@@ -2,7 +2,7 @@
 
 ## One-Line Positioning
 
-Ling Stack is a local-first AI teammate workspace for Chinese users, domestic model providers, GPT, Claude, and OpenAI-compatible relays.
+Ling Stack is a multilingual, local-first AI teammate workspace with an initial provider focus on domestic AI vendors, plus first-class GPT, Claude, and OpenAI-compatible relay entry points.
 
 ## Core Bet
 
@@ -14,7 +14,7 @@ The product should not compete as a chat client. It should compete as a work sur
 
 - Developers who use multiple providers and want one local workspace.
 - Small teams that need AI to help with code, docs, support, operations, and media tasks.
-- Chinese teams that need Doubao, DeepSeek, MiniMax, GLM, Jimeng, and local relay support.
+- Multilingual teams and developers that need Doubao, DeepSeek, MiniMax, GLM, Jimeng, GPT, Claude, and local relay support.
 - Agent power users who already use Codex, Claude Code, MCP, local proxies, or provider relays.
 
 ## Key Objects

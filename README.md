@@ -2,7 +2,7 @@
 
 Ling Stack is a local-first AI teammate workspace for developers and small teams.
 
-It is designed to connect humans, AI teammates, tasks, approvals, tools, and model providers in one auditable workspace. The first-class targets are Chinese users, domestic model providers, GPT, Claude, and any OpenAI-compatible relay.
+It is designed to connect humans, AI teammates, tasks, approvals, tools, and model providers in one auditable workspace. Ling Stack is multilingual by design, with an initial provider focus on domestic AI vendors, plus first-class GPT, Claude, and OpenAI-compatible relay entry points.
 
 ## Product Direction
 
