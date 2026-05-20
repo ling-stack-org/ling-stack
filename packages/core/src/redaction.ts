@@ -1,0 +1,50 @@
+const REDACTED = "[REDACTED]";
+const SECRET_KEY_PATTERN = /(?:api[_-]?key|apiKeyRef|authorization|cookie|password|token|secret)/i;
+const OPENAI_STYLE_SECRET_PATTERN = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g;
+const AUTH_VALUE_PATTERN = /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi;
+
+export function redactSecrets(value: unknown): unknown {
+  return redactValue(value, new WeakSet<object>());
+}
+
+function redactValue(value: unknown, seen: WeakSet<object>): unknown {
+  if (typeof value === "string") {
+    return redactString(value);
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
+    return value.map((item) => redactValue(item, seen));
+  }
+
+  if (typeof value === "object" && value !== null) {
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
+
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      result[key] = shouldRedactKey(key) ? REDACTED : redactValue(item, seen);
+    }
+    return result;
+  }
+
+  return value;
+}
+
+function shouldRedactKey(key: string): boolean {
+  return SECRET_KEY_PATTERN.test(key);
+}
+
+function redactString(value: string): string {
+  if (AUTH_VALUE_PATTERN.test(value)) {
+    AUTH_VALUE_PATTERN.lastIndex = 0;
+    return value.replace(AUTH_VALUE_PATTERN, REDACTED);
+  }
+  AUTH_VALUE_PATTERN.lastIndex = 0;
+  return value.replace(OPENAI_STYLE_SECRET_PATTERN, REDACTED);
+}

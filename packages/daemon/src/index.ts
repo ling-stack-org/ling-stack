@@ -1,5 +1,21 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { createPiRunner, type PiRunnerEvent, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import {
+  createRunId,
+  createSqliteRunStore,
+  getRunSummaryPath,
+  writeRunSummary,
+  type RunEventEnvelope,
+  type RunEventType,
+  type RunSession,
+  type RunStore,
+  type RunSummary,
+} from "@ling-stack/core";
+import {
+  createPiRunner,
+  type PiRunnerEvent,
+  type PiRunnerResult,
+  type PiRunnerRunOptions,
+} from "@ling-stack/runner-pi";
 
 export interface DaemonConfig {
   readonly host?: string;
@@ -11,6 +27,17 @@ export interface ResolvedDaemonConfig {
   readonly host: string;
   readonly port: number;
   readonly maxBodyBytes: number;
+}
+
+export interface RunnerAdapter {
+  runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
+}
+
+export type RunStoreFactory = (cwd: string) => RunStore;
+
+export interface DaemonDependencies {
+  readonly runner?: RunnerAdapter;
+  readonly storeFactory?: RunStoreFactory;
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -28,12 +55,16 @@ export interface DaemonServer {
   stop(): Promise<void>;
 }
 
-export function createDaemonServer(config: DaemonConfig = defaultDaemonConfig): DaemonServer {
+export function createDaemonServer(
+  config: DaemonConfig = defaultDaemonConfig,
+  dependencies: DaemonDependencies = {},
+): DaemonServer {
   const resolvedConfig = resolveConfig(config);
-  const runner = createPiRunner();
+  const runner = dependencies.runner ?? createPiRunner();
+  const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore);
   const server = createServer(async (request, response) => {
     try {
-      await routeRequest(request, response, resolvedConfig, runner);
+      await routeRequest(request, response, resolvedConfig, runner, storeRegistry);
     } catch (error) {
       if (!response.headersSent) {
         writeJson(response, 500, {
@@ -60,6 +91,7 @@ export function createDaemonServer(config: DaemonConfig = defaultDaemonConfig): 
     stop: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => {
+          storeRegistry.closeAll();
           if (error) {
             reject(error);
             return;
@@ -70,8 +102,11 @@ export function createDaemonServer(config: DaemonConfig = defaultDaemonConfig): 
   };
 }
 
-export async function startDaemon(config: DaemonConfig = defaultDaemonConfig): Promise<DaemonServer> {
-  const daemon = createDaemonServer(config);
+export async function startDaemon(
+  config: DaemonConfig = defaultDaemonConfig,
+  dependencies: DaemonDependencies = {},
+): Promise<DaemonServer> {
+  const daemon = createDaemonServer(config, dependencies);
   await daemon.start();
   return daemon;
 }
@@ -80,7 +115,8 @@ async function routeRequest(
   request: IncomingMessage,
   response: ServerResponse,
   config: ResolvedDaemonConfig,
-  runner: ReturnType<typeof createPiRunner>,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
 ): Promise<void> {
   setCorsHeaders(response);
 
@@ -98,7 +134,17 @@ async function routeRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/runs") {
-    await handleRun(request, response, config, runner);
+    await handleRun(request, response, config, runner, storeRegistry);
+    return;
+  }
+
+  const runRoute = parseRunRoute(url.pathname);
+  if (request.method === "GET" && runRoute?.kind === "run") {
+    handleGetRun(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+  if (request.method === "GET" && runRoute?.kind === "events") {
+    handleGetRunEvents(response, url, storeRegistry, runRoute.runId);
     return;
   }
 
@@ -109,7 +155,8 @@ async function handleRun(
   request: IncomingMessage,
   response: ServerResponse,
   config: ResolvedDaemonConfig,
-  runner: ReturnType<typeof createPiRunner>,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
 ): Promise<void> {
   let runRequest: RunRequest;
   try {
@@ -123,40 +170,213 @@ async function handleRun(
     return;
   }
 
+  let store: RunStore;
+  let run: RunSession;
+  try {
+    store = storeRegistry.getStore(runRequest.cwd);
+    const runId = createRunId();
+    const createdAt = new Date().toISOString();
+    run = store.createRun({
+      id: runId,
+      cwd: runRequest.cwd,
+      taskId: runRequest.task.id,
+      channelId: runRequest.task.channelId,
+      providerName: runRequest.provider.provider,
+      providerModel: runRequest.provider.model,
+      taskSnapshot: runRequest.task,
+      providerSnapshot: runRequest.provider,
+      requestSnapshot: runRequest,
+      createdAt,
+    });
+    storeRegistry.rememberRun(run.id, store);
+    store.appendEvent(run.id, "run_created", {
+      taskId: run.taskId,
+      cwd: run.cwd,
+      providerName: run.providerName,
+      providerModel: run.providerModel,
+    });
+  } catch (error) {
+    writeJson(response, 500, {
+      error: "run_storage_unavailable",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
   writeSseHead(response);
-  writeSse(response, "ready", { ok: true });
+  writeSse(response, "ready", { ok: true, runId: run.id });
 
   let clientClosed = false;
+  let runStartedAt: string | undefined;
+  let persistedRunError = false;
+  let persistenceError: unknown;
   response.on("close", () => {
     clientClosed = true;
   });
 
+  const appendAndMaybeStream = (type: RunEventType, data: unknown): RunEventEnvelope | undefined => {
+    if (persistenceError) {
+      return undefined;
+    }
+
+    try {
+      const envelope = store.appendEvent(run.id, type, data);
+      if (type === "run_error") {
+        persistedRunError = true;
+      }
+      if (!clientClosed) {
+        writeSse(response, envelope.type, envelope);
+      }
+      return envelope;
+    } catch (error) {
+      persistenceError = error;
+      return undefined;
+    }
+  };
+
   try {
+    runStartedAt = new Date().toISOString();
+    store.markRunStarted(run.id, runStartedAt);
+
     const result = await runner.runTask({
       ...runRequest,
       onEvent: (event: PiRunnerEvent) => {
-        if (!clientClosed) {
-          writeSse(response, event.type, event);
-        }
+        appendAndMaybeStream(event.type, event);
       },
     });
 
+    if (persistenceError) {
+      throw persistenceError;
+    }
+
+    const resultEnvelope = appendAndMaybeStream("result", {
+      taskId: result.taskId,
+      messageCount: result.messages.length,
+      runnerEventCount: result.events.length,
+    });
+    if (!resultEnvelope && persistenceError) {
+      throw persistenceError;
+    }
+
+    const endedAt = new Date().toISOString();
+    const summaryPath = writeTerminalSummary(getRunSummaryPath(store.paths, run.id), {
+      runId: run.id,
+      status: "succeeded",
+      taskId: run.taskId,
+      eventCount: resultEnvelope?.seq ?? store.countEvents(run.id),
+      messageCount: result.messages.length,
+      startedAt: runStartedAt,
+      endedAt,
+      errorMessage: null,
+    });
+    store.markRunSucceeded(run.id, endedAt, summaryPath);
+
     if (!clientClosed) {
-      writeSse(response, "result", {
-        taskId: result.taskId,
-        messageCount: result.messages.length,
-        eventCount: result.events.length,
-      });
       response.end();
     }
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const endedAt = new Date().toISOString();
+    const failureEvent = persistedRunError
+      ? undefined
+      : appendFailureEvent(store, run.id, message, clientClosed, response);
+    const summaryPath = writeTerminalSummary(getRunSummaryPath(store.paths, run.id), {
+      runId: run.id,
+      status: "failed",
+      taskId: run.taskId,
+      eventCount: failureEvent?.seq ?? store.countEvents(run.id),
+      startedAt: runStartedAt,
+      endedAt,
+      errorMessage: message,
+    });
+    store.markRunFailed(run.id, endedAt, message, summaryPath);
+
     if (!clientClosed) {
-      writeSse(response, "error", {
-        error: "run_failed",
-        message: error instanceof Error ? error.message : String(error),
-      });
       response.end();
     }
+  }
+}
+
+function writeTerminalSummary(summaryPath: string, summary: RunSummary): string | undefined {
+  try {
+    writeRunSummary(summaryPath, summary);
+    return summaryPath;
+  } catch {
+    return undefined;
+  }
+}
+
+function handleGetRun(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  runId: string,
+): void {
+  const store = storeRegistry.findStoreForRun(runId, url.searchParams.get("cwd") ?? undefined);
+  const run = store?.getRun(runId);
+  if (!run) {
+    writeJson(response, 404, {
+      error: "run_not_found",
+      message: "Run was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
+    });
+    return;
+  }
+
+  writeJson(response, 200, run);
+}
+
+function handleGetRunEvents(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  runId: string,
+): void {
+  let afterSeq: number | undefined;
+  let limit: number | undefined;
+  try {
+    afterSeq = readOptionalIntegerQuery(url, "afterSeq", 0);
+    limit = readOptionalIntegerQuery(url, "limit", 1);
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  const store = storeRegistry.findStoreForRun(runId, url.searchParams.get("cwd") ?? undefined);
+  if (!store?.getRun(runId)) {
+    writeJson(response, 404, {
+      error: "run_not_found",
+      message: "Run was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
+    });
+    return;
+  }
+
+  const events = store.listEvents(runId, { afterSeq, limit });
+  const lastEvent = events.at(-1);
+  writeJson(response, 200, {
+    runId,
+    events,
+    nextSeq: lastEvent ? lastEvent.seq + 1 : (afterSeq ?? 0) + 1,
+  });
+}
+
+function appendFailureEvent(
+  store: RunStore,
+  runId: string,
+  message: string,
+  clientClosed: boolean,
+  response: ServerResponse,
+): RunEventEnvelope | undefined {
+  try {
+    const envelope = store.appendEvent(runId, "run_error", { message });
+    if (!clientClosed) {
+      writeSse(response, envelope.type, envelope);
+    }
+    return envelope;
+  } catch {
+    return undefined;
   }
 }
 
@@ -232,6 +452,17 @@ function parseRunRequest(value: unknown): RunRequest {
   };
 
   return runRequest;
+}
+
+function parseRunRoute(pathname: string): { kind: "run"; runId: string } | { kind: "events"; runId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "runs") {
+    return { kind: "run", runId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "events") {
+    return { kind: "events", runId: segments[1] };
+  }
+  return undefined;
 }
 
 function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
@@ -373,6 +604,69 @@ function readOptionalProviderApi(record: Record<string, unknown>, key: string): 
   ])?.[0];
 }
 
+function readOptionalIntegerQuery(url: URL, key: string, minValue: number): number | undefined {
+  const rawValue = url.searchParams.get(key);
+  if (rawValue === null) {
+    return undefined;
+  }
+  const value = Number.parseInt(rawValue, 10);
+  if (!Number.isInteger(value) || value < minValue || String(value) !== rawValue) {
+    throw new Error(`${key} must be an integer greater than or equal to ${minValue}`);
+  }
+  return value;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+class RunStoreRegistry {
+  private readonly storesByCwd = new Map<string, RunStore>();
+  private readonly storesByRunId = new Map<string, RunStore>();
+
+  constructor(private readonly storeFactory: RunStoreFactory) {}
+
+  getStore(cwd: string): RunStore {
+    const existing = this.storesByCwd.get(cwd);
+    if (existing) {
+      return existing;
+    }
+
+    const store = this.storeFactory(cwd);
+    store.recoverStaleRuns(new Date().toISOString());
+    this.storesByCwd.set(cwd, store);
+    return store;
+  }
+
+  rememberRun(runId: string, store: RunStore): void {
+    this.storesByRunId.set(runId, store);
+  }
+
+  findStoreForRun(runId: string, cwd?: string): RunStore | undefined {
+    if (cwd) {
+      return this.getStore(cwd);
+    }
+
+    const knownStore = this.storesByRunId.get(runId);
+    if (knownStore?.getRun(runId)) {
+      return knownStore;
+    }
+
+    for (const store of this.storesByCwd.values()) {
+      if (store.getRun(runId)) {
+        this.rememberRun(runId, store);
+        return store;
+      }
+    }
+
+    return undefined;
+  }
+
+  closeAll(): void {
+    for (const store of this.storesByCwd.values()) {
+      store.close();
+    }
+    this.storesByCwd.clear();
+    this.storesByRunId.clear();
+  }
 }

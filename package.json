@@ -28,6 +28,11 @@
     "glm"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.15"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

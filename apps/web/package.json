@@ -4,9 +4,22 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "echo \"web build not configured yet\"",
-    "typecheck": "echo \"web typecheck not configured yet\"",
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -p tsconfig.json && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "preview": "vite preview --host 127.0.0.1",
     "lint": "echo \"lint not configured yet\"",
     "test": "echo \"tests not configured yet\""
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.0"
   }
 }
