@@ -40,6 +40,7 @@ packages/
   cli/          Command-line interface.
   daemon/       Local HTTP/WebSocket API.
   providers/    Model and media provider adapters.
+  runner-pi/    Pi coding-agent wrapper used as the first execution kernel.
 docs/
   product-design.md
   architecture.md

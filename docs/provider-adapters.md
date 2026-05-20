@@ -50,6 +50,16 @@ export interface ProviderAdapter {
 
 ## Initial Adapter List
 
+### Pi Runner
+
+Ling Stack should use `earendil-works/pi` as the first coding-agent kernel. This is not a provider adapter in the media/model sense; it is a runner adapter that already understands coding-agent sessions, streaming, tool calls, read/write/edit/bash tools, and many LLM providers.
+
+Keep this adapter thin:
+
+- Use pi for agent loop and coding tools.
+- Use Ling Stack for tasks, channels, approvals, audit logs, artifacts, and UI.
+- Do not fork pi unless upstream blocks a required product behavior.
+
 ### OpenAI
 
 Target capabilities:

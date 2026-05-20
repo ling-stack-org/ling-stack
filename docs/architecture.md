@@ -50,6 +50,19 @@ Owns provider adapters and capability normalization.
 
 Provider support must be capability-driven, not chat-only.
 
+### `packages/runner-pi`
+
+Owns the first execution kernel adapter.
+
+Ling Stack should wrap `earendil-works/pi` instead of forking it. Pi gives us a maintained coding-agent harness, provider routing, sessions, tool calling, and file/shell/git-oriented tools. Ling Stack keeps ownership of the product layer: channels, tasks, approvals, audit logs, provider policy, and future desktop/web surfaces.
+
+The adapter boundary is:
+
+- Ling Stack sends a task, cwd, model/provider config, and allowed tools.
+- Pi runs the agent session.
+- The adapter translates pi message/tool events into Ling Stack session events.
+- Ling Stack stores approvals, audit records, and artifacts outside pi.
+
 ### `packages/daemon`
 
 Local API server:
