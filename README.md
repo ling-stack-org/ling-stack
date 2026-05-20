@@ -1,33 +1,174 @@
 # Ling Stack
 
-Ling Stack is a local-first AI teammate workspace for developers and small teams.
+A multilingual, local-first AI teammate workspace for humans, agents, tools, approvals, and model providers.
 
-It is designed to connect humans, AI teammates, tasks, approvals, tools, and model providers in one auditable workspace. Ling Stack is multilingual by design, with an initial provider focus on domestic AI vendors, plus first-class GPT, Claude, and OpenAI-compatible relay entry points.
+Ling Stack connects channels, tasks, runtime sessions, provider routing, artifacts, and human approval gates in one auditable workspace. It initially prioritizes domestic AI vendors while keeping GPT, Claude, and OpenAI-compatible relay entry points first-class.
 
-## Product Direction
+> Local-first workspace. AI teammates. Channels and tasks. Pi coding-agent runtime. Provider adapters. Approval gates. Auditable sessions. Domestic AI providers first, GPT and Claude included.
 
-Ling Stack is not another chat client. The core product surface is a workspace:
+## Documentation
 
-- Channels as shared context containers.
-- Tasks as the smallest executable unit of AI work.
-- AI teammates with scoped tools, memory, budgets, and approval rules.
-- Runtime sessions with logs, artifacts, diffs, and replayable evidence.
-- Human approval gates for file writes, external sends, deployments, and other risky actions.
-- Provider adapters for GPT, Claude, Doubao, DeepSeek, MiniMax, GLM, Jimeng, and generic OpenAI-compatible APIs.
+- [Product design](docs/product-design.md)
+- [Architecture](docs/architecture.md)
+- [Daemon API](docs/daemon-api.md)
+- [Provider adapters](docs/provider-adapters.md)
+- [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
 
-## Initial Scope
+## Why This Exists
 
-The v0.1 target is a single-user local workspace:
+AI coding and agent tools are getting powerful, but most of them still live in separate boxes:
 
-- CLI first.
-- Local daemon API.
-- Local web UI.
-- SQLite metadata store.
-- File-based session logs and artifacts.
-- Provider health checks.
-- OpenAI-compatible, OpenAI, Anthropic, Doubao, MiniMax, GLM, DeepSeek, and Jimeng adapter foundations.
+- One chat client for GPT or Claude.
+- One local relay for domestic models.
+- One coding-agent CLI for file edits.
+- One media tool for image or video generation.
+- One task tracker for real work.
+- One human review process outside the agent runtime.
 
-Desktop apps for macOS, Windows, and Linux come after the local daemon and CLI are useful.
+That split creates operational friction. The model may generate useful work, but the surrounding workflow is still manual: copy the prompt, choose the model, run the tool, inspect the diff, approve the risky action, save the artifact, and explain what happened later.
+
+Ling Stack exists to make that workflow explicit and inspectable. The goal is not another chat window. The goal is a workspace where AI teammates can pick up scoped tasks, run through a maintained agent kernel, produce logs and artifacts, and hand risky actions back to humans for approval.
+
+## The Core Idea
+
+Separate the product layer from the agent kernel.
+
+```text
+workspace and channels
++ tasks and AI teammates
++ approval and audit policy
++ provider routing
++ maintained coding-agent kernel
++ streamed runtime events
++ artifacts and session records
+```
+
+Ling Stack owns the workspace. Pi owns the first coding-agent runtime.
+
+### Responsibility Layers
+
+| Layer | Purpose | Current path |
+| --- | --- | --- |
+| Workspace | Channels, tasks, teammates, approvals, artifacts | `packages/core` |
+| Runner | Execute coding-agent tasks and stream events | `packages/runner-pi` |
+| Daemon | Local API for CLI, web UI, and desktop shell | `packages/daemon` |
+| Providers | Model and media capability adapters | `packages/providers` |
+| UI | Local web and future desktop surfaces | `apps/web`, `apps/desktop` |
+
+## Benefits
+
+- **No duplicated agent kernel:** Ling Stack wraps `@earendil-works/pi-coding-agent` instead of rebuilding a coding-agent loop from scratch.
+- **Provider flexibility:** GPT, Claude, DeepSeek / DPV4-compatible endpoints, MiniMax, GLM, Doubao, Jimeng, and OpenAI-compatible relays can sit behind one workspace policy.
+- **Multilingual by design:** the product is not limited to Chinese users; the initial provider emphasis is domestic AI vendor support.
+- **Auditable execution:** runner events are streamed as first-class workspace events instead of disappearing inside a terminal.
+- **Approval-ready workflow:** file writes, shell commands, external sends, deployments, and high-cost media jobs can route through human review.
+- **Local-first adoption:** the first useful version can run as a CLI, local daemon, and local web UI before cloud/team sync exists.
+- **Desktop later, not blocking:** macOS, Windows, and Linux apps can wrap the local daemon after the runtime is useful.
+
+## Core Principles
+
+- Do not build another generic chat client.
+- Keep channels, tasks, approvals, artifacts, and audit logs as the core product surface.
+- Treat model providers as capability adapters, not just chat endpoints.
+- Use Pi for the coding-agent kernel and maintain only a thin adapter.
+- Keep domestic AI vendors first-class without making the product China-only.
+- Keep GPT, Claude, and OpenAI-compatible relay entry points first-class.
+- Make risky side effects visible and approvable.
+- Store enough runtime evidence to explain what happened after the fact.
+- Keep the desktop shell downstream of the daemon API.
+
+## Who Should Use This
+
+Ling Stack is for:
+
+- Developers who use multiple model providers and want one local AI workspace.
+- Teams that need AI help with code, docs, support, operations, and media tasks.
+- Users who need domestic AI providers alongside GPT and Claude.
+- Agent power users already using Codex, Claude Code, Pi, MCP, local proxies, or OpenAI-compatible relays.
+- Builders who want auditable AI work instead of opaque chat transcripts.
+
+It is less useful for one-shot prompts, stateless bots, or users who only need a simple chat client.
+
+## What This Is / Is Not
+
+This project is:
+
+- A local-first AI teammate workspace.
+- A product layer around maintained agent runtimes.
+- A provider and approval orchestration layer.
+- A future CLI, web UI, and desktop app surface.
+- A place to make AI work visible, reviewable, and repeatable.
+
+This project is not:
+
+- A replacement for Pi.
+- A model provider.
+- A pure chat UI.
+- A vector database.
+- A secret manager.
+- A permission slip for agents to change files, deploy, or send messages without review.
+
+## Quick Start
+
+The project is still early, but the daemon can already stream Pi runner events.
+
+### 1. Install dependencies
+
+```bash
+corepack pnpm install
+```
+
+### 2. Build and typecheck
+
+```bash
+corepack pnpm typecheck
+corepack pnpm build
+```
+
+### 3. Start the daemon
+
+```bash
+node packages/daemon/dist/cli.js
+```
+
+Default endpoint:
+
+```text
+http://127.0.0.1:17891
+```
+
+### 4. Check health
+
+```bash
+curl http://127.0.0.1:17891/health
+```
+
+### 5. Run a task through the Pi runner
+
+`POST /runs` returns an SSE stream. See [Daemon API](docs/daemon-api.md) for full request examples.
+
+```bash
+curl -N http://127.0.0.1:17891/runs \
+  -H 'content-type: application/json' \
+  -d '{
+    "cwd": "'$PWD'",
+    "task": {
+      "id": "task-1",
+      "title": "Inspect the project",
+      "prompt": "List the files and summarize the repo."
+    },
+    "provider": {
+      "provider": "local-relay",
+      "displayName": "Local Relay",
+      "model": "dpv4",
+      "baseUrl": "http://127.0.0.1:3000/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-local"
+    },
+    "tools": ["read", "grep", "find", "ls"],
+    "thinkingLevel": "off"
+  }'
+```
 
 ## Repository Layout
 
@@ -35,41 +176,57 @@ Desktop apps for macOS, Windows, and Linux come after the local daemon and CLI a
 apps/
   web/          Local workspace UI.
   desktop/      Future cross-platform desktop shell.
+
 packages/
   core/         Workspace, tasks, approvals, sessions, and policy engine.
   cli/          Command-line interface.
-  daemon/       Local HTTP/WebSocket API.
+  daemon/       Local HTTP/SSE API.
   providers/    Model and media provider adapters.
   runner-pi/    Pi coding-agent wrapper used as the first execution kernel.
+
 docs/
   product-design.md
   architecture.md
   daemon-api.md
   provider-adapters.md
   pi-coding-agent-integration.md
+
 examples/
 ```
 
 ## Provider Targets
 
-First-class providers:
+First-class provider targets:
 
 - OpenAI GPT models.
 - Anthropic Claude models.
 - Doubao / Volcengine Ark.
-- DeepSeek V4 / compatible DeepSeek endpoints.
+- DeepSeek / DPV4-compatible endpoints.
 - MiniMax.
 - GLM / Zhipu.
 - Jimeng / Seedream / Seedance for image and video generation.
 - Generic OpenAI-compatible relay endpoints.
 
-Provider support is capability based. Ling Stack should not pretend every provider is only a chat model.
+Provider support is capability-based. Ling Stack should not pretend every provider is only a chat model.
 
-## Status
+## Current Status
 
-Design scaffold. No production runtime yet.
+Implemented:
 
-The first coding-agent runtime is intentionally built on `@earendil-works/pi-coding-agent`; see [docs/pi-coding-agent-integration.md](docs/pi-coding-agent-integration.md).
+- Monorepo scaffold.
+- `@ling-stack/runner-pi` wrapper around `@earendil-works/pi-coding-agent`.
+- `@ling-stack/daemon` with `GET /health`.
+- `POST /runs` streaming Pi runner events over SSE.
+- Initial product, architecture, daemon, provider, and Pi integration docs.
+
+Not implemented yet:
+
+- Persistent session/event storage.
+- Approval policy hooks before `write`, `edit`, `bash`, external sends, or deployments.
+- Provider preset management.
+- CLI commands beyond the scaffold.
+- Web UI.
+- Desktop packaging.
 
 ## License
 
