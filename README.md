@@ -13,6 +13,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [v0.1 detailed design](docs/v0.1-detailed-design.md)
 - [Daemon API](docs/daemon-api.md)
 - [Provider adapters](docs/provider-adapters.md)
+- [Provider presets](docs/design/provider-presets.md)
 - [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
 
 ## Why This Exists
@@ -144,7 +145,32 @@ http://127.0.0.1:17891
 curl http://127.0.0.1:17891/health
 ```
 
-### 5. Run a task through the Pi runner
+### 5. Create a provider preset
+
+Provider presets persist non-secret provider configuration in the local workspace database. Secrets are referenced by name, not stored as raw keys.
+
+```bash
+export LOCAL_RELAY_API_KEY=sk-local
+
+curl http://127.0.0.1:17891/providers?cwd="$PWD" \
+  -H 'content-type: application/json' \
+  -d '{
+    "kind": "openai-compatible",
+    "displayName": "Local Relay",
+    "providerId": "local-relay",
+    "model": "gpt-5.5",
+    "api": "openai-completions",
+    "baseUrl": "http://127.0.0.1:8317/v1",
+    "apiKeyRef": "env:LOCAL_RELAY_API_KEY",
+    "capabilities": ["chat", "tool_call", "reasoning"],
+    "input": ["text"],
+    "enabled": true
+  }'
+```
+
+The response includes a generated `provider.id`, for example `provider_...`.
+
+### 6. Run a task through the Pi runner
 
 `POST /runs` returns an SSE stream. See [Daemon API](docs/daemon-api.md) for full request examples.
 
@@ -158,18 +184,13 @@ curl -N http://127.0.0.1:17891/runs \
       "title": "Inspect the project",
       "prompt": "List the files and summarize the repo."
     },
-    "provider": {
-      "provider": "local-relay",
-      "displayName": "Local Relay",
-      "model": "dpv4",
-      "baseUrl": "http://127.0.0.1:3000/v1",
-      "api": "openai-completions",
-      "apiKey": "sk-local"
-    },
+    "providerPresetId": "provider_...",
     "tools": ["read", "grep", "find", "ls"],
-    "thinkingLevel": "off"
+    "thinkingLevel": "medium"
   }'
 ```
+
+Inline provider JSON is still accepted for development, but product flows should prefer `providerPresetId` so raw API keys are not persisted in workspace records.
 
 ## Repository Layout
 
@@ -190,6 +211,7 @@ docs/
   architecture.md
   v0.1-detailed-design.md
   daemon-api.md
+  design/provider-presets.md
   provider-adapters.md
   pi-coding-agent-integration.md
 
@@ -219,15 +241,19 @@ Implemented:
 - `@ling-stack/runner-pi` wrapper around `@earendil-works/pi-coding-agent`.
 - `@ling-stack/daemon` with `GET /health`.
 - `POST /runs` streaming Pi runner events over SSE.
+- SQLite-backed run session and event persistence.
+- JSONL event audit logs under `.ling-stack/sessions`.
+- `GET /runs`, `GET /runs/:id`, and `GET /runs/:id/events`.
+- Provider preset storage and daemon APIs.
+- `POST /runs` with `providerPresetId`.
+- Local web UI with run launcher, event stream, run history, and provider settings.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
 Not implemented yet:
 
-- Persistent session/event storage.
 - Approval policy hooks before `write`, `edit`, `bash`, external sends, or deployments.
-- Provider preset management.
 - CLI commands beyond the scaffold.
-- Web UI.
+- OS keychain integration for secrets.
 - Desktop packaging.
 
 ## License
