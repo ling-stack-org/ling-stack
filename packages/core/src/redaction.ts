@@ -1,5 +1,5 @@
 const REDACTED = "[REDACTED]";
-const SECRET_KEY_PATTERN = /(?:api[_-]?key|apiKeyRef|authorization|cookie|password|token|secret)/i;
+const SECRET_KEY_NAMES = new Set(["apikey", "apikeyref", "authorization", "cookie", "password", "token", "secret"]);
 const OPENAI_STYLE_SECRET_PATTERN = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g;
 const AUTH_VALUE_PATTERN = /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi;
 
@@ -37,7 +37,14 @@ function redactValue(value: unknown, seen: WeakSet<object>): unknown {
 }
 
 function shouldRedactKey(key: string): boolean {
-  return SECRET_KEY_PATTERN.test(key);
+  const normalized = key.toLowerCase().replace(/[_-]/g, "");
+  return (
+    SECRET_KEY_NAMES.has(normalized) ||
+    normalized.endsWith("apikey") ||
+    normalized.endsWith("token") ||
+    normalized.endsWith("secret") ||
+    normalized.endsWith("password")
+  );
 }
 
 function redactString(value: string): string {

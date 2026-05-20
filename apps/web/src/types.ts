@@ -51,6 +51,11 @@ export interface RunEventsResponse {
   readonly nextSeq: number;
 }
 
+export interface RunListResponse {
+  readonly cwd: string;
+  readonly runs: readonly RunSession[];
+}
+
 export type ToolName = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write";
 
 export interface RunFormState {

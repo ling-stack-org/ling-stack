@@ -18,12 +18,13 @@ import {
   SquareTerminal,
   Workflow,
 } from "lucide-react";
-import { buildRunRequest, daemonBaseUrl, getDaemonHealth, getRun, getRunEvents } from "./api.js";
+import { buildRunRequest, daemonBaseUrl, getDaemonHealth, getRun, getRunEvents, listRuns } from "./api.js";
 import { streamRun } from "./sse.js";
 import type { RunEventEnvelope, RunFormState, RunSession, ToolName } from "./types.js";
 
 const defaultTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
 const allTools: readonly ToolName[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
+type ViewId = "workspace" | "runs";
 
 const defaultForm: RunFormState = {
   cwd: "/Users/tianxiao/ling-stack",
@@ -40,10 +41,13 @@ const defaultForm: RunFormState = {
 
 export function App(): JSX.Element {
   const [form, setForm] = useState<RunFormState>(defaultForm);
+  const [activeView, setActiveView] = useState<ViewId>("workspace");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
   const [activeRunId, setActiveRunId] = useState("");
   const [lookupRunId, setLookupRunId] = useState("");
   const [run, setRun] = useState<RunSession | undefined>();
+  const [runs, setRuns] = useState<readonly RunSession[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -63,6 +67,12 @@ export function App(): JSX.Element {
   useEffect(() => {
     void refreshHealth();
   }, []);
+
+  useEffect(() => {
+    if (activeView === "runs") {
+      void refreshRuns();
+    }
+  }, [activeView]);
 
   async function refreshHealth(): Promise<void> {
     try {
@@ -101,6 +111,7 @@ export function App(): JSX.Element {
 
       if (streamedRunId) {
         await loadRun(streamedRunId);
+        await refreshRuns();
       }
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
@@ -130,6 +141,28 @@ export function App(): JSX.Element {
     }
   }
 
+  async function refreshRuns(): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    setRunsLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await listRuns(form.cwd.trim());
+      setRuns(response.runs);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRunsLoading(false);
+    }
+  }
+
+  async function selectRun(runId: string): Promise<void> {
+    await loadRun(runId);
+  }
+
   function stopClientStream(): void {
     abortRef.current?.abort();
     setIsRunning(false);
@@ -147,26 +180,43 @@ export function App(): JSX.Element {
           </div>
         </div>
         <nav>
-          <NavItem icon={<Workflow />} label="Workspace" active />
-          <NavItem icon={<History />} label="Runs" />
-          <NavItem icon={<PlugZap />} label="Providers" />
-          <NavItem icon={<ShieldCheck />} label="Approvals" />
-          <NavItem icon={<Settings />} label="Settings" />
+          <NavItem icon={<Workflow />} label="Workspace" active={activeView === "workspace"} onClick={() => setActiveView("workspace")} />
+          <NavItem icon={<History />} label="Runs" active={activeView === "runs"} onClick={() => setActiveView("runs")} />
+          <NavItem icon={<PlugZap />} label="Providers" disabled />
+          <NavItem icon={<ShieldCheck />} label="Approvals" disabled />
+          <NavItem icon={<Settings />} label="Settings" disabled />
         </nav>
       </aside>
       <section className="workspace">
         <div className="workspace-head">
           <div>
-            <h1>Run workspace</h1>
-            <p>发起本地任务，观察 pi-coding-agent 事件流，并读取持久化 run 历史。</p>
+            <h1>{activeView === "workspace" ? "Run workspace" : "Run history"}</h1>
+            <p>
+              {activeView === "workspace"
+                ? "发起本地任务，观察 pi-coding-agent 事件流，并读取持久化 run 历史。"
+                : "查看当前 workspace 的持久化 run，点击任意记录读取事件和上下文。"}
+            </p>
           </div>
           <StatusBadge status={latestStatus} />
         </div>
 
-        <div className="content-grid">
-          <RunLauncher form={form} isRunning={isRunning} onChange={setForm} onStart={startRun} onStop={stopClientStream} />
-          <RunTimeline events={events} assistantText={assistantText} errorMessage={errorMessage} isRunning={isRunning} />
-        </div>
+        {activeView === "workspace" ? (
+          <div className="content-grid">
+            <RunLauncher form={form} isRunning={isRunning} onChange={setForm} onStart={startRun} onStop={stopClientStream} />
+            <RunTimeline events={events} assistantText={assistantText} errorMessage={errorMessage} isRunning={isRunning} />
+          </div>
+        ) : (
+          <RunHistory
+            cwd={form.cwd}
+            runs={runs}
+            selectedRunId={activeRunId}
+            isLoading={runsLoading}
+            errorMessage={errorMessage}
+            onCwdChange={(cwd) => setForm({ ...form, cwd })}
+            onRefresh={() => void refreshRuns()}
+            onSelect={(runId) => void selectRun(runId)}
+          />
+        )}
       </section>
       <aside className="right-panel">
         <RunInspector
@@ -214,12 +264,99 @@ function TopBar({
   );
 }
 
-function NavItem({ icon, label, active = false }: { readonly icon: JSX.Element; readonly label: string; readonly active?: boolean }): JSX.Element {
+function NavItem({
+  icon,
+  label,
+  active = false,
+  disabled = false,
+  onClick,
+}: {
+  readonly icon: JSX.Element;
+  readonly label: string;
+  readonly active?: boolean;
+  readonly disabled?: boolean;
+  readonly onClick?: () => void;
+}): JSX.Element {
   return (
-    <button className={active ? "nav-item active" : "nav-item"} type="button">
+    <button className={active ? "nav-item active" : "nav-item"} type="button" disabled={disabled} onClick={onClick}>
       {icon}
       <span>{label}</span>
     </button>
+  );
+}
+
+function RunHistory({
+  cwd,
+  runs,
+  selectedRunId,
+  isLoading,
+  errorMessage,
+  onCwdChange,
+  onRefresh,
+  onSelect,
+}: {
+  readonly cwd: string;
+  readonly runs: readonly RunSession[];
+  readonly selectedRunId: string;
+  readonly isLoading: boolean;
+  readonly errorMessage: string;
+  readonly onCwdChange: (cwd: string) => void;
+  readonly onRefresh: () => void;
+  readonly onSelect: (runId: string) => void;
+}): JSX.Element {
+  return (
+    <section className="panel runs-panel" aria-labelledby="run-history-title">
+      <div className="panel-title split">
+        <span>
+          <History size={18} />
+          <h2 id="run-history-title">Recent runs</h2>
+        </span>
+        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
+          {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+          Refresh
+        </button>
+      </div>
+
+      <label className="field wide runs-cwd">
+        <span>Workspace path</span>
+        <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
+      </label>
+
+      {errorMessage ? (
+        <div className="inline-error">
+          <CircleAlert size={17} />
+          {errorMessage}
+        </div>
+      ) : null}
+
+      <div className="runs-list">
+        {runs.length === 0 ? (
+          <div className="empty-state compact-empty">
+            {isLoading ? <Loader2 className="spin" /> : <Clock3 />}
+            <span>{isLoading ? "Loading runs..." : "No persisted runs for this workspace"}</span>
+          </div>
+        ) : (
+          runs.map((item) => (
+            <button
+              key={item.id}
+              className={item.id === selectedRunId ? "run-list-row selected" : "run-list-row"}
+              type="button"
+              onClick={() => onSelect(item.id)}
+            >
+              <span className={`status-dot ${item.status}`} />
+              <span className="run-list-main">
+                <strong>{readTaskTitle(item.taskSnapshot) || item.taskId}</strong>
+                <small>{item.id}</small>
+              </span>
+              <span className="run-list-meta">
+                <StatusBadge status={item.status} />
+                <time>{formatDateTime(item.createdAt)}</time>
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -512,4 +649,21 @@ function formatEventData(data: unknown): string {
     }
   }
   return JSON.stringify(data, null, 2);
+}
+
+function readTaskTitle(taskSnapshot: unknown): string {
+  if (typeof taskSnapshot === "object" && taskSnapshot !== null && "title" in taskSnapshot) {
+    const value = (taskSnapshot as { title?: unknown }).title;
+    return typeof value === "string" ? value : "";
+  }
+  return "";
+}
+
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString([], {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

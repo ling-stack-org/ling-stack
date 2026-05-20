@@ -1,4 +1,4 @@
-import type { RunEventsResponse, RunFormState, RunSession, ToolName } from "./types.js";
+import type { RunEventsResponse, RunFormState, RunListResponse, RunSession, ToolName } from "./types.js";
 
 export const daemonBaseUrl =
   import.meta.env.VITE_LING_STACK_DAEMON_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:17891";
@@ -18,6 +18,17 @@ export async function getRun(runId: string, cwd?: string): Promise<RunSession> {
     throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as RunSession;
+}
+
+export async function listRuns(cwd: string, limit = 50): Promise<RunListResponse> {
+  const parsed = new URL(`${daemonBaseUrl}/runs`);
+  parsed.searchParams.set("cwd", cwd);
+  parsed.searchParams.set("limit", String(limit));
+  const response = await fetch(parsed.toString());
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as RunListResponse;
 }
 
 export async function getRunEvents(runId: string, cwd?: string): Promise<RunEventsResponse> {

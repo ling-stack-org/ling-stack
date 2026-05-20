@@ -10,6 +10,7 @@ import {
   createEventId,
   type CreateRunInput,
   type ListRunEventsOptions,
+  type ListRunsOptions,
   type RunEventEnvelope,
   type RunEventType,
   type RunSession,
@@ -169,6 +170,39 @@ export class SqliteRunStore implements RunStore {
       .get(runId);
 
     return row ? mapRunSession(row) : undefined;
+  }
+
+  listRuns(options: ListRunsOptions = {}): RunSession[] {
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    const statusClause = options.status ? "WHERE status = ?" : "";
+    const statement = this.database.prepare(`
+      SELECT
+        id,
+        status,
+        cwd,
+        task_id,
+        channel_id,
+        teammate_id,
+        provider_preset_id,
+        provider_name,
+        provider_model,
+        task_snapshot_json,
+        provider_snapshot_json,
+        request_snapshot_json,
+        event_log_path,
+        summary_path,
+        error_message,
+        created_at,
+        started_at,
+        ended_at,
+        updated_at
+      FROM run_sessions
+      ${statusClause}
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    const rows = options.status ? statement.all(options.status, limit) : statement.all(limit);
+    return rows.map(mapRunSession);
   }
 
   listEvents(runId: string, options: ListRunEventsOptions = {}): RunEventEnvelope[] {

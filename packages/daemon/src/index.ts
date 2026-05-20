@@ -9,6 +9,7 @@ import {
   type RunSession,
   type RunStore,
   type RunSummary,
+  type RunStatus,
 } from "@ling-stack/core";
 import {
   createPiRunner,
@@ -135,6 +136,10 @@ async function routeRequest(
 
   if (request.method === "POST" && url.pathname === "/runs") {
     await handleRun(request, response, config, runner, storeRegistry);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/runs") {
+    handleListRuns(response, url, storeRegistry);
     return;
   }
 
@@ -303,6 +308,32 @@ function writeTerminalSummary(summaryPath: string, summary: RunSummary): string 
     return summaryPath;
   } catch {
     return undefined;
+  }
+}
+
+function handleListRuns(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: "cwd query parameter is required",
+    });
+    return;
+  }
+
+  try {
+    const limit = readOptionalIntegerQuery(url, "limit", 1);
+    const status = readOptionalRunStatusQuery(url);
+    const store = storeRegistry.getStore(cwd);
+    writeJson(response, 200, {
+      cwd,
+      runs: store.listRuns({ limit, status }),
+    });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -614,6 +645,17 @@ function readOptionalIntegerQuery(url: URL, key: string, minValue: number): numb
     throw new Error(`${key} must be an integer greater than or equal to ${minValue}`);
   }
   return value;
+}
+
+function readOptionalRunStatusQuery(url: URL): RunStatus | undefined {
+  const value = url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (!["queued", "running", "succeeded", "failed", "cancelled"].includes(value)) {
+    throw new Error("status must be one of: queued, running, succeeded, failed, cancelled");
+  }
+  return value as RunStatus;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

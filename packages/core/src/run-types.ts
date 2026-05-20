@@ -70,6 +70,11 @@ export interface ListRunEventsOptions {
   readonly limit?: number;
 }
 
+export interface ListRunsOptions {
+  readonly status?: RunStatus;
+  readonly limit?: number;
+}
+
 export interface RunSummary {
   readonly runId: string;
   readonly status: RunStatus;
@@ -89,6 +94,7 @@ export interface RunStore {
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
   appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope;
   getRun(runId: string): RunSession | undefined;
+  listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
   countEvents(runId: string): number;
   recoverStaleRuns(now: string): number;
