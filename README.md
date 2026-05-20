@@ -10,6 +10,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 
 - [Product design](docs/product-design.md)
 - [Architecture](docs/architecture.md)
+- [v0.1 detailed design](docs/v0.1-detailed-design.md)
 - [Daemon API](docs/daemon-api.md)
 - [Provider adapters](docs/provider-adapters.md)
 - [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
@@ -187,6 +188,7 @@ packages/
 docs/
   product-design.md
   architecture.md
+  v0.1-detailed-design.md
   daemon-api.md
   provider-adapters.md
   pi-coding-agent-integration.md
