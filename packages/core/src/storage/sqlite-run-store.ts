@@ -7,6 +7,13 @@ import {
   type LingStackRuntimePaths,
 } from "../runtime-paths.js";
 import {
+  createProviderPresetId,
+  type ListProviderPresetsOptions,
+  type ProviderPreset,
+  type ProviderPresetInput,
+  type ProviderPresetUpdateInput,
+} from "../provider-types.js";
+import {
   createEventId,
   type CreateRunInput,
   type ListRunEventsOptions,
@@ -22,6 +29,8 @@ import { appendEventLogLine } from "./event-log.js";
 
 const INITIAL_MIGRATION_VERSION = 1;
 const INITIAL_MIGRATION_NAME = "create_run_sessions_and_events";
+const PROVIDERS_MIGRATION_VERSION = 2;
+const PROVIDERS_MIGRATION_NAME = "create_provider_presets";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -243,6 +252,173 @@ export class SqliteRunStore implements RunStore {
     return staleRuns.length;
   }
 
+  createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {
+    const preset: ProviderPreset = {
+      id: createProviderPresetId(),
+      kind: input.kind,
+      displayName: input.displayName,
+      providerId: input.providerId,
+      model: input.model,
+      api: input.api,
+      baseUrl: input.baseUrl,
+      apiKeyRef: input.apiKeyRef,
+      headers: input.headers ?? {},
+      authHeader: input.authHeader,
+      reasoning: input.reasoning,
+      input: input.input ?? ["text"],
+      contextWindow: input.contextWindow,
+      maxTokens: input.maxTokens,
+      compat: input.compat ?? {},
+      capabilities: input.capabilities,
+      enabled: input.enabled ?? true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO provider_presets (
+          id,
+          kind,
+          display_name,
+          provider_id,
+          model,
+          api,
+          base_url,
+          api_key_ref,
+          headers_json,
+          auth_header,
+          reasoning,
+          input_json,
+          context_window,
+          max_tokens,
+          compat_json,
+          capabilities_json,
+          enabled,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        preset.id,
+        preset.kind,
+        preset.displayName,
+        preset.providerId,
+        preset.model,
+        preset.api,
+        preset.baseUrl ?? null,
+        preset.apiKeyRef ?? null,
+        stringifyJson(preset.headers),
+        booleanToSql(preset.authHeader),
+        booleanToSql(preset.reasoning),
+        stringifyJson(preset.input),
+        preset.contextWindow ?? null,
+        preset.maxTokens ?? null,
+        stringifyJson(preset.compat),
+        stringifyJson(preset.capabilities),
+        preset.enabled ? 1 : 0,
+        preset.createdAt,
+        preset.updatedAt,
+      );
+
+    const created = this.getProviderPreset(preset.id);
+    if (!created) {
+      throw new Error(`Failed to create provider preset: ${preset.id}`);
+    }
+    return created;
+  }
+
+  getProviderPreset(id: string): ProviderPreset | undefined {
+    const row = this.database.prepare(providerPresetSelectSql("WHERE id = ?")).get(id);
+    return row ? mapProviderPreset(row) : undefined;
+  }
+
+  listProviderPresets(options: ListProviderPresetsOptions = {}): ProviderPreset[] {
+    const whereClause = options.enabled === undefined ? "" : "WHERE enabled = ?";
+    const statement = this.database.prepare(`${providerPresetSelectSql(whereClause)} ORDER BY created_at DESC`);
+    const rows = options.enabled === undefined ? statement.all() : statement.all(options.enabled ? 1 : 0);
+    return rows.map(mapProviderPreset);
+  }
+
+  updateProviderPreset(id: string, input: ProviderPresetUpdateInput, now: string): ProviderPreset | undefined {
+    const existing = this.getProviderPreset(id);
+    if (!existing) {
+      return undefined;
+    }
+
+    const next: ProviderPreset = {
+      ...existing,
+      kind: input.kind ?? existing.kind,
+      displayName: input.displayName ?? existing.displayName,
+      providerId: input.providerId ?? existing.providerId,
+      model: input.model ?? existing.model,
+      api: input.api ?? existing.api,
+      baseUrl: nullableUpdate(input.baseUrl, existing.baseUrl),
+      apiKeyRef: nullableUpdate(input.apiKeyRef, existing.apiKeyRef),
+      headers: input.headers ?? existing.headers,
+      authHeader: nullableUpdate(input.authHeader, existing.authHeader),
+      reasoning: nullableUpdate(input.reasoning, existing.reasoning),
+      input: input.input ?? existing.input,
+      contextWindow: nullableUpdate(input.contextWindow, existing.contextWindow),
+      maxTokens: nullableUpdate(input.maxTokens, existing.maxTokens),
+      compat: input.compat ?? existing.compat,
+      capabilities: input.capabilities ?? existing.capabilities,
+      enabled: input.enabled ?? existing.enabled,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        UPDATE provider_presets
+        SET
+          kind = ?,
+          display_name = ?,
+          provider_id = ?,
+          model = ?,
+          api = ?,
+          base_url = ?,
+          api_key_ref = ?,
+          headers_json = ?,
+          auth_header = ?,
+          reasoning = ?,
+          input_json = ?,
+          context_window = ?,
+          max_tokens = ?,
+          compat_json = ?,
+          capabilities_json = ?,
+          enabled = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.kind,
+        next.displayName,
+        next.providerId,
+        next.model,
+        next.api,
+        next.baseUrl ?? null,
+        next.apiKeyRef ?? null,
+        stringifyJson(next.headers),
+        booleanToSql(next.authHeader),
+        booleanToSql(next.reasoning),
+        stringifyJson(next.input),
+        next.contextWindow ?? null,
+        next.maxTokens ?? null,
+        stringifyJson(next.compat),
+        stringifyJson(next.capabilities),
+        next.enabled ? 1 : 0,
+        next.updatedAt,
+        id,
+      );
+
+    return this.getProviderPreset(id);
+  }
+
+  deleteProviderPreset(id: string): boolean {
+    const result = this.database.prepare("DELETE FROM provider_presets WHERE id = ?").run(id);
+    return Number(result.changes) > 0;
+  }
+
   close(): void {
     if (this.database.isOpen) {
       this.database.close();
@@ -266,57 +442,102 @@ export class SqliteRunStore implements RunStore {
       );
     `);
 
-    const applied = this.database
-      .prepare("SELECT version FROM schema_migrations WHERE version = ?")
-      .get(INITIAL_MIGRATION_VERSION);
-    if (applied) {
-      return;
+    if (!this.hasMigration(INITIAL_MIGRATION_VERSION)) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS run_sessions (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL,
+          cwd TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          channel_id TEXT,
+          teammate_id TEXT,
+          provider_preset_id TEXT,
+          provider_name TEXT NOT NULL,
+          provider_model TEXT NOT NULL,
+          task_snapshot_json TEXT NOT NULL,
+          provider_snapshot_json TEXT NOT NULL,
+          request_snapshot_json TEXT NOT NULL,
+          event_log_path TEXT NOT NULL,
+          summary_path TEXT,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          ended_at TEXT,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS run_events (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          ts TEXT NOT NULL,
+          type TEXT NOT NULL,
+          data_json TEXT NOT NULL,
+          FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
+          UNIQUE(run_id, seq)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_run_sessions_status ON run_sessions(status);
+        CREATE INDEX IF NOT EXISTS idx_run_sessions_task ON run_sessions(task_id);
+        CREATE INDEX IF NOT EXISTS idx_run_sessions_created_at ON run_sessions(created_at);
+        CREATE INDEX IF NOT EXISTS idx_run_events_run_seq ON run_events(run_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_run_events_type ON run_events(type);
+      `);
+
+      this.recordMigration(INITIAL_MIGRATION_VERSION, INITIAL_MIGRATION_NAME);
     }
 
-    this.database.exec(`
-      CREATE TABLE IF NOT EXISTS run_sessions (
-        id TEXT PRIMARY KEY,
-        status TEXT NOT NULL,
-        cwd TEXT NOT NULL,
-        task_id TEXT NOT NULL,
-        channel_id TEXT,
-        teammate_id TEXT,
-        provider_preset_id TEXT,
-        provider_name TEXT NOT NULL,
-        provider_model TEXT NOT NULL,
-        task_snapshot_json TEXT NOT NULL,
-        provider_snapshot_json TEXT NOT NULL,
-        request_snapshot_json TEXT NOT NULL,
-        event_log_path TEXT NOT NULL,
-        summary_path TEXT,
-        error_message TEXT,
-        created_at TEXT NOT NULL,
-        started_at TEXT,
-        ended_at TEXT,
-        updated_at TEXT NOT NULL
-      );
+    if (!this.hasMigration(PROVIDERS_MIGRATION_VERSION)) {
+      if (!this.hasColumn("run_sessions", "provider_preset_id")) {
+        this.database.exec("ALTER TABLE run_sessions ADD COLUMN provider_preset_id TEXT;");
+      }
 
-      CREATE TABLE IF NOT EXISTS run_events (
-        id TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        ts TEXT NOT NULL,
-        type TEXT NOT NULL,
-        data_json TEXT NOT NULL,
-        FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
-        UNIQUE(run_id, seq)
-      );
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS provider_presets (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          provider_id TEXT NOT NULL,
+          model TEXT NOT NULL,
+          api TEXT NOT NULL,
+          base_url TEXT,
+          api_key_ref TEXT,
+          headers_json TEXT NOT NULL,
+          auth_header INTEGER,
+          reasoning INTEGER,
+          input_json TEXT NOT NULL,
+          context_window INTEGER,
+          max_tokens INTEGER,
+          compat_json TEXT NOT NULL,
+          capabilities_json TEXT NOT NULL,
+          enabled INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
 
-      CREATE INDEX IF NOT EXISTS idx_run_sessions_status ON run_sessions(status);
-      CREATE INDEX IF NOT EXISTS idx_run_sessions_task ON run_sessions(task_id);
-      CREATE INDEX IF NOT EXISTS idx_run_sessions_created_at ON run_sessions(created_at);
-      CREATE INDEX IF NOT EXISTS idx_run_events_run_seq ON run_events(run_id, seq);
-      CREATE INDEX IF NOT EXISTS idx_run_events_type ON run_events(type);
-    `);
+        CREATE INDEX IF NOT EXISTS idx_provider_presets_kind ON provider_presets(kind);
+        CREATE INDEX IF NOT EXISTS idx_provider_presets_enabled ON provider_presets(enabled);
+      `);
 
+      this.recordMigration(PROVIDERS_MIGRATION_VERSION, PROVIDERS_MIGRATION_NAME);
+    }
+  }
+
+  private hasMigration(version: number): boolean {
+    return Boolean(this.database.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(version));
+  }
+
+  private hasColumn(tableName: string, columnName: string): boolean {
+    return this.database
+      .prepare(`PRAGMA table_info(${tableName})`)
+      .all()
+      .some((row) => readString(row, "name") === columnName);
+  }
+
+  private recordMigration(version: number, name: string): void {
     this.database
       .prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)")
-      .run(INITIAL_MIGRATION_VERSION, INITIAL_MIGRATION_NAME, new Date().toISOString());
+      .run(version, name, new Date().toISOString());
   }
 
   private nextEventSeq(runId: string): number {
@@ -410,6 +631,57 @@ function mapRunEvent(row: Record<string, SQLOutputValue>): RunEventEnvelope {
   };
 }
 
+function mapProviderPreset(row: Record<string, SQLOutputValue>): ProviderPreset {
+  return omitUndefined({
+    id: readString(row, "id"),
+    kind: readString(row, "kind") as ProviderPreset["kind"],
+    displayName: readString(row, "display_name"),
+    providerId: readString(row, "provider_id"),
+    model: readString(row, "model"),
+    api: readString(row, "api") as ProviderPreset["api"],
+    baseUrl: readNullableString(row, "base_url"),
+    apiKeyRef: readNullableString(row, "api_key_ref"),
+    headers: parseJsonStringRecord(readString(row, "headers_json")),
+    authHeader: readNullableBoolean(row, "auth_header"),
+    reasoning: readNullableBoolean(row, "reasoning"),
+    input: parseJsonStringArray(readString(row, "input_json")) as ProviderPreset["input"],
+    contextWindow: readNullableNumber(row, "context_window"),
+    maxTokens: readNullableNumber(row, "max_tokens"),
+    compat: parseJsonObject(readString(row, "compat_json")),
+    capabilities: parseJsonStringArray(readString(row, "capabilities_json")) as ProviderPreset["capabilities"],
+    enabled: readBoolean(row, "enabled"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function providerPresetSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      kind,
+      display_name,
+      provider_id,
+      model,
+      api,
+      base_url,
+      api_key_ref,
+      headers_json,
+      auth_header,
+      reasoning,
+      input_json,
+      context_window,
+      max_tokens,
+      compat_json,
+      capabilities_json,
+      enabled,
+      created_at,
+      updated_at
+    FROM provider_presets
+    ${whereClause}
+  `;
+}
+
 function stringifyJson(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -418,12 +690,65 @@ function parseJson(value: string): unknown {
   return JSON.parse(value) as unknown;
 }
 
+function parseJsonObject(value: string): Record<string, unknown> {
+  const parsed = parseJson(value);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Expected JSON object from SQLite");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function parseJsonStringRecord(value: string): Record<string, string> {
+  const parsed = parseJsonObject(value);
+  const result: Record<string, string> = {};
+  for (const [key, entryValue] of Object.entries(parsed)) {
+    if (typeof entryValue !== "string") {
+      throw new Error("Expected JSON string record from SQLite");
+    }
+    result[key] = entryValue;
+  }
+  return result;
+}
+
+function parseJsonStringArray(value: string): string[] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
+    throw new Error("Expected JSON string array from SQLite");
+  }
+  return parsed as string[];
+}
+
 function readString(row: Record<string, SQLOutputValue> | undefined, key: string): string {
   const value = row?.[key];
   if (typeof value !== "string") {
     throw new Error(`Expected SQLite column ${key} to be a string`);
   }
   return value;
+}
+
+function readBoolean(row: Record<string, SQLOutputValue>, key: string): boolean {
+  const value = row[key];
+  if (typeof value === "number") {
+    return value === 1;
+  }
+  if (typeof value === "bigint") {
+    return value === 1n;
+  }
+  throw new Error(`Expected SQLite column ${key} to be a boolean integer`);
+}
+
+function readNullableBoolean(row: Record<string, SQLOutputValue>, key: string): boolean | undefined {
+  const value = row[key];
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "number") {
+    return value === 1;
+  }
+  if (typeof value === "bigint") {
+    return value === 1n;
+  }
+  throw new Error(`Expected SQLite column ${key} to be a boolean integer or null`);
 }
 
 function readNullableString(row: Record<string, SQLOutputValue>, key: string): string | undefined {
@@ -437,6 +762,20 @@ function readNullableString(row: Record<string, SQLOutputValue>, key: string): s
   return value;
 }
 
+function readNullableNumber(row: Record<string, SQLOutputValue>, key: string): number | undefined {
+  const value = row[key];
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  throw new Error(`Expected SQLite column ${key} to be a number or null`);
+}
+
 function readNumber(row: Record<string, SQLOutputValue> | undefined, key: string): number {
   const value = row?.[key];
   if (typeof value === "number") {
@@ -446,6 +785,23 @@ function readNumber(row: Record<string, SQLOutputValue> | undefined, key: string
     return Number(value);
   }
   throw new Error(`Expected SQLite column ${key} to be a number`);
+}
+
+function booleanToSql(value: boolean | undefined): number | null {
+  if (value === undefined) {
+    return null;
+  }
+  return value ? 1 : 0;
+}
+
+function nullableUpdate<T>(value: T | null | undefined, existing: T | undefined): T | undefined {
+  if (value === undefined) {
+    return existing;
+  }
+  if (value === null) {
+    return undefined;
+  }
+  return value;
 }
 
 function omitUndefined<T extends Record<string, unknown>>(value: T): T {

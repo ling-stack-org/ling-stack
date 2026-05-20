@@ -9,25 +9,50 @@ import {
   Folder,
   History,
   Loader2,
+  Pencil,
   Play,
   PlugZap,
+  Plus,
   RefreshCw,
+  Save,
   Search,
   Settings,
   ShieldCheck,
   SquareTerminal,
+  Trash2,
   Workflow,
 } from "lucide-react";
-import { buildRunRequest, daemonBaseUrl, getDaemonHealth, getRun, getRunEvents, listRuns } from "./api.js";
+import {
+  buildRunRequest,
+  checkProvider,
+  createProvider,
+  daemonBaseUrl,
+  deleteProvider,
+  getDaemonHealth,
+  getRun,
+  getRunEvents,
+  listProviders,
+  listRuns,
+  updateProvider,
+} from "./api.js";
 import { streamRun } from "./sse.js";
-import type { RunEventEnvelope, RunFormState, RunSession, ToolName } from "./types.js";
+import type {
+  ProviderCheckResult,
+  ProviderFormState,
+  ProviderPreset,
+  RunEventEnvelope,
+  RunFormState,
+  RunSession,
+  ToolName,
+} from "./types.js";
 
 const defaultTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
 const allTools: readonly ToolName[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
-type ViewId = "workspace" | "runs";
+type ViewId = "workspace" | "runs" | "providers";
 
 const defaultForm: RunFormState = {
   cwd: "/Users/tianxiao/ling-stack",
+  providerPresetId: "",
   taskId: `task-${new Date().toISOString().slice(0, 10)}`,
   title: "Inspect Ling Stack workspace",
   prompt: "查看当前项目结构，给出下一步实现建议。不要修改文件。",
@@ -39,6 +64,23 @@ const defaultForm: RunFormState = {
   tools: defaultTools,
 };
 
+const defaultProviderForm: ProviderFormState = {
+  kind: "openai-compatible",
+  displayName: "Local Relay",
+  providerId: "local-relay",
+  model: "gpt-5.5",
+  api: "openai-completions",
+  baseUrl: "http://127.0.0.1:8317/v1",
+  apiKeyRef: "env:LOCAL_RELAY_API_KEY",
+  capabilitiesText: "chat,tool_call,reasoning",
+  inputText: "text",
+  enabled: true,
+  authHeader: true,
+  reasoning: true,
+  contextWindow: "128000",
+  maxTokens: "16384",
+};
+
 export function App(): JSX.Element {
   const [form, setForm] = useState<RunFormState>(defaultForm);
   const [activeView, setActiveView] = useState<ViewId>("workspace");
@@ -48,6 +90,11 @@ export function App(): JSX.Element {
   const [run, setRun] = useState<RunSession | undefined>();
   const [runs, setRuns] = useState<readonly RunSession[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
+  const [providers, setProviders] = useState<readonly ProviderPreset[]>([]);
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [providerForm, setProviderForm] = useState<ProviderFormState>(defaultProviderForm);
+  const [editingProviderId, setEditingProviderId] = useState("");
+  const [providerCheck, setProviderCheck] = useState<ProviderCheckResult | undefined>();
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -66,11 +113,15 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     void refreshHealth();
+    void refreshProviders();
   }, []);
 
   useEffect(() => {
     if (activeView === "runs") {
       void refreshRuns();
+    }
+    if (activeView === "providers") {
+      void refreshProviders();
     }
   }, [activeView]);
 
@@ -159,6 +210,87 @@ export function App(): JSX.Element {
     }
   }
 
+  async function refreshProviders(): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    setProvidersLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await listProviders(form.cwd.trim());
+      setProviders(response.providers);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProvidersLoading(false);
+    }
+  }
+
+  async function saveProvider(): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      setProviderCheck(undefined);
+      const response = editingProviderId
+        ? await updateProvider(form.cwd.trim(), editingProviderId, providerForm)
+        : await createProvider(form.cwd.trim(), providerForm);
+      setEditingProviderId(response.provider.id);
+      await refreshProviders();
+      applyProviderToRun(response.provider);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function removeProvider(providerId: string): Promise<void> {
+    try {
+      setErrorMessage("");
+      await deleteProvider(form.cwd.trim(), providerId);
+      if (editingProviderId === providerId) {
+        setEditingProviderId("");
+        setProviderForm(defaultProviderForm);
+      }
+      if (form.providerPresetId === providerId) {
+        setForm((current) => ({ ...current, providerPresetId: "" }));
+      }
+      await refreshProviders();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function runProviderCheck(providerId: string): Promise<void> {
+    try {
+      setErrorMessage("");
+      setProviderCheck(await checkProvider(form.cwd.trim(), providerId));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function editProvider(provider: ProviderPreset): void {
+    setEditingProviderId(provider.id);
+    setProviderCheck(undefined);
+    setProviderForm(providerToForm(provider));
+  }
+
+  function applyProviderToRun(provider: ProviderPreset): void {
+    setForm((current) => ({
+      ...current,
+      providerPresetId: provider.id,
+      provider: provider.providerId,
+      model: provider.model,
+      baseUrl: provider.baseUrl ?? "",
+      api: provider.api,
+    }));
+  }
+
   async function selectRun(runId: string): Promise<void> {
     await loadRun(runId);
   }
@@ -182,7 +314,7 @@ export function App(): JSX.Element {
         <nav>
           <NavItem icon={<Workflow />} label="Workspace" active={activeView === "workspace"} onClick={() => setActiveView("workspace")} />
           <NavItem icon={<History />} label="Runs" active={activeView === "runs"} onClick={() => setActiveView("runs")} />
-          <NavItem icon={<PlugZap />} label="Providers" disabled />
+          <NavItem icon={<PlugZap />} label="Providers" active={activeView === "providers"} onClick={() => setActiveView("providers")} />
           <NavItem icon={<ShieldCheck />} label="Approvals" disabled />
           <NavItem icon={<Settings />} label="Settings" disabled />
         </nav>
@@ -190,22 +322,26 @@ export function App(): JSX.Element {
       <section className="workspace">
         <div className="workspace-head">
           <div>
-            <h1>{activeView === "workspace" ? "Run workspace" : "Run history"}</h1>
-            <p>
-              {activeView === "workspace"
-                ? "发起本地任务，观察 pi-coding-agent 事件流，并读取持久化 run 历史。"
-                : "查看当前 workspace 的持久化 run，点击任意记录读取事件和上下文。"}
-            </p>
+            <h1>{viewTitle(activeView)}</h1>
+            <p>{viewDescription(activeView)}</p>
           </div>
           <StatusBadge status={latestStatus} />
         </div>
 
         {activeView === "workspace" ? (
           <div className="content-grid">
-            <RunLauncher form={form} isRunning={isRunning} onChange={setForm} onStart={startRun} onStop={stopClientStream} />
+            <RunLauncher
+              form={form}
+              providers={providers}
+              isRunning={isRunning}
+              onChange={setForm}
+              onProviderSelect={applyProviderToRun}
+              onStart={startRun}
+              onStop={stopClientStream}
+            />
             <RunTimeline events={events} assistantText={assistantText} errorMessage={errorMessage} isRunning={isRunning} />
           </div>
-        ) : (
+        ) : activeView === "runs" ? (
           <RunHistory
             cwd={form.cwd}
             runs={runs}
@@ -215,6 +351,30 @@ export function App(): JSX.Element {
             onCwdChange={(cwd) => setForm({ ...form, cwd })}
             onRefresh={() => void refreshRuns()}
             onSelect={(runId) => void selectRun(runId)}
+          />
+        ) : (
+          <ProviderSettings
+            cwd={form.cwd}
+            providers={providers}
+            form={providerForm}
+            editingProviderId={editingProviderId}
+            isLoading={providersLoading}
+            errorMessage={errorMessage}
+            checkResult={providerCheck}
+            selectedProviderId={form.providerPresetId}
+            onCwdChange={(cwd) => setForm({ ...form, cwd })}
+            onFormChange={setProviderForm}
+            onNew={() => {
+              setEditingProviderId("");
+              setProviderCheck(undefined);
+              setProviderForm(defaultProviderForm);
+            }}
+            onSave={() => void saveProvider()}
+            onRefresh={() => void refreshProviders()}
+            onEdit={editProvider}
+            onDelete={(providerId) => void removeProvider(providerId)}
+            onCheck={(providerId) => void runProviderCheck(providerId)}
+            onUse={applyProviderToRun}
           />
         )}
       </section>
@@ -360,19 +520,271 @@ function RunHistory({
   );
 }
 
+function ProviderSettings({
+  cwd,
+  providers,
+  form,
+  editingProviderId,
+  isLoading,
+  errorMessage,
+  checkResult,
+  selectedProviderId,
+  onCwdChange,
+  onFormChange,
+  onNew,
+  onSave,
+  onRefresh,
+  onEdit,
+  onDelete,
+  onCheck,
+  onUse,
+}: {
+  readonly cwd: string;
+  readonly providers: readonly ProviderPreset[];
+  readonly form: ProviderFormState;
+  readonly editingProviderId: string;
+  readonly isLoading: boolean;
+  readonly errorMessage: string;
+  readonly checkResult: ProviderCheckResult | undefined;
+  readonly selectedProviderId: string;
+  readonly onCwdChange: (cwd: string) => void;
+  readonly onFormChange: (form: ProviderFormState) => void;
+  readonly onNew: () => void;
+  readonly onSave: () => void;
+  readonly onRefresh: () => void;
+  readonly onEdit: (provider: ProviderPreset) => void;
+  readonly onDelete: (providerId: string) => void;
+  readonly onCheck: (providerId: string) => void;
+  readonly onUse: (provider: ProviderPreset) => void;
+}): JSX.Element {
+  return (
+    <div className="provider-layout">
+      <section className="panel provider-list-panel" aria-labelledby="provider-list-title">
+        <div className="panel-title split">
+          <span>
+            <PlugZap size={18} />
+            <h2 id="provider-list-title">Provider presets</h2>
+          </span>
+          <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
+            {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+            Refresh
+          </button>
+        </div>
+
+        <label className="field wide runs-cwd">
+          <span>Workspace path</span>
+          <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
+        </label>
+
+        {errorMessage ? (
+          <div className="inline-error">
+            <CircleAlert size={17} />
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <div className="provider-list">
+          {providers.length === 0 ? (
+            <div className="empty-state compact-empty">
+              {isLoading ? <Loader2 className="spin" /> : <PlugZap />}
+              <span>{isLoading ? "Loading providers..." : "No provider presets yet"}</span>
+            </div>
+          ) : (
+            providers.map((provider) => (
+              <article key={provider.id} className={provider.id === selectedProviderId ? "provider-row selected" : "provider-row"}>
+                <div className="provider-row-main">
+                  <div className="provider-row-head">
+                    <strong>{provider.displayName}</strong>
+                    <span className={provider.enabled ? "provider-state enabled" : "provider-state disabled"}>
+                      {provider.enabled ? "enabled" : "disabled"}
+                    </span>
+                    <span className={provider.apiKeyConfigured ? "provider-state key-ok" : "provider-state key-missing"}>
+                      {provider.apiKeyRef ? (provider.apiKeyConfigured ? "key ready" : "key missing") : "no key ref"}
+                    </span>
+                  </div>
+                  <div className="provider-meta-line">
+                    <span>{provider.kind}</span>
+                    <span>{provider.providerId}</span>
+                    <span>{provider.model}</span>
+                    <span>{provider.api}</span>
+                  </div>
+                  <div className="provider-meta-line mono">
+                    <span>{provider.baseUrl ?? "default endpoint"}</span>
+                  </div>
+                  <div className="capability-list">
+                    {provider.capabilities.map((capability) => (
+                      <span key={capability}>{capability}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="provider-actions">
+                  <button
+                    className="secondary-button compact-button"
+                    type="button"
+                    disabled={!canUseProviderForRun(provider)}
+                    onClick={() => onUse(provider)}
+                  >
+                    <Play size={14} />
+                    Use
+                  </button>
+                  <button className="secondary-button compact-button" type="button" onClick={() => onEdit(provider)}>
+                    <Pencil size={14} />
+                    Edit
+                  </button>
+                  <button className="secondary-button compact-button" type="button" onClick={() => onCheck(provider.id)}>
+                    <CheckCircle2 size={14} />
+                    Check
+                  </button>
+                  <button className="secondary-button compact-button danger" type="button" onClick={() => onDelete(provider.id)}>
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="panel provider-form-panel" aria-labelledby="provider-form-title">
+        <div className="panel-title split">
+          <span>
+            <Settings size={18} />
+            <h2 id="provider-form-title">{editingProviderId ? "Edit preset" : "New preset"}</h2>
+          </span>
+          <button className="secondary-button compact-button" type="button" onClick={onNew}>
+            <Plus size={14} />
+            New
+          </button>
+        </div>
+
+        <div className="field-row">
+          <label className="field">
+            <span>Kind</span>
+            <select value={form.kind} onChange={(event) => onFormChange({ ...form, kind: event.target.value as ProviderFormState["kind"] })}>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="openai-compatible">OpenAI compatible</option>
+              <option value="doubao">Doubao</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="minimax">MiniMax</option>
+              <option value="glm">GLM</option>
+              <option value="jimeng">Jimeng</option>
+              <option value="seedream">Seedream</option>
+              <option value="seedance">Seedance</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Display name</span>
+            <input value={form.displayName} onChange={(event) => onFormChange({ ...form, displayName: event.target.value })} />
+          </label>
+        </div>
+
+        <div className="field-row">
+          <label className="field">
+            <span>Provider id</span>
+            <input value={form.providerId} onChange={(event) => onFormChange({ ...form, providerId: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>Model</span>
+            <input value={form.model} onChange={(event) => onFormChange({ ...form, model: event.target.value })} />
+          </label>
+        </div>
+
+        <div className="field-row">
+          <label className="field">
+            <span>API protocol</span>
+            <select value={form.api} onChange={(event) => onFormChange({ ...form, api: event.target.value as ProviderFormState["api"] })}>
+              <option value="openai-completions">OpenAI completions</option>
+              <option value="openai-responses">OpenAI responses</option>
+              <option value="anthropic-messages">Anthropic messages</option>
+              <option value="google-generative-ai">Google generative AI</option>
+              <option value="mistral-conversations">Mistral conversations</option>
+              <option value="media-job">Media job</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Base URL</span>
+            <input value={form.baseUrl} onChange={(event) => onFormChange({ ...form, baseUrl: event.target.value })} />
+          </label>
+        </div>
+
+        <label className="field wide">
+          <span>API key ref</span>
+          <input value={form.apiKeyRef} placeholder="env:LOCAL_RELAY_API_KEY" onChange={(event) => onFormChange({ ...form, apiKeyRef: event.target.value })} />
+        </label>
+
+        <div className="field-row provider-number-row">
+          <label className="field">
+            <span>Input</span>
+            <input value={form.inputText} onChange={(event) => onFormChange({ ...form, inputText: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>Context</span>
+            <input value={form.contextWindow} inputMode="numeric" onChange={(event) => onFormChange({ ...form, contextWindow: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>Max tokens</span>
+            <input value={form.maxTokens} inputMode="numeric" onChange={(event) => onFormChange({ ...form, maxTokens: event.target.value })} />
+          </label>
+        </div>
+
+        <label className="field wide">
+          <span>Capabilities</span>
+          <input value={form.capabilitiesText} onChange={(event) => onFormChange({ ...form, capabilitiesText: event.target.value })} />
+        </label>
+
+        <div className="provider-toggle-row">
+          <label className="settings-toggle">
+            <input type="checkbox" checked={form.enabled} onChange={(event) => onFormChange({ ...form, enabled: event.target.checked })} />
+            <span>Enabled</span>
+          </label>
+          <label className="settings-toggle">
+            <input type="checkbox" checked={form.authHeader} onChange={(event) => onFormChange({ ...form, authHeader: event.target.checked })} />
+            <span>Auth header</span>
+          </label>
+          <label className="settings-toggle">
+            <input type="checkbox" checked={form.reasoning} onChange={(event) => onFormChange({ ...form, reasoning: event.target.checked })} />
+            <span>Reasoning</span>
+          </label>
+        </div>
+
+        {checkResult ? (
+          <div className={checkResult.ok ? "check-result ok" : "check-result bad"}>
+            {checkResult.ok ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
+            <span>{checkResult.message}</span>
+          </div>
+        ) : null}
+
+        <div className="action-row">
+          <button className="primary-button" type="button" onClick={onSave}>
+            <Save size={16} />
+            {editingProviderId ? "Save changes" : "Create preset"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function RunLauncher({
   form,
+  providers,
   isRunning,
   onChange,
+  onProviderSelect,
   onStart,
   onStop,
 }: {
   readonly form: RunFormState;
+  readonly providers: readonly ProviderPreset[];
   readonly isRunning: boolean;
   readonly onChange: (form: RunFormState) => void;
+  readonly onProviderSelect: (provider: ProviderPreset) => void;
   readonly onStart: () => void;
   readonly onStop: () => void;
 }): JSX.Element {
+  const usingPreset = Boolean(form.providerPresetId);
   return (
     <section className="panel launcher" aria-labelledby="run-launcher-title">
       <div className="panel-title">
@@ -401,30 +813,65 @@ function RunLauncher({
         <textarea value={form.prompt} rows={6} onChange={(event) => onChange({ ...form, prompt: event.target.value })} />
       </label>
 
+      <label className="field wide">
+        <span>Provider preset</span>
+        <select
+          value={form.providerPresetId}
+          onChange={(event) => {
+            const provider = providers.find((item) => item.id === event.target.value);
+            if (!provider) {
+              onChange({ ...form, providerPresetId: "" });
+              return;
+            }
+            onProviderSelect(provider);
+          }}
+        >
+          <option value="">Manual inline provider</option>
+          {providers.map((provider) => (
+            <option key={provider.id} value={provider.id} disabled={!canUseProviderForRun(provider)}>
+              {provider.displayName} / {provider.model}
+            </option>
+          ))}
+        </select>
+      </label>
+
       <div className="field-row">
         <label className="field">
           <span>Provider</span>
-          <input value={form.provider} onChange={(event) => onChange({ ...form, provider: event.target.value })} />
+          <input
+            value={form.provider}
+            disabled={usingPreset}
+            onChange={(event) => onChange({ ...form, provider: event.target.value })}
+          />
         </label>
         <label className="field">
           <span>Model</span>
-          <input value={form.model} onChange={(event) => onChange({ ...form, model: event.target.value })} />
+          <input
+            value={form.model}
+            disabled={usingPreset}
+            onChange={(event) => onChange({ ...form, model: event.target.value })}
+          />
         </label>
       </div>
 
       <label className="field wide">
         <span>Base URL</span>
-        <input value={form.baseUrl} onChange={(event) => onChange({ ...form, baseUrl: event.target.value })} />
+        <input
+          value={form.baseUrl}
+          disabled={usingPreset}
+          onChange={(event) => onChange({ ...form, baseUrl: event.target.value })}
+        />
       </label>
 
       <div className="field-row">
         <label className="field">
           <span>API protocol</span>
-          <select value={form.api} onChange={(event) => onChange({ ...form, api: event.target.value })}>
+          <select value={form.api} disabled={usingPreset} onChange={(event) => onChange({ ...form, api: event.target.value })}>
             <option value="openai-completions">OpenAI completions</option>
             <option value="openai-responses">OpenAI responses</option>
             <option value="anthropic-messages">Anthropic messages</option>
             <option value="google-generative-ai">Google generative AI</option>
+            <option value="mistral-conversations">Mistral conversations</option>
           </select>
         </label>
         <label className="field">
@@ -432,6 +879,7 @@ function RunLauncher({
           <input
             type="password"
             value={form.apiKey}
+            disabled={usingPreset}
             placeholder="optional"
             onChange={(event) => onChange({ ...form, apiKey: event.target.value })}
           />
@@ -666,4 +1114,47 @@ function formatDateTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function providerToForm(provider: ProviderPreset): ProviderFormState {
+  return {
+    kind: provider.kind,
+    displayName: provider.displayName,
+    providerId: provider.providerId,
+    model: provider.model,
+    api: provider.api,
+    baseUrl: provider.baseUrl ?? "",
+    apiKeyRef: provider.apiKeyRef ?? "",
+    capabilitiesText: provider.capabilities.join(", "),
+    inputText: provider.input.join(", "),
+    enabled: provider.enabled,
+    authHeader: provider.authHeader ?? true,
+    reasoning: provider.reasoning ?? false,
+    contextWindow: provider.contextWindow ? String(provider.contextWindow) : "",
+    maxTokens: provider.maxTokens ? String(provider.maxTokens) : "",
+  };
+}
+
+function canUseProviderForRun(provider: ProviderPreset): boolean {
+  return provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat");
+}
+
+function viewTitle(view: ViewId): string {
+  if (view === "workspace") {
+    return "Run workspace";
+  }
+  if (view === "runs") {
+    return "Run history";
+  }
+  return "Provider presets";
+}
+
+function viewDescription(view: ViewId): string {
+  if (view === "workspace") {
+    return "发起本地任务，观察 pi-coding-agent 事件流，并读取持久化 run 历史。";
+  }
+  if (view === "runs") {
+    return "查看当前 workspace 的持久化 run，点击任意记录读取事件和上下文。";
+  }
+  return "管理本地 provider preset，用 env:NAME 引用密钥，并在 run 启动时选择预设。";
 }

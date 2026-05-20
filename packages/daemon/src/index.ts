@@ -3,7 +3,20 @@ import {
   createRunId,
   createSqliteRunStore,
   getRunSummaryPath,
+  isSupportedSecretRef,
+  providerApis,
+  providerCapabilities,
+  providerKinds,
+  resolveSecretRef,
   writeRunSummary,
+  type ProviderApi,
+  type ProviderCapability,
+  type ProviderCheckResult,
+  type ProviderKind,
+  type ProviderPreset,
+  type ProviderPresetInput,
+  type ProviderPresetUpdateInput,
+  type PublicProviderPreset,
   type RunEventEnvelope,
   type RunEventType,
   type RunSession,
@@ -14,6 +27,7 @@ import {
 import {
   createPiRunner,
   type PiRunnerEvent,
+  type PiRunnerProviderConfig,
   type PiRunnerResult,
   type PiRunnerRunOptions,
 } from "@ling-stack/runner-pi";
@@ -47,7 +61,10 @@ export const defaultDaemonConfig: DaemonConfig = {
   maxBodyBytes: 1024 * 1024,
 };
 
-export type RunRequest = Omit<PiRunnerRunOptions, "onEvent">;
+export interface RunRequest extends Omit<PiRunnerRunOptions, "onEvent" | "provider"> {
+  readonly providerPresetId?: string;
+  readonly provider?: PiRunnerProviderConfig;
+}
 
 export interface DaemonServer {
   readonly server: Server;
@@ -134,6 +151,11 @@ async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/providers") {
+    await handleProvidersCollection(request, response, config, storeRegistry);
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/runs") {
     await handleRun(request, response, config, runner, storeRegistry);
     return;
@@ -150,6 +172,12 @@ async function routeRequest(
   }
   if (request.method === "GET" && runRoute?.kind === "events") {
     handleGetRunEvents(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+
+  const providerRoute = parseProviderRoute(url.pathname);
+  if (providerRoute) {
+    await handleProviderItem(request, response, config, storeRegistry, providerRoute);
     return;
   }
 
@@ -177,8 +205,20 @@ async function handleRun(
 
   let store: RunStore;
   let run: RunSession;
+  let runnerRequest: PiRunnerRunOptions;
   try {
     store = storeRegistry.getStore(runRequest.cwd);
+    const resolvedProvider = resolveProviderForRun(store, runRequest);
+    runnerRequest = {
+      cwd: runRequest.cwd,
+      task: runRequest.task,
+      provider: resolvedProvider,
+      tools: runRequest.tools,
+      thinkingLevel: runRequest.thinkingLevel,
+      systemPrompt: runRequest.systemPrompt,
+      appendSystemPrompt: runRequest.appendSystemPrompt,
+      agentDir: runRequest.agentDir,
+    };
     const runId = createRunId();
     const createdAt = new Date().toISOString();
     run = store.createRun({
@@ -186,11 +226,12 @@ async function handleRun(
       cwd: runRequest.cwd,
       taskId: runRequest.task.id,
       channelId: runRequest.task.channelId,
-      providerName: runRequest.provider.provider,
-      providerModel: runRequest.provider.model,
+      providerPresetId: runRequest.providerPresetId,
+      providerName: resolvedProvider.provider,
+      providerModel: resolvedProvider.model,
       taskSnapshot: runRequest.task,
-      providerSnapshot: runRequest.provider,
-      requestSnapshot: runRequest,
+      providerSnapshot: { providerPresetId: runRequest.providerPresetId, ...resolvedProvider },
+      requestSnapshot: { ...runRequest, provider: resolvedProvider },
       createdAt,
     });
     storeRegistry.rememberRun(run.id, store);
@@ -201,8 +242,9 @@ async function handleRun(
       providerModel: run.providerModel,
     });
   } catch (error) {
-    writeJson(response, 500, {
-      error: "run_storage_unavailable",
+    const statusCode = error instanceof HttpError ? error.statusCode : 500;
+    writeJson(response, statusCode, {
+      error: error instanceof HttpError ? error.code : "run_storage_unavailable",
       message: error instanceof Error ? error.message : String(error),
     });
     return;
@@ -244,7 +286,7 @@ async function handleRun(
     store.markRunStarted(run.id, runStartedAt);
 
     const result = await runner.runTask({
-      ...runRequest,
+      ...runnerRequest,
       onEvent: (event: PiRunnerEvent) => {
         appendAndMaybeStream(event.type, event);
       },
@@ -300,6 +342,110 @@ async function handleRun(
       response.end();
     }
   }
+}
+
+async function handleProvidersCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  const store = storeRegistry.getStore(cwd);
+  if (request.method === "GET") {
+    writeJson(response, 200, {
+      cwd,
+      providers: store.listProviderPresets().map(toPublicProviderPreset),
+    });
+    return;
+  }
+
+  if (request.method === "POST") {
+    try {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const preset = store.createProviderPreset(parseProviderPresetInput(body), new Date().toISOString());
+      writeJson(response, 201, { provider: toPublicProviderPreset(preset) });
+    } catch (error) {
+      writeJson(response, 400, {
+        error: "bad_request",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return;
+  }
+
+  writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /providers` });
+}
+
+async function handleProviderItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  route: { readonly providerId: string; readonly action?: "check" },
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  const store = storeRegistry.getStore(cwd);
+  const preset = store.getProviderPreset(route.providerId);
+  if (!preset) {
+    writeJson(response, 404, { error: "provider_not_found", message: `Provider preset not found: ${route.providerId}` });
+    return;
+  }
+
+  if (request.method === "POST" && route.action === "check") {
+    writeJson(response, 200, checkProviderPreset(preset));
+    return;
+  }
+
+  if (route.action) {
+    writeJson(response, 404, { error: "not_found", message: `No route for ${request.method} ${url.pathname}` });
+    return;
+  }
+
+  if (request.method === "GET") {
+    writeJson(response, 200, { provider: toPublicProviderPreset(preset) });
+    return;
+  }
+
+  if (request.method === "PATCH") {
+    try {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const updateInput = parseProviderPresetUpdateInput(body);
+      validateProviderPresetUpdate(preset, updateInput);
+      const updated = store.updateProviderPreset(route.providerId, updateInput, new Date().toISOString());
+      if (!updated) {
+        writeJson(response, 404, { error: "provider_not_found", message: `Provider preset not found: ${route.providerId}` });
+        return;
+      }
+      writeJson(response, 200, { provider: toPublicProviderPreset(updated) });
+    } catch (error) {
+      writeJson(response, 400, {
+        error: "bad_request",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return;
+  }
+
+  if (request.method === "DELETE") {
+    store.deleteProviderPreset(route.providerId);
+    writeJson(response, 200, { ok: true });
+    return;
+  }
+
+  writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for provider presets` });
 }
 
 function writeTerminalSummary(summaryPath: string, summary: RunSummary): string | undefined {
@@ -411,6 +557,50 @@ function appendFailureEvent(
   }
 }
 
+function resolveProviderForRun(store: RunStore, runRequest: RunRequest): PiRunnerProviderConfig {
+  if (runRequest.providerPresetId && runRequest.provider) {
+    throw new HttpError(400, "bad_request", "providerPresetId and inline provider cannot both be supplied");
+  }
+
+  if (runRequest.providerPresetId) {
+    const preset = store.getProviderPreset(runRequest.providerPresetId);
+    if (!preset) {
+      throw new HttpError(404, "provider_not_found", `Provider preset not found: ${runRequest.providerPresetId}`);
+    }
+    if (!preset.enabled) {
+      throw new HttpError(400, "provider_disabled", `Provider preset is disabled: ${preset.id}`);
+    }
+    if (preset.api === "media-job") {
+      throw new HttpError(400, "unsupported_capability", "Media provider presets cannot run pi coding tasks");
+    }
+    if (!preset.capabilities.includes("chat")) {
+      throw new HttpError(400, "unsupported_capability", "Provider preset must include chat capability for coding runs");
+    }
+    const secret = resolveSecretRef(preset.apiKeyRef);
+    return removeUndefined({
+      provider: preset.providerId,
+      model: preset.model,
+      displayName: preset.displayName,
+      apiKey: secret.value,
+      baseUrl: preset.baseUrl,
+      api: preset.api as PiRunnerProviderConfig["api"],
+      headers: preset.headers,
+      authHeader: preset.authHeader,
+      reasoning: preset.reasoning,
+      input: preset.input,
+      contextWindow: preset.contextWindow,
+      maxTokens: preset.maxTokens,
+      compat: preset.compat,
+    }) as PiRunnerProviderConfig;
+  }
+
+  if (!runRequest.provider) {
+    throw new HttpError(400, "bad_request", "Either providerPresetId or provider is required");
+  }
+
+  return runRequest.provider;
+}
+
 async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
@@ -444,37 +634,31 @@ function parseRunRequest(value: unknown): RunRequest {
   const cwd = readString(value, "cwd");
   const task = value.task;
   const provider = value.provider;
+  const providerPresetId = readOptionalString(value, "providerPresetId");
 
   if (!isRecord(task)) {
     throw new Error("task must be an object");
   }
-  if (!isRecord(provider)) {
+  if (provider !== undefined && !isRecord(provider)) {
     throw new Error("provider must be an object");
+  }
+  if (providerPresetId && provider !== undefined) {
+    throw new Error("providerPresetId and provider cannot both be supplied");
+  }
+  if (!providerPresetId && provider === undefined) {
+    throw new Error("Either providerPresetId or provider is required");
   }
 
   const runRequest: RunRequest = {
     cwd,
+    providerPresetId,
     task: {
       id: readString(task, "id"),
       title: readString(task, "title"),
       prompt: readString(task, "prompt"),
       channelId: readOptionalString(task, "channelId"),
     },
-    provider: {
-      provider: readString(provider, "provider"),
-      model: readString(provider, "model"),
-      displayName: readOptionalString(provider, "displayName"),
-      apiKey: readOptionalString(provider, "apiKey"),
-      baseUrl: readOptionalString(provider, "baseUrl"),
-      api: readOptionalProviderApi(provider, "api"),
-      headers: readOptionalStringRecord(provider, "headers"),
-      authHeader: readOptionalBoolean(provider, "authHeader"),
-      reasoning: readOptionalBoolean(provider, "reasoning"),
-      input: readOptionalStringArray(provider, "input", ["text", "image"]),
-      contextWindow: readOptionalNumber(provider, "contextWindow"),
-      maxTokens: readOptionalNumber(provider, "maxTokens"),
-      compat: isRecord(provider.compat) ? provider.compat : undefined,
-    },
+    provider: provider ? parseInlineProvider(provider) : undefined,
     tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]),
     thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
     systemPrompt: readOptionalString(value, "systemPrompt"),
@@ -483,6 +667,24 @@ function parseRunRequest(value: unknown): RunRequest {
   };
 
   return runRequest;
+}
+
+function parseInlineProvider(provider: Record<string, unknown>): PiRunnerProviderConfig {
+  return {
+    provider: readString(provider, "provider"),
+    model: readString(provider, "model"),
+    displayName: readOptionalString(provider, "displayName"),
+    apiKey: readOptionalString(provider, "apiKey"),
+    baseUrl: readOptionalString(provider, "baseUrl"),
+    api: readOptionalProviderApi(provider, "api"),
+    headers: readOptionalStringRecord(provider, "headers"),
+    authHeader: readOptionalBoolean(provider, "authHeader"),
+    reasoning: readOptionalBoolean(provider, "reasoning"),
+    input: readOptionalStringArray(provider, "input", ["text", "image"]),
+    contextWindow: readOptionalNumber(provider, "contextWindow"),
+    maxTokens: readOptionalNumber(provider, "maxTokens"),
+    compat: isRecord(provider.compat) ? provider.compat : undefined,
+  };
 }
 
 function parseRunRoute(pathname: string): { kind: "run"; runId: string } | { kind: "events"; runId: string } | undefined {
@@ -494,6 +696,162 @@ function parseRunRoute(pathname: string): { kind: "run"; runId: string } | { kin
     return { kind: "events", runId: segments[1] };
   }
   return undefined;
+}
+
+function parseProviderRoute(pathname: string): { readonly providerId: string; readonly action?: "check" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "providers") {
+    return { providerId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "providers" && segments[2] === "check") {
+    return { providerId: segments[1], action: "check" };
+  }
+  return undefined;
+}
+
+function parseProviderPresetInput(value: unknown): ProviderPresetInput {
+  if (!isRecord(value)) {
+    throw new Error("Provider preset request must be a JSON object");
+  }
+  return validateProviderPresetInput({
+    kind: readProviderKind(value, "kind"),
+    displayName: readString(value, "displayName"),
+    providerId: readString(value, "providerId"),
+    model: readString(value, "model"),
+    api: readProviderApi(value, "api"),
+    baseUrl: readOptionalString(value, "baseUrl"),
+    apiKeyRef: readOptionalApiKeyRef(value),
+    headers: readOptionalStringRecord(value, "headers"),
+    authHeader: readOptionalBoolean(value, "authHeader"),
+    reasoning: readOptionalBoolean(value, "reasoning"),
+    input: readOptionalStringArray(value, "input", ["text", "image"]),
+    contextWindow: readOptionalNumber(value, "contextWindow"),
+    maxTokens: readOptionalNumber(value, "maxTokens"),
+    compat: isRecord(value.compat) ? value.compat : undefined,
+    capabilities: readProviderCapabilities(value, "capabilities"),
+    enabled: readOptionalBoolean(value, "enabled"),
+  });
+}
+
+function parseProviderPresetUpdateInput(value: unknown): ProviderPresetUpdateInput {
+  if (!isRecord(value)) {
+    throw new Error("Provider preset update must be a JSON object");
+  }
+
+  const input: ProviderPresetUpdateInput = {
+    kind: value.kind === undefined ? undefined : readProviderKind(value, "kind"),
+    displayName: readOptionalString(value, "displayName"),
+    providerId: readOptionalString(value, "providerId"),
+    model: readOptionalString(value, "model"),
+    api: value.api === undefined ? undefined : readProviderApi(value, "api"),
+    baseUrl: readNullableString(value, "baseUrl"),
+    apiKeyRef: readNullableApiKeyRef(value),
+    headers: readOptionalStringRecord(value, "headers"),
+    authHeader: readNullableBoolean(value, "authHeader"),
+    reasoning: readNullableBoolean(value, "reasoning"),
+    input: readOptionalStringArray(value, "input", ["text", "image"]),
+    contextWindow: readNullableNumber(value, "contextWindow"),
+    maxTokens: readNullableNumber(value, "maxTokens"),
+    compat: isRecord(value.compat) ? value.compat : undefined,
+    capabilities: value.capabilities === undefined ? undefined : readProviderCapabilities(value, "capabilities"),
+    enabled: readOptionalBoolean(value, "enabled"),
+  };
+
+  return input;
+}
+
+function validateProviderPresetInput(input: ProviderPresetInput): ProviderPresetInput {
+  validateProviderPresetShape(input);
+  return input;
+}
+
+function validateProviderPresetUpdate(existing: ProviderPreset, input: ProviderPresetUpdateInput): void {
+  validateProviderPresetShape({
+    kind: input.kind ?? existing.kind,
+    displayName: input.displayName ?? existing.displayName,
+    providerId: input.providerId ?? existing.providerId,
+    model: input.model ?? existing.model,
+    api: input.api ?? existing.api,
+    baseUrl: input.baseUrl === null ? undefined : input.baseUrl ?? existing.baseUrl,
+    apiKeyRef: input.apiKeyRef === null ? undefined : input.apiKeyRef ?? existing.apiKeyRef,
+    capabilities: input.capabilities ?? existing.capabilities,
+  });
+}
+
+function validateProviderPresetShape(input: {
+  readonly kind?: ProviderKind;
+  readonly displayName?: string;
+  readonly providerId?: string;
+  readonly model?: string;
+  readonly api?: ProviderApi;
+  readonly baseUrl?: string | null;
+  readonly apiKeyRef?: string | null;
+  readonly capabilities?: readonly ProviderCapability[];
+}): void {
+  if (!input.displayName?.trim()) {
+    throw new Error("displayName must be a non-empty string");
+  }
+  if (!input.providerId?.trim()) {
+    throw new Error("providerId must be a non-empty string");
+  }
+  if (input.providerId && !/^[A-Za-z0-9._-]+$/.test(input.providerId)) {
+    throw new Error("providerId may only contain letters, numbers, dot, underscore, and dash");
+  }
+  if (!input.model?.trim()) {
+    throw new Error("model must be a non-empty string");
+  }
+  if (input.kind === "openai-compatible" && !input.baseUrl) {
+    throw new Error("baseUrl is required for openai-compatible providers");
+  }
+  if (input.baseUrl) {
+    validateUrl(input.baseUrl, "baseUrl");
+  }
+  if (input.apiKeyRef && !isSupportedSecretRef(input.apiKeyRef)) {
+    throw new Error("apiKeyRef must use env:NAME");
+  }
+  if (!input.capabilities || input.capabilities.length === 0) {
+    throw new Error("capabilities must contain at least one capability");
+  }
+  if (input.api === "media-job") {
+    const hasMediaCapability = input.capabilities.some((capability) =>
+      ["image_generate", "image_edit", "video_generate"].includes(capability),
+    );
+    if (!hasMediaCapability) {
+      throw new Error("media-job providers must include a media capability");
+    }
+    return;
+  }
+  if (!input.capabilities.includes("chat")) {
+    throw new Error("coding provider presets must include chat capability");
+  }
+}
+
+function toPublicProviderPreset(preset: ProviderPreset): PublicProviderPreset {
+  return {
+    ...preset,
+    apiKeyConfigured: resolveSecretRef(preset.apiKeyRef).configured,
+  };
+}
+
+function checkProviderPreset(preset: ProviderPreset): ProviderCheckResult {
+  const checkedAt = new Date().toISOString();
+  if (!preset.enabled) {
+    return { ok: false, code: "provider_disabled", message: "Provider preset is disabled.", checkedAt };
+  }
+  if (preset.baseUrl) {
+    try {
+      validateUrl(preset.baseUrl, "baseUrl");
+    } catch (error) {
+      return { ok: false, code: "bad_request", message: error instanceof Error ? error.message : String(error), checkedAt };
+    }
+  }
+  if (preset.apiKeyRef && !resolveSecretRef(preset.apiKeyRef).configured) {
+    return { ok: false, code: "secret_missing", message: `Secret is not configured: ${preset.apiKeyRef}`, checkedAt };
+  }
+  if (preset.api !== "media-job" && !preset.capabilities.includes("chat")) {
+    return { ok: false, code: "unsupported_capability", message: "Provider preset cannot run chat tasks.", checkedAt };
+  }
+  return { ok: true, message: "Provider preset configuration is valid.", checkedAt };
 }
 
 function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
@@ -528,7 +886,7 @@ function writeSse(response: ServerResponse, event: string, data: unknown): void 
 
 function setCorsHeaders(response: ServerResponse): void {
   response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
@@ -551,6 +909,20 @@ function readOptionalString(record: Record<string, unknown>, key: string): strin
   return value;
 }
 
+function readNullableString(record: Record<string, unknown>, key: string): string | null | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${key} must be a string or null`);
+  }
+  return value;
+}
+
 function readOptionalBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
   const value = record[key];
   if (value === undefined) {
@@ -562,6 +934,20 @@ function readOptionalBoolean(record: Record<string, unknown>, key: string): bool
   return value;
 }
 
+function readNullableBoolean(record: Record<string, unknown>, key: string): boolean | null | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`${key} must be a boolean or null`);
+  }
+  return value;
+}
+
 function readOptionalNumber(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   if (value === undefined) {
@@ -569,6 +955,20 @@ function readOptionalNumber(record: Record<string, unknown>, key: string): numbe
   }
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`${key} must be a finite number`);
+  }
+  return value;
+}
+
+function readNullableNumber(record: Record<string, unknown>, key: string): number | null | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${key} must be a finite number or null`);
   }
   return value;
 }
@@ -589,6 +989,22 @@ function readOptionalStringRecord(record: Record<string, unknown>, key: string):
     result[entryKey] = entryValue;
   }
   return result;
+}
+
+function readOptionalApiKeyRef(record: Record<string, unknown>): string | undefined {
+  const value = readOptionalString(record, "apiKeyRef");
+  if (value && !isSupportedSecretRef(value)) {
+    throw new Error("apiKeyRef must use env:NAME");
+  }
+  return value;
+}
+
+function readNullableApiKeyRef(record: Record<string, unknown>): string | null | undefined {
+  const value = readNullableString(record, "apiKeyRef");
+  if (typeof value === "string" && !isSupportedSecretRef(value)) {
+    throw new Error("apiKeyRef must use env:NAME");
+  }
+  return value;
 }
 
 function readOptionalStringArray<T extends string = string>(
@@ -614,6 +1030,26 @@ function readOptionalStringArray<T extends string = string>(
   });
 }
 
+function readProviderKind(record: Record<string, unknown>, key: string): ProviderKind {
+  const value = readString(record, key);
+  if (!providerKinds.includes(value as ProviderKind)) {
+    throw new Error(`${key} must be one of: ${providerKinds.join(", ")}`);
+  }
+  return value as ProviderKind;
+}
+
+function readProviderApi(record: Record<string, unknown>, key: string): ProviderApi {
+  const value = readString(record, key);
+  if (!providerApis.includes(value as ProviderApi)) {
+    throw new Error(`${key} must be one of: ${providerApis.join(", ")}`);
+  }
+  return value as ProviderApi;
+}
+
+function readProviderCapabilities(record: Record<string, unknown>, key: string): ProviderCapability[] {
+  return readOptionalStringArray(record, key, providerCapabilities)?.map((capability) => capability as ProviderCapability) ?? [];
+}
+
 function readOptionalThinkingLevel(record: Record<string, unknown>, key: string): RunRequest["thinkingLevel"] {
   return readOptionalStringArray({ [key]: record[key] === undefined ? undefined : [record[key]] }, key, [
     "off",
@@ -625,7 +1061,7 @@ function readOptionalThinkingLevel(record: Record<string, unknown>, key: string)
   ])?.[0];
 }
 
-function readOptionalProviderApi(record: Record<string, unknown>, key: string): RunRequest["provider"]["api"] {
+function readOptionalProviderApi(record: Record<string, unknown>, key: string): PiRunnerProviderConfig["api"] {
   return readOptionalStringArray({ [key]: record[key] === undefined ? undefined : [record[key]] }, key, [
     "openai-completions",
     "openai-responses",
@@ -658,8 +1094,30 @@ function readOptionalRunStatusQuery(url: URL): RunStatus | undefined {
   return value as RunStatus;
 }
 
+function validateUrl(value: string, fieldName: string): void {
+  try {
+    new URL(value);
+  } catch {
+    throw new Error(`${fieldName} must be a valid URL`);
+  }
+}
+
+function removeUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)) as T;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+class HttpError extends Error {
+  constructor(
+    readonly statusCode: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 class RunStoreRegistry {

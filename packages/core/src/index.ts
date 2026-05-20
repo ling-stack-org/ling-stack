@@ -30,7 +30,9 @@ export interface Task {
 }
 
 export * from "./runtime-paths.js";
+export * from "./provider-types.js";
 export * from "./run-types.js";
 export * from "./redaction.js";
+export * from "./secrets.js";
 export * from "./storage/event-log.js";
 export * from "./storage/sqlite-run-store.js";

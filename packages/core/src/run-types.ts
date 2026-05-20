@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import type {
+  ListProviderPresetsOptions,
+  ProviderPreset,
+  ProviderPresetInput,
+  ProviderPresetUpdateInput,
+} from "./provider-types.js";
 import type { LingStackRuntimePaths } from "./runtime-paths.js";
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -98,6 +104,11 @@ export interface RunStore {
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
   countEvents(runId: string): number;
   recoverStaleRuns(now: string): number;
+  createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset;
+  getProviderPreset(id: string): ProviderPreset | undefined;
+  listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];
+  updateProviderPreset(id: string, input: ProviderPresetUpdateInput, now: string): ProviderPreset | undefined;
+  deleteProviderPreset(id: string): boolean;
   close(): void;
 }
 
