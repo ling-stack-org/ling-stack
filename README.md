@@ -45,6 +45,7 @@ docs/
   product-design.md
   architecture.md
   provider-adapters.md
+  pi-coding-agent-integration.md
 examples/
 ```
 
@@ -66,6 +67,8 @@ Provider support is capability based. Ling Stack should not pretend every provid
 ## Status
 
 Design scaffold. No production runtime yet.
+
+The first coding-agent runtime is intentionally built on `@earendil-works/pi-coding-agent`; see [docs/pi-coding-agent-integration.md](docs/pi-coding-agent-integration.md).
 
 ## License
 

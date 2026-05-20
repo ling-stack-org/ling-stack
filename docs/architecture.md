@@ -54,7 +54,7 @@ Provider support must be capability-driven, not chat-only.
 
 Owns the first execution kernel adapter.
 
-Ling Stack should wrap `earendil-works/pi` instead of forking it. Pi gives us a maintained coding-agent harness, provider routing, sessions, tool calling, and file/shell/git-oriented tools. Ling Stack keeps ownership of the product layer: channels, tasks, approvals, audit logs, provider policy, and future desktop/web surfaces.
+Ling Stack should wrap `@earendil-works/pi-coding-agent` instead of forking it. Pi gives us a maintained coding-agent harness, provider routing, sessions, tool calling, and file/shell/git-oriented tools. Ling Stack keeps ownership of the product layer: channels, tasks, approvals, audit logs, provider policy, and future desktop/web surfaces.
 
 The adapter boundary is:
 
