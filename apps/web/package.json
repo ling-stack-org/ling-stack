@@ -1,0 +1,12 @@
+{
+  "name": "@ling-stack/web",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "echo \"web build not configured yet\"",
+    "typecheck": "echo \"web typecheck not configured yet\"",
+    "lint": "echo \"lint not configured yet\"",
+    "test": "echo \"tests not configured yet\""
+  }
+}

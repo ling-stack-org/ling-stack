@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+.turbo/
+.vite/
+
+# environment
+.env
+.env.*
+!.env.example
+
+# local runtime state
+.ling-stack/
+*.log
+
+# system
+.DS_Store
+
+# editors
+.idea/
+.vscode/

@@ -1,0 +1,33 @@
+{
+  "name": "ling-stack",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Local-first AI teammate workspace for Chinese, GPT, Claude, and OpenAI-compatible model providers.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "build": "corepack pnpm -r build",
+    "typecheck": "corepack pnpm -r typecheck",
+    "lint": "corepack pnpm -r lint",
+    "test": "corepack pnpm -r test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.0"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "workspace",
+    "mcp",
+    "openai",
+    "anthropic",
+    "doubao",
+    "minimax",
+    "glm"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}
