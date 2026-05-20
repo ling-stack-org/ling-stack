@@ -483,6 +483,36 @@ textarea:disabled {
   white-space: pre-wrap;
 }
 
+.inline-approval-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #d9bd71;
+  background: #fffaf0;
+}
+
+.inline-approval-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.inline-approval-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #7a4d00;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.inline-approval-list {
+  display: grid;
+  gap: 8px;
+}
+
 .event-list {
   display: grid;
   gap: 8px;
@@ -826,6 +856,16 @@ pre {
 .approval-row.high,
 .approval-row.critical {
   border-color: #e7b4a8;
+}
+
+.approval-row.compact {
+  grid-template-columns: minmax(0, 1fr);
+  background: #ffffff;
+}
+
+.approval-row.compact .approval-actions {
+  justify-content: flex-start;
+  max-width: none;
 }
 
 .approval-main {

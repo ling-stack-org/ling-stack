@@ -117,6 +117,10 @@ export function App(): JSX.Element {
   );
 
   const latestStatus = run?.status ?? inferRunStatus(events, isRunning);
+  const activePendingApprovals = useMemo(
+    () => approvals.filter((approval) => approval.status === "pending" && approval.runId === activeRunId),
+    [approvals, activeRunId],
+  );
 
   useEffect(() => {
     void refreshHealth();
@@ -384,7 +388,16 @@ export function App(): JSX.Element {
               onStart={startRun}
               onStop={stopClientStream}
             />
-            <RunTimeline events={events} assistantText={assistantText} errorMessage={errorMessage} isRunning={isRunning} />
+            <RunTimeline
+              events={events}
+              assistantText={assistantText}
+              errorMessage={errorMessage}
+              isRunning={isRunning}
+              pendingApprovals={activePendingApprovals}
+              approvalsLoading={approvalsLoading}
+              onRefreshApprovals={() => void refreshApprovals()}
+              onResolveApproval={(approvalId, decision) => void resolveApproval(approvalId, decision)}
+            />
           </div>
         ) : activeView === "runs" ? (
           <RunHistory
@@ -873,40 +886,52 @@ function ApprovalsPage({
             <span>{isLoading ? "Loading approvals..." : "No approval requests for this workspace"}</span>
           </div>
         ) : (
-          approvals.map((approval) => (
-            <article key={approval.id} className={`approval-row ${approval.risk}`}>
-              <div className="approval-main">
-                <div className="approval-head">
-                  <strong>{approval.title}</strong>
-                  <span className={`approval-state ${approval.status}`}>{approval.status}</span>
-                  <span className={`approval-risk ${approval.risk}`}>{approval.risk}</span>
-                </div>
-                <p>{approval.description}</p>
-                <div className="provider-meta-line">
-                  <span>{approval.actionType}</span>
-                  <span>{approval.taskId}</span>
-                  <span>{approval.runId}</span>
-                  <time>{formatDateTime(approval.createdAt)}</time>
-                </div>
-                <pre>{formatEventData(approval.payload)}</pre>
-              </div>
-              {approval.status === "pending" ? (
-                <div className="approval-actions">
-                  <button className="secondary-button compact-button" type="button" onClick={() => onResolve(approval.id, "approve")}>
-                    <CheckCircle2 size={14} />
-                    Approve
-                  </button>
-                  <button className="secondary-button compact-button danger" type="button" onClick={() => onResolve(approval.id, "deny")}>
-                    <CircleAlert size={14} />
-                    Deny
-                  </button>
-                </div>
-              ) : null}
-            </article>
-          ))
+          approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} onResolve={onResolve} />)
         )}
       </div>
     </section>
+  );
+}
+
+function ApprovalCard({
+  approval,
+  compact = false,
+  onResolve,
+}: {
+  readonly approval: ApprovalRequest;
+  readonly compact?: boolean;
+  readonly onResolve: (approvalId: string, decision: "approve" | "deny") => void;
+}): JSX.Element {
+  return (
+    <article className={`approval-row ${approval.risk}${compact ? " compact" : ""}`}>
+      <div className="approval-main">
+        <div className="approval-head">
+          <strong>{approval.title}</strong>
+          <span className={`approval-state ${approval.status}`}>{approval.status}</span>
+          <span className={`approval-risk ${approval.risk}`}>{approval.risk}</span>
+        </div>
+        <p>{approval.description}</p>
+        <div className="provider-meta-line">
+          <span>{approval.actionType}</span>
+          <span>{approval.taskId}</span>
+          <span>{approval.runId}</span>
+          <time>{formatDateTime(approval.createdAt)}</time>
+        </div>
+        <pre>{formatEventData(approval.payload)}</pre>
+      </div>
+      {approval.status === "pending" ? (
+        <div className="approval-actions">
+          <button className="secondary-button compact-button" type="button" onClick={() => onResolve(approval.id, "approve")}>
+            <CheckCircle2 size={14} />
+            Approve
+          </button>
+          <button className="secondary-button compact-button danger" type="button" onClick={() => onResolve(approval.id, "deny")}>
+            <CircleAlert size={14} />
+            Deny
+          </button>
+        </div>
+      ) : null}
+    </article>
   );
 }
 
@@ -1069,11 +1094,19 @@ function RunTimeline({
   assistantText,
   errorMessage,
   isRunning,
+  pendingApprovals,
+  approvalsLoading,
+  onRefreshApprovals,
+  onResolveApproval,
 }: {
   readonly events: readonly RunEventEnvelope[];
   readonly assistantText: string;
   readonly errorMessage: string;
   readonly isRunning: boolean;
+  readonly pendingApprovals: readonly ApprovalRequest[];
+  readonly approvalsLoading: boolean;
+  readonly onRefreshApprovals: () => void;
+  readonly onResolveApproval: (approvalId: string, decision: "approve" | "deny") => void;
 }): JSX.Element {
   return (
     <section className="panel timeline" aria-labelledby="run-timeline-title">
@@ -1096,6 +1129,26 @@ function RunTimeline({
         <div className="assistant-output">
           <span>Assistant</span>
           <p>{assistantText}</p>
+        </div>
+      ) : null}
+
+      {pendingApprovals.length > 0 ? (
+        <div className="inline-approval-panel" aria-live="polite">
+          <div className="inline-approval-head">
+            <span>
+              <ShieldCheck size={16} />
+              Pending approval
+            </span>
+            <button className="secondary-button compact-button" type="button" onClick={onRefreshApprovals} disabled={approvalsLoading}>
+              {approvalsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+              Refresh
+            </button>
+          </div>
+          <div className="inline-approval-list">
+            {pendingApprovals.map((approval) => (
+              <ApprovalCard key={approval.id} approval={approval} compact onResolve={onResolveApproval} />
+            ))}
+          </div>
         </div>
       ) : null}
 
