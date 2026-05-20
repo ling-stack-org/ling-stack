@@ -68,7 +68,7 @@ The adapter boundary is:
 Local API server:
 
 - HTTP for CRUD and commands.
-- WebSocket or SSE for session streaming.
+- `POST /runs` with SSE for session streaming.
 - Local auth token.
 - Event bus between runner and UI.
 

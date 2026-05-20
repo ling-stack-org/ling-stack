@@ -21,7 +21,11 @@ importers:
 
   packages/core: {}
 
-  packages/daemon: {}
+  packages/daemon:
+    dependencies:
+      '@ling-stack/runner-pi':
+        specifier: workspace:*
+        version: link:../runner-pi
 
   packages/providers: {}
 

@@ -44,6 +44,7 @@ packages/
 docs/
   product-design.md
   architecture.md
+  daemon-api.md
   provider-adapters.md
   pi-coding-agent-integration.md
 examples/
