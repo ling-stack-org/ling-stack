@@ -14,6 +14,7 @@ Environment variables:
 ```text
 LING_STACK_HOST=127.0.0.1
 LING_STACK_PORT=17891
+LING_STACK_ALLOW_UNSAFE_TOOLS=0
 ```
 
 Provider presets can reference secrets from the daemon process environment:
@@ -113,6 +114,8 @@ Rules:
 - `media-job` presets cannot run Pi coding tasks.
 - Disabled presets return `provider_disabled`.
 - Presets without `chat` capability return `unsupported_capability`.
+- Product runs default to read-only tools: `read`, `grep`, `find`, `ls`.
+- `bash`, `edit`, and `write` return `unsafe_tools_disabled` unless the daemon is started with `LING_STACK_ALLOW_UNSAFE_TOOLS=1` and the request also sets `"allowUnsafeTools": true`.
 
 SSE events:
 
@@ -186,7 +189,7 @@ Response:
 Optional query parameters:
 
 - `limit`: integer from `1` to `200`, default `50`.
-- `status`: one of `queued`, `running`, `succeeded`, `failed`, `cancelled`.
+- `status`: one of `queued`, `running`, `waiting_for_approval`, `succeeded`, `failed`, `cancelled`.
 
 ### Get Run
 
@@ -320,9 +323,78 @@ Response:
 
 The current check validates shape, base URL format, enabled state, supported capability, and whether `apiKeyRef` resolves in the daemon environment. It does not yet perform provider-specific network model calls.
 
+## Approvals
+
+Approval requests are persisted in the workspace SQLite database and can be listed or resolved through the daemon. v0.1 stores approval decisions and enforces read-only run tools by default. It does not yet pause Pi tool execution before a side effect; that requires controlled wrappers or a Pi approval hook.
+
+### List Approvals
+
+```http
+GET /approvals?cwd=/path/to/project&status=pending
+```
+
+Optional query parameters:
+
+- `status`: one of `pending`, `approved`, `denied`, `expired`, `cancelled`.
+- `runId`: filter by run id.
+- `limit`: integer from `1` to `500`, default `100`.
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "approvals": [
+    {
+      "id": "approval_...",
+      "runId": "run_...",
+      "taskId": "task-1",
+      "channelId": "workspace",
+      "actionType": "bash",
+      "risk": "high",
+      "title": "Run shell command",
+      "description": "The agent wants to run a shell command.",
+      "payload": {
+        "type": "bash",
+        "cwd": "/path/to/project",
+        "command": "git status",
+        "riskFlags": ["unknown_shell"]
+      },
+      "status": "pending",
+      "createdAt": "2026-05-20T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Get Approval
+
+```http
+GET /approvals/:id?cwd=/path/to/project
+```
+
+### Approve or Deny
+
+```http
+POST /approvals/:id/approve?cwd=/path/to/project
+POST /approvals/:id/deny?cwd=/path/to/project
+Content-Type: application/json
+```
+
+Request body is optional:
+
+```json
+{
+  "reason": "Reviewed locally."
+}
+```
+
+Approval decisions append `approval_approved` or `approval_denied` to the linked run event log when the run still exists.
+
 ## Current Limits
 
 - `POST /runs` does not yet cancel the pi runner when the HTTP client disconnects.
-- Approval policy is not wired into tool execution yet.
+- Approval requests can be stored and resolved, but controlled Pi tool wrappers are not implemented yet.
+- `bash`, `edit`, and `write` are blocked by default rather than paused for approval.
 - Inline API keys are accepted in `/runs` for early development only; production desktop builds should use OS keychain or a local secret store.
 - Provider health checks are config checks only, not live model probes yet.

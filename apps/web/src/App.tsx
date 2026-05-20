@@ -23,20 +23,24 @@ import {
   Workflow,
 } from "lucide-react";
 import {
+  approveApproval,
   buildRunRequest,
   checkProvider,
   createProvider,
   daemonBaseUrl,
+  denyApproval,
   deleteProvider,
   getDaemonHealth,
   getRun,
   getRunEvents,
+  listApprovals,
   listProviders,
   listRuns,
   updateProvider,
 } from "./api.js";
 import { streamRun } from "./sse.js";
 import type {
+  ApprovalRequest,
   ProviderCheckResult,
   ProviderFormState,
   ProviderPreset,
@@ -48,7 +52,8 @@ import type {
 
 const defaultTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
 const allTools: readonly ToolName[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
-type ViewId = "workspace" | "runs" | "providers";
+const riskyTools: readonly ToolName[] = ["bash", "edit", "write"];
+type ViewId = "workspace" | "runs" | "providers" | "approvals";
 
 const defaultForm: RunFormState = {
   cwd: "/Users/tianxiao/ling-stack",
@@ -95,6 +100,8 @@ export function App(): JSX.Element {
   const [providerForm, setProviderForm] = useState<ProviderFormState>(defaultProviderForm);
   const [editingProviderId, setEditingProviderId] = useState("");
   const [providerCheck, setProviderCheck] = useState<ProviderCheckResult | undefined>();
+  const [approvals, setApprovals] = useState<readonly ApprovalRequest[]>([]);
+  const [approvalsLoading, setApprovalsLoading] = useState(false);
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -122,6 +129,9 @@ export function App(): JSX.Element {
     }
     if (activeView === "providers") {
       void refreshProviders();
+    }
+    if (activeView === "approvals") {
+      void refreshApprovals();
     }
   }, [activeView]);
 
@@ -228,6 +238,38 @@ export function App(): JSX.Element {
     }
   }
 
+  async function refreshApprovals(): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    setApprovalsLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await listApprovals(form.cwd.trim());
+      setApprovals(response.approvals);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setApprovalsLoading(false);
+    }
+  }
+
+  async function resolveApproval(approvalId: string, decision: "approve" | "deny"): Promise<void> {
+    try {
+      setErrorMessage("");
+      if (decision === "approve") {
+        await approveApproval(form.cwd.trim(), approvalId);
+      } else {
+        await denyApproval(form.cwd.trim(), approvalId);
+      }
+      await refreshApprovals();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function saveProvider(): Promise<void> {
     if (!form.cwd.trim()) {
       setErrorMessage("请输入 workspace path");
@@ -315,7 +357,7 @@ export function App(): JSX.Element {
           <NavItem icon={<Workflow />} label="Workspace" active={activeView === "workspace"} onClick={() => setActiveView("workspace")} />
           <NavItem icon={<History />} label="Runs" active={activeView === "runs"} onClick={() => setActiveView("runs")} />
           <NavItem icon={<PlugZap />} label="Providers" active={activeView === "providers"} onClick={() => setActiveView("providers")} />
-          <NavItem icon={<ShieldCheck />} label="Approvals" disabled />
+          <NavItem icon={<ShieldCheck />} label="Approvals" active={activeView === "approvals"} onClick={() => setActiveView("approvals")} />
           <NavItem icon={<Settings />} label="Settings" disabled />
         </nav>
       </aside>
@@ -353,6 +395,7 @@ export function App(): JSX.Element {
             onSelect={(runId) => void selectRun(runId)}
           />
         ) : (
+          activeView === "providers" ? (
           <ProviderSettings
             cwd={form.cwd}
             providers={providers}
@@ -376,6 +419,17 @@ export function App(): JSX.Element {
             onCheck={(providerId) => void runProviderCheck(providerId)}
             onUse={applyProviderToRun}
           />
+          ) : (
+            <ApprovalsPage
+              cwd={form.cwd}
+              approvals={approvals}
+              isLoading={approvalsLoading}
+              errorMessage={errorMessage}
+              onCwdChange={(cwd) => setForm({ ...form, cwd })}
+              onRefresh={() => void refreshApprovals()}
+              onResolve={(approvalId, decision) => void resolveApproval(approvalId, decision)}
+            />
+          )
         )}
       </section>
       <aside className="right-panel">
@@ -767,6 +821,92 @@ function ProviderSettings({
   );
 }
 
+function ApprovalsPage({
+  cwd,
+  approvals,
+  isLoading,
+  errorMessage,
+  onCwdChange,
+  onRefresh,
+  onResolve,
+}: {
+  readonly cwd: string;
+  readonly approvals: readonly ApprovalRequest[];
+  readonly isLoading: boolean;
+  readonly errorMessage: string;
+  readonly onCwdChange: (cwd: string) => void;
+  readonly onRefresh: () => void;
+  readonly onResolve: (approvalId: string, decision: "approve" | "deny") => void;
+}): JSX.Element {
+  return (
+    <section className="panel approvals-panel" aria-labelledby="approvals-title">
+      <div className="panel-title split">
+        <span>
+          <ShieldCheck size={18} />
+          <h2 id="approvals-title">Approval requests</h2>
+        </span>
+        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
+          {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+          Refresh
+        </button>
+      </div>
+
+      <label className="field wide runs-cwd">
+        <span>Workspace path</span>
+        <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
+      </label>
+
+      {errorMessage ? (
+        <div className="inline-error">
+          <CircleAlert size={17} />
+          {errorMessage}
+        </div>
+      ) : null}
+
+      <div className="approval-list">
+        {approvals.length === 0 ? (
+          <div className="empty-state compact-empty">
+            {isLoading ? <Loader2 className="spin" /> : <ShieldCheck />}
+            <span>{isLoading ? "Loading approvals..." : "No approval requests for this workspace"}</span>
+          </div>
+        ) : (
+          approvals.map((approval) => (
+            <article key={approval.id} className={`approval-row ${approval.risk}`}>
+              <div className="approval-main">
+                <div className="approval-head">
+                  <strong>{approval.title}</strong>
+                  <span className={`approval-state ${approval.status}`}>{approval.status}</span>
+                  <span className={`approval-risk ${approval.risk}`}>{approval.risk}</span>
+                </div>
+                <p>{approval.description}</p>
+                <div className="provider-meta-line">
+                  <span>{approval.actionType}</span>
+                  <span>{approval.taskId}</span>
+                  <span>{approval.runId}</span>
+                  <time>{formatDateTime(approval.createdAt)}</time>
+                </div>
+                <pre>{formatEventData(approval.payload)}</pre>
+              </div>
+              {approval.status === "pending" ? (
+                <div className="approval-actions">
+                  <button className="secondary-button compact-button" type="button" onClick={() => onResolve(approval.id, "approve")}>
+                    <CheckCircle2 size={14} />
+                    Approve
+                  </button>
+                  <button className="secondary-button compact-button danger" type="button" onClick={() => onResolve(approval.id, "deny")}>
+                    <CircleAlert size={14} />
+                    Deny
+                  </button>
+                </div>
+              ) : null}
+            </article>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
 function RunLauncher({
   form,
   providers,
@@ -887,19 +1027,29 @@ function RunLauncher({
       </div>
 
       <div className="tool-grid" aria-label="Allowed tools">
-        {allTools.map((tool) => (
-          <label key={tool} className={form.tools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}>
+        {allTools.map((tool) => {
+          const disabled = riskyTools.includes(tool);
+          return (
+          <label
+            key={tool}
+            className={`${form.tools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}${disabled ? " disabled" : ""}`}
+          >
             <input
               type="checkbox"
               checked={form.tools.includes(tool)}
+              disabled={disabled}
               onChange={(event) => {
+                if (disabled) {
+                  return;
+                }
                 const tools = event.target.checked ? [...form.tools, tool] : form.tools.filter((item) => item !== tool);
                 onChange({ ...form, tools });
               }}
             />
             <span>{tool}</span>
           </label>
-        ))}
+          );
+        })}
       </div>
 
       <div className="action-row">
@@ -1146,6 +1296,9 @@ function viewTitle(view: ViewId): string {
   if (view === "runs") {
     return "Run history";
   }
+  if (view === "approvals") {
+    return "Approvals";
+  }
   return "Provider presets";
 }
 
@@ -1155,6 +1308,9 @@ function viewDescription(view: ViewId): string {
   }
   if (view === "runs") {
     return "查看当前 workspace 的持久化 run，点击任意记录读取事件和上下文。";
+  }
+  if (view === "approvals") {
+    return "查看和处理需要人工决策的高风险动作；v0.1 默认禁用未接入 wrapper 的写入和命令工具。";
   }
   return "管理本地 provider preset，用 env:NAME 引用密钥，并在 run 启动时选择预设。";
 }

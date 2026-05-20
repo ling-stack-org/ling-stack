@@ -352,6 +352,11 @@ textarea:disabled {
   color: #0f5f4e;
 }
 
+.tool-toggle.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .action-row {
   gap: 10px;
 }
@@ -418,6 +423,12 @@ textarea:disabled {
 }
 
 .status-badge.running {
+  border-color: #d9bd71;
+  background: #fff7df;
+  color: #8a5b00;
+}
+
+.status-badge.waiting_for_approval {
   border-color: #d9bd71;
   background: #fff7df;
   color: #8a5b00;
@@ -790,6 +801,99 @@ pre {
   color: #9a341f;
 }
 
+.approvals-panel {
+  min-height: 640px;
+}
+
+.approval-list {
+  display: grid;
+  gap: 10px;
+}
+
+.approval-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid #e1e6e2;
+  background: #fbfcfa;
+}
+
+.approval-row.high,
+.approval-row.critical {
+  border-color: #e7b4a8;
+}
+
+.approval-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.approval-head,
+.approval-actions {
+  display: flex;
+  align-items: center;
+}
+
+.approval-head {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.approval-head strong {
+  color: #17211f;
+  font-size: 14px;
+}
+
+.approval-main p {
+  color: #4f5e59;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.approval-state,
+.approval-risk {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid #d8ded7;
+  background: #ffffff;
+  color: #61706b;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.approval-state.pending {
+  border-color: #d9bd71;
+  background: #fff7df;
+  color: #8a5b00;
+}
+
+.approval-state.approved {
+  border-color: #a9cfc0;
+  background: #e7f5ef;
+  color: #116149;
+}
+
+.approval-state.denied,
+.approval-risk.high,
+.approval-risk.critical {
+  border-color: #e7b4a8;
+  background: #fff1ed;
+  color: #9a341f;
+}
+
+.approval-actions {
+  justify-content: flex-end;
+  align-content: start;
+  flex-wrap: wrap;
+  gap: 7px;
+  max-width: 190px;
+}
+
 .right-panel {
   grid-area: inspector;
   min-width: 0;
@@ -964,8 +1068,13 @@ pre {
     grid-template-columns: 1fr;
   }
 
-  .provider-actions {
+  .provider-actions,
+  .approval-actions {
     justify-content: flex-start;
     max-width: none;
+  }
+
+  .approval-row {
+    grid-template-columns: 1fr;
   }
 }

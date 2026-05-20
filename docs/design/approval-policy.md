@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft for Milestone 4: Approval Foundation.
+Partially implemented for Milestone 4: Approval Foundation.
 
 This design follows session persistence and provider presets. It defines how Ling Stack should represent, persist, display, and enforce human approval gates for risky actions.
 
@@ -34,14 +34,15 @@ Implemented today:
 - Daemon streams tool events over SSE.
 - Session persistence design reserves approval event types.
 - The product design says risky actions require approval.
+- Approval request types and SQLite persistence exist.
+- Daemon approval list/get/approve/deny APIs exist.
+- Web UI has an Approvals page.
+- Product runs default to read-only tools.
+- `bash`, `edit`, and `write` are blocked unless the daemon and request both explicitly enable unsafe development mode.
 
 Not implemented yet:
 
-- Approval request model.
 - Approval policy model.
-- Approval persistence.
-- Approval API.
-- UI approval panel.
 - Controlled tool wrappers.
 - Runtime pause/resume around approvals.
 - Enforcement before `write`, `edit`, or `bash`.

@@ -7,6 +7,14 @@ import {
   type LingStackRuntimePaths,
 } from "../runtime-paths.js";
 import {
+  createApprovalRequestId,
+  type ApprovalRequest,
+  type ApprovalStatus,
+  type CreateApprovalRequestInput,
+  type ListApprovalRequestsOptions,
+  type ResolveApprovalRequestInput,
+} from "../approval-types.js";
+import {
   createProviderPresetId,
   type ListProviderPresetsOptions,
   type ProviderPreset,
@@ -31,6 +39,8 @@ const INITIAL_MIGRATION_VERSION = 1;
 const INITIAL_MIGRATION_NAME = "create_run_sessions_and_events";
 const PROVIDERS_MIGRATION_VERSION = 2;
 const PROVIDERS_MIGRATION_NAME = "create_provider_presets";
+const APPROVALS_MIGRATION_VERSION = 3;
+const APPROVALS_MIGRATION_NAME = "create_approval_requests";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -419,6 +429,103 @@ export class SqliteRunStore implements RunStore {
     return Number(result.changes) > 0;
   }
 
+  createApprovalRequest(input: CreateApprovalRequestInput, now: string): ApprovalRequest {
+    const approval: ApprovalRequest = {
+      id: createApprovalRequestId(),
+      runId: input.runId,
+      taskId: input.taskId,
+      channelId: input.channelId,
+      toolCallId: input.toolCallId,
+      actionType: input.actionType,
+      risk: input.risk,
+      title: input.title,
+      description: input.description,
+      payload: redactSecrets(input.payload) as ApprovalRequest["payload"],
+      status: "pending",
+      createdAt: now,
+      expiresAt: input.expiresAt,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO approval_requests (
+          id,
+          run_id,
+          task_id,
+          channel_id,
+          tool_call_id,
+          action_type,
+          risk,
+          title,
+          description,
+          payload_json,
+          status,
+          created_at,
+          expires_at,
+          resolved_at,
+          resolved_by,
+          decision_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        approval.id,
+        approval.runId,
+        approval.taskId,
+        approval.channelId ?? null,
+        approval.toolCallId ?? null,
+        approval.actionType,
+        approval.risk,
+        approval.title,
+        approval.description,
+        stringifyJson(approval.payload),
+        approval.status,
+        approval.createdAt,
+        approval.expiresAt ?? null,
+        null,
+        null,
+        null,
+      );
+
+    const created = this.getApprovalRequest(approval.id);
+    if (!created) {
+      throw new Error(`Failed to create approval request: ${approval.id}`);
+    }
+    return created;
+  }
+
+  getApprovalRequest(id: string): ApprovalRequest | undefined {
+    const row = this.database.prepare(approvalRequestSelectSql("WHERE id = ?")).get(id);
+    return row ? mapApprovalRequest(row) : undefined;
+  }
+
+  listApprovalRequests(options: ListApprovalRequestsOptions = {}): ApprovalRequest[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.runId) {
+      clauses.push("run_id = ?");
+      params.push(options.runId);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.database
+      .prepare(`${approvalRequestSelectSql(whereClause)} ORDER BY created_at DESC LIMIT ?`)
+      .all(...params)
+      .map(mapApprovalRequest);
+  }
+
+  approveApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
+    return this.resolveApprovalRequest(id, "approved", input, now);
+  }
+
+  denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
+    return this.resolveApprovalRequest(id, "denied", input, now);
+  }
+
   close(): void {
     if (this.database.isOpen) {
       this.database.close();
@@ -431,6 +538,35 @@ export class SqliteRunStore implements RunStore {
       PRAGMA foreign_keys = ON;
       PRAGMA busy_timeout = 5000;
     `);
+  }
+
+  private resolveApprovalRequest(
+    id: string,
+    status: Extract<ApprovalStatus, "approved" | "denied">,
+    input: ResolveApprovalRequestInput,
+    now: string,
+  ): ApprovalRequest | undefined {
+    const existing = this.getApprovalRequest(id);
+    if (!existing) {
+      return undefined;
+    }
+    if (existing.status !== "pending") {
+      throw new Error(`Approval request is not pending: ${id}`);
+    }
+
+    this.database
+      .prepare(`
+        UPDATE approval_requests
+        SET
+          status = ?,
+          resolved_at = ?,
+          resolved_by = ?,
+          decision_reason = ?
+        WHERE id = ?
+      `)
+      .run(status, now, input.resolvedBy ?? "local-user", input.reason ?? null, id);
+
+    return this.getApprovalRequest(id);
   }
 
   private applyMigrations(): void {
@@ -520,6 +656,37 @@ export class SqliteRunStore implements RunStore {
       `);
 
       this.recordMigration(PROVIDERS_MIGRATION_VERSION, PROVIDERS_MIGRATION_NAME);
+    }
+
+    if (!this.hasMigration(APPROVALS_MIGRATION_VERSION)) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS approval_requests (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          channel_id TEXT,
+          tool_call_id TEXT,
+          action_type TEXT NOT NULL,
+          risk TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT,
+          resolved_at TEXT,
+          resolved_by TEXT,
+          decision_reason TEXT,
+          FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_run ON approval_requests(run_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_task ON approval_requests(task_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_created_at ON approval_requests(created_at);
+      `);
+
+      this.recordMigration(APPROVALS_MIGRATION_VERSION, APPROVALS_MIGRATION_NAME);
     }
   }
 
@@ -655,6 +822,27 @@ function mapProviderPreset(row: Record<string, SQLOutputValue>): ProviderPreset 
   });
 }
 
+function mapApprovalRequest(row: Record<string, SQLOutputValue>): ApprovalRequest {
+  return omitUndefined({
+    id: readString(row, "id"),
+    runId: readString(row, "run_id"),
+    taskId: readString(row, "task_id"),
+    channelId: readNullableString(row, "channel_id"),
+    toolCallId: readNullableString(row, "tool_call_id"),
+    actionType: readString(row, "action_type") as ApprovalRequest["actionType"],
+    risk: readString(row, "risk") as ApprovalRequest["risk"],
+    title: readString(row, "title"),
+    description: readString(row, "description"),
+    payload: parseJsonObject(readString(row, "payload_json")) as ApprovalRequest["payload"],
+    status: readString(row, "status") as ApprovalStatus,
+    createdAt: readString(row, "created_at"),
+    expiresAt: readNullableString(row, "expires_at"),
+    resolvedAt: readNullableString(row, "resolved_at"),
+    resolvedBy: readNullableString(row, "resolved_by") as ApprovalRequest["resolvedBy"],
+    decisionReason: readNullableString(row, "decision_reason"),
+  });
+}
+
 function providerPresetSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -678,6 +866,30 @@ function providerPresetSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM provider_presets
+    ${whereClause}
+  `;
+}
+
+function approvalRequestSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      run_id,
+      task_id,
+      channel_id,
+      tool_call_id,
+      action_type,
+      risk,
+      title,
+      description,
+      payload_json,
+      status,
+      created_at,
+      expires_at,
+      resolved_at,
+      resolved_by,
+      decision_reason
+    FROM approval_requests
     ${whereClause}
   `;
 }

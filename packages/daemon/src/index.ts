@@ -1,14 +1,19 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import {
+  approvalStatuses,
   createRunId,
   createSqliteRunStore,
   getRunSummaryPath,
   isSupportedSecretRef,
+  listRiskyRunTools,
   providerApis,
   providerCapabilities,
   providerKinds,
+  readOnlyRunTools,
   resolveSecretRef,
   writeRunSummary,
+  type ApprovalRequest,
+  type ApprovalStatus,
   type ProviderApi,
   type ProviderCapability,
   type ProviderCheckResult,
@@ -36,12 +41,14 @@ export interface DaemonConfig {
   readonly host?: string;
   readonly port?: number;
   readonly maxBodyBytes?: number;
+  readonly allowUnsafeTools?: boolean;
 }
 
 export interface ResolvedDaemonConfig {
   readonly host: string;
   readonly port: number;
   readonly maxBodyBytes: number;
+  readonly allowUnsafeTools: boolean;
 }
 
 export interface RunnerAdapter {
@@ -64,6 +71,7 @@ export const defaultDaemonConfig: DaemonConfig = {
 export interface RunRequest extends Omit<PiRunnerRunOptions, "onEvent" | "provider"> {
   readonly providerPresetId?: string;
   readonly provider?: PiRunnerProviderConfig;
+  readonly allowUnsafeTools?: boolean;
 }
 
 export interface DaemonServer {
@@ -156,6 +164,11 @@ async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/approvals") {
+    handleApprovalsCollection(request, response, url, storeRegistry);
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/runs") {
     await handleRun(request, response, config, runner, storeRegistry);
     return;
@@ -178,6 +191,12 @@ async function routeRequest(
   const providerRoute = parseProviderRoute(url.pathname);
   if (providerRoute) {
     await handleProviderItem(request, response, config, storeRegistry, providerRoute);
+    return;
+  }
+
+  const approvalRoute = parseApprovalRoute(url.pathname);
+  if (approvalRoute) {
+    await handleApprovalItem(request, response, config, storeRegistry, approvalRoute);
     return;
   }
 
@@ -207,6 +226,7 @@ async function handleRun(
   let run: RunSession;
   let runnerRequest: PiRunnerRunOptions;
   try {
+    assertRunToolsAllowed(runRequest, config);
     store = storeRegistry.getStore(runRequest.cwd);
     const resolvedProvider = resolveProviderForRun(store, runRequest);
     runnerRequest = {
@@ -448,6 +468,99 @@ async function handleProviderItem(
   writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for provider presets` });
 }
 
+function handleApprovalsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+): void {
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /approvals` });
+    return;
+  }
+
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    writeJson(response, 200, {
+      cwd,
+      approvals: store.listApprovalRequests({
+        status: readOptionalApprovalStatusQuery(url),
+        runId: url.searchParams.get("runId") ?? undefined,
+        limit: readOptionalIntegerQuery(url, "limit", 1),
+      }),
+    });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleApprovalItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  route: { readonly approvalId: string; readonly action?: "approve" | "deny" },
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  const store = storeRegistry.getStore(cwd);
+  const approval = store.getApprovalRequest(route.approvalId);
+  if (!approval) {
+    writeJson(response, 404, { error: "approval_not_found", message: `Approval request not found: ${route.approvalId}` });
+    return;
+  }
+
+  if (!route.action && request.method === "GET") {
+    writeJson(response, 200, { approval });
+    return;
+  }
+
+  if (!route.action) {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for approval requests` });
+    return;
+  }
+
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for approval decisions` });
+    return;
+  }
+
+  try {
+    const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+    const decision = { reason: isRecord(body) ? readOptionalString(body, "reason") : undefined, resolvedBy: "local-user" as const };
+    const now = new Date().toISOString();
+    const updated =
+      route.action === "approve"
+        ? store.approveApprovalRequest(route.approvalId, decision, now)
+        : store.denyApprovalRequest(route.approvalId, decision, now);
+    if (!updated) {
+      writeJson(response, 404, { error: "approval_not_found", message: `Approval request not found: ${route.approvalId}` });
+      return;
+    }
+    appendApprovalDecisionEvent(store, updated);
+    writeJson(response, 200, { approval: updated });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: error instanceof Error && error.message.includes("not pending") ? "approval_not_pending" : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function writeTerminalSummary(summaryPath: string, summary: RunSummary): string | undefined {
   try {
     writeRunSummary(summaryPath, summary);
@@ -601,6 +714,35 @@ function resolveProviderForRun(store: RunStore, runRequest: RunRequest): PiRunne
   return runRequest.provider;
 }
 
+function assertRunToolsAllowed(runRequest: RunRequest, config: ResolvedDaemonConfig): void {
+  const riskyTools = listRiskyRunTools(runRequest.tools);
+  if (riskyTools.length === 0) {
+    return;
+  }
+
+  if (config.allowUnsafeTools && runRequest.allowUnsafeTools === true) {
+    return;
+  }
+
+  throw new HttpError(
+    400,
+    "unsafe_tools_disabled",
+    `Risky tools are disabled until approval wrappers are implemented: ${riskyTools.join(", ")}`,
+  );
+}
+
+function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalRequest): void {
+  const run = store.getRun(approval.runId);
+  if (!run) {
+    return;
+  }
+  store.appendEvent(approval.runId, approval.status === "approved" ? "approval_approved" : "approval_denied", {
+    approvalId: approval.id,
+    resolvedBy: approval.resolvedBy,
+    decisionReason: approval.decisionReason,
+  });
+}
+
 async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
@@ -619,6 +761,34 @@ async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise
   }
 
   const text = Buffer.concat(chunks).toString("utf8");
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("Request body must be valid JSON");
+  }
+}
+
+async function readOptionalJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown | undefined> {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > maxBytes) {
+      throw new Error(`Request body exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(buffer);
+  }
+
+  if (chunks.length === 0) {
+    return undefined;
+  }
+
+  const text = Buffer.concat(chunks).toString("utf8").trim();
+  if (!text) {
+    return undefined;
+  }
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -659,11 +829,12 @@ function parseRunRequest(value: unknown): RunRequest {
       channelId: readOptionalString(task, "channelId"),
     },
     provider: provider ? parseInlineProvider(provider) : undefined,
-    tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]),
+    tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]) ?? [...readOnlyRunTools],
     thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
     systemPrompt: readOptionalString(value, "systemPrompt"),
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     agentDir: readOptionalString(value, "agentDir"),
+    allowUnsafeTools: readOptionalBoolean(value, "allowUnsafeTools"),
   };
 
   return runRequest;
@@ -705,6 +876,17 @@ function parseProviderRoute(pathname: string): { readonly providerId: string; re
   }
   if (segments.length === 3 && segments[0] === "providers" && segments[2] === "check") {
     return { providerId: segments[1], action: "check" };
+  }
+  return undefined;
+}
+
+function parseApprovalRoute(pathname: string): { readonly approvalId: string; readonly action?: "approve" | "deny" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "approvals") {
+    return { approvalId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "approvals" && (segments[2] === "approve" || segments[2] === "deny")) {
+    return { approvalId: segments[1], action: segments[2] };
   }
   return undefined;
 }
@@ -859,6 +1041,7 @@ function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     host: config.host ?? "127.0.0.1",
     port: config.port ?? 17891,
     maxBodyBytes: config.maxBodyBytes ?? 1024 * 1024,
+    allowUnsafeTools: config.allowUnsafeTools ?? process.env.LING_STACK_ALLOW_UNSAFE_TOOLS === "1",
   };
 }
 
@@ -1088,10 +1271,21 @@ function readOptionalRunStatusQuery(url: URL): RunStatus | undefined {
   if (value === null) {
     return undefined;
   }
-  if (!["queued", "running", "succeeded", "failed", "cancelled"].includes(value)) {
-    throw new Error("status must be one of: queued, running, succeeded, failed, cancelled");
+  if (!["queued", "running", "waiting_for_approval", "succeeded", "failed", "cancelled"].includes(value)) {
+    throw new Error("status must be one of: queued, running, waiting_for_approval, succeeded, failed, cancelled");
   }
   return value as RunStatus;
+}
+
+function readOptionalApprovalStatusQuery(url: URL): ApprovalStatus | undefined {
+  const value = url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (!approvalStatuses.includes(value as ApprovalStatus)) {
+    throw new Error(`status must be one of: ${approvalStatuses.join(", ")}`);
+  }
+  return value as ApprovalStatus;
 }
 
 function validateUrl(value: string, fieldName: string): void {

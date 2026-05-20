@@ -14,6 +14,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Daemon API](docs/daemon-api.md)
 - [Provider adapters](docs/provider-adapters.md)
 - [Provider presets](docs/design/provider-presets.md)
+- [Approval policy](docs/design/approval-policy.md)
 - [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
 
 ## Why This Exists
@@ -212,6 +213,7 @@ docs/
   v0.1-detailed-design.md
   daemon-api.md
   design/provider-presets.md
+  design/approval-policy.md
   provider-adapters.md
   pi-coding-agent-integration.md
 
@@ -246,12 +248,14 @@ Implemented:
 - `GET /runs`, `GET /runs/:id`, and `GET /runs/:id/events`.
 - Provider preset storage and daemon APIs.
 - `POST /runs` with `providerPresetId`.
-- Local web UI with run launcher, event stream, run history, and provider settings.
+- Approval request storage and daemon APIs.
+- Default read-only tool policy for product runs; `bash`, `edit`, and `write` are blocked unless a development escape hatch is explicitly enabled.
+- Local web UI with run launcher, event stream, run history, provider settings, and approval list.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
 Not implemented yet:
 
-- Approval policy hooks before `write`, `edit`, `bash`, external sends, or deployments.
+- Controlled approval wrappers that pause Pi before `write`, `edit`, `bash`, external sends, or deployments.
 - CLI commands beyond the scaffold.
 - OS keychain integration for secrets.
 - Desktop packaging.

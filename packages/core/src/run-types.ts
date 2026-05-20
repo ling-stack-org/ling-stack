@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type {
+  ApprovalRequest,
+  CreateApprovalRequestInput,
+  ListApprovalRequestsOptions,
+  ResolveApprovalRequestInput,
+} from "./approval-types.js";
+import type {
   ListProviderPresetsOptions,
   ProviderPreset,
   ProviderPresetInput,
@@ -7,7 +13,7 @@ import type {
 } from "./provider-types.js";
 import type { LingStackRuntimePaths } from "./runtime-paths.js";
 
-export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
 export type RunEventType =
   | "run_created"
@@ -23,6 +29,9 @@ export type RunEventType =
   | "run_end"
   | "run_error"
   | "run_cancelled"
+  | "approval_requested"
+  | "approval_approved"
+  | "approval_denied"
   | "result";
 
 export interface RunSession {
@@ -109,6 +118,11 @@ export interface RunStore {
   listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];
   updateProviderPreset(id: string, input: ProviderPresetUpdateInput, now: string): ProviderPreset | undefined;
   deleteProviderPreset(id: string): boolean;
+  createApprovalRequest(input: CreateApprovalRequestInput, now: string): ApprovalRequest;
+  getApprovalRequest(id: string): ApprovalRequest | undefined;
+  listApprovalRequests(options?: ListApprovalRequestsOptions): ApprovalRequest[];
+  approveApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
+  denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   close(): void;
 }
 

@@ -1,4 +1,6 @@
 import type {
+  ApprovalListResponse,
+  ApprovalMutationResponse,
   ProviderCheckResult,
   ProviderFormState,
   ProviderListResponse,
@@ -92,6 +94,27 @@ export async function checkProvider(cwd: string, providerId: string): Promise<Pr
   return (await response.json()) as ProviderCheckResult;
 }
 
+export async function listApprovals(cwd: string, status?: string): Promise<ApprovalListResponse> {
+  const parsed = new URL(`${daemonBaseUrl}/approvals`);
+  parsed.searchParams.set("cwd", cwd);
+  if (status) {
+    parsed.searchParams.set("status", status);
+  }
+  const response = await fetch(parsed.toString());
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as ApprovalListResponse;
+}
+
+export async function approveApproval(cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
+  return resolveApproval(cwd, approvalId, "approve", reason);
+}
+
+export async function denyApproval(cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
+  return resolveApproval(cwd, approvalId, "deny", reason);
+}
+
 export async function getRunEvents(runId: string, cwd?: string): Promise<RunEventsResponse> {
   const response = await fetch(withCwd(`${daemonBaseUrl}/runs/${encodeURIComponent(runId)}/events`, cwd));
   if (!response.ok) {
@@ -136,6 +159,23 @@ export function buildRunRequest(form: RunFormState): unknown {
     tools: form.tools.filter(isRunnerTool),
     thinkingLevel: "medium",
   };
+}
+
+async function resolveApproval(
+  cwd: string,
+  approvalId: string,
+  action: "approve" | "deny",
+  reason?: string,
+): Promise<ApprovalMutationResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/approvals/${encodeURIComponent(approvalId)}/${action}`, cwd), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as ApprovalMutationResponse;
 }
 
 function providerFormToPayload(form: ProviderFormState): unknown {
