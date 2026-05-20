@@ -352,6 +352,10 @@ textarea:disabled {
   color: #0f5f4e;
 }
 
+.tool-toggle.requires-approval {
+  box-shadow: inset 0 -2px 0 #c58a25;
+}
+
 .tool-toggle.disabled {
   cursor: not-allowed;
   opacity: 0.45;

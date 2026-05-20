@@ -3,15 +3,18 @@ import type { Api, Model, ModelThinkingLevel, OpenAICompletionsCompat } from "@e
 import {
   AuthStorage,
   createAgentSession,
-  createExtensionRuntime,
+  DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
   SettingsManager,
   type AgentSessionEvent,
+  type ExtensionFactory,
   type ResourceLoader,
+  type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 
 export type PiRunnerToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
+export type PiRunnerApprovalToolName = Extract<PiRunnerToolName, "bash" | "edit" | "write">;
 
 export type PiRunnerProviderApi =
   | "openai-completions"
@@ -43,6 +46,20 @@ export interface PiRunnerTask {
   readonly channelId?: string;
 }
 
+export interface PiRunnerApprovalRequest {
+  readonly toolCallId: string;
+  readonly toolName: PiRunnerApprovalToolName;
+  readonly input: unknown;
+  readonly task: PiRunnerTask;
+  readonly cwd: string;
+}
+
+export interface PiRunnerApprovalDecision {
+  readonly approved: boolean;
+  readonly approvalId?: string;
+  readonly reason?: string;
+}
+
 export interface PiRunnerRunOptions {
   readonly cwd: string;
   readonly task: PiRunnerTask;
@@ -53,6 +70,9 @@ export interface PiRunnerRunOptions {
   readonly appendSystemPrompt?: readonly string[];
   readonly agentDir?: string;
   readonly onEvent?: (event: PiRunnerEvent) => void;
+  readonly onApprovalRequired?: (
+    request: PiRunnerApprovalRequest,
+  ) => PiRunnerApprovalDecision | Promise<PiRunnerApprovalDecision>;
 }
 
 export type PiRunnerEvent =
@@ -75,6 +95,7 @@ export interface PiRunnerResult {
 }
 
 const DEFAULT_TOOLS: readonly PiRunnerToolName[] = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const APPROVAL_REQUIRED_TOOLS = new Set<string>(["bash", "edit", "write"]);
 
 export class PiRunnerAdapter {
   async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
@@ -99,11 +120,11 @@ export class PiRunnerAdapter {
 
     const cwd = options.cwd;
     const agentDir = options.agentDir ?? join(cwd, ".ling-stack", "pi");
-    const resourceLoader = createLingStackResourceLoader(options);
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
       retry: { enabled: true, maxRetries: 1 },
     });
+    const resourceLoader = await createLingStackResourceLoader(options, agentDir, settingsManager);
 
     const { session } = await createAgentSession({
       cwd,
@@ -192,26 +213,83 @@ export function createPiRunner(): PiRunnerAdapter {
   return new PiRunnerAdapter();
 }
 
-function createLingStackResourceLoader(options: PiRunnerRunOptions): ResourceLoader {
-  const extensions = { extensions: [], errors: [], runtime: createExtensionRuntime() };
-  return {
-    getExtensions: () => extensions,
-    getSkills: () => ({ skills: [], diagnostics: [] }),
-    getPrompts: () => ({ prompts: [], diagnostics: [] }),
-    getThemes: () => ({ themes: [], diagnostics: [] }),
-    getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () =>
-      options.systemPrompt ??
-      [
-        "You are running inside Ling Stack as a scoped AI teammate.",
-        "Work on the assigned task only.",
-        "Use tools when they materially improve correctness.",
-        "Keep outputs concise and leave an auditable trail through tool calls.",
-      ].join("\n"),
-    getAppendSystemPrompt: () => [...(options.appendSystemPrompt ?? [])],
-    extendResources: () => {},
-    reload: async () => {},
+async function createLingStackResourceLoader(
+  options: PiRunnerRunOptions,
+  agentDir: string,
+  settingsManager: SettingsManager,
+): Promise<ResourceLoader> {
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: options.cwd,
+    agentDir,
+    settingsManager,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+    systemPrompt: getLingStackSystemPrompt(options),
+    appendSystemPrompt: [...(options.appendSystemPrompt ?? [])],
+    extensionFactories: [createLingStackApprovalExtension(options)],
+  });
+  await resourceLoader.reload();
+  return resourceLoader;
+}
+
+function createLingStackApprovalExtension(options: PiRunnerRunOptions): ExtensionFactory {
+  return (pi) => {
+    pi.on("tool_call", async (event): Promise<ToolCallEventResult | undefined> => {
+      if (!isApprovalToolName(event.toolName)) {
+        return undefined;
+      }
+
+      if (!options.onApprovalRequired) {
+        return {
+          block: true,
+          reason: `Ling Stack blocked ${event.toolName}: no approval handler is configured.`,
+        };
+      }
+
+      try {
+        const decision = await options.onApprovalRequired({
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          input: event.input,
+          task: options.task,
+          cwd: options.cwd,
+        });
+
+        if (decision.approved) {
+          return undefined;
+        }
+
+        return {
+          block: true,
+          reason: decision.reason ?? `Ling Stack approval denied ${event.toolName}.`,
+        };
+      } catch (error) {
+        return {
+          block: true,
+          reason: `Ling Stack approval check failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    });
   };
+}
+
+function isApprovalToolName(toolName: string): toolName is PiRunnerApprovalToolName {
+  return APPROVAL_REQUIRED_TOOLS.has(toolName);
+}
+
+function getLingStackSystemPrompt(options: PiRunnerRunOptions): string {
+  return (
+    options.systemPrompt ??
+    [
+      "You are running inside Ling Stack as a scoped AI teammate.",
+      "Work on the assigned task only.",
+      "Use tools when they materially improve correctness.",
+      "Keep outputs concise and leave an auditable trail through tool calls.",
+    ].join("\n")
+  );
 }
 
 function formatTaskPrompt(task: PiRunnerTask): string {

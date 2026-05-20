@@ -1,19 +1,22 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
   approvalStatuses,
   createRunId,
   createSqliteRunStore,
   getRunSummaryPath,
   isSupportedSecretRef,
-  listRiskyRunTools,
   providerApis,
   providerCapabilities,
   providerKinds,
   readOnlyRunTools,
   resolveSecretRef,
   writeRunSummary,
+  type ApprovalPayload,
   type ApprovalRequest,
+  type ApprovalRisk,
   type ApprovalStatus,
+  type CreateApprovalRequestInput,
   type ProviderApi,
   type ProviderCapability,
   type ProviderCheckResult,
@@ -31,6 +34,7 @@ import {
 } from "@ling-stack/core";
 import {
   createPiRunner,
+  type PiRunnerApprovalRequest,
   type PiRunnerEvent,
   type PiRunnerProviderConfig,
   type PiRunnerResult,
@@ -41,14 +45,12 @@ export interface DaemonConfig {
   readonly host?: string;
   readonly port?: number;
   readonly maxBodyBytes?: number;
-  readonly allowUnsafeTools?: boolean;
 }
 
 export interface ResolvedDaemonConfig {
   readonly host: string;
   readonly port: number;
   readonly maxBodyBytes: number;
-  readonly allowUnsafeTools: boolean;
 }
 
 export interface RunnerAdapter {
@@ -68,10 +70,13 @@ export const defaultDaemonConfig: DaemonConfig = {
   maxBodyBytes: 1024 * 1024,
 };
 
-export interface RunRequest extends Omit<PiRunnerRunOptions, "onEvent" | "provider"> {
+const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
+const APPROVAL_POLL_INTERVAL_MS = 500;
+const APPROVAL_PREVIEW_LIMIT = 1_200;
+
+export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider"> {
   readonly providerPresetId?: string;
   readonly provider?: PiRunnerProviderConfig;
-  readonly allowUnsafeTools?: boolean;
 }
 
 export interface DaemonServer {
@@ -226,7 +231,6 @@ async function handleRun(
   let run: RunSession;
   let runnerRequest: PiRunnerRunOptions;
   try {
-    assertRunToolsAllowed(runRequest, config);
     store = storeRegistry.getStore(runRequest.cwd);
     const resolvedProvider = resolveProviderForRun(store, runRequest);
     runnerRequest = {
@@ -281,6 +285,12 @@ async function handleRun(
     clientClosed = true;
   });
 
+  const streamEnvelope = (envelope: RunEventEnvelope): void => {
+    if (!clientClosed) {
+      writeSse(response, envelope.type, envelope);
+    }
+  };
+
   const appendAndMaybeStream = (type: RunEventType, data: unknown): RunEventEnvelope | undefined => {
     if (persistenceError) {
       return undefined;
@@ -291,9 +301,7 @@ async function handleRun(
       if (type === "run_error") {
         persistedRunError = true;
       }
-      if (!clientClosed) {
-        writeSse(response, envelope.type, envelope);
-      }
+      streamEnvelope(envelope);
       return envelope;
     } catch (error) {
       persistenceError = error;
@@ -307,6 +315,12 @@ async function handleRun(
 
     const result = await runner.runTask({
       ...runnerRequest,
+      onApprovalRequired: createRunApprovalHandler({
+        store,
+        run,
+        appendAndMaybeStream,
+        streamEnvelope,
+      }),
       onEvent: (event: PiRunnerEvent) => {
         appendAndMaybeStream(event.type, event);
       },
@@ -714,23 +728,6 @@ function resolveProviderForRun(store: RunStore, runRequest: RunRequest): PiRunne
   return runRequest.provider;
 }
 
-function assertRunToolsAllowed(runRequest: RunRequest, config: ResolvedDaemonConfig): void {
-  const riskyTools = listRiskyRunTools(runRequest.tools);
-  if (riskyTools.length === 0) {
-    return;
-  }
-
-  if (config.allowUnsafeTools && runRequest.allowUnsafeTools === true) {
-    return;
-  }
-
-  throw new HttpError(
-    400,
-    "unsafe_tools_disabled",
-    `Risky tools are disabled until approval wrappers are implemented: ${riskyTools.join(", ")}`,
-  );
-}
-
 function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalRequest): void {
   const run = store.getRun(approval.runId);
   if (!run) {
@@ -738,8 +735,273 @@ function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalRequest)
   }
   store.appendEvent(approval.runId, approval.status === "approved" ? "approval_approved" : "approval_denied", {
     approvalId: approval.id,
+    status: approval.status,
     resolvedBy: approval.resolvedBy,
     decisionReason: approval.decisionReason,
+  });
+}
+
+function createRunApprovalHandler(options: {
+  readonly store: RunStore;
+  readonly run: RunSession;
+  readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
+  readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
+}): PiRunnerRunOptions["onApprovalRequired"] {
+  return async (request: PiRunnerApprovalRequest) => {
+    const approval = options.store.createApprovalRequest(
+      toCreateApprovalRequestInput(options.run, request),
+      new Date().toISOString(),
+    );
+    const waitingAt = new Date().toISOString();
+    options.store.markRunWaitingForApproval(options.run.id, waitingAt);
+    const requestEvent = options.appendAndMaybeStream("approval_requested", {
+      approvalId: approval.id,
+      toolCallId: approval.toolCallId,
+      actionType: approval.actionType,
+      risk: approval.risk,
+      title: approval.title,
+      description: approval.description,
+      payload: approval.payload,
+      expiresAt: approval.expiresAt,
+    });
+
+    const resolvedApproval = await waitForApprovalDecision(options.store, approval.id);
+    options.store.markRunRunning(options.run.id, new Date().toISOString());
+    streamOrAppendApprovalDecisionEvent({
+      store: options.store,
+      approval: resolvedApproval,
+      afterSeq: requestEvent?.seq ?? 0,
+      appendAndMaybeStream: options.appendAndMaybeStream,
+      streamEnvelope: options.streamEnvelope,
+    });
+
+    if (resolvedApproval.status === "approved") {
+      return {
+        approved: true,
+        approvalId: resolvedApproval.id,
+        reason: resolvedApproval.decisionReason,
+      };
+    }
+
+    return {
+      approved: false,
+      approvalId: resolvedApproval.id,
+      reason:
+        resolvedApproval.decisionReason ??
+        `Ling Stack approval ${resolvedApproval.status} for ${resolvedApproval.actionType}.`,
+    };
+  };
+}
+
+function toCreateApprovalRequestInput(run: RunSession, request: PiRunnerApprovalRequest): CreateApprovalRequestInput {
+  const payload = toApprovalPayload(request);
+  const risk = classifyApprovalRisk(request, payload);
+  return {
+    runId: run.id,
+    taskId: run.taskId,
+    channelId: run.channelId,
+    toolCallId: request.toolCallId,
+    actionType: request.toolName,
+    risk,
+    title: approvalTitle(request.toolName, risk),
+    description: approvalDescription(request.toolName, payload),
+    payload,
+    expiresAt: new Date(Date.now() + APPROVAL_TIMEOUT_MS).toISOString(),
+  };
+}
+
+function toApprovalPayload(request: PiRunnerApprovalRequest): ApprovalPayload {
+  if (request.toolName === "bash") {
+    const command = readInputString(request.input, "command", "");
+    return {
+      type: "bash",
+      cwd: request.cwd,
+      command,
+      riskFlags: classifyBashRiskFlags(command),
+    };
+  }
+
+  if (request.toolName === "write") {
+    const path = readInputString(request.input, "path", "<unknown>");
+    const content = readInputString(request.input, "content", "");
+    return {
+      type: "file_write",
+      path,
+      bytes: Buffer.byteLength(content, "utf8"),
+      preview: truncatePreview(content),
+    };
+  }
+
+  const path = readInputString(request.input, "path", "<unknown>");
+  return {
+    type: "file_edit",
+    path,
+    diffPreview: truncatePreview(formatEditPreview(readInputArray(request.input, "edits"))),
+  };
+}
+
+function classifyApprovalRisk(request: PiRunnerApprovalRequest, payload: ApprovalPayload): ApprovalRisk {
+  if (payload.type === "bash") {
+    return payload.riskFlags.length > 0 ? "high" : "medium";
+  }
+
+  if (payload.type === "file_write" && isOutsideWorkspace(payload.path, request.cwd)) {
+    return "high";
+  }
+
+  if (payload.type === "file_edit" && isOutsideWorkspace(payload.path, request.cwd)) {
+    return "high";
+  }
+
+  return "medium";
+}
+
+function approvalTitle(toolName: PiRunnerApprovalRequest["toolName"], risk: ApprovalRisk): string {
+  if (toolName === "bash") {
+    return risk === "high" ? "Approve high-risk shell command" : "Approve shell command";
+  }
+  if (toolName === "write") {
+    return "Approve file write";
+  }
+  return "Approve file edit";
+}
+
+function approvalDescription(toolName: PiRunnerApprovalRequest["toolName"], payload: ApprovalPayload): string {
+  if (payload.type === "bash") {
+    return payload.command || "The agent requested a shell command.";
+  }
+  if (payload.type === "file_write") {
+    return `The agent requested writing ${payload.bytes} bytes to ${payload.path}.`;
+  }
+  if (payload.type === "file_edit") {
+    return `The agent requested editing ${payload.path}.`;
+  }
+  return `The agent requested ${toolName}.`;
+}
+
+async function waitForApprovalDecision(store: RunStore, approvalId: string): Promise<ApprovalRequest> {
+  const deadline = Date.now() + APPROVAL_TIMEOUT_MS;
+  while (Date.now() <= deadline) {
+    const approval = store.getApprovalRequest(approvalId);
+    if (!approval) {
+      throw new Error(`Approval request not found: ${approvalId}`);
+    }
+    if (approval.status !== "pending") {
+      return approval;
+    }
+    await delay(APPROVAL_POLL_INTERVAL_MS);
+  }
+
+  const expired = store.denyApprovalRequest(
+    approvalId,
+    { reason: "Approval request timed out before a decision was received." },
+    new Date().toISOString(),
+  );
+  if (!expired) {
+    throw new Error(`Approval request not found after timeout: ${approvalId}`);
+  }
+  appendApprovalDecisionEvent(store, expired);
+  return expired;
+}
+
+function streamOrAppendApprovalDecisionEvent(options: {
+  readonly store: RunStore;
+  readonly approval: ApprovalRequest;
+  readonly afterSeq: number;
+  readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
+  readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
+}): void {
+  const existingEvent = findApprovalDecisionEvent(options.store, options.approval, options.afterSeq);
+  if (existingEvent) {
+    options.streamEnvelope(existingEvent);
+    return;
+  }
+
+  options.appendAndMaybeStream(options.approval.status === "approved" ? "approval_approved" : "approval_denied", {
+    approvalId: options.approval.id,
+    status: options.approval.status,
+    resolvedBy: options.approval.resolvedBy,
+    decisionReason: options.approval.decisionReason,
+  });
+}
+
+function findApprovalDecisionEvent(
+  store: RunStore,
+  approval: ApprovalRequest,
+  afterSeq: number,
+): RunEventEnvelope | undefined {
+  return store
+    .listEvents(approval.runId, { afterSeq, limit: 1000 })
+    .find(
+      (event) =>
+        (event.type === "approval_approved" || event.type === "approval_denied") &&
+        isRecord(event.data) &&
+        event.data.approvalId === approval.id,
+    );
+}
+
+function classifyBashRiskFlags(command: string): string[] {
+  const checks: Array<[RegExp, string]> = [
+    [/\brm\s+-(?:[^\n]*r[^\n]*f|[^\n]*f[^\n]*r)\b/i, "destructive_remove"],
+    [/\bgit\s+reset\s+--hard\b/i, "git_reset_hard"],
+    [/\bgit\s+push\b[^\n]*--force\b/i, "git_force_push"],
+    [/\bsudo\b/i, "sudo"],
+    [/\b(?:chmod|chown)\s+-R\b/i, "recursive_permission_change"],
+    [/\b(?:dd|mkfs|diskutil)\b/i, "disk_mutation"],
+    [/\b(?:kubectl|helm|flyctl|vercel|netlify|aws|gcloud|az)\b[^\n]*\b(?:apply|delete|deploy|destroy|terminate)\b/i, "external_mutation"],
+    [/\b(?:curl|wget)\b[^\n|;]*\|\s*(?:sh|bash)\b/i, "remote_script_execution"],
+  ];
+  return checks.filter(([pattern]) => pattern.test(command)).map(([, flag]) => flag);
+}
+
+function isOutsideWorkspace(inputPath: string, cwd: string): boolean {
+  if (inputPath === "<unknown>") {
+    return true;
+  }
+  const absolutePath = isAbsolute(inputPath) ? inputPath : resolvePath(cwd, inputPath);
+  const relativePath = relative(cwd, absolutePath);
+  return relativePath.startsWith("..") || isAbsolute(relativePath);
+}
+
+function formatEditPreview(edits: readonly unknown[]): string {
+  if (edits.length === 0) {
+    return "No edit preview was provided.";
+  }
+  return edits
+    .map((edit, index) => {
+      if (!isRecord(edit)) {
+        return `#${index + 1}\n<invalid edit entry>`;
+      }
+      const oldText = readInputString(edit, "oldText", "");
+      const newText = readInputString(edit, "newText", "");
+      return `#${index + 1}\n- ${truncatePreview(oldText, 320)}\n+ ${truncatePreview(newText, 320)}`;
+    })
+    .join("\n\n");
+}
+
+function readInputString(input: unknown, key: string, fallback: string): string {
+  if (!isRecord(input)) {
+    return fallback;
+  }
+  const value = input[key];
+  return typeof value === "string" ? value : fallback;
+}
+
+function readInputArray(input: unknown, key: string): unknown[] {
+  if (!isRecord(input)) {
+    return [];
+  }
+  const value = input[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function truncatePreview(value: string, limit = APPROVAL_PREVIEW_LIMIT): string {
+  return value.length > limit ? `${value.slice(0, limit)}...` : value;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
   });
 }
 
@@ -834,7 +1096,6 @@ function parseRunRequest(value: unknown): RunRequest {
     systemPrompt: readOptionalString(value, "systemPrompt"),
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     agentDir: readOptionalString(value, "agentDir"),
-    allowUnsafeTools: readOptionalBoolean(value, "allowUnsafeTools"),
   };
 
   return runRequest;
@@ -1041,7 +1302,6 @@ function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     host: config.host ?? "127.0.0.1",
     port: config.port ?? 17891,
     maxBodyBytes: config.maxBodyBytes ?? 1024 * 1024,
-    allowUnsafeTools: config.allowUnsafeTools ?? process.env.LING_STACK_ALLOW_UNSAFE_TOOLS === "1",
   };
 }
 

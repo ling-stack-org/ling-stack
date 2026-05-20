@@ -105,6 +105,8 @@ export interface RunStore {
   readonly paths: LingStackRuntimePaths;
   createRun(input: CreateRunInput): RunSession;
   markRunStarted(runId: string, startedAt: string): void;
+  markRunWaitingForApproval(runId: string, updatedAt: string): void;
+  markRunRunning(runId: string, updatedAt: string): void;
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void;
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
   appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope;

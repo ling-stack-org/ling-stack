@@ -128,6 +128,14 @@ export class SqliteRunStore implements RunStore {
     this.updateRunStatus(runId, "running", startedAt, null, undefined, undefined, startedAt);
   }
 
+  markRunWaitingForApproval(runId: string, updatedAt: string): void {
+    this.updateRunStatus(runId, "waiting_for_approval", undefined, undefined, undefined, undefined, updatedAt);
+  }
+
+  markRunRunning(runId: string, updatedAt: string): void {
+    this.updateRunStatus(runId, "running", undefined, undefined, undefined, undefined, updatedAt);
+  }
+
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void {
     this.updateRunStatus(runId, "succeeded", undefined, endedAt, null, summaryPath, endedAt);
   }
@@ -248,7 +256,7 @@ export class SqliteRunStore implements RunStore {
 
   recoverStaleRuns(now: string): number {
     const staleRuns = this.database
-      .prepare("SELECT id FROM run_sessions WHERE status IN ('queued', 'running')")
+      .prepare("SELECT id FROM run_sessions WHERE status IN ('queued', 'running', 'waiting_for_approval')")
       .all()
       .map((row) => readString(row, "id"));
 

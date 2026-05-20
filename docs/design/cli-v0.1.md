@@ -602,7 +602,6 @@ Options:
 --thinking off|minimal|low|medium|high|xhigh
 --system-prompt <text>
 --append-system-prompt <text>
---unsafe-tools
 --json
 ```
 
@@ -618,11 +617,7 @@ Risky tools:
 write, edit, bash
 ```
 
-`write`, `edit`, and `bash` should be unavailable in product CLI flows until approval wrappers exist. If an unsafe development flag exists, it must be explicit:
-
-```bash
-ling-stack run --unsafe-tools --tool bash "Run test command"
-```
+`write`, `edit`, and `bash` should create approval requests and pause before execution.
 
 Output behavior:
 
@@ -900,32 +895,29 @@ This is easier for automation:
 ling-stack run --json "Inspect repo" | jq 'select(.type=="run_error")'
 ```
 
-## Unsafe Tool Handling
+## Risky Tool Handling
 
 Default CLI behavior:
 
 - only read-only tools are allowed.
 
-If user requests risky tools before wrappers exist:
+If user requests risky tools:
 
 ```bash
 ling-stack run --tool bash "Run tests"
 ```
 
-Return:
+Expected behavior:
 
 ```text
-error: unsafe_tools_disabled
-message: Tool "bash" requires approval wrappers and is disabled in product runs.
+run enters waiting_for_approval
+approval request is shown in CLI or Web Approvals
+approved request resumes the Pi tool call
+denied request returns a blocked tool result before the side effect
 ```
 
-Development escape hatch:
+The CLI must not add a hidden bypass for normal product runs. Any future development-only bypass has to be explicitly labeled and remain outside the default path.
 
-```bash
-ling-stack run --unsafe-tools --tool bash "Run tests"
-```
-
-This should be hidden from normal help or clearly labeled as development-only until approval wrappers exist.
 
 ## Module Plan
 

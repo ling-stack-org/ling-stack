@@ -249,13 +249,15 @@ Implemented:
 - Provider preset storage and daemon APIs.
 - `POST /runs` with `providerPresetId`.
 - Approval request storage and daemon APIs.
-- Default read-only tool policy for product runs; `bash`, `edit`, and `write` are blocked unless a development escape hatch is explicitly enabled.
+- Default read-only tool policy for product runs.
+- Pi pre-tool approval gate for `bash`, `edit`, and `write`.
 - Local web UI with run launcher, event stream, run history, provider settings, and approval list.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
 Not implemented yet:
 
-- Controlled approval wrappers that pause Pi before `write`, `edit`, `bash`, external sends, or deployments.
+- Configurable approval policies beyond the default risky-tool gate.
+- Approval gates for external sends, deployments, credential changes, and paid media jobs.
 - CLI commands beyond the scaffold.
 - OS keychain integration for secrets.
 - Desktop packaging.

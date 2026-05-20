@@ -14,7 +14,6 @@ Environment variables:
 ```text
 LING_STACK_HOST=127.0.0.1
 LING_STACK_PORT=17891
-LING_STACK_ALLOW_UNSAFE_TOOLS=0
 ```
 
 Provider presets can reference secrets from the daemon process environment:
@@ -115,7 +114,8 @@ Rules:
 - Disabled presets return `provider_disabled`.
 - Presets without `chat` capability return `unsupported_capability`.
 - Product runs default to read-only tools: `read`, `grep`, `find`, `ls`.
-- `bash`, `edit`, and `write` return `unsafe_tools_disabled` unless the daemon is started with `LING_STACK_ALLOW_UNSAFE_TOOLS=1` and the request also sets `"allowUnsafeTools": true`.
+- If `bash`, `edit`, or `write` are enabled for a run, Pi tool execution is paused before the side effect and an approval request is created.
+- The run stays `waiting_for_approval` until `/approvals/:id/approve` or `/approvals/:id/deny` resolves the request.
 
 SSE events:
 
@@ -134,6 +134,12 @@ data: {"type":"tool_start","toolName":"read",...}
 
 event: tool_end
 data: {"type":"tool_end","toolName":"read","isError":false,...}
+
+event: approval_requested
+data: {"approvalId":"approval_...","actionType":"bash","risk":"medium",...}
+
+event: approval_approved
+data: {"approvalId":"approval_...","status":"approved",...}
 
 event: run_end
 data: {"type":"run_end","taskId":"task-1","messageCount":3}

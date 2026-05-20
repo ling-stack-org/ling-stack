@@ -2,7 +2,7 @@
 
 ## Status
 
-Partially implemented for Milestone 4: Approval Foundation.
+Partially implemented for Milestone 5: Pi Controlled Tool Wrapper.
 
 This design follows session persistence and provider presets. It defines how Ling Stack should represent, persist, display, and enforce human approval gates for risky actions.
 
@@ -38,14 +38,17 @@ Implemented today:
 - Daemon approval list/get/approve/deny APIs exist.
 - Web UI has an Approvals page.
 - Product runs default to read-only tools.
-- `bash`, `edit`, and `write` are blocked unless the daemon and request both explicitly enable unsafe development mode.
+- Pi `tool_call` extension hook is wired for `bash`, `edit`, and `write`.
+- `bash`, `edit`, and `write` create approval requests before execution.
+- Runs move to `waiting_for_approval` while the daemon waits for an approve/deny decision.
+- Approved requests resume the Pi tool call; denied requests return a blocked tool result before the side effect.
 
 Not implemented yet:
 
 - Approval policy model.
-- Controlled tool wrappers.
-- Runtime pause/resume around approvals.
-- Enforcement before `write`, `edit`, or `bash`.
+- Configurable allow/deny rules beyond the default risky-tool gate.
+- Approval expiry/cancellation UI.
+- External sends, deploys, credential changes, and paid media approvals.
 
 ## Scope
 
@@ -528,9 +531,9 @@ Therefore, post-hoc event observation is not enough for approval.
 v0.1 should use a staged path:
 
 1. **Read-only default:** Web UI and normal CLI runs use only `read`, `grep`, `find`, and `ls`.
-2. **Explicit risky tools:** `write`, `edit`, and `bash` are not enabled in product flows until controlled wrappers exist.
-3. **Controlled wrapper work:** implement wrapper tools that create approval requests before side effects.
-4. **Manual development escape hatch:** allow direct inline tools only for developer smoke tests, clearly marked unsafe.
+2. **Explicit risky tools:** `write`, `edit`, and `bash` may be selected, but only through the controlled Pi pre-tool approval wrapper.
+3. **Controlled wrapper work:** keep all side effects behind approval requests before execution.
+4. **No product bypass:** do not expose a normal direct-execution path for risky tools.
 
 Default tools for product runs:
 
@@ -538,7 +541,7 @@ Default tools for product runs:
 ["read", "grep", "find", "ls"]
 ```
 
-Unsafe development tools:
+Approval-gated tools:
 
 ```json
 ["write", "edit", "bash"]
@@ -759,18 +762,17 @@ Update:
 POST /runs
 ```
 
-to default product runs to read-only tools unless risky tools are explicitly enabled by a trusted development flag or controlled wrappers.
+to default product runs to read-only tools, with `bash`, `edit`, and `write` allowed only through the controlled Pi pre-tool approval wrapper.
 
 ### `packages/runner-pi`
 
-Investigate:
+Implemented:
 
-- custom tool registration,
-- tool permission hooks,
-- pausable tool execution,
-- upstream extension points for approval.
+- Pi `tool_call` extension registration.
+- Pre-side-effect blocking for `bash`, `edit`, and `write`.
+- Daemon callback for persisted approval request and decision wait.
 
-No approval-complete claim should be made until this investigation produces an enforcement path.
+Remaining work is policy configurability, richer risk rules, and more action categories.
 
 ## Error Codes
 
@@ -782,7 +784,6 @@ approval_denied
 approval_expired
 policy_denied
 unsupported_approval_action
-unsafe_tools_disabled
 ```
 
 ## Test Plan
@@ -875,13 +876,13 @@ Expected:
 
 Question: can Pi tool execution be paused while Ling Stack waits for approval?
 
-Recommendation: verify Pi extension points before implementation. If no hook exists, upstream the smallest possible approval hook before forking.
+Implemented path: Pi's `tool_call` extension point pauses before tool execution and can block with `{ block: true }`.
 
 ### Default Tool List
 
 Question: should daemon continue accepting `bash`, `write`, and `edit` in `/runs`?
 
-Recommendation: not for product flows. Keep them behind an explicit development escape hatch until approval wrappers are real.
+Recommendation: yes, but only through the approval-gated runner path. Direct execution without an approval handler must remain blocked.
 
 ### Approval Expiry
 

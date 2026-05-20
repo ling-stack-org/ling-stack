@@ -165,6 +165,9 @@ export function App(): JSX.Element {
             setLookupRunId(message.runId);
             return;
           }
+          if (message.event.type === "approval_requested") {
+            void refreshApprovals();
+          }
           setEvents((current) => [...current, message.event]);
         },
         controller.signal,
@@ -1028,20 +1031,16 @@ function RunLauncher({
 
       <div className="tool-grid" aria-label="Allowed tools">
         {allTools.map((tool) => {
-          const disabled = riskyTools.includes(tool);
+          const requiresApproval = riskyTools.includes(tool);
           return (
           <label
             key={tool}
-            className={`${form.tools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}${disabled ? " disabled" : ""}`}
+            className={`${form.tools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}${requiresApproval ? " requires-approval" : ""}`}
           >
             <input
               type="checkbox"
               checked={form.tools.includes(tool)}
-              disabled={disabled}
               onChange={(event) => {
-                if (disabled) {
-                  return;
-                }
                 const tools = event.target.checked ? [...form.tools, tool] : form.tools.filter((item) => item !== tool);
                 onChange({ ...form, tools });
               }}
@@ -1310,7 +1309,7 @@ function viewDescription(view: ViewId): string {
     return "查看当前 workspace 的持久化 run，点击任意记录读取事件和上下文。";
   }
   if (view === "approvals") {
-    return "查看和处理需要人工决策的高风险动作；v0.1 默认禁用未接入 wrapper 的写入和命令工具。";
+    return "查看和处理需要人工决策的高风险动作；bash、edit、write 会在执行前等待审批。";
   }
   return "管理本地 provider preset，用 env:NAME 引用密钥，并在 run 启动时选择预设。";
 }
