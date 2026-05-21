@@ -319,15 +319,16 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleRun(rest, parsed.options);
     case "provider":
       return await handleProvider(rest, parsed.options);
+    case "channel":
+      return await handleChannel(rest, parsed.options);
+    case "task":
+      return await handleTask(rest, parsed.options);
     case "approvals":
       return await handleApprovals(rest, parsed.options);
     case "runs":
       return await handleRuns(rest, parsed.options);
     case "ui":
       return await handleUi(rest, parsed.options);
-    case "channel":
-    case "task":
-      throw new CliError(2, "not_implemented", `${command} is planned but not implemented in CLI v0.1 yet.`);
     default:
       throw new CliError(2, "unknown_command", `Unknown command: ${command}`);
   }
@@ -653,6 +654,281 @@ async function handleProviderRemove(args: readonly string[], options: GlobalOpti
     return 0;
   }
   console.log(`Provider removed: ${providerId}`);
+  return 0;
+}
+
+async function handleChannel(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "list", ...rest] = args;
+  switch (subcommand) {
+    case "list":
+      return await handleChannelList(rest, options);
+    case "create":
+      return await handleChannelCreate(rest, options);
+    case "show":
+      return await handleChannelShow(rest, options);
+    case "update":
+      return await handleChannelUpdate(rest, options);
+    case "remove":
+    case "delete":
+      return await handleChannelRemove(rest, options);
+    default:
+      throw new CliError(2, "unknown_command", `Unknown channel command: ${subcommand}`);
+  }
+}
+
+async function handleChannelList(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["limit"]),
+  });
+  assertNoPositionals(parsed.positionals, "channel list");
+  const response = await requestJson(options, "GET", "/channels", {
+    cwd: options.cwd,
+    limit: getFlag(parsed, "limit"),
+  });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printChannelsList(response);
+  return 0;
+}
+
+async function handleChannelCreate(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, channelCommandParserSpec());
+  assertNoPositionals(parsed.positionals, "channel create");
+  const name = getFlag(parsed, "name");
+  if (!name) {
+    throw new CliError(2, "missing_option", "channel create requires --name <name>.");
+  }
+  const body = removeUndefined({
+    name,
+    boundPath: getFlag(parsed, "path") ?? options.cwd,
+    defaultProviderPresetId: getFlag(parsed, "provider"),
+    defaultTeammateId: getFlag(parsed, "teammate"),
+    allowedTools: readChannelTools(parsed),
+  });
+  const response = await requestJson(options, "POST", "/channels", { cwd: options.cwd }, body);
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  const channel = readField(response, "channel");
+  console.log(`Channel created: ${readString(channel, "id") ?? ""}`);
+  console.log(`Name: ${readString(channel, "name") ?? ""}`);
+  console.log(`Path: ${readString(channel, "boundPath") ?? ""}`);
+  return 0;
+}
+
+async function handleChannelShow(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const channelId = singlePositional(parsed.positionals, "channel show <id>");
+  const response = await requestJson(options, "GET", `/channels/${encodeURIComponent(channelId)}`, { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printChannelDetail(response);
+  return 0;
+}
+
+async function handleChannelUpdate(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, channelCommandParserSpec({ includeClearFlags: true }));
+  const channelId = singlePositional(parsed.positionals, "channel update <id>");
+  const body = removeUndefined({
+    name: getFlag(parsed, "name"),
+    boundPath: readNullableFlag(parsed, "path", parsed.booleans.has("clear-path")),
+    defaultProviderPresetId: readNullableFlag(parsed, "provider", parsed.booleans.has("clear-provider")),
+    defaultTeammateId: readNullableFlag(parsed, "teammate", parsed.booleans.has("clear-teammate")),
+    allowedTools: readChannelTools(parsed),
+  });
+  if (Object.keys(body).length === 0) {
+    throw new CliError(2, "empty_update", "channel update requires at least one field to update.");
+  }
+  const response = await requestJson(options, "PATCH", `/channels/${encodeURIComponent(channelId)}`, { cwd: options.cwd }, body);
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  const channel = readField(response, "channel");
+  console.log(`Channel updated: ${readString(channel, "id") ?? channelId}`);
+  console.log(`Name: ${readString(channel, "name") ?? ""}`);
+  return 0;
+}
+
+async function handleChannelRemove(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const channelId = singlePositional(parsed.positionals, "channel remove <id>");
+  await requestJson(options, "DELETE", `/channels/${encodeURIComponent(channelId)}`, { cwd: options.cwd });
+  if (options.json) {
+    printJson({ ok: true, channelId });
+    return 0;
+  }
+  console.log(`Channel removed: ${channelId}`);
+  return 0;
+}
+
+async function handleTask(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "list", ...rest] = args;
+  switch (subcommand) {
+    case "list":
+      return await handleTaskList(rest, options);
+    case "create":
+      return await handleTaskCreate(rest, options);
+    case "show":
+      return await handleTaskShow(rest, options);
+    case "update":
+      return await handleTaskUpdate(rest, options);
+    case "run":
+      return await handleTaskRun(rest, options);
+    case "remove":
+    case "delete":
+      return await handleTaskRemove(rest, options);
+    default:
+      throw new CliError(2, "unknown_command", `Unknown task command: ${subcommand}`);
+  }
+}
+
+async function handleTaskList(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["channel", "status", "limit"]),
+  });
+  assertNoPositionals(parsed.positionals, "task list");
+  const response = await requestJson(options, "GET", "/tasks", {
+    cwd: options.cwd,
+    channelId: getFlag(parsed, "channel"),
+    status: getFlag(parsed, "status"),
+    limit: getFlag(parsed, "limit"),
+  });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printTasksList(response);
+  return 0;
+}
+
+async function handleTaskCreate(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, taskCommandParserSpec());
+  const channelId = getFlag(parsed, "channel");
+  if (!channelId) {
+    throw new CliError(2, "missing_option", "task create requires --channel <channelId>.");
+  }
+  const prompt = await readPrompt(parsed);
+  if (!prompt) {
+    throw new CliError(2, "missing_prompt", "task create requires --prompt <text>, --prompt-file <path>, or prompt text.");
+  }
+  const title = getFlag(parsed, "title") ?? titleFromPrompt(prompt);
+  const body = removeUndefined({
+    channelId,
+    title,
+    prompt,
+    status: getFlag(parsed, "status"),
+    assigneeTeammateId: getFlag(parsed, "assignee"),
+  });
+  const response = await requestJson(options, "POST", "/tasks", { cwd: options.cwd }, body);
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  const task = readField(response, "task");
+  console.log(`Task created: ${readString(task, "id") ?? ""}`);
+  console.log(`Title: ${readString(task, "title") ?? ""}`);
+  console.log(`Status: ${readString(task, "status") ?? ""}`);
+  return 0;
+}
+
+async function handleTaskShow(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const taskId = singlePositional(parsed.positionals, "task show <id>");
+  const response = await requestJson(options, "GET", `/tasks/${encodeURIComponent(taskId)}`, { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printTaskDetail(response);
+  return 0;
+}
+
+async function handleTaskUpdate(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, taskCommandParserSpec({ includeClearFlags: true }));
+  const taskId = singlePositional(parsed.positionals, "task update <id>");
+  const prompt = await readPrompt(parsed, { includePositionals: false });
+  const body = removeUndefined({
+    channelId: getFlag(parsed, "channel"),
+    title: getFlag(parsed, "title"),
+    prompt: prompt || undefined,
+    status: getFlag(parsed, "status"),
+    assigneeTeammateId: readNullableFlag(parsed, "assignee", parsed.booleans.has("clear-assignee")),
+    currentRunId: readNullableFlag(parsed, "current-run", parsed.booleans.has("clear-current-run")),
+  });
+  if (Object.keys(body).length === 0) {
+    throw new CliError(2, "empty_update", "task update requires at least one field to update.");
+  }
+  const response = await requestJson(options, "PATCH", `/tasks/${encodeURIComponent(taskId)}`, { cwd: options.cwd }, body);
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  const task = readField(response, "task");
+  console.log(`Task updated: ${readString(task, "id") ?? taskId}`);
+  console.log(`Status: ${readString(task, "status") ?? ""}`);
+  return 0;
+}
+
+async function handleTaskRun(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["provider", "thinking", "system-prompt", "agent-dir"]),
+    repeatableFlags: new Set(["tool", "append-system-prompt"]),
+  });
+  const taskId = singlePositional(parsed.positionals, "task run <id>");
+  const providerPresetId = getFlag(parsed, "provider");
+  if (!providerPresetId) {
+    throw new CliError(2, "missing_provider", "task run requires --provider <providerPresetId>.");
+  }
+  const taskResponse = await requestJson(options, "GET", `/tasks/${encodeURIComponent(taskId)}`, { cwd: options.cwd });
+  const task = readRequiredRecord(taskResponse, "task");
+  const channelId = readString(task, "channelId");
+  if (!channelId) {
+    throw new CliError(4, "bad_response", "Task response did not include channelId.");
+  }
+  const channelResponse = await requestJson(options, "GET", `/channels/${encodeURIComponent(channelId)}`, { cwd: options.cwd });
+  const channel = readRequiredRecord(channelResponse, "channel");
+  const thinkingLevel = getFlag(parsed, "thinking") ?? "medium";
+  if (!VALID_THINKING_LEVELS.has(thinkingLevel)) {
+    throw new CliError(2, "bad_thinking_level", `--thinking must be one of: ${[...VALID_THINKING_LEVELS].join(", ")}`);
+  }
+  const explicitTools = readTools(parsed);
+  const channelTools = readArray(channel, "allowedTools").filter((tool): tool is string => typeof tool === "string");
+  const body = removeUndefined({
+    cwd: readString(channel, "boundPath") ?? options.cwd,
+    providerPresetId,
+    task: {
+      id: taskId,
+      title: readString(task, "title") ?? taskId,
+      prompt: readString(task, "prompt") ?? "",
+      channelId,
+    },
+    tools: getFlagValues(parsed, "tool").length > 0 ? explicitTools : channelTools,
+    thinkingLevel,
+    systemPrompt: getFlag(parsed, "system-prompt"),
+    appendSystemPrompt: getFlagValues(parsed, "append-system-prompt"),
+    agentDir: getFlag(parsed, "agent-dir"),
+  });
+  const printer = new RunPrinter(options);
+  await streamRun(options, body, printer);
+  printer.finish();
+  return printer.exitCode();
+}
+
+async function handleTaskRemove(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const taskId = singlePositional(parsed.positionals, "task remove <id>");
+  await requestJson(options, "DELETE", `/tasks/${encodeURIComponent(taskId)}`, { cwd: options.cwd });
+  if (options.json) {
+    printJson({ ok: true, taskId });
+    return 0;
+  }
+  console.log(`Task removed: ${taskId}`);
   return 0;
 }
 
@@ -1374,7 +1650,7 @@ function parseSseBlock(block: string): SseBlock | undefined {
   return { event, data: dataLines.join("\n") };
 }
 
-async function readPrompt(parsed: ParsedCommandArgs): Promise<string> {
+async function readPrompt(parsed: ParsedCommandArgs, options: { readonly includePositionals?: boolean } = {}): Promise<string> {
   const promptParts: string[] = [];
   const promptFile = getFlag(parsed, "prompt-file");
   if (promptFile) {
@@ -1384,7 +1660,7 @@ async function readPrompt(parsed: ParsedCommandArgs): Promise<string> {
   if (promptFlag) {
     promptParts.push(promptFlag);
   }
-  if (parsed.positionals.length > 0) {
+  if (options.includePositionals !== false && parsed.positionals.length > 0) {
     promptParts.push(parsed.positionals.join(" "));
   }
   return promptParts.join("\n\n").trim();
@@ -1430,6 +1706,45 @@ function providerCommandParserSpec(options: { readonly includeClearFlags?: boole
         : []),
     ]),
   };
+}
+
+function channelCommandParserSpec(options: { readonly includeClearFlags?: boolean } = {}): CommandParserSpec {
+  return {
+    stringFlags: new Set(["name", "path", "provider", "teammate"]),
+    repeatableFlags: new Set(["tool"]),
+    booleanFlags: new Set([
+      ...(options.includeClearFlags ? ["clear-path", "clear-provider", "clear-teammate"] : []),
+    ]),
+  };
+}
+
+function taskCommandParserSpec(options: { readonly includeClearFlags?: boolean } = {}): CommandParserSpec {
+  return {
+    stringFlags: new Set(["channel", "title", "prompt", "prompt-file", "status", "assignee", "current-run"]),
+    booleanFlags: new Set([
+      ...(options.includeClearFlags ? ["clear-assignee", "clear-current-run"] : []),
+    ]),
+  };
+}
+
+function readChannelTools(parsed: ParsedCommandArgs): readonly string[] | undefined {
+  const values = getFlagValues(parsed, "tool").flatMap((value) => value.split(",")).map((value) => value.trim()).filter(Boolean);
+  if (values.length === 0) {
+    return undefined;
+  }
+  const invalidTools = values.filter((tool) => !VALID_TOOLS.has(tool));
+  if (invalidTools.length > 0) {
+    throw new CliError(2, "bad_tool", `Unsupported tool(s): ${invalidTools.join(", ")}. Valid tools: ${[...VALID_TOOLS].join(", ")}`);
+  }
+  return [...new Set(values)];
+}
+
+function readNullableFlag(parsed: ParsedCommandArgs, key: string, clear: boolean): string | null | undefined {
+  const value = getFlag(parsed, key);
+  if (value !== undefined && clear) {
+    throw new CliError(2, "bad_option", `Use either --${key} or --clear-${key}, not both.`);
+  }
+  return clear ? null : value;
 }
 
 function buildProviderAddBody(parsed: ParsedCommandArgs, kind: string): Record<string, unknown> {
@@ -1933,6 +2248,90 @@ function formatOptionalBoolean(value: boolean | undefined): string {
   return value === undefined ? "default" : String(value);
 }
 
+function printChannelsList(response: unknown): void {
+  const channels = readArray(response, "channels");
+  if (channels.length === 0) {
+    console.log("No channels found.");
+    return;
+  }
+  printTable(
+    ["ID", "Name", "Path", "Provider", "Tools", "Updated"],
+    channels.map((channel) => [
+      truncate(readString(channel, "id") ?? "", 32),
+      truncate(readString(channel, "name") ?? "", 24),
+      truncate(readString(channel, "boundPath") ?? "", 28),
+      truncate(readString(channel, "defaultProviderPresetId") ?? "", 22),
+      truncate(readArray(channel, "allowedTools").join(","), 24),
+      truncate(readString(channel, "updatedAt") ?? "", 24),
+    ]),
+  );
+}
+
+function printChannelDetail(response: unknown): void {
+  const channel = readField(response, "channel");
+  if (!isRecord(channel)) {
+    printJson(response);
+    return;
+  }
+  console.log(`ID: ${readString(channel, "id") ?? ""}`);
+  console.log(`Name: ${readString(channel, "name") ?? ""}`);
+  console.log(`Path: ${readString(channel, "boundPath") ?? ""}`);
+  const provider = readString(channel, "defaultProviderPresetId");
+  if (provider) {
+    console.log(`Default provider: ${provider}`);
+  }
+  const teammate = readString(channel, "defaultTeammateId");
+  if (teammate) {
+    console.log(`Default teammate: ${teammate}`);
+  }
+  console.log(`Allowed tools: ${readArray(channel, "allowedTools").join(", ")}`);
+  console.log(`Created: ${readString(channel, "createdAt") ?? ""}`);
+  console.log(`Updated: ${readString(channel, "updatedAt") ?? ""}`);
+}
+
+function printTasksList(response: unknown): void {
+  const tasks = readArray(response, "tasks");
+  if (tasks.length === 0) {
+    console.log("No tasks found.");
+    return;
+  }
+  printTable(
+    ["ID", "Status", "Channel", "Title", "Run", "Updated"],
+    tasks.map((task) => [
+      truncate(readString(task, "id") ?? "", 32),
+      readString(task, "status") ?? "",
+      truncate(readString(task, "channelId") ?? "", 22),
+      truncate(readString(task, "title") ?? "", 32),
+      truncate(readString(task, "currentRunId") ?? "", 18),
+      truncate(readString(task, "updatedAt") ?? "", 24),
+    ]),
+  );
+}
+
+function printTaskDetail(response: unknown): void {
+  const task = readField(response, "task");
+  if (!isRecord(task)) {
+    printJson(response);
+    return;
+  }
+  console.log(`ID: ${readString(task, "id") ?? ""}`);
+  console.log(`Title: ${readString(task, "title") ?? ""}`);
+  console.log(`Status: ${readString(task, "status") ?? ""}`);
+  console.log(`Channel: ${readString(task, "channelId") ?? ""}`);
+  const assignee = readString(task, "assigneeTeammateId");
+  if (assignee) {
+    console.log(`Assignee: ${assignee}`);
+  }
+  const currentRun = readString(task, "currentRunId");
+  if (currentRun) {
+    console.log(`Current run: ${currentRun}`);
+  }
+  console.log("Prompt:");
+  console.log(readString(task, "prompt") ?? "");
+  console.log(`Created: ${readString(task, "createdAt") ?? ""}`);
+  console.log(`Updated: ${readString(task, "updatedAt") ?? ""}`);
+}
+
 function printApprovalsList(response: unknown): void {
   const approvals = readArray(response, "approvals");
   if (approvals.length === 0) {
@@ -2189,6 +2588,14 @@ function readField(value: unknown, key: string): unknown {
   return isRecord(value) ? value[key] : undefined;
 }
 
+function readRequiredRecord(value: unknown, key: string): Record<string, unknown> {
+  const field = readField(value, key);
+  if (!isRecord(field)) {
+    throw new CliError(4, "bad_response", `Response did not include ${key}.`);
+  }
+  return field;
+}
+
 function readString(value: unknown, key: string): string | undefined {
   const field = readField(value, key);
   return typeof field === "string" ? field : undefined;
@@ -2247,6 +2654,14 @@ function printCommandHelp(command: string, subcommand?: string): void {
     printProviderHelp();
     return;
   }
+  if (command === "channel") {
+    printChannelHelp();
+    return;
+  }
+  if (command === "task") {
+    printTaskHelp();
+    return;
+  }
   if (command === "approvals") {
     printApprovalsHelp();
     return;
@@ -2280,6 +2695,16 @@ Usage:
   ling-stack [global options] provider check <id>
   ling-stack [global options] provider update <id> [options]
   ling-stack [global options] provider remove <id>
+  ling-stack [global options] channel list
+  ling-stack [global options] channel create --name <name> [--path <path>]
+  ling-stack [global options] channel show <id>
+  ling-stack [global options] channel update <id> [options]
+  ling-stack [global options] channel remove <id>
+  ling-stack [global options] task list
+  ling-stack [global options] task create --channel <id> --title <title> --prompt <prompt>
+  ling-stack [global options] task show <id>
+  ling-stack [global options] task update <id> [options]
+  ling-stack [global options] task run <id> --provider <providerPresetId>
   ling-stack [global options] run --provider <providerPresetId> [options] <prompt...>
   ling-stack [global options] runs list
   ling-stack [global options] runs show <id>
@@ -2300,7 +2725,7 @@ Global options:
   --help, -h           Show help
 
 Planned commands:
-  channel, task, daemon stop, background daemon start
+  daemon stop, background daemon start
 `);
 }
 
@@ -2345,6 +2770,31 @@ Common options:
 
 Update-only clear flags:
   --clear-base-url --clear-api-key-ref --clear-auth-header --clear-reasoning --clear-context-window --clear-max-tokens
+`);
+}
+
+function printChannelHelp(): void {
+  console.log(`Usage:
+  ling-stack channel list [--limit <n>]
+  ling-stack channel create --name <name> [--path <path>] [--provider <providerPresetId>] [--tool read --tool grep]
+  ling-stack channel show <id>
+  ling-stack channel update <id> [--name <name>] [--path <path>|--clear-path] [--provider <id>|--clear-provider] [--tool <name>]
+  ling-stack channel remove <id>
+
+Default allowed tools on create:
+  read, grep, find, ls
+`);
+}
+
+function printTaskHelp(): void {
+  console.log(`Usage:
+  ling-stack task list [--channel <id>] [--status todo] [--limit <n>]
+  ling-stack task create --channel <id> [--title <title>] --prompt <prompt>
+  ling-stack task create --channel <id> --prompt-file <path>
+  ling-stack task show <id>
+  ling-stack task update <id> [--title <title>] [--prompt <prompt>] [--status done]
+  ling-stack task run <id> --provider <providerPresetId>
+  ling-stack task remove <id>
 `);
 }
 

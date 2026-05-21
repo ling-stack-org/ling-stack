@@ -247,19 +247,24 @@ Implemented:
 - JSONL event audit logs under `.ling-stack/sessions`.
 - `GET /runs`, `GET /runs/:id`, and `GET /runs/:id/events`.
 - Best-effort `POST /runs/:id/cancel`.
+- Workspace bootstrap plus persisted channel and task storage.
+- Channel daemon APIs: `GET/POST /channels`, `GET/PATCH/DELETE /channels/:id`.
+- Task daemon APIs: `GET/POST /tasks`, `GET/PATCH/DELETE /tasks/:id`.
+- Task lifecycle updates from linked run sessions: `running`, `done`, `failed`, and `cancelled`.
 - Provider preset storage and daemon APIs.
 - `POST /runs` with `providerPresetId`.
 - Approval request storage and daemon APIs.
 - Default read-only tool policy for product runs.
 - Pi pre-tool approval gate for `bash`, `edit`, and `write`.
 - Local web UI with run launcher, event stream, run history, provider settings, and approval list.
-- CLI first-loop commands for init, providers, runs, approvals, daemon foreground start, and Web UI launch.
+- CLI first-loop commands for init, channels, tasks, providers, runs, approvals, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
 Not implemented yet:
 
 - Configurable approval policies beyond the default risky-tool gate.
 - Approval gates for external sends, deployments, credential changes, and paid media jobs.
+- Web UI channel/task CRUD surfaces.
 - OS keychain integration for secrets.
 - Desktop packaging.
 

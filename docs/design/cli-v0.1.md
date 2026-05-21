@@ -430,7 +430,7 @@ If the provider is in use, daemon should reject with a stable error.
 
 ## Channel Commands
 
-Channel commands depend on future channel APIs.
+Channel commands use the daemon channel APIs and never write SQLite directly.
 
 ### `ling-stack channel create`
 
@@ -489,7 +489,7 @@ DELETE /channels/:id
 
 ## Task Commands
 
-Task commands depend on future task APIs.
+Task commands use the daemon task APIs and can start a persisted task through the run stream.
 
 ### `ling-stack task create`
 
@@ -515,10 +515,9 @@ Options:
 --title <text>
 --prompt <text>
 --prompt-file <path>
---run
 ```
 
-If `--run` is set, CLI should create the task and then call run API.
+Prompt text can also be supplied as positional text. To execute a task, use `ling-stack task run <id> --provider <providerPresetId>`.
 
 ### `ling-stack task list`
 

@@ -12,6 +12,16 @@ import type {
   ProviderPresetUpdateInput,
 } from "./provider-types.js";
 import type { LingStackRuntimePaths } from "./runtime-paths.js";
+import type {
+  Channel,
+  ChannelUpdateInput,
+  CreateChannelInput,
+  CreateTaskInput,
+  ListChannelsOptions,
+  ListTasksOptions,
+  Task,
+  TaskUpdateInput,
+} from "./workspace-types.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
@@ -116,6 +126,16 @@ export interface RunStore {
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
   countEvents(runId: string): number;
   recoverStaleRuns(now: string): number;
+  createChannel(input: CreateChannelInput, now: string): Channel;
+  getChannel(id: string): Channel | undefined;
+  listChannels(options?: ListChannelsOptions): Channel[];
+  updateChannel(id: string, input: ChannelUpdateInput, now: string): Channel | undefined;
+  deleteChannel(id: string): boolean;
+  createTask(input: CreateTaskInput, now: string): Task;
+  getTask(id: string): Task | undefined;
+  listTasks(options?: ListTasksOptions): Task[];
+  updateTask(id: string, input: TaskUpdateInput, now: string): Task | undefined;
+  deleteTask(id: string): boolean;
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset;
   getProviderPreset(id: string): ProviderPreset | undefined;
   listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];

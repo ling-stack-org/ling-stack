@@ -11,12 +11,16 @@ import {
   providerKinds,
   readOnlyRunTools,
   resolveSecretRef,
+  taskStatuses,
   writeRunSummary,
   type ApprovalPayload,
   type ApprovalRequest,
   type ApprovalRisk,
   type ApprovalStatus,
   type CreateApprovalRequestInput,
+  type ChannelUpdateInput,
+  type CreateChannelInput,
+  type CreateTaskInput,
   type ProviderApi,
   type ProviderCapability,
   type ProviderCheckResult,
@@ -27,10 +31,13 @@ import {
   type PublicProviderPreset,
   type RunEventEnvelope,
   type RunEventType,
+  type RunTool,
   type RunSession,
   type RunStore,
   type RunSummary,
   type RunStatus,
+  type TaskStatus,
+  type TaskUpdateInput,
 } from "@ling-stack/core";
 import {
   createPiRunner,
@@ -167,6 +174,16 @@ async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/channels") {
+    await handleChannelsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/tasks") {
+    await handleTasksCollection(request, response, config, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/providers") {
     await handleProvidersCollection(request, response, config, storeRegistry);
     return;
@@ -197,6 +214,18 @@ async function routeRequest(
   }
   if (request.method === "GET" && runRoute?.kind === "events") {
     handleGetRunEvents(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+
+  const channelRoute = parseChannelRoute(url.pathname);
+  if (channelRoute) {
+    await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId);
+    return;
+  }
+
+  const taskRoute = parseTaskRoute(url.pathname);
+  if (taskRoute) {
+    await handleTaskItem(request, response, config, storeRegistry, taskRoute.taskId);
     return;
   }
 
@@ -332,6 +361,7 @@ async function handleRun(
   try {
     runStartedAt = new Date().toISOString();
     store.markRunStarted(run.id, runStartedAt);
+    updateLinkedTaskForRun(store, run.taskId, { status: "running", currentRunId: run.id });
 
     const result = await runner.runTask({
       ...runnerRequest,
@@ -379,6 +409,7 @@ async function handleRun(
       errorMessage: null,
     });
     store.markRunSucceeded(run.id, endedAt, summaryPath);
+    updateLinkedTaskForRun(store, run.taskId, { status: "done", currentRunId: run.id });
 
     if (!clientClosed) {
       response.end();
@@ -414,12 +445,208 @@ async function handleRun(
       errorMessage: message,
     });
     store.markRunFailed(run.id, endedAt, message, summaryPath);
+    updateLinkedTaskForRun(store, run.taskId, { status: "failed", currentRunId: run.id });
 
     if (!clientClosed) {
       response.end();
     }
   } finally {
     activeRuns.delete(run.id);
+  }
+}
+
+async function handleChannelsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channels: store.listChannels({ limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const channel = store.createChannel(parseCreateChannelInput(body), new Date().toISOString());
+      writeJson(response, 201, { channel });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /channels` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, { channel });
+      return;
+    }
+
+    if (request.method === "PATCH") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const updated = store.updateChannel(channelId, parseChannelUpdateInput(body), new Date().toISOString());
+      writeJson(response, 200, { channel: updated });
+      return;
+    }
+
+    if (request.method === "DELETE") {
+      const tasks = store.listTasks({ channelId, limit: 1 });
+      if (tasks.length > 0) {
+        writeJson(response, 409, { error: "channel_has_tasks", message: `Channel has tasks and cannot be deleted: ${channelId}` });
+        return;
+      }
+      store.deleteChannel(channelId);
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channels` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleTasksCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        tasks: store.listTasks({
+          channelId: url.searchParams.get("channelId") ?? undefined,
+          status: readOptionalTaskStatusQuery(url),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseCreateTaskInput(body);
+      if (!store.getChannel(input.channelId)) {
+        writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+        return;
+      }
+      const task = store.createTask(input, new Date().toISOString());
+      writeJson(response, 201, { task });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /tasks` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleTaskItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  taskId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const task = store.getTask(taskId);
+    if (!task) {
+      writeJson(response, 404, { error: "task_not_found", message: `Task not found: ${taskId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, { task });
+      return;
+    }
+
+    if (request.method === "PATCH") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseTaskUpdateInput(body);
+      if (input.channelId && !store.getChannel(input.channelId)) {
+        writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+        return;
+      }
+      const updated = store.updateTask(taskId, input, new Date().toISOString());
+      writeJson(response, 200, { task: updated });
+      return;
+    }
+
+    if (request.method === "DELETE") {
+      store.deleteTask(taskId);
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for tasks` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -795,11 +1022,19 @@ function ensureRunCancelled(input: {
     errorMessage: null,
   });
   input.store.markRunCancelled(input.runId, endedAt, summaryPath);
+  updateLinkedTaskForRun(input.store, input.taskId, { status: "cancelled", currentRunId: input.runId });
   return { event };
 }
 
 function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function updateLinkedTaskForRun(store: RunStore, taskId: string, input: TaskUpdateInput): void {
+  if (!store.getTask(taskId)) {
+    return;
+  }
+  store.updateTask(taskId, input, new Date().toISOString());
 }
 
 function appendFailureEvent(
@@ -1288,6 +1523,22 @@ function parseRunRoute(pathname: string): { kind: "run"; runId: string } | { kin
   return undefined;
 }
 
+function parseChannelRoute(pathname: string): { readonly channelId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "channels") {
+    return { channelId: segments[1] };
+  }
+  return undefined;
+}
+
+function parseTaskRoute(pathname: string): { readonly taskId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "tasks") {
+    return { taskId: segments[1] };
+  }
+  return undefined;
+}
+
 function parseProviderRoute(pathname: string): { readonly providerId: string; readonly action?: "check" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "providers") {
@@ -1308,6 +1559,88 @@ function parseApprovalRoute(pathname: string): { readonly approvalId: string; re
     return { approvalId: segments[1], action: segments[2] };
   }
   return undefined;
+}
+
+function parseCreateChannelInput(value: unknown): CreateChannelInput {
+  if (!isRecord(value)) {
+    throw new Error("Channel request must be a JSON object");
+  }
+  const input: CreateChannelInput = {
+    name: readString(value, "name"),
+    boundPath: readOptionalString(value, "boundPath"),
+    defaultProviderPresetId: readOptionalString(value, "defaultProviderPresetId"),
+    defaultTeammateId: readOptionalString(value, "defaultTeammateId"),
+    allowedTools: readOptionalRunTools(value, "allowedTools"),
+  };
+  validateChannelInput(input);
+  return input;
+}
+
+function parseChannelUpdateInput(value: unknown): ChannelUpdateInput {
+  if (!isRecord(value)) {
+    throw new Error("Channel update must be a JSON object");
+  }
+  const input: ChannelUpdateInput = {
+    name: readOptionalString(value, "name"),
+    boundPath: readNullableString(value, "boundPath"),
+    defaultProviderPresetId: readNullableString(value, "defaultProviderPresetId"),
+    defaultTeammateId: readNullableString(value, "defaultTeammateId"),
+    allowedTools: readOptionalRunTools(value, "allowedTools"),
+  };
+  validateChannelInput(input);
+  return input;
+}
+
+function validateChannelInput(input: ChannelUpdateInput): void {
+  if (input.name !== undefined && input.name.trim().length === 0) {
+    throw new Error("name must be a non-empty string");
+  }
+  if (input.allowedTools !== undefined && input.allowedTools.length === 0) {
+    throw new Error("allowedTools must contain at least one tool");
+  }
+}
+
+function parseCreateTaskInput(value: unknown): CreateTaskInput {
+  if (!isRecord(value)) {
+    throw new Error("Task request must be a JSON object");
+  }
+  const input: CreateTaskInput = {
+    channelId: readString(value, "channelId"),
+    title: readString(value, "title"),
+    prompt: readString(value, "prompt"),
+    status: readOptionalTaskStatus(value, "status"),
+    assigneeTeammateId: readOptionalString(value, "assigneeTeammateId"),
+  };
+  validateTaskInput(input);
+  return input;
+}
+
+function parseTaskUpdateInput(value: unknown): TaskUpdateInput {
+  if (!isRecord(value)) {
+    throw new Error("Task update must be a JSON object");
+  }
+  const input: TaskUpdateInput = {
+    channelId: readOptionalString(value, "channelId"),
+    title: readOptionalString(value, "title"),
+    prompt: readOptionalString(value, "prompt"),
+    status: readOptionalTaskStatus(value, "status"),
+    assigneeTeammateId: readNullableString(value, "assigneeTeammateId"),
+    currentRunId: readNullableString(value, "currentRunId"),
+  };
+  validateTaskInput(input);
+  return input;
+}
+
+function validateTaskInput(input: TaskUpdateInput): void {
+  if (input.channelId !== undefined && input.channelId.trim().length === 0) {
+    throw new Error("channelId must be a non-empty string");
+  }
+  if (input.title !== undefined && input.title.trim().length === 0) {
+    throw new Error("title must be a non-empty string");
+  }
+  if (input.prompt !== undefined && input.prompt.trim().length === 0) {
+    throw new Error("prompt must be a non-empty string");
+  }
 }
 
 function parseProviderPresetInput(value: unknown): ProviderPresetInput {
@@ -1631,6 +1964,21 @@ function readOptionalStringArray<T extends string = string>(
   });
 }
 
+function readOptionalRunTools(record: Record<string, unknown>, key: string): RunTool[] | undefined {
+  return readOptionalStringArray(record, key, [...readOnlyRunTools, "bash", "edit", "write"] as const);
+}
+
+function readOptionalTaskStatus(record: Record<string, unknown>, key: string): TaskStatus | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!taskStatuses.includes(value as TaskStatus)) {
+    throw new Error(`${key} must be one of: ${taskStatuses.join(", ")}`);
+  }
+  return value as TaskStatus;
+}
+
 function readProviderKind(record: Record<string, unknown>, key: string): ProviderKind {
   const value = readString(record, key);
   if (!providerKinds.includes(value as ProviderKind)) {
@@ -1693,6 +2041,17 @@ function readOptionalRunStatusQuery(url: URL): RunStatus | undefined {
     throw new Error("status must be one of: queued, running, waiting_for_approval, succeeded, failed, cancelled");
   }
   return value as RunStatus;
+}
+
+function readOptionalTaskStatusQuery(url: URL): TaskStatus | undefined {
+  const value = url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (!taskStatuses.includes(value as TaskStatus)) {
+    throw new Error(`status must be one of: ${taskStatuses.join(", ")}`);
+  }
+  return value as TaskStatus;
 }
 
 function readOptionalApprovalStatusQuery(url: URL): ApprovalStatus | undefined {

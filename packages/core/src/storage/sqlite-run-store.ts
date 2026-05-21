@@ -22,6 +22,24 @@ import {
   type ProviderPresetUpdateInput,
 } from "../provider-types.js";
 import {
+  readOnlyRunTools,
+  type RunTool,
+} from "../approval-policy.js";
+import {
+  DEFAULT_WORKSPACE_ID,
+  createChannelId,
+  createTaskId,
+  type Channel,
+  type ChannelUpdateInput,
+  type CreateChannelInput,
+  type CreateTaskInput,
+  type ListChannelsOptions,
+  type ListTasksOptions,
+  type Task,
+  type TaskStatus,
+  type TaskUpdateInput,
+} from "../workspace-types.js";
+import {
   createEventId,
   type CreateRunInput,
   type ListRunEventsOptions,
@@ -41,6 +59,8 @@ const PROVIDERS_MIGRATION_VERSION = 2;
 const PROVIDERS_MIGRATION_NAME = "create_provider_presets";
 const APPROVALS_MIGRATION_VERSION = 3;
 const APPROVALS_MIGRATION_NAME = "create_approval_requests";
+const WORKSPACE_MIGRATION_VERSION = 4;
+const WORKSPACE_MIGRATION_NAME = "create_workspace_channels_tasks";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -59,6 +79,7 @@ export class SqliteRunStore implements RunStore {
     this.database = new DatabaseSync(this.paths.databasePath);
     this.configureDatabase();
     this.applyMigrations();
+    this.ensureDefaultWorkspace();
 
     if (!existed) {
       this.database.exec("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -272,6 +293,232 @@ export class SqliteRunStore implements RunStore {
     }
 
     return staleRuns.length;
+  }
+
+  createChannel(input: CreateChannelInput, now: string): Channel {
+    const channel: Channel = {
+      id: createChannelId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      name: input.name,
+      boundPath: input.boundPath,
+      defaultProviderPresetId: input.defaultProviderPresetId,
+      defaultTeammateId: input.defaultTeammateId,
+      allowedTools: input.allowedTools ?? [...readOnlyRunTools],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO channels (
+          id,
+          workspace_id,
+          name,
+          bound_path,
+          default_provider_preset_id,
+          default_teammate_id,
+          allowed_tools_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        channel.id,
+        channel.workspaceId,
+        channel.name,
+        channel.boundPath ?? null,
+        channel.defaultProviderPresetId ?? null,
+        channel.defaultTeammateId ?? null,
+        stringifyJson(channel.allowedTools),
+        channel.createdAt,
+        channel.updatedAt,
+      );
+
+    const created = this.getChannel(channel.id);
+    if (!created) {
+      throw new Error(`Failed to create channel: ${channel.id}`);
+    }
+    return created;
+  }
+
+  getChannel(id: string): Channel | undefined {
+    const row = this.database.prepare(channelSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannel(row) : undefined;
+  }
+
+  listChannels(options: ListChannelsOptions = {}): Channel[] {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    return this.database
+      .prepare(`${channelSelectSql("WHERE workspace_id = ?")} ORDER BY created_at DESC LIMIT ?`)
+      .all(DEFAULT_WORKSPACE_ID, limit)
+      .map(mapChannel);
+  }
+
+  updateChannel(id: string, input: ChannelUpdateInput, now: string): Channel | undefined {
+    const existing = this.getChannel(id);
+    if (!existing) {
+      return undefined;
+    }
+
+    const next: Channel = {
+      ...existing,
+      name: input.name ?? existing.name,
+      boundPath: nullableUpdate(input.boundPath, existing.boundPath),
+      defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, existing.defaultProviderPresetId),
+      defaultTeammateId: nullableUpdate(input.defaultTeammateId, existing.defaultTeammateId),
+      allowedTools: input.allowedTools ?? existing.allowedTools,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        UPDATE channels
+        SET
+          name = ?,
+          bound_path = ?,
+          default_provider_preset_id = ?,
+          default_teammate_id = ?,
+          allowed_tools_json = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.name,
+        next.boundPath ?? null,
+        next.defaultProviderPresetId ?? null,
+        next.defaultTeammateId ?? null,
+        stringifyJson(next.allowedTools),
+        next.updatedAt,
+        id,
+      );
+
+    return this.getChannel(id);
+  }
+
+  deleteChannel(id: string): boolean {
+    const result = this.database.prepare("DELETE FROM channels WHERE id = ?").run(id);
+    return Number(result.changes) > 0;
+  }
+
+  createTask(input: CreateTaskInput, now: string): Task {
+    const task: Task = {
+      id: createTaskId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      title: input.title,
+      prompt: input.prompt,
+      status: input.status ?? "todo",
+      assigneeTeammateId: input.assigneeTeammateId,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO tasks (
+          id,
+          workspace_id,
+          channel_id,
+          title,
+          prompt,
+          status,
+          assignee_teammate_id,
+          current_run_id,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        task.id,
+        task.workspaceId,
+        task.channelId,
+        task.title,
+        task.prompt,
+        task.status,
+        task.assigneeTeammateId ?? null,
+        task.currentRunId ?? null,
+        task.createdAt,
+        task.updatedAt,
+      );
+
+    const created = this.getTask(task.id);
+    if (!created) {
+      throw new Error(`Failed to create task: ${task.id}`);
+    }
+    return created;
+  }
+
+  getTask(id: string): Task | undefined {
+    const row = this.database.prepare(taskSelectSql("WHERE id = ?")).get(id);
+    return row ? mapTask(row) : undefined;
+  }
+
+  listTasks(options: ListTasksOptions = {}): Task[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${taskSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC LIMIT ?`)
+      .all(...params)
+      .map(mapTask);
+  }
+
+  updateTask(id: string, input: TaskUpdateInput, now: string): Task | undefined {
+    const existing = this.getTask(id);
+    if (!existing) {
+      return undefined;
+    }
+
+    const next: Task = {
+      ...existing,
+      channelId: input.channelId ?? existing.channelId,
+      title: input.title ?? existing.title,
+      prompt: input.prompt ?? existing.prompt,
+      status: input.status ?? existing.status,
+      assigneeTeammateId: nullableUpdate(input.assigneeTeammateId, existing.assigneeTeammateId),
+      currentRunId: nullableUpdate(input.currentRunId, existing.currentRunId),
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        UPDATE tasks
+        SET
+          channel_id = ?,
+          title = ?,
+          prompt = ?,
+          status = ?,
+          assignee_teammate_id = ?,
+          current_run_id = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.channelId,
+        next.title,
+        next.prompt,
+        next.status,
+        next.assigneeTeammateId ?? null,
+        next.currentRunId ?? null,
+        next.updatedAt,
+        id,
+      );
+
+    return this.getTask(id);
+  }
+
+  deleteTask(id: string): boolean {
+    const result = this.database.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+    return Number(result.changes) > 0;
   }
 
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {
@@ -700,6 +947,64 @@ export class SqliteRunStore implements RunStore {
 
       this.recordMigration(APPROVALS_MIGRATION_VERSION, APPROVALS_MIGRATION_NAME);
     }
+
+    if (!this.hasMigration(WORKSPACE_MIGRATION_VERSION)) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS workspaces (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          default_provider_preset_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS channels (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          bound_path TEXT,
+          default_provider_preset_id TEXT,
+          default_teammate_id TEXT,
+          allowed_tools_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS tasks (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          status TEXT NOT NULL,
+          assignee_teammate_id TEXT,
+          current_run_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channels_workspace ON channels(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_tasks_channel_status ON tasks(channel_id, status);
+        CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_tasks_current_run ON tasks(current_run_id);
+      `);
+
+      this.recordMigration(WORKSPACE_MIGRATION_VERSION, WORKSPACE_MIGRATION_NAME);
+    }
+  }
+
+  private ensureDefaultWorkspace(): void {
+    const now = new Date().toISOString();
+    this.database
+      .prepare(`
+        INSERT INTO workspaces (id, name, default_provider_preset_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO NOTHING
+      `)
+      .run(DEFAULT_WORKSPACE_ID, "Default Workspace", null, now, now);
   }
 
   private hasMigration(version: number): boolean {
@@ -810,6 +1115,35 @@ function mapRunEvent(row: Record<string, SQLOutputValue>): RunEventEnvelope {
   };
 }
 
+function mapChannel(row: Record<string, SQLOutputValue>): Channel {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    name: readString(row, "name"),
+    boundPath: readNullableString(row, "bound_path"),
+    defaultProviderPresetId: readNullableString(row, "default_provider_preset_id"),
+    defaultTeammateId: readNullableString(row, "default_teammate_id"),
+    allowedTools: parseJsonStringArray(readString(row, "allowed_tools_json")) as RunTool[],
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapTask(row: Record<string, SQLOutputValue>): Task {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    title: readString(row, "title"),
+    prompt: readString(row, "prompt"),
+    status: readString(row, "status") as TaskStatus,
+    assigneeTeammateId: readNullableString(row, "assignee_teammate_id"),
+    currentRunId: readNullableString(row, "current_run_id"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
 function mapProviderPreset(row: Record<string, SQLOutputValue>): ProviderPreset {
   return omitUndefined({
     id: readString(row, "id"),
@@ -853,6 +1187,41 @@ function mapApprovalRequest(row: Record<string, SQLOutputValue>): ApprovalReques
     resolvedBy: readNullableString(row, "resolved_by") as ApprovalRequest["resolvedBy"],
     decisionReason: readNullableString(row, "decision_reason"),
   });
+}
+
+function channelSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      name,
+      bound_path,
+      default_provider_preset_id,
+      default_teammate_id,
+      allowed_tools_json,
+      created_at,
+      updated_at
+    FROM channels
+    ${whereClause}
+  `;
+}
+
+function taskSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      title,
+      prompt,
+      status,
+      assignee_teammate_id,
+      current_run_id,
+      created_at,
+      updated_at
+    FROM tasks
+    ${whereClause}
+  `;
 }
 
 function providerPresetSelectSql(whereClause: string): string {

@@ -34,6 +34,137 @@ Response:
 {"ok":true,"service":"ling-stack-daemon"}
 ```
 
+## Channels and Tasks
+
+Channels bind a workspace workflow to optional defaults such as a local path, provider preset, teammate, and allowed tools. Tasks are persisted work items inside a channel.
+
+All channel and task endpoints require `cwd` so the daemon can choose the local workspace database:
+
+```text
+.ling-stack/ling-stack.sqlite
+```
+
+### List Channels
+
+```http
+GET /channels?cwd=/path/to/project&limit=100
+```
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "channels": [
+    {
+      "id": "channel_...",
+      "workspaceId": "workspace_default",
+      "name": "Engineering",
+      "boundPath": "/path/to/project",
+      "defaultProviderPresetId": "provider_...",
+      "defaultTeammateId": null,
+      "allowedTools": ["read", "grep", "find", "ls"],
+      "createdAt": "2026-05-21T00:00:00.000Z",
+      "updatedAt": "2026-05-21T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Create Channel
+
+```http
+POST /channels?cwd=/path/to/project
+Content-Type: application/json
+```
+
+```json
+{
+  "name": "Engineering",
+  "boundPath": "/path/to/project",
+  "defaultProviderPresetId": "provider_...",
+  "defaultTeammateId": "teammate_...",
+  "allowedTools": ["read", "grep", "find", "ls"]
+}
+```
+
+`allowedTools` may contain `read`, `grep`, `find`, `ls`, `bash`, `edit`, or `write`.
+
+### Get, Update, Delete Channel
+
+```http
+GET /channels/:id?cwd=/path/to/project
+PATCH /channels/:id?cwd=/path/to/project
+DELETE /channels/:id?cwd=/path/to/project
+```
+
+`PATCH` accepts partial fields. Nullable fields can be cleared with `null`. `DELETE` returns `409 channel_has_tasks` when the channel still owns tasks.
+
+### List Tasks
+
+```http
+GET /tasks?cwd=/path/to/project&channelId=channel_...&status=todo&limit=100
+```
+
+Supported statuses:
+
+```text
+todo, claimed, running, blocked, review, done, failed, cancelled
+```
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "tasks": [
+    {
+      "id": "task_...",
+      "workspaceId": "workspace_default",
+      "channelId": "channel_...",
+      "title": "Inspect daemon API",
+      "prompt": "Read the daemon package and summarize the routes.",
+      "status": "todo",
+      "assigneeTeammateId": null,
+      "currentRunId": null,
+      "createdAt": "2026-05-21T00:00:00.000Z",
+      "updatedAt": "2026-05-21T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Create Task
+
+```http
+POST /tasks?cwd=/path/to/project
+Content-Type: application/json
+```
+
+```json
+{
+  "channelId": "channel_...",
+  "title": "Inspect daemon API",
+  "prompt": "Read the daemon package and summarize the routes.",
+  "status": "todo",
+  "assigneeTeammateId": "teammate_..."
+}
+```
+
+The referenced channel must exist.
+
+### Get, Update, Delete Task
+
+```http
+GET /tasks/:id?cwd=/path/to/project
+PATCH /tasks/:id?cwd=/path/to/project
+DELETE /tasks/:id?cwd=/path/to/project
+```
+
+`PATCH` accepts `channelId`, `title`, `prompt`, `status`, `assigneeTeammateId`, and `currentRunId`. Nullable fields can be cleared with `null`.
+
+When a persisted task is run through `/runs`, the daemon updates the linked task status to `running`, then `done`, `failed`, or `cancelled`.
+
 ## Run Task
 
 ```http
@@ -352,7 +483,7 @@ The current check validates shape, base URL format, enabled state, supported cap
 
 ## Approvals
 
-Approval requests are persisted in the workspace SQLite database and can be listed or resolved through the daemon. v0.1 stores approval decisions and enforces read-only run tools by default. It does not yet pause Pi tool execution before a side effect; that requires controlled wrappers or a Pi approval hook.
+Approval requests are persisted in the workspace SQLite database and can be listed or resolved through the daemon. v0.1 stores approval decisions, defaults product runs to read-only tools, and pauses Pi tool execution before `bash`, `edit`, or `write` proceeds.
 
 ### List Approvals
 
