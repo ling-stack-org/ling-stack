@@ -7,17 +7,23 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import {
+  approvalToolDecisions,
   createSqliteRunStore,
+  defaultAllowedWritePaths,
+  defaultApprovalToolDecisions,
   defaultProviderTemplates,
   resolveRuntimePaths,
+  type ApprovalToolDecision,
   type ProviderPreset,
   type ProviderPresetInput,
+  type RunTool,
 } from "@ling-stack/core";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = "17891";
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"] as const;
-const VALID_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "edit", "write"]);
+const VALID_TOOLS: ReadonlySet<string> = new Set(Object.keys(defaultApprovalToolDecisions) as RunTool[]);
+const VALID_POLICY_DECISIONS: ReadonlySet<string> = new Set(approvalToolDecisions);
 const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
 const VALID_PROVIDER_KINDS = new Set(["openai", "anthropic", "openai-compatible", "doubao", "deepseek", "minimax", "glm", "jimeng", "seedream", "seedance"]);
 const VALID_PROVIDER_APIS = new Set(["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai", "mistral-conversations", "media-job"]);
@@ -324,6 +330,8 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleChannel(rest, parsed.options);
     case "task":
       return await handleTask(rest, parsed.options);
+    case "policy":
+      return await handlePolicy(rest, parsed.options);
     case "approvals":
       return await handleApprovals(rest, parsed.options);
     case "runs":
@@ -931,6 +939,63 @@ async function handleTaskRemove(args: readonly string[], options: GlobalOptions)
     return 0;
   }
   console.log(`Task removed: ${taskId}`);
+  return 0;
+}
+
+async function handlePolicy(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "show", ...rest] = args;
+  switch (subcommand) {
+    case "show":
+      return await handlePolicyShow(rest, options);
+    case "set":
+      return await handlePolicySet(rest, options);
+    case "reset":
+      return await handlePolicyReset(rest, options);
+    default:
+      throw new CliError(2, "unknown_command", `Unknown policy command: ${subcommand}`);
+  }
+}
+
+async function handlePolicyShow(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  assertNoPositionals(parsed.positionals, "policy show");
+  const response = await requestJson(options, "GET", "/approval-policy", { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printApprovalPolicy(response);
+  return 0;
+}
+
+async function handlePolicySet(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, policyCommandParserSpec());
+  assertNoPositionals(parsed.positionals, "policy set");
+  const body = buildPolicySetBody(parsed);
+  if (Object.keys(body).length === 0) {
+    throw new CliError(2, "empty_update", "policy set requires at least one --tool or --write-path option.");
+  }
+  const response = await requestJson(options, "PATCH", "/approval-policy", { cwd: options.cwd }, body);
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printApprovalPolicy(response);
+  return 0;
+}
+
+async function handlePolicyReset(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  assertNoPositionals(parsed.positionals, "policy reset");
+  const response = await requestJson(options, "PATCH", "/approval-policy", { cwd: options.cwd }, {
+    toolDecisions: defaultApprovalToolDecisions,
+    allowedWritePaths: defaultAllowedWritePaths,
+  });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printApprovalPolicy(response);
   return 0;
 }
 
@@ -1597,6 +1662,12 @@ function taskCommandParserSpec(options: { readonly includeClearFlags?: boolean }
   };
 }
 
+function policyCommandParserSpec(): CommandParserSpec {
+  return {
+    repeatableFlags: new Set(["tool", "write-path"]),
+  };
+}
+
 function readChannelTools(parsed: ParsedCommandArgs): readonly string[] | undefined {
   const values = getFlagValues(parsed, "tool").flatMap((value) => value.split(",")).map((value) => value.trim()).filter(Boolean);
   if (values.length === 0) {
@@ -1607,6 +1678,48 @@ function readChannelTools(parsed: ParsedCommandArgs): readonly string[] | undefi
     throw new CliError(2, "bad_tool", `Unsupported tool(s): ${invalidTools.join(", ")}. Valid tools: ${[...VALID_TOOLS].join(", ")}`);
   }
   return [...new Set(values)];
+}
+
+function buildPolicySetBody(parsed: ParsedCommandArgs): Record<string, unknown> {
+  return removeUndefined({
+    toolDecisions: readPolicyToolDecisions(parsed),
+    allowedWritePaths: readPolicyWritePaths(parsed),
+  });
+}
+
+function readPolicyToolDecisions(parsed: ParsedCommandArgs): Partial<Record<RunTool, ApprovalToolDecision>> | undefined {
+  const assignments = getFlagValues(parsed, "tool")
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (assignments.length === 0) {
+    return undefined;
+  }
+
+  const toolDecisions: Partial<Record<RunTool, ApprovalToolDecision>> = {};
+  for (const assignment of assignments) {
+    const separatorIndex = assignment.indexOf("=");
+    if (separatorIndex <= 0 || separatorIndex === assignment.length - 1) {
+      throw new CliError(2, "bad_tool_policy", "--tool must use TOOL=allow|ask|deny.");
+    }
+    const tool = assignment.slice(0, separatorIndex).trim();
+    const decision = assignment.slice(separatorIndex + 1).trim();
+    assertAllowed("tool", tool, VALID_TOOLS);
+    assertAllowed("decision", decision, VALID_POLICY_DECISIONS);
+    toolDecisions[tool as RunTool] = decision as ApprovalToolDecision;
+  }
+  return toolDecisions;
+}
+
+function readPolicyWritePaths(parsed: ParsedCommandArgs): readonly string[] | undefined {
+  const paths = getFlagValues(parsed, "write-path")
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (paths.length === 0) {
+    return undefined;
+  }
+  return [...new Set(paths)];
 }
 
 function readNullableFlag(parsed: ParsedCommandArgs, key: string, clear: boolean): string | null | undefined {
@@ -2202,6 +2315,31 @@ function printTaskDetail(response: unknown): void {
   console.log(`Updated: ${readString(task, "updatedAt") ?? ""}`);
 }
 
+function printApprovalPolicy(response: unknown): void {
+  const policy = readField(response, "policy");
+  if (!isRecord(policy)) {
+    printJson(response);
+    return;
+  }
+
+  console.log(`CWD: ${readString(response, "cwd") ?? ""}`);
+  console.log(`Workspace: ${readString(policy, "workspaceId") ?? ""}`);
+  console.log(`Updated: ${readString(policy, "updatedAt") ?? ""}`);
+  console.log("");
+  console.log("Tool decisions:");
+  const toolDecisions = readField(policy, "toolDecisions");
+  printTable(
+    ["Tool", "Decision"],
+    (Object.keys(defaultApprovalToolDecisions) as RunTool[]).map((tool) => [
+      tool,
+      readString(toolDecisions, tool) ?? defaultApprovalToolDecisions[tool],
+    ]),
+  );
+  const allowedWritePaths = readArray(policy, "allowedWritePaths").filter((path): path is string => typeof path === "string");
+  console.log("");
+  console.log(`Allowed write paths: ${allowedWritePaths.length > 0 ? allowedWritePaths.join(", ") : "<none>"}`);
+}
+
 function printApprovalsList(response: unknown): void {
   const approvals = readArray(response, "approvals");
   if (approvals.length === 0) {
@@ -2532,6 +2670,10 @@ function printCommandHelp(command: string, subcommand?: string): void {
     printTaskHelp();
     return;
   }
+  if (command === "policy") {
+    printPolicyHelp();
+    return;
+  }
   if (command === "approvals") {
     printApprovalsHelp();
     return;
@@ -2576,6 +2718,9 @@ Usage:
   ling-stack [global options] task update <id> [options]
   ling-stack [global options] task run <id> --provider <providerPresetId>
   ling-stack [global options] run --provider <providerPresetId> [options] <prompt...>
+  ling-stack [global options] policy show
+  ling-stack [global options] policy set --tool write=deny --write-path .
+  ling-stack [global options] policy reset
   ling-stack [global options] runs list
   ling-stack [global options] runs show <id>
   ling-stack [global options] runs events <id>
@@ -2683,6 +2828,22 @@ Options:
   --system-prompt <text>       Override system prompt
   --append-system-prompt <txt> Repeatable appended system prompt
   --agent-dir <path>           Pi agent directory
+`);
+}
+
+function printPolicyHelp(): void {
+  console.log(`Usage:
+  ling-stack policy show
+  ling-stack policy set --tool bash=ask --tool write=deny
+  ling-stack policy set --write-path . --write-path docs
+  ling-stack policy reset
+
+Options:
+  --tool <tool=decision>        Repeatable or comma-separated. Tools: ${[...VALID_TOOLS].join(", ")}
+  --write-path <path>           Repeatable or comma-separated. Relative paths resolve from the run cwd.
+
+Decisions:
+  allow, ask, deny
 `);
 }
 

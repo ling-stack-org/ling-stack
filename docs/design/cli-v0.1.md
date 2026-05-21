@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft for Milestone 6: CLI First Loop.
+Implemented for Milestone 6: CLI First Loop.
 
 This design depends on:
 
@@ -11,7 +11,7 @@ This design depends on:
 - [Approval policy](approval-policy.md)
 - [Web UI v0.1](web-ui-v0.1.md)
 
-The current `packages/cli` package is a placeholder. It prints help and returns `Command not implemented yet` for all real commands.
+The current `packages/cli` package can initialize a workspace, manage providers, channels, tasks, runs, approvals, approval policy, daemon foreground startup, and Web UI launch through daemon APIs.
 
 ## Goal
 
@@ -50,21 +50,24 @@ v0.1 CLI does not include:
 
 Implemented today:
 
-```text
-ling-stack --help
-ling-stack help
-```
+- `ling-stack init`
+- `ling-stack daemon status`
+- `ling-stack daemon start --foreground`
+- `ling-stack provider list/add/show/check/update/remove`
+- `ling-stack channel list/create/show/update/remove`
+- `ling-stack task list/create/show/update/run/remove`
+- `ling-stack run`
+- `ling-stack runs list/show/events/cancel`
+- `ling-stack approvals list/show/approve/deny`
+- `ling-stack policy show/set/reset`
+- `ling-stack ui`
 
 Not implemented yet:
 
-- daemon start/status helpers,
-- init,
-- provider commands,
-- channel commands,
-- task commands,
-- run commands,
-- approval commands,
-- UI launcher.
+- background daemon start,
+- daemon stop,
+- shell completion generation,
+- desktop packaging.
 
 ## Design Principles
 
@@ -114,6 +117,10 @@ ling-stack approvals list
 ling-stack approvals show
 ling-stack approvals approve
 ling-stack approvals deny
+
+ling-stack policy show
+ling-stack policy set
+ling-stack policy reset
 
 ling-stack ui
 ```
@@ -782,6 +789,57 @@ If an approval is critical, the CLI should require an explicit confirmation flag
 ling-stack approvals approve approval_critical --confirm-critical
 ```
 
+### `ling-stack policy show`
+
+Purpose:
+
+- inspect the workspace approval policy from terminal.
+
+Calls:
+
+```http
+GET /approval-policy?cwd=/path/to/workspace
+```
+
+Default output includes workspace id, updated time, a tool decision table, and allowed write paths.
+
+### `ling-stack policy set`
+
+Command:
+
+```bash
+ling-stack policy set --tool bash=ask --tool write=deny
+ling-stack policy set --write-path . --write-path docs
+```
+
+Calls:
+
+```http
+PATCH /approval-policy?cwd=/path/to/workspace
+```
+
+Request body is partial:
+
+```json
+{
+  "toolDecisions": {
+    "bash": "ask",
+    "write": "deny"
+  },
+  "allowedWritePaths": [".", "docs"]
+}
+```
+
+`--tool` accepts `allow`, `ask`, or `deny` decisions. `--write-path` entries are stored as policy scopes; relative paths resolve from the run execution `cwd`.
+
+### `ling-stack policy reset`
+
+Purpose:
+
+- restore the default read-only auto-allow policy,
+- require approval for `bash`, `edit`, and `write`,
+- reset allowed write paths to `["."]`.
+
 ## UI Command
 
 ### `ling-stack ui`
@@ -962,6 +1020,7 @@ Avoid a large CLI framework unless argument parsing becomes painful. A small par
 | `runs show/events` | run read APIs |
 | `runs cancel` | cancel API |
 | approvals commands | approval APIs |
+| policy commands | approval policy API |
 | `ui` | Web dev server or packaged web app |
 
 The CLI can ship incrementally as APIs land.
@@ -987,6 +1046,7 @@ Command tests with mock daemon:
 - `run --json` emits JSONL only,
 - `runs events` paginates,
 - `approvals approve/deny` sends reason payload,
+- `policy show/set/reset` calls `GET/PATCH /approval-policy`,
 - unsafe tools are rejected without explicit flag.
 
 Manual smoke:

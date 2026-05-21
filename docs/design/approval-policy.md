@@ -4,7 +4,7 @@
 
 Partially implemented for Milestone 5: Pi Controlled Tool Wrapper.
 
-Current implementation includes workspace-level configurable policy storage, `GET/PATCH /approval-policy`, Web Settings controls, tool decisions (`allow`, `ask`, `deny`), write path scopes, and Pi pre-tool interception for `bash`, `edit`, and `write`.
+Current implementation includes workspace-level configurable policy storage, `GET/PATCH /approval-policy`, Web Settings controls, CLI policy commands, tool decisions (`allow`, `ask`, `deny`), write path scopes, and Pi pre-tool interception for `bash`, `edit`, and `write`.
 
 This design follows session persistence and provider presets. It defines how Ling Stack should represent, persist, display, and enforce human approval gates for risky actions.
 
@@ -45,11 +45,10 @@ Implemented today:
 - `bash`, `edit`, and `write` create approval requests before execution.
 - Runs move to `waiting_for_approval` while the daemon waits for an approve/deny decision.
 - Approved requests resume the Pi tool call; denied requests return a blocked tool result before the side effect.
+- CLI can inspect, update, and reset workspace approval policy.
 
 Not implemented yet:
 
-- Approval policy model.
-- Configurable allow/deny rules beyond the default risky-tool gate.
 - Approval expiry/cancellation UI.
 - External sends, deploys, credential changes, and paid media approvals.
 
@@ -692,6 +691,9 @@ ling-stack approvals list
 ling-stack approvals show <id>
 ling-stack approvals approve <id> --reason "..."
 ling-stack approvals deny <id> --reason "..."
+ling-stack policy show
+ling-stack policy set --tool write=deny --write-path docs
+ling-stack policy reset
 ```
 
 Examples:
@@ -701,6 +703,9 @@ ling-stack approvals list --status pending
 ling-stack approvals show approval_123
 ling-stack approvals approve approval_123 --reason "Diff is scoped."
 ling-stack approvals deny approval_123 --reason "Do not run git push."
+ling-stack policy show
+ling-stack policy set --tool bash=ask --tool write=deny
+ling-stack policy set --write-path . --write-path docs
 ```
 
 CLI output must include:
@@ -865,7 +870,7 @@ Expected:
 12. Implement wrapper path for `write`.
 13. Implement wrapper path for `edit`.
 14. Implement wrapper path for `bash`.
-15. Add CLI approval commands.
+15. Add CLI approval and policy commands.
 16. Add Web UI approval panel.
 17. Add unit tests.
 18. Add daemon tests.
