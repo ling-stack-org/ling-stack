@@ -518,9 +518,81 @@ Response:
 
 The check validates base URL format, required secret refs, enabled state, and supported capabilities. For `openai-completions`, `openai-responses`, and `anthropic-messages`, it also performs a small live model request with a 10 second timeout. Common failure codes include `secret_missing`, `network_failed`, `auth_failed`, `model_unsupported`, `rate_limited`, `provider_disabled`, and `provider_error`.
 
-## Approvals
+## Approval Policy and Requests
 
 Approval requests are persisted in the workspace SQLite database and can be listed or resolved through the daemon. v0.1 stores approval decisions, defaults product runs to read-only tools, and pauses Pi tool execution before `bash`, `edit`, or `write` proceeds.
+
+### Workspace Policy
+
+Approval policy controls whether Ling Stack automatically allows, asks for approval, or denies tool execution. It is workspace-scoped in v0.1.
+
+Default policy:
+
+```json
+{
+  "toolDecisions": {
+    "read": "allow",
+    "grep": "allow",
+    "find": "allow",
+    "ls": "allow",
+    "bash": "ask",
+    "edit": "ask",
+    "write": "ask"
+  },
+  "allowedWritePaths": ["."]
+}
+```
+
+`allowedWritePaths` entries are resolved relative to the run execution `cwd` unless they are absolute paths. `edit` and `write` requests outside these scopes are denied before they reach the approval inbox.
+
+### Get Approval Policy
+
+```http
+GET /approval-policy?cwd=/path/to/workspace
+```
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/workspace",
+  "policy": {
+    "workspaceId": "workspace_default",
+    "toolDecisions": {
+      "read": "allow",
+      "grep": "allow",
+      "find": "allow",
+      "ls": "allow",
+      "bash": "ask",
+      "edit": "ask",
+      "write": "ask"
+    },
+    "allowedWritePaths": ["."],
+    "createdAt": "2026-05-20T00:00:00.000Z",
+    "updatedAt": "2026-05-20T00:00:00.000Z"
+  }
+}
+```
+
+### Update Approval Policy
+
+```http
+PATCH /approval-policy?cwd=/path/to/workspace
+Content-Type: application/json
+```
+
+```json
+{
+  "toolDecisions": {
+    "bash": "ask",
+    "edit": "ask",
+    "write": "deny"
+  },
+  "allowedWritePaths": [".", "src", "docs"]
+}
+```
+
+Tool decisions must be `allow`, `ask`, or `deny`.
 
 ### List Approvals
 

@@ -4,6 +4,8 @@
 
 Partially implemented for Milestone 5: Pi Controlled Tool Wrapper.
 
+Current implementation includes workspace-level configurable policy storage, `GET/PATCH /approval-policy`, Web Settings controls, tool decisions (`allow`, `ask`, `deny`), write path scopes, and Pi pre-tool interception for `bash`, `edit`, and `write`.
+
 This design follows session persistence and provider presets. It defines how Ling Stack should represent, persist, display, and enforce human approval gates for risky actions.
 
 ## Goal
@@ -38,6 +40,7 @@ Implemented today:
 - Daemon approval list/get/approve/deny APIs exist.
 - Web UI has an Approvals page.
 - Product runs default to read-only tools.
+- Workspace approval policy controls tool decisions and allowed write paths.
 - Pi `tool_call` extension hook is wired for `bash`, `edit`, and `write`.
 - `bash`, `edit`, and `write` create approval requests before execution.
 - Runs move to `waiting_for_approval` while the daemon waits for an approve/deny decision.

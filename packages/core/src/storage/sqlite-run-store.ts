@@ -22,7 +22,13 @@ import {
   type ProviderPresetUpdateInput,
 } from "../provider-types.js";
 import {
+  createDefaultApprovalPolicy,
+  defaultApprovalToolDecisions,
   readOnlyRunTools,
+  type ApprovalPolicy,
+  type ApprovalPolicyUpdateInput,
+  type ApprovalToolDecision,
+  type ApprovalToolDecisions,
   type RunTool,
 } from "../approval-policy.js";
 import {
@@ -61,6 +67,8 @@ const APPROVALS_MIGRATION_VERSION = 3;
 const APPROVALS_MIGRATION_NAME = "create_approval_requests";
 const WORKSPACE_MIGRATION_VERSION = 4;
 const WORKSPACE_MIGRATION_NAME = "create_workspace_channels_tasks";
+const APPROVAL_POLICY_MIGRATION_VERSION = 5;
+const APPROVAL_POLICY_MIGRATION_NAME = "create_approval_policy";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -80,6 +88,7 @@ export class SqliteRunStore implements RunStore {
     this.configureDatabase();
     this.applyMigrations();
     this.ensureDefaultWorkspace();
+    this.ensureDefaultApprovalPolicy();
 
     if (!existed) {
       this.database.exec("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -785,6 +794,50 @@ export class SqliteRunStore implements RunStore {
     return this.resolveApprovalRequest(id, "denied", input, now);
   }
 
+  getApprovalPolicy(): ApprovalPolicy {
+    const row = this.database.prepare(approvalPolicySelectSql("WHERE workspace_id = ?")).get(DEFAULT_WORKSPACE_ID);
+    if (row) {
+      return mapApprovalPolicy(row);
+    }
+    this.ensureDefaultApprovalPolicy();
+    const created = this.database.prepare(approvalPolicySelectSql("WHERE workspace_id = ?")).get(DEFAULT_WORKSPACE_ID);
+    if (!created) {
+      throw new Error(`Approval policy not found: ${DEFAULT_WORKSPACE_ID}`);
+    }
+    return mapApprovalPolicy(created);
+  }
+
+  updateApprovalPolicy(input: ApprovalPolicyUpdateInput, now: string): ApprovalPolicy {
+    const existing = this.getApprovalPolicy();
+    const next: ApprovalPolicy = {
+      ...existing,
+      toolDecisions: {
+        ...existing.toolDecisions,
+        ...(input.toolDecisions ?? {}),
+      },
+      allowedWritePaths: input.allowedWritePaths ?? existing.allowedWritePaths,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        UPDATE approval_policies
+        SET
+          tool_decisions_json = ?,
+          allowed_write_paths_json = ?,
+          updated_at = ?
+        WHERE workspace_id = ?
+      `)
+      .run(
+        stringifyJson(next.toolDecisions),
+        stringifyJson(next.allowedWritePaths),
+        next.updatedAt,
+        next.workspaceId,
+      );
+
+    return this.getApprovalPolicy();
+  }
+
   close(): void {
     if (this.database.isOpen) {
       this.database.close();
@@ -994,6 +1047,21 @@ export class SqliteRunStore implements RunStore {
 
       this.recordMigration(WORKSPACE_MIGRATION_VERSION, WORKSPACE_MIGRATION_NAME);
     }
+
+    if (!this.hasMigration(APPROVAL_POLICY_MIGRATION_VERSION)) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS approval_policies (
+          workspace_id TEXT PRIMARY KEY,
+          tool_decisions_json TEXT NOT NULL,
+          allowed_write_paths_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+      `);
+
+      this.recordMigration(APPROVAL_POLICY_MIGRATION_VERSION, APPROVAL_POLICY_MIGRATION_NAME);
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -1005,6 +1073,29 @@ export class SqliteRunStore implements RunStore {
         ON CONFLICT(id) DO NOTHING
       `)
       .run(DEFAULT_WORKSPACE_ID, "Default Workspace", null, now, now);
+  }
+
+  private ensureDefaultApprovalPolicy(): void {
+    const now = new Date().toISOString();
+    const policy = createDefaultApprovalPolicy(DEFAULT_WORKSPACE_ID, now);
+    this.database
+      .prepare(`
+        INSERT INTO approval_policies (
+          workspace_id,
+          tool_decisions_json,
+          allowed_write_paths_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id) DO NOTHING
+      `)
+      .run(
+        policy.workspaceId,
+        stringifyJson(policy.toolDecisions),
+        stringifyJson(policy.allowedWritePaths),
+        policy.createdAt,
+        policy.updatedAt,
+      );
   }
 
   private hasMigration(version: number): boolean {
@@ -1189,6 +1280,28 @@ function mapApprovalRequest(row: Record<string, SQLOutputValue>): ApprovalReques
   });
 }
 
+function mapApprovalPolicy(row: Record<string, SQLOutputValue>): ApprovalPolicy {
+  return {
+    workspaceId: readString(row, "workspace_id"),
+    toolDecisions: parseApprovalToolDecisions(readString(row, "tool_decisions_json")),
+    allowedWritePaths: parseJsonStringArray(readString(row, "allowed_write_paths_json")),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  };
+}
+
+function parseApprovalToolDecisions(value: string): ApprovalToolDecisions {
+  const parsed = parseJsonObject(value);
+  const decisions: Record<RunTool, ApprovalToolDecision> = { ...defaultApprovalToolDecisions };
+  for (const tool of Object.keys(defaultApprovalToolDecisions) as RunTool[]) {
+    const decision = parsed[tool];
+    if (decision === "allow" || decision === "ask" || decision === "deny") {
+      decisions[tool] = decision;
+    }
+  }
+  return decisions;
+}
+
 function channelSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -1271,6 +1384,19 @@ function approvalRequestSelectSql(whereClause: string): string {
       resolved_by,
       decision_reason
     FROM approval_requests
+    ${whereClause}
+  `;
+}
+
+function approvalPolicySelectSql(whereClause: string): string {
+  return `
+    SELECT
+      workspace_id,
+      tool_decisions_json,
+      allowed_write_paths_json,
+      created_at,
+      updated_at
+    FROM approval_policies
     ${whereClause}
   `;
 }

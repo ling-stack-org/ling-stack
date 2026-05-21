@@ -6,6 +6,10 @@ import type {
   ResolveApprovalRequestInput,
 } from "./approval-types.js";
 import type {
+  ApprovalPolicy,
+  ApprovalPolicyUpdateInput,
+} from "./approval-policy.js";
+import type {
   ListProviderPresetsOptions,
   ProviderPreset,
   ProviderPresetInput,
@@ -146,6 +150,8 @@ export interface RunStore {
   listApprovalRequests(options?: ListApprovalRequestsOptions): ApprovalRequest[];
   approveApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
+  getApprovalPolicy(): ApprovalPolicy;
+  updateApprovalPolicy(input: ApprovalPolicyUpdateInput, now: string): ApprovalPolicy;
   close(): void;
 }
 

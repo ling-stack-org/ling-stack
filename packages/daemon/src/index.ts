@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
+  approvalToolDecisions,
   approvalStatuses,
   createRunId,
   createSqliteRunStore,
+  defaultApprovalToolDecisions,
   defaultProviderTemplates,
   getRunSummaryPath,
   isSupportedSecretRef,
@@ -15,9 +17,12 @@ import {
   taskStatuses,
   writeRunSummary,
   type ApprovalPayload,
+  type ApprovalPolicy,
+  type ApprovalPolicyUpdateInput,
   type ApprovalRequest,
   type ApprovalRisk,
   type ApprovalStatus,
+  type ApprovalToolDecision,
   type CreateApprovalRequestInput,
   type ChannelUpdateInput,
   type CreateChannelInput,
@@ -197,6 +202,11 @@ async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/approval-policy") {
+    await handleApprovalPolicy(request, response, config, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/approvals") {
     handleApprovalsCollection(request, response, url, storeRegistry);
     return;
@@ -372,12 +382,14 @@ async function handleRun(
     runStartedAt = new Date().toISOString();
     store.markRunStarted(run.id, runStartedAt);
     updateLinkedTaskForRun(store, run.taskId, { status: "running", currentRunId: run.id });
+    const approvalPolicy = store.getApprovalPolicy();
 
     const result = await runner.runTask({
       ...runnerRequest,
       onApprovalRequired: createRunApprovalHandler({
         store,
         run,
+        approvalPolicy,
         appendAndMaybeStream,
         streamEnvelope,
         signal: abortController.signal,
@@ -764,6 +776,42 @@ async function handleProviderItem(
   writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for provider presets` });
 }
 
+async function handleApprovalPolicy(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  const store = storeRegistry.getStore(cwd);
+  if (request.method === "GET") {
+    writeJson(response, 200, { cwd, policy: store.getApprovalPolicy() });
+    return;
+  }
+
+  if (request.method === "PATCH") {
+    try {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const policy = store.updateApprovalPolicy(parseApprovalPolicyUpdateInput(body), new Date().toISOString());
+      writeJson(response, 200, { cwd, policy });
+    } catch (error) {
+      writeJson(response, 400, {
+        error: "bad_request",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return;
+  }
+
+  writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for approval policy` });
+}
+
 function handleApprovalsCollection(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1125,27 +1173,50 @@ function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalRequest)
 function createRunApprovalHandler(options: {
   readonly store: RunStore;
   readonly run: RunSession;
+  readonly approvalPolicy: ApprovalPolicy;
   readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
   readonly signal?: AbortSignal;
 }): PiRunnerRunOptions["onApprovalRequired"] {
   return async (request: PiRunnerApprovalRequest) => {
-    const approval = options.store.createApprovalRequest(
-      toCreateApprovalRequestInput(options.run, request),
-      new Date().toISOString(),
-    );
+    const approvalInput = toCreateApprovalRequestInput(options.run, request);
+    const policyDecision = evaluateApprovalPolicy(options.approvalPolicy, request, approvalInput.payload);
+    if (policyDecision.decision === "allow") {
+      return {
+        approved: true,
+        reason: policyDecision.reason,
+      };
+    }
+
+    if (policyDecision.decision === "deny") {
+      const denied = options.store.createApprovalRequest(approvalInput, new Date().toISOString());
+      const resolved = options.store.denyApprovalRequest(
+        denied.id,
+        { reason: policyDecision.reason },
+        new Date().toISOString(),
+      );
+      if (!resolved) {
+        throw new Error(`Approval request not found after policy denial: ${denied.id}`);
+      }
+      const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(resolved));
+      streamOrAppendApprovalDecisionEvent({
+        store: options.store,
+        approval: resolved,
+        afterSeq: requestEvent?.seq ?? 0,
+        appendAndMaybeStream: options.appendAndMaybeStream,
+        streamEnvelope: options.streamEnvelope,
+      });
+      return {
+        approved: false,
+        approvalId: resolved.id,
+        reason: resolved.decisionReason,
+      };
+    }
+
+    const approval = options.store.createApprovalRequest(approvalInput, new Date().toISOString());
     const waitingAt = new Date().toISOString();
     options.store.markRunWaitingForApproval(options.run.id, waitingAt);
-    const requestEvent = options.appendAndMaybeStream("approval_requested", {
-      approvalId: approval.id,
-      toolCallId: approval.toolCallId,
-      actionType: approval.actionType,
-      risk: approval.risk,
-      title: approval.title,
-      description: approval.description,
-      payload: approval.payload,
-      expiresAt: approval.expiresAt,
-    });
+    const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(approval));
 
     const resolvedApproval = await waitForApprovalDecision(options.store, approval.id, options.signal);
     options.store.markRunRunning(options.run.id, new Date().toISOString());
@@ -1172,6 +1243,52 @@ function createRunApprovalHandler(options: {
         resolvedApproval.decisionReason ??
         `Ling Stack approval ${resolvedApproval.status} for ${resolvedApproval.actionType}.`,
     };
+  };
+}
+
+function approvalRequestEventPayload(approval: ApprovalRequest): Record<string, unknown> {
+  return {
+    approvalId: approval.id,
+    toolCallId: approval.toolCallId,
+    actionType: approval.actionType,
+    risk: approval.risk,
+    title: approval.title,
+    description: approval.description,
+    payload: approval.payload,
+    expiresAt: approval.expiresAt,
+  };
+}
+
+function evaluateApprovalPolicy(
+  policy: ApprovalPolicy,
+  request: PiRunnerApprovalRequest,
+  payload: ApprovalPayload,
+): { readonly decision: ApprovalToolDecision; readonly reason: string } {
+  const toolDecision = policy.toolDecisions[request.toolName] ?? defaultApprovalToolDecisions[request.toolName];
+  if (toolDecision === "deny") {
+    return {
+      decision: "deny",
+      reason: `Ling Stack policy denied ${request.toolName}.`,
+    };
+  }
+
+  if ((payload.type === "file_write" || payload.type === "file_edit") && !isPathWithinAllowedWritePaths(payload.path, request.cwd, policy.allowedWritePaths)) {
+    return {
+      decision: "deny",
+      reason: `Ling Stack policy denied ${request.toolName}: ${payload.path} is outside allowed write paths.`,
+    };
+  }
+
+  if (toolDecision === "allow") {
+    return {
+      decision: "allow",
+      reason: `Ling Stack policy allowed ${request.toolName}.`,
+    };
+  }
+
+  return {
+    decision: "ask",
+    reason: `Ling Stack policy requires approval for ${request.toolName}.`,
   };
 }
 
@@ -1214,6 +1331,15 @@ function toApprovalPayload(request: PiRunnerApprovalRequest): ApprovalPayload {
     };
   }
 
+  if (request.toolName !== "edit") {
+    return {
+      type: "tool_call",
+      toolName: request.toolName,
+      cwd: request.cwd,
+      input: request.input,
+    };
+  }
+
   const path = readInputString(request.input, "path", "<unknown>");
   return {
     type: "file_edit",
@@ -1235,6 +1361,10 @@ function classifyApprovalRisk(request: PiRunnerApprovalRequest, payload: Approva
     return "high";
   }
 
+  if (payload.type === "tool_call") {
+    return "low";
+  }
+
   return "medium";
 }
 
@@ -1245,7 +1375,10 @@ function approvalTitle(toolName: PiRunnerApprovalRequest["toolName"], risk: Appr
   if (toolName === "write") {
     return "Approve file write";
   }
-  return "Approve file edit";
+  if (toolName === "edit") {
+    return "Approve file edit";
+  }
+  return `Approve ${toolName}`;
 }
 
 function approvalDescription(toolName: PiRunnerApprovalRequest["toolName"], payload: ApprovalPayload): string {
@@ -1257,6 +1390,9 @@ function approvalDescription(toolName: PiRunnerApprovalRequest["toolName"], payl
   }
   if (payload.type === "file_edit") {
     return `The agent requested editing ${payload.path}.`;
+  }
+  if (payload.type === "tool_call") {
+    return `The agent requested ${payload.toolName}.`;
   }
   return `The agent requested ${toolName}.`;
 }
@@ -1344,6 +1480,18 @@ function isOutsideWorkspace(inputPath: string, cwd: string): boolean {
   const absolutePath = isAbsolute(inputPath) ? inputPath : resolvePath(cwd, inputPath);
   const relativePath = relative(cwd, absolutePath);
   return relativePath.startsWith("..") || isAbsolute(relativePath);
+}
+
+function isPathWithinAllowedWritePaths(inputPath: string, cwd: string, allowedWritePaths: readonly string[]): boolean {
+  if (inputPath === "<unknown>") {
+    return false;
+  }
+  const absolutePath = isAbsolute(inputPath) ? inputPath : resolvePath(cwd, inputPath);
+  return allowedWritePaths.some((allowedPath) => {
+    const scopePath = isAbsolute(allowedPath) ? allowedPath : resolvePath(cwd, allowedPath);
+    const relativePath = relative(scopePath, absolutePath);
+    return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+  });
 }
 
 function formatEditPreview(edits: readonly unknown[]): string {
@@ -1571,6 +1719,24 @@ function parseApprovalRoute(pathname: string): { readonly approvalId: string; re
     return { approvalId: segments[1], action: segments[2] };
   }
   return undefined;
+}
+
+function parseApprovalPolicyUpdateInput(value: unknown): ApprovalPolicyUpdateInput {
+  if (!isRecord(value)) {
+    throw new Error("Approval policy update must be a JSON object");
+  }
+  const input: ApprovalPolicyUpdateInput = {
+    toolDecisions: readOptionalApprovalToolDecisions(value, "toolDecisions"),
+    allowedWritePaths: readOptionalStringArray(value, "allowedWritePaths")?.map((path) => path.trim()),
+  };
+  validateApprovalPolicyUpdateInput(input);
+  return input;
+}
+
+function validateApprovalPolicyUpdateInput(input: ApprovalPolicyUpdateInput): void {
+  if (input.allowedWritePaths?.some((path) => path.trim().length === 0)) {
+    throw new Error("allowedWritePaths must not contain empty paths");
+  }
 }
 
 function parseCreateChannelInput(value: unknown): CreateChannelInput {
@@ -2140,6 +2306,32 @@ function readOptionalStringArray<T extends string = string>(
 
 function readOptionalRunTools(record: Record<string, unknown>, key: string): RunTool[] | undefined {
   return readOptionalStringArray(record, key, [...readOnlyRunTools, "bash", "edit", "write"] as const);
+}
+
+function readOptionalApprovalToolDecisions(
+  record: Record<string, unknown>,
+  key: string,
+): Partial<Record<RunTool, ApprovalToolDecision>> | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+
+  const result: Partial<Record<RunTool, ApprovalToolDecision>> = {};
+  const validTools = Object.keys(defaultApprovalToolDecisions) as RunTool[];
+  for (const [tool, decision] of Object.entries(value)) {
+    if (!validTools.includes(tool as RunTool)) {
+      throw new Error(`${key}.${tool} is not a supported tool`);
+    }
+    if (typeof decision !== "string" || !approvalToolDecisions.includes(decision as ApprovalToolDecision)) {
+      throw new Error(`${key}.${tool} must be one of: ${approvalToolDecisions.join(", ")}`);
+    }
+    result[tool as RunTool] = decision as ApprovalToolDecision;
+  }
+  return result;
 }
 
 function readOptionalTaskStatus(record: Record<string, unknown>, key: string): TaskStatus | undefined {

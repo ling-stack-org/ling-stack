@@ -1217,6 +1217,47 @@ pre {
   color: #9a341f;
 }
 
+.settings-panel {
+  max-width: 860px;
+}
+
+.policy-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.policy-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.policy-tool-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #d8ded7;
+  background: #fbfcfa;
+}
+
+.policy-tool-row.risky {
+  border-color: #e2d4bc;
+  background: #fffaf0;
+}
+
+.policy-tool-row span {
+  color: #37433f;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .approvals-panel {
   min-height: 640px;
 }

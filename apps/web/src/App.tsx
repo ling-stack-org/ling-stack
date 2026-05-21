@@ -39,6 +39,7 @@ import {
   deleteTask,
   deleteProvider,
   getDaemonHealth,
+  getApprovalPolicy,
   getRun,
   getRunEvents,
   listChannels,
@@ -48,6 +49,7 @@ import {
   listRuns,
   listTasks,
   updateChannel,
+  updateApprovalPolicy,
   updateTask,
   updateTaskStatus,
   updateProvider,
@@ -55,6 +57,9 @@ import {
 import { streamRun } from "./sse.js";
 import type {
   ApprovalRequest,
+  ApprovalPolicy,
+  ApprovalPolicyFormState,
+  ApprovalToolDecision,
   Channel,
   ChannelFormState,
   ProviderCheckResult,
@@ -75,7 +80,7 @@ const defaultTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
 const allTools: readonly ToolName[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const riskyTools: readonly ToolName[] = ["bash", "edit", "write"];
 const taskStatuses: readonly TaskStatus[] = ["todo", "claimed", "running", "blocked", "review", "done", "failed", "cancelled"];
-type ViewId = "workspace" | "runs" | "providers" | "approvals";
+type ViewId = "workspace" | "runs" | "providers" | "approvals" | "settings";
 
 const defaultForm: RunFormState = {
   cwd: "/Users/tianxiao/ling-stack",
@@ -133,6 +138,19 @@ const defaultTaskEditForm: TaskEditFormState = {
   status: "todo",
 };
 
+const defaultApprovalPolicyForm: ApprovalPolicyFormState = {
+  toolDecisions: {
+    read: "allow",
+    grep: "allow",
+    find: "allow",
+    ls: "allow",
+    bash: "ask",
+    edit: "ask",
+    write: "ask",
+  },
+  allowedWritePathsText: ".",
+};
+
 export function App(): JSX.Element {
   const [form, setForm] = useState<RunFormState>(defaultForm);
   const [activeView, setActiveView] = useState<ViewId>("workspace");
@@ -159,6 +177,9 @@ export function App(): JSX.Element {
   const [providerForm, setProviderForm] = useState<ProviderFormState>(defaultProviderForm);
   const [editingProviderId, setEditingProviderId] = useState("");
   const [providerCheck, setProviderCheck] = useState<ProviderCheckResult | undefined>();
+  const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
+  const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
+  const [approvalPolicyLoading, setApprovalPolicyLoading] = useState(false);
   const [approvals, setApprovals] = useState<readonly ApprovalRequest[]>([]);
   const [approvalsLoading, setApprovalsLoading] = useState(false);
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
@@ -200,6 +221,9 @@ export function App(): JSX.Element {
     }
     if (activeView === "approvals") {
       void refreshApprovals();
+    }
+    if (activeView === "settings") {
+      void refreshApprovalPolicy();
     }
   }, [activeView]);
 
@@ -585,6 +609,44 @@ export function App(): JSX.Element {
     }
   }
 
+  async function refreshApprovalPolicy(): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    setApprovalPolicyLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await getApprovalPolicy(form.cwd.trim());
+      setApprovalPolicy(response.policy);
+      setApprovalPolicyForm(approvalPolicyToForm(response.policy));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setApprovalPolicyLoading(false);
+    }
+  }
+
+  async function saveApprovalPolicy(): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    setApprovalPolicyLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await updateApprovalPolicy(form.cwd.trim(), approvalPolicyForm);
+      setApprovalPolicy(response.policy);
+      setApprovalPolicyForm(approvalPolicyToForm(response.policy));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setApprovalPolicyLoading(false);
+    }
+  }
+
   async function resolveApproval(approvalId: string, decision: "approve" | "deny"): Promise<void> {
     try {
       setErrorMessage("");
@@ -706,7 +768,7 @@ export function App(): JSX.Element {
           <NavItem icon={<History />} label="Runs" active={activeView === "runs"} onClick={() => setActiveView("runs")} />
           <NavItem icon={<PlugZap />} label="Providers" active={activeView === "providers"} onClick={() => setActiveView("providers")} />
           <NavItem icon={<ShieldCheck />} label="Approvals" active={activeView === "approvals"} onClick={() => setActiveView("approvals")} />
-          <NavItem icon={<Settings />} label="Settings" disabled />
+          <NavItem icon={<Settings />} label="Settings" active={activeView === "settings"} onClick={() => setActiveView("settings")} />
         </nav>
       </aside>
       <section className="workspace">
@@ -837,15 +899,29 @@ export function App(): JSX.Element {
             onUse={applyProviderToRun}
           />
           ) : (
-            <ApprovalsPage
-              cwd={form.cwd}
-              approvals={approvals}
-              isLoading={approvalsLoading}
-              errorMessage={errorMessage}
-              onCwdChange={(cwd) => setForm({ ...form, cwd })}
-              onRefresh={() => void refreshApprovals()}
-              onResolve={(approvalId, decision) => void resolveApproval(approvalId, decision)}
-            />
+            activeView === "settings" ? (
+              <SettingsPage
+                cwd={form.cwd}
+                policy={approvalPolicy}
+                form={approvalPolicyForm}
+                isLoading={approvalPolicyLoading}
+                errorMessage={errorMessage}
+                onCwdChange={(cwd) => setForm({ ...form, cwd })}
+                onFormChange={setApprovalPolicyForm}
+                onRefresh={() => void refreshApprovalPolicy()}
+                onSave={() => void saveApprovalPolicy()}
+              />
+            ) : (
+              <ApprovalsPage
+                cwd={form.cwd}
+                approvals={approvals}
+                isLoading={approvalsLoading}
+                errorMessage={errorMessage}
+                onCwdChange={(cwd) => setForm({ ...form, cwd })}
+                onRefresh={() => void refreshApprovals()}
+                onResolve={(approvalId, decision) => void resolveApproval(approvalId, decision)}
+              />
+            )
           )
         )}
       </section>
@@ -1816,6 +1892,99 @@ function ProviderSettings({
   );
 }
 
+function SettingsPage({
+  cwd,
+  policy,
+  form,
+  isLoading,
+  errorMessage,
+  onCwdChange,
+  onFormChange,
+  onRefresh,
+  onSave,
+}: {
+  readonly cwd: string;
+  readonly policy: ApprovalPolicy | undefined;
+  readonly form: ApprovalPolicyFormState;
+  readonly isLoading: boolean;
+  readonly errorMessage: string;
+  readonly onCwdChange: (cwd: string) => void;
+  readonly onFormChange: (form: ApprovalPolicyFormState) => void;
+  readonly onRefresh: () => void;
+  readonly onSave: () => void;
+}): JSX.Element {
+  return (
+    <section className="panel settings-panel" aria-labelledby="settings-title">
+      <div className="panel-title split">
+        <span>
+          <Settings size={18} />
+          <h2 id="settings-title">Approval policy</h2>
+        </span>
+        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
+          {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+          Refresh
+        </button>
+      </div>
+
+      <label className="field wide runs-cwd">
+        <span>Workspace path</span>
+        <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
+      </label>
+
+      {errorMessage ? (
+        <div className="inline-error">
+          <CircleAlert size={17} />
+          {errorMessage}
+        </div>
+      ) : null}
+
+      <div className="policy-meta">
+        <MetaRow label="Workspace" value={policy?.workspaceId ?? "-"} compact />
+        <MetaRow label="Updated" value={policy ? formatDateTime(policy.updatedAt) : "-"} compact />
+      </div>
+
+      <div className="policy-tool-grid" aria-label="Tool approval decisions">
+        {allTools.map((tool) => (
+          <label key={tool} className={`policy-tool-row${riskyTools.includes(tool) ? " risky" : ""}`}>
+            <span>{tool}</span>
+            <select
+              value={form.toolDecisions[tool]}
+              onChange={(event) =>
+                onFormChange({
+                  ...form,
+                  toolDecisions: {
+                    ...form.toolDecisions,
+                    [tool]: event.target.value as ApprovalToolDecision,
+                  },
+                })
+              }
+            >
+              <option value="allow">Allow</option>
+              <option value="ask">Ask</option>
+              <option value="deny">Deny</option>
+            </select>
+          </label>
+        ))}
+      </div>
+
+      <label className="field wide">
+        <span>Allowed write paths</span>
+        <textarea
+          value={form.allowedWritePathsText}
+          onChange={(event) => onFormChange({ ...form, allowedWritePathsText: event.target.value })}
+        />
+      </label>
+
+      <div className="action-row">
+        <button className="primary-button" type="button" onClick={onSave} disabled={isLoading}>
+          {isLoading ? <Loader2 className="spin" size={16} /> : <Save size={16} />}
+          Save policy
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function ApprovalsPage({
   cwd,
   approvals,
@@ -2372,6 +2541,21 @@ function providerTemplateToForm(template: ProviderTemplate): ProviderFormState {
   };
 }
 
+function approvalPolicyToForm(policy: ApprovalPolicy): ApprovalPolicyFormState {
+  return {
+    toolDecisions: {
+      read: policy.toolDecisions.read ?? "allow",
+      grep: policy.toolDecisions.grep ?? "allow",
+      find: policy.toolDecisions.find ?? "allow",
+      ls: policy.toolDecisions.ls ?? "allow",
+      bash: policy.toolDecisions.bash ?? "ask",
+      edit: policy.toolDecisions.edit ?? "ask",
+      write: policy.toolDecisions.write ?? "ask",
+    },
+    allowedWritePathsText: policy.allowedWritePaths.join("\n"),
+  };
+}
+
 function canUseProviderForRun(provider: ProviderPreset): boolean {
   return provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat");
 }
@@ -2408,6 +2592,9 @@ function viewTitle(view: ViewId): string {
   if (view === "approvals") {
     return "Approvals";
   }
+  if (view === "settings") {
+    return "Settings";
+  }
   return "Provider presets";
 }
 
@@ -2420,6 +2607,9 @@ function viewDescription(view: ViewId): string {
   }
   if (view === "approvals") {
     return "查看和处理需要人工决策的高风险动作；bash、edit、write 会在执行前等待审批。";
+  }
+  if (view === "settings") {
+    return "配置 workspace 级 approval policy，控制工具自动允许、询问或拒绝，以及写入路径边界。";
   }
   return "管理本地 provider preset，用 env:NAME 引用密钥，并在 run 启动时选择预设。";
 }

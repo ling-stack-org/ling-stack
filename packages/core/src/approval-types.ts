@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 export type ApprovalActionType =
+  | "read"
+  | "grep"
+  | "find"
+  | "ls"
   | "write"
   | "edit"
   | "bash"
@@ -33,6 +37,12 @@ export type ApprovalPayload =
       readonly cwd: string;
       readonly command: string;
       readonly riskFlags: readonly string[];
+    }
+  | {
+      readonly type: "tool_call";
+      readonly toolName: "read" | "grep" | "find" | "ls";
+      readonly cwd: string;
+      readonly input: unknown;
     }
   | {
       readonly type: "external_send";
@@ -106,6 +116,10 @@ export interface ListApprovalRequestsOptions {
 export const approvalStatuses: readonly ApprovalStatus[] = ["pending", "approved", "denied", "expired", "cancelled"];
 
 export const approvalActionTypes: readonly ApprovalActionType[] = [
+  "read",
+  "grep",
+  "find",
+  "ls",
   "write",
   "edit",
   "bash",

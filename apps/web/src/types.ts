@@ -252,6 +252,26 @@ export interface ApprovalMutationResponse {
   readonly approval: ApprovalRequest;
 }
 
+export type ApprovalToolDecision = "allow" | "ask" | "deny";
+
+export interface ApprovalPolicy {
+  readonly workspaceId: string;
+  readonly toolDecisions: Record<ToolName, ApprovalToolDecision>;
+  readonly allowedWritePaths: readonly string[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ApprovalPolicyResponse {
+  readonly cwd: string;
+  readonly policy: ApprovalPolicy;
+}
+
+export interface ApprovalPolicyFormState {
+  readonly toolDecisions: Record<ToolName, ApprovalToolDecision>;
+  readonly allowedWritePathsText: string;
+}
+
 export type ToolName = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write";
 
 export interface RunFormState {

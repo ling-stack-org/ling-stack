@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 export type PiRunnerToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
-export type PiRunnerApprovalToolName = Extract<PiRunnerToolName, "bash" | "edit" | "write">;
+export type PiRunnerApprovalToolName = PiRunnerToolName;
 
 export type PiRunnerProviderApi =
   | "openai-completions"
@@ -96,7 +96,8 @@ export interface PiRunnerResult {
 }
 
 const DEFAULT_TOOLS: readonly PiRunnerToolName[] = ["read", "bash", "edit", "write", "grep", "find", "ls"];
-const APPROVAL_REQUIRED_TOOLS = new Set<string>(["bash", "edit", "write"]);
+const APPROVAL_REQUIRED_TOOLS = new Set<string>(DEFAULT_TOOLS);
+const SIDE_EFFECT_TOOLS = new Set<string>(["bash", "edit", "write"]);
 
 export class PiRunnerAdapter {
   async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
@@ -271,6 +272,9 @@ function createLingStackApprovalExtension(options: PiRunnerRunOptions): Extensio
       }
 
       if (!options.onApprovalRequired) {
+        if (!SIDE_EFFECT_TOOLS.has(event.toolName)) {
+          return undefined;
+        }
         return {
           block: true,
           reason: `Ling Stack blocked ${event.toolName}: no approval handler is configured.`,

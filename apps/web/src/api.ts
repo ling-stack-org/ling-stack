@@ -1,6 +1,8 @@
 import type {
   ApprovalListResponse,
   ApprovalMutationResponse,
+  ApprovalPolicyFormState,
+  ApprovalPolicyResponse,
   Channel,
   ChannelFormState,
   ChannelListResponse,
@@ -233,6 +235,29 @@ export async function listApprovals(cwd: string, status?: string): Promise<Appro
   return (await response.json()) as ApprovalListResponse;
 }
 
+export async function getApprovalPolicy(cwd: string): Promise<ApprovalPolicyResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/approval-policy`, cwd));
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as ApprovalPolicyResponse;
+}
+
+export async function updateApprovalPolicy(cwd: string, form: ApprovalPolicyFormState): Promise<ApprovalPolicyResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/approval-policy`, cwd), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      toolDecisions: form.toolDecisions,
+      allowedWritePaths: splitLines(form.allowedWritePathsText),
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as ApprovalPolicyResponse;
+}
+
 export async function approveApproval(cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
   return resolveApproval(cwd, approvalId, "approve", reason);
 }
@@ -396,6 +421,13 @@ function channelFormToUpdatePayload(form: ChannelFormState): unknown {
 function splitCsv(value: string): string[] {
   return value
     .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function splitLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
     .map((item) => item.trim())
     .filter(Boolean);
 }
