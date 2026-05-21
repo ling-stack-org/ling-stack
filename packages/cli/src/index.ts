@@ -90,6 +90,53 @@ interface ProviderCheckSummary {
   readonly checkedAt: string;
 }
 
+interface DoctorDependencyError {
+  readonly code: string;
+  readonly message: string;
+  readonly status?: number;
+}
+
+interface DoctorDependencyResult {
+  readonly ok: boolean;
+  readonly body?: unknown;
+  readonly error?: DoctorDependencyError;
+}
+
+interface DoctorReport {
+  readonly ok: boolean;
+  readonly daemon: {
+    readonly ok: boolean;
+    readonly url: string;
+    readonly elapsedMs: number;
+    readonly service: string;
+  };
+  readonly workspace: {
+    readonly cwd: string;
+  };
+  readonly providers: {
+    readonly total: number;
+    readonly runnable: number;
+    readonly preflightReady: number;
+    readonly unchecked: number;
+    readonly failed: number;
+    readonly error?: DoctorDependencyError;
+  };
+  readonly channels: {
+    readonly total: number;
+    readonly withDefaultProvider: number;
+    readonly error?: DoctorDependencyError;
+  };
+  readonly tasks: {
+    readonly total: number;
+    readonly error?: DoctorDependencyError;
+  };
+  readonly approvalPolicy: {
+    readonly ok: boolean;
+    readonly error?: DoctorDependencyError;
+  };
+  readonly next: readonly string[];
+}
+
 interface InitResult {
   readonly cwd: string;
   readonly rootDir: string;
@@ -403,26 +450,270 @@ async function handleInit(args: readonly string[], options: GlobalOptions): Prom
 }
 
 async function handleDoctor(options: GlobalOptions): Promise<number> {
-  const startedAt = Date.now();
-  const health = await requestJson(options, "GET", "/health");
-  const elapsedMs = Date.now() - startedAt;
+  const daemon = await readDaemonHealth(options);
+  const [providersResult, channelsResult, tasksResult, approvalPolicyResult] = await Promise.all([
+    requestDoctorJson(options, "GET", "/providers", { cwd: options.cwd }),
+    requestDoctorJson(options, "GET", "/channels", { cwd: options.cwd }),
+    requestDoctorJson(options, "GET", "/tasks", { cwd: options.cwd }),
+    requestDoctorJson(options, "GET", "/approval-policy", { cwd: options.cwd }),
+  ]);
+  const report = buildDoctorReport(options, daemon, providersResult, channelsResult, tasksResult, approvalPolicyResult);
+
   if (options.json) {
-    printJson({ ok: true, daemonUrl: options.daemonUrl, elapsedMs, health });
+    printJson(report);
+    return report.ok ? 0 : 4;
+  }
+
+  printDoctorReport(report);
+  return report.ok ? 0 : 4;
+}
+
+async function handleDaemonStatus(options: GlobalOptions): Promise<number> {
+  const daemon = await readDaemonHealth(options);
+  if (options.json) {
+    printJson({ ok: true, daemonUrl: options.daemonUrl, elapsedMs: daemon.elapsedMs, health: daemon.health });
     return 0;
   }
 
   console.log("Daemon: ok");
   console.log(`URL: ${options.daemonUrl}`);
-  console.log(`Service: ${readString(health, "service") ?? "unknown"}`);
-  console.log(`Latency: ${elapsedMs}ms`);
+  console.log(`Service: ${daemon.service}`);
+  console.log(`Latency: ${daemon.elapsedMs}ms`);
   return 0;
+}
+
+async function readDaemonHealth(options: GlobalOptions): Promise<{
+  readonly health: unknown;
+  readonly elapsedMs: number;
+  readonly service: string;
+}> {
+  const startedAt = Date.now();
+  const health = await requestJson(options, "GET", "/health");
+  const elapsedMs = Date.now() - startedAt;
+  return {
+    health,
+    elapsedMs,
+    service: readString(health, "service") ?? "unknown",
+  };
+}
+
+async function requestDoctorJson(
+  options: GlobalOptions,
+  method: "GET",
+  path: string,
+  query?: Record<string, QueryValue>,
+): Promise<DoctorDependencyResult> {
+  try {
+    return { ok: true, body: await requestJson(options, method, path, query) };
+  } catch (error) {
+    if (error instanceof CliError) {
+      return {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          status: error.status,
+        },
+      };
+    }
+    return {
+      ok: false,
+      error: {
+        code: "unknown_error",
+        message: errorMessage(error),
+      },
+    };
+  }
+}
+
+function buildDoctorReport(
+  options: GlobalOptions,
+  daemon: { readonly elapsedMs: number; readonly service: string },
+  providersResult: DoctorDependencyResult,
+  channelsResult: DoctorDependencyResult,
+  tasksResult: DoctorDependencyResult,
+  approvalPolicyResult: DoctorDependencyResult,
+): DoctorReport {
+  const providers = providersResult.ok ? readArray(providersResult.body, "providers") : [];
+  const runnableProviders = providers.filter((provider) => providerRunCompatibilityBlocker(provider) === undefined);
+  const preflightReadyProviders = runnableProviders.filter((provider) => providerLastCheckReady(provider));
+  const uncheckedProviders = runnableProviders.filter((provider) => !isRecord(readField(provider, "lastCheck")));
+  const failedProviders = runnableProviders.filter((provider) => {
+    const lastCheck = readField(provider, "lastCheck");
+    return isRecord(lastCheck) && readBoolean(lastCheck, "ok") !== true;
+  });
+
+  const channels = channelsResult.ok ? readArray(channelsResult.body, "channels") : [];
+  const channelsWithDefaultProvider = channels.filter((channel) => Boolean(readString(channel, "defaultProviderPresetId")));
+  const tasks = tasksResult.ok ? readArray(tasksResult.body, "tasks") : [];
+  const approvalPolicyOk = approvalPolicyResult.ok && isRecord(readField(approvalPolicyResult.body, "policy"));
+  const next = buildDoctorNextSteps({
+    providers,
+    runnableProviders,
+    preflightReadyProviders,
+    channels,
+    approvalPolicyOk,
+    providersResult,
+    channelsResult,
+    tasksResult,
+    approvalPolicyResult,
+  });
+  const ok =
+    Boolean(options.cwd.trim()) &&
+    providersResult.ok &&
+    channelsResult.ok &&
+    tasksResult.ok &&
+    approvalPolicyOk &&
+    providers.length > 0 &&
+    runnableProviders.length > 0 &&
+    preflightReadyProviders.length > 0 &&
+    channels.length > 0;
+
+  return {
+    ok,
+    daemon: {
+      ok: true,
+      url: options.daemonUrl,
+      elapsedMs: daemon.elapsedMs,
+      service: daemon.service,
+    },
+    workspace: {
+      cwd: options.cwd,
+    },
+    providers: {
+      total: providers.length,
+      runnable: runnableProviders.length,
+      preflightReady: preflightReadyProviders.length,
+      unchecked: uncheckedProviders.length,
+      failed: failedProviders.length,
+      error: providersResult.error,
+    },
+    channels: {
+      total: channels.length,
+      withDefaultProvider: channelsWithDefaultProvider.length,
+      error: channelsResult.error,
+    },
+    tasks: {
+      total: tasks.length,
+      error: tasksResult.error,
+    },
+    approvalPolicy: {
+      ok: approvalPolicyOk,
+      error: approvalPolicyResult.error,
+    },
+    next,
+  };
+}
+
+function buildDoctorNextSteps({
+  providers,
+  runnableProviders,
+  preflightReadyProviders,
+  channels,
+  approvalPolicyOk,
+  providersResult,
+  channelsResult,
+  tasksResult,
+  approvalPolicyResult,
+}: {
+  readonly providers: readonly unknown[];
+  readonly runnableProviders: readonly unknown[];
+  readonly preflightReadyProviders: readonly unknown[];
+  readonly channels: readonly unknown[];
+  readonly approvalPolicyOk: boolean;
+  readonly providersResult: DoctorDependencyResult;
+  readonly channelsResult: DoctorDependencyResult;
+  readonly tasksResult: DoctorDependencyResult;
+  readonly approvalPolicyResult: DoctorDependencyResult;
+}): readonly string[] {
+  const next = new Set<string>();
+  if (!providersResult.ok) {
+    next.add("ling-stack provider list");
+  } else if (providers.length === 0) {
+    next.add("ling-stack init --with-provider-templates");
+  } else if (runnableProviders.length === 0) {
+    const providerId = readString(providers[0], "id") ?? "<provider_id>";
+    next.add(`ling-stack provider update ${providerId} --enabled true --api-key-ref env:LOCAL_RELAY_API_KEY`);
+  } else if (preflightReadyProviders.length === 0) {
+    next.add("ling-stack provider check-all");
+  }
+
+  if (!channelsResult.ok) {
+    next.add("ling-stack channel list");
+  } else if (channels.length === 0) {
+    const providerId = readString(preflightReadyProviders[0], "id") ?? readString(runnableProviders[0], "id") ?? "<provider_id>";
+    next.add(`ling-stack channel create --name Engineering --path . --provider ${providerId}`);
+  }
+
+  if (!tasksResult.ok) {
+    next.add("ling-stack task list");
+  }
+  if (!approvalPolicyOk || !approvalPolicyResult.ok) {
+    next.add("ling-stack policy show");
+  }
+  return [...next];
+}
+
+function providerRunCompatibilityBlocker(provider: unknown): string | undefined {
+  const displayName = readString(provider, "displayName") ?? readString(provider, "id") ?? "Provider";
+  if (readBoolean(provider, "enabled") !== true) {
+    return `${displayName}: provider is disabled.`;
+  }
+  if (readString(provider, "api") === "media-job") {
+    return `${displayName}: provider is media only.`;
+  }
+  if (!readArray(provider, "capabilities").includes("chat")) {
+    return `${displayName}: provider does not support chat.`;
+  }
+  if (readString(provider, "apiKeyRef") && readBoolean(provider, "apiKeyConfigured") !== true) {
+    return `${displayName}: missing ${envNameFromRef(readString(provider, "apiKeyRef") ?? "")}.`;
+  }
+  return undefined;
+}
+
+function providerLastCheckReady(provider: unknown): boolean {
+  const lastCheck = readField(provider, "lastCheck");
+  return isRecord(lastCheck) && readBoolean(lastCheck, "ok") === true;
+}
+
+function printDoctorReport(report: DoctorReport): void {
+  console.log("Ling Stack doctor");
+  console.log(`Daemon: ok ${report.daemon.url} (${report.daemon.elapsedMs}ms)`);
+  console.log(`Service: ${report.daemon.service}`);
+  console.log(`Workspace: ${report.workspace.cwd}`);
+  console.log(formatDoctorLine(
+    "Providers",
+    `${report.providers.total} total, ${report.providers.runnable} runnable, ${report.providers.preflightReady} preflight ready`,
+    report.providers.error,
+  ));
+  console.log(formatDoctorLine(
+    "Channels",
+    `${report.channels.total} total, ${report.channels.withDefaultProvider} with default provider`,
+    report.channels.error,
+  ));
+  console.log(formatDoctorLine("Tasks", `${report.tasks.total} total`, report.tasks.error));
+  console.log(formatDoctorLine("Approval policy", report.approvalPolicy.ok ? "ok" : "not ready", report.approvalPolicy.error));
+  console.log(`Ready: ${report.ok ? "yes" : "no"}`);
+  if (report.next.length > 0) {
+    console.log("Next:");
+    for (const command of report.next) {
+      console.log(`  ${command}`);
+    }
+  }
+}
+
+function formatDoctorLine(label: string, value: string, error?: DoctorDependencyError): string {
+  if (!error) {
+    return `${label}: ${value}`;
+  }
+  return `${label}: error (${error.code}) ${error.message}`;
 }
 
 async function handleDaemon(args: readonly string[], options: GlobalOptions): Promise<number> {
   const [subcommand = "status", ...rest] = args;
   if (subcommand === "status") {
     assertNoPositionals(rest, "daemon status");
-    return await handleDoctor(options);
+    return await handleDaemonStatus(options);
   }
   if (subcommand === "start") {
     return await handleDaemonStart(rest, options);
@@ -2883,6 +3174,10 @@ function printCommandHelp(command: string, subcommand?: string): void {
     printRunHelp();
     return;
   }
+  if (command === "doctor") {
+    printDoctorHelp();
+    return;
+  }
   if (command === "provider") {
     printProviderHelp();
     return;
@@ -3056,6 +3351,20 @@ Options:
   --append-system-prompt <txt> Repeatable appended system prompt
   --agent-dir <path>           Pi agent directory
   --skip-preflight             Skip provider last-check gate for debugging
+`);
+}
+
+function printDoctorHelp(): void {
+  console.log(`Usage:
+  ling-stack doctor [--json]
+
+Checks:
+  daemon health, providers, provider preflight, channels, tasks, and approval policy.
+
+Exit codes:
+  0 ready
+  3 daemon unreachable
+  4 workspace not ready
 `);
 }
 

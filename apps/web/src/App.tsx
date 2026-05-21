@@ -93,6 +93,15 @@ interface ProviderBatchResult {
   readonly message: string;
   readonly failedCount: number;
 }
+interface WorkspaceReadinessItem {
+  readonly id: string;
+  readonly label: string;
+  readonly detail: string;
+  readonly status: "ready" | "attention" | "loading" | "info";
+  readonly actionLabel?: string;
+  readonly onAction?: () => void;
+  readonly disabled?: boolean;
+}
 
 const defaultForm: RunFormState = {
   cwd: "/Users/tianxiao/ling-stack",
@@ -929,72 +938,87 @@ export function App(): JSX.Element {
         </div>
 
         {activeView === "workspace" ? (
-          <div className="workspace-task-grid">
-            <ChannelTaskWorkspace
-              cwd={form.cwd}
-              channels={channels}
-              selectedChannelId={selectedChannelId}
-              channelForm={channelForm}
-              channelEditForm={channelEditForm}
-              tasks={tasks}
-              taskForm={taskForm}
-              selectedTaskId={selectedTaskId}
-              taskEditForm={taskEditForm}
+          <>
+            <WorkspaceReadiness
+              daemonHealthy={daemonHealthy}
               providers={providers}
-              taskRunProviderId={taskRunProviderId}
-              fallbackProviderId={form.providerPresetId}
+              channels={channels}
+              tasks={tasks}
+              providersLoading={providersLoading}
               channelsLoading={channelsLoading}
               tasksLoading={tasksLoading}
-              isRunning={isRunning}
-              errorMessage={errorMessage}
-              onCwdChange={(cwd) => {
-                setForm({ ...form, cwd });
-                setChannelForm((current) => ({
-                  ...current,
-                  boundPath: current.boundPath === form.cwd || !current.boundPath ? cwd : current.boundPath,
-                }));
-              }}
-              onChannelFormChange={setChannelForm}
-              onChannelEditFormChange={setChannelEditForm}
-              onTaskFormChange={setTaskForm}
-              onTaskEditFormChange={setTaskEditForm}
-              onProviderSelect={(providerId) => {
-                setTaskRunProviderId(providerId);
-                const provider = providers.find((item) => item.id === providerId);
-                if (provider) {
-                  applyProviderToRun(provider);
-                }
-              }}
-              onSelectChannel={(channelId) => {
-                setSelectedChannelId(channelId);
-                setTaskRunProviderId("");
-              }}
-              onCreateChannel={() => void saveChannel()}
-              onSaveChannelEdit={(channelId) => void saveChannelEdit(channelId)}
-              onDeleteChannel={(channelId) => void removeChannel(channelId)}
-              onRefreshChannels={() => void refreshChannels()}
-              onCreateTask={() => void saveTask()}
-              onRefreshTasks={() => void refreshTasks()}
-              onSelectTask={setSelectedTaskId}
-              onSaveTaskEdit={(taskId) => void saveTaskEdit(taskId)}
-              onRunTask={(task) => void runPersistedTask(task)}
-              onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
-              onReviewTask={(taskId) => void moveTaskToReview(taskId)}
-              onDeleteTask={(taskId) => void removeTask(taskId)}
+              onRefreshDaemon={() => void refreshHealth()}
               onOpenProviders={() => setActiveView("providers")}
+              onCreateChannel={() => void saveChannel()}
+              onCreateTask={() => void saveTask()}
             />
-            <RunTimeline
-              events={events}
-              assistantText={assistantText}
-              errorMessage={errorMessage}
-              isRunning={isRunning}
-              pendingApprovals={activePendingApprovals}
-              approvalsLoading={approvalsLoading}
-              resolvingApprovals={resolvingApprovals}
-              onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
-              onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
-            />
-          </div>
+            <div className="workspace-task-grid">
+              <ChannelTaskWorkspace
+                cwd={form.cwd}
+                channels={channels}
+                selectedChannelId={selectedChannelId}
+                channelForm={channelForm}
+                channelEditForm={channelEditForm}
+                tasks={tasks}
+                taskForm={taskForm}
+                selectedTaskId={selectedTaskId}
+                taskEditForm={taskEditForm}
+                providers={providers}
+                taskRunProviderId={taskRunProviderId}
+                fallbackProviderId={form.providerPresetId}
+                channelsLoading={channelsLoading}
+                tasksLoading={tasksLoading}
+                isRunning={isRunning}
+                errorMessage={errorMessage}
+                onCwdChange={(cwd) => {
+                  setForm({ ...form, cwd });
+                  setChannelForm((current) => ({
+                    ...current,
+                    boundPath: current.boundPath === form.cwd || !current.boundPath ? cwd : current.boundPath,
+                  }));
+                }}
+                onChannelFormChange={setChannelForm}
+                onChannelEditFormChange={setChannelEditForm}
+                onTaskFormChange={setTaskForm}
+                onTaskEditFormChange={setTaskEditForm}
+                onProviderSelect={(providerId) => {
+                  setTaskRunProviderId(providerId);
+                  const provider = providers.find((item) => item.id === providerId);
+                  if (provider) {
+                    applyProviderToRun(provider);
+                  }
+                }}
+                onSelectChannel={(channelId) => {
+                  setSelectedChannelId(channelId);
+                  setTaskRunProviderId("");
+                }}
+                onCreateChannel={() => void saveChannel()}
+                onSaveChannelEdit={(channelId) => void saveChannelEdit(channelId)}
+                onDeleteChannel={(channelId) => void removeChannel(channelId)}
+                onRefreshChannels={() => void refreshChannels()}
+                onCreateTask={() => void saveTask()}
+                onRefreshTasks={() => void refreshTasks()}
+                onSelectTask={setSelectedTaskId}
+                onSaveTaskEdit={(taskId) => void saveTaskEdit(taskId)}
+                onRunTask={(task) => void runPersistedTask(task)}
+                onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
+                onReviewTask={(taskId) => void moveTaskToReview(taskId)}
+                onDeleteTask={(taskId) => void removeTask(taskId)}
+                onOpenProviders={() => setActiveView("providers")}
+              />
+              <RunTimeline
+                events={events}
+                assistantText={assistantText}
+                errorMessage={errorMessage}
+                isRunning={isRunning}
+                pendingApprovals={activePendingApprovals}
+                approvalsLoading={approvalsLoading}
+                resolvingApprovals={resolvingApprovals}
+                onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
+                onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+              />
+            </div>
+          </>
         ) : activeView === "runs" ? (
           <RunHistory
             cwd={form.cwd}
@@ -1184,6 +1208,245 @@ function ProviderPresetOptions({
       ) : null}
     </>
   );
+}
+
+function WorkspaceReadiness({
+  daemonHealthy,
+  providers,
+  channels,
+  tasks,
+  providersLoading,
+  channelsLoading,
+  tasksLoading,
+  onRefreshDaemon,
+  onOpenProviders,
+  onCreateChannel,
+  onCreateTask,
+}: {
+  readonly daemonHealthy: boolean | undefined;
+  readonly providers: readonly ProviderPreset[];
+  readonly channels: readonly Channel[];
+  readonly tasks: readonly Task[];
+  readonly providersLoading: boolean;
+  readonly channelsLoading: boolean;
+  readonly tasksLoading: boolean;
+  readonly onRefreshDaemon: () => void;
+  readonly onOpenProviders: () => void;
+  readonly onCreateChannel: () => void;
+  readonly onCreateTask: () => void;
+}): JSX.Element {
+  const runnableProviderCount = providers.filter(canUseProviderForRun).length;
+  const readyProviderCount = providers.filter((provider) => providerRunPreflightBlocker(provider) === undefined).length;
+  const providerItem = buildProviderReadinessItem(providers.length, runnableProviderCount, readyProviderCount, providersLoading, onOpenProviders);
+  const channelItem = buildChannelReadinessItem(channels.length, channelsLoading, onCreateChannel);
+  const taskItem = buildTaskReadinessItem(tasks.length, tasksLoading, channels.length > 0, onCreateTask);
+  const items: readonly WorkspaceReadinessItem[] = [
+    buildDaemonReadinessItem(daemonHealthy, onRefreshDaemon),
+    providerItem,
+    channelItem,
+    taskItem,
+  ];
+  const blockingItems = items.filter((item) => item.id !== "tasks" && item.status !== "ready");
+  const ready = blockingItems.length === 0;
+
+  return (
+    <section className="workspace-readiness panel" aria-labelledby="workspace-readiness-title">
+      <div className="panel-title split readiness-title">
+        <span>
+          <ShieldCheck size={18} />
+          <h2 id="workspace-readiness-title">Workspace readiness</h2>
+        </span>
+        <span className={ready ? "readiness-summary ok" : "readiness-summary attention"}>
+          {ready ? <CheckCircle2 size={15} /> : <CircleAlert size={15} />}
+          {ready ? "Ready" : `${blockingItems.length} blocked`}
+        </span>
+      </div>
+      <div className="readiness-grid">
+        {items.map((item) => (
+          <div key={item.id} className={`readiness-item ${item.status}`}>
+            <span className="readiness-icon">{readinessIcon(item.status)}</span>
+            <span className="readiness-copy">
+              <strong>{item.label}</strong>
+              <small>{item.detail}</small>
+            </span>
+            {item.actionLabel && item.onAction ? (
+              <button className="secondary-button compact-button" type="button" onClick={item.onAction} disabled={item.disabled}>
+                {item.status === "loading" ? <Loader2 className="spin" size={14} /> : readinessActionIcon(item)}
+                {item.actionLabel}
+              </button>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function buildDaemonReadinessItem(daemonHealthy: boolean | undefined, onRefreshDaemon: () => void): WorkspaceReadinessItem {
+  if (daemonHealthy === undefined) {
+    return {
+      id: "daemon",
+      label: "Daemon",
+      detail: "Checking local daemon",
+      status: "loading",
+      actionLabel: "Retry",
+      onAction: onRefreshDaemon,
+    };
+  }
+  if (!daemonHealthy) {
+    return {
+      id: "daemon",
+      label: "Daemon",
+      detail: "Daemon is offline",
+      status: "attention",
+      actionLabel: "Retry",
+      onAction: onRefreshDaemon,
+    };
+  }
+  return {
+    id: "daemon",
+    label: "Daemon",
+    detail: "Local daemon is reachable",
+    status: "ready",
+  };
+}
+
+function buildProviderReadinessItem(
+  total: number,
+  runnable: number,
+  ready: number,
+  loading: boolean,
+  onOpenProviders: () => void,
+): WorkspaceReadinessItem {
+  if (loading) {
+    return {
+      id: "providers",
+      label: "Provider",
+      detail: "Loading provider presets",
+      status: "loading",
+      actionLabel: "Providers",
+      onAction: onOpenProviders,
+      disabled: true,
+    };
+  }
+  if (total === 0) {
+    return {
+      id: "providers",
+      label: "Provider",
+      detail: "No provider presets",
+      status: "attention",
+      actionLabel: "Providers",
+      onAction: onOpenProviders,
+    };
+  }
+  if (runnable === 0) {
+    return {
+      id: "providers",
+      label: "Provider",
+      detail: `${total} configured, none runnable`,
+      status: "attention",
+      actionLabel: "Providers",
+      onAction: onOpenProviders,
+    };
+  }
+  if (ready === 0) {
+    return {
+      id: "providers",
+      label: "Provider",
+      detail: `${runnable} runnable, check required`,
+      status: "attention",
+      actionLabel: "Providers",
+      onAction: onOpenProviders,
+    };
+  }
+  return {
+    id: "providers",
+    label: "Provider",
+    detail: `${ready}/${total} preflight ready`,
+    status: "ready",
+    actionLabel: "Providers",
+    onAction: onOpenProviders,
+  };
+}
+
+function buildChannelReadinessItem(total: number, loading: boolean, onCreateChannel: () => void): WorkspaceReadinessItem {
+  if (loading) {
+    return {
+      id: "channels",
+      label: "Channel",
+      detail: "Loading channels",
+      status: "loading",
+      actionLabel: "Create",
+      onAction: onCreateChannel,
+      disabled: true,
+    };
+  }
+  if (total === 0) {
+    return {
+      id: "channels",
+      label: "Channel",
+      detail: "No channel yet",
+      status: "attention",
+      actionLabel: "Create",
+      onAction: onCreateChannel,
+    };
+  }
+  return {
+    id: "channels",
+    label: "Channel",
+    detail: `${total} channel${total === 1 ? "" : "s"} available`,
+    status: "ready",
+  };
+}
+
+function buildTaskReadinessItem(total: number, loading: boolean, hasChannel: boolean, onCreateTask: () => void): WorkspaceReadinessItem {
+  if (loading) {
+    return {
+      id: "tasks",
+      label: "Tasks",
+      detail: "Loading selected channel tasks",
+      status: "loading",
+    };
+  }
+  if (total === 0) {
+    return {
+      id: "tasks",
+      label: "Tasks",
+      detail: hasChannel ? "No task in selected channel" : "Create a channel first",
+      status: hasChannel ? "info" : "attention",
+      actionLabel: hasChannel ? "Create" : undefined,
+      onAction: hasChannel ? onCreateTask : undefined,
+    };
+  }
+  return {
+    id: "tasks",
+    label: "Tasks",
+    detail: `${total} task${total === 1 ? "" : "s"} in selected channel`,
+    status: "ready",
+  };
+}
+
+function readinessIcon(status: WorkspaceReadinessItem["status"]): JSX.Element {
+  if (status === "ready") {
+    return <CheckCircle2 size={17} />;
+  }
+  if (status === "loading") {
+    return <Loader2 className="spin" size={17} />;
+  }
+  if (status === "info") {
+    return <Clock3 size={17} />;
+  }
+  return <CircleAlert size={17} />;
+}
+
+function readinessActionIcon(item: WorkspaceReadinessItem): JSX.Element {
+  if (item.actionLabel === "Providers") {
+    return <PlugZap size={14} />;
+  }
+  if (item.actionLabel === "Create") {
+    return <Plus size={14} />;
+  }
+  return <RefreshCw size={14} />;
 }
 
 function ChannelTaskWorkspace({

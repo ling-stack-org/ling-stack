@@ -238,6 +238,111 @@ h1 {
   align-items: start;
 }
 
+.workspace-readiness {
+  margin-bottom: 16px;
+}
+
+.readiness-title {
+  margin-bottom: 12px;
+}
+
+.readiness-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid #d8ded7;
+  background: #ffffff;
+  color: #43524e;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.readiness-summary.ok {
+  border-color: #a9cfc0;
+  background: #e7f5ef;
+  color: #116149;
+}
+
+.readiness-summary.attention {
+  border-color: #e7b4a8;
+  background: #fff1ed;
+  color: #9a341f;
+}
+
+.readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.readiness-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 58px;
+  padding: 9px 10px;
+  border: 1px solid #d8ded7;
+  background: #fbfcfa;
+  color: #43524e;
+}
+
+.readiness-icon {
+  display: grid;
+  place-items: center;
+  color: #5f6d68;
+}
+
+.readiness-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.readiness-copy strong {
+  color: #17211f;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.readiness-copy small {
+  overflow-wrap: anywhere;
+  color: #5f6d68;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.readiness-item.ready {
+  border-color: #bdd8cc;
+  background: #f2faf6;
+}
+
+.readiness-item.ready .readiness-icon {
+  color: #116149;
+}
+
+.readiness-item.attention {
+  border-color: #e7b4a8;
+  background: #fff7f4;
+}
+
+.readiness-item.attention .readiness-icon {
+  color: #9a341f;
+}
+
+.readiness-item.loading,
+.readiness-item.info {
+  border-color: #d6c28a;
+  background: #fffaf0;
+}
+
+.readiness-item.loading .readiness-icon,
+.readiness-item.info .readiness-icon {
+  color: #8a5a0a;
+}
+
 .task-workspace {
   display: grid;
   grid-template-columns: minmax(260px, 0.82fr) minmax(360px, 1.18fr);
@@ -1810,6 +1915,10 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .readiness-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .run-history-layout .runs-panel,
   .run-history-layout .run-detail-panel,
   .provider-list-panel,
@@ -1864,6 +1973,10 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .readiness-grid {
+    grid-template-columns: 1fr;
+  }
+
   .provider-layout {
     grid-template-columns: 1fr;
   }
@@ -1886,6 +1999,15 @@ pre {
   .top-status {
     display: grid;
     grid-template-columns: 1fr 1fr 34px;
+  }
+
+  .readiness-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .readiness-item .secondary-button {
+    grid-column: 2;
+    justify-self: start;
   }
 
   nav {

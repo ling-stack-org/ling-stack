@@ -144,6 +144,7 @@ Content:
 
 - daemon health,
 - provider readiness,
+- compact readiness checklist,
 - default channel,
 - recent runs,
 - pending approvals,
@@ -162,6 +163,26 @@ Empty state priority:
 2. no provider: guide to Provider Settings.
 3. no channel: guide to Channel Setup.
 4. ready: show task form.
+
+Compact readiness checklist:
+
+- appears near the top of Workspace Overview before the task/channel workspace,
+- uses existing daemon, provider, channel, and task state instead of a separate dashboard API,
+- stays compact enough to scan while preserving the task board as the primary surface,
+- shows status for daemon, provider preflight, channel setup, and task availability,
+- provider readiness requires the same run preflight as the Run button: enabled, chat-capable, non-media, secret configured, and `lastCheck.ok === true`,
+- task availability is informational, not blocking, because a user can create the first task from the same screen,
+- each blocked item should expose the next action: retry daemon health, open Providers, create/select channel, or create task.
+
+Example:
+
+```text
+Workspace readiness
+Daemon       Ready
+Provider     Needs check     Open Providers
+Channel      Ready
+Tasks        Empty           Create task
+```
 
 ### Provider Settings
 

@@ -11,7 +11,7 @@ This design depends on:
 - [Approval policy](approval-policy.md)
 - [Web UI v0.1](web-ui-v0.1.md)
 
-The current `packages/cli` package can initialize a workspace, manage providers, channels, tasks, runs, approvals, approval policy, daemon foreground startup, and Web UI launch through daemon APIs.
+The current `packages/cli` package can initialize a workspace, diagnose readiness, manage providers, channels, tasks, runs, approvals, approval policy, daemon foreground startup, and Web UI launch through daemon APIs.
 
 ## Goal
 
@@ -51,6 +51,7 @@ v0.1 CLI does not include:
 Implemented today:
 
 - `ling-stack init`
+- `ling-stack doctor`
 - `ling-stack daemon status`
 - `ling-stack daemon start --foreground`
 - `ling-stack provider list/add/show/check/update/remove`
@@ -83,6 +84,7 @@ Not implemented yet:
 
 ```text
 ling-stack init
+ling-stack doctor
 
 ling-stack daemon start
 ling-stack daemon status
@@ -183,7 +185,7 @@ ling-stack provider list --json
 1  generic failure
 2  bad CLI usage
 3  daemon unreachable
-4  daemon returned error
+4  daemon returned error or doctor found the workspace not ready
 5  approval denied
 6  run failed
 7  timeout
@@ -271,6 +273,105 @@ Next:
   ling-stack provider add openai-compatible ...
   ling-stack daemon start
 ```
+
+### `ling-stack doctor`
+
+Purpose:
+
+- diagnose whether the local workspace is ready to run a task,
+- keep terminal users aligned with the Web UI readiness state,
+- print the next concrete repair action when readiness is blocked.
+
+Command:
+
+```bash
+ling-stack doctor
+ling-stack doctor --json
+```
+
+Calls:
+
+```http
+GET /health
+GET /providers?cwd=/path/to/workspace
+GET /channels?cwd=/path/to/workspace
+GET /tasks?cwd=/path/to/workspace
+GET /approval-policy?cwd=/path/to/workspace
+```
+
+Readiness checks:
+
+- daemon reachable,
+- workspace path selected,
+- provider presets exist,
+- at least one enabled chat-capable non-media provider has configured secrets,
+- at least one runnable provider has `lastCheck.ok === true`,
+- at least one channel exists,
+- at least one channel has a default provider or a preflight-ready provider exists for explicit run selection,
+- task count is visible for context but does not block readiness,
+- approval policy is reachable.
+
+Human output:
+
+```text
+Ling Stack doctor
+Daemon: ok http://127.0.0.1:17891 (12ms)
+Workspace: /Users/tianxiao/ling-stack
+Providers: 3 total, 2 runnable, 1 preflight ready
+Channels: 1 total, 1 with default provider
+Tasks: 4 total
+Approval policy: ok
+Ready: yes
+```
+
+When not ready, append `Next:` lines with one or more concrete commands, for example:
+
+```text
+Ready: no
+Next:
+  ling-stack provider check-all
+```
+
+JSON output:
+
+```json
+{
+  "ok": false,
+  "daemon": {
+    "ok": true,
+    "url": "http://127.0.0.1:17891",
+    "elapsedMs": 12,
+    "service": "ling-stack-daemon"
+  },
+  "workspace": {
+    "cwd": "/Users/tianxiao/ling-stack"
+  },
+  "providers": {
+    "total": 3,
+    "runnable": 2,
+    "preflightReady": 1,
+    "unchecked": 1,
+    "failed": 1
+  },
+  "channels": {
+    "total": 1,
+    "withDefaultProvider": 1
+  },
+  "tasks": {
+    "total": 4
+  },
+  "approvalPolicy": {
+    "ok": true
+  },
+  "next": ["ling-stack provider check-all"]
+}
+```
+
+Exit behavior:
+
+- exit `0` when the workspace is ready,
+- exit `3` when the daemon is unreachable,
+- exit `4` when daemon is reachable but workspace readiness is blocked.
 
 ### `ling-stack daemon start`
 
