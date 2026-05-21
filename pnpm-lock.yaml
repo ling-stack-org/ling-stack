@@ -48,6 +48,9 @@ importers:
       '@ling-stack/daemon':
         specifier: workspace:*
         version: link:../daemon
+      '@ling-stack/web':
+        specifier: workspace:*
+        version: link:../../apps/web
 
   packages/core: {}
 

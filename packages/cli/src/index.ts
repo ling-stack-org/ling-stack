@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import {
   createSqliteRunStore,
@@ -81,6 +81,14 @@ interface InitResult {
 interface DaemonListenOptions {
   readonly host: string;
   readonly port: number;
+}
+
+interface UiOptions {
+  readonly host: string;
+  readonly port: number;
+  readonly url: string;
+  readonly open: boolean;
+  readonly foreground: boolean;
 }
 
 class CliError extends Error {
@@ -315,9 +323,10 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleApprovals(rest, parsed.options);
     case "runs":
       return await handleRuns(rest, parsed.options);
+    case "ui":
+      return await handleUi(rest, parsed.options);
     case "channel":
     case "task":
-    case "ui":
       throw new CliError(2, "not_implemented", `${command} is planned but not implemented in CLI v0.1 yet.`);
     default:
       throw new CliError(2, "unknown_command", `Unknown command: ${command}`);
@@ -411,6 +420,72 @@ async function handleDaemonStart(args: readonly string[], options: GlobalOptions
 
   const listenOptions = readDaemonListenOptions(parsed, options);
   return await runDaemonForeground(listenOptions);
+}
+
+async function handleUi(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["host", "port"]),
+    booleanFlags: new Set(["open", "foreground"]),
+  });
+  assertNoPositionals(parsed.positionals, "ui");
+  const uiOptions = readUiOptions(parsed);
+
+  if (uiOptions.foreground && options.json) {
+    throw new CliError(2, "unsupported_json", "ui --foreground is a long-running process and does not support --json.");
+  }
+
+  const [webRunning, daemonRunning] = await Promise.all([
+    isWebUiReachable(uiOptions.url),
+    isDaemonReachable(options.daemonUrl),
+  ]);
+
+  if (uiOptions.foreground) {
+    if (webRunning) {
+      if (uiOptions.open) {
+        openExternalUrl(uiOptions.url);
+      }
+      console.log(`Ling Stack Web UI already running at ${uiOptions.url}`);
+      return 0;
+    }
+    if (!daemonRunning) {
+      console.log(`Daemon is not reachable at ${options.daemonUrl}`);
+      console.log("Start it in another terminal:");
+      console.log("  ling-stack daemon start --foreground");
+    }
+    return await runWebForeground(uiOptions, options.daemonUrl);
+  }
+
+  const status = {
+    url: uiOptions.url,
+    daemonUrl: options.daemonUrl,
+    webRunning,
+    daemonRunning,
+    openRequested: uiOptions.open,
+    webStartCommand: `ling-stack ui --foreground --port ${uiOptions.port}`,
+    daemonStartCommand: "ling-stack daemon start --foreground",
+  };
+
+  if (options.json) {
+    printJson(status);
+    return 0;
+  }
+
+  console.log(`Web UI: ${uiOptions.url}`);
+  console.log(`Web server: ${webRunning ? "running" : "not running"}`);
+  console.log(`Daemon: ${daemonRunning ? "running" : "not running"} (${options.daemonUrl})`);
+  if (webRunning && uiOptions.open) {
+    openExternalUrl(uiOptions.url);
+    console.log("Opened browser.");
+  }
+  if (!webRunning) {
+    console.log("Start Web UI:");
+    console.log(`  ${status.webStartCommand}`);
+  }
+  if (!daemonRunning) {
+    console.log("Start daemon:");
+    console.log(`  ${status.daemonStartCommand}`);
+  }
+  return 0;
 }
 
 async function handleRun(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -1013,6 +1088,156 @@ function resolveDaemonCliPath(): string {
   } catch (error) {
     throw new CliError(1, "daemon_cli_not_found", `Cannot resolve @ling-stack/daemon CLI: ${errorMessage(error)}`);
   }
+}
+
+function readUiOptions(parsed: ParsedCommandArgs): UiOptions {
+  const host = getFlag(parsed, "host") ?? "127.0.0.1";
+  const port = getFlag(parsed, "port") ? readRequiredPort(getFlag(parsed, "port") as string, "--port") : 5173;
+  return {
+    host,
+    port,
+    url: `http://${host}:${port}`,
+    open: parsed.booleans.has("open"),
+    foreground: parsed.booleans.has("foreground"),
+  };
+}
+
+async function isDaemonReachable(daemonUrl: string): Promise<boolean> {
+  try {
+    const response = await fetch(buildUrl(daemonUrl, "/health"), { signal: AbortSignal.timeout(1000) });
+    if (!response.ok) {
+      return false;
+    }
+    const body = (await response.json()) as { ok?: unknown };
+    return body.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+async function isHttpReachable(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(1000) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function isWebUiReachable(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(1000) });
+    if (!response.ok) {
+      return false;
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("text/html")) {
+      return false;
+    }
+    const body = await response.text();
+    return body.includes("<title>Ling Stack</title>");
+  } catch {
+    return false;
+  }
+}
+
+async function runWebForeground(options: UiOptions, daemonUrl: string): Promise<number> {
+  const webDir = resolveWebPackageDir();
+  const viteCliPath = resolveViteCliPath(webDir);
+  const child = spawn(process.execPath, [viteCliPath, "--host", options.host, "--port", String(options.port), "--strictPort"], {
+    cwd: webDir,
+    env: {
+      ...process.env,
+      VITE_LING_STACK_DAEMON_URL: daemonUrl,
+    },
+    stdio: "inherit",
+  });
+
+  if (options.open) {
+    void waitForHttpReachable(options.url, 10_000).then((reachable) => {
+      if (reachable) {
+        openExternalUrl(options.url);
+      }
+    });
+  }
+
+  return await waitForChildExit(child, "web_ui_start_failed");
+}
+
+async function waitForHttpReachable(url: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isHttpReachable(url)) {
+      return true;
+    }
+    await delay(250);
+  }
+  return false;
+}
+
+function resolveWebPackageDir(): string {
+  try {
+    return dirname(createRequire(import.meta.url).resolve("@ling-stack/web/package.json"));
+  } catch (error) {
+    throw new CliError(1, "web_package_not_found", `Cannot resolve @ling-stack/web package: ${errorMessage(error)}`);
+  }
+}
+
+function resolveViteCliPath(webDir: string): string {
+  try {
+    const requireFromWeb = createRequire(join(webDir, "package.json"));
+    return join(dirname(requireFromWeb.resolve("vite/package.json")), "bin", "vite.js");
+  } catch (error) {
+    throw new CliError(1, "vite_cli_not_found", `Cannot resolve Vite from @ling-stack/web: ${errorMessage(error)}`);
+  }
+}
+
+function openExternalUrl(url: string): void {
+  const opener =
+    process.platform === "darwin"
+      ? { command: "open", args: [url] }
+      : process.platform === "win32"
+        ? { command: "cmd", args: ["/c", "start", "", url] }
+        : { command: "xdg-open", args: [url] };
+  const child = spawn(opener.command, opener.args, { detached: true, stdio: "ignore" });
+  child.unref();
+}
+
+async function waitForChildExit(child: ReturnType<typeof spawn>, errorCode: string): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const forwardSignal = (signal: NodeJS.Signals): void => {
+      if (!child.killed) {
+        child.kill(signal);
+      }
+    };
+    const onSigint = (): void => forwardSignal("SIGINT");
+    const onSigterm = (): void => forwardSignal("SIGTERM");
+    const cleanup = (): void => {
+      process.off("SIGINT", onSigint);
+      process.off("SIGTERM", onSigterm);
+    };
+
+    process.once("SIGINT", onSigint);
+    process.once("SIGTERM", onSigterm);
+    child.once("error", (error) => {
+      cleanup();
+      reject(new CliError(1, errorCode, error.message));
+    });
+    child.once("exit", (code, signal) => {
+      cleanup();
+      if (code !== null) {
+        resolve(code);
+        return;
+      }
+      resolve(signal === "SIGINT" || signal === "SIGTERM" ? 0 : 1);
+    });
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => {
+    setTimeout(resolveDelay, ms);
+  });
 }
 
 async function requestJson(
@@ -2017,6 +2242,10 @@ function printCommandHelp(command: string, subcommand?: string): void {
     printDaemonHelp(subcommand);
     return;
   }
+  if (command === "ui") {
+    printUiHelp();
+    return;
+  }
   printHelp();
 }
 
@@ -2042,6 +2271,7 @@ Usage:
   ling-stack [global options] approvals show <id>
   ling-stack [global options] approvals approve <id>
   ling-stack [global options] approvals deny <id>
+  ling-stack [global options] ui
 
 Global options:
   --daemon-url <url>   Default: LING_STACK_DAEMON_URL or http://127.0.0.1:17891
@@ -2052,7 +2282,7 @@ Global options:
   --help, -h           Show help
 
 Planned commands:
-  channel, task, ui, daemon stop, background daemon start
+  channel, task, daemon stop, background daemon start
 `);
 }
 
@@ -2132,6 +2362,18 @@ function printRunsHelp(): void {
   ling-stack runs list [--status succeeded] [--limit <n>]
   ling-stack runs show <id>
   ling-stack runs events <id> [--after-seq <n>] [--limit <n>]
+`);
+}
+
+function printUiHelp(): void {
+  console.log(`Usage:
+  ling-stack ui
+  ling-stack ui --open
+  ling-stack ui --foreground [--open] [--host 127.0.0.1] [--port 5173]
+
+Behavior:
+  Without --foreground, checks Web UI and daemon status and prints the next command.
+  With --foreground, starts the Vite Web UI in this terminal and injects VITE_LING_STACK_DAEMON_URL.
 `);
 }
 

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@ling-stack/core": "workspace:*",
-    "@ling-stack/daemon": "workspace:*"
+    "@ling-stack/daemon": "workspace:*",
+    "@ling-stack/web": "workspace:*"
   }
 }
