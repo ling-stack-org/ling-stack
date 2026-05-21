@@ -242,6 +242,127 @@ h1 {
   margin-bottom: 16px;
 }
 
+.first-run-flow {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.first-run-flow.ready {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-color: #a9cfc0;
+  background: #f3fbf7;
+}
+
+.first-run-title {
+  margin-bottom: 0;
+}
+
+.first-run-copy,
+.first-run-copy span {
+  display: flex;
+  align-items: center;
+}
+
+.first-run-copy {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.first-run-copy span {
+  gap: 7px;
+  color: #116149;
+}
+
+.first-run-copy strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.first-run-copy small {
+  overflow-wrap: anywhere;
+  color: #5f6d68;
+  font-size: 12px;
+}
+
+.first-run-actions,
+.first-run-step-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.first-run-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.first-run-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-height: 104px;
+  padding: 10px;
+  border: 1px solid #d8ded7;
+  background: #fbfcfa;
+}
+
+.first-run-step.ready {
+  border-color: #bdd8cc;
+  background: #f2faf6;
+}
+
+.first-run-step.ready > svg {
+  color: #116149;
+}
+
+.first-run-step.attention {
+  border-color: #e7b4a8;
+  background: #fff7f4;
+}
+
+.first-run-step.attention > svg {
+  color: #9a341f;
+}
+
+.first-run-step.pending {
+  border-color: #d6c28a;
+  background: #fffaf0;
+}
+
+.first-run-step.pending > svg {
+  color: #8a5a0a;
+}
+
+.first-run-step-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.first-run-step-copy strong {
+  color: #17211f;
+  font-size: 12px;
+}
+
+.first-run-step-copy small {
+  overflow-wrap: anywhere;
+  color: #5f6d68;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.first-run-step-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+}
+
 .readiness-title {
   margin-bottom: 12px;
 }
@@ -1981,6 +2102,10 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .first-run-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .readiness-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2039,6 +2164,10 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .first-run-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .readiness-grid {
     grid-template-columns: 1fr;
   }
@@ -2069,6 +2198,17 @@ pre {
 
   .readiness-item {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .first-run-flow.ready,
+  .first-run-steps,
+  .first-run-step {
+    grid-template-columns: 1fr;
+  }
+
+  .first-run-step-actions,
+  .first-run-actions {
+    justify-content: flex-start;
   }
 
   .readiness-item .secondary-button {

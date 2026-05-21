@@ -110,6 +110,17 @@ interface WorkspaceReadinessItem {
   readonly onAction?: () => void;
   readonly disabled?: boolean;
 }
+interface FirstRunStep {
+  readonly id: string;
+  readonly label: string;
+  readonly detail: string;
+  readonly status: "ready" | "attention" | "pending";
+  readonly actionLabel?: string;
+  readonly onAction?: () => void;
+  readonly secondaryActionLabel?: string;
+  readonly onSecondaryAction?: () => void;
+  readonly disabled?: boolean;
+}
 
 const defaultForm: RunFormState = {
   cwd: "/Users/tianxiao/ling-stack",
@@ -488,6 +499,66 @@ export function App(): JSX.Element {
         name: "",
         defaultProviderPresetId: (current.defaultProviderPresetId || response.channel.defaultProviderPresetId) ?? "",
       }));
+      await refreshChannels();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function saveDefaultChannel(): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    const readyProvider = providers.find(providerPreflightReady);
+    try {
+      setErrorMessage("");
+      const response = await createChannel(form.cwd.trim(), {
+        name: channelForm.name.trim() || "Engineering",
+        boundPath: channelForm.boundPath.trim() || form.cwd.trim(),
+        defaultProviderPresetId: readyProvider?.id ?? channelForm.defaultProviderPresetId,
+        allowedTools: channelForm.allowedTools.length > 0 ? channelForm.allowedTools : defaultTools,
+      });
+      setSelectedChannelId(response.channel.id);
+      setTaskRunProviderId("");
+      if (readyProvider) {
+        applyProviderToRun(readyProvider);
+      }
+      setChannelForm((current) => ({
+        ...current,
+        name: "",
+        boundPath: current.boundPath || form.cwd.trim(),
+        defaultProviderPresetId: readyProvider?.id ?? current.defaultProviderPresetId,
+      }));
+      await refreshChannels();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function setChannelDefaultProvider(channelId: string, providerId: string): Promise<void> {
+    const channel = channels.find((item) => item.id === channelId);
+    if (!channel) {
+      setErrorMessage("找不到 channel");
+      return;
+    }
+    const provider = providers.find((item) => item.id === providerId);
+    if (!provider || !providerPreflightReady(provider)) {
+      setErrorMessage("请先选择 preflight-ready provider");
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      const response = await updateChannel(form.cwd.trim(), channelId, {
+        ...channelToForm(channel, form.cwd),
+        defaultProviderPresetId: provider.id,
+      });
+      setSelectedChannelId(response.channel.id);
+      setTaskRunProviderId("");
+      setChannelEditForm(channelToForm(response.channel, form.cwd));
+      applyProviderToRun(provider);
       await refreshChannels();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -957,8 +1028,27 @@ export function App(): JSX.Element {
               tasksLoading={tasksLoading}
               onRefreshDaemon={() => void refreshHealth()}
               onOpenProviders={() => setActiveView("providers")}
-              onCreateChannel={() => void saveChannel()}
+              onCreateChannel={() => void saveDefaultChannel()}
               onCreateTask={() => void saveTask()}
+            />
+            <FirstRunFlow
+              providers={providers}
+              channels={channels}
+              selectedChannelId={selectedChannelId}
+              tasks={tasks}
+              selectedTaskId={selectedTaskId}
+              taskRunProviderId={taskRunProviderId}
+              fallbackProviderId={form.providerPresetId}
+              providersLoading={providersLoading}
+              channelsLoading={channelsLoading}
+              tasksLoading={tasksLoading}
+              isRunning={isRunning}
+              onOpenProviders={() => setActiveView("providers")}
+              onCreateDefaultChannel={() => void saveDefaultChannel()}
+              onSetChannelProvider={(channelId, providerId) => void setChannelDefaultProvider(channelId, providerId)}
+              onCreateTask={() => void saveTask()}
+              onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
+              onRunTask={(task) => void runPersistedTask(task)}
             />
             <div className="workspace-task-grid">
               <ChannelTaskWorkspace
@@ -1288,6 +1378,333 @@ function WorkspaceReadiness({
       </div>
     </section>
   );
+}
+
+function FirstRunFlow({
+  providers,
+  channels,
+  selectedChannelId,
+  tasks,
+  selectedTaskId,
+  taskRunProviderId,
+  fallbackProviderId,
+  providersLoading,
+  channelsLoading,
+  tasksLoading,
+  isRunning,
+  onOpenProviders,
+  onCreateDefaultChannel,
+  onSetChannelProvider,
+  onCreateTask,
+  onCheckThenRunTask,
+  onRunTask,
+}: {
+  readonly providers: readonly ProviderPreset[];
+  readonly channels: readonly Channel[];
+  readonly selectedChannelId: string;
+  readonly tasks: readonly Task[];
+  readonly selectedTaskId: string;
+  readonly taskRunProviderId: string;
+  readonly fallbackProviderId: string;
+  readonly providersLoading: boolean;
+  readonly channelsLoading: boolean;
+  readonly tasksLoading: boolean;
+  readonly isRunning: boolean;
+  readonly onOpenProviders: () => void;
+  readonly onCreateDefaultChannel: () => void;
+  readonly onSetChannelProvider: (channelId: string, providerId: string) => void;
+  readonly onCreateTask: () => void;
+  readonly onCheckThenRunTask: (task: Task) => void;
+  readonly onRunTask: (task: Task) => void;
+}): JSX.Element | null {
+  const readyProvider = providers.find(providerPreflightReady);
+  const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
+  const channelDefaultProvider = selectedChannel?.defaultProviderPresetId
+    ? providers.find((provider) => provider.id === selectedChannel.defaultProviderPresetId)
+    : undefined;
+  const channelHasReadyDefault = Boolean(channelDefaultProvider && providerPreflightReady(channelDefaultProvider));
+  const effectiveProviderId = taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId || readyProvider?.id || "";
+  const effectiveProvider = providers.find((provider) => provider.id === effectiveProviderId);
+  const runReady = Boolean(selectedTask && effectiveProvider && providerRunPreflightBlocker(effectiveProvider) === undefined);
+  const firstRunComplete = Boolean(readyProvider && selectedChannel && channelHasReadyDefault && selectedTask && runReady);
+
+  if (firstRunComplete && selectedTask && effectiveProvider) {
+    return (
+      <section className="first-run-flow panel ready" aria-labelledby="first-run-flow-title">
+        <div className="first-run-copy">
+          <span>
+            <CheckCircle2 size={17} />
+            <strong id="first-run-flow-title">First run ready</strong>
+          </span>
+          <small>
+            {selectedTask.title} can run with {effectiveProvider.displayName}.
+          </small>
+        </div>
+        <div className="first-run-actions">
+          <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(selectedTask)} disabled={isRunning}>
+            {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+            Check run
+          </button>
+          <button className="primary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning}>
+            {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+            Run
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  const steps: readonly FirstRunStep[] = [
+    buildFirstRunProviderStep(readyProvider, providersLoading, onOpenProviders),
+    buildFirstRunChannelStep(Boolean(selectedChannel), Boolean(readyProvider), channelsLoading, onCreateDefaultChannel),
+    buildFirstRunChannelProviderStep(selectedChannel, readyProvider, channelHasReadyDefault, onSetChannelProvider),
+    buildFirstRunTaskStep(Boolean(selectedChannel), tasks.length, tasksLoading, onCreateTask),
+    buildFirstRunRunStep(selectedTask, effectiveProvider, runReady, isRunning, onCheckThenRunTask, onRunTask),
+  ];
+
+  return (
+    <section className="first-run-flow panel" aria-labelledby="first-run-flow-title">
+      <div className="panel-title split first-run-title">
+        <span>
+          <Play size={18} />
+          <h2 id="first-run-flow-title">First run</h2>
+        </span>
+        <span className="event-count">setup loop</span>
+      </div>
+      <div className="first-run-steps">
+        {steps.map((step) => (
+          <article key={step.id} className={`first-run-step ${step.status}`}>
+            {firstRunStepIcon(step.status)}
+            <span className="first-run-step-copy">
+              <strong>{step.label}</strong>
+              <small>{step.detail}</small>
+            </span>
+            <span className="first-run-step-actions">
+              {step.actionLabel && step.onAction ? (
+                <button className="secondary-button compact-button" type="button" onClick={step.onAction} disabled={step.disabled}>
+                  {step.status === "pending" ? <Loader2 className="spin" size={14} /> : firstRunActionIcon(step.actionLabel)}
+                  {step.actionLabel}
+                </button>
+              ) : null}
+              {step.secondaryActionLabel && step.onSecondaryAction ? (
+                <button className="primary-button compact-button" type="button" onClick={step.onSecondaryAction} disabled={step.disabled}>
+                  {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                  {step.secondaryActionLabel}
+                </button>
+              ) : null}
+            </span>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function buildFirstRunProviderStep(
+  readyProvider: ProviderPreset | undefined,
+  loading: boolean,
+  onOpenProviders: () => void,
+): FirstRunStep {
+  if (loading) {
+    return {
+      id: "provider",
+      label: "Provider",
+      detail: "Loading provider presets",
+      status: "pending",
+      actionLabel: "Providers",
+      onAction: onOpenProviders,
+      disabled: true,
+    };
+  }
+  if (!readyProvider) {
+    return {
+      id: "provider",
+      label: "Provider",
+      detail: "Create or repair a preflight-ready chat provider first.",
+      status: "attention",
+      actionLabel: "Providers",
+      onAction: onOpenProviders,
+    };
+  }
+  return {
+    id: "provider",
+    label: "Provider",
+    detail: `${readyProvider.displayName} is preflight-ready.`,
+    status: "ready",
+  };
+}
+
+function buildFirstRunChannelStep(
+  hasChannel: boolean,
+  hasReadyProvider: boolean,
+  loading: boolean,
+  onCreateDefaultChannel: () => void,
+): FirstRunStep {
+  if (loading) {
+    return {
+      id: "channel",
+      label: "Channel",
+      detail: "Loading channels",
+      status: "pending",
+      disabled: true,
+    };
+  }
+  if (!hasChannel) {
+    return {
+      id: "channel",
+      label: "Channel",
+      detail: hasReadyProvider ? "Create an Engineering channel with the ready provider as default." : "Create a channel after provider setup.",
+      status: "attention",
+      actionLabel: "Create default",
+      onAction: onCreateDefaultChannel,
+      disabled: !hasReadyProvider,
+    };
+  }
+  return {
+    id: "channel",
+    label: "Channel",
+    detail: "A channel is selected.",
+    status: "ready",
+  };
+}
+
+function buildFirstRunChannelProviderStep(
+  channel: Channel | undefined,
+  readyProvider: ProviderPreset | undefined,
+  channelHasReadyDefault: boolean,
+  onSetChannelProvider: (channelId: string, providerId: string) => void,
+): FirstRunStep {
+  if (!channel) {
+    return {
+      id: "channel-provider",
+      label: "Channel provider",
+      detail: "Create or select a channel first.",
+      status: "pending",
+    };
+  }
+  if (channelHasReadyDefault) {
+    return {
+      id: "channel-provider",
+      label: "Channel provider",
+      detail: "Selected channel has a preflight-ready default provider.",
+      status: "ready",
+    };
+  }
+  return {
+    id: "channel-provider",
+    label: "Channel provider",
+    detail: readyProvider ? `Set ${readyProvider.displayName} as the channel default.` : "Repair a provider before setting the channel default.",
+    status: "attention",
+    actionLabel: "Set provider",
+    onAction: readyProvider ? () => onSetChannelProvider(channel.id, readyProvider.id) : undefined,
+    disabled: !readyProvider,
+  };
+}
+
+function buildFirstRunTaskStep(
+  hasChannel: boolean,
+  taskCount: number,
+  loading: boolean,
+  onCreateTask: () => void,
+): FirstRunStep {
+  if (loading) {
+    return {
+      id: "task",
+      label: "Task",
+      detail: "Loading selected channel tasks",
+      status: "pending",
+    };
+  }
+  if (taskCount === 0) {
+    return {
+      id: "task",
+      label: "Task",
+      detail: hasChannel ? "Create the first task from the default prompt." : "Create a channel first.",
+      status: "attention",
+      actionLabel: "Create first task",
+      onAction: hasChannel ? onCreateTask : undefined,
+      disabled: !hasChannel,
+    };
+  }
+  return {
+    id: "task",
+    label: "Task",
+    detail: `${taskCount} task${taskCount === 1 ? "" : "s"} available.`,
+    status: "ready",
+  };
+}
+
+function buildFirstRunRunStep(
+  task: Task | undefined,
+  provider: ProviderPreset | undefined,
+  runReady: boolean,
+  isRunning: boolean,
+  onCheckThenRunTask: (task: Task) => void,
+  onRunTask: (task: Task) => void,
+): FirstRunStep {
+  if (!task) {
+    return {
+      id: "run",
+      label: "Run",
+      detail: "Create a task first.",
+      status: "pending",
+    };
+  }
+  if (!provider) {
+    return {
+      id: "run",
+      label: "Run",
+      detail: "Select or set a provider before running.",
+      status: "attention",
+    };
+  }
+  if (!runReady) {
+    return {
+      id: "run",
+      label: "Run",
+      detail: providerRunPreflightBlocker(provider) ?? "Provider is not ready.",
+      status: "attention",
+      actionLabel: "Check run",
+      onAction: () => onCheckThenRunTask(task),
+      disabled: isRunning || !canUseProviderForRun(provider),
+    };
+  }
+  return {
+    id: "run",
+    label: "Run",
+    detail: "Task and provider are ready.",
+    status: "ready",
+    actionLabel: "Check run",
+    onAction: () => onCheckThenRunTask(task),
+    secondaryActionLabel: "Run",
+    onSecondaryAction: () => onRunTask(task),
+    disabled: isRunning,
+  };
+}
+
+function firstRunStepIcon(status: FirstRunStep["status"]): JSX.Element {
+  if (status === "ready") {
+    return <CheckCircle2 size={17} />;
+  }
+  if (status === "pending") {
+    return <Clock3 size={17} />;
+  }
+  return <CircleAlert size={17} />;
+}
+
+function firstRunActionIcon(label: string): JSX.Element {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("provider")) {
+    return <PlugZap size={14} />;
+  }
+  if (normalized.includes("create")) {
+    return <Plus size={14} />;
+  }
+  if (normalized.includes("check")) {
+    return <CheckCircle2 size={14} />;
+  }
+  return <Save size={14} />;
 }
 
 function buildDaemonReadinessItem(daemonHealthy: boolean | undefined, onRefreshDaemon: () => void): WorkspaceReadinessItem {

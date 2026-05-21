@@ -184,6 +184,19 @@ Channel      Ready
 Tasks        Empty           Create task
 ```
 
+First run quick flow:
+
+- appears under the readiness checklist when the workspace has not completed the first runnable task loop,
+- aligns with CLI `doctor` next actions but keeps the Web flow action-oriented,
+- uses the first preflight-ready chat provider for defaults when the user has not selected a provider,
+- offers `Create default channel` when no channel exists,
+- offers `Set as channel provider` when a selected channel has no preflight-ready default provider,
+- offers `Create first task` when a channel exists but the selected channel has no task,
+- offers `Check run` and `Run` once a selected task has a preflight-ready effective provider,
+- should not create duplicate channels/tasks from repeated loading states; buttons must disable while the relevant collection is loading or a run is active.
+
+The quick flow is a convenience layer. The normal channel/task forms remain the source of editable details.
+
 ### Provider Settings
 
 Backed by:
