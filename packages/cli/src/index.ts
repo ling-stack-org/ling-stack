@@ -10,6 +10,10 @@ const DEFAULT_PORT = "17891";
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"] as const;
 const VALID_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "edit", "write"]);
 const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const VALID_PROVIDER_KINDS = new Set(["openai", "anthropic", "openai-compatible", "doubao", "deepseek", "minimax", "glm", "jimeng", "seedream", "seedance"]);
+const VALID_PROVIDER_APIS = new Set(["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai", "mistral-conversations", "media-job"]);
+const VALID_PROVIDER_CAPABILITIES = new Set(["chat", "tool_call", "reasoning", "vision", "embedding", "image_generate", "image_edit", "video_generate", "tts", "asr"]);
+const VALID_PROVIDER_INPUTS = new Set(["text", "image"]);
 
 type QueryValue = string | number | boolean | undefined;
 
@@ -277,12 +281,13 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleDaemon(rest, parsed.options);
     case "run":
       return await handleRun(rest, parsed.options);
+    case "provider":
+      return await handleProvider(rest, parsed.options);
     case "approvals":
       return await handleApprovals(rest, parsed.options);
     case "runs":
       return await handleRuns(rest, parsed.options);
     case "init":
-    case "provider":
     case "channel":
     case "task":
     case "ui":
@@ -368,6 +373,127 @@ async function handleRun(args: readonly string[], options: GlobalOptions): Promi
   await streamRun(options, body, printer);
   printer.finish();
   return printer.exitCode();
+}
+
+async function handleProvider(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "list", ...rest] = args;
+  switch (subcommand) {
+    case "list":
+      return await handleProviderList(rest, options);
+    case "add":
+      return await handleProviderAdd(rest, options);
+    case "show":
+      return await handleProviderShow(rest, options);
+    case "check":
+      return await handleProviderCheck(rest, options);
+    case "update":
+      return await handleProviderUpdate(rest, options);
+    case "remove":
+    case "delete":
+      return await handleProviderRemove(rest, options);
+    default:
+      throw new CliError(2, "unknown_command", `Unknown provider command: ${subcommand}`);
+  }
+}
+
+async function handleProviderList(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  assertNoPositionals(parsed.positionals, "provider list");
+  const response = await requestJson(options, "GET", "/providers", { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printProvidersList(response);
+  return 0;
+}
+
+async function handleProviderAdd(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, providerCommandParserSpec());
+  if (parsed.positionals.length !== 1) {
+    throw new CliError(2, "bad_usage", "Usage: ling-stack provider add <kind> --name <name> --provider-id <id> --model <model> [options]");
+  }
+  const kind = parsed.positionals[0];
+  assertAllowed("kind", kind, VALID_PROVIDER_KINDS);
+  const body = buildProviderAddBody(parsed, kind);
+  const response = await requestJson(options, "POST", "/providers", { cwd: options.cwd }, body);
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  const provider = readField(response, "provider");
+  console.log(`Provider created: ${readString(provider, "id") ?? ""}`);
+  console.log(`Name: ${readString(provider, "displayName") ?? ""}`);
+  console.log(`Model: ${readString(provider, "model") ?? ""}`);
+  console.log(`Enabled: ${readBoolean(provider, "enabled") ?? false}`);
+  return 0;
+}
+
+async function handleProviderShow(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const providerId = singlePositional(parsed.positionals, "provider show <id>");
+  const response = await requestJson(options, "GET", `/providers/${encodeURIComponent(providerId)}`, { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printProviderDetail(response);
+  return 0;
+}
+
+async function handleProviderCheck(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const providerId = singlePositional(parsed.positionals, "provider check <id>");
+  const response = await requestJson(options, "POST", `/providers/${encodeURIComponent(providerId)}/check`, { cwd: options.cwd });
+  const ok = readBoolean(response, "ok") ?? false;
+  if (options.json) {
+    printJson(response);
+    return ok ? 0 : 4;
+  }
+  console.log(`Provider: ${providerId}`);
+  console.log(`Status: ${ok ? "ok" : "failed"}`);
+  const code = readString(response, "code");
+  if (code) {
+    console.log(`Code: ${code}`);
+  }
+  console.log(`Message: ${readString(response, "message") ?? ""}`);
+  console.log(`Checked: ${readString(response, "checkedAt") ?? ""}`);
+  return ok ? 0 : 4;
+}
+
+async function handleProviderUpdate(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, providerCommandParserSpec({ includeClearFlags: true }));
+  if (parsed.positionals.length !== 1) {
+    throw new CliError(2, "bad_usage", "Usage: ling-stack provider update <id> [options]");
+  }
+  const providerId = parsed.positionals[0];
+  const body = buildProviderUpdateBody(parsed);
+  if (Object.keys(body).length === 0) {
+    throw new CliError(2, "empty_update", "provider update requires at least one field to update.");
+  }
+  const response = await requestJson(options, "PATCH", `/providers/${encodeURIComponent(providerId)}`, { cwd: options.cwd }, body);
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  const provider = readField(response, "provider");
+  console.log(`Provider updated: ${readString(provider, "id") ?? providerId}`);
+  console.log(`Name: ${readString(provider, "displayName") ?? ""}`);
+  console.log(`Model: ${readString(provider, "model") ?? ""}`);
+  console.log(`Enabled: ${readBoolean(provider, "enabled") ?? false}`);
+  return 0;
+}
+
+async function handleProviderRemove(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const providerId = singlePositional(parsed.positionals, "provider remove <id>");
+  const response = await requestJson(options, "DELETE", `/providers/${encodeURIComponent(providerId)}`, { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  console.log(`Provider removed: ${providerId}`);
+  return 0;
 }
 
 async function handleApprovals(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -503,7 +629,7 @@ async function handleRunsEvents(args: readonly string[], options: GlobalOptions)
 
 async function requestJson(
   options: GlobalOptions,
-  method: "GET" | "POST",
+  method: "DELETE" | "GET" | "PATCH" | "POST",
   path: string,
   query?: Record<string, QueryValue>,
   body?: unknown,
@@ -643,6 +769,249 @@ function readTools(parsed: ParsedCommandArgs): readonly string[] {
     throw new CliError(2, "bad_tool", `Unsupported tool(s): ${invalidTools.join(", ")}. Valid tools: ${[...VALID_TOOLS].join(", ")}`);
   }
   return effectiveTools;
+}
+
+function providerCommandParserSpec(options: { readonly includeClearFlags?: boolean } = {}): CommandParserSpec {
+  return {
+    stringFlags: new Set([
+      "name",
+      "display-name",
+      "kind",
+      "provider-id",
+      "model",
+      "api",
+      "base-url",
+      "api-key-ref",
+      "context-window",
+      "max-tokens",
+      "enabled",
+      "headers-json",
+      "compat-json",
+    ]),
+    repeatableFlags: new Set(["capability", "input", "header"]),
+    booleanFlags: new Set([
+      "auth-header",
+      "no-auth-header",
+      "reasoning",
+      "no-reasoning",
+      "disabled",
+      ...(options.includeClearFlags
+        ? ["clear-base-url", "clear-api-key-ref", "clear-auth-header", "clear-reasoning", "clear-context-window", "clear-max-tokens"]
+        : []),
+    ]),
+  };
+}
+
+function buildProviderAddBody(parsed: ParsedCommandArgs, kind: string): Record<string, unknown> {
+  const displayName = getFlag(parsed, "name") ?? getFlag(parsed, "display-name");
+  const providerId = getFlag(parsed, "provider-id");
+  const model = getFlag(parsed, "model");
+  const api = getFlag(parsed, "api") ?? defaultProviderApi(kind);
+  const capabilities = readStringSetFlag(parsed, "capability", VALID_PROVIDER_CAPABILITIES, defaultProviderCapabilities(kind, api));
+  const input = readStringSetFlag(parsed, "input", VALID_PROVIDER_INPUTS, ["text"]);
+  assertAllowed("api", api, VALID_PROVIDER_APIS);
+
+  if (!displayName) {
+    throw new CliError(2, "missing_option", "provider add requires --name <displayName>.");
+  }
+  if (!providerId) {
+    throw new CliError(2, "missing_option", "provider add requires --provider-id <id>.");
+  }
+  if (!model) {
+    throw new CliError(2, "missing_option", "provider add requires --model <model>.");
+  }
+
+  return removeUndefined({
+    kind,
+    displayName,
+    providerId,
+    model,
+    api,
+    baseUrl: getFlag(parsed, "base-url"),
+    apiKeyRef: getFlag(parsed, "api-key-ref"),
+    headers: readHeaders(parsed),
+    authHeader: readTriStateBoolean(parsed, "auth-header", "no-auth-header"),
+    reasoning: readTriStateBoolean(parsed, "reasoning", "no-reasoning"),
+    input,
+    contextWindow: readOptionalIntegerFlag(parsed, "context-window"),
+    maxTokens: readOptionalIntegerFlag(parsed, "max-tokens"),
+    compat: readJsonObjectFlag(parsed, "compat-json"),
+    capabilities,
+    enabled: readEnabledFlag(parsed, true),
+  });
+}
+
+function buildProviderUpdateBody(parsed: ParsedCommandArgs): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  setIfDefined(body, "kind", readAllowedOptionalFlag(parsed, "kind", VALID_PROVIDER_KINDS));
+  setIfDefined(body, "displayName", getFlag(parsed, "name") ?? getFlag(parsed, "display-name"));
+  setIfDefined(body, "providerId", getFlag(parsed, "provider-id"));
+  setIfDefined(body, "model", getFlag(parsed, "model"));
+  setIfDefined(body, "api", readAllowedOptionalFlag(parsed, "api", VALID_PROVIDER_APIS));
+  setIfDefinedOrCleared(body, "baseUrl", getFlag(parsed, "base-url"), parsed.booleans.has("clear-base-url"));
+  setIfDefinedOrCleared(body, "apiKeyRef", getFlag(parsed, "api-key-ref"), parsed.booleans.has("clear-api-key-ref"));
+  setIfDefined(body, "headers", readHeaders(parsed));
+  setIfDefinedOrCleared(body, "authHeader", readTriStateBoolean(parsed, "auth-header", "no-auth-header"), parsed.booleans.has("clear-auth-header"));
+  setIfDefinedOrCleared(body, "reasoning", readTriStateBoolean(parsed, "reasoning", "no-reasoning"), parsed.booleans.has("clear-reasoning"));
+  setIfDefined(body, "input", readStringSetFlag(parsed, "input", VALID_PROVIDER_INPUTS));
+  setIfDefinedOrCleared(body, "contextWindow", readOptionalIntegerFlag(parsed, "context-window"), parsed.booleans.has("clear-context-window"));
+  setIfDefinedOrCleared(body, "maxTokens", readOptionalIntegerFlag(parsed, "max-tokens"), parsed.booleans.has("clear-max-tokens"));
+  setIfDefined(body, "compat", readJsonObjectFlag(parsed, "compat-json"));
+  setIfDefined(body, "capabilities", readStringSetFlag(parsed, "capability", VALID_PROVIDER_CAPABILITIES));
+  setIfDefined(body, "enabled", readEnabledFlag(parsed));
+  return body;
+}
+
+function defaultProviderApi(kind: string): string {
+  if (kind === "anthropic") {
+    return "anthropic-messages";
+  }
+  return "openai-completions";
+}
+
+function defaultProviderCapabilities(kind: string, api: string): readonly string[] {
+  if (api !== "media-job") {
+    return ["chat", "tool_call", "reasoning"];
+  }
+  if (kind === "seedance") {
+    return ["video_generate"];
+  }
+  return ["image_generate"];
+}
+
+function readStringSetFlag(
+  parsed: ParsedCommandArgs,
+  key: string,
+  allowed: ReadonlySet<string>,
+  fallback?: readonly string[],
+): readonly string[] | undefined {
+  const values = getFlagValues(parsed, key).flatMap((value) => value.split(",")).map((value) => value.trim()).filter(Boolean);
+  if (values.length === 0) {
+    return fallback;
+  }
+  for (const value of values) {
+    assertAllowed(key, value, allowed);
+  }
+  return [...new Set(values)];
+}
+
+function readAllowedOptionalFlag(parsed: ParsedCommandArgs, key: string, allowed: ReadonlySet<string>): string | undefined {
+  const value = getFlag(parsed, key);
+  if (value !== undefined) {
+    assertAllowed(key, value, allowed);
+  }
+  return value;
+}
+
+function readHeaders(parsed: ParsedCommandArgs): Record<string, string> | undefined {
+  const headerEntries = getFlagValues(parsed, "header");
+  const headersFromJson = readJsonObjectFlag(parsed, "headers-json");
+  const headers: Record<string, string> = {};
+  if (headersFromJson) {
+    for (const [key, value] of Object.entries(headersFromJson)) {
+      if (typeof value !== "string") {
+        throw new CliError(2, "bad_header", "--headers-json must be an object with string values.");
+      }
+      headers[key] = value;
+    }
+  }
+  for (const entry of headerEntries) {
+    const separatorIndex = entry.indexOf("=");
+    if (separatorIndex <= 0) {
+      throw new CliError(2, "bad_header", "--header must use KEY=VALUE.");
+    }
+    headers[entry.slice(0, separatorIndex)] = entry.slice(separatorIndex + 1);
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function readJsonObjectFlag(parsed: ParsedCommandArgs, key: string): Record<string, unknown> | undefined {
+  const value = getFlag(parsed, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(value) as unknown;
+  } catch {
+    throw new CliError(2, "bad_json", `--${key} must be valid JSON.`);
+  }
+  if (!isRecord(parsedJson)) {
+    throw new CliError(2, "bad_json", `--${key} must be a JSON object.`);
+  }
+  return parsedJson;
+}
+
+function readOptionalIntegerFlag(parsed: ParsedCommandArgs, key: string): number | undefined {
+  const rawValue = getFlag(parsed, key);
+  if (rawValue === undefined) {
+    return undefined;
+  }
+  const value = Number.parseInt(rawValue, 10);
+  if (!Number.isInteger(value) || value < 1 || String(value) !== rawValue) {
+    throw new CliError(2, "bad_number", `--${key} must be a positive integer.`);
+  }
+  return value;
+}
+
+function readEnabledFlag(parsed: ParsedCommandArgs, fallback?: boolean): boolean | undefined {
+  const enabled = getFlag(parsed, "enabled");
+  const disabled = parsed.booleans.has("disabled");
+  if (enabled !== undefined && disabled) {
+    throw new CliError(2, "bad_option", "Use either --enabled <true|false> or --disabled, not both.");
+  }
+  if (disabled) {
+    return false;
+  }
+  if (enabled !== undefined) {
+    return parseBooleanValue(enabled, "--enabled");
+  }
+  return fallback;
+}
+
+function readTriStateBoolean(parsed: ParsedCommandArgs, positiveKey: string, negativeKey: string): boolean | undefined {
+  const positive = parsed.booleans.has(positiveKey);
+  const negative = parsed.booleans.has(negativeKey);
+  if (positive && negative) {
+    throw new CliError(2, "bad_option", `Use either --${positiveKey} or --${negativeKey}, not both.`);
+  }
+  if (positive) {
+    return true;
+  }
+  if (negative) {
+    return false;
+  }
+  return undefined;
+}
+
+function parseBooleanValue(value: string, flag: string): boolean {
+  if (value === "true" || value === "1" || value === "yes") {
+    return true;
+  }
+  if (value === "false" || value === "0" || value === "no") {
+    return false;
+  }
+  throw new CliError(2, "bad_boolean", `${flag} must be true or false.`);
+}
+
+function setIfDefined(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (value !== undefined) {
+    target[key] = value;
+  }
+}
+
+function setIfDefinedOrCleared(target: Record<string, unknown>, key: string, value: unknown, cleared: boolean): void {
+  if (cleared) {
+    target[key] = null;
+    return;
+  }
+  setIfDefined(target, key, value);
+}
+
+function assertAllowed(key: string, value: string, allowed: ReadonlySet<string>): void {
+  if (!allowed.has(value)) {
+    throw new CliError(2, `bad_${key.replace(/-/g, "_")}`, `${key} must be one of: ${[...allowed].join(", ")}`);
+  }
 }
 
 function parseGlobalArgs(rawArgs: readonly string[]): ParsedGlobalArgs {
@@ -853,6 +1222,85 @@ function parseJson(text: string, message: string): unknown {
   } catch {
     throw new CliError(4, "invalid_json", message);
   }
+}
+
+function printProvidersList(response: unknown): void {
+  const providers = readArray(response, "providers");
+  if (providers.length === 0) {
+    console.log("No providers found.");
+    return;
+  }
+  printTable(
+    ["ID", "Kind", "Name", "Provider", "Model", "API", "Enabled", "Secret"],
+    providers.map((provider) => [
+      truncate(readString(provider, "id") ?? "", 32),
+      truncate(readString(provider, "kind") ?? "", 18),
+      truncate(readString(provider, "displayName") ?? "", 24),
+      truncate(readString(provider, "providerId") ?? "", 18),
+      truncate(readString(provider, "model") ?? "", 20),
+      truncate(readString(provider, "api") ?? "", 20),
+      String(readBoolean(provider, "enabled") ?? false),
+      providerSecretStatus(provider),
+    ]),
+  );
+}
+
+function printProviderDetail(response: unknown): void {
+  const provider = readField(response, "provider");
+  if (!isRecord(provider)) {
+    printJson(response);
+    return;
+  }
+  console.log(`ID: ${readString(provider, "id") ?? ""}`);
+  console.log(`Kind: ${readString(provider, "kind") ?? ""}`);
+  console.log(`Name: ${readString(provider, "displayName") ?? ""}`);
+  console.log(`Provider ID: ${readString(provider, "providerId") ?? ""}`);
+  console.log(`Model: ${readString(provider, "model") ?? ""}`);
+  console.log(`API: ${readString(provider, "api") ?? ""}`);
+  const baseUrl = readString(provider, "baseUrl");
+  if (baseUrl) {
+    console.log(`Base URL: ${baseUrl}`);
+  }
+  const apiKeyRef = readString(provider, "apiKeyRef");
+  if (apiKeyRef) {
+    console.log(`API key ref: ${apiKeyRef}`);
+  }
+  console.log(`Secret: ${providerSecretStatus(provider)}`);
+  console.log(`Enabled: ${readBoolean(provider, "enabled") ?? false}`);
+  console.log(`Auth header: ${formatOptionalBoolean(readBoolean(provider, "authHeader"))}`);
+  console.log(`Reasoning: ${formatOptionalBoolean(readBoolean(provider, "reasoning"))}`);
+  console.log(`Input: ${readArray(provider, "input").join(", ")}`);
+  console.log(`Capabilities: ${readArray(provider, "capabilities").join(", ")}`);
+  const contextWindow = readNumber(provider, "contextWindow");
+  if (contextWindow !== undefined) {
+    console.log(`Context window: ${contextWindow}`);
+  }
+  const maxTokens = readNumber(provider, "maxTokens");
+  if (maxTokens !== undefined) {
+    console.log(`Max tokens: ${maxTokens}`);
+  }
+  const headers = readField(provider, "headers");
+  if (isRecord(headers) && Object.keys(headers).length > 0) {
+    console.log(`Headers: ${Object.keys(headers).join(", ")}`);
+  }
+  const compat = readField(provider, "compat");
+  if (isRecord(compat) && Object.keys(compat).length > 0) {
+    console.log("Compat:");
+    console.log(JSON.stringify(compat, null, 2));
+  }
+  console.log(`Created: ${readString(provider, "createdAt") ?? ""}`);
+  console.log(`Updated: ${readString(provider, "updatedAt") ?? ""}`);
+}
+
+function providerSecretStatus(provider: unknown): string {
+  if (!readString(provider, "apiKeyRef")) {
+    return "none";
+  }
+  return readBoolean(provider, "apiKeyConfigured") ? "configured" : "missing";
+}
+
+function formatOptionalBoolean(value: boolean | undefined): string {
+  return value === undefined ? "default" : String(value);
 }
 
 function printApprovalsList(response: unknown): void {
@@ -1161,6 +1609,10 @@ function printCommandHelp(command: string, subcommand?: string): void {
     printRunHelp();
     return;
   }
+  if (command === "provider") {
+    printProviderHelp();
+    return;
+  }
   if (command === "approvals") {
     printApprovalsHelp();
     return;
@@ -1182,6 +1634,12 @@ function printHelp(): void {
 Usage:
   ling-stack [global options] doctor
   ling-stack [global options] daemon status
+  ling-stack [global options] provider list
+  ling-stack [global options] provider add <kind> --name <name> --provider-id <id> --model <model>
+  ling-stack [global options] provider show <id>
+  ling-stack [global options] provider check <id>
+  ling-stack [global options] provider update <id> [options]
+  ling-stack [global options] provider remove <id>
   ling-stack [global options] run --provider <providerPresetId> [options] <prompt...>
   ling-stack [global options] runs list
   ling-stack [global options] runs show <id>
@@ -1200,7 +1658,39 @@ Global options:
   --help, -h           Show help
 
 Planned commands:
-  init, provider, channel, task, ui, daemon start, daemon stop
+  init, channel, task, ui, daemon start, daemon stop
+`);
+}
+
+function printProviderHelp(): void {
+  console.log(`Usage:
+  ling-stack provider list
+  ling-stack provider add <kind> --name <name> --provider-id <id> --model <model> [options]
+  ling-stack provider show <id>
+  ling-stack provider check <id>
+  ling-stack provider update <id> [options]
+  ling-stack provider remove <id>
+
+Kinds:
+  openai, anthropic, openai-compatible, doubao, deepseek, minimax, glm, jimeng, seedream, seedance
+
+Common options:
+  --api <api>                  Default: openai-completions, anthropic-messages for anthropic
+  --base-url <url>             Required for openai-compatible
+  --api-key-ref env:NAME       Secret reference; raw API keys are not accepted
+  --capability <name>          Repeatable or comma-separated. Default on add: chat,tool_call,reasoning
+  --input <text|image>         Repeatable or comma-separated. Default on add: text
+  --context-window <n>
+  --max-tokens <n>
+  --auth-header | --no-auth-header
+  --reasoning | --no-reasoning
+  --enabled <true|false> | --disabled
+  --header KEY=VALUE           Repeatable custom header
+  --headers-json <object>      Custom headers as JSON object with string values
+  --compat-json <object>       OpenAI-compatible adapter options
+
+Update-only clear flags:
+  --clear-base-url --clear-api-key-ref --clear-auth-header --clear-reasoning --clear-context-window --clear-max-tokens
 `);
 }
 
