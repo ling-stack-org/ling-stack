@@ -82,6 +82,7 @@ const APPROVAL_POLL_INTERVAL_MS = 500;
 const APPROVAL_PREVIEW_LIMIT = 1_200;
 
 export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider"> {
+  readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
   readonly provider?: PiRunnerProviderConfig;
 }
@@ -268,7 +269,8 @@ async function handleRun(
   let run: RunSession;
   let runnerRequest: PiRunnerRunOptions;
   try {
-    store = storeRegistry.getStore(runRequest.cwd);
+    const workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
+    store = storeRegistry.getStore(workspaceCwd);
     const resolvedProvider = resolveProviderForRun(store, runRequest);
     runnerRequest = {
       cwd: runRequest.cwd,
@@ -292,12 +294,13 @@ async function handleRun(
       providerModel: resolvedProvider.model,
       taskSnapshot: runRequest.task,
       providerSnapshot: { providerPresetId: runRequest.providerPresetId, ...resolvedProvider },
-      requestSnapshot: { ...runRequest, provider: resolvedProvider },
+      requestSnapshot: { ...runRequest, workspaceCwd, provider: resolvedProvider },
       createdAt,
     });
     storeRegistry.rememberRun(run.id, store);
     store.appendEvent(run.id, "run_created", {
       taskId: run.taskId,
+      workspaceCwd,
       cwd: run.cwd,
       providerName: run.providerName,
       providerModel: run.providerModel,
@@ -1454,6 +1457,7 @@ function parseRunRequest(value: unknown): RunRequest {
   }
 
   const cwd = readString(value, "cwd");
+  const workspaceCwd = readOptionalString(value, "workspaceCwd");
   const task = value.task;
   const provider = value.provider;
   const providerPresetId = readOptionalString(value, "providerPresetId");
@@ -1473,6 +1477,7 @@ function parseRunRequest(value: unknown): RunRequest {
 
   const runRequest: RunRequest = {
     cwd,
+    workspaceCwd,
     providerPresetId,
     task: {
       id: readString(task, "id"),

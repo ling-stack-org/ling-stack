@@ -670,7 +670,8 @@ pre {
 }
 
 .channel-create,
-.task-create {
+.task-create,
+.task-detail {
   margin-top: 16px;
   padding-top: 14px;
   border-top: 1px solid #e1e6e2;
@@ -721,6 +722,11 @@ pre {
   padding: 12px;
   border: 1px solid #e1e6e2;
   background: #fbfcfa;
+}
+
+.task-row.selected {
+  border-color: #9bc8b7;
+  background: #f2faf6;
 }
 
 .task-row-head {
@@ -798,6 +804,23 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+}
+
+.task-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.task-detail .field {
+  margin-bottom: 0;
+}
+
+.task-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: #e1e6e2;
+  border: 1px solid #e1e6e2;
 }
 
 .runs-cwd {
@@ -1326,6 +1349,7 @@ pre {
   .field-row,
   .tool-grid,
   .compact-tools,
+  .task-detail-meta,
   .provider-number-row {
     grid-template-columns: 1fr;
   }

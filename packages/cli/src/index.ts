@@ -900,6 +900,7 @@ async function handleTaskRun(args: readonly string[], options: GlobalOptions): P
   const explicitTools = readTools(parsed);
   const channelTools = readArray(channel, "allowedTools").filter((tool): tool is string => typeof tool === "string");
   const body = removeUndefined({
+    workspaceCwd: options.cwd,
     cwd: readString(channel, "boundPath") ?? options.cwd,
     providerPresetId,
     task: {

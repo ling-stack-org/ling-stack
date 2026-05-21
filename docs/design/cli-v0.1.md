@@ -563,6 +563,12 @@ Equivalent to:
 ling-stack run --task task_123 --provider provider_local_relay
 ```
 
+Execution and storage semantics:
+
+- task and channel are loaded from the CLI `--cwd` workspace,
+- runner execution uses the channel `boundPath` when present,
+- the `/runs` request sends `workspaceCwd=<--cwd>` and `cwd=<channel.boundPath>`, so run history remains in the Ling Stack workspace while tools operate inside the bound project.
+
 ## Run Commands
 
 ### `ling-stack run`

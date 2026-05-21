@@ -175,6 +175,8 @@ Accept: text/event-stream
 
 `POST /runs` returns an SSE stream. Because native `EventSource` cannot send POST bodies, web clients should use `fetch()` and read the response body stream.
 
+`cwd` is the execution directory passed to the runner. `workspaceCwd` is optional and selects where Ling Stack stores run/session records and resolves provider presets. If `workspaceCwd` is omitted, it defaults to `cwd`. Persisted channel/task flows should set `workspaceCwd` to the Ling Stack workspace path and `cwd` to the selected channel `boundPath`.
+
 Request with inline provider config:
 
 ```json
@@ -225,7 +227,8 @@ Request with a provider preset:
 
 ```json
 {
-  "cwd": "/path/to/project",
+  "workspaceCwd": "/path/to/workspace",
+  "cwd": "/path/to/channel/project",
   "task": {
     "id": "task-3",
     "title": "Preset smoke test",
@@ -295,6 +298,8 @@ Runs and events are persisted in the workspace runtime directory:
 .ling-stack/sessions/<runId>.jsonl
 .ling-stack/sessions/<runId>.summary.json
 ```
+
+For runs created with `workspaceCwd`, query run history using `cwd=<workspaceCwd>`. The returned run object's `cwd` remains the execution directory.
 
 ### List Runs
 

@@ -256,7 +256,7 @@ Implemented:
 - Approval request storage and daemon APIs.
 - Default read-only tool policy for product runs.
 - Pi pre-tool approval gate for `bash`, `edit`, and `write`.
-- Local web UI with channel/task workspace, task run entry, event stream, run history, provider settings, and approval list.
+- Local web UI with channel/task workspace, task detail editing, task run entry, event stream, run history, provider settings, and approval list.
 - CLI first-loop commands for init, channels, tasks, providers, runs, approvals, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
@@ -264,7 +264,7 @@ Not implemented yet:
 
 - Configurable approval policies beyond the default risky-tool gate.
 - Approval gates for external sends, deployments, credential changes, and paid media jobs.
-- Web UI task editing beyond create/status/delete.
+- Rich task detail views beyond the first edit form.
 - OS keychain integration for secrets.
 - Desktop packaging.
 

@@ -15,6 +15,7 @@ import type {
   RunListResponse,
   RunSession,
   Task,
+  TaskEditFormState,
   TaskFormState,
   TaskListResponse,
   TaskMutationResponse,
@@ -123,6 +124,22 @@ export async function updateTaskStatus(cwd: string, taskId: string, status: Task
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as TaskMutationResponse;
+}
+
+export async function updateTask(cwd: string, taskId: string, form: TaskEditFormState): Promise<TaskMutationResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/tasks/${encodeURIComponent(taskId)}`, cwd), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: form.title,
+      prompt: form.prompt,
+      status: form.status,
+    }),
   });
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
@@ -260,14 +277,15 @@ export function buildRunRequest(form: RunFormState): unknown {
 }
 
 export function buildTaskRunRequest(
-  cwd: string,
+  workspaceCwd: string,
   task: Task,
   channel: Channel,
   providerPresetId: string,
 ): unknown {
   const fallbackTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
   return {
-    cwd,
+    workspaceCwd,
+    cwd: channel.boundPath || workspaceCwd,
     task: {
       id: task.id,
       title: task.title,

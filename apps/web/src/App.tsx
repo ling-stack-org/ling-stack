@@ -44,6 +44,7 @@ import {
   listProviders,
   listRuns,
   listTasks,
+  updateTask,
   updateTaskStatus,
   updateProvider,
 } from "./api.js";
@@ -59,13 +60,16 @@ import type {
   RunFormState,
   RunSession,
   Task,
+  TaskEditFormState,
   TaskFormState,
+  TaskStatus,
   ToolName,
 } from "./types.js";
 
 const defaultTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
 const allTools: readonly ToolName[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const riskyTools: readonly ToolName[] = ["bash", "edit", "write"];
+const taskStatuses: readonly TaskStatus[] = ["todo", "claimed", "running", "blocked", "review", "done", "failed", "cancelled"];
 type ViewId = "workspace" | "runs" | "providers" | "approvals";
 
 const defaultForm: RunFormState = {
@@ -111,6 +115,12 @@ const defaultTaskForm: TaskFormState = {
   prompt: "查看当前项目结构，给出下一步实现建议。不要修改文件。",
 };
 
+const defaultTaskEditForm: TaskEditFormState = {
+  title: "",
+  prompt: "",
+  status: "todo",
+};
+
 export function App(): JSX.Element {
   const [form, setForm] = useState<RunFormState>(defaultForm);
   const [activeView, setActiveView] = useState<ViewId>("workspace");
@@ -129,6 +139,8 @@ export function App(): JSX.Element {
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [taskForm, setTaskForm] = useState<TaskFormState>(defaultTaskForm);
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
   const [providerForm, setProviderForm] = useState<ProviderFormState>(defaultProviderForm);
   const [editingProviderId, setEditingProviderId] = useState("");
@@ -180,8 +192,22 @@ export function App(): JSX.Element {
       void refreshTasks(selectedChannelId);
     } else {
       setTasks([]);
+      setSelectedTaskId("");
     }
   }, [selectedChannelId]);
+
+  useEffect(() => {
+    const selectedTask = tasks.find((task) => task.id === selectedTaskId);
+    if (!selectedTask) {
+      setTaskEditForm(defaultTaskEditForm);
+      return;
+    }
+    setTaskEditForm({
+      title: selectedTask.title,
+      prompt: selectedTask.prompt,
+      status: selectedTask.status,
+    });
+  }, [selectedTaskId, tasks]);
 
   async function refreshHealth(): Promise<void> {
     try {
@@ -324,6 +350,12 @@ export function App(): JSX.Element {
       setErrorMessage("");
       const response = await listTasks(form.cwd.trim(), channelId);
       setTasks(response.tasks);
+      setSelectedTaskId((current) => {
+        if (response.tasks.some((task) => task.id === current)) {
+          return current;
+        }
+        return response.tasks[0]?.id ?? "";
+      });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -381,10 +413,11 @@ export function App(): JSX.Element {
 
     try {
       setErrorMessage("");
-      await createTask(form.cwd.trim(), selectedChannelId, {
+      const response = await createTask(form.cwd.trim(), selectedChannelId, {
         title: taskForm.title.trim() || titleFromPrompt(taskForm.prompt),
         prompt: taskForm.prompt,
       });
+      setSelectedTaskId(response.task.id);
       setTaskForm(defaultTaskForm);
       await refreshTasks(selectedChannelId);
     } catch (error) {
@@ -396,6 +429,9 @@ export function App(): JSX.Element {
     try {
       setErrorMessage("");
       await deleteTask(form.cwd.trim(), taskId);
+      if (selectedTaskId === taskId) {
+        setSelectedTaskId("");
+      }
       await refreshTasks();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -406,6 +442,29 @@ export function App(): JSX.Element {
     try {
       setErrorMessage("");
       await updateTaskStatus(form.cwd.trim(), taskId, "review");
+      await refreshTasks();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function saveTaskEdit(taskId: string): Promise<void> {
+    if (!taskEditForm.title.trim()) {
+      setErrorMessage("请输入 task title");
+      return;
+    }
+    if (!taskEditForm.prompt.trim()) {
+      setErrorMessage("请输入 task prompt");
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      await updateTask(form.cwd.trim(), taskId, {
+        ...taskEditForm,
+        title: taskEditForm.title.trim(),
+        prompt: taskEditForm.prompt.trim(),
+      });
       await refreshTasks();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -628,6 +687,8 @@ export function App(): JSX.Element {
               channelForm={channelForm}
               tasks={tasks}
               taskForm={taskForm}
+              selectedTaskId={selectedTaskId}
+              taskEditForm={taskEditForm}
               providers={providers}
               taskRunProviderId={taskRunProviderId || form.providerPresetId}
               channelsLoading={channelsLoading}
@@ -643,6 +704,7 @@ export function App(): JSX.Element {
               }}
               onChannelFormChange={setChannelForm}
               onTaskFormChange={setTaskForm}
+              onTaskEditFormChange={setTaskEditForm}
               onProviderSelect={(providerId) => {
                 setTaskRunProviderId(providerId);
                 const provider = providers.find((item) => item.id === providerId);
@@ -656,6 +718,8 @@ export function App(): JSX.Element {
               onRefreshChannels={() => void refreshChannels()}
               onCreateTask={() => void saveTask()}
               onRefreshTasks={() => void refreshTasks()}
+              onSelectTask={setSelectedTaskId}
+              onSaveTaskEdit={(taskId) => void saveTaskEdit(taskId)}
               onRunTask={(task) => void runPersistedTask(task)}
               onReviewTask={(taskId) => void moveTaskToReview(taskId)}
               onDeleteTask={(taskId) => void removeTask(taskId)}
@@ -794,6 +858,8 @@ function ChannelTaskWorkspace({
   channelForm,
   tasks,
   taskForm,
+  selectedTaskId,
+  taskEditForm,
   providers,
   taskRunProviderId,
   channelsLoading,
@@ -803,6 +869,7 @@ function ChannelTaskWorkspace({
   onCwdChange,
   onChannelFormChange,
   onTaskFormChange,
+  onTaskEditFormChange,
   onProviderSelect,
   onSelectChannel,
   onCreateChannel,
@@ -810,6 +877,8 @@ function ChannelTaskWorkspace({
   onRefreshChannels,
   onCreateTask,
   onRefreshTasks,
+  onSelectTask,
+  onSaveTaskEdit,
   onRunTask,
   onReviewTask,
   onDeleteTask,
@@ -820,6 +889,8 @@ function ChannelTaskWorkspace({
   readonly channelForm: ChannelFormState;
   readonly tasks: readonly Task[];
   readonly taskForm: TaskFormState;
+  readonly selectedTaskId: string;
+  readonly taskEditForm: TaskEditFormState;
   readonly providers: readonly ProviderPreset[];
   readonly taskRunProviderId: string;
   readonly channelsLoading: boolean;
@@ -829,6 +900,7 @@ function ChannelTaskWorkspace({
   readonly onCwdChange: (cwd: string) => void;
   readonly onChannelFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
+  readonly onTaskEditFormChange: (form: TaskEditFormState) => void;
   readonly onProviderSelect: (providerId: string) => void;
   readonly onSelectChannel: (channelId: string) => void;
   readonly onCreateChannel: () => void;
@@ -836,11 +908,14 @@ function ChannelTaskWorkspace({
   readonly onRefreshChannels: () => void;
   readonly onCreateTask: () => void;
   readonly onRefreshTasks: () => void;
+  readonly onSelectTask: (taskId: string) => void;
+  readonly onSaveTaskEdit: (taskId: string) => void;
   readonly onRunTask: (task: Task) => void;
   readonly onReviewTask: (taskId: string) => void;
   readonly onDeleteTask: (taskId: string) => void;
 }): JSX.Element {
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId);
   const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId) ?? "";
 
   return (
@@ -999,6 +1074,51 @@ function ChannelTaskWorkspace({
           </button>
         </div>
 
+        {selectedTask ? (
+          <div className="task-detail" aria-label="Task detail">
+            <div className="panel-title tight split">
+              <span>
+                <Pencil size={16} />
+                <h3>Task detail</h3>
+              </span>
+              <span className={`task-status ${selectedTask.status}`}>{selectedTask.status}</span>
+            </div>
+            <div className="task-detail-meta">
+              <MetaRow label="Task id" value={selectedTask.id} compact />
+              <MetaRow label="Channel" value={selectedTask.channelId} compact />
+              <MetaRow label="Current run" value={selectedTask.currentRunId ?? "-"} compact />
+            </div>
+            <label className="field wide">
+              <span>Title</span>
+              <input value={taskEditForm.title} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, title: event.target.value })} />
+            </label>
+            <label className="field wide">
+              <span>Status</span>
+              <select value={taskEditForm.status} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, status: event.target.value as TaskStatus })}>
+                {taskStatuses.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field wide">
+              <span>Prompt</span>
+              <textarea value={taskEditForm.prompt} rows={7} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, prompt: event.target.value })} />
+            </label>
+            <div className="task-actions">
+              <button className="primary-button" type="button" onClick={() => onSaveTaskEdit(selectedTask.id)}>
+                <Save size={16} />
+                Save task
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !effectiveProviderId}>
+                {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                Run
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="task-list">
           {tasks.length === 0 ? (
             <div className="empty-state compact-empty">
@@ -1007,7 +1127,7 @@ function ChannelTaskWorkspace({
             </div>
           ) : (
             tasks.map((task) => (
-              <article key={task.id} className="task-row">
+              <article key={task.id} className={task.id === selectedTaskId ? "task-row selected" : "task-row"}>
                 <div className="task-row-head">
                   <strong>{task.title}</strong>
                   <span className={`task-status ${task.status}`}>{task.status}</span>
@@ -1019,6 +1139,10 @@ function ChannelTaskWorkspace({
                   <time>{formatDateTime(task.updatedAt)}</time>
                 </div>
                 <div className="task-actions">
+                  <button className="secondary-button compact-button" type="button" onClick={() => onSelectTask(task.id)}>
+                    <Pencil size={14} />
+                    Edit
+                  </button>
                   <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || !effectiveProviderId}>
                     {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                     Run

@@ -270,3 +270,9 @@ export interface TaskFormState {
   readonly title: string;
   readonly prompt: string;
 }
+
+export interface TaskEditFormState {
+  readonly title: string;
+  readonly prompt: string;
+  readonly status: TaskStatus;
+}
