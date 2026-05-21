@@ -227,6 +227,7 @@ export function App(): JSX.Element {
   const [providerCheckTargetId, setProviderCheckTargetId] = useState("");
   const [checkingProviderIds, setCheckingProviderIds] = useState<readonly string[]>([]);
   const [providerBatchResult, setProviderBatchResult] = useState<ProviderBatchResult | undefined>();
+  const [providerRepairRunId, setProviderRepairRunId] = useState("");
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
   const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
   const [approvalPolicyLoading, setApprovalPolicyLoading] = useState(false);
@@ -265,6 +266,7 @@ export function App(): JSX.Element {
     return items;
   }, [run, runs]);
   const succeededRunCount = useMemo(() => [...runById.values()].filter((item) => item.status === "succeeded").length, [runById]);
+  const providerRepairRun = providerRepairRunId ? runById.get(providerRepairRunId) : undefined;
 
   useEffect(() => {
     void refreshHealth();
@@ -993,6 +995,9 @@ export function App(): JSX.Element {
   function openProvidersFromRun(runToRepair?: RunSession): void {
     const providerPresetId = runToRepair ? readRunProviderPresetId(runToRepair) : "";
     const provider = providerPresetId ? providers.find((item) => item.id === providerPresetId) : undefined;
+    if (runToRepair) {
+      setProviderRepairRunId(runToRepair.id);
+    }
     if (provider) {
       editProvider(provider);
     }
@@ -1086,7 +1091,7 @@ export function App(): JSX.Element {
               currentRun={run}
               runById={runById}
               pendingApprovalCount={activePendingApprovals.length}
-              onOpenProviders={() => setActiveView("providers")}
+              onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : setActiveView("providers")}
               onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
               onOpenRun={(runId) => void openRunFromWorkspace(runId)}
               onCreateDefaultChannel={() => void saveDefaultChannel()}
@@ -1152,7 +1157,7 @@ export function App(): JSX.Element {
                 onDeleteTask={(taskId) => void removeTask(taskId)}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
-                onOpenProviders={() => setActiveView("providers")}
+                onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : setActiveView("providers")}
               />
               <RunTimeline
                 events={events}
@@ -1212,15 +1217,19 @@ export function App(): JSX.Element {
             checkedProviderId={providerCheckTargetId}
             batchResult={providerBatchResult}
             selectedProviderId={form.providerPresetId}
+            repairRun={providerRepairRun}
+            isRunning={isRunning}
             onCwdChange={(cwd) => setForm({ ...form, cwd })}
             onFormChange={setProviderForm}
             onTemplateSelect={(template) => {
+              setProviderRepairRunId("");
               setEditingProviderId("");
               setProviderCheck(undefined);
               setProviderCheckTargetId("");
               setProviderForm(providerTemplateToForm(template));
             }}
             onNew={() => {
+              setProviderRepairRunId("");
               setEditingProviderId("");
               setProviderCheck(undefined);
               setProviderCheckTargetId("");
@@ -1233,6 +1242,9 @@ export function App(): JSX.Element {
             onCheck={(providerId) => void runProviderCheck(providerId)}
             onCheckBatch={() => void runProviderBatchCheck()}
             onUse={applyProviderToRun}
+            onRerun={(sourceRun) => void rerunRun(sourceRun)}
+            onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+            onClearRepair={() => setProviderRepairRunId("")}
           />
           ) : (
             activeView === "settings" ? (
@@ -1482,7 +1494,7 @@ function FirstRunFlow({
   readonly currentRun: RunSession | undefined;
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly pendingApprovalCount: number;
-  readonly onOpenProviders: () => void;
+  readonly onOpenProviders: (run?: RunSession) => void;
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onCreateDefaultChannel: () => void;
@@ -1554,7 +1566,7 @@ function FirstRunFlow({
         </div>
         <div className="first-run-actions">
           {primaryAction === "providers" ? (
-            <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
+            <button className="secondary-button compact-button" type="button" onClick={() => onOpenProviders(selectedTaskRun)}>
               <PlugZap size={14} />
               {repairHint?.actionLabel ?? "Providers"}
             </button>
@@ -1607,7 +1619,7 @@ function FirstRunFlow({
   }
 
   const steps: readonly FirstRunStep[] = [
-    buildFirstRunProviderStep(readyProvider, providersLoading, onOpenProviders),
+    buildFirstRunProviderStep(readyProvider, providersLoading, () => onOpenProviders()),
     buildFirstRunChannelStep(Boolean(selectedChannel), Boolean(readyProvider), channelsLoading, onCreateDefaultChannel),
     buildFirstRunChannelProviderStep(selectedChannel, readyProvider, channelHasReadyDefault, onSetChannelProvider),
     buildFirstRunTaskStep(Boolean(selectedChannel), tasks.length, tasksLoading, onCreateTask),
@@ -2143,7 +2155,7 @@ function ChannelTaskWorkspace({
   readonly onDeleteTask: (taskId: string) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
-  readonly onOpenProviders: () => void;
+  readonly onOpenProviders: (run?: RunSession) => void;
 }): JSX.Element {
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
@@ -2366,7 +2378,7 @@ function ChannelTaskWorkspace({
                     ? (effectiveProviderPreflightBlocker ?? `${effectiveProvider.displayName}: ${providerRunBlockerLabel(effectiveProvider)}.`)
                     : "Select a provider preset before running tasks."}
             </span>
-            <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
+            <button className="secondary-button compact-button" type="button" onClick={() => onOpenProviders()}>
               Providers
             </button>
           </div>
@@ -2416,7 +2428,7 @@ function ChannelTaskWorkspace({
                 hint={selectedTaskRepairHint}
                 runId={selectedTask.currentRunId}
                 compact
-                onOpenProviders={onOpenProviders}
+                onOpenProviders={() => onOpenProviders(selectedTaskRun)}
                 onOpenApprovals={onOpenApprovals}
                 onOpenRun={onOpenRun}
               />
@@ -2439,7 +2451,7 @@ function ChannelTaskWorkspace({
               <span>Prompt</span>
               <textarea value={taskEditForm.prompt} rows={7} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, prompt: event.target.value })} />
             </label>
-            <TaskProviderReadiness provider={effectiveProvider} onOpenProviders={onOpenProviders} />
+            <TaskProviderReadiness provider={effectiveProvider} onOpenProviders={() => onOpenProviders()} />
             <div className="task-actions">
               <button className="primary-button" type="button" onClick={() => onSaveTaskEdit(selectedTask.id)}>
                 <Save size={16} />
@@ -2496,7 +2508,7 @@ function ChannelTaskWorkspace({
                       hint={repairHint}
                       runId={task.currentRunId}
                       compact
-                      onOpenProviders={onOpenProviders}
+                      onOpenProviders={() => onOpenProviders(linkedRun)}
                       onOpenApprovals={onOpenApprovals}
                       onOpenRun={onOpenRun}
                     />
@@ -2917,6 +2929,8 @@ function ProviderSettings({
   checkedProviderId,
   batchResult,
   selectedProviderId,
+  repairRun,
+  isRunning,
   onCwdChange,
   onFormChange,
   onTemplateSelect,
@@ -2928,6 +2942,9 @@ function ProviderSettings({
   onCheck,
   onCheckBatch,
   onUse,
+  onRerun,
+  onOpenRun,
+  onClearRepair,
 }: {
   readonly cwd: string;
   readonly providers: readonly ProviderPreset[];
@@ -2941,6 +2958,8 @@ function ProviderSettings({
   readonly checkedProviderId: string;
   readonly batchResult: ProviderBatchResult | undefined;
   readonly selectedProviderId: string;
+  readonly repairRun: RunSession | undefined;
+  readonly isRunning: boolean;
   readonly onCwdChange: (cwd: string) => void;
   readonly onFormChange: (form: ProviderFormState) => void;
   readonly onTemplateSelect: (template: ProviderTemplate) => void;
@@ -2952,6 +2971,9 @@ function ProviderSettings({
   readonly onCheck: (providerId: string) => void;
   readonly onCheckBatch: () => void;
   readonly onUse: (provider: ProviderPreset) => void;
+  readonly onRerun: (run: RunSession) => void;
+  readonly onOpenRun: (runId: string) => void;
+  readonly onClearRepair: () => void;
 }): JSX.Element {
   const compatibleProviderCount = providers.filter(canUseProviderForRun).length;
   const preflightReadyProviderCount = providers.filter(providerPreflightReady).length;
@@ -2974,6 +2996,8 @@ function ProviderSettings({
     providers.find((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured);
   const checkedProvider = checkedProviderId ? providers.find((provider) => provider.id === checkedProviderId) : undefined;
   const isCheckingProviders = checkingProviderIds.length > 0;
+  const repairProviderId = repairRun ? readRunProviderPresetId(repairRun) : "";
+  const repairProvider = repairProviderId ? providers.find((provider) => provider.id === repairProviderId) : undefined;
 
   return (
     <div className="provider-layout">
@@ -3015,6 +3039,19 @@ function ProviderSettings({
         </div>
 
         <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={isLoading} />
+        {repairRun ? (
+          <ProviderRunRepairPanel
+            run={repairRun}
+            provider={repairProvider}
+            isChecking={repairProvider ? checkingProviderIds.includes(repairProvider.id) : false}
+            isRunning={isRunning}
+            onEdit={onEdit}
+            onCheck={onCheck}
+            onRerun={onRerun}
+            onOpenRun={onOpenRun}
+            onClear={onClearRepair}
+          />
+        ) : null}
         {providers.length > 0 ? (
           <ProviderRepairQueue
             items={repairItems}
@@ -3340,6 +3377,80 @@ function ProviderNextAction({
     <div className="provider-next-action">
       <CircleAlert size={16} />
       <span>Next: enable a chat provider with a supported API protocol, then run Check.</span>
+    </div>
+  );
+}
+
+function ProviderRunRepairPanel({
+  run,
+  provider,
+  isChecking,
+  isRunning,
+  onEdit,
+  onCheck,
+  onRerun,
+  onOpenRun,
+  onClear,
+}: {
+  readonly run: RunSession;
+  readonly provider: ProviderPreset | undefined;
+  readonly isChecking: boolean;
+  readonly isRunning: boolean;
+  readonly onEdit: (provider: ProviderPreset) => void;
+  readonly onCheck: (providerId: string) => void;
+  readonly onRerun: (run: RunSession) => void;
+  readonly onOpenRun: (runId: string) => void;
+  readonly onClear: () => void;
+}): JSX.Element {
+  const providerReady = provider ? providerPreflightReady(provider) : false;
+  const providerCheckText = provider
+    ? provider.lastCheck
+      ? `${providerCheckStatusLabel(provider.lastCheck)}: ${provider.lastCheck.message}`
+      : "Provider has not been checked yet."
+    : "The provider preset used by this run is missing.";
+
+  return (
+    <div className="provider-run-repair" aria-label="Provider run repair">
+      <div className="provider-run-repair-head">
+        <span>
+          <CircleAlert size={16} />
+          <strong>Repair failed run provider</strong>
+        </span>
+        <button className="secondary-button compact-button" type="button" onClick={onClear}>
+          Clear
+        </button>
+      </div>
+      <div className="provider-run-repair-copy">
+        <span>
+          Run <code>{run.id}</code> failed with <strong>{provider?.displayName ?? (readRunProviderPresetId(run) || "missing provider")}</strong>.
+        </span>
+        {run.errorMessage ? <small>{run.errorMessage}</small> : null}
+        <small>{providerCheckText}</small>
+      </div>
+      <div className="provider-run-repair-steps">
+        <span className={provider ? "provider-state check-ok" : "provider-state check-bad"}>{provider ? "provider found" : "provider missing"}</span>
+        <span className={providerReady ? "provider-state run-ready" : "provider-state run-blocked"}>
+          {providerReady ? "preflight ready" : provider ? providerRunPreflightBlocker(provider) : "cannot rerun"}
+        </span>
+      </div>
+      <div className="provider-run-repair-actions">
+        <button className="secondary-button compact-button" type="button" onClick={() => provider && onEdit(provider)} disabled={!provider}>
+          <Pencil size={14} />
+          Edit provider
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => provider && onCheck(provider.id)} disabled={!provider || isChecking || isRunning}>
+          {isChecking ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+          Check provider
+        </button>
+        <button className="primary-button compact-button" type="button" onClick={() => onRerun(run)} disabled={!providerReady || isChecking || isRunning}>
+          {isRunning ? <Loader2 className="spin" size={14} /> : <RotateCcw size={14} />}
+          Rerun
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(run.id)}>
+          <History size={14} />
+          Back to run
+        </button>
+      </div>
     </div>
   );
 }

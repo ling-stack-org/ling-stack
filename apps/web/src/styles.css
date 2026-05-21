@@ -1527,6 +1527,64 @@ pre {
   background: #fbfcfa;
 }
 
+.provider-run-repair {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #e7b4a8;
+  background: #fff7f4;
+}
+
+.provider-run-repair-head,
+.provider-run-repair-head span,
+.provider-run-repair-actions,
+.provider-run-repair-steps {
+  display: flex;
+  align-items: center;
+}
+
+.provider-run-repair-head {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.provider-run-repair-head span {
+  gap: 7px;
+  color: #9a341f;
+}
+
+.provider-run-repair-head strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.provider-run-repair-copy {
+  display: grid;
+  gap: 5px;
+  color: #4f5e59;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.provider-run-repair-copy code {
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #17211f;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.provider-run-repair-copy small {
+  overflow-wrap: anywhere;
+}
+
+.provider-run-repair-steps,
+.provider-run-repair-actions {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .provider-repair-queue.ok {
   display: flex;
   align-items: center;

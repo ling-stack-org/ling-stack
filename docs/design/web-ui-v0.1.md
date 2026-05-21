@@ -288,6 +288,14 @@ Provider onboarding and repair:
   - disabled/media/no-chat preset: show Edit action.
 - The `Use` shortcut should only be enabled for preflight-ready chat providers, because the daemon run gate will reject unchecked or failed presets.
 
+Provider run repair flow:
+
+- when a failed run routes to Providers, the app should carry the failed `runId` and provider preset into Provider Settings,
+- Provider Settings should show a focused repair panel above the normal queue with: failed run id, provider preset, failure text, and next actions,
+- repair actions should be executable without leaving the page: edit provider, save changes through the existing form, run Check, rerun after the provider becomes preflight-ready, or return to the failed run detail,
+- rerun remains disabled until the provider used by the failed run is preflight-ready, matching the daemon run gate,
+- clearing the repair panel should not delete the run or provider; it only exits the guided repair context.
+
 ### Channel Setup
 
 Backed by channel APIs:
