@@ -235,6 +235,27 @@ Response:
 }
 ```
 
+### Cancel Run
+
+```http
+POST /runs/:id/cancel?cwd=/path/to/project
+```
+
+Cancellation is best effort. For an active run, the daemon marks the run `cancelled`, appends a `run_cancelled` event, streams that event to the open SSE client when possible, and asks the Pi session to abort.
+
+Response:
+
+```json
+{
+  "cancelled": true,
+  "active": true,
+  "run": {
+    "id": "run_...",
+    "status": "cancelled"
+  }
+}
+```
+
 ## Provider Presets
 
 Provider presets store reusable non-secret provider configuration. API keys are represented as `apiKeyRef`, currently `env:NAME`.
@@ -399,8 +420,7 @@ Approval decisions append `approval_approved` or `approval_denied` to the linked
 
 ## Current Limits
 
-- `POST /runs` does not yet cancel the pi runner when the HTTP client disconnects.
-- Approval requests can be stored and resolved, but controlled Pi tool wrappers are not implemented yet.
-- `bash`, `edit`, and `write` are blocked by default rather than paused for approval.
+- HTTP client disconnect does not imply cancellation; callers must use `POST /runs/:id/cancel`.
+- Cancellation is best effort and depends on Pi session abort behavior.
 - Inline API keys are accepted in `/runs` for early development only; production desktop builds should use OS keychain or a local secret store.
 - Provider health checks are config checks only, not live model probes yet.

@@ -144,6 +144,10 @@ export class SqliteRunStore implements RunStore {
     this.updateRunStatus(runId, "failed", undefined, endedAt, errorMessage, summaryPath, endedAt);
   }
 
+  markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void {
+    this.updateRunStatus(runId, "cancelled", undefined, endedAt, null, summaryPath, endedAt);
+  }
+
   appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope {
     const run = this.getRun(runId);
     if (!run) {

@@ -25,6 +25,7 @@ import {
 import {
   approveApproval,
   buildRunRequest,
+  cancelRun,
   checkProvider,
   createProvider,
   daemonBaseUrl,
@@ -344,9 +345,28 @@ export function App(): JSX.Element {
     await loadRun(runId);
   }
 
-  function stopClientStream(): void {
+  async function cancelActiveRun(): Promise<void> {
     abortRef.current?.abort();
-    setIsRunning(false);
+    if (!activeRunId) {
+      setIsRunning(false);
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      const response = await cancelRun(form.cwd.trim(), activeRunId);
+      if (response.run) {
+        setRun(response.run);
+      }
+      const eventResult = await getRunEvents(activeRunId, form.cwd.trim());
+      setEvents(eventResult.events);
+      await refreshRuns();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsRunning(false);
+      await refreshHealth();
+    }
   }
 
   return (
@@ -386,7 +406,7 @@ export function App(): JSX.Element {
               onChange={setForm}
               onProviderSelect={applyProviderToRun}
               onStart={startRun}
-              onStop={stopClientStream}
+              onStop={() => void cancelActiveRun()}
             />
             <RunTimeline
               events={events}
@@ -1082,7 +1102,7 @@ function RunLauncher({
           Start
         </button>
         <button className="secondary-button" type="button" onClick={onStop} disabled={!isRunning}>
-          Stop stream
+          Cancel run
         </button>
       </div>
     </section>

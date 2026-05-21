@@ -109,6 +109,7 @@ export interface RunStore {
   markRunRunning(runId: string, updatedAt: string): void;
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void;
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
+  markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
   appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope;
   getRun(runId: string): RunSession | undefined;
   listRuns(options?: ListRunsOptions): RunSession[];

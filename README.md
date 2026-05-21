@@ -246,19 +246,20 @@ Implemented:
 - SQLite-backed run session and event persistence.
 - JSONL event audit logs under `.ling-stack/sessions`.
 - `GET /runs`, `GET /runs/:id`, and `GET /runs/:id/events`.
+- Best-effort `POST /runs/:id/cancel`.
 - Provider preset storage and daemon APIs.
 - `POST /runs` with `providerPresetId`.
 - Approval request storage and daemon APIs.
 - Default read-only tool policy for product runs.
 - Pi pre-tool approval gate for `bash`, `edit`, and `write`.
 - Local web UI with run launcher, event stream, run history, provider settings, and approval list.
+- CLI first-loop commands for init, providers, runs, approvals, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
 Not implemented yet:
 
 - Configurable approval policies beyond the default risky-tool gate.
 - Approval gates for external sends, deployments, credential changes, and paid media jobs.
-- CLI commands beyond the scaffold.
 - OS keychain integration for secrets.
 - Desktop packaging.
 

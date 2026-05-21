@@ -734,6 +734,8 @@ async function handleRuns(args: readonly string[], options: GlobalOptions): Prom
       return await handleRunsShow(rest, options);
     case "events":
       return await handleRunsEvents(rest, options);
+    case "cancel":
+      return await handleRunsCancel(rest, options);
     default:
       throw new CliError(2, "unknown_command", `Unknown runs command: ${subcommand}`);
   }
@@ -784,6 +786,21 @@ async function handleRunsEvents(args: readonly string[], options: GlobalOptions)
     return 0;
   }
   printRunEvents(response);
+  return 0;
+}
+
+async function handleRunsCancel(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const runId = singlePositional(parsed.positionals, "runs cancel <id>");
+  const response = await requestJson(options, "POST", `/runs/${encodeURIComponent(runId)}/cancel`, { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  const run = readField(response, "run");
+  console.log(`Run cancelled: ${runId}`);
+  console.log(`Active runner: ${readBoolean(response, "active") ?? false ? "yes" : "no"}`);
+  console.log(`Status: ${readString(run, "status") ?? "cancelled"}`);
   return 0;
 }
 
@@ -2267,6 +2284,7 @@ Usage:
   ling-stack [global options] runs list
   ling-stack [global options] runs show <id>
   ling-stack [global options] runs events <id>
+  ling-stack [global options] runs cancel <id>
   ling-stack [global options] approvals list
   ling-stack [global options] approvals show <id>
   ling-stack [global options] approvals approve <id>
@@ -2362,6 +2380,7 @@ function printRunsHelp(): void {
   ling-stack runs list [--status succeeded] [--limit <n>]
   ling-stack runs show <id>
   ling-stack runs events <id> [--after-seq <n>] [--limit <n>]
+  ling-stack runs cancel <id>
 `);
 }
 

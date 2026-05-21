@@ -69,6 +69,7 @@ export interface PiRunnerRunOptions {
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
   readonly agentDir?: string;
+  readonly signal?: AbortSignal;
   readonly onEvent?: (event: PiRunnerEvent) => void;
   readonly onApprovalRequired?: (
     request: PiRunnerApprovalRequest,
@@ -105,6 +106,8 @@ export class PiRunnerAdapter {
       options.onEvent?.(event);
     };
 
+    throwIfAborted(options.signal);
+
     const authStorage = AuthStorage.inMemory();
     if (options.provider.apiKey) {
       authStorage.setRuntimeApiKey(options.provider.provider, options.provider.apiKey);
@@ -139,6 +142,13 @@ export class PiRunnerAdapter {
       settingsManager,
     });
 
+    const onAbort = (): void => {
+      void session.abort();
+    };
+    if (options.signal) {
+      options.signal.addEventListener("abort", onAbort, { once: true });
+    }
+
     const unsubscribe = session.subscribe((event) => {
       const translated = translatePiEvent(event);
       if (translated) {
@@ -155,7 +165,9 @@ export class PiRunnerAdapter {
     });
 
     try {
+      throwIfAborted(options.signal);
       await session.prompt(formatTaskPrompt(options.task), { source: "rpc" });
+      throwIfAborted(options.signal);
       emit({
         type: "run_end",
         taskId: options.task.id,
@@ -174,6 +186,9 @@ export class PiRunnerAdapter {
       });
       throw error;
     } finally {
+      if (options.signal) {
+        options.signal.removeEventListener("abort", onAbort);
+      }
       unsubscribe();
       session.dispose();
     }
@@ -207,6 +222,19 @@ export class PiRunnerAdapter {
       ],
     });
   }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  throw createAbortError();
+}
+
+function createAbortError(): Error {
+  const error = new Error("Run cancelled.");
+  error.name = "AbortError";
+  return error;
 }
 
 export function createPiRunner(): PiRunnerAdapter {

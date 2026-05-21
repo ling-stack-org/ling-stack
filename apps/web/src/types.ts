@@ -59,6 +59,13 @@ export interface RunListResponse {
   readonly runs: readonly RunSession[];
 }
 
+export interface RunCancelResponse {
+  readonly cancelled: boolean;
+  readonly active: boolean;
+  readonly run?: RunSession;
+  readonly event?: RunEventEnvelope;
+}
+
 export type ProviderKind =
   | "openai"
   | "anthropic"

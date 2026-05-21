@@ -5,6 +5,7 @@ import type {
   ProviderFormState,
   ProviderListResponse,
   ProviderMutationResponse,
+  RunCancelResponse,
   RunEventsResponse,
   RunFormState,
   RunListResponse,
@@ -121,6 +122,16 @@ export async function getRunEvents(runId: string, cwd?: string): Promise<RunEven
     throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as RunEventsResponse;
+}
+
+export async function cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/runs/${encodeURIComponent(runId)}/cancel`, cwd), {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as RunCancelResponse;
 }
 
 export function buildRunRequest(form: RunFormState): unknown {

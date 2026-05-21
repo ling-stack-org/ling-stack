@@ -93,9 +93,10 @@ export function createDaemonServer(
   const resolvedConfig = resolveConfig(config);
   const runner = dependencies.runner ?? createPiRunner();
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore);
+  const activeRuns = new ActiveRunRegistry();
   const server = createServer(async (request, response) => {
     try {
-      await routeRequest(request, response, resolvedConfig, runner, storeRegistry);
+      await routeRequest(request, response, resolvedConfig, runner, storeRegistry, activeRuns);
     } catch (error) {
       if (!response.headersSent) {
         writeJson(response, 500, {
@@ -121,6 +122,7 @@ export function createDaemonServer(
       }),
     stop: () =>
       new Promise<void>((resolve, reject) => {
+        activeRuns.cancelAll();
         server.close((error) => {
           storeRegistry.closeAll();
           if (error) {
@@ -148,6 +150,7 @@ async function routeRequest(
   config: ResolvedDaemonConfig,
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
 ): Promise<void> {
   setCorsHeaders(response);
 
@@ -175,7 +178,7 @@ async function routeRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/runs") {
-    await handleRun(request, response, config, runner, storeRegistry);
+    await handleRun(request, response, config, runner, storeRegistry, activeRuns);
     return;
   }
   if (request.method === "GET" && url.pathname === "/runs") {
@@ -184,6 +187,10 @@ async function routeRequest(
   }
 
   const runRoute = parseRunRoute(url.pathname);
+  if (request.method === "POST" && runRoute?.kind === "cancel") {
+    handleCancelRun(response, url, storeRegistry, activeRuns, runRoute.runId);
+    return;
+  }
   if (request.method === "GET" && runRoute?.kind === "run") {
     handleGetRun(response, url, storeRegistry, runRoute.runId);
     return;
@@ -214,6 +221,7 @@ async function handleRun(
   config: ResolvedDaemonConfig,
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
 ): Promise<void> {
   let runRequest: RunRequest;
   try {
@@ -277,6 +285,7 @@ async function handleRun(
   writeSseHead(response);
   writeSse(response, "ready", { ok: true, runId: run.id });
 
+  const abortController = new AbortController();
   let clientClosed = false;
   let runStartedAt: string | undefined;
   let persistedRunError = false;
@@ -291,8 +300,19 @@ async function handleRun(
     }
   };
 
+  activeRuns.add(run.id, {
+    abortController,
+    streamEnvelope,
+  });
+
   const appendAndMaybeStream = (type: RunEventType, data: unknown): RunEventEnvelope | undefined => {
     if (persistenceError) {
+      return undefined;
+    }
+    if (abortController.signal.aborted && type !== "run_cancelled") {
+      return undefined;
+    }
+    if (store.getRun(run.id)?.status === "cancelled" && type !== "run_cancelled") {
       return undefined;
     }
 
@@ -320,14 +340,22 @@ async function handleRun(
         run,
         appendAndMaybeStream,
         streamEnvelope,
+        signal: abortController.signal,
       }),
       onEvent: (event: PiRunnerEvent) => {
         appendAndMaybeStream(event.type, event);
       },
+      signal: abortController.signal,
     });
 
     if (persistenceError) {
       throw persistenceError;
+    }
+    if (store.getRun(run.id)?.status === "cancelled") {
+      if (!clientClosed) {
+        response.end();
+      }
+      return;
     }
 
     const resultEnvelope = appendAndMaybeStream("result", {
@@ -356,6 +384,21 @@ async function handleRun(
       response.end();
     }
   } catch (error) {
+    if (isAbortError(error) || store.getRun(run.id)?.status === "cancelled") {
+      ensureRunCancelled({
+        store,
+        runId: run.id,
+        taskId: run.taskId,
+        startedAt: runStartedAt,
+        reason: "cancelled",
+        active: false,
+        streamEnvelope,
+      });
+      if (!clientClosed) {
+        response.end();
+      }
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     const endedAt = new Date().toISOString();
     const failureEvent = persistedRunError
@@ -375,6 +418,8 @@ async function handleRun(
     if (!clientClosed) {
       response.end();
     }
+  } finally {
+    activeRuns.delete(run.id);
   }
 }
 
@@ -666,6 +711,97 @@ function handleGetRunEvents(
   });
 }
 
+function handleCancelRun(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
+  runId: string,
+): void {
+  const store = storeRegistry.findStoreForRun(runId, url.searchParams.get("cwd") ?? undefined);
+  const run = store?.getRun(runId);
+  if (!store || !run) {
+    writeJson(response, 404, {
+      error: "run_not_found",
+      message: "Run was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
+    });
+    return;
+  }
+
+  if (run.status === "cancelled") {
+    writeJson(response, 200, { cancelled: true, active: false, run });
+    return;
+  }
+
+  if (isTerminalRunStatus(run.status)) {
+    writeJson(response, 409, {
+      error: "run_not_cancellable",
+      message: `Run ${runId} is already ${run.status}.`,
+      run,
+    });
+    return;
+  }
+
+  const activeRun = activeRuns.get(runId);
+  const cancelled = ensureRunCancelled({
+    store,
+    runId,
+    taskId: run.taskId,
+    startedAt: run.startedAt,
+    reason: "user_requested",
+    active: Boolean(activeRun),
+    streamEnvelope: activeRun?.streamEnvelope,
+  });
+  activeRun?.abortController.abort();
+
+  writeJson(response, 200, {
+    cancelled: true,
+    active: Boolean(activeRun),
+    run: store.getRun(runId),
+    event: cancelled.event,
+  });
+}
+
+function ensureRunCancelled(input: {
+  readonly store: RunStore;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly startedAt?: string;
+  readonly reason: string;
+  readonly active: boolean;
+  readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
+}): { readonly event?: RunEventEnvelope } {
+  const current = input.store.getRun(input.runId);
+  if (!current || current.status === "cancelled") {
+    return {};
+  }
+  if (isTerminalRunStatus(current.status)) {
+    return {};
+  }
+
+  const endedAt = new Date().toISOString();
+  const event = input.store.appendEvent(input.runId, "run_cancelled", {
+    reason: input.reason,
+    active: input.active,
+  });
+  input.streamEnvelope?.(event);
+  const summaryPath = writeTerminalSummary(getRunSummaryPath(input.store.paths, input.runId), {
+    runId: input.runId,
+    status: "cancelled",
+    taskId: input.taskId,
+    eventCount: event.seq,
+    startedAt: input.startedAt,
+    endedAt,
+    errorMessage: null,
+  });
+  input.store.markRunCancelled(input.runId, endedAt, summaryPath);
+  return { event };
+}
+
+function isTerminalRunStatus(status: RunStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
 function appendFailureEvent(
   store: RunStore,
   runId: string,
@@ -746,6 +882,7 @@ function createRunApprovalHandler(options: {
   readonly run: RunSession;
   readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
+  readonly signal?: AbortSignal;
 }): PiRunnerRunOptions["onApprovalRequired"] {
   return async (request: PiRunnerApprovalRequest) => {
     const approval = options.store.createApprovalRequest(
@@ -765,7 +902,7 @@ function createRunApprovalHandler(options: {
       expiresAt: approval.expiresAt,
     });
 
-    const resolvedApproval = await waitForApprovalDecision(options.store, approval.id);
+    const resolvedApproval = await waitForApprovalDecision(options.store, approval.id, options.signal);
     options.store.markRunRunning(options.run.id, new Date().toISOString());
     streamOrAppendApprovalDecisionEvent({
       store: options.store,
@@ -879,9 +1016,10 @@ function approvalDescription(toolName: PiRunnerApprovalRequest["toolName"], payl
   return `The agent requested ${toolName}.`;
 }
 
-async function waitForApprovalDecision(store: RunStore, approvalId: string): Promise<ApprovalRequest> {
+async function waitForApprovalDecision(store: RunStore, approvalId: string, signal?: AbortSignal): Promise<ApprovalRequest> {
   const deadline = Date.now() + APPROVAL_TIMEOUT_MS;
   while (Date.now() <= deadline) {
+    throwIfAborted(signal);
     const approval = store.getApprovalRequest(approvalId);
     if (!approval) {
       throw new Error(`Approval request not found: ${approvalId}`);
@@ -1005,6 +1143,23 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  throw createAbortError();
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function createAbortError(): Error {
+  const error = new Error("Run cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
 async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
@@ -1119,13 +1274,16 @@ function parseInlineProvider(provider: Record<string, unknown>): PiRunnerProvide
   };
 }
 
-function parseRunRoute(pathname: string): { kind: "run"; runId: string } | { kind: "events"; runId: string } | undefined {
+function parseRunRoute(pathname: string): { kind: "run"; runId: string } | { kind: "events"; runId: string } | { kind: "cancel"; runId: string } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "runs") {
     return { kind: "run", runId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "events") {
     return { kind: "events", runId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "cancel") {
+    return { kind: "cancel", runId: segments[1] };
   }
   return undefined;
 }
@@ -1571,6 +1729,34 @@ class HttpError extends Error {
     message: string,
   ) {
     super(message);
+  }
+}
+
+interface ActiveRun {
+  readonly abortController: AbortController;
+  readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
+}
+
+class ActiveRunRegistry {
+  private readonly activeRuns = new Map<string, ActiveRun>();
+
+  add(runId: string, run: ActiveRun): void {
+    this.activeRuns.set(runId, run);
+  }
+
+  get(runId: string): ActiveRun | undefined {
+    return this.activeRuns.get(runId);
+  }
+
+  delete(runId: string): void {
+    this.activeRuns.delete(runId);
+  }
+
+  cancelAll(): void {
+    for (const run of this.activeRuns.values()) {
+      run.abortController.abort();
+    }
+    this.activeRuns.clear();
   }
 }
 
