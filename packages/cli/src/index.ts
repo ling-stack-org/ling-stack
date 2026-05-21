@@ -72,6 +72,14 @@ interface RunEventEnvelope {
   readonly data: unknown;
 }
 
+interface RunApprovalSummary {
+  readonly id: string;
+  readonly status: string;
+  readonly actionType: string;
+  readonly risk: string;
+  readonly reason: string;
+}
+
 interface InitResult {
   readonly cwd: string;
   readonly rootDir: string;
@@ -1110,7 +1118,8 @@ async function handleRunsShow(args: readonly string[], options: GlobalOptions): 
     printJson(response);
     return 0;
   }
-  printRunDetail(response);
+  const eventsResponse = await requestJson(options, "GET", `/runs/${encodeURIComponent(runId)}/events`, { cwd: options.cwd, limit: 500 });
+  printRunDetail(response, eventsResponse);
   return 0;
 }
 
@@ -2410,7 +2419,7 @@ function printRunsList(response: unknown): void {
   );
 }
 
-function printRunDetail(run: unknown): void {
+function printRunDetail(run: unknown, eventsResponse?: unknown): void {
   if (!isRecord(run)) {
     printJson(run);
     return;
@@ -2434,6 +2443,29 @@ function printRunDetail(run: unknown): void {
   if (summaryPath) {
     console.log(`Summary: ${summaryPath}`);
   }
+  if (eventsResponse !== undefined) {
+    printRunApprovalSummary(eventsResponse);
+  }
+}
+
+function printRunApprovalSummary(eventsResponse: unknown): void {
+  const approvalSummaries = summarizeRunApprovalEvents(readArray(eventsResponse, "events").filter(isRunEventEnvelope));
+  if (approvalSummaries.length === 0) {
+    console.log("Approvals: none");
+    return;
+  }
+
+  console.log("Approvals:");
+  printTable(
+    ["ID", "Status", "Action", "Risk", "Reason"],
+    approvalSummaries.map((approval) => [
+      truncate(approval.id, 32),
+      approval.status,
+      approval.actionType,
+      approval.risk,
+      truncate(approval.reason, 48),
+    ]),
+  );
 }
 
 function printRunEvents(response: unknown): void {
@@ -2485,6 +2517,42 @@ function summarizeEvent(event: RunEventEnvelope): string {
     default:
       return summarizeUnknown(event.data, 120);
   }
+}
+
+function summarizeRunApprovalEvents(events: readonly RunEventEnvelope[]): RunApprovalSummary[] {
+  const approvals = new Map<string, RunApprovalSummary>();
+  for (const event of events) {
+    if (event.type === "approval_requested") {
+      const approvalId = readString(event.data, "approvalId");
+      if (!approvalId || approvals.has(approvalId)) {
+        continue;
+      }
+      approvals.set(approvalId, {
+        id: approvalId,
+        status: "pending",
+        actionType: readString(event.data, "actionType") ?? "",
+        risk: readString(event.data, "risk") ?? "",
+        reason: readString(event.data, "description") ?? readString(event.data, "title") ?? "",
+      });
+      continue;
+    }
+
+    if (event.type === "approval_approved" || event.type === "approval_denied") {
+      const approvalId = readString(event.data, "approvalId");
+      if (!approvalId) {
+        continue;
+      }
+      const current = approvals.get(approvalId);
+      approvals.set(approvalId, {
+        id: approvalId,
+        status: readString(event.data, "status") ?? (event.type === "approval_approved" ? "approved" : "denied"),
+        actionType: current?.actionType ?? "",
+        risk: current?.risk ?? "",
+        reason: readString(event.data, "decisionReason") ?? current?.reason ?? "",
+      });
+    }
+  }
+  return [...approvals.values()];
 }
 
 function summarizeResult(data: unknown): string {

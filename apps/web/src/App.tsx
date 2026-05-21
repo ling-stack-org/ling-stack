@@ -57,8 +57,11 @@ import {
 import { streamRun } from "./sse.js";
 import type {
   ApprovalRequest,
+  ApprovalActionType,
   ApprovalPolicy,
   ApprovalPolicyFormState,
+  ApprovalRisk,
+  ApprovalStatus,
   ApprovalToolDecision,
   Channel,
   ChannelFormState,
@@ -200,6 +203,10 @@ export function App(): JSX.Element {
   const activePendingApprovals = useMemo(
     () => approvals.filter((approval) => approval.status === "pending" && approval.runId === activeRunId),
     [approvals, activeRunId],
+  );
+  const activeRunApprovals = useMemo(
+    () => buildRunApprovalSummaries(events, approvals, activeRunId),
+    [approvals, activeRunId, events],
   );
 
   useEffect(() => {
@@ -591,8 +598,8 @@ export function App(): JSX.Element {
     }
   }
 
-  async function refreshApprovals(): Promise<void> {
-    if (!form.cwd.trim()) {
+  async function refreshApprovals(cwd = form.cwd.trim()): Promise<void> {
+    if (!cwd.trim()) {
       setErrorMessage("请输入 workspace path");
       return;
     }
@@ -600,7 +607,7 @@ export function App(): JSX.Element {
     setApprovalsLoading(true);
     try {
       setErrorMessage("");
-      const response = await listApprovals(form.cwd.trim());
+      const response = await listApprovals(cwd.trim());
       setApprovals(response.approvals);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -726,6 +733,7 @@ export function App(): JSX.Element {
 
   async function selectRun(runId: string): Promise<void> {
     await loadRun(runId);
+    void refreshApprovals();
   }
 
   async function cancelActiveRun(): Promise<void> {
@@ -852,6 +860,8 @@ export function App(): JSX.Element {
             selectedRun={run}
             events={events}
             assistantText={assistantText}
+            approvals={activeRunApprovals}
+            approvalsLoading={approvalsLoading}
             isLoading={runsLoading}
             isRunning={isRunning}
             errorMessage={errorMessage}
@@ -864,7 +874,9 @@ export function App(): JSX.Element {
             }}
             onRefresh={() => void refreshRuns()}
             onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
+            onRefreshApprovals={() => void refreshApprovals()}
             onRerun={(sourceRun) => void rerunRun(sourceRun)}
+            onResolveApproval={(approvalId, decision) => void resolveApproval(approvalId, decision)}
             onSelect={(runId) => void selectRun(runId)}
           />
         ) : (
@@ -1387,13 +1399,17 @@ function RunHistory({
   selectedRun,
   events,
   assistantText,
+  approvals,
+  approvalsLoading,
   isLoading,
   isRunning,
   errorMessage,
   onCwdChange,
   onRefresh,
   onRefreshSelected,
+  onRefreshApprovals,
   onRerun,
+  onResolveApproval,
   onSelect,
 }: {
   readonly cwd: string;
@@ -1402,13 +1418,17 @@ function RunHistory({
   readonly selectedRun: RunSession | undefined;
   readonly events: readonly RunEventEnvelope[];
   readonly assistantText: string;
+  readonly approvals: readonly ApprovalRequest[];
+  readonly approvalsLoading: boolean;
   readonly isLoading: boolean;
   readonly isRunning: boolean;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onRefresh: () => void;
   readonly onRefreshSelected: () => void;
+  readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
+  readonly onResolveApproval: (approvalId: string, decision: "approve" | "deny") => void;
   readonly onSelect: (runId: string) => void;
 }): JSX.Element {
   return (
@@ -1466,7 +1486,18 @@ function RunHistory({
         </div>
       </section>
 
-      <RunDetailPanel run={selectedRun} events={events} assistantText={assistantText} isRunning={isRunning} onRefresh={onRefreshSelected} onRerun={onRerun} />
+      <RunDetailPanel
+        run={selectedRun}
+        events={events}
+        assistantText={assistantText}
+        approvals={approvals}
+        approvalsLoading={approvalsLoading}
+        isRunning={isRunning}
+        onRefresh={onRefreshSelected}
+        onRefreshApprovals={onRefreshApprovals}
+        onRerun={onRerun}
+        onResolveApproval={onResolveApproval}
+      />
     </div>
   );
 }
@@ -1475,21 +1506,30 @@ function RunDetailPanel({
   run,
   events,
   assistantText,
+  approvals,
+  approvalsLoading,
   isRunning,
   onRefresh,
+  onRefreshApprovals,
   onRerun,
+  onResolveApproval,
 }: {
   readonly run: RunSession | undefined;
   readonly events: readonly RunEventEnvelope[];
   readonly assistantText: string;
+  readonly approvals: readonly ApprovalRequest[];
+  readonly approvalsLoading: boolean;
   readonly isRunning: boolean;
   readonly onRefresh: () => void;
+  readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
+  readonly onResolveApproval: (approvalId: string, decision: "approve" | "deny") => void;
 }): JSX.Element {
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   const terminalEvent = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));
   const workspaceCwd = run ? readDataString(run.requestSnapshot, "workspaceCwd") || run.cwd : "-";
   const providerPresetId = run ? readRunProviderPresetId(run) : "";
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
 
   return (
     <section className="panel run-detail-panel" aria-labelledby="run-detail-title">
@@ -1535,6 +1575,40 @@ function RunDetailPanel({
               {run.errorMessage}
             </div>
           ) : null}
+
+          <div className="run-detail-section approval-state-section">
+            <div className="panel-title tight split">
+              <span>
+                <ShieldCheck size={16} />
+                <h3>Approval state</h3>
+              </span>
+              <span className="approval-section-actions">
+                <span className="event-count">{approvals.length} approval events</span>
+                <button className="secondary-button compact-button" type="button" onClick={onRefreshApprovals} disabled={approvalsLoading}>
+                  {approvalsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                  Refresh
+                </button>
+              </span>
+            </div>
+            {pendingApprovals.length > 0 ? (
+              <div className="approval-waiting-banner" role="status">
+                <Clock3 size={16} />
+                <span>
+                  Waiting for {pendingApprovals.length} approval{pendingApprovals.length > 1 ? "s" : ""}:{" "}
+                  {pendingApprovals.map((approval) => approval.actionType).join(", ")}
+                </span>
+              </div>
+            ) : null}
+            {approvals.length === 0 ? (
+              <p className="muted">No approval gates recorded for this run.</p>
+            ) : (
+              <div className="run-approval-list">
+                {approvals.map((approval) => (
+                  <ApprovalCard key={approval.id} approval={approval} compact onResolve={onResolveApproval} />
+                ))}
+              </div>
+            )}
+          </div>
 
           {assistantText ? (
             <div className="assistant-output">
@@ -2064,7 +2138,9 @@ function ApprovalCard({
           <span>{approval.taskId}</span>
           <span>{approval.runId}</span>
           <time>{formatDateTime(approval.createdAt)}</time>
+          {approval.resolvedAt ? <time>resolved {formatDateTime(approval.resolvedAt)}</time> : null}
         </div>
+        {approval.decisionReason ? <p className="approval-decision-reason">{approval.decisionReason}</p> : null}
         <pre>{formatEventData(approval.payload)}</pre>
       </div>
       {approval.status === "pending" ? (
@@ -2454,6 +2530,78 @@ function readRunWorkspaceCwd(run: RunSession, fallbackCwd: string): string {
   return readDataString(run.requestSnapshot, "workspaceCwd") || fallbackCwd || run.cwd;
 }
 
+function buildRunApprovalSummaries(
+  events: readonly RunEventEnvelope[],
+  approvals: readonly ApprovalRequest[],
+  runId: string,
+): readonly ApprovalRequest[] {
+  const summaries = new Map<string, ApprovalRequest>();
+  for (const approval of approvals) {
+    if (approval.runId === runId) {
+      summaries.set(approval.id, approval);
+    }
+  }
+
+  for (const event of events) {
+    if (event.type === "approval_requested") {
+      const approvalId = readDataString(event.data, "approvalId");
+      if (!approvalId || summaries.has(approvalId)) {
+        continue;
+      }
+      summaries.set(approvalId, {
+        id: approvalId,
+        runId: event.runId,
+        taskId: readDataString(event.data, "taskId") || event.runId,
+        toolCallId: readDataString(event.data, "toolCallId") || undefined,
+        actionType: readApprovalActionType(event.data),
+        risk: readApprovalRisk(event.data),
+        title: readDataString(event.data, "title") || "Approval requested",
+        description: readDataString(event.data, "description") || "The run requested approval.",
+        payload: readDataField(event.data, "payload"),
+        status: "pending",
+        createdAt: event.ts,
+        expiresAt: readDataString(event.data, "expiresAt") || undefined,
+      });
+      continue;
+    }
+
+    if (event.type === "approval_approved" || event.type === "approval_denied") {
+      const approvalId = readDataString(event.data, "approvalId");
+      if (!approvalId) {
+        continue;
+      }
+      const existing = summaries.get(approvalId);
+      const status = readApprovalStatus(event.data, event.type === "approval_approved" ? "approved" : "denied");
+      summaries.set(approvalId, {
+        id: approvalId,
+        runId: event.runId,
+        taskId: existing?.taskId ?? event.runId,
+        toolCallId: existing?.toolCallId,
+        actionType: existing?.actionType ?? "bash",
+        risk: existing?.risk ?? "medium",
+        title: existing?.title ?? (status === "approved" ? "Approval approved" : "Approval denied"),
+        description: existing?.description ?? "Approval decision recorded.",
+        payload: existing?.payload ?? {},
+        status,
+        createdAt: existing?.createdAt ?? event.ts,
+        expiresAt: existing?.expiresAt,
+        resolvedAt: event.ts,
+        resolvedBy: "local-user",
+        decisionReason: readDataString(event.data, "decisionReason") || existing?.decisionReason,
+      });
+    }
+  }
+
+  return [...summaries.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function readDataField(data: unknown, key: string): unknown {
+  if (typeof data === "object" && data !== null && key in data) {
+    return (data as Record<string, unknown>)[key];
+  }
+  return undefined;
+}
+
 function formatEventData(data: unknown): string {
   if (typeof data === "object" && data !== null && "text" in data) {
     const value = (data as { text?: unknown }).text;
@@ -2462,6 +2610,30 @@ function formatEventData(data: unknown): string {
     }
   }
   return JSON.stringify(data, null, 2);
+}
+
+function readApprovalActionType(data: unknown): ApprovalActionType {
+  const value = readDataString(data, "actionType");
+  if (["write", "edit", "bash", "git_commit", "git_push", "external_send", "deploy", "media_cost", "credential_change", "provider_change"].includes(value)) {
+    return value as ApprovalActionType;
+  }
+  return "bash";
+}
+
+function readApprovalRisk(data: unknown): ApprovalRisk {
+  const value = readDataString(data, "risk");
+  if (["low", "medium", "high", "critical"].includes(value)) {
+    return value as ApprovalRisk;
+  }
+  return "medium";
+}
+
+function readApprovalStatus(data: unknown, fallback: ApprovalStatus): ApprovalStatus {
+  const value = readDataString(data, "status");
+  if (["pending", "approved", "denied", "expired", "cancelled"].includes(value)) {
+    return value as ApprovalStatus;
+  }
+  return fallback;
 }
 
 function readTaskTitle(taskSnapshot: unknown): string {

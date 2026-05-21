@@ -658,6 +658,38 @@ pre {
   white-space: pre-wrap;
 }
 
+.approval-state-section {
+  padding: 12px;
+  border: 1px solid #d8ded7;
+  background: #f7faf7;
+}
+
+.approval-section-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.approval-waiting-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #d9bd71;
+  background: #fff7df;
+  color: #6f4a00;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.run-approval-list {
+  display: grid;
+  gap: 8px;
+}
+
 .tool-event-list {
   display: grid;
   gap: 7px;
@@ -1317,6 +1349,14 @@ pre {
   color: #4f5e59;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.approval-main .approval-decision-reason {
+  padding: 8px 10px;
+  border: 1px solid #d8ded7;
+  background: #f4f7f4;
+  color: #42504c;
+  font-size: 12px;
 }
 
 .approval-state,
