@@ -222,11 +222,17 @@ export async function checkProvider(cwd: string, providerId: string): Promise<Pr
   return (await response.json()) as ProviderCheckResult;
 }
 
-export async function listApprovals(cwd: string, status?: string): Promise<ApprovalListResponse> {
+export async function listApprovals(
+  cwd: string,
+  options: { readonly status?: string; readonly runId?: string } = {},
+): Promise<ApprovalListResponse> {
   const parsed = new URL(`${daemonBaseUrl}/approvals`);
   parsed.searchParams.set("cwd", cwd);
-  if (status) {
-    parsed.searchParams.set("status", status);
+  if (options.status) {
+    parsed.searchParams.set("status", options.status);
+  }
+  if (options.runId) {
+    parsed.searchParams.set("runId", options.runId);
   }
   const response = await fetch(parsed.toString());
   if (!response.ok) {

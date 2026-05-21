@@ -84,6 +84,7 @@ const allTools: readonly ToolName[] = ["read", "grep", "find", "ls", "bash", "ed
 const riskyTools: readonly ToolName[] = ["bash", "edit", "write"];
 const taskStatuses: readonly TaskStatus[] = ["todo", "claimed", "running", "blocked", "review", "done", "failed", "cancelled"];
 type ViewId = "workspace" | "runs" | "providers" | "approvals" | "settings";
+type ApprovalResolution = "approve" | "deny";
 
 const defaultForm: RunFormState = {
   cwd: "/Users/tianxiao/ling-stack",
@@ -185,10 +186,12 @@ export function App(): JSX.Element {
   const [approvalPolicyLoading, setApprovalPolicyLoading] = useState(false);
   const [approvals, setApprovals] = useState<readonly ApprovalRequest[]>([]);
   const [approvalsLoading, setApprovalsLoading] = useState(false);
+  const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, ApprovalResolution>>({});
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const abortRef = useRef<AbortController | undefined>(undefined);
+  const resolvingApprovalsRef = useRef<Set<string>>(new Set());
 
   const assistantText = useMemo(
     () =>
@@ -304,7 +307,7 @@ export function App(): JSX.Element {
             return;
           }
           if (message.event.type === "approval_requested") {
-            void refreshApprovals();
+            void refreshApprovals(loadCwd, streamedRunId || undefined);
           }
           setEvents((current) => [...current, message.event]);
         },
@@ -314,6 +317,7 @@ export function App(): JSX.Element {
       if (streamedRunId) {
         await loadRun(streamedRunId, loadCwd);
         await refreshRuns(loadCwd);
+        await refreshApprovals(loadCwd, streamedRunId);
         await afterRunLoaded?.(streamedRunId);
       }
     } catch (error) {
@@ -598,7 +602,7 @@ export function App(): JSX.Element {
     }
   }
 
-  async function refreshApprovals(cwd = form.cwd.trim()): Promise<void> {
+  async function refreshApprovals(cwd = form.cwd.trim(), runId?: string): Promise<void> {
     if (!cwd.trim()) {
       setErrorMessage("请输入 workspace path");
       return;
@@ -607,8 +611,8 @@ export function App(): JSX.Element {
     setApprovalsLoading(true);
     try {
       setErrorMessage("");
-      const response = await listApprovals(cwd.trim());
-      setApprovals(response.approvals);
+      const response = await listApprovals(cwd.trim(), { runId });
+      setApprovals((current) => (runId ? mergeApprovalsForRun(current, response.approvals, runId) : response.approvals));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -654,17 +658,39 @@ export function App(): JSX.Element {
     }
   }
 
-  async function resolveApproval(approvalId: string, decision: "approve" | "deny"): Promise<void> {
+  async function resolveApproval(approvalId: string, decision: ApprovalResolution): Promise<void> {
+    if (resolvingApprovalsRef.current.has(approvalId)) {
+      return;
+    }
+
+    resolvingApprovalsRef.current.add(approvalId);
+    setResolvingApprovals((current) => ({ ...current, [approvalId]: decision }));
     try {
       setErrorMessage("");
-      if (decision === "approve") {
-        await approveApproval(form.cwd.trim(), approvalId);
-      } else {
-        await denyApproval(form.cwd.trim(), approvalId);
+      const approvalBeforeResolution =
+        approvals.find((approval) => approval.id === approvalId) ?? activeRunApprovals.find((approval) => approval.id === approvalId);
+      const response =
+        decision === "approve"
+          ? await approveApproval(form.cwd.trim(), approvalId)
+          : await denyApproval(form.cwd.trim(), approvalId);
+      setApprovals((current) => upsertApproval(current, response.approval));
+
+      const resolvedRunId = response.approval.runId || approvalBeforeResolution?.runId;
+      const workspaceCwd = form.cwd.trim();
+      await refreshApprovals(workspaceCwd, resolvedRunId);
+      if (resolvedRunId && (resolvedRunId === activeRunId || resolvedRunId === lookupRunId)) {
+        await Promise.all([loadRun(resolvedRunId, workspaceCwd), refreshRuns(workspaceCwd)]);
+        window.setTimeout(() => {
+          void loadRun(resolvedRunId, workspaceCwd);
+          void refreshRuns(workspaceCwd);
+          void refreshApprovals(workspaceCwd, resolvedRunId);
+        }, 750);
       }
-      await refreshApprovals();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      resolvingApprovalsRef.current.delete(approvalId);
+      setResolvingApprovals((current) => removeRecordKey(current, approvalId));
     }
   }
 
@@ -733,7 +759,7 @@ export function App(): JSX.Element {
 
   async function selectRun(runId: string): Promise<void> {
     await loadRun(runId);
-    void refreshApprovals();
+    void refreshApprovals(form.cwd.trim(), runId);
   }
 
   async function cancelActiveRun(): Promise<void> {
@@ -848,7 +874,8 @@ export function App(): JSX.Element {
               isRunning={isRunning}
               pendingApprovals={activePendingApprovals}
               approvalsLoading={approvalsLoading}
-              onRefreshApprovals={() => void refreshApprovals()}
+              resolvingApprovals={resolvingApprovals}
+              onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
               onResolveApproval={(approvalId, decision) => void resolveApproval(approvalId, decision)}
             />
           </div>
@@ -862,6 +889,7 @@ export function App(): JSX.Element {
             assistantText={assistantText}
             approvals={activeRunApprovals}
             approvalsLoading={approvalsLoading}
+            resolvingApprovals={resolvingApprovals}
             isLoading={runsLoading}
             isRunning={isRunning}
             errorMessage={errorMessage}
@@ -874,7 +902,7 @@ export function App(): JSX.Element {
             }}
             onRefresh={() => void refreshRuns()}
             onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
-            onRefreshApprovals={() => void refreshApprovals()}
+            onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
             onRerun={(sourceRun) => void rerunRun(sourceRun)}
             onResolveApproval={(approvalId, decision) => void resolveApproval(approvalId, decision)}
             onSelect={(runId) => void selectRun(runId)}
@@ -928,6 +956,7 @@ export function App(): JSX.Element {
                 cwd={form.cwd}
                 approvals={approvals}
                 isLoading={approvalsLoading}
+                resolvingApprovals={resolvingApprovals}
                 errorMessage={errorMessage}
                 onCwdChange={(cwd) => setForm({ ...form, cwd })}
                 onRefresh={() => void refreshApprovals()}
@@ -1401,6 +1430,7 @@ function RunHistory({
   assistantText,
   approvals,
   approvalsLoading,
+  resolvingApprovals,
   isLoading,
   isRunning,
   errorMessage,
@@ -1420,6 +1450,7 @@ function RunHistory({
   readonly assistantText: string;
   readonly approvals: readonly ApprovalRequest[];
   readonly approvalsLoading: boolean;
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly isLoading: boolean;
   readonly isRunning: boolean;
   readonly errorMessage: string;
@@ -1428,7 +1459,7 @@ function RunHistory({
   readonly onRefreshSelected: () => void;
   readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
-  readonly onResolveApproval: (approvalId: string, decision: "approve" | "deny") => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution) => void;
   readonly onSelect: (runId: string) => void;
 }): JSX.Element {
   return (
@@ -1492,6 +1523,7 @@ function RunHistory({
         assistantText={assistantText}
         approvals={approvals}
         approvalsLoading={approvalsLoading}
+        resolvingApprovals={resolvingApprovals}
         isRunning={isRunning}
         onRefresh={onRefreshSelected}
         onRefreshApprovals={onRefreshApprovals}
@@ -1508,6 +1540,7 @@ function RunDetailPanel({
   assistantText,
   approvals,
   approvalsLoading,
+  resolvingApprovals,
   isRunning,
   onRefresh,
   onRefreshApprovals,
@@ -1519,11 +1552,12 @@ function RunDetailPanel({
   readonly assistantText: string;
   readonly approvals: readonly ApprovalRequest[];
   readonly approvalsLoading: boolean;
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly isRunning: boolean;
   readonly onRefresh: () => void;
   readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
-  readonly onResolveApproval: (approvalId: string, decision: "approve" | "deny") => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution) => void;
 }): JSX.Element {
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   const terminalEvent = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));
@@ -1604,7 +1638,13 @@ function RunDetailPanel({
             ) : (
               <div className="run-approval-list">
                 {approvals.map((approval) => (
-                  <ApprovalCard key={approval.id} approval={approval} compact onResolve={onResolveApproval} />
+                  <ApprovalCard
+                    key={approval.id}
+                    approval={approval}
+                    compact
+                    resolvingDecision={resolvingApprovals[approval.id]}
+                    onResolve={onResolveApproval}
+                  />
                 ))}
               </div>
             )}
@@ -2063,6 +2103,7 @@ function ApprovalsPage({
   cwd,
   approvals,
   isLoading,
+  resolvingApprovals,
   errorMessage,
   onCwdChange,
   onRefresh,
@@ -2071,10 +2112,11 @@ function ApprovalsPage({
   readonly cwd: string;
   readonly approvals: readonly ApprovalRequest[];
   readonly isLoading: boolean;
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onRefresh: () => void;
-  readonly onResolve: (approvalId: string, decision: "approve" | "deny") => void;
+  readonly onResolve: (approvalId: string, decision: ApprovalResolution) => void;
 }): JSX.Element {
   return (
     <section className="panel approvals-panel" aria-labelledby="approvals-title">
@@ -2108,7 +2150,14 @@ function ApprovalsPage({
             <span>{isLoading ? "Loading approvals..." : "No approval requests for this workspace"}</span>
           </div>
         ) : (
-          approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} onResolve={onResolve} />)
+          approvals.map((approval) => (
+            <ApprovalCard
+              key={approval.id}
+              approval={approval}
+              resolvingDecision={resolvingApprovals[approval.id]}
+              onResolve={onResolve}
+            />
+          ))
         )}
       </div>
     </section>
@@ -2118,12 +2167,15 @@ function ApprovalsPage({
 function ApprovalCard({
   approval,
   compact = false,
+  resolvingDecision,
   onResolve,
 }: {
   readonly approval: ApprovalRequest;
   readonly compact?: boolean;
-  readonly onResolve: (approvalId: string, decision: "approve" | "deny") => void;
+  readonly resolvingDecision?: ApprovalResolution;
+  readonly onResolve: (approvalId: string, decision: ApprovalResolution) => void;
 }): JSX.Element {
+  const isResolving = Boolean(resolvingDecision);
   return (
     <article className={`approval-row ${approval.risk}${compact ? " compact" : ""}`}>
       <div className="approval-main">
@@ -2145,13 +2197,23 @@ function ApprovalCard({
       </div>
       {approval.status === "pending" ? (
         <div className="approval-actions">
-          <button className="secondary-button compact-button" type="button" onClick={() => onResolve(approval.id, "approve")}>
-            <CheckCircle2 size={14} />
-            Approve
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => onResolve(approval.id, "approve")}
+            disabled={isResolving}
+          >
+            {resolvingDecision === "approve" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+            {resolvingDecision === "approve" ? "Approving" : "Approve"}
           </button>
-          <button className="secondary-button compact-button danger" type="button" onClick={() => onResolve(approval.id, "deny")}>
-            <CircleAlert size={14} />
-            Deny
+          <button
+            className="secondary-button compact-button danger"
+            type="button"
+            onClick={() => onResolve(approval.id, "deny")}
+            disabled={isResolving}
+          >
+            {resolvingDecision === "deny" ? <Loader2 className="spin" size={14} /> : <CircleAlert size={14} />}
+            {resolvingDecision === "deny" ? "Denying" : "Deny"}
           </button>
         </div>
       ) : null}
@@ -2320,6 +2382,7 @@ function RunTimeline({
   isRunning,
   pendingApprovals,
   approvalsLoading,
+  resolvingApprovals,
   onRefreshApprovals,
   onResolveApproval,
 }: {
@@ -2329,8 +2392,9 @@ function RunTimeline({
   readonly isRunning: boolean;
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly approvalsLoading: boolean;
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly onRefreshApprovals: () => void;
-  readonly onResolveApproval: (approvalId: string, decision: "approve" | "deny") => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution) => void;
 }): JSX.Element {
   return (
     <section className="panel timeline" aria-labelledby="run-timeline-title">
@@ -2370,7 +2434,13 @@ function RunTimeline({
           </div>
           <div className="inline-approval-list">
             {pendingApprovals.map((approval) => (
-              <ApprovalCard key={approval.id} approval={approval} compact onResolve={onResolveApproval} />
+              <ApprovalCard
+                key={approval.id}
+                approval={approval}
+                compact
+                resolvingDecision={resolvingApprovals[approval.id]}
+                onResolve={onResolveApproval}
+              />
             ))}
           </div>
         </div>
@@ -2593,6 +2663,33 @@ function buildRunApprovalSummaries(
   }
 
   return [...summaries.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function mergeApprovalsForRun(
+  current: readonly ApprovalRequest[],
+  nextRunApprovals: readonly ApprovalRequest[],
+  runId: string,
+): readonly ApprovalRequest[] {
+  const otherApprovals = current.filter((approval) => approval.runId !== runId);
+  return [...nextRunApprovals, ...otherApprovals];
+}
+
+function upsertApproval(current: readonly ApprovalRequest[], next: ApprovalRequest): readonly ApprovalRequest[] {
+  const existingIndex = current.findIndex((approval) => approval.id === next.id);
+  if (existingIndex === -1) {
+    return [next, ...current];
+  }
+  return current.map((approval, index) => (index === existingIndex ? next : approval));
+}
+
+function removeRecordKey<T>(record: Readonly<Record<string, T>>, key: string): Record<string, T> {
+  const next: Record<string, T> = {};
+  for (const [currentKey, value] of Object.entries(record)) {
+    if (currentKey !== key) {
+      next[currentKey] = value;
+    }
+  }
+  return next;
 }
 
 function readDataField(data: unknown, key: string): unknown {
