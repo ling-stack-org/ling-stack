@@ -520,6 +520,7 @@ async function handleRun(args: readonly string[], options: GlobalOptions): Promi
   const parsed = parseCommandArgs(args, {
     stringFlags: new Set(["provider", "title", "task", "thinking", "system-prompt", "agent-dir", "prompt", "prompt-file"]),
     repeatableFlags: new Set(["tool", "append-system-prompt"]),
+    booleanFlags: new Set(["skip-preflight"]),
   });
 
   const providerPresetId = getFlag(parsed, "provider");
@@ -541,6 +542,9 @@ async function handleRun(args: readonly string[], options: GlobalOptions): Promi
   const taskId = getFlag(parsed, "task") ?? `task_cli_${randomUUID()}`;
   const title = getFlag(parsed, "title") ?? titleFromPrompt(prompt);
   const appendSystemPrompt = getFlagValues(parsed, "append-system-prompt");
+  if (!parsed.booleans.has("skip-preflight")) {
+    await assertProviderRunPreflight(options, providerPresetId);
+  }
 
   const body = removeUndefined({
     cwd: options.cwd,
@@ -964,6 +968,7 @@ async function handleTaskRun(args: readonly string[], options: GlobalOptions): P
   const parsed = parseCommandArgs(args, {
     stringFlags: new Set(["provider", "thinking", "system-prompt", "agent-dir"]),
     repeatableFlags: new Set(["tool", "append-system-prompt"]),
+    booleanFlags: new Set(["skip-preflight"]),
   });
   const taskId = singlePositional(parsed.positionals, "task run <id>");
   const providerPresetId = getFlag(parsed, "provider");
@@ -981,6 +986,9 @@ async function handleTaskRun(args: readonly string[], options: GlobalOptions): P
   const thinkingLevel = getFlag(parsed, "thinking") ?? "medium";
   if (!VALID_THINKING_LEVELS.has(thinkingLevel)) {
     throw new CliError(2, "bad_thinking_level", `--thinking must be one of: ${[...VALID_THINKING_LEVELS].join(", ")}`);
+  }
+  if (!parsed.booleans.has("skip-preflight")) {
+    await assertProviderRunPreflight(options, providerPresetId);
   }
   const explicitTools = readTools(parsed);
   const channelTools = readArray(channel, "allowedTools").filter((tool): tool is string => typeof tool === "string");
@@ -2306,6 +2314,44 @@ function providerSecretStatus(provider: unknown): string {
   return readBoolean(provider, "apiKeyConfigured") ? "configured" : "missing";
 }
 
+async function assertProviderRunPreflight(options: GlobalOptions, providerPresetId: string): Promise<void> {
+  const response = await requestJson(options, "GET", `/providers/${encodeURIComponent(providerPresetId)}`, { cwd: options.cwd });
+  const provider = readRequiredRecord(response, "provider");
+  const blocker = providerRunPreflightBlocker(provider);
+  if (blocker) {
+    throw new CliError(
+      4,
+      "provider_preflight_failed",
+      `${blocker} Run 'ling-stack provider check ${providerPresetId}' or pass --skip-preflight for debugging.`,
+    );
+  }
+}
+
+function providerRunPreflightBlocker(provider: unknown): string | undefined {
+  const displayName = readString(provider, "displayName") ?? readString(provider, "id") ?? "Provider";
+  if (readBoolean(provider, "enabled") !== true) {
+    return `${displayName}: provider is disabled.`;
+  }
+  if (readString(provider, "api") === "media-job") {
+    return `${displayName}: provider is media only.`;
+  }
+  if (!readArray(provider, "capabilities").includes("chat")) {
+    return `${displayName}: provider does not support chat.`;
+  }
+  if (readString(provider, "apiKeyRef") && readBoolean(provider, "apiKeyConfigured") !== true) {
+    return `${displayName}: missing ${envNameFromRef(readString(provider, "apiKeyRef") ?? "")}.`;
+  }
+
+  const lastCheck = readField(provider, "lastCheck");
+  if (!isRecord(lastCheck)) {
+    return `${displayName}: provider has not been checked.`;
+  }
+  if (readBoolean(lastCheck, "ok") !== true) {
+    return `${displayName}: provider check failed (${readString(lastCheck, "code") ?? "failed"}). ${readString(lastCheck, "message") ?? ""}`.trim();
+  }
+  return undefined;
+}
+
 function providerCheckStatus(provider: unknown): string {
   const lastCheck = readField(provider, "lastCheck");
   if (!isRecord(lastCheck)) {
@@ -2323,6 +2369,10 @@ function canBatchCheckProviderResponse(provider: unknown): boolean {
     readString(provider, "api") !== "media-job" &&
     readArray(provider, "capabilities").includes("chat")
   );
+}
+
+function envNameFromRef(ref: string): string {
+  return ref.startsWith("env:") ? ref.slice("env:".length) : ref;
 }
 
 function printProviderLastCheck(provider: unknown): void {
@@ -2888,8 +2938,8 @@ Usage:
   ling-stack [global options] task create --channel <id> --title <title> --prompt <prompt>
   ling-stack [global options] task show <id>
   ling-stack [global options] task update <id> [options]
-  ling-stack [global options] task run <id> --provider <providerPresetId>
-  ling-stack [global options] run --provider <providerPresetId> [options] <prompt...>
+  ling-stack [global options] task run <id> --provider <providerPresetId> [--skip-preflight]
+  ling-stack [global options] run --provider <providerPresetId> [--skip-preflight] [options] <prompt...>
   ling-stack [global options] policy show
   ling-stack [global options] policy set --tool write=deny --write-path .
   ling-stack [global options] policy reset
@@ -2981,7 +3031,7 @@ function printTaskHelp(): void {
   ling-stack task create --channel <id> --prompt-file <path>
   ling-stack task show <id>
   ling-stack task update <id> [--title <title>] [--prompt <prompt>] [--status done]
-  ling-stack task run <id> --provider <providerPresetId>
+  ling-stack task run <id> --provider <providerPresetId> [--skip-preflight]
   ling-stack task remove <id>
 `);
 }
@@ -3001,6 +3051,7 @@ Options:
   --system-prompt <text>       Override system prompt
   --append-system-prompt <txt> Repeatable appended system prompt
   --agent-dir <path>           Pi agent directory
+  --skip-preflight             Skip provider last-check gate for debugging
 `);
 }
 

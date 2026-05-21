@@ -86,6 +86,68 @@ test("provider check-all checks enabled chat providers", async () => {
   }
 });
 
+test("run blocks providers without successful preflight", async () => {
+  const daemon = await startProviderDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-provider-"));
+  try {
+    const result = await runCli(daemon.url, cwd, ["run", "--provider", provider.id, "--prompt", "hello"]);
+
+    assert.equal(result.code, 4);
+    assert.match(result.stderr, /provider_preflight_failed/);
+    assert.match(result.stderr, /provider check failed \(auth_failed\)/);
+    assert.deepEqual(daemon.runRequests, []);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
+test("task run blocks providers without successful preflight", async () => {
+  const daemon = await startProviderDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-provider-"));
+  try {
+    const result = await runCli(daemon.url, cwd, ["task", "run", "task_1", "--provider", provider.id]);
+
+    assert.equal(result.code, 4);
+    assert.match(result.stderr, /provider_preflight_failed/);
+    assert.match(result.stderr, /provider check failed \(auth_failed\)/);
+    assert.deepEqual(daemon.runRequests, []);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
+test("run can skip provider preflight", async () => {
+  const daemon = await startProviderDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-provider-"));
+  try {
+    const result = await runCli(daemon.url, cwd, ["run", "--provider", provider.id, "--skip-preflight", "--prompt", "hello"]);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /Run: run_1/);
+    assert.deepEqual(daemon.runRequests, ["POST /runs"]);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
+test("task run can skip provider preflight", async () => {
+  const daemon = await startProviderDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-provider-"));
+  try {
+    const result = await runCli(daemon.url, cwd, ["task", "run", "task_1", "--provider", provider.id, "--skip-preflight"]);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /Run: run_1/);
+    assert.deepEqual(daemon.runRequests, ["POST /runs"]);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 function runCli(daemonUrl, cwd, args) {
   return new Promise((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
@@ -100,8 +162,16 @@ function runCli(daemonUrl, cwd, args) {
 
 async function startProviderDaemon() {
   const checkRequests = [];
+  const runRequests = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "POST" && url.pathname === "/runs") {
+      runRequests.push("POST /runs");
+      request.resume();
+      writeSseReady(response, "run_1");
+      return;
+    }
+
     if (!url.searchParams.get("cwd")) {
       writeJson(response, 400, { error: "bad_request" });
       return;
@@ -114,6 +184,35 @@ async function startProviderDaemon() {
 
     if (request.method === "GET" && url.pathname === `/providers/${provider.id}`) {
       writeJson(response, 200, { provider });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/tasks/task_1") {
+      writeJson(response, 200, {
+        task: {
+          id: "task_1",
+          channelId: "channel_1",
+          title: "Task 1",
+          prompt: "Do task 1",
+          status: "todo",
+          createdAt: "2026-05-21T00:00:00.000Z",
+          updatedAt: "2026-05-21T00:00:00.000Z",
+        },
+      });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/channels/channel_1") {
+      writeJson(response, 200, {
+        channel: {
+          id: "channel_1",
+          name: "Default",
+          boundPath: "/tmp/project",
+          allowedTools: ["read", "grep"],
+          createdAt: "2026-05-21T00:00:00.000Z",
+          updatedAt: "2026-05-21T00:00:00.000Z",
+        },
+      });
       return;
     }
 
@@ -138,6 +237,7 @@ async function startProviderDaemon() {
   assert.ok(address && typeof address === "object");
   return {
     checkRequests,
+    runRequests,
     url: `http://127.0.0.1:${address.port}`,
     close: () => new Promise((resolveClose, rejectClose) => {
       server.close((error) => {
@@ -154,4 +254,9 @@ async function startProviderDaemon() {
 function writeJson(response, statusCode, body) {
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+function writeSseReady(response, runId) {
+  response.writeHead(200, { "content-type": "text/event-stream" });
+  response.end(`event: ready\ndata: ${JSON.stringify({ runId })}\n\n`);
 }

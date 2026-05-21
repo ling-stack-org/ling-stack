@@ -586,7 +586,7 @@ export function App(): JSX.Element {
     }
   }
 
-  async function runPersistedTask(task: Task): Promise<void> {
+  async function runPersistedTask(task: Task, options: { readonly skipPreflight?: boolean } = {}): Promise<void> {
     const channel = channels.find((item) => item.id === task.channelId);
     if (!channel) {
       setErrorMessage("找不到 task 所属 channel");
@@ -602,11 +602,58 @@ export function App(): JSX.Element {
       setErrorMessage(provider ? `Provider preset is not runnable: ${providerRunBlockerLabel(provider)}` : "找不到 provider preset");
       return;
     }
+    if (!options.skipPreflight) {
+      const blocker = providerRunPreflightBlocker(provider);
+      if (blocker) {
+        setErrorMessage(blocker);
+        return;
+      }
+    }
 
     const runCwd = form.cwd.trim();
     await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId), runCwd, async () => {
       await refreshTasks(task.channelId);
     });
+  }
+
+  async function checkThenRunPersistedTask(task: Task): Promise<void> {
+    const channel = channels.find((item) => item.id === task.channelId);
+    const providerPresetId = taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId;
+    const provider = providerPresetId ? providers.find((item) => item.id === providerPresetId) : undefined;
+    if (!provider) {
+      setErrorMessage(providerPresetId ? "找不到 provider preset" : "请先选择 provider preset");
+      return;
+    }
+    if (await checkProviderForRun(provider)) {
+      await runPersistedTask(task, { skipPreflight: true });
+    }
+  }
+
+  async function checkProviderForRun(provider: ProviderPreset): Promise<boolean> {
+    if (!canBatchCheckProvider(provider)) {
+      setErrorMessage(`Provider preset is not runnable: ${providerRunBlockerLabel(provider)}`);
+      return false;
+    }
+
+    try {
+      setErrorMessage("");
+      setProviderBatchResult(undefined);
+      setCheckingProviderIds([provider.id]);
+      setProviderCheckTargetId(provider.id);
+      const result = await checkProvider(form.cwd.trim(), provider.id);
+      setProviderCheck(result);
+      await refreshProviders();
+      if (!result.ok) {
+        setErrorMessage(`${provider.displayName}: provider check failed (${providerCheckStatusLabel(result)}). ${providerCheckGuidance(result, provider)}`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setCheckingProviderIds([]);
+    }
   }
 
   async function rerunRun(sourceRun: RunSession): Promise<void> {
@@ -931,6 +978,7 @@ export function App(): JSX.Element {
               onSelectTask={setSelectedTaskId}
               onSaveTaskEdit={(taskId) => void saveTaskEdit(taskId)}
               onRunTask={(task) => void runPersistedTask(task)}
+              onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
               onReviewTask={(taskId) => void moveTaskToReview(taskId)}
               onDeleteTask={(taskId) => void removeTask(taskId)}
               onOpenProviders={() => setActiveView("providers")}
@@ -1171,6 +1219,7 @@ function ChannelTaskWorkspace({
   onSelectTask,
   onSaveTaskEdit,
   onRunTask,
+  onCheckThenRunTask,
   onReviewTask,
   onDeleteTask,
   onOpenProviders,
@@ -1207,6 +1256,7 @@ function ChannelTaskWorkspace({
   readonly onSelectTask: (taskId: string) => void;
   readonly onSaveTaskEdit: (taskId: string) => void;
   readonly onRunTask: (task: Task) => void;
+  readonly onCheckThenRunTask: (task: Task) => void;
   readonly onReviewTask: (taskId: string) => void;
   readonly onDeleteTask: (taskId: string) => void;
   readonly onOpenProviders: () => void;
@@ -1218,6 +1268,9 @@ function ChannelTaskWorkspace({
   const blockedProviders = providers.filter((provider) => !canUseProviderForRun(provider));
   const effectiveProvider = providers.find((provider) => provider.id === effectiveProviderId);
   const canRunWithEffectiveProvider = Boolean(effectiveProvider && canUseProviderForRun(effectiveProvider));
+  const canPreflightRunWithEffectiveProvider = Boolean(
+    effectiveProvider && canRunWithEffectiveProvider && providerRunPreflightBlocker(effectiveProvider) === undefined,
+  );
 
   return (
     <div className="task-workspace">
@@ -1413,16 +1466,16 @@ function ChannelTaskWorkspace({
             <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
           </select>
         </label>
-        {providers.length === 0 || runnableProviders.length === 0 || (effectiveProvider && !canUseProviderForRun(effectiveProvider)) ? (
-          <div className={canRunWithEffectiveProvider ? "provider-run-notice ok" : "provider-run-notice"}>
-            {canRunWithEffectiveProvider ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
+        {providers.length === 0 || runnableProviders.length === 0 || (effectiveProvider && !canPreflightRunWithEffectiveProvider) ? (
+          <div className={canPreflightRunWithEffectiveProvider ? "provider-run-notice ok" : "provider-run-notice"}>
+            {canPreflightRunWithEffectiveProvider ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
             <span>
               {providers.length === 0
                 ? "No saved provider presets. Create one from GPT, Claude, relay, or domestic templates."
                 : runnableProviders.length === 0
                   ? "No runnable provider presets. Enable a chat provider and configure its env key."
                   : effectiveProvider
-                    ? `${effectiveProvider.displayName}: ${providerRunBlockerLabel(effectiveProvider)}.`
+                    ? (providerRunPreflightBlocker(effectiveProvider) ?? `${effectiveProvider.displayName}: ${providerRunBlockerLabel(effectiveProvider)}.`)
                     : ""}
             </span>
             <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
@@ -1483,7 +1536,11 @@ function ChannelTaskWorkspace({
                 <Save size={16} />
                 Save task
               </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !canRunWithEffectiveProvider}>
+              <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(selectedTask)} disabled={isRunning || !canRunWithEffectiveProvider}>
+                {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                Check run
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !canPreflightRunWithEffectiveProvider}>
                 {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                 Run
               </button>
@@ -1515,7 +1572,11 @@ function ChannelTaskWorkspace({
                     <Pencil size={14} />
                     Edit
                   </button>
-                  <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || !canRunWithEffectiveProvider}>
+                  <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={isRunning || !canRunWithEffectiveProvider}>
+                    {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                    Check run
+                  </button>
+                  <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || !canPreflightRunWithEffectiveProvider}>
                     {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                     Run
                   </button>
@@ -3192,6 +3253,22 @@ function providerRunBlockerLabel(provider: ProviderPreset): string {
     return provider.apiKeyRef ? `missing ${envNameFromRef(provider.apiKeyRef)}` : "missing env key";
   }
   return "not runnable";
+}
+
+function providerRunPreflightBlocker(provider: ProviderPreset | undefined): string | undefined {
+  if (!provider) {
+    return "找不到 provider preset";
+  }
+  if (!canUseProviderForRun(provider)) {
+    return `${provider.displayName}: ${providerRunBlockerLabel(provider)}.`;
+  }
+  if (!provider.lastCheck) {
+    return `${provider.displayName}: provider has not been checked. Use Check run before starting.`;
+  }
+  if (!provider.lastCheck.ok) {
+    return `${provider.displayName}: provider check failed (${providerCheckStatusLabel(provider.lastCheck)}). ${providerCheckGuidance(provider.lastCheck, provider)}`;
+  }
+  return undefined;
 }
 
 function providerLastCheckLabel(provider: ProviderPreset): string {
