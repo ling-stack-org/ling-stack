@@ -197,6 +197,17 @@ First run quick flow:
 
 The quick flow is a convenience layer. The normal channel/task forms remain the source of editable details.
 
+Run-after loop:
+
+- task cards should surface the latest linked run status from `currentRunId` when available,
+- each task with a linked run should expose `Open run` to load the persisted run and switch to the run detail view,
+- while a run is active, the first-run panel should show the active run id/status and offer `Open run` instead of looking like a fresh setup flow,
+- after a successful run, Workspace readiness should include a compact run-history signal that the local loop has completed at least once,
+- failed runs should point to the right repair surface:
+  - provider/preflight failures -> Providers,
+  - pending approvals -> Approvals,
+  - tool/runtime failure -> Run detail.
+
 ### Provider Settings
 
 Backed by:

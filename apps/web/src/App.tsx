@@ -250,6 +250,14 @@ export function App(): JSX.Element {
     () => buildRunApprovalSummaries(events, approvals, activeRunId),
     [approvals, activeRunId, events],
   );
+  const runById = useMemo(() => {
+    const items = new Map(runs.map((item) => [item.id, item]));
+    if (run) {
+      items.set(run.id, run);
+    }
+    return items;
+  }, [run, runs]);
+  const succeededRunCount = useMemo(() => [...runById.values()].filter((item) => item.status === "succeeded").length, [runById]);
 
   useEffect(() => {
     void refreshHealth();
@@ -260,6 +268,7 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (activeView === "workspace") {
       void refreshChannels();
+      void refreshRuns();
     }
     if (activeView === "runs") {
       void refreshRuns();
@@ -964,6 +973,16 @@ export function App(): JSX.Element {
     void refreshApprovals(form.cwd.trim(), runId);
   }
 
+  async function openRunFromWorkspace(runId: string): Promise<void> {
+    await selectRun(runId);
+    setActiveView("runs");
+  }
+
+  function openApprovalsFromWorkspace(runId?: string): void {
+    void refreshApprovals(form.cwd.trim(), runId || activeRunId || undefined);
+    setActiveView("approvals");
+  }
+
   async function cancelActiveRun(): Promise<void> {
     abortRef.current?.abort();
     if (!activeRunId) {
@@ -1026,8 +1045,11 @@ export function App(): JSX.Element {
               providersLoading={providersLoading}
               channelsLoading={channelsLoading}
               tasksLoading={tasksLoading}
+              runsLoading={runsLoading}
+              succeededRunCount={succeededRunCount}
               onRefreshDaemon={() => void refreshHealth()}
               onOpenProviders={() => setActiveView("providers")}
+              onOpenRuns={() => setActiveView("runs")}
               onCreateChannel={() => void saveDefaultChannel()}
               onCreateTask={() => void saveTask()}
             />
@@ -1043,7 +1065,14 @@ export function App(): JSX.Element {
               channelsLoading={channelsLoading}
               tasksLoading={tasksLoading}
               isRunning={isRunning}
+              activeRunId={activeRunId}
+              latestStatus={latestStatus}
+              currentRun={run}
+              runById={runById}
+              pendingApprovalCount={activePendingApprovals.length}
               onOpenProviders={() => setActiveView("providers")}
+              onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
+              onOpenRun={(runId) => void openRunFromWorkspace(runId)}
               onCreateDefaultChannel={() => void saveDefaultChannel()}
               onSetChannelProvider={(channelId, providerId) => void setChannelDefaultProvider(channelId, providerId)}
               onCreateTask={() => void saveTask()}
@@ -1067,6 +1096,9 @@ export function App(): JSX.Element {
                 channelsLoading={channelsLoading}
                 tasksLoading={tasksLoading}
                 isRunning={isRunning}
+                activeRunId={activeRunId}
+                latestStatus={latestStatus}
+                runById={runById}
                 errorMessage={errorMessage}
                 onCwdChange={(cwd) => {
                   setForm({ ...form, cwd });
@@ -1102,6 +1134,7 @@ export function App(): JSX.Element {
                 onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
                 onReviewTask={(taskId) => void moveTaskToReview(taskId)}
                 onDeleteTask={(taskId) => void removeTask(taskId)}
+                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onOpenProviders={() => setActiveView("providers")}
               />
               <RunTimeline
@@ -1316,8 +1349,11 @@ function WorkspaceReadiness({
   providersLoading,
   channelsLoading,
   tasksLoading,
+  runsLoading,
+  succeededRunCount,
   onRefreshDaemon,
   onOpenProviders,
+  onOpenRuns,
   onCreateChannel,
   onCreateTask,
 }: {
@@ -1328,8 +1364,11 @@ function WorkspaceReadiness({
   readonly providersLoading: boolean;
   readonly channelsLoading: boolean;
   readonly tasksLoading: boolean;
+  readonly runsLoading: boolean;
+  readonly succeededRunCount: number;
   readonly onRefreshDaemon: () => void;
   readonly onOpenProviders: () => void;
+  readonly onOpenRuns: () => void;
   readonly onCreateChannel: () => void;
   readonly onCreateTask: () => void;
 }): JSX.Element {
@@ -1338,13 +1377,15 @@ function WorkspaceReadiness({
   const providerItem = buildProviderReadinessItem(providers.length, runnableProviderCount, readyProviderCount, providersLoading, onOpenProviders);
   const channelItem = buildChannelReadinessItem(channels.length, channelsLoading, onCreateChannel);
   const taskItem = buildTaskReadinessItem(tasks.length, tasksLoading, channels.length > 0, onCreateTask);
+  const runLoopItem = buildRunLoopReadinessItem(succeededRunCount, runsLoading, onOpenRuns);
   const items: readonly WorkspaceReadinessItem[] = [
     buildDaemonReadinessItem(daemonHealthy, onRefreshDaemon),
     providerItem,
     channelItem,
     taskItem,
+    runLoopItem,
   ];
-  const blockingItems = items.filter((item) => item.id !== "tasks" && item.status !== "ready");
+  const blockingItems = items.filter((item) => item.id !== "tasks" && item.id !== "run-loop" && item.status !== "ready");
   const ready = blockingItems.length === 0;
 
   return (
@@ -1392,7 +1433,14 @@ function FirstRunFlow({
   channelsLoading,
   tasksLoading,
   isRunning,
+  activeRunId,
+  latestStatus,
+  currentRun,
+  runById,
+  pendingApprovalCount,
   onOpenProviders,
+  onOpenApprovals,
+  onOpenRun,
   onCreateDefaultChannel,
   onSetChannelProvider,
   onCreateTask,
@@ -1410,7 +1458,14 @@ function FirstRunFlow({
   readonly channelsLoading: boolean;
   readonly tasksLoading: boolean;
   readonly isRunning: boolean;
+  readonly activeRunId: string;
+  readonly latestStatus: string;
+  readonly currentRun: RunSession | undefined;
+  readonly runById: ReadonlyMap<string, RunSession>;
+  readonly pendingApprovalCount: number;
   readonly onOpenProviders: () => void;
+  readonly onOpenApprovals: (runId?: string) => void;
+  readonly onOpenRun: (runId: string) => void;
   readonly onCreateDefaultChannel: () => void;
   readonly onSetChannelProvider: (channelId: string, providerId: string) => void;
   readonly onCreateTask: () => void;
@@ -1428,6 +1483,81 @@ function FirstRunFlow({
   const effectiveProvider = providers.find((provider) => provider.id === effectiveProviderId);
   const runReady = Boolean(selectedTask && effectiveProvider && providerRunPreflightBlocker(effectiveProvider) === undefined);
   const firstRunComplete = Boolean(readyProvider && selectedChannel && channelHasReadyDefault && selectedTask && runReady);
+  const activeRun = activeRunId ? (currentRun?.id === activeRunId ? currentRun : runById.get(activeRunId)) : undefined;
+  const selectedTaskRunId = selectedTask?.currentRunId ?? "";
+  const selectedTaskRun = selectedTaskRunId ? runById.get(selectedTaskRunId) : undefined;
+  const selectedTaskRunStatus = selectedTaskRunId ? displayLinkedRunStatus(selectedTaskRunId, selectedTaskRun, activeRunId, latestStatus) : "";
+
+  if (activeRunId && isRunning) {
+    return (
+      <section className="first-run-flow panel active" aria-labelledby="first-run-flow-title">
+        <div className="first-run-copy">
+          <span>
+            <Loader2 className="spin" size={17} />
+            <strong id="first-run-flow-title">Run in progress</strong>
+          </span>
+          <small>
+            {activeRun ? readTaskTitle(activeRun.taskSnapshot) || activeRun.taskId : "Active task"} is {latestStatus}. {activeRunId}
+          </small>
+        </div>
+        <div className="first-run-actions">
+          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(activeRunId)}>
+            <History size={14} />
+            Open run
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (selectedTask && selectedTaskRunId) {
+    const repairTarget = classifyRunRepairTarget(selectedTaskRun, pendingApprovalCount, selectedTaskRunStatus);
+    const needsRepair = selectedTaskRunStatus === "failed" || selectedTaskRunStatus === "waiting_for_approval";
+    const runStatusClass = selectedTaskRunStatus === "succeeded" ? "ready" : needsRepair ? "attention" : "active";
+    const title = selectedTaskRunStatus === "succeeded"
+      ? "Run loop complete"
+      : needsRepair
+        ? "Run needs attention"
+        : "Current run linked";
+    const detail = `${selectedTask.title} latest run is ${selectedTaskRunStatus}.${selectedTaskRun?.errorMessage ? ` ${selectedTaskRun.errorMessage}` : ""}`;
+    const primaryAction = needsRepair ? repairTarget : "run";
+
+    return (
+      <section className={`first-run-flow panel ${runStatusClass}`} aria-labelledby="first-run-flow-title">
+        <div className="first-run-copy">
+          <span>
+            {selectedTaskRunStatus === "succeeded" ? <CheckCircle2 size={17} /> : needsRepair ? <CircleAlert size={17} /> : <History size={17} />}
+            <strong id="first-run-flow-title">{title}</strong>
+          </span>
+          <small>{detail}</small>
+        </div>
+        <div className="first-run-actions">
+          {primaryAction === "providers" ? (
+            <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
+              <PlugZap size={14} />
+              Providers
+            </button>
+          ) : null}
+          {primaryAction === "approvals" ? (
+            <button className="secondary-button compact-button" type="button" onClick={() => onOpenApprovals(selectedTaskRunId)}>
+              <ShieldCheck size={14} />
+              Approvals
+            </button>
+          ) : null}
+          <button className={primaryAction === "run" ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(selectedTaskRunId)}>
+            <History size={14} />
+            Open run
+          </button>
+          {selectedTaskRunStatus === "succeeded" ? (
+            <button className="primary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !runReady}>
+              <Play size={14} />
+              Run again
+            </button>
+          ) : null}
+        </div>
+      </section>
+    );
+  }
 
   if (firstRunComplete && selectedTask && effectiveProvider) {
     return (
@@ -1851,6 +1981,38 @@ function buildTaskReadinessItem(total: number, loading: boolean, hasChannel: boo
   };
 }
 
+function buildRunLoopReadinessItem(succeededRunCount: number, loading: boolean, onOpenRuns: () => void): WorkspaceReadinessItem {
+  if (loading) {
+    return {
+      id: "run-loop",
+      label: "Run loop",
+      detail: "Loading run history",
+      status: "loading",
+      actionLabel: "Runs",
+      onAction: onOpenRuns,
+      disabled: true,
+    };
+  }
+  if (succeededRunCount === 0) {
+    return {
+      id: "run-loop",
+      label: "Run loop",
+      detail: "No successful run yet",
+      status: "info",
+      actionLabel: "Runs",
+      onAction: onOpenRuns,
+    };
+  }
+  return {
+    id: "run-loop",
+    label: "Run loop",
+    detail: `${succeededRunCount} successful run${succeededRunCount === 1 ? "" : "s"}`,
+    status: "ready",
+    actionLabel: "Runs",
+    onAction: onOpenRuns,
+  };
+}
+
 function readinessIcon(status: WorkspaceReadinessItem["status"]): JSX.Element {
   if (status === "ready") {
     return <CheckCircle2 size={17} />;
@@ -1867,6 +2029,9 @@ function readinessIcon(status: WorkspaceReadinessItem["status"]): JSX.Element {
 function readinessActionIcon(item: WorkspaceReadinessItem): JSX.Element {
   if (item.actionLabel === "Providers") {
     return <PlugZap size={14} />;
+  }
+  if (item.actionLabel === "Runs") {
+    return <History size={14} />;
   }
   if (item.actionLabel === "Create") {
     return <Plus size={14} />;
@@ -1890,6 +2055,9 @@ function ChannelTaskWorkspace({
   channelsLoading,
   tasksLoading,
   isRunning,
+  activeRunId,
+  latestStatus,
+  runById,
   errorMessage,
   onCwdChange,
   onChannelFormChange,
@@ -1910,6 +2078,7 @@ function ChannelTaskWorkspace({
   onCheckThenRunTask,
   onReviewTask,
   onDeleteTask,
+  onOpenRun,
   onOpenProviders,
 }: {
   readonly cwd: string;
@@ -1927,6 +2096,9 @@ function ChannelTaskWorkspace({
   readonly channelsLoading: boolean;
   readonly tasksLoading: boolean;
   readonly isRunning: boolean;
+  readonly activeRunId: string;
+  readonly latestStatus: string;
+  readonly runById: ReadonlyMap<string, RunSession>;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onChannelFormChange: (form: ChannelFormState) => void;
@@ -1947,10 +2119,15 @@ function ChannelTaskWorkspace({
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onReviewTask: (taskId: string) => void;
   readonly onDeleteTask: (taskId: string) => void;
+  readonly onOpenRun: (runId: string) => void;
   readonly onOpenProviders: () => void;
 }): JSX.Element {
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
+  const selectedTaskRun = selectedTask?.currentRunId ? runById.get(selectedTask.currentRunId) : undefined;
+  const selectedTaskRunStatus = selectedTask?.currentRunId
+    ? displayLinkedRunStatus(selectedTask.currentRunId, selectedTaskRun, activeRunId, latestStatus)
+    : "";
   const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId) ?? "";
   const runnableProviders = providers.filter(canUseProviderForRun);
   const blockedProviders = providers.filter((provider) => !canUseProviderForRun(provider));
@@ -2200,6 +2377,16 @@ function ChannelTaskWorkspace({
               <MetaRow label="Channel" value={selectedTask.channelId} compact />
               <MetaRow label="Current run" value={selectedTask.currentRunId ?? "-"} compact />
             </div>
+            {selectedTask.currentRunId ? (
+              <div className="task-run-link">
+                <StatusBadge status={selectedTaskRunStatus} />
+                <code>{selectedTask.currentRunId}</code>
+                <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(selectedTask.currentRunId ?? "")}>
+                  <History size={14} />
+                  Open run
+                </button>
+              </div>
+            ) : null}
             <label className="field wide">
               <span>Title</span>
               <input value={taskEditForm.title} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, title: event.target.value })} />
@@ -2243,42 +2430,57 @@ function ChannelTaskWorkspace({
               <span>{tasksLoading ? "Loading tasks..." : "No tasks in this channel"}</span>
             </div>
           ) : (
-            tasks.map((task) => (
-              <article key={task.id} className={task.id === selectedTaskId ? "task-row selected" : "task-row"}>
-                <div className="task-row-head">
-                  <strong>{task.title}</strong>
-                  <span className={`task-status ${task.status}`}>{task.status}</span>
-                </div>
-                <p>{task.prompt}</p>
-                <div className="provider-meta-line mono">
-                  <span>{task.id}</span>
-                  {task.currentRunId ? <span>{task.currentRunId}</span> : null}
-                  <time>{formatDateTime(task.updatedAt)}</time>
-                </div>
-                <div className="task-actions">
-                  <button className="secondary-button compact-button" type="button" onClick={() => onSelectTask(task.id)}>
-                    <Pencil size={14} />
-                    Edit
-                  </button>
-                  <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={isRunning || !canRunWithEffectiveProvider}>
-                    {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                    Check run
-                  </button>
-                  <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || !canPreflightRunWithEffectiveProvider}>
-                    {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                    Run
-                  </button>
-                  <button className="secondary-button compact-button" type="button" onClick={() => onReviewTask(task.id)} disabled={task.status === "review"}>
-                    <CheckCircle2 size={14} />
-                    Review
-                  </button>
-                  <button className="secondary-button compact-button danger" type="button" onClick={() => onDeleteTask(task.id)}>
-                    <Trash2 size={14} />
-                    Delete
-                  </button>
-                </div>
-              </article>
-            ))
+            tasks.map((task) => {
+              const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
+              const linkedRunStatus = task.currentRunId
+                ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus)
+                : "";
+              return (
+                <article key={task.id} className={task.id === selectedTaskId ? "task-row selected" : "task-row"}>
+                  <div className="task-row-head">
+                    <strong>{task.title}</strong>
+                    <span className={`task-status ${task.status}`}>{task.status}</span>
+                  </div>
+                  <p>{task.prompt}</p>
+                  <div className="provider-meta-line mono">
+                    <span>{task.id}</span>
+                    <time>{formatDateTime(task.updatedAt)}</time>
+                  </div>
+                  {task.currentRunId ? (
+                    <div className="task-run-link compact">
+                      <StatusBadge status={linkedRunStatus} />
+                      <code>{task.currentRunId}</code>
+                      <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
+                        <History size={14} />
+                        Open run
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="task-actions">
+                    <button className="secondary-button compact-button" type="button" onClick={() => onSelectTask(task.id)}>
+                      <Pencil size={14} />
+                      Edit
+                    </button>
+                    <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={isRunning || !canRunWithEffectiveProvider}>
+                      {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                      Check run
+                    </button>
+                    <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || !canPreflightRunWithEffectiveProvider}>
+                      {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                      Run
+                    </button>
+                    <button className="secondary-button compact-button" type="button" onClick={() => onReviewTask(task.id)} disabled={task.status === "review"}>
+                      <CheckCircle2 size={14} />
+                      Review
+                    </button>
+                    <button className="secondary-button compact-button danger" type="button" onClick={() => onDeleteTask(task.id)}>
+                      <Trash2 size={14} />
+                      Delete
+                    </button>
+                  </div>
+                </article>
+              );
+            })
           )}
         </div>
       </section>
@@ -3833,6 +4035,37 @@ function MetaRow({
 
 function StatusBadge({ status }: { readonly status: string }): JSX.Element {
   return <span className={`status-badge ${status}`}>{status}</span>;
+}
+
+type RunRepairTarget = "providers" | "approvals" | "run";
+
+function displayLinkedRunStatus(
+  runId: string,
+  linkedRun: RunSession | undefined,
+  activeRunId: string,
+  latestStatus: string,
+): string {
+  if (runId === activeRunId && latestStatus !== "idle") {
+    return latestStatus;
+  }
+  return linkedRun?.status ?? "saved";
+}
+
+function classifyRunRepairTarget(
+  run: RunSession | undefined,
+  pendingApprovalCount: number,
+  status: string,
+): RunRepairTarget {
+  if (pendingApprovalCount > 0 || status === "waiting_for_approval" || run?.status === "waiting_for_approval") {
+    return "approvals";
+  }
+
+  const message = run?.errorMessage ?? "";
+  if (/provider|preflight|api[-_ ]?key|apikey|auth|secret|credential|model|base[-_ ]?url|endpoint|token/i.test(message)) {
+    return "providers";
+  }
+
+  return "run";
 }
 
 function inferRunStatus(events: readonly RunEventEnvelope[], isRunning: boolean): string {
