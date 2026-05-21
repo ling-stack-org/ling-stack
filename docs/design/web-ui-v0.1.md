@@ -467,6 +467,14 @@ Critical approvals:
 - show explicit target and risk,
 - never auto-approve.
 
+Approval run repair flow:
+
+- when a run routes to Approvals, the app should carry the `runId` into the approval inbox,
+- the inbox should show a focused repair panel above the list with run id, task, pending approval count, highest risk, and involved action types,
+- while focused on a run, the list should show approval records for that run instead of the global inbox,
+- after approve/deny, the UI should refresh approvals, the linked run, and run history so the user can immediately return to the updated run detail,
+- the repair panel should expose Reload, Back to run, and Clear; clearing only exits the guided approval context.
+
 Approval cards also appear in the Run Viewer timeline.
 
 ### Artifacts Panel

@@ -2007,6 +2007,60 @@ pre {
   gap: 10px;
 }
 
+.approval-run-repair {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #d9bd71;
+  background: #fffaf0;
+}
+
+.approval-run-repair-head,
+.approval-run-repair-head span,
+.approval-run-repair-meta,
+.approval-run-repair-actions {
+  display: flex;
+  align-items: center;
+}
+
+.approval-run-repair-head {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.approval-run-repair-head span {
+  gap: 7px;
+  color: #7a4d00;
+}
+
+.approval-run-repair-head strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.approval-run-repair-copy {
+  display: grid;
+  gap: 5px;
+  color: #4f5e59;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.approval-run-repair-copy code {
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #17211f;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.approval-run-repair-meta,
+.approval-run-repair-actions {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .approval-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);

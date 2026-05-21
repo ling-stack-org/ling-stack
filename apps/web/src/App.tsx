@@ -234,6 +234,7 @@ export function App(): JSX.Element {
   const [approvals, setApprovals] = useState<readonly ApprovalRequest[]>([]);
   const [approvalsLoading, setApprovalsLoading] = useState(false);
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, ApprovalResolution>>({});
+  const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -267,6 +268,7 @@ export function App(): JSX.Element {
   }, [run, runs]);
   const succeededRunCount = useMemo(() => [...runById.values()].filter((item) => item.status === "succeeded").length, [runById]);
   const providerRepairRun = providerRepairRunId ? runById.get(providerRepairRunId) : undefined;
+  const approvalRepairRun = approvalRepairRunId ? runById.get(approvalRepairRunId) : undefined;
 
   useEffect(() => {
     void refreshHealth();
@@ -847,7 +849,7 @@ export function App(): JSX.Element {
       const resolvedRunId = response.approval.runId || approvalBeforeResolution?.runId;
       const workspaceCwd = form.cwd.trim();
       await refreshApprovals(workspaceCwd, resolvedRunId);
-      if (resolvedRunId && (resolvedRunId === activeRunId || resolvedRunId === lookupRunId)) {
+      if (resolvedRunId && (resolvedRunId === activeRunId || resolvedRunId === lookupRunId || resolvedRunId === approvalRepairRunId)) {
         await Promise.all([loadRun(resolvedRunId, workspaceCwd), refreshRuns(workspaceCwd)]);
         window.setTimeout(() => {
           void loadRun(resolvedRunId, workspaceCwd);
@@ -988,7 +990,12 @@ export function App(): JSX.Element {
   }
 
   function openApprovalsFromWorkspace(runId?: string): void {
-    void refreshApprovals(form.cwd.trim(), runId || activeRunId || undefined);
+    const targetRunId = runId || activeRunId || "";
+    setApprovalRepairRunId(targetRunId);
+    if (targetRunId) {
+      void loadRun(targetRunId, form.cwd.trim());
+    }
+    void refreshApprovals(form.cwd.trim(), targetRunId || undefined);
     setActiveView("approvals");
   }
 
@@ -1043,7 +1050,15 @@ export function App(): JSX.Element {
           <NavItem icon={<Workflow />} label="Workspace" active={activeView === "workspace"} onClick={() => setActiveView("workspace")} />
           <NavItem icon={<History />} label="Runs" active={activeView === "runs"} onClick={() => setActiveView("runs")} />
           <NavItem icon={<PlugZap />} label="Providers" active={activeView === "providers"} onClick={() => setActiveView("providers")} />
-          <NavItem icon={<ShieldCheck />} label="Approvals" active={activeView === "approvals"} onClick={() => setActiveView("approvals")} />
+          <NavItem
+            icon={<ShieldCheck />}
+            label="Approvals"
+            active={activeView === "approvals"}
+            onClick={() => {
+              setApprovalRepairRunId("");
+              setActiveView("approvals");
+            }}
+          />
           <NavItem icon={<Settings />} label="Settings" active={activeView === "settings"} onClick={() => setActiveView("settings")} />
         </nav>
       </aside>
@@ -1263,12 +1278,23 @@ export function App(): JSX.Element {
               <ApprovalsPage
                 cwd={form.cwd}
                 approvals={approvals}
+                repairRunId={approvalRepairRunId}
+                repairRun={approvalRepairRun}
                 isLoading={approvalsLoading}
                 resolvingApprovals={resolvingApprovals}
                 errorMessage={errorMessage}
-                onCwdChange={(cwd) => setForm({ ...form, cwd })}
+                onCwdChange={(cwd) => {
+                  setApprovalRepairRunId("");
+                  setForm({ ...form, cwd });
+                }}
                 onRefresh={() => void refreshApprovals()}
+                onRefreshRepair={(runId) => {
+                  void refreshApprovals(form.cwd.trim(), runId);
+                  void loadRun(runId, form.cwd.trim());
+                }}
                 onResolve={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onClearRepair={() => setApprovalRepairRunId("")}
               />
             )
           )
@@ -3698,22 +3724,35 @@ function SettingsPage({
 function ApprovalsPage({
   cwd,
   approvals,
+  repairRunId,
+  repairRun,
   isLoading,
   resolvingApprovals,
   errorMessage,
   onCwdChange,
   onRefresh,
+  onRefreshRepair,
   onResolve,
+  onOpenRun,
+  onClearRepair,
 }: {
   readonly cwd: string;
   readonly approvals: readonly ApprovalRequest[];
+  readonly repairRunId: string;
+  readonly repairRun: RunSession | undefined;
   readonly isLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onRefresh: () => void;
+  readonly onRefreshRepair: (runId: string) => void;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onOpenRun: (runId: string) => void;
+  readonly onClearRepair: () => void;
 }): JSX.Element {
+  const focusedApprovals = repairRunId ? approvals.filter((approval) => approval.runId === repairRunId) : approvals;
+  const listEmptyCopy = repairRunId ? "No approval records for this run" : "No approval requests for this workspace";
+
   return (
     <section className="panel approvals-panel" aria-labelledby="approvals-title">
       <div className="panel-title split">
@@ -3721,7 +3760,12 @@ function ApprovalsPage({
           <ShieldCheck size={18} />
           <h2 id="approvals-title">Approval requests</h2>
         </span>
-        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
+        <button
+          className="secondary-button compact-button"
+          type="button"
+          onClick={repairRunId ? () => onRefreshRepair(repairRunId) : onRefresh}
+          disabled={isLoading}
+        >
           {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
           Refresh
         </button>
@@ -3739,14 +3783,26 @@ function ApprovalsPage({
         </div>
       ) : null}
 
+      {repairRunId ? (
+        <ApprovalRunRepairPanel
+          runId={repairRunId}
+          run={repairRun}
+          approvals={focusedApprovals}
+          isLoading={isLoading}
+          onRefresh={() => onRefreshRepair(repairRunId)}
+          onOpenRun={() => onOpenRun(repairRunId)}
+          onClear={onClearRepair}
+        />
+      ) : null}
+
       <div className="approval-list">
-        {approvals.length === 0 ? (
+        {focusedApprovals.length === 0 ? (
           <div className="empty-state compact-empty">
             {isLoading ? <Loader2 className="spin" /> : <ShieldCheck />}
-            <span>{isLoading ? "Loading approvals..." : "No approval requests for this workspace"}</span>
+            <span>{isLoading ? "Loading approvals..." : listEmptyCopy}</span>
           </div>
         ) : (
-          approvals.map((approval) => (
+          focusedApprovals.map((approval) => (
             <ApprovalCard
               key={approval.id}
               approval={approval}
@@ -3757,6 +3813,66 @@ function ApprovalsPage({
         )}
       </div>
     </section>
+  );
+}
+
+function ApprovalRunRepairPanel({
+  runId,
+  run,
+  approvals,
+  isLoading,
+  onRefresh,
+  onOpenRun,
+  onClear,
+}: {
+  readonly runId: string;
+  readonly run: RunSession | undefined;
+  readonly approvals: readonly ApprovalRequest[];
+  readonly isLoading: boolean;
+  readonly onRefresh: () => void;
+  readonly onOpenRun: () => void;
+  readonly onClear: () => void;
+}): JSX.Element {
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
+  const resolvedApprovals = approvals.filter((approval) => approval.status !== "pending");
+  const highestRisk = highestApprovalRisk(approvals);
+  const actionTypes = [...new Set(approvals.map((approval) => approval.actionType))];
+  const taskLabel = run ? readTaskTitle(run.taskSnapshot) || run.taskId : approvals[0]?.taskId ?? "-";
+
+  return (
+    <div className="approval-run-repair" aria-label="Approval run repair">
+      <div className="approval-run-repair-head">
+        <span>
+          <ShieldCheck size={16} />
+          <strong>Resolve run approvals</strong>
+        </span>
+        <button className="secondary-button compact-button" type="button" onClick={onClear}>
+          Clear
+        </button>
+      </div>
+      <div className="approval-run-repair-copy">
+        <span>
+          Run <code>{runId}</code> is focused for approval repair.
+        </span>
+        <small>Task: {taskLabel}</small>
+      </div>
+      <div className="approval-run-repair-meta">
+        <span className="approval-state pending">{pendingApprovals.length} pending</span>
+        <span className="approval-state approved">{resolvedApprovals.length} resolved</span>
+        <span className={`approval-risk ${highestRisk}`}>{highestRisk}</span>
+        {actionTypes.length > 0 ? <span className="approval-state">{actionTypes.join(", ")}</span> : null}
+      </div>
+      <div className="approval-run-repair-actions">
+        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
+          {isLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          Reload
+        </button>
+        <button className="primary-button compact-button" type="button" onClick={onOpenRun}>
+          <History size={14} />
+          Back to run
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -4335,6 +4451,13 @@ function readRunEventIssueText(event: RunEventEnvelope | undefined): string {
     || readDataString(event.data, "error")
     || readDataString(event.data, "detail")
     || readDataString(event.data, "reason");
+}
+
+function highestApprovalRisk(approvals: readonly ApprovalRequest[]): ApprovalRisk {
+  const order: readonly ApprovalRisk[] = ["low", "medium", "high", "critical"];
+  return approvals.reduce<ApprovalRisk>((highest, approval) => {
+    return order.indexOf(approval.risk) > order.indexOf(highest) ? approval.risk : highest;
+  }, "low");
 }
 
 function inferRunStatus(events: readonly RunEventEnvelope[], isRunning: boolean): string {
