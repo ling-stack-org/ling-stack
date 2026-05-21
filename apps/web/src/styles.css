@@ -1110,9 +1110,18 @@ pre {
   margin-bottom: 14px;
 }
 
+.provider-title-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .provider-next-action,
 .provider-env-hint,
-.provider-form-hint {
+.provider-form-hint,
+.provider-batch-result {
   margin-bottom: 14px;
   padding: 10px;
   border: 1px solid #e7b4a8;
@@ -1123,7 +1132,8 @@ pre {
 }
 
 .provider-next-action,
-.provider-env-hint {
+.provider-env-hint,
+.provider-batch-result {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1133,6 +1143,18 @@ pre {
   border-color: #a9cfc0;
   background: #e7f5ef;
   color: #116149;
+}
+
+.provider-batch-result.ok {
+  border-color: #a9cfc0;
+  background: #e7f5ef;
+  color: #116149;
+}
+
+.provider-batch-result.bad {
+  border-color: #e7b4a8;
+  background: #fff1ed;
+  color: #7c2d12;
 }
 
 .provider-next-action span,

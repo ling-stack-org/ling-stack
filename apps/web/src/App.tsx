@@ -89,6 +89,10 @@ interface ProviderTemplateGroup {
   readonly label: string;
   readonly templates: readonly ProviderTemplate[];
 }
+interface ProviderBatchResult {
+  readonly message: string;
+  readonly failedCount: number;
+}
 
 const defaultForm: RunFormState = {
   cwd: "/Users/tianxiao/ling-stack",
@@ -186,7 +190,8 @@ export function App(): JSX.Element {
   const [editingProviderId, setEditingProviderId] = useState("");
   const [providerCheck, setProviderCheck] = useState<ProviderCheckResult | undefined>();
   const [providerCheckTargetId, setProviderCheckTargetId] = useState("");
-  const [checkingProviderId, setCheckingProviderId] = useState("");
+  const [checkingProviderIds, setCheckingProviderIds] = useState<readonly string[]>([]);
+  const [providerBatchResult, setProviderBatchResult] = useState<ProviderBatchResult | undefined>();
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
   const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
   const [approvalPolicyLoading, setApprovalPolicyLoading] = useState(false);
@@ -715,6 +720,7 @@ export function App(): JSX.Element {
       setErrorMessage("");
       setProviderCheck(undefined);
       setProviderCheckTargetId("");
+      setProviderBatchResult(undefined);
       const response = editingProviderId
         ? await updateProvider(form.cwd.trim(), editingProviderId, providerForm)
         : await createProvider(form.cwd.trim(), providerForm);
@@ -731,6 +737,7 @@ export function App(): JSX.Element {
       setErrorMessage("");
       setProviderCheck(undefined);
       setProviderCheckTargetId("");
+      setProviderBatchResult(undefined);
       await deleteProvider(form.cwd.trim(), providerId);
       if (editingProviderId === providerId) {
         setEditingProviderId("");
@@ -748,7 +755,8 @@ export function App(): JSX.Element {
   async function runProviderCheck(providerId: string): Promise<void> {
     try {
       setErrorMessage("");
-      setCheckingProviderId(providerId);
+      setProviderBatchResult(undefined);
+      setCheckingProviderIds([providerId]);
       setProviderCheckTargetId(providerId);
       const result = await checkProvider(form.cwd.trim(), providerId);
       setProviderCheck(result);
@@ -756,7 +764,44 @@ export function App(): JSX.Element {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setCheckingProviderId("");
+      setCheckingProviderIds([]);
+    }
+  }
+
+  async function runProviderBatchCheck(): Promise<void> {
+    const candidates = providers.filter(canBatchCheckProvider);
+    if (candidates.length === 0) {
+      setErrorMessage("No enabled chat providers to check.");
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      setProviderCheck(undefined);
+      setProviderCheckTargetId("");
+      setProviderBatchResult(undefined);
+      setCheckingProviderIds(candidates.map((provider) => provider.id));
+
+      let readyCount = 0;
+      let failedCount = 0;
+      for (const provider of candidates) {
+        const result = await checkProvider(form.cwd.trim(), provider.id);
+        if (result.ok) {
+          readyCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      }
+
+      await refreshProviders();
+      setProviderBatchResult({
+        message: `Checked ${candidates.length} chat providers: ${readyCount} ready, ${failedCount} failed.`,
+        failedCount,
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCheckingProviderIds([]);
     }
   }
 
@@ -764,6 +809,7 @@ export function App(): JSX.Element {
     setEditingProviderId(provider.id);
     setProviderCheck(undefined);
     setProviderCheckTargetId("");
+    setProviderBatchResult(undefined);
     setProviderForm(providerToForm(provider));
   }
 
@@ -938,10 +984,11 @@ export function App(): JSX.Element {
             form={providerForm}
             editingProviderId={editingProviderId}
             isLoading={providersLoading}
-            checkingProviderId={checkingProviderId}
+            checkingProviderIds={checkingProviderIds}
             errorMessage={errorMessage}
             checkResult={providerCheck}
             checkedProviderId={providerCheckTargetId}
+            batchResult={providerBatchResult}
             selectedProviderId={form.providerPresetId}
             onCwdChange={(cwd) => setForm({ ...form, cwd })}
             onFormChange={setProviderForm}
@@ -962,6 +1009,7 @@ export function App(): JSX.Element {
             onEdit={editProvider}
             onDelete={(providerId) => void removeProvider(providerId)}
             onCheck={(providerId) => void runProviderCheck(providerId)}
+            onCheckBatch={() => void runProviderBatchCheck()}
             onUse={applyProviderToRun}
           />
           ) : (
@@ -1808,10 +1856,11 @@ function ProviderSettings({
   form,
   editingProviderId,
   isLoading,
-  checkingProviderId,
+  checkingProviderIds,
   errorMessage,
   checkResult,
   checkedProviderId,
+  batchResult,
   selectedProviderId,
   onCwdChange,
   onFormChange,
@@ -1822,6 +1871,7 @@ function ProviderSettings({
   onEdit,
   onDelete,
   onCheck,
+  onCheckBatch,
   onUse,
 }: {
   readonly cwd: string;
@@ -1830,10 +1880,11 @@ function ProviderSettings({
   readonly form: ProviderFormState;
   readonly editingProviderId: string;
   readonly isLoading: boolean;
-  readonly checkingProviderId: string;
+  readonly checkingProviderIds: readonly string[];
   readonly errorMessage: string;
   readonly checkResult: ProviderCheckResult | undefined;
   readonly checkedProviderId: string;
+  readonly batchResult: ProviderBatchResult | undefined;
   readonly selectedProviderId: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onFormChange: (form: ProviderFormState) => void;
@@ -1844,9 +1895,11 @@ function ProviderSettings({
   readonly onEdit: (provider: ProviderPreset) => void;
   readonly onDelete: (providerId: string) => void;
   readonly onCheck: (providerId: string) => void;
+  readonly onCheckBatch: () => void;
   readonly onUse: (provider: ProviderPreset) => void;
 }): JSX.Element {
   const runnableProviderCount = providers.filter(canUseProviderForRun).length;
+  const batchCheckProviderCount = providers.filter(canBatchCheckProvider).length;
   const missingSecretCount = providers.filter((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured).length;
   const chatTemplateCount = templates.filter((template) => template.capabilities.includes("chat")).length;
   const mediaTemplateCount = templates.length - chatTemplateCount;
@@ -1863,6 +1916,7 @@ function ProviderSettings({
     providers.find(canUseProviderForRun) ??
     providers.find((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured);
   const checkedProvider = checkedProviderId ? providers.find((provider) => provider.id === checkedProviderId) : undefined;
+  const isCheckingProviders = checkingProviderIds.length > 0;
 
   return (
     <div className="provider-layout">
@@ -1872,10 +1926,16 @@ function ProviderSettings({
             <PlugZap size={18} />
             <h2 id="provider-list-title">Provider presets</h2>
           </span>
-          <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
-            {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            Refresh
-          </button>
+          <div className="provider-title-actions">
+            <button className="secondary-button compact-button" type="button" onClick={onCheckBatch} disabled={isCheckingProviders || batchCheckProviderCount === 0}>
+              {isCheckingProviders ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}
+              Check chat
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading || isCheckingProviders}>
+              {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+              Refresh
+            </button>
+          </div>
         </div>
 
         <label className="field wide runs-cwd">
@@ -1898,6 +1958,12 @@ function ProviderSettings({
         </div>
 
         <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={isLoading} />
+        {batchResult ? (
+          <div className={batchResult.failedCount === 0 ? "provider-batch-result ok" : "provider-batch-result bad"}>
+            {batchResult.failedCount === 0 ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
+            <span>{batchResult.message}</span>
+          </div>
+        ) : null}
 
         <div className="provider-list">
           {providers.length === 0 ? (
@@ -1955,8 +2021,8 @@ function ProviderSettings({
                     <Pencil size={14} />
                     Edit
                   </button>
-                  <button className="secondary-button compact-button" type="button" disabled={Boolean(checkingProviderId)} onClick={() => onCheck(provider.id)}>
-                    {checkingProviderId === provider.id ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                  <button className="secondary-button compact-button" type="button" disabled={isCheckingProviders} onClick={() => onCheck(provider.id)}>
+                    {checkingProviderIds.includes(provider.id) ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
                     Check
                   </button>
                   <button className="secondary-button compact-button danger" type="button" onClick={() => onDelete(provider.id)}>
@@ -2125,8 +2191,8 @@ function ProviderSettings({
             <Save size={16} />
             {editingProviderId ? "Save changes" : "Create preset"}
           </button>
-          <button className="secondary-button" type="button" disabled={!editingProviderId || Boolean(checkingProviderId)} onClick={() => onCheck(editingProviderId)}>
-            {checkingProviderId === editingProviderId ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
+          <button className="secondary-button" type="button" disabled={!editingProviderId || isCheckingProviders} onClick={() => onCheck(editingProviderId)}>
+            {checkingProviderIds.includes(editingProviderId) ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
             Check preset
           </button>
         </div>
@@ -3098,6 +3164,10 @@ function approvalPolicyToForm(policy: ApprovalPolicy): ApprovalPolicyFormState {
 
 function canUseProviderForRun(provider: ProviderPreset): boolean {
   return provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat") && providerSecretReady(provider);
+}
+
+function canBatchCheckProvider(provider: ProviderPreset): boolean {
+  return provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat");
 }
 
 function providerSecretReady(provider: ProviderPreset): boolean {

@@ -34,6 +34,18 @@ const provider = {
   createdAt: "2026-05-21T00:00:00.000Z",
   updatedAt: "2026-05-21T00:00:00.000Z",
 };
+const mediaProvider = {
+  ...provider,
+  id: "provider_media",
+  kind: "jimeng",
+  displayName: "Jimeng Image",
+  providerId: "jimeng",
+  model: "jimeng-image",
+  api: "media-job",
+  apiKeyConfigured: false,
+  capabilities: ["image_generate"],
+  lastCheck: undefined,
+};
 
 test("provider list and show include last check state", async () => {
   const daemon = await startProviderDaemon();
@@ -57,6 +69,23 @@ test("provider list and show include last check state", async () => {
   }
 });
 
+test("provider check-all checks enabled chat providers", async () => {
+  const daemon = await startProviderDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-provider-"));
+  try {
+    const result = await runCli(daemon.url, cwd, ["provider", "check-all"]);
+
+    assert.equal(result.code, 4);
+    assert.match(result.stdout, /provider_local/);
+    assert.match(result.stdout, /auth_failed/);
+    assert.match(result.stdout, /Checked 1 chat providers: 0 ready, 1 failed\./);
+    assert.deepEqual(daemon.checkRequests, ["provider_local"]);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 function runCli(daemonUrl, cwd, args) {
   return new Promise((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
@@ -70,6 +99,7 @@ function runCli(daemonUrl, cwd, args) {
 }
 
 async function startProviderDaemon() {
+  const checkRequests = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (!url.searchParams.get("cwd")) {
@@ -78,12 +108,23 @@ async function startProviderDaemon() {
     }
 
     if (request.method === "GET" && url.pathname === "/providers") {
-      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), providers: [provider] });
+      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), providers: [provider, mediaProvider] });
       return;
     }
 
     if (request.method === "GET" && url.pathname === `/providers/${provider.id}`) {
       writeJson(response, 200, { provider });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === `/providers/${provider.id}/check`) {
+      checkRequests.push(provider.id);
+      writeJson(response, 200, {
+        ok: false,
+        code: "auth_failed",
+        message: "Provider authentication failed with HTTP 401.",
+        checkedAt: "2026-05-21T00:01:00.000Z",
+      });
       return;
     }
 
@@ -96,6 +137,7 @@ async function startProviderDaemon() {
   const address = server.address();
   assert.ok(address && typeof address === "object");
   return {
+    checkRequests,
     url: `http://127.0.0.1:${address.port}`,
     close: () => new Promise((resolveClose, rejectClose) => {
       server.close((error) => {

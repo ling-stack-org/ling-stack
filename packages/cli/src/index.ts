@@ -14,6 +14,7 @@ import {
   defaultProviderTemplates,
   resolveRuntimePaths,
   type ApprovalToolDecision,
+  type ProviderCheckResult,
   type ProviderPreset,
   type ProviderPresetInput,
   type RunTool,
@@ -78,6 +79,15 @@ interface RunApprovalSummary {
   readonly actionType: string;
   readonly risk: string;
   readonly reason: string;
+}
+
+interface ProviderCheckSummary {
+  readonly providerId: string;
+  readonly displayName: string;
+  readonly ok: boolean;
+  readonly code?: string;
+  readonly message: string;
+  readonly checkedAt: string;
 }
 
 interface InitResult {
@@ -562,6 +572,8 @@ async function handleProvider(args: readonly string[], options: GlobalOptions): 
       return await handleProviderAdd(rest, options);
     case "show":
       return await handleProviderShow(rest, options);
+    case "check-all":
+      return await handleProviderCheckAll(rest, options);
     case "check":
       return await handleProviderCheck(rest, options);
     case "update":
@@ -637,6 +649,62 @@ async function handleProviderCheck(args: readonly string[], options: GlobalOptio
   console.log(`Message: ${readString(response, "message") ?? ""}`);
   console.log(`Checked: ${readString(response, "checkedAt") ?? ""}`);
   return ok ? 0 : 4;
+}
+
+async function handleProviderCheckAll(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  assertNoPositionals(parsed.positionals, "provider check-all");
+  const listResponse = await requestJson(options, "GET", "/providers", { cwd: options.cwd });
+  const providers = readArray(listResponse, "providers");
+  const candidates = providers.filter(canBatchCheckProviderResponse);
+  const results: ProviderCheckSummary[] = [];
+
+  for (const provider of candidates) {
+    const providerId = readString(provider, "id");
+    if (!providerId) {
+      continue;
+    }
+    const result = (await requestJson(options, "POST", `/providers/${encodeURIComponent(providerId)}/check`, { cwd: options.cwd })) as ProviderCheckResult;
+    results.push({
+      providerId,
+      displayName: readString(provider, "displayName") ?? providerId,
+      ok: result.ok,
+      code: result.code,
+      message: result.message,
+      checkedAt: result.checkedAt,
+    });
+  }
+
+  const readyCount = results.filter((result) => result.ok).length;
+  const failedCount = results.length - readyCount;
+  if (options.json) {
+    printJson({
+      cwd: readString(listResponse, "cwd") ?? options.cwd,
+      checked: results,
+      skipped: providers.length - candidates.length,
+      ready: readyCount,
+      failed: failedCount,
+    });
+    return failedCount === 0 ? 0 : 4;
+  }
+
+  if (results.length === 0) {
+    console.log("No enabled chat providers to check.");
+    return 0;
+  }
+
+  printTable(
+    ["ID", "Name", "Status", "Code", "Checked"],
+    results.map((result) => [
+      truncate(result.providerId, 32),
+      truncate(result.displayName, 24),
+      result.ok ? "ok" : "failed",
+      truncate(result.code ?? "", 20),
+      truncate(result.checkedAt, 24),
+    ]),
+  );
+  console.log(`Checked ${results.length} chat providers: ${readyCount} ready, ${failedCount} failed.`);
+  return failedCount === 0 ? 0 : 4;
 }
 
 async function handleProviderUpdate(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -2249,6 +2317,14 @@ function providerCheckStatus(provider: unknown): string {
   return readString(lastCheck, "code") ?? "failed";
 }
 
+function canBatchCheckProviderResponse(provider: unknown): boolean {
+  return (
+    readBoolean(provider, "enabled") === true &&
+    readString(provider, "api") !== "media-job" &&
+    readArray(provider, "capabilities").includes("chat")
+  );
+}
+
 function printProviderLastCheck(provider: unknown): void {
   const lastCheck = readField(provider, "lastCheck");
   if (!isRecord(lastCheck)) {
@@ -2800,6 +2876,7 @@ Usage:
   ling-stack [global options] provider add <kind> --name <name> --provider-id <id> --model <model>
   ling-stack [global options] provider show <id>
   ling-stack [global options] provider check <id>
+  ling-stack [global options] provider check-all
   ling-stack [global options] provider update <id> [options]
   ling-stack [global options] provider remove <id>
   ling-stack [global options] channel list
@@ -2857,6 +2934,7 @@ function printProviderHelp(): void {
   ling-stack provider add <kind> --name <name> --provider-id <id> --model <model> [options]
   ling-stack provider show <id>
   ling-stack provider check <id>
+  ling-stack provider check-all
   ling-stack provider update <id> [options]
   ling-stack provider remove <id>
 
