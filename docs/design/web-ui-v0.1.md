@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft for Milestone 5: Web UI First Loop.
+Partially implemented for Milestone 5: Web UI First Loop.
 
 This design depends on:
 
@@ -10,7 +10,7 @@ This design depends on:
 - [Provider presets](provider-presets.md)
 - [Approval policy](approval-policy.md)
 
-The current `apps/web` package is a placeholder. This document defines the first usable browser surface before implementation starts.
+The current `apps/web` package now provides the local app shell, provider settings, approval list, run history, channel/task workspace, and first task-run entry. This document remains the target design for the remaining richer workspace flows.
 
 ## Goal
 
@@ -225,15 +225,13 @@ Rules:
 
 ### Channel Setup
 
-Backed by future channel APIs:
+Backed by channel APIs:
 
 - `GET /channels`
 - `POST /channels`
 - `GET /channels/:id`
 - `PATCH /channels/:id`
 - `DELETE /channels/:id`
-
-Until channel APIs exist, the UI may use a temporary direct-run form with `cwd`.
 
 Required UI:
 

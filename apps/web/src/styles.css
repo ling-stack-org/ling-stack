@@ -231,6 +231,20 @@ h1 {
   align-items: start;
 }
 
+.workspace-task-grid {
+  display: grid;
+  grid-template-columns: minmax(520px, 1.12fr) minmax(0, 0.88fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.task-workspace {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.82fr) minmax(360px, 1.18fr);
+  gap: 16px;
+  min-width: 0;
+}
+
 .panel,
 .inspector {
   border: 1px solid #d8ded7;
@@ -401,6 +415,10 @@ textarea:disabled {
 }
 
 .secondary-button.full {
+  width: 100%;
+}
+
+.primary-button.full {
   width: 100%;
 }
 
@@ -588,6 +606,198 @@ pre {
 
 .runs-panel {
   min-height: 640px;
+}
+
+.channel-panel,
+.task-panel {
+  min-height: 640px;
+}
+
+.channel-list,
+.task-list {
+  display: grid;
+  gap: 8px;
+}
+
+.channel-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #e1e6e2;
+  background: #fbfcfa;
+  color: inherit;
+  text-align: left;
+}
+
+.channel-row:hover,
+.channel-row.selected {
+  border-color: #9bc8b7;
+  background: #f2faf6;
+}
+
+.channel-row-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.channel-row-main strong,
+.channel-row-main small,
+.channel-tools {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-row-main strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.channel-row-main small,
+.channel-tools {
+  color: #72817b;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.channel-tools {
+  max-width: 120px;
+}
+
+.channel-create,
+.task-create {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #e1e6e2;
+}
+
+.panel-title.tight {
+  margin-bottom: 10px;
+}
+
+.compact-tools {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.selected-channel-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #e1e6e2;
+  background: #fbfcfa;
+}
+
+.selected-channel-strip div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.selected-channel-strip span {
+  color: #6a7973;
+  font-size: 11px;
+}
+
+.selected-channel-strip strong {
+  overflow: hidden;
+  color: #17211f;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-row {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #e1e6e2;
+  background: #fbfcfa;
+}
+
+.task-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.task-row-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #17211f;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-row p {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #4f5e59;
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.task-status {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid #d8ded7;
+  background: #ffffff;
+  color: #61706b;
+  font-size: 11px;
+  font-weight: 740;
+  white-space: nowrap;
+}
+
+.task-status.running,
+.task-status.claimed {
+  border-color: #d9bd71;
+  background: #fff7df;
+  color: #8a5b00;
+}
+
+.task-status.review {
+  border-color: #9fb9d8;
+  background: #eef6ff;
+  color: #24507d;
+}
+
+.task-status.done {
+  border-color: #a9cfc0;
+  background: #e7f5ef;
+  color: #116149;
+}
+
+.task-status.failed,
+.task-status.blocked {
+  border-color: #e7b4a8;
+  background: #fff1ed;
+  color: #9a341f;
+}
+
+.task-status.cancelled {
+  border-color: #ccd3d0;
+  background: #f1f4f2;
+  color: #5d6b66;
+}
+
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
 }
 
 .runs-cwd {
@@ -1032,6 +1242,12 @@ pre {
   }
 }
 
+@media (max-width: 1500px) {
+  .workspace-task-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1120px) {
   .app-shell {
     grid-template-areas:
@@ -1066,6 +1282,11 @@ pre {
   }
 
   .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-task-grid,
+  .task-workspace {
     grid-template-columns: 1fr;
   }
 
@@ -1104,6 +1325,7 @@ pre {
 
   .field-row,
   .tool-grid,
+  .compact-tools,
   .provider-number-row {
     grid-template-columns: 1fr;
   }

@@ -66,6 +66,51 @@ export interface RunCancelResponse {
   readonly event?: RunEventEnvelope;
 }
 
+export type TaskStatus = "todo" | "claimed" | "running" | "blocked" | "review" | "done" | "failed" | "cancelled";
+
+export interface Channel {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly boundPath?: string;
+  readonly defaultProviderPresetId?: string;
+  readonly defaultTeammateId?: string;
+  readonly allowedTools: readonly ToolName[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ChannelListResponse {
+  readonly cwd: string;
+  readonly channels: readonly Channel[];
+}
+
+export interface ChannelMutationResponse {
+  readonly channel: Channel;
+}
+
+export interface Task {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly status: TaskStatus;
+  readonly assigneeTeammateId?: string;
+  readonly currentRunId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface TaskListResponse {
+  readonly cwd: string;
+  readonly tasks: readonly Task[];
+}
+
+export interface TaskMutationResponse {
+  readonly task: Task;
+}
+
 export type ProviderKind =
   | "openai"
   | "anthropic"
@@ -212,4 +257,16 @@ export interface ProviderFormState {
   readonly reasoning: boolean;
   readonly contextWindow: string;
   readonly maxTokens: string;
+}
+
+export interface ChannelFormState {
+  readonly name: string;
+  readonly boundPath: string;
+  readonly defaultProviderPresetId: string;
+  readonly allowedTools: readonly ToolName[];
+}
+
+export interface TaskFormState {
+  readonly title: string;
+  readonly prompt: string;
 }

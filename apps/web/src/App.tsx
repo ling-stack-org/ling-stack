@@ -25,29 +25,41 @@ import {
 import {
   approveApproval,
   buildRunRequest,
+  buildTaskRunRequest,
   cancelRun,
   checkProvider,
+  createChannel,
   createProvider,
+  createTask,
   daemonBaseUrl,
   denyApproval,
+  deleteChannel,
+  deleteTask,
   deleteProvider,
   getDaemonHealth,
   getRun,
   getRunEvents,
+  listChannels,
   listApprovals,
   listProviders,
   listRuns,
+  listTasks,
+  updateTaskStatus,
   updateProvider,
 } from "./api.js";
 import { streamRun } from "./sse.js";
 import type {
   ApprovalRequest,
+  Channel,
+  ChannelFormState,
   ProviderCheckResult,
   ProviderFormState,
   ProviderPreset,
   RunEventEnvelope,
   RunFormState,
   RunSession,
+  Task,
+  TaskFormState,
   ToolName,
 } from "./types.js";
 
@@ -87,6 +99,18 @@ const defaultProviderForm: ProviderFormState = {
   maxTokens: "16384",
 };
 
+const defaultChannelForm: ChannelFormState = {
+  name: "Engineering",
+  boundPath: "/Users/tianxiao/ling-stack",
+  defaultProviderPresetId: "",
+  allowedTools: defaultTools,
+};
+
+const defaultTaskForm: TaskFormState = {
+  title: "Inspect workspace",
+  prompt: "查看当前项目结构，给出下一步实现建议。不要修改文件。",
+};
+
 export function App(): JSX.Element {
   const [form, setForm] = useState<RunFormState>(defaultForm);
   const [activeView, setActiveView] = useState<ViewId>("workspace");
@@ -98,6 +122,14 @@ export function App(): JSX.Element {
   const [runsLoading, setRunsLoading] = useState(false);
   const [providers, setProviders] = useState<readonly ProviderPreset[]>([]);
   const [providersLoading, setProvidersLoading] = useState(false);
+  const [channels, setChannels] = useState<readonly Channel[]>([]);
+  const [channelsLoading, setChannelsLoading] = useState(false);
+  const [selectedChannelId, setSelectedChannelId] = useState("");
+  const [channelForm, setChannelForm] = useState<ChannelFormState>(defaultChannelForm);
+  const [tasks, setTasks] = useState<readonly Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [taskForm, setTaskForm] = useState<TaskFormState>(defaultTaskForm);
+  const [taskRunProviderId, setTaskRunProviderId] = useState("");
   const [providerForm, setProviderForm] = useState<ProviderFormState>(defaultProviderForm);
   const [editingProviderId, setEditingProviderId] = useState("");
   const [providerCheck, setProviderCheck] = useState<ProviderCheckResult | undefined>();
@@ -129,6 +161,9 @@ export function App(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    if (activeView === "workspace") {
+      void refreshChannels();
+    }
     if (activeView === "runs") {
       void refreshRuns();
     }
@@ -139,6 +174,14 @@ export function App(): JSX.Element {
       void refreshApprovals();
     }
   }, [activeView]);
+
+  useEffect(() => {
+    if (selectedChannelId) {
+      void refreshTasks(selectedChannelId);
+    } else {
+      setTasks([]);
+    }
+  }, [selectedChannelId]);
 
   async function refreshHealth(): Promise<void> {
     try {
@@ -192,7 +235,7 @@ export function App(): JSX.Element {
     }
   }
 
-  async function loadRun(runId = lookupRunId): Promise<void> {
+  async function loadRun(runId = lookupRunId, cwd = form.cwd): Promise<void> {
     if (!runId.trim()) {
       setErrorMessage("请输入 runId");
       return;
@@ -200,7 +243,7 @@ export function App(): JSX.Element {
 
     try {
       setErrorMessage("");
-      const [runResult, eventResult] = await Promise.all([getRun(runId.trim(), form.cwd), getRunEvents(runId.trim(), form.cwd)]);
+      const [runResult, eventResult] = await Promise.all([getRun(runId.trim(), cwd), getRunEvents(runId.trim(), cwd)]);
       setRun(runResult);
       setEvents(eventResult.events);
       setActiveRunId(runResult.id);
@@ -243,6 +286,185 @@ export function App(): JSX.Element {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setProvidersLoading(false);
+    }
+  }
+
+  async function refreshChannels(): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    setChannelsLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await listChannels(form.cwd.trim());
+      setChannels(response.channels);
+      setSelectedChannelId((current) => {
+        if (response.channels.some((channel) => channel.id === current)) {
+          return current;
+        }
+        return response.channels[0]?.id ?? "";
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChannelsLoading(false);
+    }
+  }
+
+  async function refreshTasks(channelId = selectedChannelId): Promise<void> {
+    if (!form.cwd.trim() || !channelId) {
+      setTasks([]);
+      return;
+    }
+
+    setTasksLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await listTasks(form.cwd.trim(), channelId);
+      setTasks(response.tasks);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTasksLoading(false);
+    }
+  }
+
+  async function saveChannel(): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+    if (!channelForm.name.trim()) {
+      setErrorMessage("请输入 channel name");
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      const response = await createChannel(form.cwd.trim(), channelForm);
+      setSelectedChannelId(response.channel.id);
+      setChannelForm((current) => ({
+        ...current,
+        name: "",
+        defaultProviderPresetId: (current.defaultProviderPresetId || response.channel.defaultProviderPresetId) ?? "",
+      }));
+      await refreshChannels();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function removeChannel(channelId: string): Promise<void> {
+    try {
+      setErrorMessage("");
+      await deleteChannel(form.cwd.trim(), channelId);
+      if (selectedChannelId === channelId) {
+        setSelectedChannelId("");
+      }
+      await refreshChannels();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function saveTask(): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    if (!taskForm.prompt.trim()) {
+      setErrorMessage("请输入 task prompt");
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      await createTask(form.cwd.trim(), selectedChannelId, {
+        title: taskForm.title.trim() || titleFromPrompt(taskForm.prompt),
+        prompt: taskForm.prompt,
+      });
+      setTaskForm(defaultTaskForm);
+      await refreshTasks(selectedChannelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function removeTask(taskId: string): Promise<void> {
+    try {
+      setErrorMessage("");
+      await deleteTask(form.cwd.trim(), taskId);
+      await refreshTasks();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function moveTaskToReview(taskId: string): Promise<void> {
+    try {
+      setErrorMessage("");
+      await updateTaskStatus(form.cwd.trim(), taskId, "review");
+      await refreshTasks();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function runPersistedTask(task: Task): Promise<void> {
+    const channel = channels.find((item) => item.id === task.channelId);
+    if (!channel) {
+      setErrorMessage("找不到 task 所属 channel");
+      return;
+    }
+    const providerPresetId = taskRunProviderId || channel.defaultProviderPresetId || form.providerPresetId;
+    if (!providerPresetId) {
+      setErrorMessage("请先选择 provider preset");
+      return;
+    }
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const runCwd = form.cwd.trim();
+    setErrorMessage("");
+    setEvents([]);
+    setRun(undefined);
+    setActiveRunId("");
+    setIsRunning(true);
+
+    try {
+      let streamedRunId = "";
+      await streamRun(
+        `${daemonBaseUrl}/runs`,
+        buildTaskRunRequest(runCwd, task, channel, providerPresetId),
+        (message) => {
+          if (message.kind === "ready") {
+            streamedRunId = message.runId;
+            setActiveRunId(message.runId);
+            setLookupRunId(message.runId);
+            return;
+          }
+          if (message.event.type === "approval_requested") {
+            void refreshApprovals();
+          }
+          setEvents((current) => [...current, message.event]);
+        },
+        controller.signal,
+      );
+
+      if (streamedRunId) {
+        await loadRun(streamedRunId, runCwd);
+        await refreshTasks(task.channelId);
+      }
+    } catch (error) {
+      if ((error as Error).name !== "AbortError") {
+        setErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      setIsRunning(false);
+      await refreshHealth();
     }
   }
 
@@ -398,15 +620,45 @@ export function App(): JSX.Element {
         </div>
 
         {activeView === "workspace" ? (
-          <div className="content-grid">
-            <RunLauncher
-              form={form}
+          <div className="workspace-task-grid">
+            <ChannelTaskWorkspace
+              cwd={form.cwd}
+              channels={channels}
+              selectedChannelId={selectedChannelId}
+              channelForm={channelForm}
+              tasks={tasks}
+              taskForm={taskForm}
               providers={providers}
+              taskRunProviderId={taskRunProviderId || form.providerPresetId}
+              channelsLoading={channelsLoading}
+              tasksLoading={tasksLoading}
               isRunning={isRunning}
-              onChange={setForm}
-              onProviderSelect={applyProviderToRun}
-              onStart={startRun}
-              onStop={() => void cancelActiveRun()}
+              errorMessage={errorMessage}
+              onCwdChange={(cwd) => {
+                setForm({ ...form, cwd });
+                setChannelForm((current) => ({
+                  ...current,
+                  boundPath: current.boundPath === form.cwd || !current.boundPath ? cwd : current.boundPath,
+                }));
+              }}
+              onChannelFormChange={setChannelForm}
+              onTaskFormChange={setTaskForm}
+              onProviderSelect={(providerId) => {
+                setTaskRunProviderId(providerId);
+                const provider = providers.find((item) => item.id === providerId);
+                if (provider) {
+                  applyProviderToRun(provider);
+                }
+              }}
+              onSelectChannel={(channelId) => setSelectedChannelId(channelId)}
+              onCreateChannel={() => void saveChannel()}
+              onDeleteChannel={(channelId) => void removeChannel(channelId)}
+              onRefreshChannels={() => void refreshChannels()}
+              onCreateTask={() => void saveTask()}
+              onRefreshTasks={() => void refreshTasks()}
+              onRunTask={(task) => void runPersistedTask(task)}
+              onReviewTask={(taskId) => void moveTaskToReview(taskId)}
+              onDeleteTask={(taskId) => void removeTask(taskId)}
             />
             <RunTimeline
               events={events}
@@ -532,6 +784,260 @@ function NavItem({
       {icon}
       <span>{label}</span>
     </button>
+  );
+}
+
+function ChannelTaskWorkspace({
+  cwd,
+  channels,
+  selectedChannelId,
+  channelForm,
+  tasks,
+  taskForm,
+  providers,
+  taskRunProviderId,
+  channelsLoading,
+  tasksLoading,
+  isRunning,
+  errorMessage,
+  onCwdChange,
+  onChannelFormChange,
+  onTaskFormChange,
+  onProviderSelect,
+  onSelectChannel,
+  onCreateChannel,
+  onDeleteChannel,
+  onRefreshChannels,
+  onCreateTask,
+  onRefreshTasks,
+  onRunTask,
+  onReviewTask,
+  onDeleteTask,
+}: {
+  readonly cwd: string;
+  readonly channels: readonly Channel[];
+  readonly selectedChannelId: string;
+  readonly channelForm: ChannelFormState;
+  readonly tasks: readonly Task[];
+  readonly taskForm: TaskFormState;
+  readonly providers: readonly ProviderPreset[];
+  readonly taskRunProviderId: string;
+  readonly channelsLoading: boolean;
+  readonly tasksLoading: boolean;
+  readonly isRunning: boolean;
+  readonly errorMessage: string;
+  readonly onCwdChange: (cwd: string) => void;
+  readonly onChannelFormChange: (form: ChannelFormState) => void;
+  readonly onTaskFormChange: (form: TaskFormState) => void;
+  readonly onProviderSelect: (providerId: string) => void;
+  readonly onSelectChannel: (channelId: string) => void;
+  readonly onCreateChannel: () => void;
+  readonly onDeleteChannel: (channelId: string) => void;
+  readonly onRefreshChannels: () => void;
+  readonly onCreateTask: () => void;
+  readonly onRefreshTasks: () => void;
+  readonly onRunTask: (task: Task) => void;
+  readonly onReviewTask: (taskId: string) => void;
+  readonly onDeleteTask: (taskId: string) => void;
+}): JSX.Element {
+  const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+  const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId) ?? "";
+
+  return (
+    <div className="task-workspace">
+      <section className="panel channel-panel" aria-labelledby="channels-title">
+        <div className="panel-title split">
+          <span>
+            <Workflow size={18} />
+            <h2 id="channels-title">Channels</h2>
+          </span>
+          <button className="secondary-button compact-button" type="button" onClick={onRefreshChannels} disabled={channelsLoading}>
+            {channelsLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+            Refresh
+          </button>
+        </div>
+
+        <label className="field wide">
+          <span>Workspace path</span>
+          <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
+        </label>
+
+        {errorMessage ? (
+          <div className="inline-error">
+            <CircleAlert size={17} />
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <div className="channel-list">
+          {channels.length === 0 ? (
+            <div className="empty-state compact-empty">
+              {channelsLoading ? <Loader2 className="spin" /> : <Workflow />}
+              <span>{channelsLoading ? "Loading channels..." : "No channels yet"}</span>
+            </div>
+          ) : (
+            channels.map((channel) => (
+              <button
+                key={channel.id}
+                className={channel.id === selectedChannelId ? "channel-row selected" : "channel-row"}
+                type="button"
+                onClick={() => onSelectChannel(channel.id)}
+              >
+                <span className="channel-row-main">
+                  <strong>{channel.name}</strong>
+                  <small>{channel.boundPath ?? cwd}</small>
+                </span>
+                <span className="channel-tools">{channel.allowedTools.join(", ")}</span>
+              </button>
+            ))
+          )}
+        </div>
+
+        <div className="channel-create">
+          <div className="panel-title tight">
+            <Plus size={16} />
+            <h3>New channel</h3>
+          </div>
+          <label className="field wide">
+            <span>Name</span>
+            <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} />
+          </label>
+          <label className="field wide">
+            <span>Bound path</span>
+            <input value={channelForm.boundPath} onChange={(event) => onChannelFormChange({ ...channelForm, boundPath: event.target.value })} />
+          </label>
+          <label className="field wide">
+            <span>Default provider</span>
+            <select
+              value={channelForm.defaultProviderPresetId}
+              onChange={(event) => onChannelFormChange({ ...channelForm, defaultProviderPresetId: event.target.value })}
+            >
+              <option value="">None</option>
+              {providers.map((provider) => (
+                <option key={provider.id} value={provider.id} disabled={!canUseProviderForRun(provider)}>
+                  {provider.displayName} / {provider.model}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="tool-grid compact-tools" aria-label="Channel allowed tools">
+            {allTools.map((tool) => (
+              <label
+                key={tool}
+                className={`${channelForm.allowedTools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}${riskyTools.includes(tool) ? " requires-approval" : ""}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={channelForm.allowedTools.includes(tool)}
+                  onChange={(event) => {
+                    const allowedTools = event.target.checked
+                      ? [...channelForm.allowedTools, tool]
+                      : channelForm.allowedTools.filter((item) => item !== tool);
+                    onChannelFormChange({ ...channelForm, allowedTools });
+                  }}
+                />
+                <span>{tool}</span>
+              </label>
+            ))}
+          </div>
+          <button className="primary-button full" type="button" onClick={onCreateChannel}>
+            <Plus size={16} />
+            Create channel
+          </button>
+        </div>
+      </section>
+
+      <section className="panel task-panel" aria-labelledby="tasks-title">
+        <div className="panel-title split">
+          <span>
+            <SquareTerminal size={18} />
+            <h2 id="tasks-title">Tasks</h2>
+          </span>
+          <button className="secondary-button compact-button" type="button" onClick={onRefreshTasks} disabled={!selectedChannelId || tasksLoading}>
+            {tasksLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+            Refresh
+          </button>
+        </div>
+
+        <div className="selected-channel-strip">
+          <div>
+            <span>Channel</span>
+            <strong>{selectedChannel?.name ?? "None selected"}</strong>
+          </div>
+          {selectedChannel ? (
+            <button className="secondary-button compact-button danger" type="button" onClick={() => onDeleteChannel(selectedChannel.id)}>
+              <Trash2 size={14} />
+              Delete
+            </button>
+          ) : null}
+        </div>
+
+        <label className="field wide">
+          <span>Run provider</span>
+          <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providers.length === 0}>
+            <option value="">Select provider preset</option>
+            {providers.map((provider) => (
+              <option key={provider.id} value={provider.id} disabled={!canUseProviderForRun(provider)}>
+                {provider.displayName} / {provider.model}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="task-create">
+          <label className="field wide">
+            <span>Title</span>
+            <input value={taskForm.title} onChange={(event) => onTaskFormChange({ ...taskForm, title: event.target.value })} />
+          </label>
+          <label className="field wide">
+            <span>Prompt</span>
+            <textarea value={taskForm.prompt} rows={5} onChange={(event) => onTaskFormChange({ ...taskForm, prompt: event.target.value })} />
+          </label>
+          <button className="primary-button" type="button" onClick={onCreateTask} disabled={!selectedChannelId}>
+            <Plus size={16} />
+            Create task
+          </button>
+        </div>
+
+        <div className="task-list">
+          {tasks.length === 0 ? (
+            <div className="empty-state compact-empty">
+              {tasksLoading ? <Loader2 className="spin" /> : <Clock3 />}
+              <span>{tasksLoading ? "Loading tasks..." : "No tasks in this channel"}</span>
+            </div>
+          ) : (
+            tasks.map((task) => (
+              <article key={task.id} className="task-row">
+                <div className="task-row-head">
+                  <strong>{task.title}</strong>
+                  <span className={`task-status ${task.status}`}>{task.status}</span>
+                </div>
+                <p>{task.prompt}</p>
+                <div className="provider-meta-line mono">
+                  <span>{task.id}</span>
+                  {task.currentRunId ? <span>{task.currentRunId}</span> : null}
+                  <time>{formatDateTime(task.updatedAt)}</time>
+                </div>
+                <div className="task-actions">
+                  <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || !effectiveProviderId}>
+                    {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                    Run
+                  </button>
+                  <button className="secondary-button compact-button" type="button" onClick={() => onReviewTask(task.id)} disabled={task.status === "review"}>
+                    <CheckCircle2 size={14} />
+                    Review
+                  </button>
+                  <button className="secondary-button compact-button danger" type="button" onClick={() => onDeleteTask(task.id)}>
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -1327,6 +1833,11 @@ function readTaskTitle(taskSnapshot: unknown): string {
     return typeof value === "string" ? value : "";
   }
   return "";
+}
+
+function titleFromPrompt(prompt: string): string {
+  const firstLine = prompt.trim().split(/\r?\n/)[0] ?? "";
+  return firstLine.length > 64 ? `${firstLine.slice(0, 61)}...` : firstLine || "Untitled task";
 }
 
 function formatDateTime(value: string): string {

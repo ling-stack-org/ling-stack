@@ -1,6 +1,10 @@
 import type {
   ApprovalListResponse,
   ApprovalMutationResponse,
+  Channel,
+  ChannelFormState,
+  ChannelListResponse,
+  ChannelMutationResponse,
   ProviderCheckResult,
   ProviderFormState,
   ProviderListResponse,
@@ -10,6 +14,10 @@ import type {
   RunFormState,
   RunListResponse,
   RunSession,
+  Task,
+  TaskFormState,
+  TaskListResponse,
+  TaskMutationResponse,
   ToolName,
 } from "./types.js";
 
@@ -50,6 +58,85 @@ export async function listProviders(cwd: string): Promise<ProviderListResponse> 
     throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as ProviderListResponse;
+}
+
+export async function listChannels(cwd: string): Promise<ChannelListResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/channels`, cwd));
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as ChannelListResponse;
+}
+
+export async function createChannel(cwd: string, form: ChannelFormState): Promise<ChannelMutationResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/channels`, cwd), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(channelFormToPayload(form)),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as ChannelMutationResponse;
+}
+
+export async function deleteChannel(cwd: string, channelId: string): Promise<void> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/channels/${encodeURIComponent(channelId)}`, cwd), {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+}
+
+export async function listTasks(cwd: string, channelId?: string): Promise<TaskListResponse> {
+  const parsed = new URL(`${daemonBaseUrl}/tasks`);
+  parsed.searchParams.set("cwd", cwd);
+  if (channelId) {
+    parsed.searchParams.set("channelId", channelId);
+  }
+  const response = await fetch(parsed.toString());
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as TaskListResponse;
+}
+
+export async function createTask(cwd: string, channelId: string, form: TaskFormState): Promise<TaskMutationResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/tasks`, cwd), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      channelId,
+      title: form.title,
+      prompt: form.prompt,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as TaskMutationResponse;
+}
+
+export async function updateTaskStatus(cwd: string, taskId: string, status: Task["status"]): Promise<TaskMutationResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/tasks/${encodeURIComponent(taskId)}`, cwd), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as TaskMutationResponse;
+}
+
+export async function deleteTask(cwd: string, taskId: string): Promise<void> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/tasks/${encodeURIComponent(taskId)}`, cwd), {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
 }
 
 export async function createProvider(cwd: string, form: ProviderFormState): Promise<ProviderMutationResponse> {
@@ -172,6 +259,27 @@ export function buildRunRequest(form: RunFormState): unknown {
   };
 }
 
+export function buildTaskRunRequest(
+  cwd: string,
+  task: Task,
+  channel: Channel,
+  providerPresetId: string,
+): unknown {
+  const fallbackTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
+  return {
+    cwd,
+    task: {
+      id: task.id,
+      title: task.title,
+      prompt: task.prompt,
+      channelId: task.channelId,
+    },
+    providerPresetId,
+    tools: (channel.allowedTools.length > 0 ? channel.allowedTools : fallbackTools).filter(isRunnerTool),
+    thinkingLevel: "medium",
+  };
+}
+
 async function resolveApproval(
   cwd: string,
   approvalId: string,
@@ -205,6 +313,15 @@ function providerFormToPayload(form: ProviderFormState): unknown {
     reasoning: form.reasoning,
     contextWindow: form.contextWindow ? Number(form.contextWindow) : undefined,
     maxTokens: form.maxTokens ? Number(form.maxTokens) : undefined,
+  };
+}
+
+function channelFormToPayload(form: ChannelFormState): unknown {
+  return {
+    name: form.name,
+    boundPath: form.boundPath || undefined,
+    defaultProviderPresetId: form.defaultProviderPresetId || undefined,
+    allowedTools: form.allowedTools.filter(isRunnerTool),
   };
 }
 
