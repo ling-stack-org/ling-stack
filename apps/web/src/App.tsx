@@ -44,6 +44,7 @@ import {
   listProviders,
   listRuns,
   listTasks,
+  updateChannel,
   updateTask,
   updateTaskStatus,
   updateProvider,
@@ -110,6 +111,13 @@ const defaultChannelForm: ChannelFormState = {
   allowedTools: defaultTools,
 };
 
+const defaultChannelEditForm: ChannelFormState = {
+  name: "",
+  boundPath: "",
+  defaultProviderPresetId: "",
+  allowedTools: defaultTools,
+};
+
 const defaultTaskForm: TaskFormState = {
   title: "Inspect workspace",
   prompt: "查看当前项目结构，给出下一步实现建议。不要修改文件。",
@@ -136,6 +144,7 @@ export function App(): JSX.Element {
   const [channelsLoading, setChannelsLoading] = useState(false);
   const [selectedChannelId, setSelectedChannelId] = useState("");
   const [channelForm, setChannelForm] = useState<ChannelFormState>(defaultChannelForm);
+  const [channelEditForm, setChannelEditForm] = useState<ChannelFormState>(defaultChannelEditForm);
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [taskForm, setTaskForm] = useState<TaskFormState>(defaultTaskForm);
@@ -195,6 +204,15 @@ export function App(): JSX.Element {
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
+
+  useEffect(() => {
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    if (!selectedChannel) {
+      setChannelEditForm(defaultChannelEditForm);
+      return;
+    }
+    setChannelEditForm(channelToForm(selectedChannel, form.cwd));
+  }, [channels, form.cwd, selectedChannelId]);
 
   useEffect(() => {
     const selectedTask = tasks.find((task) => task.id === selectedTaskId);
@@ -382,6 +400,32 @@ export function App(): JSX.Element {
         name: "",
         defaultProviderPresetId: (current.defaultProviderPresetId || response.channel.defaultProviderPresetId) ?? "",
       }));
+      await refreshChannels();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function saveChannelEdit(channelId: string): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+    if (!channelEditForm.name.trim()) {
+      setErrorMessage("请输入 channel name");
+      return;
+    }
+    if (channelEditForm.allowedTools.length === 0) {
+      setErrorMessage("请至少选择一个 allowed tool");
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      const response = await updateChannel(form.cwd.trim(), channelId, channelEditForm);
+      setSelectedChannelId(response.channel.id);
+      setTaskRunProviderId("");
+      setChannelEditForm(channelToForm(response.channel, form.cwd));
       await refreshChannels();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -685,12 +729,14 @@ export function App(): JSX.Element {
               channels={channels}
               selectedChannelId={selectedChannelId}
               channelForm={channelForm}
+              channelEditForm={channelEditForm}
               tasks={tasks}
               taskForm={taskForm}
               selectedTaskId={selectedTaskId}
               taskEditForm={taskEditForm}
               providers={providers}
-              taskRunProviderId={taskRunProviderId || form.providerPresetId}
+              taskRunProviderId={taskRunProviderId}
+              fallbackProviderId={form.providerPresetId}
               channelsLoading={channelsLoading}
               tasksLoading={tasksLoading}
               isRunning={isRunning}
@@ -703,6 +749,7 @@ export function App(): JSX.Element {
                 }));
               }}
               onChannelFormChange={setChannelForm}
+              onChannelEditFormChange={setChannelEditForm}
               onTaskFormChange={setTaskForm}
               onTaskEditFormChange={setTaskEditForm}
               onProviderSelect={(providerId) => {
@@ -712,8 +759,12 @@ export function App(): JSX.Element {
                   applyProviderToRun(provider);
                 }
               }}
-              onSelectChannel={(channelId) => setSelectedChannelId(channelId)}
+              onSelectChannel={(channelId) => {
+                setSelectedChannelId(channelId);
+                setTaskRunProviderId("");
+              }}
               onCreateChannel={() => void saveChannel()}
+              onSaveChannelEdit={(channelId) => void saveChannelEdit(channelId)}
               onDeleteChannel={(channelId) => void removeChannel(channelId)}
               onRefreshChannels={() => void refreshChannels()}
               onCreateTask={() => void saveTask()}
@@ -866,23 +917,27 @@ function ChannelTaskWorkspace({
   channels,
   selectedChannelId,
   channelForm,
+  channelEditForm,
   tasks,
   taskForm,
   selectedTaskId,
   taskEditForm,
   providers,
   taskRunProviderId,
+  fallbackProviderId,
   channelsLoading,
   tasksLoading,
   isRunning,
   errorMessage,
   onCwdChange,
   onChannelFormChange,
+  onChannelEditFormChange,
   onTaskFormChange,
   onTaskEditFormChange,
   onProviderSelect,
   onSelectChannel,
   onCreateChannel,
+  onSaveChannelEdit,
   onDeleteChannel,
   onRefreshChannels,
   onCreateTask,
@@ -897,23 +952,27 @@ function ChannelTaskWorkspace({
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
   readonly channelForm: ChannelFormState;
+  readonly channelEditForm: ChannelFormState;
   readonly tasks: readonly Task[];
   readonly taskForm: TaskFormState;
   readonly selectedTaskId: string;
   readonly taskEditForm: TaskEditFormState;
   readonly providers: readonly ProviderPreset[];
   readonly taskRunProviderId: string;
+  readonly fallbackProviderId: string;
   readonly channelsLoading: boolean;
   readonly tasksLoading: boolean;
   readonly isRunning: boolean;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onChannelFormChange: (form: ChannelFormState) => void;
+  readonly onChannelEditFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
   readonly onTaskEditFormChange: (form: TaskEditFormState) => void;
   readonly onProviderSelect: (providerId: string) => void;
   readonly onSelectChannel: (channelId: string) => void;
   readonly onCreateChannel: () => void;
+  readonly onSaveChannelEdit: (channelId: string) => void;
   readonly onDeleteChannel: (channelId: string) => void;
   readonly onRefreshChannels: () => void;
   readonly onCreateTask: () => void;
@@ -926,7 +985,7 @@ function ChannelTaskWorkspace({
 }): JSX.Element {
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
-  const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId) ?? "";
+  const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId) ?? "";
 
   return (
     <div className="task-workspace">
@@ -970,13 +1029,79 @@ function ChannelTaskWorkspace({
               >
                 <span className="channel-row-main">
                   <strong>{channel.name}</strong>
-                  <small>{channel.boundPath ?? cwd}</small>
+                  <small>Execution: {channel.boundPath ?? cwd}</small>
                 </span>
                 <span className="channel-tools">{channel.allowedTools.join(", ")}</span>
               </button>
             ))
           )}
         </div>
+
+        {selectedChannel ? (
+          <div className="channel-detail" aria-label="Channel detail">
+            <div className="panel-title tight split">
+              <span>
+                <Pencil size={16} />
+                <h3>Channel detail</h3>
+              </span>
+              <span className="event-count">{selectedChannel.allowedTools.length} tools</span>
+            </div>
+            <div className="channel-detail-meta">
+              <MetaRow label="Channel id" value={selectedChannel.id} compact />
+              <MetaRow label="Workspace path" value={cwd} compact />
+              <MetaRow label="Execution path" value={selectedChannel.boundPath ?? cwd} compact />
+            </div>
+            <label className="field wide">
+              <span>Name</span>
+              <input value={channelEditForm.name} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, name: event.target.value })} />
+            </label>
+            <label className="field wide">
+              <span>Execution path</span>
+              <input
+                value={channelEditForm.boundPath}
+                onChange={(event) => onChannelEditFormChange({ ...channelEditForm, boundPath: event.target.value })}
+              />
+            </label>
+            <label className="field wide">
+              <span>Default provider</span>
+              <select
+                value={channelEditForm.defaultProviderPresetId}
+                onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
+              >
+                <option value="">None</option>
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id} disabled={!canUseProviderForRun(provider)}>
+                    {provider.displayName} / {provider.model}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="tool-grid compact-tools" aria-label="Channel detail allowed tools">
+              {allTools.map((tool) => (
+                <label
+                  key={tool}
+                  className={`${channelEditForm.allowedTools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}${riskyTools.includes(tool) ? " requires-approval" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={channelEditForm.allowedTools.includes(tool)}
+                    onChange={(event) => {
+                      const allowedTools = event.target.checked
+                        ? [...channelEditForm.allowedTools, tool]
+                        : channelEditForm.allowedTools.filter((item) => item !== tool);
+                      onChannelEditFormChange({ ...channelEditForm, allowedTools });
+                    }}
+                  />
+                  <span>{tool}</span>
+                </label>
+              ))}
+            </div>
+            <button className="primary-button full" type="button" onClick={() => onSaveChannelEdit(selectedChannel.id)}>
+              <Save size={16} />
+              Save channel
+            </button>
+          </div>
+        ) : null}
 
         <div className="channel-create">
           <div className="panel-title tight">
@@ -988,7 +1113,7 @@ function ChannelTaskWorkspace({
             <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} />
           </label>
           <label className="field wide">
-            <span>Bound path</span>
+            <span>Execution path</span>
             <input value={channelForm.boundPath} onChange={(event) => onChannelFormChange({ ...channelForm, boundPath: event.target.value })} />
           </label>
           <label className="field wide">
@@ -2144,6 +2269,15 @@ function formatDateTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function channelToForm(channel: Channel, fallbackCwd: string): ChannelFormState {
+  return {
+    name: channel.name,
+    boundPath: channel.boundPath ?? fallbackCwd,
+    defaultProviderPresetId: channel.defaultProviderPresetId ?? "",
+    allowedTools: channel.allowedTools.length > 0 ? channel.allowedTools : defaultTools,
+  };
 }
 
 function providerToForm(provider: ProviderPreset): ProviderFormState {

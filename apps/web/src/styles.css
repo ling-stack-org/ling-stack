@@ -776,6 +776,7 @@ pre {
 }
 
 .channel-create,
+.channel-detail,
 .task-create,
 .task-detail {
   margin-top: 16px;
@@ -922,6 +923,23 @@ pre {
 }
 
 .task-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: #e1e6e2;
+  border: 1px solid #e1e6e2;
+}
+
+.channel-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.channel-detail .field {
+  margin-bottom: 0;
+}
+
+.channel-detail-meta {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
@@ -1465,6 +1483,7 @@ pre {
   .field-row,
   .tool-grid,
   .compact-tools,
+  .channel-detail-meta,
   .task-detail-meta,
   .run-detail-summary,
   .provider-number-row {

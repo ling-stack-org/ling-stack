@@ -81,6 +81,18 @@ export async function createChannel(cwd: string, form: ChannelFormState): Promis
   return (await response.json()) as ChannelMutationResponse;
 }
 
+export async function updateChannel(cwd: string, channelId: string, form: ChannelFormState): Promise<ChannelMutationResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/channels/${encodeURIComponent(channelId)}`, cwd), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(channelFormToUpdatePayload(form)),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as ChannelMutationResponse;
+}
+
 export async function deleteChannel(cwd: string, channelId: string): Promise<void> {
   const response = await fetch(withCwd(`${daemonBaseUrl}/channels/${encodeURIComponent(channelId)}`, cwd), {
     method: "DELETE",
@@ -336,9 +348,18 @@ function providerFormToPayload(form: ProviderFormState): unknown {
 
 function channelFormToPayload(form: ChannelFormState): unknown {
   return {
-    name: form.name,
-    boundPath: form.boundPath || undefined,
+    name: form.name.trim(),
+    boundPath: form.boundPath.trim() || undefined,
     defaultProviderPresetId: form.defaultProviderPresetId || undefined,
+    allowedTools: form.allowedTools.filter(isRunnerTool),
+  };
+}
+
+function channelFormToUpdatePayload(form: ChannelFormState): unknown {
+  return {
+    name: form.name.trim(),
+    boundPath: form.boundPath.trim() || null,
+    defaultProviderPresetId: form.defaultProviderPresetId || null,
     allowedTools: form.allowedTools.filter(isRunnerTool),
   };
 }
