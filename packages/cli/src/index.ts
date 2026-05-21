@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import process from "node:process";
 import {
@@ -74,6 +76,11 @@ interface InitResult {
   readonly configPath: string;
   readonly createdProviders: readonly ProviderPreset[];
   readonly skippedProviders: readonly ProviderPreset[];
+}
+
+interface DaemonListenOptions {
+  readonly host: string;
+  readonly port: number;
 }
 
 class CliError extends Error {
@@ -381,12 +388,29 @@ async function handleDaemon(args: readonly string[], options: GlobalOptions): Pr
     return await handleDoctor(options);
   }
   if (subcommand === "start") {
-    throw new CliError(2, "not_implemented", "daemon start is not implemented in CLI v0.1 yet. Run: corepack pnpm --filter @ling-stack/daemon build && node packages/daemon/dist/cli.js");
+    return await handleDaemonStart(rest, options);
   }
   if (subcommand === "stop") {
     throw new CliError(2, "not_implemented", "daemon stop is not implemented yet. Stop the foreground daemon with Ctrl-C.");
   }
   throw new CliError(2, "unknown_command", `Unknown daemon command: ${subcommand}`);
+}
+
+async function handleDaemonStart(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["host", "port"]),
+    booleanFlags: new Set(["foreground"]),
+  });
+  assertNoPositionals(parsed.positionals, "daemon start");
+  if (!parsed.booleans.has("foreground")) {
+    throw new CliError(2, "not_implemented", "Background daemon start is not implemented yet. Use: ling-stack daemon start --foreground");
+  }
+  if (options.json) {
+    throw new CliError(2, "unsupported_json", "daemon start --foreground is a long-running process and does not support --json yet.");
+  }
+
+  const listenOptions = readDaemonListenOptions(parsed, options);
+  return await runDaemonForeground(listenOptions);
 }
 
 async function handleRun(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -907,6 +931,88 @@ function readProviderTemplatesFlag(parsed: ParsedCommandArgs): boolean {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
+}
+
+function readDaemonListenOptions(parsed: ParsedCommandArgs, options: GlobalOptions): DaemonListenOptions {
+  let daemonUrl: URL;
+  try {
+    daemonUrl = new URL(options.daemonUrl);
+  } catch {
+    throw new CliError(2, "bad_daemon_url", "--daemon-url must be a valid URL.");
+  }
+  const host = getFlag(parsed, "host") ?? daemonUrl.hostname;
+  const port = getFlag(parsed, "port") ? readRequiredPort(getFlag(parsed, "port") as string, "--port") : readPortFromDaemonUrl(daemonUrl);
+  return { host, port };
+}
+
+function readPortFromDaemonUrl(url: URL): number {
+  if (url.port) {
+    return readRequiredPort(url.port, "--daemon-url");
+  }
+  if (url.protocol === "http:") {
+    return 80;
+  }
+  if (url.protocol === "https:") {
+    return 443;
+  }
+  throw new CliError(2, "bad_daemon_url", "--daemon-url must include an http or https URL.");
+}
+
+function readRequiredPort(value: string, source: string): number {
+  const port = Number.parseInt(value, 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || String(port) !== value) {
+    throw new CliError(2, "bad_port", `${source} must specify a TCP port between 1 and 65535.`);
+  }
+  return port;
+}
+
+async function runDaemonForeground(options: DaemonListenOptions): Promise<number> {
+  const daemonCliPath = resolveDaemonCliPath();
+  const child = spawn(process.execPath, [daemonCliPath], {
+    env: {
+      ...process.env,
+      LING_STACK_HOST: options.host,
+      LING_STACK_PORT: String(options.port),
+    },
+    stdio: "inherit",
+  });
+
+  return await new Promise<number>((resolve, reject) => {
+    const forwardSignal = (signal: NodeJS.Signals): void => {
+      if (!child.killed) {
+        child.kill(signal);
+      }
+    };
+    const onSigint = (): void => forwardSignal("SIGINT");
+    const onSigterm = (): void => forwardSignal("SIGTERM");
+    const cleanup = (): void => {
+      process.off("SIGINT", onSigint);
+      process.off("SIGTERM", onSigterm);
+    };
+
+    process.once("SIGINT", onSigint);
+    process.once("SIGTERM", onSigterm);
+    child.once("error", (error) => {
+      cleanup();
+      reject(new CliError(1, "daemon_start_failed", error.message));
+    });
+    child.once("exit", (code, signal) => {
+      cleanup();
+      if (code !== null) {
+        resolve(code);
+        return;
+      }
+      resolve(signal === "SIGINT" || signal === "SIGTERM" ? 0 : 1);
+    });
+  });
+}
+
+function resolveDaemonCliPath(): string {
+  try {
+    return createRequire(import.meta.url).resolve("@ling-stack/daemon/dist/cli.js");
+  } catch (error) {
+    throw new CliError(1, "daemon_cli_not_found", `Cannot resolve @ling-stack/daemon CLI: ${errorMessage(error)}`);
+  }
 }
 
 async function requestJson(
@@ -1921,6 +2027,7 @@ Usage:
   ling-stack [global options] init
   ling-stack [global options] doctor
   ling-stack [global options] daemon status
+  ling-stack [global options] daemon start --foreground
   ling-stack [global options] provider list
   ling-stack [global options] provider add <kind> --name <name> --provider-id <id> --model <model>
   ling-stack [global options] provider show <id>
@@ -1945,7 +2052,7 @@ Global options:
   --help, -h           Show help
 
 Planned commands:
-  channel, task, ui, daemon start, daemon stop
+  channel, task, ui, daemon stop, background daemon start
 `);
 }
 
@@ -2031,10 +2138,15 @@ function printRunsHelp(): void {
 function printDaemonHelp(_subcommand?: string): void {
   console.log(`Usage:
   ling-stack daemon status
+  ling-stack daemon start --foreground [--host 127.0.0.1] [--port 17891]
 
 Not implemented yet:
-  ling-stack daemon start
+  ling-stack daemon start without --foreground
   ling-stack daemon stop
+
+Notes:
+  Without --host/--port, start uses --daemon-url, LING_STACK_DAEMON_URL, or LING_STACK_HOST/LING_STACK_PORT.
+  Background process management is not implemented yet; use --foreground and stop with Ctrl-C.
 `);
 }
 

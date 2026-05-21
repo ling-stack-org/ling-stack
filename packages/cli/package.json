@@ -12,6 +12,7 @@
     "test": "echo \"tests not configured yet\""
   },
   "dependencies": {
-    "@ling-stack/core": "workspace:*"
+    "@ling-stack/core": "workspace:*",
+    "@ling-stack/daemon": "workspace:*"
   }
 }
