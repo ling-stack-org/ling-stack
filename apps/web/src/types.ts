@@ -34,6 +34,7 @@ export interface RunSession {
   readonly cwd: string;
   readonly taskId: string;
   readonly channelId?: string;
+  readonly providerPresetId?: string;
   readonly providerName: string;
   readonly providerModel: string;
   readonly taskSnapshot: unknown;

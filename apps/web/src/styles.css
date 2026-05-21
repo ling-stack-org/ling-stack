@@ -619,6 +619,12 @@ pre {
   min-height: 640px;
 }
 
+.run-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .run-detail-content {
   display: grid;
   gap: 14px;
@@ -1499,6 +1505,7 @@ pre {
   }
 
   .provider-actions,
+  .run-detail-actions,
   .approval-actions {
     justify-content: flex-start;
     max-width: none;

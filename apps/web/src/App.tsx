@@ -14,6 +14,7 @@ import {
   PlugZap,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   Search,
   Settings,
@@ -24,6 +25,7 @@ import {
 } from "lucide-react";
 import {
   approveApproval,
+  buildRerunRequest,
   buildRunRequest,
   buildTaskRunRequest,
   cancelRun,
@@ -236,6 +238,14 @@ export function App(): JSX.Element {
   }
 
   async function startRun(): Promise<void> {
+    await runWithRequest(buildRunRequest(form), form.cwd.trim());
+  }
+
+  async function runWithRequest(
+    requestBody: unknown,
+    loadCwd: string,
+    afterRunLoaded?: (runId: string) => Promise<void>,
+  ): Promise<void> {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -249,7 +259,7 @@ export function App(): JSX.Element {
       let streamedRunId = "";
       await streamRun(
         `${daemonBaseUrl}/runs`,
-        buildRunRequest(form),
+        requestBody,
         (message) => {
           if (message.kind === "ready") {
             streamedRunId = message.runId;
@@ -266,8 +276,9 @@ export function App(): JSX.Element {
       );
 
       if (streamedRunId) {
-        await loadRun(streamedRunId);
-        await refreshRuns();
+        await loadRun(streamedRunId, loadCwd);
+        await refreshRuns(loadCwd);
+        await afterRunLoaded?.(streamedRunId);
       }
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
@@ -297,8 +308,8 @@ export function App(): JSX.Element {
     }
   }
 
-  async function refreshRuns(): Promise<void> {
-    if (!form.cwd.trim()) {
+  async function refreshRuns(cwd = form.cwd.trim()): Promise<void> {
+    if (!cwd) {
       setErrorMessage("请输入 workspace path");
       return;
     }
@@ -306,7 +317,7 @@ export function App(): JSX.Element {
     setRunsLoading(true);
     try {
       setErrorMessage("");
-      const response = await listRuns(form.cwd.trim());
+      const response = await listRuns(cwd);
       setRuns(response.runs);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -527,47 +538,18 @@ export function App(): JSX.Element {
       return;
     }
 
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
     const runCwd = form.cwd.trim();
-    setErrorMessage("");
-    setEvents([]);
-    setRun(undefined);
-    setActiveRunId("");
-    setIsRunning(true);
+    await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId), runCwd, async () => {
+      await refreshTasks(task.channelId);
+    });
+  }
 
+  async function rerunRun(sourceRun: RunSession): Promise<void> {
     try {
-      let streamedRunId = "";
-      await streamRun(
-        `${daemonBaseUrl}/runs`,
-        buildTaskRunRequest(runCwd, task, channel, providerPresetId),
-        (message) => {
-          if (message.kind === "ready") {
-            streamedRunId = message.runId;
-            setActiveRunId(message.runId);
-            setLookupRunId(message.runId);
-            return;
-          }
-          if (message.event.type === "approval_requested") {
-            void refreshApprovals();
-          }
-          setEvents((current) => [...current, message.event]);
-        },
-        controller.signal,
-      );
-
-      if (streamedRunId) {
-        await loadRun(streamedRunId, runCwd);
-        await refreshTasks(task.channelId);
-      }
+      const workspaceCwd = readRunWorkspaceCwd(sourceRun, form.cwd.trim());
+      await runWithRequest(buildRerunRequest(sourceRun), workspaceCwd);
     } catch (error) {
-      if ((error as Error).name !== "AbortError") {
-        setErrorMessage(error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      setIsRunning(false);
-      await refreshHealth();
+      setErrorMessage(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -795,6 +777,7 @@ export function App(): JSX.Element {
             events={events}
             assistantText={assistantText}
             isLoading={runsLoading}
+            isRunning={isRunning}
             errorMessage={errorMessage}
             onCwdChange={(cwd) => {
               setForm({ ...form, cwd });
@@ -805,6 +788,7 @@ export function App(): JSX.Element {
             }}
             onRefresh={() => void refreshRuns()}
             onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
+            onRerun={(sourceRun) => void rerunRun(sourceRun)}
             onSelect={(runId) => void selectRun(runId)}
           />
         ) : (
@@ -1308,10 +1292,12 @@ function RunHistory({
   events,
   assistantText,
   isLoading,
+  isRunning,
   errorMessage,
   onCwdChange,
   onRefresh,
   onRefreshSelected,
+  onRerun,
   onSelect,
 }: {
   readonly cwd: string;
@@ -1321,10 +1307,12 @@ function RunHistory({
   readonly events: readonly RunEventEnvelope[];
   readonly assistantText: string;
   readonly isLoading: boolean;
+  readonly isRunning: boolean;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onRefresh: () => void;
   readonly onRefreshSelected: () => void;
+  readonly onRerun: (run: RunSession) => void;
   readonly onSelect: (runId: string) => void;
 }): JSX.Element {
   return (
@@ -1382,7 +1370,7 @@ function RunHistory({
         </div>
       </section>
 
-      <RunDetailPanel run={selectedRun} events={events} assistantText={assistantText} onRefresh={onRefreshSelected} />
+      <RunDetailPanel run={selectedRun} events={events} assistantText={assistantText} isRunning={isRunning} onRefresh={onRefreshSelected} onRerun={onRerun} />
     </div>
   );
 }
@@ -1391,16 +1379,21 @@ function RunDetailPanel({
   run,
   events,
   assistantText,
+  isRunning,
   onRefresh,
+  onRerun,
 }: {
   readonly run: RunSession | undefined;
   readonly events: readonly RunEventEnvelope[];
   readonly assistantText: string;
+  readonly isRunning: boolean;
   readonly onRefresh: () => void;
+  readonly onRerun: (run: RunSession) => void;
 }): JSX.Element {
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   const terminalEvent = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));
   const workspaceCwd = run ? readDataString(run.requestSnapshot, "workspaceCwd") || run.cwd : "-";
+  const providerPresetId = run ? readRunProviderPresetId(run) : "";
 
   return (
     <section className="panel run-detail-panel" aria-labelledby="run-detail-title">
@@ -1409,10 +1402,16 @@ function RunDetailPanel({
           <Activity size={18} />
           <h2 id="run-detail-title">Run detail</h2>
         </span>
-        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={!run}>
-          <RefreshCw size={15} />
-          Reload
-        </button>
+        <span className="run-detail-actions">
+          <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={!run || isRunning}>
+            <RefreshCw size={15} />
+            Reload
+          </button>
+          <button className="primary-button compact-button" type="button" onClick={() => run && onRerun(run)} disabled={!run || isRunning || !providerPresetId}>
+            {isRunning ? <Loader2 className="spin" size={15} /> : <RotateCcw size={15} />}
+            Rerun
+          </button>
+        </span>
       </div>
 
       {!run ? (
@@ -1427,6 +1426,7 @@ function RunDetailPanel({
             <MetaRow label="Workspace cwd" value={workspaceCwd} compact />
             <MetaRow label="Execution cwd" value={run.cwd} compact />
             <MetaRow label="Provider" value={`${run.providerName}/${run.providerModel}`} compact />
+            <MetaRow label="Provider preset" value={providerPresetId || "-"} compact />
             <MetaRow label="Task" value={run.taskId} compact />
             <MetaRow label="Channel" value={run.channelId ?? "-"} compact />
             <MetaRow label="Created" value={formatDateTime(run.createdAt)} compact />
@@ -2229,6 +2229,14 @@ function readDataBoolean(data: unknown, key: string): boolean {
     return (data as Record<string, unknown>)[key] === true;
   }
   return false;
+}
+
+function readRunProviderPresetId(run: RunSession): string {
+  return run.providerPresetId ?? readDataString(run.requestSnapshot, "providerPresetId");
+}
+
+function readRunWorkspaceCwd(run: RunSession, fallbackCwd: string): string {
+  return readDataString(run.requestSnapshot, "workspaceCwd") || fallbackCwd || run.cwd;
 }
 
 function formatEventData(data: unknown): string {

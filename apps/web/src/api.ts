@@ -310,6 +310,26 @@ export function buildTaskRunRequest(
   };
 }
 
+export function buildRerunRequest(run: RunSession): unknown {
+  const snapshot = readRecord(run.requestSnapshot);
+  const providerPresetId = run.providerPresetId ?? readOptionalString(snapshot, "providerPresetId");
+  if (!providerPresetId) {
+    throw new Error("This run cannot be rerun because it did not use a provider preset.");
+  }
+
+  return removeUndefined({
+    workspaceCwd: readOptionalString(snapshot, "workspaceCwd") ?? run.cwd,
+    cwd: readOptionalString(snapshot, "cwd") ?? run.cwd,
+    task: readRunTask(run),
+    providerPresetId,
+    tools: readToolArray(snapshot, "tools"),
+    thinkingLevel: readOptionalString(snapshot, "thinkingLevel") ?? "medium",
+    systemPrompt: readOptionalString(snapshot, "systemPrompt"),
+    appendSystemPrompt: readStringArray(snapshot, "appendSystemPrompt"),
+    agentDir: readOptionalString(snapshot, "agentDir"),
+  });
+}
+
 async function resolveApproval(
   cwd: string,
   approvalId: string,
@@ -373,6 +393,52 @@ function splitCsv(value: string): string[] {
 
 function isRunnerTool(tool: ToolName): tool is "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write" {
   return ["read", "grep", "find", "ls", "bash", "edit", "write"].includes(tool);
+}
+
+function readRunTask(run: RunSession): { readonly id: string; readonly title: string; readonly prompt: string; readonly channelId: string } {
+  const task = readRecord(run.taskSnapshot);
+  const prompt = readOptionalString(task, "prompt");
+  if (!prompt) {
+    throw new Error("This run cannot be rerun because its task snapshot has no prompt.");
+  }
+
+  return {
+    id: readOptionalString(task, "id") ?? run.taskId,
+    title: readOptionalString(task, "title") ?? run.taskId,
+    prompt,
+    channelId: readOptionalString(task, "channelId") ?? run.channelId ?? "workspace",
+  };
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function readOptionalString(value: Record<string, unknown>, key: string): string | undefined {
+  const field = value[key];
+  return typeof field === "string" && field.length > 0 ? field : undefined;
+}
+
+function readStringArray(value: Record<string, unknown>, key: string): string[] | undefined {
+  const field = value[key];
+  if (!Array.isArray(field)) {
+    return undefined;
+  }
+  const items = field.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return items.length > 0 ? items : undefined;
+}
+
+function readToolArray(value: Record<string, unknown>, key: string): ToolName[] | undefined {
+  const field = value[key];
+  if (!Array.isArray(field)) {
+    return undefined;
+  }
+  const tools = field.filter((item): item is ToolName => typeof item === "string" && isRunnerTool(item as ToolName));
+  return tools.length > 0 ? tools : undefined;
+}
+
+function removeUndefined(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
 
 function withCwd(url: string, cwd?: string): string {
