@@ -40,7 +40,11 @@ importers:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@22.19.19)(jiti@2.7.0)(yaml@2.9.0)
 
-  packages/cli: {}
+  packages/cli:
+    dependencies:
+      '@ling-stack/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/core: {}
 

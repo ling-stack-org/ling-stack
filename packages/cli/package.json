@@ -10,5 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
     "test": "echo \"tests not configured yet\""
+  },
+  "dependencies": {
+    "@ling-stack/core": "workspace:*"
   }
 }

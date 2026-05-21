@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import process from "node:process";
+import {
+  createSqliteRunStore,
+  resolveRuntimePaths,
+  type ProviderPreset,
+  type ProviderPresetInput,
+} from "@ling-stack/core";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = "17891";
@@ -55,6 +61,19 @@ interface RunEventEnvelope {
   readonly ts: string;
   readonly type: string;
   readonly data: unknown;
+}
+
+interface InitResult {
+  readonly cwd: string;
+  readonly rootDir: string;
+  readonly databasePath: string;
+  readonly sessionsDir: string;
+  readonly artifactsDir: string;
+  readonly logsDir: string;
+  readonly piDir: string;
+  readonly configPath: string;
+  readonly createdProviders: readonly ProviderPreset[];
+  readonly skippedProviders: readonly ProviderPreset[];
 }
 
 class CliError extends Error {
@@ -274,6 +293,8 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
   }
 
   switch (command) {
+    case "init":
+      return await handleInit(rest, parsed.options);
     case "doctor":
       assertNoPositionals(rest, "doctor");
       return await handleDoctor(parsed.options);
@@ -287,7 +308,6 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleApprovals(rest, parsed.options);
     case "runs":
       return await handleRuns(rest, parsed.options);
-    case "init":
     case "channel":
     case "task":
     case "ui":
@@ -295,6 +315,47 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
     default:
       throw new CliError(2, "unknown_command", `Unknown command: ${command}`);
   }
+}
+
+async function handleInit(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    booleanFlags: new Set(["with-provider-templates", "no-provider-templates"]),
+  });
+  assertNoPositionals(parsed.positionals, "init");
+  const withProviderTemplates = readProviderTemplatesFlag(parsed);
+  const result = await initWorkspace(options.cwd, withProviderTemplates);
+
+  if (options.json) {
+    printJson({
+      ok: true,
+      cwd: result.cwd,
+      rootDir: result.rootDir,
+      databasePath: result.databasePath,
+      sessionsDir: result.sessionsDir,
+      artifactsDir: result.artifactsDir,
+      logsDir: result.logsDir,
+      piDir: result.piDir,
+      configPath: result.configPath,
+      createdProviderIds: result.createdProviders.map((provider) => provider.id),
+      skippedProviderIds: result.skippedProviders.map((provider) => provider.id),
+    });
+    return 0;
+  }
+
+  console.log(`Initialized Ling Stack at ${result.rootDir}`);
+  console.log(`Database: ${result.databasePath}`);
+  console.log(`Config: ${result.configPath}`);
+  if (withProviderTemplates) {
+    console.log(`Provider templates: ${result.createdProviders.length} created, ${result.skippedProviders.length} skipped`);
+  } else {
+    console.log("Provider templates: skipped");
+  }
+  console.log("Next:");
+  console.log("  export LOCAL_RELAY_API_KEY=...");
+  console.log("  ling-stack provider list");
+  console.log("  ling-stack provider update <provider_id> --api-key-ref env:LOCAL_RELAY_API_KEY --enabled true");
+  console.log("  ling-stack run --provider <provider_id> \"Inspect this repo.\"");
+  return 0;
 }
 
 async function handleDoctor(options: GlobalOptions): Promise<number> {
@@ -625,6 +686,227 @@ async function handleRunsEvents(args: readonly string[], options: GlobalOptions)
   }
   printRunEvents(response);
   return 0;
+}
+
+async function initWorkspace(cwd: string, withProviderTemplates: boolean): Promise<InitResult> {
+  const paths = resolveRuntimePaths(cwd);
+  const logsDir = join(paths.rootDir, "logs");
+  await mkdir(paths.rootDir, { recursive: true });
+  await mkdir(paths.sessionsDir, { recursive: true });
+  await mkdir(paths.artifactsDir, { recursive: true });
+  await mkdir(logsDir, { recursive: true });
+  await mkdir(paths.piDir, { recursive: true });
+  await writeDefaultConfig(paths.rootDir);
+
+  const store = createSqliteRunStore(cwd);
+  const createdProviders: ProviderPreset[] = [];
+  const skippedProviders: ProviderPreset[] = [];
+  try {
+    if (withProviderTemplates) {
+      const existingProviders = store.listProviderPresets();
+      const now = new Date().toISOString();
+      for (const template of defaultProviderTemplates()) {
+        const existing = findEquivalentProvider(existingProviders, template);
+        if (existing) {
+          skippedProviders.push(existing);
+          continue;
+        }
+        const created = store.createProviderPreset(template, now);
+        existingProviders.push(created);
+        createdProviders.push(created);
+      }
+    }
+  } finally {
+    store.close();
+  }
+
+  return {
+    cwd,
+    rootDir: paths.rootDir,
+    databasePath: paths.databasePath,
+    sessionsDir: paths.sessionsDir,
+    artifactsDir: paths.artifactsDir,
+    logsDir,
+    piDir: paths.piDir,
+    configPath: join(paths.rootDir, "config.json"),
+    createdProviders,
+    skippedProviders,
+  };
+}
+
+async function writeDefaultConfig(rootDir: string): Promise<void> {
+  const configPath = join(rootDir, "config.json");
+  const config = {
+    schemaVersion: 1,
+    product: "ling-stack",
+    providerTemplates: "sqlite",
+    secrets: "env",
+    createdBy: "ling-stack init",
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: "wx" }).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "EEXIST") {
+      return;
+    }
+    throw error;
+  });
+}
+
+function defaultProviderTemplates(): readonly ProviderPresetInput[] {
+  return [
+    chatProviderTemplate({
+      kind: "openai",
+      displayName: "OpenAI GPT",
+      providerId: "openai",
+      model: "gpt-5.5",
+      api: "openai-completions",
+      apiKeyRef: "env:OPENAI_API_KEY",
+    }),
+    chatProviderTemplate({
+      kind: "anthropic",
+      displayName: "Claude",
+      providerId: "anthropic",
+      model: "claude-sonnet-4-5",
+      api: "anthropic-messages",
+      apiKeyRef: "env:ANTHROPIC_API_KEY",
+    }),
+    chatProviderTemplate({
+      kind: "openai-compatible",
+      displayName: "Local OpenAI-Compatible Relay",
+      providerId: "local-relay",
+      model: "dpv4",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:8317/v1",
+      apiKeyRef: "env:LOCAL_RELAY_API_KEY",
+    }),
+    chatProviderTemplate({
+      kind: "doubao",
+      displayName: "Doubao Ark",
+      providerId: "doubao",
+      model: "doubao-seed-1-6",
+      api: "openai-completions",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKeyRef: "env:ARK_API_KEY",
+    }),
+    chatProviderTemplate({
+      kind: "deepseek",
+      displayName: "DeepSeek DPV4",
+      providerId: "deepseek",
+      model: "deepseek-v3",
+      api: "openai-completions",
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKeyRef: "env:DEEPSEEK_API_KEY",
+    }),
+    chatProviderTemplate({
+      kind: "minimax",
+      displayName: "MiniMax",
+      providerId: "minimax",
+      model: "MiniMax-M1",
+      api: "openai-completions",
+      baseUrl: "https://api.minimax.chat/v1",
+      apiKeyRef: "env:MINIMAX_API_KEY",
+    }),
+    chatProviderTemplate({
+      kind: "glm",
+      displayName: "GLM Zhipu",
+      providerId: "glm",
+      model: "glm-4.5",
+      api: "openai-completions",
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      apiKeyRef: "env:ZHIPU_API_KEY",
+    }),
+    mediaProviderTemplate({
+      kind: "jimeng",
+      displayName: "Jimeng Image",
+      providerId: "jimeng",
+      model: "jimeng-image",
+      apiKeyRef: "env:JIMENG_API_KEY",
+      capabilities: ["image_generate", "image_edit"],
+    }),
+    mediaProviderTemplate({
+      kind: "seedream",
+      displayName: "Seedream Image",
+      providerId: "seedream",
+      model: "seedream",
+      apiKeyRef: "env:SEEDREAM_API_KEY",
+      capabilities: ["image_generate", "image_edit"],
+    }),
+    mediaProviderTemplate({
+      kind: "seedance",
+      displayName: "Seedance Video",
+      providerId: "seedance",
+      model: "seedance",
+      apiKeyRef: "env:SEEDANCE_API_KEY",
+      capabilities: ["video_generate"],
+    }),
+  ];
+}
+
+function chatProviderTemplate(input: {
+  readonly kind: ProviderPresetInput["kind"];
+  readonly displayName: string;
+  readonly providerId: string;
+  readonly model: string;
+  readonly api: ProviderPresetInput["api"];
+  readonly baseUrl?: string;
+  readonly apiKeyRef: string;
+}): ProviderPresetInput {
+  return {
+    ...input,
+    capabilities: ["chat", "tool_call", "reasoning"],
+    input: ["text"],
+    enabled: false,
+    authHeader: true,
+    reasoning: true,
+    contextWindow: 128000,
+    maxTokens: 16384,
+  };
+}
+
+function mediaProviderTemplate(input: {
+  readonly kind: ProviderPresetInput["kind"];
+  readonly displayName: string;
+  readonly providerId: string;
+  readonly model: string;
+  readonly apiKeyRef: string;
+  readonly capabilities: ProviderPresetInput["capabilities"];
+}): ProviderPresetInput {
+  return {
+    kind: input.kind,
+    displayName: input.displayName,
+    providerId: input.providerId,
+    model: input.model,
+    api: "media-job",
+    apiKeyRef: input.apiKeyRef,
+    capabilities: input.capabilities,
+    input: ["text", "image"],
+    enabled: false,
+  };
+}
+
+function findEquivalentProvider(
+  providers: readonly ProviderPreset[],
+  template: ProviderPresetInput,
+): ProviderPreset | undefined {
+  return providers.find(
+    (provider) =>
+      provider.kind === template.kind &&
+      provider.providerId === template.providerId &&
+      provider.model === template.model &&
+      provider.api === template.api,
+  );
+}
+
+function readProviderTemplatesFlag(parsed: ParsedCommandArgs): boolean {
+  const withTemplates = parsed.booleans.has("with-provider-templates");
+  const withoutTemplates = parsed.booleans.has("no-provider-templates");
+  if (withTemplates && withoutTemplates) {
+    throw new CliError(2, "bad_option", "Use either --with-provider-templates or --no-provider-templates, not both.");
+  }
+  return !withoutTemplates;
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 async function requestJson(
@@ -1605,6 +1887,10 @@ function shellQuote(value: string): string {
 }
 
 function printCommandHelp(command: string, subcommand?: string): void {
+  if (command === "init") {
+    printInitHelp();
+    return;
+  }
   if (command === "run") {
     printRunHelp();
     return;
@@ -1632,6 +1918,7 @@ function printHelp(): void {
   console.log(`Ling Stack CLI
 
 Usage:
+  ling-stack [global options] init
   ling-stack [global options] doctor
   ling-stack [global options] daemon status
   ling-stack [global options] provider list
@@ -1658,7 +1945,19 @@ Global options:
   --help, -h           Show help
 
 Planned commands:
-  init, channel, task, ui, daemon start, daemon stop
+  channel, task, ui, daemon start, daemon stop
+`);
+}
+
+function printInitHelp(): void {
+  console.log(`Usage:
+  ling-stack init
+  ling-stack init --cwd /path/to/project
+  ling-stack init --no-provider-templates
+
+Behavior:
+  Creates .ling-stack/, SQLite runtime state, sessions/, artifacts/, logs/, pi/, and config.json.
+  Provider templates are created disabled by default and use env: secret references only.
 `);
 }
 
