@@ -185,6 +185,8 @@ export function App(): JSX.Element {
   const [providerForm, setProviderForm] = useState<ProviderFormState>(defaultProviderForm);
   const [editingProviderId, setEditingProviderId] = useState("");
   const [providerCheck, setProviderCheck] = useState<ProviderCheckResult | undefined>();
+  const [providerCheckTargetId, setProviderCheckTargetId] = useState("");
+  const [checkingProviderId, setCheckingProviderId] = useState("");
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
   const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
   const [approvalPolicyLoading, setApprovalPolicyLoading] = useState(false);
@@ -712,6 +714,7 @@ export function App(): JSX.Element {
     try {
       setErrorMessage("");
       setProviderCheck(undefined);
+      setProviderCheckTargetId("");
       const response = editingProviderId
         ? await updateProvider(form.cwd.trim(), editingProviderId, providerForm)
         : await createProvider(form.cwd.trim(), providerForm);
@@ -726,6 +729,8 @@ export function App(): JSX.Element {
   async function removeProvider(providerId: string): Promise<void> {
     try {
       setErrorMessage("");
+      setProviderCheck(undefined);
+      setProviderCheckTargetId("");
       await deleteProvider(form.cwd.trim(), providerId);
       if (editingProviderId === providerId) {
         setEditingProviderId("");
@@ -743,15 +748,22 @@ export function App(): JSX.Element {
   async function runProviderCheck(providerId: string): Promise<void> {
     try {
       setErrorMessage("");
-      setProviderCheck(await checkProvider(form.cwd.trim(), providerId));
+      setCheckingProviderId(providerId);
+      setProviderCheckTargetId(providerId);
+      const result = await checkProvider(form.cwd.trim(), providerId);
+      setProviderCheck(result);
+      await refreshProviders();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCheckingProviderId("");
     }
   }
 
   function editProvider(provider: ProviderPreset): void {
     setEditingProviderId(provider.id);
     setProviderCheck(undefined);
+    setProviderCheckTargetId("");
     setProviderForm(providerToForm(provider));
   }
 
@@ -926,19 +938,23 @@ export function App(): JSX.Element {
             form={providerForm}
             editingProviderId={editingProviderId}
             isLoading={providersLoading}
+            checkingProviderId={checkingProviderId}
             errorMessage={errorMessage}
             checkResult={providerCheck}
+            checkedProviderId={providerCheckTargetId}
             selectedProviderId={form.providerPresetId}
             onCwdChange={(cwd) => setForm({ ...form, cwd })}
             onFormChange={setProviderForm}
             onTemplateSelect={(template) => {
               setEditingProviderId("");
               setProviderCheck(undefined);
+              setProviderCheckTargetId("");
               setProviderForm(providerTemplateToForm(template));
             }}
             onNew={() => {
               setEditingProviderId("");
               setProviderCheck(undefined);
+              setProviderCheckTargetId("");
               setProviderForm(defaultProviderForm);
             }}
             onSave={() => void saveProvider()}
@@ -1792,8 +1808,10 @@ function ProviderSettings({
   form,
   editingProviderId,
   isLoading,
+  checkingProviderId,
   errorMessage,
   checkResult,
+  checkedProviderId,
   selectedProviderId,
   onCwdChange,
   onFormChange,
@@ -1812,8 +1830,10 @@ function ProviderSettings({
   readonly form: ProviderFormState;
   readonly editingProviderId: string;
   readonly isLoading: boolean;
+  readonly checkingProviderId: string;
   readonly errorMessage: string;
   readonly checkResult: ProviderCheckResult | undefined;
+  readonly checkedProviderId: string;
   readonly selectedProviderId: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onFormChange: (form: ProviderFormState) => void;
@@ -1831,6 +1851,18 @@ function ProviderSettings({
   const chatTemplateCount = templates.filter((template) => template.capabilities.includes("chat")).length;
   const mediaTemplateCount = templates.length - chatTemplateCount;
   const templateGroups = groupProviderTemplates(templates);
+  const nextActionProvider =
+    providers.find(
+      (provider) =>
+        provider.enabled &&
+        provider.api !== "media-job" &&
+        provider.capabilities.includes("chat") &&
+        providerNeedsSecret(provider) &&
+        !provider.apiKeyConfigured,
+    ) ??
+    providers.find(canUseProviderForRun) ??
+    providers.find((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured);
+  const checkedProvider = checkedProviderId ? providers.find((provider) => provider.id === checkedProviderId) : undefined;
 
   return (
     <div className="provider-layout">
@@ -1864,6 +1896,8 @@ function ProviderSettings({
           <MetaRow label="Chat templates" value={String(chatTemplateCount)} compact />
           <MetaRow label="Media templates" value={String(mediaTemplateCount)} compact />
         </div>
+
+        <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={isLoading} />
 
         <div className="provider-list">
           {providers.length === 0 ? (
@@ -1917,8 +1951,8 @@ function ProviderSettings({
                     <Pencil size={14} />
                     Edit
                   </button>
-                  <button className="secondary-button compact-button" type="button" onClick={() => onCheck(provider.id)}>
-                    <CheckCircle2 size={14} />
+                  <button className="secondary-button compact-button" type="button" disabled={Boolean(checkingProviderId)} onClick={() => onCheck(provider.id)}>
+                    {checkingProviderId === provider.id ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
                     Check
                   </button>
                   <button className="secondary-button compact-button danger" type="button" onClick={() => onDelete(provider.id)}>
@@ -2033,6 +2067,7 @@ function ProviderSettings({
           <span>API key ref</span>
           <input value={form.apiKeyRef} placeholder="env:LOCAL_RELAY_API_KEY" onChange={(event) => onFormChange({ ...form, apiKeyRef: event.target.value })} />
         </label>
+        <ProviderEnvHint apiKeyRef={form.apiKeyRef} />
 
         <div className="field-row provider-number-row">
           <label className="field">
@@ -2072,8 +2107,12 @@ function ProviderSettings({
         {checkResult ? (
           <div className={checkResult.ok ? "check-result ok" : "check-result bad"}>
             {checkResult.ok ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
-            <span className="check-result-status">{providerCheckStatusLabel(checkResult)}</span>
-            <span>{checkResult.message}</span>
+            <div className="check-result-copy">
+              <span className="check-result-status">{providerCheckStatusLabel(checkResult)}</span>
+              <strong>{checkedProvider ? checkedProvider.displayName : "Provider check"}</strong>
+              <span>{checkResult.message}</span>
+              <small>{providerCheckGuidance(checkResult, checkedProvider ?? (editingProviderId ? providers.find((provider) => provider.id === editingProviderId) : undefined))}</small>
+            </div>
           </div>
         ) : null}
 
@@ -2082,8 +2121,99 @@ function ProviderSettings({
             <Save size={16} />
             {editingProviderId ? "Save changes" : "Create preset"}
           </button>
+          <button className="secondary-button" type="button" disabled={!editingProviderId || Boolean(checkingProviderId)} onClick={() => onCheck(editingProviderId)}>
+            {checkingProviderId === editingProviderId ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
+            Check preset
+          </button>
+        </div>
+        <div className="provider-form-hint">
+          {editingProviderId ? "Run Check after saving to validate env, base URL, and model access." : "Create the preset first, then run Check before using it in Workspace."}
         </div>
       </section>
+    </div>
+  );
+}
+
+function ProviderNextAction({
+  providers,
+  nextActionProvider,
+  isLoading,
+}: {
+  readonly providers: readonly ProviderPreset[];
+  readonly nextActionProvider: ProviderPreset | undefined;
+  readonly isLoading: boolean;
+}): JSX.Element | null {
+  if (isLoading) {
+    return null;
+  }
+
+  if (providers.length === 0) {
+    return (
+      <div className="provider-next-action">
+        <CircleAlert size={16} />
+        <span>Next: choose a template, save the preset, then run Check before using it.</span>
+      </div>
+    );
+  }
+
+  if (nextActionProvider && providerNeedsSecret(nextActionProvider) && !nextActionProvider.apiKeyConfigured) {
+    const envName = nextActionProvider.apiKeyRef ? envNameFromRef(nextActionProvider.apiKeyRef) : "API_KEY";
+    return (
+      <div className="provider-next-action">
+        <CircleAlert size={16} />
+        <span>
+          Next: set <code>{envName}</code> for {nextActionProvider.displayName}, restart the daemon, then run Check.
+        </span>
+      </div>
+    );
+  }
+
+  if (nextActionProvider && canUseProviderForRun(nextActionProvider)) {
+    return (
+      <div className="provider-next-action ok">
+        <CheckCircle2 size={16} />
+        <span>
+          Ready: {nextActionProvider.displayName} can run tasks. Use Check when you change env, base URL, or model.
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="provider-next-action">
+      <CircleAlert size={16} />
+      <span>Next: enable a chat provider with a supported API protocol, then run Check.</span>
+    </div>
+  );
+}
+
+function ProviderEnvHint({ apiKeyRef }: { readonly apiKeyRef: string }): JSX.Element {
+  const trimmedRef = apiKeyRef.trim();
+  if (!trimmedRef) {
+    return (
+      <div className="provider-env-hint">
+        <SquareTerminal size={15} />
+        <span>Use an env ref like <code>env:DEEPSEEK_API_KEY</code> to keep API keys out of Ling Stack data.</span>
+      </div>
+    );
+  }
+
+  if (!trimmedRef.startsWith("env:")) {
+    return (
+      <div className="provider-env-hint">
+        <SquareTerminal size={15} />
+        <span>Make sure the daemon can resolve this secret ref before running Check.</span>
+      </div>
+    );
+  }
+
+  const envName = envNameFromRef(trimmedRef);
+  return (
+    <div className="provider-env-hint">
+      <SquareTerminal size={15} />
+      <span>
+        Shell: <code>export {envName}=...</code>. Restart or reload the daemon after setting env.
+      </span>
     </div>
   );
 }
@@ -3037,6 +3167,42 @@ function providerCheckStatusLabel(result: ProviderCheckResult): string {
     return "disabled";
   }
   return result.code ?? "failed";
+}
+
+function providerCheckGuidance(result: ProviderCheckResult, provider: ProviderPreset | undefined): string {
+  if (result.ok) {
+    return "Ready for run. You can select this preset from Workspace or a channel.";
+  }
+
+  const secretRef = provider?.apiKeyRef ?? extractEnvRef(result.message);
+  const envName = secretRef ? envNameFromRef(secretRef) : "the provider API key env";
+
+  if (result.code === "secret_missing") {
+    return `Set ${envName}, restart or reload the daemon process, then run Check again.`;
+  }
+  if (result.code === "auth_failed") {
+    return "Verify the key, account access, balance, and model permission for this provider.";
+  }
+  if (result.code === "network_failed") {
+    return "Check proxy, base URL, local relay status, and outbound network access from the daemon.";
+  }
+  if (result.code === "model_unsupported") {
+    return "Check the model name, API protocol, and base URL path for this provider.";
+  }
+  if (result.code === "provider_disabled") {
+    return "Enable the preset before using it for runs.";
+  }
+  if (result.code === "unsupported_capability") {
+    return "This preset needs chat capability before it can run coding tasks.";
+  }
+  if (result.code === "rate_limited") {
+    return "The endpoint is reachable. Wait or switch credentials, then run Check again.";
+  }
+  return "Inspect the provider response, then verify base URL, API protocol, and model configuration.";
+}
+
+function extractEnvRef(text: string): string | undefined {
+  return text.match(/env:[A-Za-z_][A-Za-z0-9_]*/)?.[0];
 }
 
 function viewTitle(view: ViewId): string {
