@@ -85,6 +85,10 @@ const riskyTools: readonly ToolName[] = ["bash", "edit", "write"];
 const taskStatuses: readonly TaskStatus[] = ["todo", "claimed", "running", "blocked", "review", "done", "failed", "cancelled"];
 type ViewId = "workspace" | "runs" | "providers" | "approvals" | "settings";
 type ApprovalResolution = "approve" | "deny";
+interface ProviderTemplateGroup {
+  readonly label: string;
+  readonly templates: readonly ProviderTemplate[];
+}
 
 const defaultForm: RunFormState = {
   cwd: "/Users/tianxiao/ling-stack",
@@ -586,6 +590,11 @@ export function App(): JSX.Element {
       setErrorMessage("请先选择 provider preset");
       return;
     }
+    const provider = providers.find((item) => item.id === providerPresetId);
+    if (!provider || !canUseProviderForRun(provider)) {
+      setErrorMessage(provider ? `Provider preset is not runnable: ${providerRunBlockerLabel(provider)}` : "找不到 provider preset");
+      return;
+    }
 
     const runCwd = form.cwd.trim();
     await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId), runCwd, async () => {
@@ -866,6 +875,7 @@ export function App(): JSX.Element {
               onRunTask={(task) => void runPersistedTask(task)}
               onReviewTask={(taskId) => void moveTaskToReview(taskId)}
               onDeleteTask={(taskId) => void removeTask(taskId)}
+              onOpenProviders={() => setActiveView("providers")}
             />
             <RunTimeline
               events={events}
@@ -1033,6 +1043,37 @@ function NavItem({
   );
 }
 
+function ProviderPresetOptions({
+  runnableProviders,
+  blockedProviders,
+}: {
+  readonly runnableProviders: readonly ProviderPreset[];
+  readonly blockedProviders: readonly ProviderPreset[];
+}): JSX.Element {
+  return (
+    <>
+      {runnableProviders.length > 0 ? (
+        <optgroup label="Runnable chat presets">
+          {runnableProviders.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.displayName} / {provider.model}
+            </option>
+          ))}
+        </optgroup>
+      ) : null}
+      {blockedProviders.length > 0 ? (
+        <optgroup label="Needs setup">
+          {blockedProviders.map((provider) => (
+            <option key={provider.id} value={provider.id} disabled>
+              {provider.displayName} / {provider.model} - {providerRunBlockerLabel(provider)}
+            </option>
+          ))}
+        </optgroup>
+      ) : null}
+    </>
+  );
+}
+
 function ChannelTaskWorkspace({
   cwd,
   channels,
@@ -1068,6 +1109,7 @@ function ChannelTaskWorkspace({
   onRunTask,
   onReviewTask,
   onDeleteTask,
+  onOpenProviders,
 }: {
   readonly cwd: string;
   readonly channels: readonly Channel[];
@@ -1103,10 +1145,15 @@ function ChannelTaskWorkspace({
   readonly onRunTask: (task: Task) => void;
   readonly onReviewTask: (taskId: string) => void;
   readonly onDeleteTask: (taskId: string) => void;
+  readonly onOpenProviders: () => void;
 }): JSX.Element {
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
   const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId) ?? "";
+  const runnableProviders = providers.filter(canUseProviderForRun);
+  const blockedProviders = providers.filter((provider) => !canUseProviderForRun(provider));
+  const effectiveProvider = providers.find((provider) => provider.id === effectiveProviderId);
+  const canRunWithEffectiveProvider = Boolean(effectiveProvider && canUseProviderForRun(effectiveProvider));
 
   return (
     <div className="task-workspace">
@@ -1190,11 +1237,7 @@ function ChannelTaskWorkspace({
                 onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
               >
                 <option value="">None</option>
-                {providers.map((provider) => (
-                  <option key={provider.id} value={provider.id} disabled={!canUseProviderForRun(provider)}>
-                    {provider.displayName} / {provider.model}
-                  </option>
-                ))}
+                <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
               </select>
             </label>
             <div className="tool-grid compact-tools" aria-label="Channel detail allowed tools">
@@ -1244,11 +1287,7 @@ function ChannelTaskWorkspace({
               onChange={(event) => onChannelFormChange({ ...channelForm, defaultProviderPresetId: event.target.value })}
             >
               <option value="">None</option>
-              {providers.map((provider) => (
-                <option key={provider.id} value={provider.id} disabled={!canUseProviderForRun(provider)}>
-                  {provider.displayName} / {provider.model}
-                </option>
-              ))}
+              <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
             </select>
           </label>
           <div className="tool-grid compact-tools" aria-label="Channel allowed tools">
@@ -1307,13 +1346,26 @@ function ChannelTaskWorkspace({
           <span>Run provider</span>
           <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providers.length === 0}>
             <option value="">Select provider preset</option>
-            {providers.map((provider) => (
-              <option key={provider.id} value={provider.id} disabled={!canUseProviderForRun(provider)}>
-                {provider.displayName} / {provider.model}
-              </option>
-            ))}
+            <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
           </select>
         </label>
+        {providers.length === 0 || runnableProviders.length === 0 || (effectiveProvider && !canUseProviderForRun(effectiveProvider)) ? (
+          <div className={canRunWithEffectiveProvider ? "provider-run-notice ok" : "provider-run-notice"}>
+            {canRunWithEffectiveProvider ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
+            <span>
+              {providers.length === 0
+                ? "No saved provider presets. Create one from GPT, Claude, relay, or domestic templates."
+                : runnableProviders.length === 0
+                  ? "No runnable provider presets. Enable a chat provider and configure its env key."
+                  : effectiveProvider
+                    ? `${effectiveProvider.displayName}: ${providerRunBlockerLabel(effectiveProvider)}.`
+                    : ""}
+            </span>
+            <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
+              Providers
+            </button>
+          </div>
+        ) : null}
 
         <div className="task-create">
           <label className="field wide">
@@ -1367,7 +1419,7 @@ function ChannelTaskWorkspace({
                 <Save size={16} />
                 Save task
               </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !effectiveProviderId}>
+              <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !canRunWithEffectiveProvider}>
                 {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                 Run
               </button>
@@ -1399,7 +1451,7 @@ function ChannelTaskWorkspace({
                     <Pencil size={14} />
                     Edit
                   </button>
-                  <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || !effectiveProviderId}>
+                  <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || !canRunWithEffectiveProvider}>
                     {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                     Run
                   </button>
@@ -1774,6 +1826,12 @@ function ProviderSettings({
   readonly onCheck: (providerId: string) => void;
   readonly onUse: (provider: ProviderPreset) => void;
 }): JSX.Element {
+  const runnableProviderCount = providers.filter(canUseProviderForRun).length;
+  const missingSecretCount = providers.filter((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured).length;
+  const chatTemplateCount = templates.filter((template) => template.capabilities.includes("chat")).length;
+  const mediaTemplateCount = templates.length - chatTemplateCount;
+  const templateGroups = groupProviderTemplates(templates);
+
   return (
     <div className="provider-layout">
       <section className="panel provider-list-panel" aria-labelledby="provider-list-title">
@@ -1800,11 +1858,18 @@ function ProviderSettings({
           </div>
         ) : null}
 
+        <div className="provider-onboarding-strip" aria-label="Provider onboarding status">
+          <MetaRow label="Runnable chat" value={String(runnableProviderCount)} compact />
+          <MetaRow label="Missing env" value={String(missingSecretCount)} compact />
+          <MetaRow label="Chat templates" value={String(chatTemplateCount)} compact />
+          <MetaRow label="Media templates" value={String(mediaTemplateCount)} compact />
+        </div>
+
         <div className="provider-list">
           {providers.length === 0 ? (
             <div className="empty-state compact-empty">
               {isLoading ? <Loader2 className="spin" /> : <PlugZap />}
-              <span>{isLoading ? "Loading providers..." : "No provider presets yet"}</span>
+              <span>{isLoading ? "Loading providers..." : "Create a preset from GPT, Claude, relay, or domestic provider templates"}</span>
             </div>
           ) : (
             providers.map((provider) => (
@@ -1818,6 +1883,9 @@ function ProviderSettings({
                     <span className={provider.apiKeyConfigured ? "provider-state key-ok" : "provider-state key-missing"}>
                       {provider.apiKeyRef ? (provider.apiKeyConfigured ? "key ready" : "key missing") : "no key ref"}
                     </span>
+                    <span className={canUseProviderForRun(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
+                      {canUseProviderForRun(provider) ? "run ready" : providerRunBlockerLabel(provider)}
+                    </span>
                   </div>
                   <div className="provider-meta-line">
                     <span>{provider.kind}</span>
@@ -1827,6 +1895,7 @@ function ProviderSettings({
                   </div>
                   <div className="provider-meta-line mono">
                     <span>{provider.baseUrl ?? "default endpoint"}</span>
+                    {provider.apiKeyRef ? <span>{provider.apiKeyRef}</span> : null}
                   </div>
                   <div className="capability-list">
                     {provider.capabilities.map((capability) => (
@@ -1875,26 +1944,39 @@ function ProviderSettings({
           </button>
         </div>
 
-        <label className="field wide provider-template-select">
-          <span>Template</span>
-          <select
-            value=""
-            onChange={(event) => {
-              const template = templates.find((item) => item.templateId === event.target.value);
-              if (template) {
-                onTemplateSelect(template);
-              }
-            }}
-          >
-            <option value="">Start from template</option>
-            {templates.map((template) => (
-              <option key={template.templateId} value={template.templateId}>
-                {template.displayName} / {template.model}
-              </option>
-            ))}
-          </select>
-          {templates.length === 0 ? <small>No templates available.</small> : null}
-        </label>
+        <div className="provider-template-board" aria-label="Provider templates">
+          {templateGroups.length === 0 ? (
+            <div className="empty-state compact-empty">
+              <PlugZap />
+              <span>No templates available.</span>
+            </div>
+          ) : (
+            templateGroups.map((group) => (
+              <div key={group.label} className="provider-template-group">
+                <div className="provider-template-group-head">
+                  <span>{group.label}</span>
+                  <small>{group.templates.length}</small>
+                </div>
+                <div className="provider-template-grid">
+                  {group.templates.map((template) => (
+                    <button
+                      key={template.templateId}
+                      className="provider-template-card"
+                      type="button"
+                      onClick={() => onTemplateSelect(template)}
+                    >
+                      <span className="provider-template-kind">{providerTemplateKindLabel(template)}</span>
+                      <strong>{template.displayName}</strong>
+                      <span className="provider-template-model">{template.model}</span>
+                      <small>{template.description}</small>
+                      {template.apiKeyRef ? <code>{template.apiKeyRef}</code> : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
 
         <div className="field-row">
           <label className="field">
@@ -2881,7 +2963,58 @@ function approvalPolicyToForm(policy: ApprovalPolicy): ApprovalPolicyFormState {
 }
 
 function canUseProviderForRun(provider: ProviderPreset): boolean {
-  return provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat");
+  return provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat") && providerSecretReady(provider);
+}
+
+function providerSecretReady(provider: ProviderPreset): boolean {
+  return !providerNeedsSecret(provider) || provider.apiKeyConfigured;
+}
+
+function providerNeedsSecret(provider: Pick<ProviderPreset, "api" | "authHeader" | "apiKeyRef">): boolean {
+  return provider.api === "anthropic-messages" || provider.authHeader !== false || Boolean(provider.apiKeyRef);
+}
+
+function providerRunBlockerLabel(provider: ProviderPreset): string {
+  if (!provider.enabled) {
+    return "disabled";
+  }
+  if (provider.api === "media-job") {
+    return "media only";
+  }
+  if (!provider.capabilities.includes("chat")) {
+    return "no chat";
+  }
+  if (!providerSecretReady(provider)) {
+    return provider.apiKeyRef ? `missing ${envNameFromRef(provider.apiKeyRef)}` : "missing env key";
+  }
+  return "not runnable";
+}
+
+function envNameFromRef(ref: string): string {
+  return ref.startsWith("env:") ? ref.slice("env:".length) : ref;
+}
+
+function providerTemplateKindLabel(template: ProviderTemplate): string {
+  if (template.api === "media-job") {
+    return "media";
+  }
+  if (template.kind === "openai" || template.kind === "anthropic") {
+    return "global";
+  }
+  if (template.kind === "openai-compatible") {
+    return "relay";
+  }
+  return "domestic";
+}
+
+function groupProviderTemplates(templates: readonly ProviderTemplate[]): readonly ProviderTemplateGroup[] {
+  const groups: ProviderTemplateGroup[] = [
+    { label: "GPT / Claude", templates: templates.filter((template) => providerTemplateKindLabel(template) === "global") },
+    { label: "Relays", templates: templates.filter((template) => providerTemplateKindLabel(template) === "relay") },
+    { label: "Domestic AI", templates: templates.filter((template) => providerTemplateKindLabel(template) === "domestic") },
+    { label: "Media", templates: templates.filter((template) => providerTemplateKindLabel(template) === "media") },
+  ];
+  return groups.filter((group) => group.templates.length > 0);
 }
 
 function providerCheckStatusLabel(result: ProviderCheckResult): string {
