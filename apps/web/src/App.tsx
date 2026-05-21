@@ -93,6 +93,14 @@ interface ProviderBatchResult {
   readonly message: string;
   readonly failedCount: number;
 }
+interface ProviderRepairItem {
+  readonly provider: ProviderPreset;
+  readonly title: string;
+  readonly detail: string;
+  readonly status: "attention" | "warning";
+  readonly action: "check" | "edit";
+  readonly actionLabel: string;
+}
 interface WorkspaceReadinessItem {
   readonly id: string;
   readonly label: string;
@@ -2260,12 +2268,14 @@ function ProviderSettings({
   readonly onCheckBatch: () => void;
   readonly onUse: (provider: ProviderPreset) => void;
 }): JSX.Element {
-  const runnableProviderCount = providers.filter(canUseProviderForRun).length;
+  const compatibleProviderCount = providers.filter(canUseProviderForRun).length;
+  const preflightReadyProviderCount = providers.filter(providerPreflightReady).length;
   const batchCheckProviderCount = providers.filter(canBatchCheckProvider).length;
   const missingSecretCount = providers.filter((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured).length;
   const chatTemplateCount = templates.filter((template) => template.capabilities.includes("chat")).length;
   const mediaTemplateCount = templates.length - chatTemplateCount;
   const templateGroups = groupProviderTemplates(templates);
+  const repairItems = buildProviderRepairItems(providers);
   const nextActionProvider =
     providers.find(
       (provider) =>
@@ -2291,7 +2301,7 @@ function ProviderSettings({
           <div className="provider-title-actions">
             <button className="secondary-button compact-button" type="button" onClick={onCheckBatch} disabled={isCheckingProviders || batchCheckProviderCount === 0}>
               {isCheckingProviders ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}
-              Check chat
+              Check all
             </button>
             <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading || isCheckingProviders}>
               {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
@@ -2313,13 +2323,21 @@ function ProviderSettings({
         ) : null}
 
         <div className="provider-onboarding-strip" aria-label="Provider onboarding status">
-          <MetaRow label="Runnable chat" value={String(runnableProviderCount)} compact />
+          <MetaRow label="Compatible chat" value={String(compatibleProviderCount)} compact />
+          <MetaRow label="Preflight ready" value={String(preflightReadyProviderCount)} compact />
           <MetaRow label="Missing env" value={String(missingSecretCount)} compact />
-          <MetaRow label="Chat templates" value={String(chatTemplateCount)} compact />
-          <MetaRow label="Media templates" value={String(mediaTemplateCount)} compact />
+          <MetaRow label="Templates" value={`${chatTemplateCount} chat / ${mediaTemplateCount} media`} compact />
         </div>
 
         <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={isLoading} />
+        {providers.length > 0 ? (
+          <ProviderRepairQueue
+            items={repairItems}
+            checkingProviderIds={checkingProviderIds}
+            onEdit={onEdit}
+            onCheck={onCheck}
+          />
+        ) : null}
         {batchResult ? (
           <div className={batchResult.failedCount === 0 ? "provider-batch-result ok" : "provider-batch-result bad"}>
             {batchResult.failedCount === 0 ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
@@ -2345,8 +2363,8 @@ function ProviderSettings({
                     <span className={provider.apiKeyConfigured ? "provider-state key-ok" : "provider-state key-missing"}>
                       {provider.apiKeyRef ? (provider.apiKeyConfigured ? "key ready" : "key missing") : "no key ref"}
                     </span>
-                    <span className={canUseProviderForRun(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
-                      {canUseProviderForRun(provider) ? "run ready" : providerRunBlockerLabel(provider)}
+                    <span className={providerPreflightReady(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
+                      {providerPreflightReady(provider) ? "preflight ready" : canUseProviderForRun(provider) ? "needs check" : providerRunBlockerLabel(provider)}
                     </span>
                     <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider)}>
                       {providerLastCheckLabel(provider)}
@@ -2373,7 +2391,7 @@ function ProviderSettings({
                   <button
                     className="secondary-button compact-button"
                     type="button"
-                    disabled={!canUseProviderForRun(provider)}
+                    disabled={!providerPreflightReady(provider)}
                     onClick={() => onUse(provider)}
                   >
                     <Play size={14} />
@@ -2588,6 +2606,18 @@ function ProviderNextAction({
     );
   }
 
+  const readyProvider = providers.find(providerPreflightReady);
+  if (readyProvider) {
+    return (
+      <div className="provider-next-action ok">
+        <CheckCircle2 size={16} />
+        <span>
+          Ready: {readyProvider.displayName} passed preflight and can run tasks. Re-check after env, base URL, or model changes.
+        </span>
+      </div>
+    );
+  }
+
   if (nextActionProvider && providerNeedsSecret(nextActionProvider) && !nextActionProvider.apiKeyConfigured) {
     const envName = nextActionProvider.apiKeyRef ? envNameFromRef(nextActionProvider.apiKeyRef) : "API_KEY";
     return (
@@ -2601,14 +2631,24 @@ function ProviderNextAction({
   }
 
   if (nextActionProvider && canUseProviderForRun(nextActionProvider)) {
-    return (
-      <div className="provider-next-action ok">
-        <CheckCircle2 size={16} />
-        <span>
-          Ready: {nextActionProvider.displayName} can run tasks. Use Check when you change env, base URL, or model.
-        </span>
-      </div>
-    );
+    if (!nextActionProvider.lastCheck) {
+      return (
+        <div className="provider-next-action">
+          <CircleAlert size={16} />
+          <span>Next: run Check for {nextActionProvider.displayName} before using it in Workspace.</span>
+        </div>
+      );
+    }
+    if (!nextActionProvider.lastCheck.ok) {
+      return (
+        <div className="provider-next-action">
+          <CircleAlert size={16} />
+          <span>
+            Next: repair {nextActionProvider.displayName} check failure ({providerCheckStatusLabel(nextActionProvider.lastCheck)}), then run Check again.
+          </span>
+        </div>
+      );
+    }
   }
 
   return (
@@ -2617,6 +2657,122 @@ function ProviderNextAction({
       <span>Next: enable a chat provider with a supported API protocol, then run Check.</span>
     </div>
   );
+}
+
+function ProviderRepairQueue({
+  items,
+  checkingProviderIds,
+  onEdit,
+  onCheck,
+}: {
+  readonly items: readonly ProviderRepairItem[];
+  readonly checkingProviderIds: readonly string[];
+  readonly onEdit: (provider: ProviderPreset) => void;
+  readonly onCheck: (providerId: string) => void;
+}): JSX.Element | null {
+  if (items.length === 0) {
+    return (
+      <div className="provider-repair-queue ok">
+        <CheckCircle2 size={16} />
+        <span>All saved chat providers are either preflight-ready or intentionally out of the run path.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="provider-repair-queue" aria-label="Provider repair queue">
+      <div className="provider-repair-head">
+        <span>Repair queue</span>
+        <small>{items.length}</small>
+      </div>
+      {items.map((item) => (
+        <article key={item.provider.id} className={`provider-repair-item ${item.status}`}>
+          {item.status === "warning" ? <Clock3 size={16} /> : <CircleAlert size={16} />}
+          <span className="provider-repair-copy">
+            <strong>{item.title}</strong>
+            <small>{item.detail}</small>
+          </span>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => {
+              if (item.action === "check") {
+                onCheck(item.provider.id);
+                return;
+              }
+              onEdit(item.provider);
+            }}
+            disabled={checkingProviderIds.includes(item.provider.id)}
+          >
+            {checkingProviderIds.includes(item.provider.id) ? (
+              <Loader2 className="spin" size={14} />
+            ) : item.action === "check" ? (
+              <CheckCircle2 size={14} />
+            ) : (
+              <Pencil size={14} />
+            )}
+            {item.actionLabel}
+          </button>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function buildProviderRepairItems(providers: readonly ProviderPreset[]): readonly ProviderRepairItem[] {
+  return providers
+    .map(buildProviderRepairItem)
+    .filter((item): item is ProviderRepairItem => item !== undefined)
+    .slice(0, 4);
+}
+
+function buildProviderRepairItem(provider: ProviderPreset): ProviderRepairItem | undefined {
+  if (providerPreflightReady(provider)) {
+    return undefined;
+  }
+
+  if (providerNeedsSecret(provider) && !provider.apiKeyConfigured) {
+    const envName = provider.apiKeyRef ? envNameFromRef(provider.apiKeyRef) : "API_KEY";
+    return {
+      provider,
+      title: `${provider.displayName}: set env`,
+      detail: `export ${envName}=... then restart the daemon and run Check.`,
+      status: "attention",
+      action: "edit",
+      actionLabel: "Edit",
+    };
+  }
+
+  if (!provider.enabled || provider.api === "media-job" || !provider.capabilities.includes("chat")) {
+    return {
+      provider,
+      title: `${provider.displayName}: not chat-compatible`,
+      detail: provider.api === "media-job" ? "Media providers are not runnable for coding tasks yet." : `Current blocker: ${providerRunBlockerLabel(provider)}.`,
+      status: "attention",
+      action: "edit",
+      actionLabel: "Edit",
+    };
+  }
+
+  if (!provider.lastCheck) {
+    return {
+      provider,
+      title: `${provider.displayName}: needs check`,
+      detail: "Validate env, base URL, protocol, and model before using it in Workspace.",
+      status: "warning",
+      action: "check",
+      actionLabel: "Check",
+    };
+  }
+
+  return {
+    provider,
+    title: `${provider.displayName}: ${providerCheckStatusLabel(provider.lastCheck)}`,
+    detail: `${provider.lastCheck.message} ${providerCheckGuidance(provider.lastCheck, provider)}`,
+    status: "attention",
+    action: "check",
+    actionLabel: "Retry",
+  };
 }
 
 function ProviderEnvHint({ apiKeyRef }: { readonly apiKeyRef: string }): JSX.Element {
@@ -3570,6 +3726,10 @@ function providerRunPreflightBlocker(provider: ProviderPreset | undefined): stri
     return `${provider.displayName}: provider check failed (${providerCheckStatusLabel(provider.lastCheck)}). ${providerCheckGuidance(provider.lastCheck, provider)}`;
   }
   return undefined;
+}
+
+function providerPreflightReady(provider: ProviderPreset): boolean {
+  return providerRunPreflightBlocker(provider) === undefined;
 }
 
 function taskProviderReadinessMessage(provider: ProviderPreset | undefined, blocker: string | undefined): string {

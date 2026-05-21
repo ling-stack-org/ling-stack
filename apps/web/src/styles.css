@@ -1294,6 +1294,72 @@ pre {
   line-height: 1.45;
 }
 
+.provider-repair-queue {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px;
+  border: 1px solid #d8ded7;
+  background: #fbfcfa;
+}
+
+.provider-repair-queue.ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-color: #a9cfc0;
+  background: #e7f5ef;
+  color: #116149;
+  font-size: 12px;
+}
+
+.provider-repair-head,
+.provider-repair-item {
+  display: grid;
+  align-items: center;
+}
+
+.provider-repair-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  color: #61706b;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.provider-repair-item {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #e7b4a8;
+  background: #fff7f4;
+  color: #7c2d12;
+}
+
+.provider-repair-item.warning {
+  border-color: #d6c28a;
+  background: #fffaf0;
+  color: #7a4a0a;
+}
+
+.provider-repair-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.provider-repair-copy strong {
+  color: #17211f;
+  font-size: 12px;
+}
+
+.provider-repair-copy small {
+  overflow-wrap: anywhere;
+  color: #5f6d68;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .provider-next-action,
 .provider-env-hint,
 .provider-batch-result {
@@ -2029,6 +2095,7 @@ pre {
   .run-detail-summary,
   .provider-number-row,
   .provider-onboarding-strip,
+  .provider-repair-item,
   .provider-template-grid,
   .provider-run-notice {
     grid-template-columns: 1fr;

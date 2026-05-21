@@ -146,7 +146,7 @@ http://127.0.0.1:17891
 curl http://127.0.0.1:17891/health
 ```
 
-### 5. Create a provider preset
+### 5. Create and check a provider preset
 
 Provider presets persist non-secret provider configuration in the local workspace database. Secrets are referenced by name, not stored as raw keys.
 
@@ -171,6 +171,19 @@ export SEEDREAM_API_KEY=...
 export SEEDANCE_API_KEY=...
 ```
 
+Recommended CLI first loop:
+
+```bash
+node packages/cli/dist/index.js init --with-provider-templates
+export LOCAL_RELAY_API_KEY=sk-local
+node packages/cli/dist/index.js provider list
+node packages/cli/dist/index.js provider update provider_... --enabled true --api-key-ref env:LOCAL_RELAY_API_KEY
+node packages/cli/dist/index.js provider check-all
+node packages/cli/dist/index.js doctor
+```
+
+The Web UI exposes the same flow in Providers: choose a GPT, Claude, relay, domestic AI, or media template; save the preset; set the shown `env:NAME`; run Check; then use only preflight-ready providers in Workspace.
+
 ```bash
 export LOCAL_RELAY_API_KEY=sk-local
 
@@ -192,7 +205,14 @@ curl http://127.0.0.1:17891/providers?cwd="$PWD" \
 
 The response includes a generated `provider.id`, for example `provider_...`.
 
-### 6. Run a task through the Pi runner
+### 6. Create a channel and task
+
+```bash
+node packages/cli/dist/index.js channel create --name Engineering --path "$PWD" --provider provider_...
+node packages/cli/dist/index.js task create --channel channel_... --title "Inspect repo" --prompt "List files and summarize this repo."
+```
+
+### 7. Run a task through the Pi runner
 
 `POST /runs` returns an SSE stream. See [Daemon API](docs/daemon-api.md) for full request examples.
 

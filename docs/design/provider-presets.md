@@ -639,6 +639,32 @@ Inline `provider` remains accepted for development and does not participate in p
 
 v0.1 does not expire `lastCheck` by time. Editing a provider clears the prior check result, and daemon run startup re-resolves env secrets so obvious env drift still fails unless the caller explicitly sets `skipProviderPreflight`.
 
+### Onboarding and Repair UX
+
+Provider setup should present a short, repeatable path:
+
+```text
+choose template -> save preset -> set env -> check provider -> use in workspace
+```
+
+Web Provider Settings should expose:
+
+- template groups for GPT/Claude, OpenAI-compatible relays, domestic AI, and media providers,
+- summary counters for chat-compatible providers, preflight-ready providers, missing env refs, and templates,
+- a compact repair queue ordered by next action,
+- `Check all` for enabled chat providers,
+- per-provider `Check`, `Edit`, and `Use` actions.
+
+Repair queue rules:
+
+- missing env is highest priority and should show the exact env var name derived from `apiKeyRef`,
+- unchecked compatible providers should point to `Check`,
+- failed checks should show `lastCheck.code` and guidance,
+- disabled, media-only, or no-chat providers should point to `Edit`,
+- `Use` is enabled only when provider preflight is ready, not merely when hard compatibility checks pass.
+
+CLI `doctor` and Web readiness should use the same readiness meaning: a provider can start product runs only when it passes the daemon preflight gate.
+
 ## Validation Rules
 
 Provider preset validation:

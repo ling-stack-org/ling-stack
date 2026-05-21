@@ -244,6 +244,18 @@ Rules:
 - do not reveal secret values,
 - show health check result with stable error code.
 
+Provider onboarding and repair:
+
+- Provider Settings must make the path from template to runnable preset explicit: choose template, save preset, set env if needed, run Check, then Use.
+- The list summary should distinguish chat-compatible providers from preflight-ready providers. Compatibility means enabled, non-media, chat-capable, and secret-present; preflight-ready additionally requires `lastCheck.ok === true`.
+- The primary batch action should read as `Check all` and only target enabled chat providers whose hard compatibility rules can be checked.
+- A compact repair queue should show the next blocked providers before the full list:
+  - missing env: show the env name and daemon restart hint,
+  - unchecked compatible preset: show Check action,
+  - failed check: show stable failure code/message and Check action,
+  - disabled/media/no-chat preset: show Edit action.
+- The `Use` shortcut should only be enabled for preflight-ready chat providers, because the daemon run gate will reject unchecked or failed presets.
+
 ### Channel Setup
 
 Backed by channel APIs:
