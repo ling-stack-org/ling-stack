@@ -658,7 +658,7 @@ export function App(): JSX.Element {
     }
   }
 
-  async function resolveApproval(approvalId: string, decision: ApprovalResolution): Promise<void> {
+  async function resolveApproval(approvalId: string, decision: ApprovalResolution, reason?: string): Promise<void> {
     if (resolvingApprovalsRef.current.has(approvalId)) {
       return;
     }
@@ -671,8 +671,8 @@ export function App(): JSX.Element {
         approvals.find((approval) => approval.id === approvalId) ?? activeRunApprovals.find((approval) => approval.id === approvalId);
       const response =
         decision === "approve"
-          ? await approveApproval(form.cwd.trim(), approvalId)
-          : await denyApproval(form.cwd.trim(), approvalId);
+          ? await approveApproval(form.cwd.trim(), approvalId, reason)
+          : await denyApproval(form.cwd.trim(), approvalId, reason);
       setApprovals((current) => upsertApproval(current, response.approval));
 
       const resolvedRunId = response.approval.runId || approvalBeforeResolution?.runId;
@@ -876,7 +876,7 @@ export function App(): JSX.Element {
               approvalsLoading={approvalsLoading}
               resolvingApprovals={resolvingApprovals}
               onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
-              onResolveApproval={(approvalId, decision) => void resolveApproval(approvalId, decision)}
+              onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
             />
           </div>
         ) : activeView === "runs" ? (
@@ -904,7 +904,7 @@ export function App(): JSX.Element {
             onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
             onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
             onRerun={(sourceRun) => void rerunRun(sourceRun)}
-            onResolveApproval={(approvalId, decision) => void resolveApproval(approvalId, decision)}
+            onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
             onSelect={(runId) => void selectRun(runId)}
           />
         ) : (
@@ -960,7 +960,7 @@ export function App(): JSX.Element {
                 errorMessage={errorMessage}
                 onCwdChange={(cwd) => setForm({ ...form, cwd })}
                 onRefresh={() => void refreshApprovals()}
-                onResolve={(approvalId, decision) => void resolveApproval(approvalId, decision)}
+                onResolve={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
               />
             )
           )
@@ -1459,7 +1459,7 @@ function RunHistory({
   readonly onRefreshSelected: () => void;
   readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
-  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution) => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onSelect: (runId: string) => void;
 }): JSX.Element {
   return (
@@ -1557,7 +1557,7 @@ function RunDetailPanel({
   readonly onRefresh: () => void;
   readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
-  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution) => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
 }): JSX.Element {
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   const terminalEvent = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));
@@ -2116,7 +2116,7 @@ function ApprovalsPage({
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onRefresh: () => void;
-  readonly onResolve: (approvalId: string, decision: ApprovalResolution) => void;
+  readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
 }): JSX.Element {
   return (
     <section className="panel approvals-panel" aria-labelledby="approvals-title">
@@ -2173,9 +2173,37 @@ function ApprovalCard({
   readonly approval: ApprovalRequest;
   readonly compact?: boolean;
   readonly resolvingDecision?: ApprovalResolution;
-  readonly onResolve: (approvalId: string, decision: ApprovalResolution) => void;
+  readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
 }): JSX.Element {
+  const [decisionReason, setDecisionReason] = useState("");
+  const [confirmDecision, setConfirmDecision] = useState<ApprovalResolution | undefined>();
+  const [reasonError, setReasonError] = useState("");
   const isResolving = Boolean(resolvingDecision);
+  const requiresSecondConfirmation = approval.risk === "high" || approval.risk === "critical";
+  const trimmedReason = decisionReason.trim();
+
+  function submitDecision(decision: ApprovalResolution): void {
+    if (isResolving) {
+      return;
+    }
+
+    if (decision === "approve" && requiresSecondConfirmation) {
+      if (confirmDecision !== "approve") {
+        setConfirmDecision("approve");
+        setReasonError(trimmedReason ? "" : "High-risk approvals need a decision reason.");
+        return;
+      }
+      if (!trimmedReason) {
+        setReasonError("High-risk approvals need a decision reason.");
+        return;
+      }
+    }
+
+    setConfirmDecision(undefined);
+    setReasonError("");
+    onResolve(approval.id, decision, trimmedReason || undefined);
+  }
+
   return (
     <article className={`approval-row ${approval.risk}${compact ? " compact" : ""}`}>
       <div className="approval-main">
@@ -2196,25 +2224,52 @@ function ApprovalCard({
         <pre>{formatEventData(approval.payload)}</pre>
       </div>
       {approval.status === "pending" ? (
-        <div className="approval-actions">
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={() => onResolve(approval.id, "approve")}
-            disabled={isResolving}
-          >
-            {resolvingDecision === "approve" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-            {resolvingDecision === "approve" ? "Approving" : "Approve"}
-          </button>
-          <button
-            className="secondary-button compact-button danger"
-            type="button"
-            onClick={() => onResolve(approval.id, "deny")}
-            disabled={isResolving}
-          >
-            {resolvingDecision === "deny" ? <Loader2 className="spin" size={14} /> : <CircleAlert size={14} />}
-            {resolvingDecision === "deny" ? "Denying" : "Deny"}
-          </button>
+        <div className="approval-decision-panel">
+          <label className="approval-reason-field">
+            <span>Decision reason</span>
+            <textarea
+              value={decisionReason}
+              rows={compact ? 2 : 3}
+              placeholder={requiresSecondConfirmation ? "Required before approving high-risk requests" : "Optional note for the audit log"}
+              disabled={isResolving}
+              onChange={(event) => {
+                setDecisionReason(event.target.value);
+                if (event.target.value.trim()) {
+                  setReasonError("");
+                }
+              }}
+            />
+          </label>
+          {reasonError ? <p className="approval-reason-error">{reasonError}</p> : null}
+          {confirmDecision === "approve" ? (
+            <div className="approval-confirm-panel" role="alert">
+              <CircleAlert size={15} />
+              <span>High-risk approval. Review the payload and reason, then confirm.</span>
+              <button className="secondary-button compact-button" type="button" onClick={() => setConfirmDecision(undefined)} disabled={isResolving}>
+                Cancel
+              </button>
+            </div>
+          ) : null}
+          <div className="approval-actions">
+            <button
+              className={confirmDecision === "approve" ? "secondary-button compact-button danger" : "secondary-button compact-button"}
+              type="button"
+              onClick={() => submitDecision("approve")}
+              disabled={isResolving}
+            >
+              {resolvingDecision === "approve" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+              {resolvingDecision === "approve" ? "Approving" : confirmDecision === "approve" ? "Confirm approve" : "Approve"}
+            </button>
+            <button
+              className="secondary-button compact-button danger"
+              type="button"
+              onClick={() => submitDecision("deny")}
+              disabled={isResolving}
+            >
+              {resolvingDecision === "deny" ? <Loader2 className="spin" size={14} /> : <CircleAlert size={14} />}
+              {resolvingDecision === "deny" ? "Denying" : "Deny"}
+            </button>
+          </div>
         </div>
       ) : null}
     </article>
@@ -2394,7 +2449,7 @@ function RunTimeline({
   readonly approvalsLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly onRefreshApprovals: () => void;
-  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution) => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
 }): JSX.Element {
   return (
     <section className="panel timeline" aria-labelledby="run-timeline-title">

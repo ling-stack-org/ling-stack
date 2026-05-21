@@ -1301,7 +1301,7 @@ pre {
 
 .approval-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
   gap: 14px;
   padding: 12px;
   border: 1px solid #e1e6e2;
@@ -1316,11 +1316,6 @@ pre {
 .approval-row.compact {
   grid-template-columns: minmax(0, 1fr);
   background: #ffffff;
-}
-
-.approval-row.compact .approval-actions {
-  justify-content: flex-start;
-  max-width: none;
 }
 
 .approval-main {
@@ -1393,12 +1388,70 @@ pre {
   color: #9a341f;
 }
 
+.approval-decision-panel {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.approval-reason-field {
+  display: grid;
+  gap: 5px;
+}
+
+.approval-reason-field span {
+  color: #61706b;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.approval-reason-field textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+
+.approval-reason-error {
+  margin: 0;
+  color: #9a341f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.approval-confirm-panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e7b4a8;
+  background: #fff1ed;
+  color: #7c2d12;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 .approval-actions {
   justify-content: flex-end;
   align-content: start;
   flex-wrap: wrap;
   gap: 7px;
-  max-width: 190px;
+}
+
+.approval-row.compact .approval-actions {
+  justify-content: flex-start;
+}
+
+@media (max-width: 1180px) {
+  .approval-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .approval-actions {
+    justify-content: flex-start;
+  }
 }
 
 .right-panel {
