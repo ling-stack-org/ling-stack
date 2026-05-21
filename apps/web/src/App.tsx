@@ -1920,12 +1920,16 @@ function ProviderSettings({
                     <span className={canUseProviderForRun(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
                       {canUseProviderForRun(provider) ? "run ready" : providerRunBlockerLabel(provider)}
                     </span>
+                    <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider)}>
+                      {providerLastCheckLabel(provider)}
+                    </span>
                   </div>
                   <div className="provider-meta-line">
                     <span>{provider.kind}</span>
                     <span>{provider.providerId}</span>
                     <span>{provider.model}</span>
                     <span>{provider.api}</span>
+                    <span>{provider.lastCheck ? `last check ${formatDateTime(provider.lastCheck.checkedAt)}` : "not checked"}</span>
                   </div>
                   <div className="provider-meta-line mono">
                     <span>{provider.baseUrl ?? "default endpoint"}</span>
@@ -3118,6 +3122,27 @@ function providerRunBlockerLabel(provider: ProviderPreset): string {
     return provider.apiKeyRef ? `missing ${envNameFromRef(provider.apiKeyRef)}` : "missing env key";
   }
   return "not runnable";
+}
+
+function providerLastCheckLabel(provider: ProviderPreset): string {
+  if (!provider.lastCheck) {
+    return "unchecked";
+  }
+  return provider.lastCheck.ok ? "check ready" : providerCheckStatusLabel(provider.lastCheck);
+}
+
+function providerLastCheckClass(provider: ProviderPreset): string {
+  if (!provider.lastCheck) {
+    return "provider-state check-unknown";
+  }
+  return provider.lastCheck.ok ? "provider-state check-ok" : "provider-state check-bad";
+}
+
+function providerLastCheckTitle(provider: ProviderPreset): string {
+  if (!provider.lastCheck) {
+    return "Provider has not been checked yet.";
+  }
+  return `${provider.lastCheck.message} (${provider.lastCheck.checkedAt})`;
 }
 
 function envNameFromRef(ref: string): string {

@@ -159,6 +159,41 @@ test("write outside allowed paths is denied even when write is allowed", async (
   }
 });
 
+test("provider check persists last check result", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const created = await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "jimeng",
+      displayName: "Jimeng Image",
+      providerId: "jimeng",
+      model: "jimeng-image",
+      api: "media-job",
+      capabilities: ["image_generate"],
+      input: ["text", "image"],
+      authHeader: false,
+      enabled: true,
+    });
+    const providerId = created.provider.id;
+
+    const checkResult = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(checkResult.ok, true);
+    assert.equal(checkResult.code, "static_check");
+
+    const fetched = await getJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(fetched.provider.lastCheck.ok, true);
+    assert.equal(fetched.provider.lastCheck.code, "static_check");
+    assert.equal(fetched.provider.lastCheck.checkedAt, checkResult.checkedAt);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 class ApprovalProbeRunner {
   constructor(request) {
     this.request = request;

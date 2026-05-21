@@ -17,6 +17,7 @@ import {
 import {
   createProviderPresetId,
   type ListProviderPresetsOptions,
+  type ProviderCheckResult,
   type ProviderPreset,
   type ProviderPresetInput,
   type ProviderPresetUpdateInput,
@@ -69,6 +70,8 @@ const WORKSPACE_MIGRATION_VERSION = 4;
 const WORKSPACE_MIGRATION_NAME = "create_workspace_channels_tasks";
 const APPROVAL_POLICY_MIGRATION_VERSION = 5;
 const APPROVAL_POLICY_MIGRATION_NAME = "create_approval_policy";
+const PROVIDER_CHECKS_MIGRATION_VERSION = 6;
+const PROVIDER_CHECKS_MIGRATION_NAME = "add_provider_check_results";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -573,9 +576,10 @@ export class SqliteRunStore implements RunStore {
           compat_json,
           capabilities_json,
           enabled,
+          last_check_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         preset.id,
@@ -595,6 +599,7 @@ export class SqliteRunStore implements RunStore {
         stringifyJson(preset.compat),
         stringifyJson(preset.capabilities),
         preset.enabled ? 1 : 0,
+        preset.lastCheck ? stringifyJson(preset.lastCheck) : null,
         preset.createdAt,
         preset.updatedAt,
       );
@@ -642,6 +647,7 @@ export class SqliteRunStore implements RunStore {
       compat: input.compat ?? existing.compat,
       capabilities: input.capabilities ?? existing.capabilities,
       enabled: input.enabled ?? existing.enabled,
+      lastCheck: undefined,
       updatedAt: now,
     };
 
@@ -665,6 +671,7 @@ export class SqliteRunStore implements RunStore {
           compat_json = ?,
           capabilities_json = ?,
           enabled = ?,
+          last_check_json = ?,
           updated_at = ?
         WHERE id = ?
       `)
@@ -685,10 +692,21 @@ export class SqliteRunStore implements RunStore {
         stringifyJson(next.compat),
         stringifyJson(next.capabilities),
         next.enabled ? 1 : 0,
+        next.lastCheck ? stringifyJson(next.lastCheck) : null,
         next.updatedAt,
         id,
       );
 
+    return this.getProviderPreset(id);
+  }
+
+  recordProviderCheckResult(id: string, result: ProviderCheckResult): ProviderPreset | undefined {
+    const updateResult = this.database
+      .prepare("UPDATE provider_presets SET last_check_json = ? WHERE id = ?")
+      .run(stringifyJson(result), id);
+    if (Number(updateResult.changes) === 0) {
+      return undefined;
+    }
     return this.getProviderPreset(id);
   }
 
@@ -1062,6 +1080,14 @@ export class SqliteRunStore implements RunStore {
 
       this.recordMigration(APPROVAL_POLICY_MIGRATION_VERSION, APPROVAL_POLICY_MIGRATION_NAME);
     }
+
+    if (!this.hasMigration(PROVIDER_CHECKS_MIGRATION_VERSION)) {
+      if (!this.hasColumn("provider_presets", "last_check_json")) {
+        this.database.exec("ALTER TABLE provider_presets ADD COLUMN last_check_json TEXT;");
+      }
+
+      this.recordMigration(PROVIDER_CHECKS_MIGRATION_VERSION, PROVIDER_CHECKS_MIGRATION_NAME);
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -1254,6 +1280,7 @@ function mapProviderPreset(row: Record<string, SQLOutputValue>): ProviderPreset 
     compat: parseJsonObject(readString(row, "compat_json")),
     capabilities: parseJsonStringArray(readString(row, "capabilities_json")) as ProviderPreset["capabilities"],
     enabled: readBoolean(row, "enabled"),
+    lastCheck: parseProviderCheckResult(readNullableString(row, "last_check_json")),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
@@ -1357,6 +1384,7 @@ function providerPresetSelectSql(whereClause: string): string {
       compat_json,
       capabilities_json,
       enabled,
+      last_check_json,
       created_at,
       updated_at
     FROM provider_presets
@@ -1435,6 +1463,28 @@ function parseJsonStringArray(value: string): string[] {
     throw new Error("Expected JSON string array from SQLite");
   }
   return parsed as string[];
+}
+
+function parseProviderCheckResult(value: string | undefined): ProviderCheckResult | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = parseJsonObject(value);
+  if (typeof parsed.ok !== "boolean" || typeof parsed.message !== "string" || typeof parsed.checkedAt !== "string") {
+    throw new Error("Expected provider check result from SQLite");
+  }
+  if (parsed.code !== undefined && typeof parsed.code !== "string") {
+    throw new Error("Expected provider check code to be a string");
+  }
+
+  const code = typeof parsed.code === "string" ? parsed.code : undefined;
+  return omitUndefined({
+    ok: parsed.ok,
+    code,
+    message: parsed.message,
+    checkedAt: parsed.checkedAt,
+  }) as ProviderCheckResult;
 }
 
 function readString(row: Record<string, SQLOutputValue> | undefined, key: string): string {

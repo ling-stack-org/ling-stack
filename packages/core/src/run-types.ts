@@ -11,6 +11,7 @@ import type {
 } from "./approval-policy.js";
 import type {
   ListProviderPresetsOptions,
+  ProviderCheckResult,
   ProviderPreset,
   ProviderPresetInput,
   ProviderPresetUpdateInput,
@@ -144,6 +145,7 @@ export interface RunStore {
   getProviderPreset(id: string): ProviderPreset | undefined;
   listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];
   updateProviderPreset(id: string, input: ProviderPresetUpdateInput, now: string): ProviderPreset | undefined;
+  recordProviderCheckResult(id: string, result: ProviderCheckResult): ProviderPreset | undefined;
   deleteProviderPreset(id: string): boolean;
   createApprovalRequest(input: CreateApprovalRequestInput, now: string): ApprovalRequest;
   getApprovalRequest(id: string): ApprovalRequest | undefined;

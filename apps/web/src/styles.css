@@ -1205,7 +1205,8 @@ pre {
 
 .provider-state.enabled,
 .provider-state.key-ok,
-.provider-state.run-ready {
+.provider-state.run-ready,
+.provider-state.check-ok {
   border-color: #a9cfc0;
   background: #e7f5ef;
   color: #116149;
@@ -1213,10 +1214,17 @@ pre {
 
 .provider-state.disabled,
 .provider-state.key-missing,
-.provider-state.run-blocked {
+.provider-state.run-blocked,
+.provider-state.check-bad {
   border-color: #e7b4a8;
   background: #fff1ed;
   color: #9a341f;
+}
+
+.provider-state.check-unknown {
+  border-color: #cfd8d3;
+  background: #fbfcfa;
+  color: #61706b;
 }
 
 .provider-meta-line {

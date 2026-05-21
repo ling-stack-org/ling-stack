@@ -2168,7 +2168,7 @@ function printProvidersList(response: unknown): void {
     return;
   }
   printTable(
-    ["ID", "Kind", "Name", "Provider", "Model", "API", "Enabled", "Secret"],
+    ["ID", "Kind", "Name", "Provider", "Model", "API", "Enabled", "Secret", "Check"],
     providers.map((provider) => [
       truncate(readString(provider, "id") ?? "", 32),
       truncate(readString(provider, "kind") ?? "", 18),
@@ -2178,6 +2178,7 @@ function printProvidersList(response: unknown): void {
       truncate(readString(provider, "api") ?? "", 20),
       String(readBoolean(provider, "enabled") ?? false),
       providerSecretStatus(provider),
+      truncate(providerCheckStatus(provider), 18),
     ]),
   );
 }
@@ -2225,6 +2226,7 @@ function printProviderDetail(response: unknown): void {
     console.log("Compat:");
     console.log(JSON.stringify(compat, null, 2));
   }
+  printProviderLastCheck(provider);
   console.log(`Created: ${readString(provider, "createdAt") ?? ""}`);
   console.log(`Updated: ${readString(provider, "updatedAt") ?? ""}`);
 }
@@ -2234,6 +2236,31 @@ function providerSecretStatus(provider: unknown): string {
     return "none";
   }
   return readBoolean(provider, "apiKeyConfigured") ? "configured" : "missing";
+}
+
+function providerCheckStatus(provider: unknown): string {
+  const lastCheck = readField(provider, "lastCheck");
+  if (!isRecord(lastCheck)) {
+    return "unchecked";
+  }
+  if (readBoolean(lastCheck, "ok")) {
+    return "ready";
+  }
+  return readString(lastCheck, "code") ?? "failed";
+}
+
+function printProviderLastCheck(provider: unknown): void {
+  const lastCheck = readField(provider, "lastCheck");
+  if (!isRecord(lastCheck)) {
+    console.log("Last check: unchecked");
+    return;
+  }
+  console.log(`Last check: ${providerCheckStatus(provider)}`);
+  console.log(`Checked: ${readString(lastCheck, "checkedAt") ?? ""}`);
+  const message = readString(lastCheck, "message");
+  if (message) {
+    console.log(`Check message: ${message}`);
+  }
 }
 
 function formatOptionalBoolean(value: boolean | undefined): string {

@@ -733,7 +733,9 @@ async function handleProviderItem(
   }
 
   if (request.method === "POST" && route.action === "check") {
-    writeJson(response, 200, await checkProviderPreset(preset));
+    const checkResult = await checkProviderPreset(preset);
+    store.recordProviderCheckResult(route.providerId, checkResult);
+    writeJson(response, 200, checkResult);
     return;
   }
 

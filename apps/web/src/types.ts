@@ -163,6 +163,7 @@ export interface ProviderPreset {
   readonly compat: Record<string, unknown>;
   readonly capabilities: readonly ProviderCapability[];
   readonly enabled: boolean;
+  readonly lastCheck?: ProviderCheckResult;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
