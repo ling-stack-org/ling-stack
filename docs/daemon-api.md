@@ -396,6 +396,37 @@ Response:
 
 Provider presets store reusable non-secret provider configuration. API keys are represented as `apiKeyRef`, currently `env:NAME`.
 
+### List Provider Templates
+
+```http
+GET /provider-templates
+```
+
+Response:
+
+```json
+{
+  "templates": [
+    {
+      "templateId": "local-openai-compatible-relay",
+      "kind": "openai-compatible",
+      "displayName": "Local OpenAI-Compatible Relay",
+      "description": "Local relay, One API, New API, LiteLLM, OpenRouter-style gateways, or private compatible gateways.",
+      "providerId": "local-relay",
+      "model": "dpv4",
+      "api": "openai-completions",
+      "baseUrl": "http://127.0.0.1:8317/v1",
+      "apiKeyRef": "env:LOCAL_RELAY_API_KEY",
+      "capabilities": ["chat", "tool_call", "reasoning"],
+      "input": ["text"],
+      "enabled": false
+    }
+  ]
+}
+```
+
+Templates are reusable request bodies for `POST /providers`. They are disabled by default and use env secret refs only.
+
 ### List Providers
 
 ```http
@@ -479,12 +510,13 @@ Response:
 ```json
 {
   "ok": true,
-  "message": "Provider preset configuration is valid.",
+  "code": "ready",
+  "message": "Provider is reachable and accepted the configured model.",
   "checkedAt": "2026-05-20T00:00:00.000Z"
 }
 ```
 
-The current check validates shape, base URL format, enabled state, supported capability, and whether `apiKeyRef` resolves in the daemon environment. It does not yet perform provider-specific network model calls.
+The check validates base URL format, required secret refs, enabled state, and supported capabilities. For `openai-completions`, `openai-responses`, and `anthropic-messages`, it also performs a small live model request with a 10 second timeout. Common failure codes include `secret_missing`, `network_failed`, `auth_failed`, `model_unsupported`, `rate_limited`, `provider_disabled`, and `provider_error`.
 
 ## Approvals
 
@@ -559,4 +591,4 @@ Approval decisions append `approval_approved` or `approval_denied` to the linked
 - HTTP client disconnect does not imply cancellation; callers must use `POST /runs/:id/cancel`.
 - Cancellation is best effort and depends on Pi session abort behavior.
 - Inline API keys are accepted in `/runs` for early development only; production desktop builds should use OS keychain or a local secret store.
-- Provider health checks are config checks only, not live model probes yet.
+- Media provider health checks are static config checks until media job execution exists.

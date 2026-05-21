@@ -150,6 +150,27 @@ curl http://127.0.0.1:17891/health
 
 Provider presets persist non-secret provider configuration in the local workspace database. Secrets are referenced by name, not stored as raw keys.
 
+Built-in templates are available from the daemon:
+
+```bash
+curl http://127.0.0.1:17891/provider-templates
+```
+
+Common development secret refs:
+
+```bash
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+export LOCAL_RELAY_API_KEY=sk-local
+export ARK_API_KEY=...
+export DEEPSEEK_API_KEY=...
+export MINIMAX_API_KEY=...
+export ZHIPU_API_KEY=...
+export JIMENG_API_KEY=...
+export SEEDREAM_API_KEY=...
+export SEEDANCE_API_KEY=...
+```
+
 ```bash
 export LOCAL_RELAY_API_KEY=sk-local
 
@@ -252,7 +273,9 @@ Implemented:
 - Task daemon APIs: `GET/POST /tasks`, `GET/PATCH/DELETE /tasks/:id`.
 - Task lifecycle updates from linked run sessions: `running`, `done`, `failed`, and `cancelled`.
 - Provider preset storage and daemon APIs.
+- Built-in provider templates for OpenAI, Claude, OpenAI-compatible relays, Doubao, DeepSeek/DPV4, MiniMax, GLM, Jimeng, Seedream, and Seedance.
 - `POST /runs` with `providerPresetId`.
+- Provider live checks for OpenAI-compatible chat, OpenAI Responses, and Anthropic Messages presets.
 - Approval request storage and daemon APIs.
 - Default read-only tool policy for product runs.
 - Pi pre-tool approval gate for `bash`, `edit`, and `write`.
@@ -266,6 +289,7 @@ Not implemented yet:
 - Approval gates for external sends, deployments, credential changes, and paid media jobs.
 - Rich task detail views beyond the first edit form.
 - OS keychain integration for secrets.
+- Live media provider job checks.
 - Desktop packaging.
 
 ## License

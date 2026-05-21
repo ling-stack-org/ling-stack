@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import {
   createSqliteRunStore,
+  defaultProviderTemplates,
   resolveRuntimePaths,
   type ProviderPreset,
   type ProviderPresetInput,
@@ -1142,138 +1143,6 @@ async function writeDefaultConfig(rootDir: string): Promise<void> {
     }
     throw error;
   });
-}
-
-function defaultProviderTemplates(): readonly ProviderPresetInput[] {
-  return [
-    chatProviderTemplate({
-      kind: "openai",
-      displayName: "OpenAI GPT",
-      providerId: "openai",
-      model: "gpt-5.5",
-      api: "openai-completions",
-      apiKeyRef: "env:OPENAI_API_KEY",
-    }),
-    chatProviderTemplate({
-      kind: "anthropic",
-      displayName: "Claude",
-      providerId: "anthropic",
-      model: "claude-sonnet-4-5",
-      api: "anthropic-messages",
-      apiKeyRef: "env:ANTHROPIC_API_KEY",
-    }),
-    chatProviderTemplate({
-      kind: "openai-compatible",
-      displayName: "Local OpenAI-Compatible Relay",
-      providerId: "local-relay",
-      model: "dpv4",
-      api: "openai-completions",
-      baseUrl: "http://127.0.0.1:8317/v1",
-      apiKeyRef: "env:LOCAL_RELAY_API_KEY",
-    }),
-    chatProviderTemplate({
-      kind: "doubao",
-      displayName: "Doubao Ark",
-      providerId: "doubao",
-      model: "doubao-seed-1-6",
-      api: "openai-completions",
-      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-      apiKeyRef: "env:ARK_API_KEY",
-    }),
-    chatProviderTemplate({
-      kind: "deepseek",
-      displayName: "DeepSeek DPV4",
-      providerId: "deepseek",
-      model: "deepseek-v3",
-      api: "openai-completions",
-      baseUrl: "https://api.deepseek.com/v1",
-      apiKeyRef: "env:DEEPSEEK_API_KEY",
-    }),
-    chatProviderTemplate({
-      kind: "minimax",
-      displayName: "MiniMax",
-      providerId: "minimax",
-      model: "MiniMax-M1",
-      api: "openai-completions",
-      baseUrl: "https://api.minimax.chat/v1",
-      apiKeyRef: "env:MINIMAX_API_KEY",
-    }),
-    chatProviderTemplate({
-      kind: "glm",
-      displayName: "GLM Zhipu",
-      providerId: "glm",
-      model: "glm-4.5",
-      api: "openai-completions",
-      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-      apiKeyRef: "env:ZHIPU_API_KEY",
-    }),
-    mediaProviderTemplate({
-      kind: "jimeng",
-      displayName: "Jimeng Image",
-      providerId: "jimeng",
-      model: "jimeng-image",
-      apiKeyRef: "env:JIMENG_API_KEY",
-      capabilities: ["image_generate", "image_edit"],
-    }),
-    mediaProviderTemplate({
-      kind: "seedream",
-      displayName: "Seedream Image",
-      providerId: "seedream",
-      model: "seedream",
-      apiKeyRef: "env:SEEDREAM_API_KEY",
-      capabilities: ["image_generate", "image_edit"],
-    }),
-    mediaProviderTemplate({
-      kind: "seedance",
-      displayName: "Seedance Video",
-      providerId: "seedance",
-      model: "seedance",
-      apiKeyRef: "env:SEEDANCE_API_KEY",
-      capabilities: ["video_generate"],
-    }),
-  ];
-}
-
-function chatProviderTemplate(input: {
-  readonly kind: ProviderPresetInput["kind"];
-  readonly displayName: string;
-  readonly providerId: string;
-  readonly model: string;
-  readonly api: ProviderPresetInput["api"];
-  readonly baseUrl?: string;
-  readonly apiKeyRef: string;
-}): ProviderPresetInput {
-  return {
-    ...input,
-    capabilities: ["chat", "tool_call", "reasoning"],
-    input: ["text"],
-    enabled: false,
-    authHeader: true,
-    reasoning: true,
-    contextWindow: 128000,
-    maxTokens: 16384,
-  };
-}
-
-function mediaProviderTemplate(input: {
-  readonly kind: ProviderPresetInput["kind"];
-  readonly displayName: string;
-  readonly providerId: string;
-  readonly model: string;
-  readonly apiKeyRef: string;
-  readonly capabilities: ProviderPresetInput["capabilities"];
-}): ProviderPresetInput {
-  return {
-    kind: input.kind,
-    displayName: input.displayName,
-    providerId: input.providerId,
-    model: input.model,
-    api: "media-job",
-    apiKeyRef: input.apiKeyRef,
-    capabilities: input.capabilities,
-    input: ["text", "image"],
-    enabled: false,
-  };
 }
 
 function findEquivalentProvider(

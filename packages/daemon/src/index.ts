@@ -4,6 +4,7 @@ import {
   approvalStatuses,
   createRunId,
   createSqliteRunStore,
+  defaultProviderTemplates,
   getRunSummaryPath,
   isSupportedSecretRef,
   providerApis,
@@ -80,6 +81,7 @@ export const defaultDaemonConfig: DaemonConfig = {
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
 const APPROVAL_PREVIEW_LIMIT = 1_200;
+const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
 
 export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider"> {
   readonly workspaceCwd?: string;
@@ -187,6 +189,11 @@ async function routeRequest(
 
   if (url.pathname === "/providers") {
     await handleProvidersCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/provider-templates") {
+    writeJson(response, 200, { templates: defaultProviderTemplates() });
     return;
   }
 
@@ -714,7 +721,7 @@ async function handleProviderItem(
   }
 
   if (request.method === "POST" && route.action === "check") {
-    writeJson(response, 200, checkProviderPreset(preset));
+    writeJson(response, 200, await checkProviderPreset(preset));
     return;
   }
 
@@ -1772,11 +1779,8 @@ function toPublicProviderPreset(preset: ProviderPreset): PublicProviderPreset {
   };
 }
 
-function checkProviderPreset(preset: ProviderPreset): ProviderCheckResult {
+async function checkProviderPreset(preset: ProviderPreset): Promise<ProviderCheckResult> {
   const checkedAt = new Date().toISOString();
-  if (!preset.enabled) {
-    return { ok: false, code: "provider_disabled", message: "Provider preset is disabled.", checkedAt };
-  }
   if (preset.baseUrl) {
     try {
       validateUrl(preset.baseUrl, "baseUrl");
@@ -1784,13 +1788,178 @@ function checkProviderPreset(preset: ProviderPreset): ProviderCheckResult {
       return { ok: false, code: "bad_request", message: error instanceof Error ? error.message : String(error), checkedAt };
     }
   }
+  const needsSecret = preset.api === "anthropic-messages" || preset.authHeader !== false;
+  if (needsSecret && !preset.apiKeyRef) {
+    return { ok: false, code: "secret_missing", message: "Secret is not configured: apiKeyRef is required for live checks.", checkedAt };
+  }
   if (preset.apiKeyRef && !resolveSecretRef(preset.apiKeyRef).configured) {
     return { ok: false, code: "secret_missing", message: `Secret is not configured: ${preset.apiKeyRef}`, checkedAt };
   }
   if (preset.api !== "media-job" && !preset.capabilities.includes("chat")) {
     return { ok: false, code: "unsupported_capability", message: "Provider preset cannot run chat tasks.", checkedAt };
   }
-  return { ok: true, message: "Provider preset configuration is valid.", checkedAt };
+  if (!preset.enabled) {
+    return { ok: false, code: "provider_disabled", message: "Provider preset is disabled.", checkedAt };
+  }
+
+  if (preset.api === "media-job") {
+    return {
+      ok: true,
+      code: "static_check",
+      message: "Media provider configuration is valid. Live media job checks are not implemented yet.",
+      checkedAt,
+    };
+  }
+
+  if (!["openai-completions", "openai-responses", "anthropic-messages"].includes(preset.api)) {
+    return {
+      ok: true,
+      code: "static_check",
+      message: `Provider configuration is valid. Live checks for ${preset.api} are not implemented yet.`,
+      checkedAt,
+    };
+  }
+
+  return await probeChatProvider(preset, checkedAt);
+}
+
+async function probeChatProvider(preset: ProviderPreset, checkedAt: string): Promise<ProviderCheckResult> {
+  try {
+    const response = await fetch(buildProviderCheckUrl(preset), {
+      method: "POST",
+      headers: buildProviderCheckHeaders(preset),
+      body: JSON.stringify(buildProviderCheckBody(preset)),
+      signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
+    });
+
+    if (response.ok) {
+      return {
+        ok: true,
+        code: "ready",
+        message: "Provider is reachable and accepted the configured model.",
+        checkedAt,
+      };
+    }
+
+    return await providerCheckHttpFailure(response, checkedAt);
+  } catch (error) {
+    return {
+      ok: false,
+      code: "network_failed",
+      message: `Provider network check failed: ${error instanceof Error ? error.message : String(error)}`,
+      checkedAt,
+    };
+  }
+}
+
+function buildProviderCheckUrl(preset: ProviderPreset): string {
+  const baseUrl = normalizeProviderBaseUrl(preset);
+  if (preset.api === "anthropic-messages") {
+    return `${baseUrl}/messages`;
+  }
+  if (preset.api === "openai-responses") {
+    return `${baseUrl}/responses`;
+  }
+  return `${baseUrl}/chat/completions`;
+}
+
+function normalizeProviderBaseUrl(preset: ProviderPreset): string {
+  if (preset.baseUrl) {
+    return preset.baseUrl.replace(/\/+$/, "");
+  }
+  if (preset.api === "anthropic-messages" || preset.kind === "anthropic") {
+    return "https://api.anthropic.com/v1";
+  }
+  return "https://api.openai.com/v1";
+}
+
+function buildProviderCheckHeaders(preset: ProviderPreset): Record<string, string> {
+  const secret = resolveSecretRef(preset.apiKeyRef);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...preset.headers,
+  };
+
+  if (preset.api === "anthropic-messages") {
+    if (secret.value) {
+      headers["x-api-key"] = secret.value;
+    }
+    headers["anthropic-version"] = headers["anthropic-version"] ?? "2023-06-01";
+    return headers;
+  }
+
+  if (preset.authHeader !== false && secret.value) {
+    headers.Authorization = `Bearer ${secret.value}`;
+  }
+  return headers;
+}
+
+function buildProviderCheckBody(preset: ProviderPreset): Record<string, unknown> {
+  if (preset.api === "anthropic-messages") {
+    return {
+      model: preset.model,
+      max_tokens: 8,
+      messages: [{ role: "user", content: "Reply with OK." }],
+    };
+  }
+  if (preset.api === "openai-responses") {
+    return {
+      model: preset.model,
+      input: "Reply with OK.",
+      max_output_tokens: 8,
+      stream: false,
+    };
+  }
+  return {
+    model: preset.model,
+    messages: [{ role: "user", content: "Reply with OK." }],
+    max_tokens: 8,
+    stream: false,
+  };
+}
+
+async function providerCheckHttpFailure(response: Response, checkedAt: string): Promise<ProviderCheckResult> {
+  const bodyText = await readLimitedResponseText(response, 800);
+  const lowerBody = bodyText.toLowerCase();
+  if (response.status === 401 || response.status === 403) {
+    return {
+      ok: false,
+      code: "auth_failed",
+      message: `Provider authentication failed with HTTP ${response.status}. Check apiKeyRef and account access.`,
+      checkedAt,
+    };
+  }
+  if (response.status === 404 || lowerBody.includes("model") && (lowerBody.includes("not found") || lowerBody.includes("does not exist"))) {
+    return {
+      ok: false,
+      code: "model_unsupported",
+      message: `Provider rejected the endpoint or model with HTTP ${response.status}. Check baseUrl and model.`,
+      checkedAt,
+    };
+  }
+  if (response.status === 429) {
+    return {
+      ok: false,
+      code: "rate_limited",
+      message: "Provider is reachable but rate limited the health check.",
+      checkedAt,
+    };
+  }
+  return {
+    ok: false,
+    code: "provider_error",
+    message: `Provider returned HTTP ${response.status}${bodyText ? `: ${bodyText}` : "."}`,
+    checkedAt,
+  };
+}
+
+async function readLimitedResponseText(response: Response, limit: number): Promise<string> {
+  try {
+    const text = await response.text();
+    return text.length > limit ? `${text.slice(0, limit)}...` : text;
+  } catch {
+    return "";
+  }
 }
 
 function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {

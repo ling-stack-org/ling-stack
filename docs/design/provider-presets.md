@@ -30,16 +30,15 @@ Implemented today:
 - `POST /runs` accepts inline provider config.
 - `PiRunnerAdapter` accepts `provider`, `model`, `apiKey`, `baseUrl`, `api`, `headers`, and compatibility settings.
 - Custom OpenAI-compatible providers can be registered dynamically by the Pi runner adapter when `baseUrl` is present.
+- Persistent provider preset storage, daemon CRUD APIs, CLI/Web setup surfaces, built-in templates, and env secret refs are implemented.
+- Provider health checks perform static validation plus live lightweight probes for OpenAI-compatible chat, OpenAI Responses, and Anthropic Messages.
 - `packages/providers` defines capability interfaces but has no concrete adapters.
 
 Not implemented yet:
 
-- Persistent provider preset storage.
-- Secret references.
-- Provider CRUD API.
-- Provider health check API.
-- Provider selection in CLI or Web UI.
 - Media provider job routing.
+- OS keychain secret refs.
+- Vendor-specific model catalog sync.
 
 ## Scope
 
@@ -564,9 +563,9 @@ Check levels:
 1. Config validation.
 2. Secret resolution.
 3. Base URL syntax validation.
-4. Optional network/model call if the adapter supports it.
+4. Live network/model call for `openai-completions`, `openai-responses`, and `anthropic-messages`.
 
-For Milestone 2, a provider health check can be conservative: fail missing key/base URL/model, and perform a lightweight model request only where implementation is straightforward.
+For Milestone 2, provider health checks are conservative: fail missing key/base URL/model, perform a lightweight model request for the supported chat protocols, and keep media-job checks static until media execution exists.
 
 ## `/runs` Integration
 
@@ -844,7 +843,7 @@ Recommendation: allow edits only if no active runs reference the preset. Runtime
 
 Question: should health checks perform real model calls?
 
-Recommendation: start with config and secret validation, then add lightweight provider-specific checks. Do not block preset creation just because a network check fails.
+Recommendation: implemented for chat protocols. Do not block preset creation just because a network check fails.
 
 ### Built-In Defaults
 

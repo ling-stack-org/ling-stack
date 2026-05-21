@@ -176,6 +176,31 @@ export interface ProviderMutationResponse {
   readonly provider: ProviderPreset;
 }
 
+export interface ProviderTemplate {
+  readonly templateId: string;
+  readonly description: string;
+  readonly kind: ProviderKind;
+  readonly displayName: string;
+  readonly providerId: string;
+  readonly model: string;
+  readonly api: ProviderApi;
+  readonly baseUrl?: string;
+  readonly apiKeyRef?: string;
+  readonly headers?: Record<string, string>;
+  readonly authHeader?: boolean;
+  readonly reasoning?: boolean;
+  readonly input?: readonly ("text" | "image")[];
+  readonly contextWindow?: number;
+  readonly maxTokens?: number;
+  readonly compat?: Record<string, unknown>;
+  readonly capabilities: readonly ProviderCapability[];
+  readonly enabled?: boolean;
+}
+
+export interface ProviderTemplateListResponse {
+  readonly templates: readonly ProviderTemplate[];
+}
+
 export interface ProviderCheckResult {
   readonly ok: boolean;
   readonly code?: string;

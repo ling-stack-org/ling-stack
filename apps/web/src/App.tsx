@@ -44,6 +44,7 @@ import {
   listChannels,
   listApprovals,
   listProviders,
+  listProviderTemplates,
   listRuns,
   listTasks,
   updateChannel,
@@ -59,6 +60,7 @@ import type {
   ProviderCheckResult,
   ProviderFormState,
   ProviderPreset,
+  ProviderTemplate,
   RunEventEnvelope,
   RunFormState,
   RunSession,
@@ -141,6 +143,7 @@ export function App(): JSX.Element {
   const [runs, setRuns] = useState<readonly RunSession[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [providers, setProviders] = useState<readonly ProviderPreset[]>([]);
+  const [providerTemplates, setProviderTemplates] = useState<readonly ProviderTemplate[]>([]);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [channels, setChannels] = useState<readonly Channel[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
@@ -180,6 +183,7 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     void refreshHealth();
+    void refreshProviderTemplates();
     void refreshProviders();
   }, []);
 
@@ -191,6 +195,7 @@ export function App(): JSX.Element {
       void refreshRuns();
     }
     if (activeView === "providers") {
+      void refreshProviderTemplates();
       void refreshProviders();
     }
     if (activeView === "approvals") {
@@ -341,6 +346,15 @@ export function App(): JSX.Element {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setProvidersLoading(false);
+    }
+  }
+
+  async function refreshProviderTemplates(): Promise<void> {
+    try {
+      const response = await listProviderTemplates();
+      setProviderTemplates(response.templates);
+    } catch {
+      setProviderTemplates([]);
     }
   }
 
@@ -796,6 +810,7 @@ export function App(): JSX.Element {
           <ProviderSettings
             cwd={form.cwd}
             providers={providers}
+            templates={providerTemplates}
             form={providerForm}
             editingProviderId={editingProviderId}
             isLoading={providersLoading}
@@ -804,6 +819,11 @@ export function App(): JSX.Element {
             selectedProviderId={form.providerPresetId}
             onCwdChange={(cwd) => setForm({ ...form, cwd })}
             onFormChange={setProviderForm}
+            onTemplateSelect={(template) => {
+              setEditingProviderId("");
+              setProviderCheck(undefined);
+              setProviderForm(providerTemplateToForm(template));
+            }}
             onNew={() => {
               setEditingProviderId("");
               setProviderCheck(undefined);
@@ -1526,6 +1546,7 @@ function RunDetailPanel({
 function ProviderSettings({
   cwd,
   providers,
+  templates,
   form,
   editingProviderId,
   isLoading,
@@ -1534,6 +1555,7 @@ function ProviderSettings({
   selectedProviderId,
   onCwdChange,
   onFormChange,
+  onTemplateSelect,
   onNew,
   onSave,
   onRefresh,
@@ -1544,6 +1566,7 @@ function ProviderSettings({
 }: {
   readonly cwd: string;
   readonly providers: readonly ProviderPreset[];
+  readonly templates: readonly ProviderTemplate[];
   readonly form: ProviderFormState;
   readonly editingProviderId: string;
   readonly isLoading: boolean;
@@ -1552,6 +1575,7 @@ function ProviderSettings({
   readonly selectedProviderId: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onFormChange: (form: ProviderFormState) => void;
+  readonly onTemplateSelect: (template: ProviderTemplate) => void;
   readonly onNew: () => void;
   readonly onSave: () => void;
   readonly onRefresh: () => void;
@@ -1661,6 +1685,27 @@ function ProviderSettings({
           </button>
         </div>
 
+        <label className="field wide provider-template-select">
+          <span>Template</span>
+          <select
+            value=""
+            onChange={(event) => {
+              const template = templates.find((item) => item.templateId === event.target.value);
+              if (template) {
+                onTemplateSelect(template);
+              }
+            }}
+          >
+            <option value="">Start from template</option>
+            {templates.map((template) => (
+              <option key={template.templateId} value={template.templateId}>
+                {template.displayName} / {template.model}
+              </option>
+            ))}
+          </select>
+          {templates.length === 0 ? <small>No templates available.</small> : null}
+        </label>
+
         <div className="field-row">
           <label className="field">
             <span>Kind</span>
@@ -1755,6 +1800,7 @@ function ProviderSettings({
         {checkResult ? (
           <div className={checkResult.ok ? "check-result ok" : "check-result bad"}>
             {checkResult.ok ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
+            <span className="check-result-status">{providerCheckStatusLabel(checkResult)}</span>
             <span>{checkResult.message}</span>
           </div>
         ) : null}
@@ -2307,8 +2353,49 @@ function providerToForm(provider: ProviderPreset): ProviderFormState {
   };
 }
 
+function providerTemplateToForm(template: ProviderTemplate): ProviderFormState {
+  return {
+    kind: template.kind,
+    displayName: template.displayName,
+    providerId: template.providerId,
+    model: template.model,
+    api: template.api,
+    baseUrl: template.baseUrl ?? "",
+    apiKeyRef: template.apiKeyRef ?? "",
+    capabilitiesText: template.capabilities.join(", "),
+    inputText: (template.input ?? ["text"]).join(", "),
+    enabled: template.enabled ?? false,
+    authHeader: template.authHeader ?? true,
+    reasoning: template.reasoning ?? false,
+    contextWindow: template.contextWindow ? String(template.contextWindow) : "",
+    maxTokens: template.maxTokens ? String(template.maxTokens) : "",
+  };
+}
+
 function canUseProviderForRun(provider: ProviderPreset): boolean {
   return provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat");
+}
+
+function providerCheckStatusLabel(result: ProviderCheckResult): string {
+  if (result.ok) {
+    return "ready";
+  }
+  if (result.code === "secret_missing") {
+    return "missing env";
+  }
+  if (result.code === "network_failed") {
+    return "network failed";
+  }
+  if (result.code === "auth_failed") {
+    return "auth failed";
+  }
+  if (result.code === "model_unsupported") {
+    return "model unsupported";
+  }
+  if (result.code === "provider_disabled") {
+    return "disabled";
+  }
+  return result.code ?? "failed";
 }
 
 function viewTitle(view: ViewId): string {

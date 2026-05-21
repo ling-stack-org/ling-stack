@@ -9,6 +9,7 @@ import type {
   ProviderFormState,
   ProviderListResponse,
   ProviderMutationResponse,
+  ProviderTemplateListResponse,
   RunCancelResponse,
   RunEventsResponse,
   RunFormState,
@@ -59,6 +60,14 @@ export async function listProviders(cwd: string): Promise<ProviderListResponse> 
     throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as ProviderListResponse;
+}
+
+export async function listProviderTemplates(): Promise<ProviderTemplateListResponse> {
+  const response = await fetch(`${daemonBaseUrl}/provider-templates`);
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as ProviderTemplateListResponse;
 }
 
 export async function listChannels(cwd: string): Promise<ChannelListResponse> {
