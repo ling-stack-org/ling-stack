@@ -101,6 +101,13 @@ interface ProviderRepairItem {
   readonly action: "check" | "edit";
   readonly actionLabel: string;
 }
+type RunRepairTarget = "providers" | "approvals" | "run";
+interface RunRepairHint {
+  readonly target: RunRepairTarget;
+  readonly title: string;
+  readonly detail: string;
+  readonly actionLabel: string;
+}
 interface WorkspaceReadinessItem {
   readonly id: string;
   readonly label: string;
@@ -983,6 +990,15 @@ export function App(): JSX.Element {
     setActiveView("approvals");
   }
 
+  function openProvidersFromRun(runToRepair?: RunSession): void {
+    const providerPresetId = runToRepair ? readRunProviderPresetId(runToRepair) : "";
+    const provider = providerPresetId ? providers.find((item) => item.id === providerPresetId) : undefined;
+    if (provider) {
+      editProvider(provider);
+    }
+    setActiveView("providers");
+  }
+
   async function cancelActiveRun(): Promise<void> {
     abortRef.current?.abort();
     if (!activeRunId) {
@@ -1135,6 +1151,7 @@ export function App(): JSX.Element {
                 onReviewTask={(taskId) => void moveTaskToReview(taskId)}
                 onDeleteTask={(taskId) => void removeTask(taskId)}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
                 onOpenProviders={() => setActiveView("providers")}
               />
               <RunTimeline
@@ -1176,6 +1193,8 @@ export function App(): JSX.Element {
             onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
             onRerun={(sourceRun) => void rerunRun(sourceRun)}
             onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+            onOpenProviders={(sourceRun) => openProvidersFromRun(sourceRun)}
+            onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
             onSelect={(runId) => void selectRun(runId)}
           />
         ) : (
@@ -1511,7 +1530,7 @@ function FirstRunFlow({
   }
 
   if (selectedTask && selectedTaskRunId) {
-    const repairTarget = classifyRunRepairTarget(selectedTaskRun, pendingApprovalCount, selectedTaskRunStatus);
+    const repairHint = buildRunRepairHint(selectedTaskRun, pendingApprovalCount, selectedTaskRunStatus);
     const needsRepair = selectedTaskRunStatus === "failed" || selectedTaskRunStatus === "waiting_for_approval";
     const runStatusClass = selectedTaskRunStatus === "succeeded" ? "ready" : needsRepair ? "attention" : "active";
     const title = selectedTaskRunStatus === "succeeded"
@@ -1519,8 +1538,10 @@ function FirstRunFlow({
       : needsRepair
         ? "Run needs attention"
         : "Current run linked";
-    const detail = `${selectedTask.title} latest run is ${selectedTaskRunStatus}.${selectedTaskRun?.errorMessage ? ` ${selectedTaskRun.errorMessage}` : ""}`;
-    const primaryAction = needsRepair ? repairTarget : "run";
+    const detail = repairHint
+      ? `${selectedTask.title} latest run is ${selectedTaskRunStatus}. ${repairHint.detail}`
+      : `${selectedTask.title} latest run is ${selectedTaskRunStatus}.${selectedTaskRun?.errorMessage ? ` ${selectedTaskRun.errorMessage}` : ""}`;
+    const primaryAction = repairHint?.target ?? "run";
 
     return (
       <section className={`first-run-flow panel ${runStatusClass}`} aria-labelledby="first-run-flow-title">
@@ -1535,18 +1556,18 @@ function FirstRunFlow({
           {primaryAction === "providers" ? (
             <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
               <PlugZap size={14} />
-              Providers
+              {repairHint?.actionLabel ?? "Providers"}
             </button>
           ) : null}
           {primaryAction === "approvals" ? (
             <button className="secondary-button compact-button" type="button" onClick={() => onOpenApprovals(selectedTaskRunId)}>
               <ShieldCheck size={14} />
-              Approvals
+              {repairHint?.actionLabel ?? "Approvals"}
             </button>
           ) : null}
           <button className={primaryAction === "run" ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(selectedTaskRunId)}>
             <History size={14} />
-            Open run
+            {primaryAction === "run" ? (repairHint?.actionLabel ?? "Open run") : "Open run"}
           </button>
           {selectedTaskRunStatus === "succeeded" ? (
             <button className="primary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !runReady}>
@@ -2079,6 +2100,7 @@ function ChannelTaskWorkspace({
   onReviewTask,
   onDeleteTask,
   onOpenRun,
+  onOpenApprovals,
   onOpenProviders,
 }: {
   readonly cwd: string;
@@ -2120,6 +2142,7 @@ function ChannelTaskWorkspace({
   readonly onReviewTask: (taskId: string) => void;
   readonly onDeleteTask: (taskId: string) => void;
   readonly onOpenRun: (runId: string) => void;
+  readonly onOpenApprovals: (runId?: string) => void;
   readonly onOpenProviders: () => void;
 }): JSX.Element {
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
@@ -2128,6 +2151,7 @@ function ChannelTaskWorkspace({
   const selectedTaskRunStatus = selectedTask?.currentRunId
     ? displayLinkedRunStatus(selectedTask.currentRunId, selectedTaskRun, activeRunId, latestStatus)
     : "";
+  const selectedTaskRepairHint = buildRunRepairHint(selectedTaskRun, 0, selectedTaskRunStatus);
   const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId) ?? "";
   const runnableProviders = providers.filter(canUseProviderForRun);
   const blockedProviders = providers.filter((provider) => !canUseProviderForRun(provider));
@@ -2387,6 +2411,16 @@ function ChannelTaskWorkspace({
                 </button>
               </div>
             ) : null}
+            {selectedTask.currentRunId && selectedTaskRepairHint ? (
+              <RunRepairHintBanner
+                hint={selectedTaskRepairHint}
+                runId={selectedTask.currentRunId}
+                compact
+                onOpenProviders={onOpenProviders}
+                onOpenApprovals={onOpenApprovals}
+                onOpenRun={onOpenRun}
+              />
+            ) : null}
             <label className="field wide">
               <span>Title</span>
               <input value={taskEditForm.title} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, title: event.target.value })} />
@@ -2435,6 +2469,7 @@ function ChannelTaskWorkspace({
               const linkedRunStatus = task.currentRunId
                 ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus)
                 : "";
+              const repairHint = buildRunRepairHint(linkedRun, 0, linkedRunStatus);
               return (
                 <article key={task.id} className={task.id === selectedTaskId ? "task-row selected" : "task-row"}>
                   <div className="task-row-head">
@@ -2455,6 +2490,16 @@ function ChannelTaskWorkspace({
                         Open run
                       </button>
                     </div>
+                  ) : null}
+                  {task.currentRunId && repairHint ? (
+                    <RunRepairHintBanner
+                      hint={repairHint}
+                      runId={task.currentRunId}
+                      compact
+                      onOpenProviders={onOpenProviders}
+                      onOpenApprovals={onOpenApprovals}
+                      onOpenRun={onOpenRun}
+                    />
                   ) : null}
                   <div className="task-actions">
                     <button className="secondary-button compact-button" type="button" onClick={() => onSelectTask(task.id)}>
@@ -2545,6 +2590,8 @@ function RunHistory({
   onRefreshApprovals,
   onRerun,
   onResolveApproval,
+  onOpenProviders,
+  onOpenApprovals,
   onSelect,
 }: {
   readonly cwd: string;
@@ -2565,6 +2612,8 @@ function RunHistory({
   readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onOpenProviders: (run?: RunSession) => void;
+  readonly onOpenApprovals: (runId?: string) => void;
   readonly onSelect: (runId: string) => void;
 }): JSX.Element {
   return (
@@ -2634,6 +2683,8 @@ function RunHistory({
         onRefreshApprovals={onRefreshApprovals}
         onRerun={onRerun}
         onResolveApproval={onResolveApproval}
+        onOpenProviders={onOpenProviders}
+        onOpenApprovals={onOpenApprovals}
       />
     </div>
   );
@@ -2651,6 +2702,8 @@ function RunDetailPanel({
   onRefreshApprovals,
   onRerun,
   onResolveApproval,
+  onOpenProviders,
+  onOpenApprovals,
 }: {
   readonly run: RunSession | undefined;
   readonly events: readonly RunEventEnvelope[];
@@ -2663,12 +2716,15 @@ function RunDetailPanel({
   readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onOpenProviders: (run?: RunSession) => void;
+  readonly onOpenApprovals: (runId?: string) => void;
 }): JSX.Element {
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   const terminalEvent = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));
   const workspaceCwd = run ? readDataString(run.requestSnapshot, "workspaceCwd") || run.cwd : "-";
   const providerPresetId = run ? readRunProviderPresetId(run) : "";
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
+  const repairHint = run ? buildRunRepairHint(run, pendingApprovals.length, run.status, readRunEventIssueText(terminalEvent)) : undefined;
 
   return (
     <section className="panel run-detail-panel" aria-labelledby="run-detail-title">
@@ -2707,6 +2763,16 @@ function RunDetailPanel({
             <MetaRow label="Created" value={formatDateTime(run.createdAt)} compact />
             <MetaRow label="Ended" value={run.endedAt ? formatDateTime(run.endedAt) : "-"} compact />
           </div>
+
+          {repairHint ? (
+            <RunRepairHintBanner
+              hint={repairHint}
+              runId={run.id}
+              onOpenProviders={() => onOpenProviders(run)}
+              onOpenApprovals={onOpenApprovals}
+              onReload={onRefresh}
+            />
+          ) : null}
 
           {run.errorMessage ? (
             <div className="inline-error">
@@ -4037,7 +4103,62 @@ function StatusBadge({ status }: { readonly status: string }): JSX.Element {
   return <span className={`status-badge ${status}`}>{status}</span>;
 }
 
-type RunRepairTarget = "providers" | "approvals" | "run";
+function RunRepairHintBanner({
+  hint,
+  runId,
+  compact = false,
+  onOpenProviders,
+  onOpenApprovals,
+  onOpenRun,
+  onReload,
+}: {
+  readonly hint: RunRepairHint;
+  readonly runId: string;
+  readonly compact?: boolean;
+  readonly onOpenProviders: () => void;
+  readonly onOpenApprovals: (runId?: string) => void;
+  readonly onOpenRun?: (runId: string) => void;
+  readonly onReload?: () => void;
+}): JSX.Element {
+  const canOpenRun = hint.target === "run" && Boolean(onOpenRun);
+  const canReload = hint.target === "run" && !onOpenRun && Boolean(onReload);
+  const actionLabel = canReload ? "Reload" : hint.actionLabel;
+  const onAction = hint.target === "providers"
+    ? onOpenProviders
+    : hint.target === "approvals"
+      ? () => onOpenApprovals(runId)
+      : canOpenRun
+        ? () => onOpenRun?.(runId)
+        : canReload
+          ? onReload
+          : undefined;
+
+  return (
+    <div className={`run-repair-hint ${hint.target}${compact ? " compact" : ""}`}>
+      <span className="run-repair-icon">{runRepairIcon(hint.target)}</span>
+      <span className="run-repair-copy">
+        <strong>{hint.title}</strong>
+        <small>{hint.detail}</small>
+      </span>
+      {onAction ? (
+        <button className="secondary-button compact-button" type="button" onClick={onAction}>
+          {runRepairIcon(hint.target)}
+          {actionLabel}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function runRepairIcon(target: RunRepairTarget): JSX.Element {
+  if (target === "providers") {
+    return <PlugZap size={14} />;
+  }
+  if (target === "approvals") {
+    return <ShieldCheck size={14} />;
+  }
+  return <History size={14} />;
+}
 
 function displayLinkedRunStatus(
   runId: string,
@@ -4051,21 +4172,58 @@ function displayLinkedRunStatus(
   return linkedRun?.status ?? "saved";
 }
 
-function classifyRunRepairTarget(
+function buildRunRepairHint(
   run: RunSession | undefined,
   pendingApprovalCount: number,
   status: string,
-): RunRepairTarget {
-  if (pendingApprovalCount > 0 || status === "waiting_for_approval" || run?.status === "waiting_for_approval") {
-    return "approvals";
+  extraMessage = "",
+): RunRepairHint | undefined {
+  const effectiveStatus = status || run?.status || "";
+  if (pendingApprovalCount > 0 || effectiveStatus === "waiting_for_approval" || run?.status === "waiting_for_approval") {
+    return {
+      target: "approvals",
+      title: "Approval required",
+      detail: pendingApprovalCount > 0
+        ? `${pendingApprovalCount} approval${pendingApprovalCount === 1 ? "" : "s"} pending before this run can continue.`
+        : "This run is waiting for an approval decision.",
+      actionLabel: "Approvals",
+    };
   }
 
-  const message = run?.errorMessage ?? "";
-  if (/provider|preflight|api[-_ ]?key|apikey|auth|secret|credential|model|base[-_ ]?url|endpoint|token/i.test(message)) {
-    return "providers";
+  if (effectiveStatus !== "failed" && run?.status !== "failed") {
+    return undefined;
   }
 
-  return "run";
+  const message = [run?.errorMessage, extraMessage].filter(Boolean).join(" ");
+  if (isProviderRepairMessage(message)) {
+    return {
+      target: "providers",
+      title: "Provider repair needed",
+      detail: "The failure looks related to provider auth, preflight, endpoint, or model configuration.",
+      actionLabel: "Providers",
+    };
+  }
+
+  return {
+    target: "run",
+    title: "Inspect run failure",
+    detail: "The failure looks like a runtime or tool issue. Inspect events, fix the workspace or task, then rerun.",
+    actionLabel: "Open run",
+  };
+}
+
+function isProviderRepairMessage(message: string): boolean {
+  return /provider|preflight|api[-_ ]?key|apikey|auth|secret|credential|model|base[-_ ]?url|endpoint|token/i.test(message);
+}
+
+function readRunEventIssueText(event: RunEventEnvelope | undefined): string {
+  if (!event) {
+    return "";
+  }
+  return readDataString(event.data, "message")
+    || readDataString(event.data, "error")
+    || readDataString(event.data, "detail")
+    || readDataString(event.data, "reason");
 }
 
 function inferRunStatus(events: readonly RunEventEnvelope[], isRunning: boolean): string {

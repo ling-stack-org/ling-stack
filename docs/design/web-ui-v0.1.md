@@ -208,6 +208,14 @@ Run-after loop:
   - pending approvals -> Approvals,
   - tool/runtime failure -> Run detail.
 
+Run repair hints:
+
+- the run repair classifier should be shared by first-run, task cards, and run detail,
+- `waiting_for_approval` and runs with pending approval records should show an Approvals action,
+- failed runs whose error mentions provider auth, preflight, key, secret, model, base URL, endpoint, or token should show a Providers action,
+- all other failed tool/runtime runs should show an Open run / run-detail action,
+- run detail should show the repair hint near the status summary so the user does not need to infer the next repair surface from raw events.
+
 ### Provider Settings
 
 Backed by:

@@ -734,6 +734,57 @@ textarea:disabled {
   font-size: 13px;
 }
 
+.run-repair-hint {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid #e7b4a8;
+  background: #fff7f4;
+  color: #9a341f;
+}
+
+.run-repair-hint.compact {
+  padding: 8px;
+}
+
+.run-repair-hint.approvals {
+  border-color: #d9bd71;
+  background: #fffaf0;
+  color: #7a4d00;
+}
+
+.run-repair-hint.run {
+  border-color: #d8ded7;
+  background: #f7faf7;
+  color: #43524e;
+}
+
+.run-repair-icon {
+  display: grid;
+  place-items: center;
+}
+
+.run-repair-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.run-repair-copy strong {
+  color: #17211f;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.run-repair-copy small {
+  overflow-wrap: anywhere;
+  color: currentColor;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .assistant-output {
   margin-bottom: 12px;
   padding: 12px;
@@ -2255,6 +2306,15 @@ pre {
   .task-run-link {
     grid-template-columns: 1fr;
     justify-items: start;
+  }
+
+  .run-repair-hint {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .run-repair-hint .secondary-button {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .first-run-flow.ready,
