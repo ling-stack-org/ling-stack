@@ -608,6 +608,112 @@ pre {
   min-height: 640px;
 }
 
+.run-history-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.run-detail-panel {
+  min-height: 640px;
+}
+
+.run-detail-content {
+  display: grid;
+  gap: 14px;
+}
+
+.run-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: #e1e6e2;
+  border: 1px solid #e1e6e2;
+}
+
+.run-detail-section {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid #e1e6e2;
+}
+
+.run-detail-section > strong {
+  color: #17211f;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.run-detail-section > p {
+  color: #50605b;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.tool-event-list {
+  display: grid;
+  gap: 7px;
+}
+
+.tool-event-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid #e1e6e2;
+  background: #fbfcfa;
+}
+
+.tool-event-row span,
+.tool-event-row small {
+  color: #6d7d77;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tool-event-row strong,
+.tool-event-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-event-row strong {
+  color: #17211f;
+  font-size: 12px;
+}
+
+.tool-event-row code {
+  color: #50605b;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.run-detail-events {
+  max-height: 420px;
+  overflow: auto;
+}
+
+.json-details {
+  border: 1px solid #e1e6e2;
+  background: #fbfcfa;
+}
+
+.json-details summary {
+  cursor: pointer;
+  padding: 10px;
+  color: #17211f;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.json-details pre {
+  padding: 0 10px 10px;
+}
+
 .channel-panel,
 .task-panel {
   min-height: 640px;
@@ -1266,8 +1372,14 @@ pre {
 }
 
 @media (max-width: 1500px) {
+  .run-history-layout,
   .workspace-task-grid {
     grid-template-columns: 1fr;
+  }
+
+  .run-history-layout .runs-panel,
+  .run-history-layout .run-detail-panel {
+    min-height: auto;
   }
 }
 
@@ -1305,6 +1417,10 @@ pre {
   }
 
   .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .run-history-layout {
     grid-template-columns: 1fr;
   }
 
@@ -1350,8 +1466,13 @@ pre {
   .tool-grid,
   .compact-tools,
   .task-detail-meta,
+  .run-detail-summary,
   .provider-number-row {
     grid-template-columns: 1fr;
+  }
+
+  .tool-event-row {
+    grid-template-columns: 42px minmax(0, 1fr);
   }
 
   .provider-row {

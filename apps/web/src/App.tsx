@@ -740,10 +740,20 @@ export function App(): JSX.Element {
             cwd={form.cwd}
             runs={runs}
             selectedRunId={activeRunId}
+            selectedRun={run}
+            events={events}
+            assistantText={assistantText}
             isLoading={runsLoading}
             errorMessage={errorMessage}
-            onCwdChange={(cwd) => setForm({ ...form, cwd })}
+            onCwdChange={(cwd) => {
+              setForm({ ...form, cwd });
+              setRun(undefined);
+              setEvents([]);
+              setActiveRunId("");
+              setLookupRunId("");
+            }}
             onRefresh={() => void refreshRuns()}
+            onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
             onSelect={(runId) => void selectRun(runId)}
           />
         ) : (
@@ -1169,73 +1179,221 @@ function RunHistory({
   cwd,
   runs,
   selectedRunId,
+  selectedRun,
+  events,
+  assistantText,
   isLoading,
   errorMessage,
   onCwdChange,
   onRefresh,
+  onRefreshSelected,
   onSelect,
 }: {
   readonly cwd: string;
   readonly runs: readonly RunSession[];
   readonly selectedRunId: string;
+  readonly selectedRun: RunSession | undefined;
+  readonly events: readonly RunEventEnvelope[];
+  readonly assistantText: string;
   readonly isLoading: boolean;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onRefresh: () => void;
+  readonly onRefreshSelected: () => void;
   readonly onSelect: (runId: string) => void;
 }): JSX.Element {
   return (
-    <section className="panel runs-panel" aria-labelledby="run-history-title">
+    <div className="run-history-layout">
+      <section className="panel runs-panel" aria-labelledby="run-history-title">
+        <div className="panel-title split">
+          <span>
+            <History size={18} />
+            <h2 id="run-history-title">Recent runs</h2>
+          </span>
+          <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
+            {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+            Refresh
+          </button>
+        </div>
+
+        <label className="field wide runs-cwd">
+          <span>Workspace path</span>
+          <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
+        </label>
+
+        {errorMessage ? (
+          <div className="inline-error">
+            <CircleAlert size={17} />
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <div className="runs-list">
+          {runs.length === 0 ? (
+            <div className="empty-state compact-empty">
+              {isLoading ? <Loader2 className="spin" /> : <Clock3 />}
+              <span>{isLoading ? "Loading runs..." : "No persisted runs for this workspace"}</span>
+            </div>
+          ) : (
+            runs.map((item) => (
+              <button
+                key={item.id}
+                className={item.id === selectedRunId ? "run-list-row selected" : "run-list-row"}
+                type="button"
+                onClick={() => onSelect(item.id)}
+              >
+                <span className={`status-dot ${item.status}`} />
+                <span className="run-list-main">
+                  <strong>{readTaskTitle(item.taskSnapshot) || item.taskId}</strong>
+                  <small>{item.id}</small>
+                </span>
+                <span className="run-list-meta">
+                  <StatusBadge status={item.status} />
+                  <time>{formatDateTime(item.createdAt)}</time>
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      </section>
+
+      <RunDetailPanel run={selectedRun} events={events} assistantText={assistantText} onRefresh={onRefreshSelected} />
+    </div>
+  );
+}
+
+function RunDetailPanel({
+  run,
+  events,
+  assistantText,
+  onRefresh,
+}: {
+  readonly run: RunSession | undefined;
+  readonly events: readonly RunEventEnvelope[];
+  readonly assistantText: string;
+  readonly onRefresh: () => void;
+}): JSX.Element {
+  const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
+  const terminalEvent = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));
+  const workspaceCwd = run ? readDataString(run.requestSnapshot, "workspaceCwd") || run.cwd : "-";
+
+  return (
+    <section className="panel run-detail-panel" aria-labelledby="run-detail-title">
       <div className="panel-title split">
         <span>
-          <History size={18} />
-          <h2 id="run-history-title">Recent runs</h2>
+          <Activity size={18} />
+          <h2 id="run-detail-title">Run detail</h2>
         </span>
-        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
-          {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-          Refresh
+        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={!run}>
+          <RefreshCw size={15} />
+          Reload
         </button>
       </div>
 
-      <label className="field wide runs-cwd">
-        <span>Workspace path</span>
-        <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
-      </label>
-
-      {errorMessage ? (
-        <div className="inline-error">
-          <CircleAlert size={17} />
-          {errorMessage}
+      {!run ? (
+        <div className="empty-state">
+          <Search />
+          <span>Select a run to inspect execution details</span>
         </div>
-      ) : null}
-
-      <div className="runs-list">
-        {runs.length === 0 ? (
-          <div className="empty-state compact-empty">
-            {isLoading ? <Loader2 className="spin" /> : <Clock3 />}
-            <span>{isLoading ? "Loading runs..." : "No persisted runs for this workspace"}</span>
+      ) : (
+        <div className="run-detail-content">
+          <div className="run-detail-summary">
+            <MetaRow label="Status" value={run.status} compact />
+            <MetaRow label="Workspace cwd" value={workspaceCwd} compact />
+            <MetaRow label="Execution cwd" value={run.cwd} compact />
+            <MetaRow label="Provider" value={`${run.providerName}/${run.providerModel}`} compact />
+            <MetaRow label="Task" value={run.taskId} compact />
+            <MetaRow label="Channel" value={run.channelId ?? "-"} compact />
+            <MetaRow label="Created" value={formatDateTime(run.createdAt)} compact />
+            <MetaRow label="Ended" value={run.endedAt ? formatDateTime(run.endedAt) : "-"} compact />
           </div>
-        ) : (
-          runs.map((item) => (
-            <button
-              key={item.id}
-              className={item.id === selectedRunId ? "run-list-row selected" : "run-list-row"}
-              type="button"
-              onClick={() => onSelect(item.id)}
-            >
-              <span className={`status-dot ${item.status}`} />
-              <span className="run-list-main">
-                <strong>{readTaskTitle(item.taskSnapshot) || item.taskId}</strong>
-                <small>{item.id}</small>
+
+          {run.errorMessage ? (
+            <div className="inline-error">
+              <CircleAlert size={17} />
+              {run.errorMessage}
+            </div>
+          ) : null}
+
+          {assistantText ? (
+            <div className="assistant-output">
+              <span>Assistant output</span>
+              <p>{assistantText}</p>
+            </div>
+          ) : null}
+
+          <div className="run-detail-section">
+            <div className="panel-title tight">
+              <Bot size={16} />
+              <h3>Task snapshot</h3>
+            </div>
+            <strong>{readTaskTitle(run.taskSnapshot) || run.taskId}</strong>
+            <p>{readTaskPrompt(run.taskSnapshot) || "No prompt snapshot."}</p>
+          </div>
+
+          <div className="run-detail-section">
+            <div className="panel-title tight split">
+              <span>
+                <SquareTerminal size={16} />
+                <h3>Tool activity</h3>
               </span>
-              <span className="run-list-meta">
-                <StatusBadge status={item.status} />
-                <time>{formatDateTime(item.createdAt)}</time>
+              <span className="event-count">{toolEvents.length} tool events</span>
+            </div>
+            {toolEvents.length === 0 ? (
+              <p className="muted">No tool activity recorded.</p>
+            ) : (
+              <div className="tool-event-list">
+                {toolEvents.map((event) => (
+                  <article className="tool-event-row" key={event.id}>
+                    <span>#{event.seq}</span>
+                    <strong>{readDataString(event.data, "toolName") || event.type.replace("tool_", "")}</strong>
+                    <code>{event.type}</code>
+                    <small>{readDataBoolean(event.data, "isError") ? "error" : formatDateTime(event.ts)}</small>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="run-detail-section">
+            <div className="panel-title tight split">
+              <span>
+                <Database size={16} />
+                <h3>Event timeline</h3>
               </span>
-            </button>
-          ))
-        )}
-      </div>
+              <span className="event-count">{events.length} events</span>
+            </div>
+            {events.length === 0 ? (
+              <p className="muted">No events loaded.</p>
+            ) : (
+              <div className="event-list run-detail-events">
+                {events.map((event) => <EventRow key={event.id} event={event} />)}
+              </div>
+            )}
+          </div>
+
+          <div className="run-detail-section">
+            <div className="panel-title tight">
+              <Database size={16} />
+              <h3>Snapshots</h3>
+            </div>
+            <details className="json-details">
+              <summary>Request snapshot</summary>
+              <pre>{formatEventData(run.requestSnapshot)}</pre>
+            </details>
+            <details className="json-details">
+              <summary>Provider snapshot</summary>
+              <pre>{formatEventData(run.providerSnapshot)}</pre>
+            </details>
+            {terminalEvent ? (
+              <details className="json-details">
+                <summary>Terminal event</summary>
+                <pre>{formatEventData(terminalEvent.data)}</pre>
+              </details>
+            ) : null}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -1941,6 +2099,13 @@ function readDataString(data: unknown, key: string): string {
   return "";
 }
 
+function readDataBoolean(data: unknown, key: string): boolean {
+  if (typeof data === "object" && data !== null && key in data) {
+    return (data as Record<string, unknown>)[key] === true;
+  }
+  return false;
+}
+
 function formatEventData(data: unknown): string {
   if (typeof data === "object" && data !== null && "text" in data) {
     const value = (data as { text?: unknown }).text;
@@ -1954,6 +2119,14 @@ function formatEventData(data: unknown): string {
 function readTaskTitle(taskSnapshot: unknown): string {
   if (typeof taskSnapshot === "object" && taskSnapshot !== null && "title" in taskSnapshot) {
     const value = (taskSnapshot as { title?: unknown }).title;
+    return typeof value === "string" ? value : "";
+  }
+  return "";
+}
+
+function readTaskPrompt(taskSnapshot: unknown): string {
+  if (typeof taskSnapshot === "object" && taskSnapshot !== null && "prompt" in taskSnapshot) {
+    const value = (taskSnapshot as { prompt?: unknown }).prompt;
     return typeof value === "string" ? value : "";
   }
   return "";
