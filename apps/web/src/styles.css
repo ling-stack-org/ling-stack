@@ -968,6 +968,64 @@ pre {
   border: 1px solid #e1e6e2;
 }
 
+.task-provider-readiness {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #e7b4a8;
+  background: #fff1ed;
+  color: #7c2d12;
+}
+
+.task-provider-readiness.ok {
+  border-color: #a9cfc0;
+  background: #e7f5ef;
+  color: #116149;
+}
+
+.task-provider-readiness-copy,
+.task-provider-readiness-head {
+  min-width: 0;
+}
+
+.task-provider-readiness-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.task-provider-readiness-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.task-provider-readiness-head strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.task-provider-readiness p,
+.task-provider-readiness small {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.task-provider-readiness small {
+  color: #5f6d68;
+}
+
+.task-provider-readiness-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: #dfe6e2;
+  border: 1px solid #dfe6e2;
+}
+
 .channel-detail {
   display: grid;
   gap: 10px;
@@ -1844,6 +1902,8 @@ pre {
   .compact-tools,
   .channel-detail-meta,
   .task-detail-meta,
+  .task-provider-readiness,
+  .task-provider-readiness-meta,
   .run-detail-summary,
   .provider-number-row,
   .provider-onboarding-strip,

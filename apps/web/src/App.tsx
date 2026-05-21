@@ -1268,9 +1268,8 @@ function ChannelTaskWorkspace({
   const blockedProviders = providers.filter((provider) => !canUseProviderForRun(provider));
   const effectiveProvider = providers.find((provider) => provider.id === effectiveProviderId);
   const canRunWithEffectiveProvider = Boolean(effectiveProvider && canUseProviderForRun(effectiveProvider));
-  const canPreflightRunWithEffectiveProvider = Boolean(
-    effectiveProvider && canRunWithEffectiveProvider && providerRunPreflightBlocker(effectiveProvider) === undefined,
-  );
+  const effectiveProviderPreflightBlocker = providerRunPreflightBlocker(effectiveProvider);
+  const canPreflightRunWithEffectiveProvider = Boolean(effectiveProvider && canRunWithEffectiveProvider && effectiveProviderPreflightBlocker === undefined);
 
   return (
     <div className="task-workspace">
@@ -1466,7 +1465,7 @@ function ChannelTaskWorkspace({
             <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
           </select>
         </label>
-        {providers.length === 0 || runnableProviders.length === 0 || (effectiveProvider && !canPreflightRunWithEffectiveProvider) ? (
+        {providers.length === 0 || runnableProviders.length === 0 || !effectiveProvider || effectiveProviderPreflightBlocker ? (
           <div className={canPreflightRunWithEffectiveProvider ? "provider-run-notice ok" : "provider-run-notice"}>
             {canPreflightRunWithEffectiveProvider ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
             <span>
@@ -1475,8 +1474,8 @@ function ChannelTaskWorkspace({
                 : runnableProviders.length === 0
                   ? "No runnable provider presets. Enable a chat provider and configure its env key."
                   : effectiveProvider
-                    ? (providerRunPreflightBlocker(effectiveProvider) ?? `${effectiveProvider.displayName}: ${providerRunBlockerLabel(effectiveProvider)}.`)
-                    : ""}
+                    ? (effectiveProviderPreflightBlocker ?? `${effectiveProvider.displayName}: ${providerRunBlockerLabel(effectiveProvider)}.`)
+                    : "Select a provider preset before running tasks."}
             </span>
             <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
               Providers
@@ -1531,6 +1530,7 @@ function ChannelTaskWorkspace({
               <span>Prompt</span>
               <textarea value={taskEditForm.prompt} rows={7} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, prompt: event.target.value })} />
             </label>
+            <TaskProviderReadiness provider={effectiveProvider} onOpenProviders={onOpenProviders} />
             <div className="task-actions">
               <button className="primary-button" type="button" onClick={() => onSaveTaskEdit(selectedTask.id)}>
                 <Save size={16} />
@@ -1594,6 +1594,44 @@ function ChannelTaskWorkspace({
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function TaskProviderReadiness({
+  provider,
+  onOpenProviders,
+}: {
+  readonly provider: ProviderPreset | undefined;
+  readonly onOpenProviders: () => void;
+}): JSX.Element {
+  const blocker = providerRunPreflightBlocker(provider);
+  const ready = Boolean(provider && !blocker);
+  const lastCheck = provider?.lastCheck;
+  const checkedAt = lastCheck ? formatDateTime(lastCheck.checkedAt) : "not checked";
+
+  return (
+    <div className={ready ? "task-provider-readiness ok" : "task-provider-readiness"}>
+      {ready ? <CheckCircle2 size={17} /> : <CircleAlert size={17} />}
+      <div className="task-provider-readiness-copy">
+        <div className="task-provider-readiness-head">
+          <strong>{ready ? "Provider ready" : "Provider needs attention"}</strong>
+          <span className={provider ? providerLastCheckClass(provider) : "provider-state check-unknown"}>
+            {provider ? providerLastCheckLabel(provider) : "no provider"}
+          </span>
+        </div>
+        <p>{taskProviderReadinessMessage(provider, blocker)}</p>
+        <div className="task-provider-readiness-meta">
+          <MetaRow label="Provider" value={provider ? provider.displayName : "-"} compact />
+          <MetaRow label="Model" value={provider ? provider.model : "-"} compact />
+          <MetaRow label="Checked" value={checkedAt} compact />
+        </div>
+        {lastCheck && !lastCheck.ok ? <small>{lastCheck.message}</small> : null}
+        <small>{taskProviderReadinessGuidance(provider)}</small>
+      </div>
+      <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
+        Providers
+      </button>
     </div>
   );
 }
@@ -3269,6 +3307,34 @@ function providerRunPreflightBlocker(provider: ProviderPreset | undefined): stri
     return `${provider.displayName}: provider check failed (${providerCheckStatusLabel(provider.lastCheck)}). ${providerCheckGuidance(provider.lastCheck, provider)}`;
   }
   return undefined;
+}
+
+function taskProviderReadinessMessage(provider: ProviderPreset | undefined, blocker: string | undefined): string {
+  if (!provider) {
+    return "No provider preset is selected for this task run.";
+  }
+  if (!blocker) {
+    return `${provider.displayName} passed the last provider check and can run this task.`;
+  }
+  return blocker;
+}
+
+function taskProviderReadinessGuidance(provider: ProviderPreset | undefined): string {
+  if (!provider) {
+    return "Select a provider preset or set one as the channel default.";
+  }
+  if (!canUseProviderForRun(provider)) {
+    return providerNeedsSecret(provider) && !provider.apiKeyConfigured
+      ? `Set ${provider.apiKeyRef ? envNameFromRef(provider.apiKeyRef) : "the API key env"}, restart daemon, then run Check.`
+      : "Open Providers to enable a chat-capable preset before running.";
+  }
+  if (!provider.lastCheck) {
+    return "Use Check run to validate env, base URL, and model access before starting.";
+  }
+  if (!provider.lastCheck.ok) {
+    return providerCheckGuidance(provider.lastCheck, provider);
+  }
+  return "Run is available until provider settings or env change.";
 }
 
 function providerLastCheckLabel(provider: ProviderPreset): string {
