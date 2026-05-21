@@ -194,13 +194,91 @@ test("provider check persists last check result", async () => {
   }
 });
 
+test("provider preset run requires successful daemon preflight", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-run-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_preflight_ready",
+    toolName: "read",
+    input: { path: "README.md" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const created = await createStaticChatProvider(daemon.url, cwd, {
+      displayName: "GLM Static",
+      providerId: "glm-static",
+    });
+    const providerId = created.provider.id;
+
+    const blocked = await postRunExpectError(daemon.url, providerRunBody(cwd, "task_provider_unchecked", providerId));
+    assert.equal(blocked.status, 400);
+    assert.equal(blocked.body.error, "provider_preflight_failed");
+    assert.match(blocked.body.message, /provider has not been checked/);
+    assert.equal(runner.runs.length, 0);
+
+    const checkResult = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(checkResult.ok, true);
+
+    const { runId } = await postRunAndCollectEvents(daemon.url, providerRunBody(cwd, "task_provider_ready", providerId));
+    assert.ok(runId);
+    assert.equal(runner.runs.length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("failed provider checks block daemon preset runs unless skipped", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-run-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_preflight_failed",
+    toolName: "read",
+    input: { path: "README.md" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const created = await createStaticChatProvider(daemon.url, cwd, {
+      kind: "openai-compatible",
+      displayName: "Broken Relay",
+      providerId: "broken-relay",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:9/v1",
+    });
+    const providerId = created.provider.id;
+    const checkResult = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(checkResult.ok, false);
+
+    const blocked = await postRunExpectError(daemon.url, providerRunBody(cwd, "task_provider_failed", providerId));
+    assert.equal(blocked.status, 400);
+    assert.equal(blocked.body.error, "provider_preflight_failed");
+    assert.match(blocked.body.message, /provider check failed/);
+    assert.equal(runner.runs.length, 0);
+
+    const { runId } = await postRunAndCollectEvents(
+      daemon.url,
+      providerRunBody(cwd, "task_provider_skip_preflight", providerId, { skipProviderPreflight: true }),
+    );
+    assert.ok(runId);
+    assert.equal(runner.runs.length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 class ApprovalProbeRunner {
   constructor(request) {
     this.request = request;
     this.decisions = [];
+    this.runs = [];
   }
 
   async runTask(options) {
+    this.runs.push({
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+      taskId: options.task.id,
+    });
     options.onEvent?.({
       type: "run_start",
       taskId: options.task.id,
@@ -266,6 +344,36 @@ function runBody(cwd, taskId) {
   };
 }
 
+function providerRunBody(cwd, taskId, providerPresetId, overrides = {}) {
+  return {
+    cwd,
+    task: {
+      id: taskId,
+      title: taskId,
+      prompt: "Trigger provider preset run.",
+    },
+    providerPresetId,
+    tools: ["read"],
+    thinkingLevel: "off",
+    ...overrides,
+  };
+}
+
+async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
+  return await postJson(`${baseUrl}/providers?cwd=${encodeURIComponent(cwd)}`, {
+    kind: "glm",
+    displayName: "Static Chat",
+    providerId: "static-chat",
+    model: "static-model",
+    api: "google-generative-ai",
+    capabilities: ["chat"],
+    input: ["text"],
+    authHeader: false,
+    enabled: true,
+    ...overrides,
+  });
+}
+
 async function patchPolicy(baseUrl, cwd, body) {
   return await patchJson(`${baseUrl}/approval-policy?cwd=${encodeURIComponent(cwd)}`, body);
 }
@@ -296,6 +404,20 @@ async function postRunStream(baseUrl, body) {
   }
   assert.ok(response.body);
   return response;
+}
+
+async function postRunExpectError(baseUrl, body) {
+  const response = await fetch(`${baseUrl}/runs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  assert.notEqual(response.status, 200, text);
+  return {
+    status: response.status,
+    body: text.trim() ? JSON.parse(text) : {},
+  };
 }
 
 async function getJson(url) {

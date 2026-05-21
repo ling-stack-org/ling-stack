@@ -235,6 +235,7 @@ Request with a provider preset:
     "prompt": "Inspect the repo and summarize the main packages."
   },
   "providerPresetId": "provider_...",
+  "skipProviderPreflight": false,
   "tools": ["read", "grep", "find", "ls"],
   "thinkingLevel": "medium"
 }
@@ -247,9 +248,27 @@ Rules:
 - `media-job` presets cannot run Pi coding tasks.
 - Disabled presets return `provider_disabled`.
 - Presets without `chat` capability return `unsupported_capability`.
+- `providerPresetId` product runs require a successful saved provider check. If `lastCheck` is missing or `lastCheck.ok !== true`, the daemon returns `provider_preflight_failed` before creating a run session.
+- Required `apiKeyRef` values are re-resolved from the current daemon environment at run startup. Missing required secrets return `provider_preflight_failed`.
+- `skipProviderPreflight: true` is a development/debug escape hatch for direct callers and CLI `--skip-preflight`. It bypasses secret-readiness and `lastCheck` gates only; it does not allow disabled, media-only, or no-chat presets to run.
+- Inline `provider` requests are development-only and are not checked against persisted provider `lastCheck`.
 - Product runs default to read-only tools: `read`, `grep`, `find`, `ls`.
 - If `bash`, `edit`, or `write` are enabled for a run, Pi tool execution is paused before the side effect and an approval request is created.
 - The run stays `waiting_for_approval` until `/approvals/:id/approve` or `/approvals/:id/deny` resolves the request.
+
+Preflight failure response:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+```
+
+```json
+{
+  "error": "provider_preflight_failed",
+  "message": "Local Relay: provider has not been checked. Run provider check before starting."
+}
+```
 
 SSE events:
 
@@ -664,3 +683,4 @@ Approval decisions append `approval_approved` or `approval_denied` to the linked
 - Cancellation is best effort and depends on Pi session abort behavior.
 - Inline API keys are accepted in `/runs` for early development only; production desktop builds should use OS keychain or a local secret store.
 - Media provider health checks are static config checks until media job execution exists.
+- v0.1 does not expire provider `lastCheck` by time. Provider edits clear old check state; future versions can add TTL-based recheck prompts.

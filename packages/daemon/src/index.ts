@@ -92,6 +92,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
   readonly provider?: PiRunnerProviderConfig;
+  readonly skipProviderPreflight?: boolean;
 }
 
 export interface DaemonServer {
@@ -1134,6 +1135,7 @@ function resolveProviderForRun(store: RunStore, runRequest: RunRequest): PiRunne
     if (!preset.capabilities.includes("chat")) {
       throw new HttpError(400, "unsupported_capability", "Provider preset must include chat capability for coding runs");
     }
+    assertProviderRunPreflight(preset, runRequest.skipProviderPreflight === true);
     const secret = resolveSecretRef(preset.apiKeyRef);
     return removeUndefined({
       provider: preset.providerId,
@@ -1157,6 +1159,39 @@ function resolveProviderForRun(store: RunStore, runRequest: RunRequest): PiRunne
   }
 
   return runRequest.provider;
+}
+
+function assertProviderRunPreflight(preset: ProviderPreset, skipProviderPreflight: boolean): void {
+  if (skipProviderPreflight) {
+    return;
+  }
+
+  const secretBlocker = providerSecretPreflightBlocker(preset);
+  if (secretBlocker) {
+    throw new HttpError(400, "provider_preflight_failed", `${preset.displayName}: ${secretBlocker}`);
+  }
+
+  if (!preset.lastCheck) {
+    throw new HttpError(400, "provider_preflight_failed", `${preset.displayName}: provider has not been checked. Run provider check before starting.`);
+  }
+  if (!preset.lastCheck.ok) {
+    throw new HttpError(
+      400,
+      "provider_preflight_failed",
+      `${preset.displayName}: provider check failed (${preset.lastCheck.code ?? "failed"}). ${preset.lastCheck.message}`.trim(),
+    );
+  }
+}
+
+function providerSecretPreflightBlocker(preset: ProviderPreset): string | undefined {
+  const needsSecret = preset.api === "anthropic-messages" || preset.authHeader !== false;
+  if (needsSecret && !preset.apiKeyRef) {
+    return "missing apiKeyRef.";
+  }
+  if (preset.apiKeyRef && !resolveSecretRef(preset.apiKeyRef).configured) {
+    return `missing ${preset.apiKeyRef}.`;
+  }
+  return undefined;
 }
 
 function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalRequest): void {
@@ -1618,6 +1653,7 @@ function parseRunRequest(value: unknown): RunRequest {
   const task = value.task;
   const provider = value.provider;
   const providerPresetId = readOptionalString(value, "providerPresetId");
+  const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
 
   if (!isRecord(task)) {
     throw new Error("task must be an object");
@@ -1636,6 +1672,7 @@ function parseRunRequest(value: unknown): RunRequest {
     cwd,
     workspaceCwd,
     providerPresetId,
+    skipProviderPreflight,
     task: {
       id: readString(task, "id"),
       title: readString(task, "title"),

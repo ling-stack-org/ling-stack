@@ -126,7 +126,9 @@ test("run can skip provider preflight", async () => {
 
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /Run: run_1/);
-    assert.deepEqual(daemon.runRequests, ["POST /runs"]);
+    assert.equal(daemon.runRequests.length, 1);
+    assert.equal(daemon.runRequests[0].providerPresetId, provider.id);
+    assert.equal(daemon.runRequests[0].skipProviderPreflight, true);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -141,7 +143,9 @@ test("task run can skip provider preflight", async () => {
 
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /Run: run_1/);
-    assert.deepEqual(daemon.runRequests, ["POST /runs"]);
+    assert.equal(daemon.runRequests.length, 1);
+    assert.equal(daemon.runRequests[0].providerPresetId, provider.id);
+    assert.equal(daemon.runRequests[0].skipProviderPreflight, true);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -163,11 +167,10 @@ function runCli(daemonUrl, cwd, args) {
 async function startProviderDaemon() {
   const checkRequests = [];
   const runRequests = [];
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method === "POST" && url.pathname === "/runs") {
-      runRequests.push("POST /runs");
-      request.resume();
+      runRequests.push(await readJsonBody(request));
       writeSseReady(response, "run_1");
       return;
     }
@@ -254,6 +257,18 @@ async function startProviderDaemon() {
 function writeJson(response, statusCode, body) {
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+function readJsonBody(request) {
+  return new Promise((resolveRequestBody, rejectRequestBody) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("error", rejectRequestBody);
+    request.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8").trim();
+      resolveRequestBody(text ? JSON.parse(text) : {});
+    });
+  });
 }
 
 function writeSseReady(response, runId) {

@@ -611,6 +611,7 @@ interface RunRequest {
   };
   providerPresetId?: string;
   provider?: InlineProviderConfig;
+  skipProviderPreflight?: boolean;
   tools?: ToolName[];
   thinkingLevel?: ThinkingLevel;
   systemPrompt?: string;
@@ -618,6 +619,25 @@ interface RunRequest {
   agentDir?: string;
 }
 ```
+
+### Run Preflight Gate
+
+`providerPresetId` product runs must pass daemon-side preflight before a run session is created. Web and CLI can provide earlier guidance, but the daemon is the enforcement boundary because direct `POST /runs` callers must not bypass provider readiness.
+
+Default preflight for `providerPresetId` checks:
+
+- preset is enabled,
+- preset is not `media-job`,
+- preset includes `chat`,
+- required `apiKeyRef` is configured in the current daemon environment,
+- `lastCheck` exists,
+- `lastCheck.ok === true`.
+
+`skipProviderPreflight: true` is a development/debug escape hatch. It may bypass secret-readiness and `lastCheck` gates, but it must not bypass hard compatibility rules: disabled presets, media presets, and no-chat presets still fail before runner invocation.
+
+Inline `provider` remains accepted for development and does not participate in preset preflight because there is no persisted `lastCheck`. Normal product flows should use `providerPresetId`.
+
+v0.1 does not expire `lastCheck` by time. Editing a provider clears the prior check result, and daemon run startup re-resolves env secrets so obvious env drift still fails unless the caller explicitly sets `skipProviderPreflight`.
 
 ## Validation Rules
 
@@ -769,6 +789,9 @@ Daemon tests:
 - `PATCH /providers/:id` updates allowed fields.
 - `DELETE /providers/:id` removes unused preset.
 - `POST /providers/:id/check` fails when secret is missing.
+- `POST /runs` with unchecked `providerPresetId` returns `provider_preflight_failed`.
+- `POST /runs` with failed `lastCheck` returns `provider_preflight_failed`.
+- `POST /runs` with `skipProviderPreflight: true` can start a debug run for an unchecked preset.
 - `POST /runs` with `providerPresetId` invokes runner with resolved provider config.
 - `POST /runs` with both `providerPresetId` and inline `provider` returns `bad_request`.
 
@@ -826,10 +849,11 @@ curl -N http://127.0.0.1:17891/runs \
 10. Update `POST /runs` parsing for `providerPresetId`.
 11. Resolve presets into `PiRunnerProviderConfig`.
 12. Persist redacted provider snapshots through session persistence.
-13. Add unit tests.
-14. Add daemon route tests.
-15. Run `corepack pnpm typecheck`.
-16. Run `corepack pnpm build`.
+13. Add daemon run preflight for `providerPresetId`.
+14. Add unit tests.
+15. Add daemon route tests.
+16. Run `corepack pnpm typecheck`.
+17. Run `corepack pnpm build`.
 
 ## Open Decisions
 

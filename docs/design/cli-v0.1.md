@@ -614,6 +614,7 @@ Options:
 --thinking off|minimal|low|medium|high|xhigh
 --system-prompt <text>
 --append-system-prompt <text>
+--skip-preflight
 --json
 ```
 
@@ -630,6 +631,13 @@ write, edit, bash
 ```
 
 `write`, `edit`, and `bash` should create approval requests and pause before execution.
+
+Provider preflight:
+
+- CLI defaults to the same provider preflight as daemon product runs.
+- `run` and `task run` block if the selected provider preset has no successful saved provider check.
+- `--skip-preflight` is an explicit debug flag. The CLI sends `skipProviderPreflight: true` to the daemon so direct daemon enforcement and CLI behavior stay aligned.
+- `--skip-preflight` must remain visible in help output and must not bypass approval policy or hard provider compatibility rules.
 
 Output behavior:
 
@@ -1043,6 +1051,7 @@ Command tests with mock daemon:
 - `daemon status` handles ok and unreachable daemon,
 - `provider add/list/check` calls correct endpoints,
 - `run` sends `providerPresetId`,
+- `run --skip-preflight` sends `skipProviderPreflight: true`,
 - `run --json` emits JSONL only,
 - `runs events` paginates,
 - `approvals approve/deny` sends reason payload,

@@ -542,13 +542,15 @@ async function handleRun(args: readonly string[], options: GlobalOptions): Promi
   const taskId = getFlag(parsed, "task") ?? `task_cli_${randomUUID()}`;
   const title = getFlag(parsed, "title") ?? titleFromPrompt(prompt);
   const appendSystemPrompt = getFlagValues(parsed, "append-system-prompt");
-  if (!parsed.booleans.has("skip-preflight")) {
+  const skipProviderPreflight = parsed.booleans.has("skip-preflight");
+  if (!skipProviderPreflight) {
     await assertProviderRunPreflight(options, providerPresetId);
   }
 
   const body = removeUndefined({
     cwd: options.cwd,
     providerPresetId,
+    skipProviderPreflight: skipProviderPreflight ? true : undefined,
     task: {
       id: taskId,
       title,
@@ -987,7 +989,8 @@ async function handleTaskRun(args: readonly string[], options: GlobalOptions): P
   if (!VALID_THINKING_LEVELS.has(thinkingLevel)) {
     throw new CliError(2, "bad_thinking_level", `--thinking must be one of: ${[...VALID_THINKING_LEVELS].join(", ")}`);
   }
-  if (!parsed.booleans.has("skip-preflight")) {
+  const skipProviderPreflight = parsed.booleans.has("skip-preflight");
+  if (!skipProviderPreflight) {
     await assertProviderRunPreflight(options, providerPresetId);
   }
   const explicitTools = readTools(parsed);
@@ -996,6 +999,7 @@ async function handleTaskRun(args: readonly string[], options: GlobalOptions): P
     workspaceCwd: options.cwd,
     cwd: readString(channel, "boundPath") ?? options.cwd,
     providerPresetId,
+    skipProviderPreflight: skipProviderPreflight ? true : undefined,
     task: {
       id: taskId,
       title: readString(task, "title") ?? taskId,
