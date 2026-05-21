@@ -108,6 +108,16 @@ interface RunRepairHint {
   readonly detail: string;
   readonly actionLabel: string;
 }
+interface RuntimeFailureSummary {
+  readonly eventLabel: string;
+  readonly toolName: string;
+  readonly issueText: string;
+  readonly command: string;
+  readonly cwd: string;
+  readonly targetPath: string;
+  readonly exitCode: string;
+  readonly suggestion: string;
+}
 interface WorkspaceReadinessItem {
   readonly id: string;
   readonly label: string;
@@ -1011,6 +1021,21 @@ export function App(): JSX.Element {
     setActiveView("providers");
   }
 
+  async function openTaskFromRun(runToRepair: RunSession): Promise<void> {
+    if (!runToRepair.channelId || !runToRepair.taskId) {
+      setErrorMessage("This run is not linked to an editable channel task.");
+      return;
+    }
+
+    setErrorMessage("");
+    setSelectedChannelId(runToRepair.channelId);
+    setSelectedTaskId(runToRepair.taskId);
+    setTaskRunProviderId("");
+    setActiveView("workspace");
+    await refreshTasks(runToRepair.channelId);
+    setSelectedTaskId(runToRepair.taskId);
+  }
+
   async function cancelActiveRun(): Promise<void> {
     abortRef.current?.abort();
     if (!activeRunId) {
@@ -1215,6 +1240,7 @@ export function App(): JSX.Element {
             onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
             onOpenProviders={(sourceRun) => openProvidersFromRun(sourceRun)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
+            onEditTask={(sourceRun) => void openTaskFromRun(sourceRun)}
             onSelect={(runId) => void selectRun(runId)}
           />
         ) : (
@@ -2630,6 +2656,7 @@ function RunHistory({
   onResolveApproval,
   onOpenProviders,
   onOpenApprovals,
+  onEditTask,
   onSelect,
 }: {
   readonly cwd: string;
@@ -2652,6 +2679,7 @@ function RunHistory({
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly onOpenApprovals: (runId?: string) => void;
+  readonly onEditTask: (run: RunSession) => void;
   readonly onSelect: (runId: string) => void;
 }): JSX.Element {
   return (
@@ -2723,6 +2751,7 @@ function RunHistory({
         onResolveApproval={onResolveApproval}
         onOpenProviders={onOpenProviders}
         onOpenApprovals={onOpenApprovals}
+        onEditTask={onEditTask}
       />
     </div>
   );
@@ -2742,6 +2771,7 @@ function RunDetailPanel({
   onResolveApproval,
   onOpenProviders,
   onOpenApprovals,
+  onEditTask,
 }: {
   readonly run: RunSession | undefined;
   readonly events: readonly RunEventEnvelope[];
@@ -2756,6 +2786,7 @@ function RunDetailPanel({
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly onOpenApprovals: (runId?: string) => void;
+  readonly onEditTask: (run: RunSession) => void;
 }): JSX.Element {
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   const terminalEvent = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));
@@ -2763,6 +2794,7 @@ function RunDetailPanel({
   const providerPresetId = run ? readRunProviderPresetId(run) : "";
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
   const repairHint = run ? buildRunRepairHint(run, pendingApprovals.length, run.status, readRunEventIssueText(terminalEvent)) : undefined;
+  const runtimeRepairRun = run && run.status === "failed" && repairHint?.target === "run" ? run : undefined;
 
   return (
     <section className="panel run-detail-panel" aria-labelledby="run-detail-title">
@@ -2817,6 +2849,18 @@ function RunDetailPanel({
               <CircleAlert size={17} />
               {run.errorMessage}
             </div>
+          ) : null}
+
+          {runtimeRepairRun ? (
+            <RuntimeRunRepairPanel
+              run={runtimeRepairRun}
+              events={events}
+              workspaceCwd={workspaceCwd}
+              isRunning={isRunning}
+              onEditTask={onEditTask}
+              onRerun={onRerun}
+              onReload={onRefresh}
+            />
           ) : null}
 
           <div className="run-detail-section approval-state-section">
@@ -2939,6 +2983,69 @@ function RunDetailPanel({
         </div>
       )}
     </section>
+  );
+}
+
+function RuntimeRunRepairPanel({
+  run,
+  events,
+  workspaceCwd,
+  isRunning,
+  onEditTask,
+  onRerun,
+  onReload,
+}: {
+  readonly run: RunSession;
+  readonly events: readonly RunEventEnvelope[];
+  readonly workspaceCwd: string;
+  readonly isRunning: boolean;
+  readonly onEditTask: (run: RunSession) => void;
+  readonly onRerun: (run: RunSession) => void;
+  readonly onReload: () => void;
+}): JSX.Element {
+  const summary = buildRuntimeFailureSummary(run, events, workspaceCwd);
+  const canEditTask = Boolean(run.channelId && run.taskId);
+  const canRerun = Boolean(readRunProviderPresetId(run));
+
+  return (
+    <div className="runtime-run-repair" aria-label="Runtime run repair">
+      <div className="runtime-run-repair-head">
+        <span>
+          <SquareTerminal size={16} />
+          <strong>Repair runtime/tool failure</strong>
+        </span>
+        <StatusBadge status={run.status} />
+      </div>
+      <div className="runtime-run-repair-copy">
+        <span>
+          Run <code>{run.id}</code> failed at <code>{summary.eventLabel}</code>.
+        </span>
+        <small>{summary.issueText}</small>
+        <small>{summary.suggestion}</small>
+      </div>
+      <div className="runtime-run-repair-meta">
+        <MetaRow label="Tool" value={summary.toolName || "-"} compact />
+        <MetaRow label="Event" value={summary.eventLabel} compact />
+        <MetaRow label="Cwd" value={summary.cwd || "-"} compact />
+        <MetaRow label="Exit code" value={summary.exitCode || "-"} compact />
+        {summary.command ? <MetaRow label="Command" value={summary.command} compact /> : null}
+        {summary.targetPath ? <MetaRow label="Target path" value={summary.targetPath} compact /> : null}
+      </div>
+      <div className="runtime-run-repair-actions">
+        <button className="secondary-button compact-button" type="button" onClick={() => onEditTask(run)} disabled={!canEditTask}>
+          <Pencil size={14} />
+          Edit task
+        </button>
+        <button className="primary-button compact-button" type="button" onClick={() => onRerun(run)} disabled={isRunning || !canRerun}>
+          {isRunning ? <Loader2 className="spin" size={14} /> : <RotateCcw size={14} />}
+          Rerun
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={onReload} disabled={isRunning}>
+          <RefreshCw size={14} />
+          Reload
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -4441,6 +4548,106 @@ function buildRunRepairHint(
 
 function isProviderRepairMessage(message: string): boolean {
   return /provider|preflight|api[-_ ]?key|apikey|auth|secret|credential|model|base[-_ ]?url|endpoint|token/i.test(message);
+}
+
+function buildRuntimeFailureSummary(
+  run: RunSession,
+  events: readonly RunEventEnvelope[],
+  workspaceCwd: string,
+): RuntimeFailureSummary {
+  const failureEvent = findRuntimeFailureEvent(events);
+  const relatedToolStart = findRelatedToolStart(events, failureEvent);
+  const dataSources = [failureEvent?.data, relatedToolStart?.data, run.requestSnapshot].filter((item): item is unknown => item !== undefined);
+  const toolName = readFirstDataString(dataSources, ["toolName", "tool", "name", "actionType"])
+    || (failureEvent?.type.startsWith("tool_") ? failureEvent.type.replace("tool_", "") : "runtime");
+  const issueText = (failureEvent ? readRunEventIssueText(failureEvent) : "") || run.errorMessage || "No failure message was recorded for this run.";
+  const command = readFirstDataString(dataSources, ["command", "cmd", "script", "input"]);
+  const cwd = readFirstDataString(dataSources, ["cwd", "workdir", "workingDirectory"]) || run.cwd || workspaceCwd;
+  const targetPath = readFirstDataString(dataSources, ["path", "filePath", "targetPath", "target"]);
+  const exitCode = readFirstDataScalarString(dataSources, ["exitCode", "exit_code", "statusCode"]);
+
+  return {
+    eventLabel: failureEvent ? `#${failureEvent.seq} ${failureEvent.type}` : "run status",
+    toolName,
+    issueText,
+    command,
+    cwd,
+    targetPath,
+    exitCode,
+    suggestion: buildRuntimeRepairSuggestion(toolName, command, targetPath),
+  };
+}
+
+function findRuntimeFailureEvent(events: readonly RunEventEnvelope[]): RunEventEnvelope | undefined {
+  const reversed = [...events].reverse();
+  return reversed.find((event) => event.type === "tool_end" && readDataBoolean(event.data, "isError"))
+    ?? reversed.find((event) => event.type === "run_error")
+    ?? reversed.find((event) => ["run_cancelled", "run_end"].includes(event.type));
+}
+
+function findRelatedToolStart(
+  events: readonly RunEventEnvelope[],
+  failureEvent: RunEventEnvelope | undefined,
+): RunEventEnvelope | undefined {
+  if (!failureEvent || !failureEvent.type.startsWith("tool_")) {
+    return undefined;
+  }
+
+  const failureIndex = events.findIndex((event) => event.id === failureEvent.id);
+  const candidates = [...(failureIndex >= 0 ? events.slice(0, failureIndex) : events)].reverse();
+  const toolCallId = readDataString(failureEvent.data, "toolCallId");
+  const toolName = readDataString(failureEvent.data, "toolName");
+
+  return candidates.find((event) => {
+    if (event.type !== "tool_start") {
+      return false;
+    }
+    if (toolCallId) {
+      return readDataString(event.data, "toolCallId") === toolCallId;
+    }
+    if (toolName) {
+      return readDataString(event.data, "toolName") === toolName;
+    }
+    return true;
+  });
+}
+
+function readFirstDataString(dataSources: readonly unknown[], keys: readonly string[]): string {
+  for (const data of dataSources) {
+    for (const key of keys) {
+      const value = readDataString(data, key);
+      if (value) {
+        return value;
+      }
+    }
+  }
+  return "";
+}
+
+function readFirstDataScalarString(dataSources: readonly unknown[], keys: readonly string[]): string {
+  for (const data of dataSources) {
+    for (const key of keys) {
+      const value = readDataField(data, key);
+      if (typeof value === "string" && value) {
+        return value;
+      }
+      if (typeof value === "number" || typeof value === "boolean") {
+        return String(value);
+      }
+    }
+  }
+  return "";
+}
+
+function buildRuntimeRepairSuggestion(toolName: string, command: string, targetPath: string): string {
+  const normalizedTool = toolName.toLowerCase();
+  if (normalizedTool.includes("bash") || command) {
+    return "Check the command, cwd, dependency state, or task prompt. Edit the task if the instruction is wrong, then rerun.";
+  }
+  if (["edit", "write"].some((tool) => normalizedTool.includes(tool)) || targetPath) {
+    return "Check the target path and intended file change. Edit the task or workspace files, then rerun.";
+  }
+  return "Inspect the failed event, fix the task or workspace state, then rerun from the same persisted snapshot.";
 }
 
 function readRunEventIssueText(event: RunEventEnvelope | undefined): string {

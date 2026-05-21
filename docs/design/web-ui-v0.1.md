@@ -442,6 +442,15 @@ GET /runs/:id
 -> reconstruct transcript and timeline
 ```
 
+Runtime/tool run repair flow:
+
+- when a failed run routes to Run detail, the page should show a focused repair panel near the status summary instead of only a generic event timeline,
+- the panel should identify the most relevant failure event, preferring the latest errored `tool_end`, then `run_error`, then the terminal run event,
+- if a matching `tool_start` exists, the panel should carry forward useful context such as tool name, command, cwd, and target path,
+- repair actions should keep the loop short: Edit task, Rerun, and Reload,
+- Edit task should switch back to Workspace, select the run's channel/task, and let the user adjust the prompt/status before rerunning,
+- Rerun should reuse the persisted run snapshot and remain disabled when the run cannot be replayed through a provider preset.
+
 ### Approval Inbox
 
 Backed by:

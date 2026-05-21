@@ -996,6 +996,69 @@ pre {
   gap: 8px;
 }
 
+.runtime-run-repair {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d8ded7;
+  background: #f7faf7;
+}
+
+.runtime-run-repair-head,
+.runtime-run-repair-head span,
+.runtime-run-repair-actions {
+  display: flex;
+  align-items: center;
+}
+
+.runtime-run-repair-head {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.runtime-run-repair-head span {
+  gap: 7px;
+  color: #43524e;
+}
+
+.runtime-run-repair-head strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.runtime-run-repair-copy {
+  display: grid;
+  gap: 5px;
+  color: #4f5e59;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.runtime-run-repair-copy code {
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.8);
+  color: #17211f;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.runtime-run-repair-copy small {
+  overflow-wrap: anywhere;
+}
+
+.runtime-run-repair-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid #e1e6e2;
+  background: #e1e6e2;
+}
+
+.runtime-run-repair-actions {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .tool-event-list {
   display: grid;
   gap: 7px;
@@ -2464,6 +2527,7 @@ pre {
   .task-provider-readiness,
   .task-provider-readiness-meta,
   .run-detail-summary,
+  .runtime-run-repair-meta,
   .provider-number-row,
   .provider-onboarding-strip,
   .provider-repair-item,
