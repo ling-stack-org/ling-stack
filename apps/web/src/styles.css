@@ -1848,6 +1848,12 @@ pre {
   gap: 10px;
 }
 
+.media-job-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .media-job-row-head strong {
   color: #17211f;
   font-size: 13px;
@@ -1861,6 +1867,14 @@ pre {
 
 .media-job-error {
   color: #9a341f;
+}
+
+.media-job-artifacts {
+  padding-top: 2px;
+}
+
+.media-job-artifacts .artifact-row {
+  grid-template-columns: 74px minmax(0, 1fr) auto;
 }
 
 .provider-list {

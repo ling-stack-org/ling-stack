@@ -73,7 +73,8 @@ export type ArtifactType = "file" | "diff" | "log" | "json" | "markdown" | "imag
 
 export interface RunArtifact {
   readonly id: string;
-  readonly runId: string;
+  readonly runId?: string;
+  readonly mediaJobId?: string;
   readonly type: ArtifactType;
   readonly path: string;
   readonly title?: string;
@@ -84,6 +85,11 @@ export interface RunArtifact {
 
 export interface RunArtifactListResponse {
   readonly runId: string;
+  readonly artifacts: readonly RunArtifact[];
+}
+
+export interface MediaJobArtifactListResponse {
+  readonly mediaJobId: string;
   readonly artifacts: readonly RunArtifact[];
 }
 
@@ -116,6 +122,7 @@ export interface MediaJobListResponse {
 
 export interface MediaJobMutationResponse {
   readonly mediaJob: MediaJob;
+  readonly artifacts?: readonly RunArtifact[];
 }
 
 export type TaskStatus = "todo" | "claimed" | "running" | "blocked" | "review" | "done" | "failed" | "cancelled";

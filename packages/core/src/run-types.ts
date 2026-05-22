@@ -128,7 +128,8 @@ export type ArtifactType = "file" | "diff" | "log" | "json" | "markdown" | "imag
 
 export interface RunArtifact {
   readonly id: string;
-  readonly runId: string;
+  readonly runId?: string;
+  readonly mediaJobId?: string;
   readonly type: ArtifactType;
   readonly path: string;
   readonly title?: string;
@@ -139,7 +140,8 @@ export interface RunArtifact {
 
 export interface CreateRunArtifactInput {
   readonly id?: string;
-  readonly runId: string;
+  readonly runId?: string;
+  readonly mediaJobId?: string;
   readonly type: ArtifactType;
   readonly path: string;
   readonly title?: string;
@@ -165,6 +167,7 @@ export interface RunStore {
   createArtifact(input: CreateRunArtifactInput): RunArtifact;
   getArtifact(artifactId: string): RunArtifact | undefined;
   listArtifacts(runId: string): RunArtifact[];
+  listMediaJobArtifacts(mediaJobId: string): RunArtifact[];
   recoverStaleRuns(now: string): number;
   createChannel(input: CreateChannelInput, now: string): Channel;
   getChannel(id: string): Channel | undefined;

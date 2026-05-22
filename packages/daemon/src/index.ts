@@ -33,6 +33,7 @@ import {
   type CreateMediaJobInput,
   type CreateChannelInput,
   type CreateTaskInput,
+  type MediaJob,
   type MediaJobStatus,
   type MediaOperation,
   type ProviderApi,
@@ -286,6 +287,18 @@ async function routeRequest(
 
   const mediaJobRoute = parseMediaJobRoute(url.pathname);
   if (mediaJobRoute) {
+    if (request.method === "POST" && mediaJobRoute.action === "run") {
+      handleRunMediaJob(response, url, storeRegistry, mediaJobRoute.mediaJobId);
+      return;
+    }
+    if (request.method === "GET" && mediaJobRoute.action === "artifacts") {
+      handleListMediaJobArtifacts(response, url, storeRegistry, mediaJobRoute.mediaJobId);
+      return;
+    }
+    if (mediaJobRoute.action) {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for media job ${mediaJobRoute.action}` });
+      return;
+    }
     handleMediaJobItem(request, response, config, storeRegistry, mediaJobRoute.mediaJobId);
     return;
   }
@@ -917,6 +930,118 @@ function handleMediaJobItem(
       return;
     }
     writeJson(response, 200, { mediaJob: job });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function handleRunMediaJob(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  mediaJobId: string,
+): void {
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  let store: RunStore | undefined;
+  let job: MediaJob | undefined;
+  let startedExecution = false;
+  try {
+    store = storeRegistry.getStore(cwd);
+    job = store.getMediaJob(mediaJobId);
+    if (!job) {
+      writeJson(response, 404, { error: "media_job_not_found", message: `Media job not found: ${mediaJobId}` });
+      return;
+    }
+    if (!isRunnableMediaJobStatus(job.status)) {
+      writeJson(response, 409, {
+        error: "media_job_not_runnable",
+        message: `Media job cannot be run from status ${job.status}: ${mediaJobId}`,
+      });
+      return;
+    }
+
+    const provider = assertMediaJobProvider(store, {
+      providerPresetId: job.providerPresetId,
+      operation: job.operation,
+      prompt: job.prompt,
+      input: job.input,
+    });
+
+    job = store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, new Date().toISOString()) ?? job;
+    startedExecution = true;
+
+    if (shouldForceStaticMediaFailure(job.input)) {
+      const failed = store.updateMediaJobStatus(
+        job.id,
+        {
+          status: "failed",
+          errorMessage: "Static media adapter forced failure from input.forceFailure.",
+        },
+        new Date().toISOString(),
+      ) ?? job;
+      writeJson(response, 200, { mediaJob: failed, artifacts: [] });
+      return;
+    }
+
+    const completedAt = new Date().toISOString();
+    const artifact = createStaticMediaJobArtifact(store, job, provider, completedAt);
+    const artifactIds = [...new Set([...job.artifactIds, artifact.id])];
+    const succeeded = store.updateMediaJobStatus(
+      job.id,
+      {
+        status: "succeeded",
+        artifactIds,
+        errorMessage: null,
+      },
+      completedAt,
+    ) ?? job;
+
+    writeJson(response, 200, { mediaJob: succeeded, artifacts: [artifact] });
+  } catch (error) {
+    const statusCode = error instanceof HttpError ? error.statusCode : startedExecution ? 500 : 400;
+    const message = error instanceof Error ? error.message : String(error);
+    const failed = store && job && startedExecution
+      ? store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, new Date().toISOString())
+      : undefined;
+    writeJson(response, statusCode, {
+      error: error instanceof HttpError ? error.code : startedExecution ? "media_job_execution_failed" : "bad_request",
+      message,
+      ...(failed ? { mediaJob: failed } : {}),
+    });
+  }
+}
+
+function handleListMediaJobArtifacts(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  mediaJobId: string,
+): void {
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const job = store.getMediaJob(mediaJobId);
+    if (!job) {
+      writeJson(response, 404, { error: "media_job_not_found", message: `Media job not found: ${mediaJobId}` });
+      return;
+    }
+    writeJson(response, 200, {
+      mediaJobId,
+      artifacts: store.listMediaJobArtifacts(mediaJobId),
+    });
   } catch (error) {
     writeJson(response, 400, {
       error: "bad_request",
@@ -2094,6 +2219,70 @@ function materializeExtractedArtifact(
   });
 }
 
+function createStaticMediaJobArtifact(
+  store: RunStore,
+  job: MediaJob,
+  provider: ProviderPreset,
+  createdAt: string,
+): RunArtifact {
+  const artifactDir = resolvePath(store.paths.artifactsDir, "media_jobs", job.id);
+  mkdirSync(artifactDir, { recursive: true });
+  const relativePath = normalizeArtifactPath(`media_jobs/${job.id}/static-result-${formatTimestampSlug(createdAt)}.md`);
+  const absolutePath = resolvePath(store.paths.artifactsDir, relativePath);
+  const content = renderStaticMediaJobArtifact(job, provider, createdAt);
+  writeFileSync(absolutePath, content, "utf8");
+  const stats = statSync(absolutePath);
+
+  return store.createArtifact({
+    mediaJobId: job.id,
+    type: "markdown",
+    path: relativePath,
+    title: `${formatMediaOperationLabel(job.operation)} static result`,
+    contentType: contentTypeForArtifactType("markdown"),
+    sizeBytes: Number(stats.size),
+    createdAt,
+  });
+}
+
+function renderStaticMediaJobArtifact(job: MediaJob, provider: ProviderPreset, createdAt: string): string {
+  const redactedInput = JSON.stringify(redactSecrets(job.input), null, 2);
+  return [
+    "# Media job static result",
+    "",
+    `- Job: ${job.id}`,
+    `- Operation: ${job.operation}`,
+    `- Provider: ${provider.displayName} (${provider.providerId}/${provider.model})`,
+    `- Generated at: ${createdAt}`,
+    "",
+    "## Prompt",
+    "",
+    job.prompt,
+    "",
+    "## Input",
+    "",
+    "```json",
+    redactedInput,
+    "```",
+    "",
+    "This artifact was produced by the local static media adapter. No vendor media API was called.",
+    "",
+  ].join("\n");
+}
+
+function formatTimestampSlug(value: string): string {
+  return value.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "") || "now";
+}
+
+function formatMediaOperationLabel(operation: MediaOperation): string {
+  if (operation === "image_generate") {
+    return "Image generate";
+  }
+  if (operation === "image_edit") {
+    return "Image edit";
+  }
+  return "Video generate";
+}
+
 function dedupeArtifactCandidates(candidates: readonly ExtractedArtifactCandidate[]): ExtractedArtifactCandidate[] {
   const seen = new Set<string>();
   return candidates.filter((candidate) => {
@@ -2474,10 +2663,13 @@ function parseProviderRoute(pathname: string): { readonly providerId: string; re
   return undefined;
 }
 
-function parseMediaJobRoute(pathname: string): { readonly mediaJobId: string } | undefined {
+function parseMediaJobRoute(pathname: string): { readonly mediaJobId: string; readonly action?: "run" | "artifacts" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "media-jobs") {
     return { mediaJobId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "media-jobs" && (segments[2] === "run" || segments[2] === "artifacts")) {
+    return { mediaJobId: segments[1], action: segments[2] };
   }
   return undefined;
 }
@@ -2616,7 +2808,7 @@ function validateMediaJobInput(input: CreateMediaJobInput): void {
   }
 }
 
-function assertMediaJobProvider(store: RunStore, input: CreateMediaJobInput): void {
+function assertMediaJobProvider(store: RunStore, input: CreateMediaJobInput): ProviderPreset {
   const preset = store.getProviderPreset(input.providerPresetId);
   if (!preset) {
     throw new HttpError(404, "provider_not_found", `Provider preset not found: ${input.providerPresetId}`);
@@ -2630,6 +2822,15 @@ function assertMediaJobProvider(store: RunStore, input: CreateMediaJobInput): vo
   if (!preset.capabilities.includes(input.operation)) {
     throw new HttpError(400, "unsupported_capability", `${preset.displayName} does not support ${input.operation}`);
   }
+  return preset;
+}
+
+function isRunnableMediaJobStatus(status: MediaJobStatus): boolean {
+  return status === "queued" || status === "failed" || status === "cancelled";
+}
+
+function shouldForceStaticMediaFailure(input: Record<string, unknown>): boolean {
+  return input.forceFailure === true;
 }
 
 function parseProviderPresetInput(value: unknown): ProviderPresetInput {
@@ -3378,7 +3579,9 @@ class RunStoreRegistry {
     for (const store of this.storesByCwd.values()) {
       const artifact = store.getArtifact(artifactId);
       if (artifact) {
-        this.rememberRun(artifact.runId, store);
+        if (artifact.runId) {
+          this.rememberRun(artifact.runId, store);
+        }
         return { store, artifact };
       }
     }

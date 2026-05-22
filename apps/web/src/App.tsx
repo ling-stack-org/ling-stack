@@ -44,6 +44,7 @@ import {
   getApprovalPolicy,
   getRun,
   getRunEvents,
+  listMediaJobArtifacts,
   listRunArtifacts,
   listChannels,
   listApprovals,
@@ -52,6 +53,7 @@ import {
   listProviderTemplates,
   listRuns,
   listTasks,
+  runMediaJob,
   updateChannel,
   updateApprovalPolicy,
   updateTask,
@@ -254,7 +256,9 @@ export function App(): JSX.Element {
   const [providerBatchResult, setProviderBatchResult] = useState<ProviderBatchResult | undefined>();
   const [providerRepairRunId, setProviderRepairRunId] = useState("");
   const [mediaJobs, setMediaJobs] = useState<readonly MediaJob[]>([]);
+  const [mediaJobArtifacts, setMediaJobArtifacts] = useState<Record<string, readonly RunArtifact[]>>({});
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
+  const [runningMediaJobId, setRunningMediaJobId] = useState("");
   const [mediaJobForm, setMediaJobForm] = useState<MediaJobFormState>(defaultMediaJobForm);
   const [taskRepairRunId, setTaskRepairRunId] = useState("");
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
@@ -515,11 +519,26 @@ export function App(): JSX.Element {
       setErrorMessage("");
       const response = await listMediaJobs(cwd);
       setMediaJobs(response.mediaJobs);
+      setMediaJobArtifacts(await loadMediaJobArtifacts(cwd, response.mediaJobs));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setMediaJobsLoading(false);
     }
+  }
+
+  async function loadMediaJobArtifacts(cwd: string, jobs: readonly MediaJob[]): Promise<Record<string, readonly RunArtifact[]>> {
+    const jobsWithArtifacts = jobs.filter((job) => job.artifactIds.length > 0);
+    if (jobsWithArtifacts.length === 0) {
+      return {};
+    }
+    const entries = await Promise.all(
+      jobsWithArtifacts.map(async (job) => {
+        const response = await listMediaJobArtifacts(job.id, cwd);
+        return [job.id, response.artifacts] as const;
+      }),
+    );
+    return Object.fromEntries(entries);
   }
 
   async function saveMediaJob(): Promise<void> {
@@ -544,10 +563,35 @@ export function App(): JSX.Element {
         prompt: mediaJobForm.prompt.trim(),
       });
       setMediaJobs((current) => [response.mediaJob, ...current.filter((job) => job.id !== response.mediaJob.id)]);
+      setMediaJobArtifacts((current) => ({ ...current, [response.mediaJob.id]: response.artifacts ?? [] }));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setMediaJobsLoading(false);
+    }
+  }
+
+  async function executeMediaJob(jobId: string): Promise<void> {
+    const cwd = form.cwd.trim();
+    if (!cwd) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    setRunningMediaJobId(jobId);
+    try {
+      setErrorMessage("");
+      const response = await runMediaJob(cwd, jobId);
+      const artifactsResponse = response.mediaJob.artifactIds.length > 0
+        ? await listMediaJobArtifacts(response.mediaJob.id, cwd)
+        : { artifacts: response.artifacts ?? [] };
+      setMediaJobs((current) => current.map((job) => (job.id === response.mediaJob.id ? response.mediaJob : job)));
+      setMediaJobArtifacts((current) => ({ ...current, [response.mediaJob.id]: artifactsResponse.artifacts }));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      void refreshMediaJobs(cwd);
+    } finally {
+      setRunningMediaJobId("");
     }
   }
 
@@ -1417,13 +1461,16 @@ export function App(): JSX.Element {
                 cwd={form.cwd}
                 providers={providers}
                 jobs={mediaJobs}
+                artifactsByJob={mediaJobArtifacts}
                 form={mediaJobForm}
                 isLoading={mediaJobsLoading}
+                runningJobId={runningMediaJobId}
                 errorMessage={errorMessage}
                 onCwdChange={(cwd) => setForm({ ...form, cwd })}
                 onFormChange={setMediaJobForm}
                 onRefresh={() => void refreshMediaJobs()}
                 onCreate={() => void saveMediaJob()}
+                onRun={(jobId) => void executeMediaJob(jobId)}
                 onOpenProviders={() => setActiveView("providers")}
               />
             ) : (
@@ -4161,25 +4208,31 @@ function MediaJobsPage({
   cwd,
   providers,
   jobs,
+  artifactsByJob,
   form,
   isLoading,
+  runningJobId,
   errorMessage,
   onCwdChange,
   onFormChange,
   onRefresh,
   onCreate,
+  onRun,
   onOpenProviders,
 }: {
   readonly cwd: string;
   readonly providers: readonly ProviderPreset[];
   readonly jobs: readonly MediaJob[];
+  readonly artifactsByJob: Record<string, readonly RunArtifact[]>;
   readonly form: MediaJobFormState;
   readonly isLoading: boolean;
+  readonly runningJobId: string;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onFormChange: (form: MediaJobFormState) => void;
   readonly onRefresh: () => void;
   readonly onCreate: () => void;
+  readonly onRun: (jobId: string) => void;
   readonly onOpenProviders: () => void;
 }): JSX.Element {
   const mediaProviders = providers.filter(isMediaProvider);
@@ -4230,11 +4283,26 @@ function MediaJobsPage({
           ) : (
             jobs.map((job) => {
               const provider = providers.find((item) => item.id === job.providerPresetId);
+              const jobArtifacts = artifactsByJob[job.id] ?? [];
+              const isRunnable = job.status === "queued" || job.status === "failed" || job.status === "cancelled";
+              const isRunningJob = runningJobId === job.id;
               return (
                 <article key={job.id} className="media-job-row">
                   <div className="media-job-row-head">
                     <strong>{job.operation}</strong>
-                    <StatusBadge status={job.status} />
+                    <span className="media-job-actions">
+                      <StatusBadge status={job.status} />
+                      <button
+                        className="secondary-button compact-button"
+                        type="button"
+                        onClick={() => onRun(job.id)}
+                        disabled={isLoading || isRunningJob || !isRunnable}
+                        title={isRunnable ? "Run static media adapter" : `Cannot run from ${job.status}`}
+                      >
+                        {isRunningJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                        Run
+                      </button>
+                    </span>
                   </div>
                   <p>{job.prompt}</p>
                   <div className="provider-meta-line">
@@ -4243,6 +4311,20 @@ function MediaJobsPage({
                     <time>{formatDateTime(job.createdAt)}</time>
                   </div>
                   {job.errorMessage ? <small className="media-job-error">{job.errorMessage}</small> : null}
+                  {jobArtifacts.length > 0 ? (
+                    <div className="media-job-artifacts artifact-list" aria-label={`Artifacts for ${job.id}`}>
+                      {jobArtifacts.map((artifact) => (
+                        <a className="artifact-row" href={artifactContentUrl(artifact.id, cwd)} key={artifact.id} target="_blank" rel="noreferrer">
+                          <span className="artifact-type">{artifact.type}</span>
+                          <span className="artifact-main">
+                            <strong>{artifact.title || artifact.path}</strong>
+                            <code>{artifact.path}</code>
+                          </span>
+                          <small>{formatArtifactSize(artifact.sizeBytes)}</small>
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
                 </article>
               );
             })
@@ -4254,7 +4336,7 @@ function MediaJobsPage({
         <div className="panel-title split">
           <span>
             <Plus size={18} />
-            <h2 id="media-job-form-title">Create stub job</h2>
+            <h2 id="media-job-form-title">Create media job</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
             <PlugZap size={14} />
@@ -4266,7 +4348,7 @@ function MediaJobsPage({
           {mediaProviders.length > 0 ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
           <span>
             {mediaProviders.length > 0
-              ? "Media providers are configured for media job metadata. Coding task runs still require chat providers."
+              ? "Media providers can run the local static media adapter. Coding task runs still require chat providers."
               : "Create a Jimeng, Seedream, or Seedance media provider before recording media jobs."}
           </span>
         </div>
