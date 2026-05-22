@@ -88,6 +88,8 @@ const ARTIFACTS_MIGRATION_VERSION = 7;
 const ARTIFACTS_MIGRATION_NAME = "create_artifacts";
 const MEDIA_JOBS_MIGRATION_VERSION = 8;
 const MEDIA_JOBS_MIGRATION_NAME = "create_media_jobs";
+const MEDIA_JOB_ARTIFACTS_MIGRATION_VERSION = 9;
+const MEDIA_JOB_ARTIFACTS_MIGRATION_NAME = "allow_media_job_artifacts";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -308,37 +310,48 @@ export class SqliteRunStore implements RunStore {
   }
 
   createArtifact(input: CreateRunArtifactInput): RunArtifact {
-    if (!this.getRun(input.runId)) {
-      throw new Error(`Run session not found: ${input.runId}`);
+    const runId = normalizeOptionalOwnerId(input.runId);
+    const mediaJobId = normalizeOptionalOwnerId(input.mediaJobId);
+    if (Boolean(runId) === Boolean(mediaJobId)) {
+      throw new Error("Artifact must belong to exactly one run or media job.");
+    }
+    if (runId && !this.getRun(runId)) {
+      throw new Error(`Run session not found: ${runId}`);
+    }
+    if (mediaJobId && !this.getMediaJob(mediaJobId)) {
+      throw new Error(`Media job not found: ${mediaJobId}`);
     }
 
-    const artifact: RunArtifact = {
+    const artifact: RunArtifact = omitUndefined({
       id: input.id ?? createArtifactId(),
-      runId: input.runId,
+      runId,
+      mediaJobId,
       type: input.type,
       path: input.path,
       title: input.title,
       contentType: input.contentType,
       sizeBytes: input.sizeBytes,
       createdAt: input.createdAt,
-    };
+    });
 
     this.database
       .prepare(`
         INSERT INTO artifacts (
           id,
           run_id,
+          media_job_id,
           type,
           path,
           title,
           content_type,
           size_bytes,
           created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         artifact.id,
-        artifact.runId,
+        artifact.runId ?? null,
+        artifact.mediaJobId ?? null,
         artifact.type,
         artifact.path,
         artifact.title ?? null,
@@ -363,6 +376,13 @@ export class SqliteRunStore implements RunStore {
     return this.database
       .prepare(`${artifactSelectSql("WHERE run_id = ?")} ORDER BY created_at ASC, id ASC`)
       .all(runId)
+      .map(mapArtifact);
+  }
+
+  listMediaJobArtifacts(mediaJobId: string): RunArtifact[] {
+    return this.database
+      .prepare(`${artifactSelectSql("WHERE media_job_id = ?")} ORDER BY created_at ASC, id ASC`)
+      .all(mediaJobId)
       .map(mapArtifact);
   }
 
@@ -1316,6 +1336,59 @@ export class SqliteRunStore implements RunStore {
 
       this.recordMigration(MEDIA_JOBS_MIGRATION_VERSION, MEDIA_JOBS_MIGRATION_NAME);
     }
+
+    if (!this.hasMigration(MEDIA_JOB_ARTIFACTS_MIGRATION_VERSION)) {
+      this.database.exec(`
+        DROP TABLE IF EXISTS artifacts_next;
+
+        CREATE TABLE artifacts_next (
+          id TEXT PRIMARY KEY,
+          run_id TEXT,
+          media_job_id TEXT,
+          type TEXT NOT NULL,
+          path TEXT NOT NULL,
+          title TEXT,
+          content_type TEXT,
+          size_bytes INTEGER,
+          created_at TEXT NOT NULL,
+          CHECK ((run_id IS NOT NULL AND media_job_id IS NULL) OR (run_id IS NULL AND media_job_id IS NOT NULL)),
+          FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
+          FOREIGN KEY(media_job_id) REFERENCES media_jobs(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO artifacts_next (
+          id,
+          run_id,
+          media_job_id,
+          type,
+          path,
+          title,
+          content_type,
+          size_bytes,
+          created_at
+        )
+        SELECT
+          id,
+          run_id,
+          NULL,
+          type,
+          path,
+          title,
+          content_type,
+          size_bytes,
+          created_at
+        FROM artifacts;
+
+        DROP TABLE artifacts;
+        ALTER TABLE artifacts_next RENAME TO artifacts;
+
+        CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_media_job ON artifacts(media_job_id);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
+      `);
+
+      this.recordMigration(MEDIA_JOB_ARTIFACTS_MIGRATION_VERSION, MEDIA_JOB_ARTIFACTS_MIGRATION_NAME);
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -1545,10 +1618,19 @@ function mapApprovalPolicy(row: Record<string, SQLOutputValue>): ApprovalPolicy 
   };
 }
 
+function normalizeOptionalOwnerId(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function mapArtifact(row: Record<string, SQLOutputValue>): RunArtifact {
   return omitUndefined({
     id: readString(row, "id"),
-    runId: readString(row, "run_id"),
+    runId: readNullableString(row, "run_id"),
+    mediaJobId: readNullableString(row, "media_job_id"),
     type: readString(row, "type") as ArtifactType,
     path: readString(row, "path"),
     title: readNullableString(row, "title"),
@@ -1691,6 +1773,7 @@ function artifactSelectSql(whereClause: string): string {
     SELECT
       id,
       run_id,
+      media_job_id,
       type,
       path,
       title,

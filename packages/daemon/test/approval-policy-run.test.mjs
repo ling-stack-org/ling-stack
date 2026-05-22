@@ -262,7 +262,7 @@ test("provider check persists last check result", async () => {
   }
 });
 
-test("media job API creates, lists, and shows stub jobs without running a provider", async () => {
+test("media job API creates, lists, and shows queued jobs without running on creation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-jobs-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job",
@@ -295,6 +295,83 @@ test("media job API creates, lists, and shows stub jobs without running a provid
     const fetched = await getJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(fetched.mediaJob.id, createdJob.mediaJob.id);
     assert.equal(fetched.mediaJob.prompt, "Create a launch card mockup.");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media job run uses the static adapter and links artifacts", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-run-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_job_run",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const createdProvider = await createMediaProvider(daemon.url, cwd, {
+      displayName: "Seedream Static",
+      capabilities: ["image_generate"],
+    });
+    const providerId = createdProvider.provider.id;
+    const createdJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: providerId,
+      operation: "image_generate",
+      prompt: "Create a local static artifact.",
+      input: { size: "1024x1024", apiKey: "sk-test_123456789" },
+    });
+
+    const executed = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(executed.mediaJob.status, "succeeded");
+    assert.equal(executed.artifacts.length, 1);
+    assert.equal(executed.artifacts[0].mediaJobId, createdJob.mediaJob.id);
+    assert.equal(executed.artifacts[0].type, "markdown");
+    assert.deepEqual(executed.mediaJob.artifactIds, [executed.artifacts[0].id]);
+
+    const listed = await getJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.mediaJobId, createdJob.mediaJob.id);
+    assert.deepEqual(listed.artifacts, executed.artifacts);
+
+    const content = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(executed.artifacts[0].id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(content.status, 200);
+    assert.match(content.headers.get("content-type") ?? "", /text\/markdown/);
+    const text = await content.text();
+    assert.match(text, /Media job static result/);
+    assert.match(text, /No vendor media API was called/);
+    assert.doesNotMatch(text, /sk-test_123456789/);
+
+    const rerun = await postJsonExpectError(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(rerun.status, 409);
+    assert.equal(rerun.body.error, "media_job_not_runnable");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media job run records static adapter failures", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-run-failure-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_job_run_failure",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const createdProvider = await createMediaProvider(daemon.url, cwd, {
+      capabilities: ["image_generate"],
+    });
+    const createdJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: createdProvider.provider.id,
+      operation: "image_generate",
+      prompt: "Create a local static artifact failure.",
+      input: { forceFailure: true },
+    });
+
+    const executed = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(executed.mediaJob.status, "failed");
+    assert.match(executed.mediaJob.errorMessage, /forced failure/);
+    assert.deepEqual(executed.mediaJob.artifactIds, []);
+    assert.deepEqual(executed.artifacts, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

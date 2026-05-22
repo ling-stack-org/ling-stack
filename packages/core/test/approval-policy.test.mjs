@@ -142,17 +142,31 @@ test("sqlite store persists media jobs and status updates", async () => {
     assert.equal(created.input.size, "1024x1024");
     assert.equal(created.input.apiKey, "[REDACTED]");
 
+    const artifact = store.createArtifact({
+      id: "artifact_media_job_markdown",
+      mediaJobId: created.id,
+      type: "markdown",
+      path: `${created.id}/static-result.md`,
+      title: "Static media result",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 128,
+      createdAt,
+    });
+    assert.equal(artifact.mediaJobId, created.id);
+    assert.equal(artifact.runId, undefined);
+    assert.deepEqual(store.listMediaJobArtifacts(created.id), [artifact]);
+
     const updated = store.updateMediaJobStatus(
       created.id,
       {
         status: "succeeded",
-        artifactIds: ["artifact_image_1"],
+        artifactIds: [artifact.id],
       },
       updatedAt,
     );
     assert.ok(updated);
     assert.equal(updated.status, "succeeded");
-    assert.deepEqual(updated.artifactIds, ["artifact_image_1"]);
+    assert.deepEqual(updated.artifactIds, [artifact.id]);
     assert.equal(updated.updatedAt, updatedAt);
     assert.deepEqual(store.listMediaJobs({ status: "succeeded" }), [updated]);
   } finally {
@@ -165,7 +179,8 @@ test("sqlite store persists media jobs and status updates", async () => {
     assert.ok(fetched);
     assert.equal(fetched.status, "succeeded");
     assert.equal(fetched.prompt, "Generate a clean product mockup.");
-    assert.deepEqual(fetched.artifactIds, ["artifact_image_1"]);
+    assert.deepEqual(fetched.artifactIds, ["artifact_media_job_markdown"]);
+    assert.deepEqual(store.listMediaJobArtifacts(jobId), [store.getArtifact("artifact_media_job_markdown")]);
     assert.deepEqual(store.listMediaJobs({ providerPresetId: "provider_seedream" }), [fetched]);
   } finally {
     store.close();

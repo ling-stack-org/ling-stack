@@ -8,6 +8,7 @@ import type {
   ChannelListResponse,
   ChannelMutationResponse,
   MediaJobFormState,
+  MediaJobArtifactListResponse,
   MediaJobListResponse,
   MediaJobMutationResponse,
   ProviderCheckResult,
@@ -313,6 +314,24 @@ export async function createMediaJob(cwd: string, form: MediaJobFormState): Prom
     throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as MediaJobMutationResponse;
+}
+
+export async function runMediaJob(cwd: string, mediaJobId: string): Promise<MediaJobMutationResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/media-jobs/${encodeURIComponent(mediaJobId)}/run`, cwd), {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as MediaJobMutationResponse;
+}
+
+export async function listMediaJobArtifacts(mediaJobId: string, cwd?: string): Promise<MediaJobArtifactListResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/media-jobs/${encodeURIComponent(mediaJobId)}/artifacts`, cwd));
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as MediaJobArtifactListResponse;
 }
 
 export function artifactContentUrl(artifactId: string, cwd?: string): string {

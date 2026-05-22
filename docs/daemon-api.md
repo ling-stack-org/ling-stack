@@ -401,7 +401,7 @@ GET /runs/:id/artifacts?cwd=/path/to/project
 
 Passing `cwd` is recommended after daemon restart. Artifact paths are local paths under `.ling-stack/artifacts` and are served only through the artifact content endpoint.
 
-During run execution the daemon records `artifact_created` events for extracted Pi tool evidence. v0.1 extraction covers text, log, Markdown, diff output, and generated file path metadata. Image/video/media job artifacts are not extracted yet.
+During run execution the daemon records `artifact_created` events for extracted Pi tool evidence. v0.1 extraction covers text, log, Markdown, diff output, and generated file path metadata. Image/video media bytes are not extracted yet.
 
 Response:
 
@@ -454,7 +454,7 @@ The daemon resolves artifact content relative to `.ling-stack/artifacts` and rej
 
 ## Media Jobs
 
-Media jobs are persisted metadata for media-capable provider presets. This foundation slice does not call Jimeng, Seedream, Seedance, or any other live media API. Created jobs remain `queued` until a later adapter runtime updates them.
+Media jobs are persisted metadata for media-capable provider presets. The current execution interface uses a local fake/static adapter, so it does not call Jimeng, Seedream, Seedance, or any other live media API.
 
 Supported statuses:
 
@@ -491,7 +491,7 @@ Rules:
 - `providerPresetId` must reference an enabled provider preset with `api: "media-job"`.
 - The provider preset must include the requested media operation in `capabilities`.
 - Chat provider presets return `unsupported_capability`.
-- No live provider call, cost approval, or artifact generation happens in this slice.
+- Creation only records queued metadata. Live vendor calls, cost approval, and image/video media bytes are still out of scope.
 
 Response:
 
@@ -543,6 +543,53 @@ Response:
     "id": "media_job_...",
     "status": "queued"
   }
+}
+```
+
+### Run Media Job
+
+```http
+POST /media-jobs/:id/run?cwd=/path/to/project
+```
+
+The current execution interface uses a local static adapter. It re-validates the media provider preset, moves the job through `running`, and then records `succeeded` with a Markdown artifact under `.ling-stack/artifacts/media_jobs/:id/`. No Jimeng, Seedream, Seedance, billing, or `media_cost` approval call is made.
+
+Runnable statuses are `queued`, `failed`, and `cancelled`. `running` and `succeeded` jobs return `409 media_job_not_runnable`. Tests can force the failure path with `input.forceFailure: true`.
+
+Response:
+
+```json
+{
+  "mediaJob": {
+    "id": "media_job_...",
+    "status": "succeeded",
+    "artifactIds": ["artifact_..."]
+  },
+  "artifacts": [
+    {
+      "id": "artifact_...",
+      "mediaJobId": "media_job_...",
+      "type": "markdown",
+      "path": "media_jobs/media_job_.../static-result-2026-05-23T00-00-00-000Z.md",
+      "title": "Image generate static result",
+      "contentType": "text/markdown; charset=utf-8"
+    }
+  ]
+}
+```
+
+### List Media Job Artifacts
+
+```http
+GET /media-jobs/:id/artifacts?cwd=/path/to/project
+```
+
+Response:
+
+```json
+{
+  "mediaJobId": "media_job_...",
+  "artifacts": []
 }
 ```
 

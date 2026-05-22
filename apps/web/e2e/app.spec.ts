@@ -10,6 +10,7 @@ interface MockState {
   approvals: MockApproval[];
   mediaJobs: MockMediaJob[];
   artifactsByRun: Record<string, MockArtifact[]>;
+  artifactsByMediaJob: Record<string, MockArtifact[]>;
 }
 
 interface MockRun {
@@ -49,7 +50,8 @@ interface MockApproval {
 
 interface MockArtifact {
   id: string;
-  runId: string;
+  runId?: string;
+  mediaJobId?: string;
   type: string;
   path: string;
   title?: string;
@@ -146,7 +148,7 @@ test("run detail renders artifact rows from the daemon API", async ({ page }) =>
   await expect(page.locator(".artifact-row").first()).toHaveAttribute("href", /\/artifacts\/artifact_report\/content/);
 });
 
-test("media jobs page lists stub jobs and creates metadata-only jobs", async ({ page }) => {
+test("media jobs page lists, runs, and creates media jobs", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     {
@@ -213,6 +215,12 @@ test("media jobs page lists stub jobs and creates metadata-only jobs", async ({ 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Jobs" }).click();
   await expect(page.getByRole("heading", { name: "Media jobs", level: 1 })).toBeVisible();
   await expect(page.locator(".media-job-row")).toContainText("Existing product mockup.");
+
+  const existingJob = page.locator(".media-job-row").filter({ hasText: "Existing product mockup." });
+  await existingJob.getByRole("button", { name: "Run" }).click();
+  await expect(existingJob).toContainText("succeeded");
+  await expect(existingJob.locator(".artifact-row")).toContainText("Image generate static result");
+  await expect(existingJob.locator(".artifact-row")).toHaveAttribute("href", /\/artifacts\/artifact_media_job_existing\/content/);
 
   await page.getByRole("textbox", { name: "Prompt" }).fill("New campaign image.");
   await page.getByRole("button", { name: "Create media job" }).click();
@@ -285,6 +293,7 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     ],
     mediaJobs: [],
     artifactsByRun: {},
+    artifactsByMediaJob: {},
   };
 }
 
@@ -359,6 +368,42 @@ async function handleDaemonRoute(route: Route, state: MockState): Promise<void> 
     };
     state.mediaJobs.unshift(job);
     await route.fulfill({ status: 201, json: { mediaJob: job } });
+    return;
+  }
+
+  const mediaJobRunMatch = /^\/media-jobs\/([^/]+)\/run$/.exec(path);
+  if (request.method() === "POST" && mediaJobRunMatch) {
+    const job = state.mediaJobs.find((item) => item.id === decodeURIComponent(mediaJobRunMatch[1]));
+    if (!job) {
+      await route.fulfill({ status: 404, json: { error: "media_job_not_found" } });
+      return;
+    }
+    if (job.status !== "queued" && job.status !== "failed" && job.status !== "cancelled") {
+      await route.fulfill({ status: 409, json: { error: "media_job_not_runnable" } });
+      return;
+    }
+    const artifact: MockArtifact = {
+      id: `artifact_${job.id}`,
+      mediaJobId: job.id,
+      type: "markdown",
+      path: `media_jobs/${job.id}/static-result.md`,
+      title: "Image generate static result",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 192,
+      createdAt: "2026-05-23T00:03:00.000Z",
+    };
+    job.status = "succeeded";
+    job.artifactIds = [artifact.id];
+    job.updatedAt = "2026-05-23T00:03:00.000Z";
+    state.artifactsByMediaJob[job.id] = [artifact];
+    await route.fulfill({ json: { mediaJob: job, artifacts: [artifact] } });
+    return;
+  }
+
+  const mediaJobArtifactsMatch = /^\/media-jobs\/([^/]+)\/artifacts$/.exec(path);
+  if (request.method() === "GET" && mediaJobArtifactsMatch) {
+    const mediaJobId = decodeURIComponent(mediaJobArtifactsMatch[1]);
+    await route.fulfill({ json: { mediaJobId, artifacts: state.artifactsByMediaJob[mediaJobId] ?? [] } });
     return;
   }
 

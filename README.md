@@ -304,7 +304,7 @@ Implemented:
 - Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, provider settings, and approval list.
 - Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
 - Automatic artifact extraction from Pi tool outputs, generated text/log/Markdown/diff content, and generated file path metadata.
-- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, and Web Media Jobs panel.
+- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, fake/static execution, local Markdown artifacts, and Web Media Jobs panel.
 - CLI first-loop commands for init, channels, tasks, providers, runs, approvals, approval policy, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
@@ -312,7 +312,7 @@ Not implemented yet:
 
 - Approval gates for external sends, deployments, credential changes, and paid media jobs.
 - Rich task detail views beyond the first edit form.
-- Media job artifact extraction for image/video outputs.
+- Real media vendor execution and image/video artifact outputs.
 - Live Jimeng/Seedream/Seedance execution.
 - OS keychain integration for secrets.
 - Live media provider job checks.
