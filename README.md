@@ -301,6 +301,7 @@ Implemented:
 - Pi pre-tool approval gate for `bash`, `edit`, and `write`.
 - Workspace approval policy storage, daemon API, Web settings UI, CLI policy commands, tool decisions, and write path scopes.
 - Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, provider settings, and approval list.
+- Run Evidence panel with session files, summary preview, tool/approval counts, and the v0.1 artifacts API empty state.
 - CLI first-loop commands for init, channels, tasks, providers, runs, approvals, approval policy, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
@@ -308,6 +309,7 @@ Not implemented yet:
 
 - Approval gates for external sends, deployments, credential changes, and paid media jobs.
 - Rich task detail views beyond the first edit form.
+- Artifact APIs and automatic artifact extraction from Pi tool outputs and generated diffs.
 - OS keychain integration for secrets.
 - Live media provider job checks.
 - Desktop packaging.

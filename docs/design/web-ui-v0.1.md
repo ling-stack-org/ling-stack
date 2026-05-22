@@ -424,7 +424,7 @@ Required regions:
    - timeline rows should stay scannable by default with a short preview, while error/result/tool payloads can be expanded inline for debugging.
 
 5. Evidence:
-   - v0.1 is derived only from already-loaded run/session fields and events; the UI does not fetch summary file contents yet,
+   - v0.1 is derived from already-loaded run/session fields, events, approvals, and assistant text; the UI does not fetch summary file contents yet,
    - show a run summary preview with status, task, provider, terminal event, error/result summary, assistant output preview, tool counts, errored tool count, and approval count,
    - show session files from `eventLogPath` and `summaryPath` with path wrapping,
    - keep request/provider/terminal raw snapshots below Evidence as debug details,
