@@ -63,6 +63,11 @@ import {
   type PiRunnerResult,
   type PiRunnerRunOptions,
 } from "@ling-stack/runner-pi";
+import {
+  createStaticMediaAdapter,
+  executeMediaJob as executeMediaAdapterJob,
+  type MediaExecutionArtifact,
+} from "@ling-stack/providers";
 
 export interface DaemonConfig {
   readonly host?: string;
@@ -288,7 +293,7 @@ async function routeRequest(
   const mediaJobRoute = parseMediaJobRoute(url.pathname);
   if (mediaJobRoute) {
     if (request.method === "POST" && mediaJobRoute.action === "run") {
-      handleRunMediaJob(response, url, storeRegistry, mediaJobRoute.mediaJobId);
+      await handleRunMediaJob(response, url, storeRegistry, mediaJobRoute.mediaJobId);
       return;
     }
     if (request.method === "GET" && mediaJobRoute.action === "artifacts") {
@@ -938,12 +943,12 @@ function handleMediaJobItem(
   }
 }
 
-function handleRunMediaJob(
+async function handleRunMediaJob(
   response: ServerResponse,
   url: URL,
   storeRegistry: RunStoreRegistry,
   mediaJobId: string,
-): void {
+): Promise<void> {
   const cwd = url.searchParams.get("cwd");
   if (!cwd) {
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
@@ -978,12 +983,28 @@ function handleRunMediaJob(
     job = store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, new Date().toISOString()) ?? job;
     startedExecution = true;
 
-    if (shouldForceStaticMediaFailure(job.input)) {
+    const requestedAt = new Date().toISOString();
+    const execution = await executeMediaAdapterJob(createMediaAdapterForProvider(provider), {
+      jobId: job.id,
+      provider: {
+        id: provider.id,
+        displayName: provider.displayName,
+        providerId: provider.providerId,
+        model: provider.model,
+        capabilities: provider.capabilities,
+      },
+      operation: job.operation,
+      prompt: job.prompt,
+      input: job.input,
+      requestedAt,
+    });
+
+    if (execution.status === "failed") {
       const failed = store.updateMediaJobStatus(
         job.id,
         {
           status: "failed",
-          errorMessage: "Static media adapter forced failure from input.forceFailure.",
+          errorMessage: execution.errorMessage ?? "Media adapter execution failed.",
         },
         new Date().toISOString(),
       ) ?? job;
@@ -992,8 +1013,8 @@ function handleRunMediaJob(
     }
 
     const completedAt = new Date().toISOString();
-    const artifact = createStaticMediaJobArtifact(store, job, provider, completedAt);
-    const artifactIds = [...new Set([...job.artifactIds, artifact.id])];
+    const artifacts = createMediaJobArtifacts(store, job, execution.artifacts, completedAt);
+    const artifactIds = [...new Set([...job.artifactIds, ...artifacts.map((artifact) => artifact.id)])];
     const succeeded = store.updateMediaJobStatus(
       job.id,
       {
@@ -1004,7 +1025,7 @@ function handleRunMediaJob(
       completedAt,
     ) ?? job;
 
-    writeJson(response, 200, { mediaJob: succeeded, artifacts: [artifact] });
+    writeJson(response, 200, { mediaJob: succeeded, artifacts });
   } catch (error) {
     const statusCode = error instanceof HttpError ? error.statusCode : startedExecution ? 500 : 400;
     const message = error instanceof Error ? error.message : String(error);
@@ -2219,68 +2240,66 @@ function materializeExtractedArtifact(
   });
 }
 
-function createStaticMediaJobArtifact(
+function createMediaAdapterForProvider(provider: ProviderPreset) {
+  if (provider.api !== "media-job") {
+    throw new HttpError(400, "unsupported_capability", "Media jobs require a media-job provider preset");
+  }
+  return createStaticMediaAdapter();
+}
+
+function createMediaJobArtifacts(
   store: RunStore,
   job: MediaJob,
-  provider: ProviderPreset,
+  candidates: readonly MediaExecutionArtifact[],
   createdAt: string,
-): RunArtifact {
+): RunArtifact[] {
+  return candidates
+    .map((candidate, index) => createMediaJobArtifact(store, job, candidate, index, createdAt))
+    .filter((artifact): artifact is RunArtifact => Boolean(artifact));
+}
+
+function createMediaJobArtifact(
+  store: RunStore,
+  job: MediaJob,
+  candidate: MediaExecutionArtifact,
+  index: number,
+  createdAt: string,
+): RunArtifact | undefined {
+  if (candidate.content === undefined) {
+    return undefined;
+  }
   const artifactDir = resolvePath(store.paths.artifactsDir, "media_jobs", job.id);
   mkdirSync(artifactDir, { recursive: true });
-  const relativePath = normalizeArtifactPath(`media_jobs/${job.id}/static-result-${formatTimestampSlug(createdAt)}.md`);
+  const relativePath = normalizeArtifactPath(`media_jobs/${job.id}/${formatMediaArtifactFilename(index, candidate, createdAt)}`);
   const absolutePath = resolvePath(store.paths.artifactsDir, relativePath);
-  const content = renderStaticMediaJobArtifact(job, provider, createdAt);
+  const content = redactArtifactContent(candidate.content);
   writeFileSync(absolutePath, content, "utf8");
   const stats = statSync(absolutePath);
 
   return store.createArtifact({
     mediaJobId: job.id,
-    type: "markdown",
+    type: candidate.type,
     path: relativePath,
-    title: `${formatMediaOperationLabel(job.operation)} static result`,
-    contentType: contentTypeForArtifactType("markdown"),
+    title: candidate.title,
+    contentType: candidate.contentType ?? contentTypeForArtifactType(candidate.type),
     sizeBytes: Number(stats.size),
     createdAt,
   });
 }
 
-function renderStaticMediaJobArtifact(job: MediaJob, provider: ProviderPreset, createdAt: string): string {
-  const redactedInput = JSON.stringify(redactSecrets(job.input), null, 2);
-  return [
-    "# Media job static result",
-    "",
-    `- Job: ${job.id}`,
-    `- Operation: ${job.operation}`,
-    `- Provider: ${provider.displayName} (${provider.providerId}/${provider.model})`,
-    `- Generated at: ${createdAt}`,
-    "",
-    "## Prompt",
-    "",
-    job.prompt,
-    "",
-    "## Input",
-    "",
-    "```json",
-    redactedInput,
-    "```",
-    "",
-    "This artifact was produced by the local static media adapter. No vendor media API was called.",
-    "",
-  ].join("\n");
+function formatMediaArtifactFilename(index: number, candidate: MediaExecutionArtifact, createdAt: string): string {
+  const hintedName = candidate.pathHint ? basename(candidate.pathHint) : "";
+  const titleSlug = (hintedName || candidate.title)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || `artifact-${formatTimestampSlug(createdAt)}`;
+  const extension = extname(titleSlug) ? "" : `.${artifactExtensionForType(candidate.type)}`;
+  return `${String(index + 1).padStart(3, "0")}-${titleSlug}${extension}`;
 }
 
 function formatTimestampSlug(value: string): string {
   return value.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "") || "now";
-}
-
-function formatMediaOperationLabel(operation: MediaOperation): string {
-  if (operation === "image_generate") {
-    return "Image generate";
-  }
-  if (operation === "image_edit") {
-    return "Image edit";
-  }
-  return "Video generate";
 }
 
 function dedupeArtifactCandidates(candidates: readonly ExtractedArtifactCandidate[]): ExtractedArtifactCandidate[] {

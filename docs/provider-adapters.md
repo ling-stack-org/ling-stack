@@ -48,6 +48,45 @@ export interface ProviderAdapter {
 }
 ```
 
+## Media Execution Contract
+
+Media execution is intentionally separate from chat provider adapters. Daemon media jobs call a `MediaAdapter` through `executeMediaJob(adapter, request)`, then persist returned artifact candidates under `.ling-stack/artifacts`.
+
+```ts
+type MediaOperation = "image_generate" | "image_edit" | "video_generate";
+
+interface MediaExecutionRequest {
+  jobId: string;
+  provider: MediaAdapterProviderConfig;
+  operation: MediaOperation;
+  prompt: string;
+  input: Record<string, unknown>;
+  requestedAt: string;
+}
+
+interface MediaExecutionResult {
+  status: "succeeded" | "failed";
+  artifacts: MediaExecutionArtifact[];
+  errorCode?: MediaAdapterErrorCode;
+  errorMessage?: string;
+}
+
+interface MediaAdapter {
+  id: string;
+  displayName: string;
+  capabilities: MediaOperation[];
+  supports(operation: MediaOperation): boolean;
+  execute(request: MediaExecutionRequest): Promise<MediaExecutionResult>;
+}
+```
+
+Current implementation:
+
+- `createStaticMediaAdapter()` is the only executable media adapter,
+- it produces redacted Markdown artifact candidates for success,
+- it exposes deterministic failure/error paths for contract tests,
+- it does not call Jimeng, Seedream, Seedance, billing, or approval services.
+
 ## Initial Adapter List
 
 ### Pi Runner
@@ -145,6 +184,8 @@ Every adapter should have contract tests for:
 - Tool-call shape if supported.
 - Rate-limit or provider error normalization.
 - Secret redaction in logs.
+
+Current media contract coverage lives in `packages/providers/test/media-adapter-contract.test.mjs` and covers static success, forced failure, thrown error normalization, unsupported capability rejection, and secret redaction.
 
 ## Error Normalization
 

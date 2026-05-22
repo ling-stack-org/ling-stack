@@ -62,6 +62,9 @@ importers:
       '@ling-stack/core':
         specifier: workspace:*
         version: link:../core
+      '@ling-stack/providers':
+        specifier: workspace:*
+        version: link:../providers
       '@ling-stack/runner-pi':
         specifier: workspace:*
         version: link:../runner-pi

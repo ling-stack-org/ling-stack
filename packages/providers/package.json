@@ -8,6 +8,6 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
-    "test": "echo \"tests not configured yet\""
+    "test": "tsc -p tsconfig.json && node --test test/*.test.mjs"
   }
 }
