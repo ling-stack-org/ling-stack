@@ -262,6 +262,108 @@ test("provider check persists last check result", async () => {
   }
 });
 
+test("media job API creates, lists, and shows stub jobs without running a provider", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-jobs-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_job",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const createdProvider = await createMediaProvider(daemon.url, cwd, {
+      capabilities: ["image_generate", "image_edit"],
+    });
+    const providerId = createdProvider.provider.id;
+
+    const createdJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: providerId,
+      operation: "image_generate",
+      prompt: "Create a launch card mockup.",
+      input: { size: "1024x1024" },
+    });
+
+    assert.ok(createdJob.mediaJob.id.startsWith("media_job_"));
+    assert.equal(createdJob.mediaJob.providerPresetId, providerId);
+    assert.equal(createdJob.mediaJob.operation, "image_generate");
+    assert.equal(createdJob.mediaJob.status, "queued");
+    assert.deepEqual(createdJob.mediaJob.artifactIds, []);
+
+    const listed = await getJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}&status=queued`);
+    assert.equal(listed.mediaJobs.length, 1);
+    assert.equal(listed.mediaJobs[0].id, createdJob.mediaJob.id);
+
+    const fetched = await getJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(fetched.mediaJob.id, createdJob.mediaJob.id);
+    assert.equal(fetched.mediaJob.prompt, "Create a launch card mockup.");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media job API rejects chat providers and unsupported media operations", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-jobs-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_job_reject",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const chatProvider = await createStaticChatProvider(daemon.url, cwd, {
+      displayName: "Chat Only",
+      providerId: "chat-only",
+    });
+    const mediaProvider = await createMediaProvider(daemon.url, cwd, {
+      displayName: "Seedance Video",
+      providerId: "seedance",
+      model: "seedance",
+      capabilities: ["video_generate"],
+    });
+
+    const chatRejected = await postJsonExpectError(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: chatProvider.provider.id,
+      operation: "image_generate",
+      prompt: "Create an image.",
+    });
+    assert.equal(chatRejected.status, 400);
+    assert.equal(chatRejected.body.error, "unsupported_capability");
+
+    const operationRejected = await postJsonExpectError(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: mediaProvider.provider.id,
+      operation: "image_generate",
+      prompt: "Create an image.",
+    });
+    assert.equal(operationRejected.status, 400);
+    assert.equal(operationRejected.body.error, "unsupported_capability");
+    assert.equal(await mediaJobCount(daemon.url, cwd), 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media provider presets remain blocked from coding task runs", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-run-block-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_media_run_block",
+    toolName: "read",
+    input: { path: "README.md" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const created = await createMediaProvider(daemon.url, cwd);
+    const blocked = await postRunExpectError(daemon.url, providerRunBody(cwd, "task_media_provider_run", created.provider.id));
+
+    assert.equal(blocked.status, 400);
+    assert.equal(blocked.body.error, "unsupported_capability");
+    assert.match(blocked.body.message, /Media provider presets cannot run pi coding tasks/);
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provider preset run requires successful daemon preflight", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-run-"));
   const runner = new ApprovalProbeRunner({
@@ -605,6 +707,26 @@ async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
   });
 }
 
+async function createMediaProvider(baseUrl, cwd, overrides = {}) {
+  return await postJson(`${baseUrl}/providers?cwd=${encodeURIComponent(cwd)}`, {
+    kind: "seedream",
+    displayName: "Seedream Image",
+    providerId: "seedream",
+    model: "seedream",
+    api: "media-job",
+    capabilities: ["image_generate", "image_edit"],
+    input: ["text", "image"],
+    authHeader: false,
+    enabled: true,
+    ...overrides,
+  });
+}
+
+async function mediaJobCount(baseUrl, cwd) {
+  const response = await getJson(`${baseUrl}/media-jobs?cwd=${encodeURIComponent(cwd)}`);
+  return response.mediaJobs.length;
+}
+
 async function patchPolicy(baseUrl, cwd, body) {
   return await patchJson(`${baseUrl}/approval-policy?cwd=${encodeURIComponent(cwd)}`, body);
 }
@@ -672,6 +794,20 @@ async function postJson(url, body) {
     body: JSON.stringify(body),
   });
   return await readJsonResponse(response);
+}
+
+async function postJsonExpectError(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  assert.equal(response.ok, false, text);
+  return {
+    status: response.status,
+    body: text.trim() ? JSON.parse(text) : {},
+  };
 }
 
 async function readJsonResponse(response) {

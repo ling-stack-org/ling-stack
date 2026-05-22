@@ -18,6 +18,12 @@ import type {
 } from "./provider-types.js";
 import type { LingStackRuntimePaths } from "./runtime-paths.js";
 import type {
+  CreateMediaJobInput,
+  ListMediaJobsOptions,
+  MediaJob,
+  UpdateMediaJobStatusInput,
+} from "./media-types.js";
+import type {
   Channel,
   ChannelUpdateInput,
   CreateChannelInput,
@@ -176,6 +182,10 @@ export interface RunStore {
   updateProviderPreset(id: string, input: ProviderPresetUpdateInput, now: string): ProviderPreset | undefined;
   recordProviderCheckResult(id: string, result: ProviderCheckResult): ProviderPreset | undefined;
   deleteProviderPreset(id: string): boolean;
+  createMediaJob(input: CreateMediaJobInput, now: string): MediaJob;
+  getMediaJob(id: string): MediaJob | undefined;
+  listMediaJobs(options?: ListMediaJobsOptions): MediaJob[];
+  updateMediaJobStatus(id: string, input: UpdateMediaJobStatusInput, now: string): MediaJob | undefined;
   createApprovalRequest(input: CreateApprovalRequestInput, now: string): ApprovalRequest;
   getApprovalRequest(id: string): ApprovalRequest | undefined;
   listApprovalRequests(options?: ListApprovalRequestsOptions): ApprovalRequest[];

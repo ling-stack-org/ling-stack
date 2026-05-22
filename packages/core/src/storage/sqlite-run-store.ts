@@ -61,6 +61,14 @@ import {
   type RunStore,
   type RunStatus,
 } from "../run-types.js";
+import {
+  createMediaJobId,
+  type CreateMediaJobInput,
+  type ListMediaJobsOptions,
+  type MediaJob,
+  type MediaJobStatus,
+  type UpdateMediaJobStatusInput,
+} from "../media-types.js";
 import { redactSecrets } from "../redaction.js";
 import { appendEventLogLine } from "./event-log.js";
 
@@ -78,6 +86,8 @@ const PROVIDER_CHECKS_MIGRATION_VERSION = 6;
 const PROVIDER_CHECKS_MIGRATION_NAME = "add_provider_check_results";
 const ARTIFACTS_MIGRATION_VERSION = 7;
 const ARTIFACTS_MIGRATION_NAME = "create_artifacts";
+const MEDIA_JOBS_MIGRATION_VERSION = 8;
+const MEDIA_JOBS_MIGRATION_NAME = "create_media_jobs";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -780,6 +790,108 @@ export class SqliteRunStore implements RunStore {
     return Number(result.changes) > 0;
   }
 
+  createMediaJob(input: CreateMediaJobInput, now: string): MediaJob {
+    const job: MediaJob = {
+      id: createMediaJobId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      providerPresetId: input.providerPresetId,
+      operation: input.operation,
+      prompt: input.prompt,
+      input: input.input ?? {},
+      artifactIds: [],
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO media_jobs (
+          id,
+          workspace_id,
+          provider_preset_id,
+          operation,
+          prompt,
+          input_json,
+          artifact_ids_json,
+          status,
+          error_message,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        job.id,
+        job.workspaceId,
+        job.providerPresetId,
+        job.operation,
+        job.prompt,
+        stringifyJson(redactSecrets(job.input)),
+        stringifyJson(job.artifactIds),
+        job.status,
+        null,
+        job.createdAt,
+        job.updatedAt,
+      );
+
+    const created = this.getMediaJob(job.id);
+    if (!created) {
+      throw new Error(`Failed to create media job: ${job.id}`);
+    }
+    return created;
+  }
+
+  getMediaJob(id: string): MediaJob | undefined {
+    const row = this.database.prepare(mediaJobSelectSql("WHERE id = ?")).get(id);
+    return row ? mapMediaJob(row) : undefined;
+  }
+
+  listMediaJobs(options: ListMediaJobsOptions = {}): MediaJob[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.providerPresetId) {
+      clauses.push("provider_preset_id = ?");
+      params.push(options.providerPresetId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${mediaJobSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC LIMIT ?`)
+      .all(...params)
+      .map(mapMediaJob);
+  }
+
+  updateMediaJobStatus(id: string, input: UpdateMediaJobStatusInput, now: string): MediaJob | undefined {
+    const existing = this.getMediaJob(id);
+    if (!existing) {
+      return undefined;
+    }
+
+    this.database
+      .prepare(`
+        UPDATE media_jobs
+        SET
+          status = ?,
+          artifact_ids_json = ?,
+          error_message = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        input.status,
+        stringifyJson(input.artifactIds ?? existing.artifactIds),
+        input.errorMessage === undefined ? existing.errorMessage ?? null : input.errorMessage,
+        now,
+        id,
+      );
+
+    return this.getMediaJob(id);
+  }
+
   createApprovalRequest(input: CreateApprovalRequestInput, now: string): ApprovalRequest {
     const approval: ApprovalRequest = {
       id: createApprovalRequestId(),
@@ -1178,6 +1290,32 @@ export class SqliteRunStore implements RunStore {
 
       this.recordMigration(ARTIFACTS_MIGRATION_VERSION, ARTIFACTS_MIGRATION_NAME);
     }
+
+    if (!this.hasMigration(MEDIA_JOBS_MIGRATION_VERSION)) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS media_jobs (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          provider_preset_id TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          input_json TEXT NOT NULL,
+          artifact_ids_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_workspace ON media_jobs(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_provider ON media_jobs(provider_preset_id);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_created_at ON media_jobs(created_at);
+      `);
+
+      this.recordMigration(MEDIA_JOBS_MIGRATION_VERSION, MEDIA_JOBS_MIGRATION_NAME);
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -1420,6 +1558,22 @@ function mapArtifact(row: Record<string, SQLOutputValue>): RunArtifact {
   });
 }
 
+function mapMediaJob(row: Record<string, SQLOutputValue>): MediaJob {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    providerPresetId: readString(row, "provider_preset_id"),
+    operation: readString(row, "operation") as MediaJob["operation"],
+    prompt: readString(row, "prompt"),
+    input: parseJsonObject(readString(row, "input_json")),
+    artifactIds: parseJsonStringArray(readString(row, "artifact_ids_json")),
+    status: readString(row, "status") as MediaJobStatus,
+    errorMessage: readNullableString(row, "error_message"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
 function parseApprovalToolDecisions(value: string): ApprovalToolDecisions {
   const parsed = parseJsonObject(value);
   const decisions: Record<RunTool, ApprovalToolDecision> = { ...defaultApprovalToolDecisions };
@@ -1544,6 +1698,25 @@ function artifactSelectSql(whereClause: string): string {
       size_bytes,
       created_at
     FROM artifacts
+    ${whereClause}
+  `;
+}
+
+function mediaJobSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      provider_preset_id,
+      operation,
+      prompt,
+      input_json,
+      artifact_ids_json,
+      status,
+      error_message,
+      created_at,
+      updated_at
+    FROM media_jobs
     ${whereClause}
   `;
 }

@@ -117,6 +117,62 @@ test("sqlite store persists run artifacts", async () => {
   }
 });
 
+test("sqlite store persists media jobs and status updates", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-media-jobs-"));
+  const createdAt = "2026-05-23T00:00:00.000Z";
+  const updatedAt = "2026-05-23T00:01:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  let jobId = "";
+  try {
+    const created = store.createMediaJob(
+      {
+        providerPresetId: "provider_seedream",
+        operation: "image_generate",
+        prompt: "Generate a clean product mockup.",
+        input: { size: "1024x1024", apiKey: "sk-test_123456789" },
+      },
+      createdAt,
+    );
+    jobId = created.id;
+
+    assert.equal(created.providerPresetId, "provider_seedream");
+    assert.equal(created.operation, "image_generate");
+    assert.equal(created.status, "queued");
+    assert.deepEqual(created.artifactIds, []);
+    assert.equal(created.input.size, "1024x1024");
+    assert.equal(created.input.apiKey, "[REDACTED]");
+
+    const updated = store.updateMediaJobStatus(
+      created.id,
+      {
+        status: "succeeded",
+        artifactIds: ["artifact_image_1"],
+      },
+      updatedAt,
+    );
+    assert.ok(updated);
+    assert.equal(updated.status, "succeeded");
+    assert.deepEqual(updated.artifactIds, ["artifact_image_1"]);
+    assert.equal(updated.updatedAt, updatedAt);
+    assert.deepEqual(store.listMediaJobs({ status: "succeeded" }), [updated]);
+  } finally {
+    store.close();
+  }
+
+  store = createSqliteRunStore(cwd);
+  try {
+    const fetched = store.getMediaJob(jobId);
+    assert.ok(fetched);
+    assert.equal(fetched.status, "succeeded");
+    assert.equal(fetched.prompt, "Generate a clean product mockup.");
+    assert.deepEqual(fetched.artifactIds, ["artifact_image_1"]);
+    assert.deepEqual(store.listMediaJobs({ providerPresetId: "provider_seedream" }), [fetched]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite store expires pending approval requests", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-expiry-"));
   const now = "2026-05-22T00:00:00.000Z";

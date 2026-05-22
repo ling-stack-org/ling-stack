@@ -1,6 +1,7 @@
 export * from "./runtime-paths.js";
 export * from "./approval-policy.js";
 export * from "./approval-types.js";
+export * from "./media-types.js";
 export * from "./provider-types.js";
 export * from "./provider-templates.js";
 export * from "./run-types.js";

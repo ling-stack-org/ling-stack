@@ -10,6 +10,8 @@ import {
   defaultProviderTemplates,
   getRunSummaryPath,
   isSupportedSecretRef,
+  mediaJobStatuses,
+  mediaOperations,
   providerApis,
   providerCapabilities,
   providerKinds,
@@ -28,8 +30,11 @@ import {
   type ArtifactType,
   type CreateApprovalRequestInput,
   type ChannelUpdateInput,
+  type CreateMediaJobInput,
   type CreateChannelInput,
   type CreateTaskInput,
+  type MediaJobStatus,
+  type MediaOperation,
   type ProviderApi,
   type ProviderCapability,
   type ProviderCheckResult,
@@ -204,6 +209,11 @@ async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/media-jobs") {
+    await handleMediaJobsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/provider-templates") {
     writeJson(response, 200, { templates: defaultProviderTemplates() });
     return;
@@ -271,6 +281,12 @@ async function routeRequest(
   const providerRoute = parseProviderRoute(url.pathname);
   if (providerRoute) {
     await handleProviderItem(request, response, config, storeRegistry, providerRoute);
+    return;
+  }
+
+  const mediaJobRoute = parseMediaJobRoute(url.pathname);
+  if (mediaJobRoute) {
+    handleMediaJobItem(request, response, config, storeRegistry, mediaJobRoute.mediaJobId);
     return;
   }
 
@@ -826,6 +842,87 @@ async function handleProviderItem(
   }
 
   writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for provider presets` });
+}
+
+async function handleMediaJobsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        mediaJobs: store.listMediaJobs({
+          providerPresetId: url.searchParams.get("providerPresetId") ?? undefined,
+          status: readOptionalMediaJobStatusQuery(url),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseCreateMediaJobInput(body);
+      assertMediaJobProvider(store, input);
+      const job = store.createMediaJob(input, new Date().toISOString());
+      writeJson(response, 201, { mediaJob: job });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /media-jobs` });
+  } catch (error) {
+    const statusCode = error instanceof HttpError ? error.statusCode : 400;
+    writeJson(response, statusCode, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function handleMediaJobItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  mediaJobId: string,
+): void {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for media jobs` });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const job = store.getMediaJob(mediaJobId);
+    if (!job) {
+      writeJson(response, 404, { error: "media_job_not_found", message: `Media job not found: ${mediaJobId}` });
+      return;
+    }
+    writeJson(response, 200, { mediaJob: job });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function handleApprovalPolicy(
@@ -2377,6 +2474,14 @@ function parseProviderRoute(pathname: string): { readonly providerId: string; re
   return undefined;
 }
 
+function parseMediaJobRoute(pathname: string): { readonly mediaJobId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "media-jobs") {
+    return { mediaJobId: segments[1] };
+  }
+  return undefined;
+}
+
 function parseApprovalRoute(pathname: string): { readonly approvalId: string; readonly action?: "approve" | "deny" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "approvals") {
@@ -2485,6 +2590,45 @@ function validateTaskInput(input: TaskUpdateInput): void {
   }
   if (input.prompt !== undefined && input.prompt.trim().length === 0) {
     throw new Error("prompt must be a non-empty string");
+  }
+}
+
+function parseCreateMediaJobInput(value: unknown): CreateMediaJobInput {
+  if (!isRecord(value)) {
+    throw new Error("Media job request must be a JSON object");
+  }
+  const input: CreateMediaJobInput = {
+    providerPresetId: readString(value, "providerPresetId"),
+    operation: readMediaOperation(value, "operation"),
+    prompt: readString(value, "prompt"),
+    input: readOptionalObject(value, "input"),
+  };
+  validateMediaJobInput(input);
+  return input;
+}
+
+function validateMediaJobInput(input: CreateMediaJobInput): void {
+  if (!input.providerPresetId.trim()) {
+    throw new Error("providerPresetId must be a non-empty string");
+  }
+  if (!input.prompt.trim()) {
+    throw new Error("prompt must be a non-empty string");
+  }
+}
+
+function assertMediaJobProvider(store: RunStore, input: CreateMediaJobInput): void {
+  const preset = store.getProviderPreset(input.providerPresetId);
+  if (!preset) {
+    throw new HttpError(404, "provider_not_found", `Provider preset not found: ${input.providerPresetId}`);
+  }
+  if (!preset.enabled) {
+    throw new HttpError(400, "provider_disabled", `Provider preset is disabled: ${preset.id}`);
+  }
+  if (preset.api !== "media-job") {
+    throw new HttpError(400, "unsupported_capability", "Media jobs require a media-job provider preset");
+  }
+  if (!preset.capabilities.includes(input.operation)) {
+    throw new HttpError(400, "unsupported_capability", `${preset.displayName} does not support ${input.operation}`);
   }
 }
 
@@ -2932,6 +3076,17 @@ function readOptionalStringRecord(record: Record<string, unknown>, key: string):
   return result;
 }
 
+function readOptionalObject(record: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  return value;
+}
+
 function readOptionalApiKeyRef(record: Record<string, unknown>): string | undefined {
   const value = readOptionalString(record, "apiKeyRef");
   if (value && !isSupportedSecretRef(value)) {
@@ -3032,6 +3187,14 @@ function readProviderCapabilities(record: Record<string, unknown>, key: string):
   return readOptionalStringArray(record, key, providerCapabilities)?.map((capability) => capability as ProviderCapability) ?? [];
 }
 
+function readMediaOperation(record: Record<string, unknown>, key: string): MediaOperation {
+  const value = readString(record, key);
+  if (!mediaOperations.includes(value as MediaOperation)) {
+    throw new Error(`${key} must be one of: ${mediaOperations.join(", ")}`);
+  }
+  return value as MediaOperation;
+}
+
 function readOptionalThinkingLevel(record: Record<string, unknown>, key: string): RunRequest["thinkingLevel"] {
   return readOptionalStringArray({ [key]: record[key] === undefined ? undefined : [record[key]] }, key, [
     "off",
@@ -3096,6 +3259,17 @@ function readOptionalApprovalStatusQuery(url: URL): ApprovalStatus | undefined {
     throw new Error(`status must be one of: ${approvalStatuses.join(", ")}`);
   }
   return value as ApprovalStatus;
+}
+
+function readOptionalMediaJobStatusQuery(url: URL): MediaJobStatus | undefined {
+  const value = url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (!mediaJobStatuses.includes(value as MediaJobStatus)) {
+    throw new Error(`status must be one of: ${mediaJobStatuses.join(", ")}`);
+  }
+  return value as MediaJobStatus;
 }
 
 function validateUrl(value: string, fieldName: string): void {

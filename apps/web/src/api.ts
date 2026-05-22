@@ -7,6 +7,9 @@ import type {
   ChannelFormState,
   ChannelListResponse,
   ChannelMutationResponse,
+  MediaJobFormState,
+  MediaJobListResponse,
+  MediaJobMutationResponse,
   ProviderCheckResult,
   ProviderFormState,
   ProviderListResponse,
@@ -289,6 +292,29 @@ export async function listRunArtifacts(runId: string, cwd?: string): Promise<Run
   return (await response.json()) as RunArtifactListResponse;
 }
 
+export async function listMediaJobs(cwd: string, limit = 100): Promise<MediaJobListResponse> {
+  const parsed = new URL(`${daemonBaseUrl}/media-jobs`);
+  parsed.searchParams.set("cwd", cwd);
+  parsed.searchParams.set("limit", String(limit));
+  const response = await fetch(parsed.toString());
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as MediaJobListResponse;
+}
+
+export async function createMediaJob(cwd: string, form: MediaJobFormState): Promise<MediaJobMutationResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/media-jobs`, cwd), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(mediaJobFormToPayload(form)),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as MediaJobMutationResponse;
+}
+
 export function artifactContentUrl(artifactId: string, cwd?: string): string {
   return withCwd(`${daemonBaseUrl}/artifacts/${encodeURIComponent(artifactId)}/content`, cwd);
 }
@@ -435,6 +461,27 @@ function channelFormToUpdatePayload(form: ChannelFormState): unknown {
     defaultProviderPresetId: form.defaultProviderPresetId || null,
     allowedTools: form.allowedTools.filter(isRunnerTool),
   };
+}
+
+function mediaJobFormToPayload(form: MediaJobFormState): unknown {
+  return {
+    providerPresetId: form.providerPresetId,
+    operation: form.operation,
+    prompt: form.prompt,
+    input: parseMediaInput(form.inputText),
+  };
+}
+
+function parseMediaInput(inputText: string): Record<string, unknown> | undefined {
+  const trimmed = inputText.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Media job input must be a JSON object.");
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function splitCsv(value: string): string[] {

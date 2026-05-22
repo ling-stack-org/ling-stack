@@ -452,6 +452,100 @@ GET /artifacts/:id/content?cwd=/path/to/project
 
 The daemon resolves artifact content relative to `.ling-stack/artifacts` and rejects paths outside that directory with `403 artifact_outside_root`.
 
+## Media Jobs
+
+Media jobs are persisted metadata for media-capable provider presets. This foundation slice does not call Jimeng, Seedream, Seedance, or any other live media API. Created jobs remain `queued` until a later adapter runtime updates them.
+
+Supported statuses:
+
+```text
+queued, running, succeeded, failed, cancelled
+```
+
+Supported operations:
+
+```text
+image_generate, image_edit, video_generate
+```
+
+### Create Media Job
+
+```http
+POST /media-jobs?cwd=/path/to/project
+Content-Type: application/json
+```
+
+```json
+{
+  "providerPresetId": "provider_...",
+  "operation": "image_generate",
+  "prompt": "Create a clean product screenshot style image.",
+  "input": {
+    "size": "1024x1024"
+  }
+}
+```
+
+Rules:
+
+- `providerPresetId` must reference an enabled provider preset with `api: "media-job"`.
+- The provider preset must include the requested media operation in `capabilities`.
+- Chat provider presets return `unsupported_capability`.
+- No live provider call, cost approval, or artifact generation happens in this slice.
+
+Response:
+
+```json
+{
+  "mediaJob": {
+    "id": "media_job_...",
+    "workspaceId": "workspace_default",
+    "providerPresetId": "provider_...",
+    "operation": "image_generate",
+    "prompt": "Create a clean product screenshot style image.",
+    "input": {
+      "size": "1024x1024"
+    },
+    "artifactIds": [],
+    "status": "queued",
+    "createdAt": "2026-05-23T00:00:00.000Z",
+    "updatedAt": "2026-05-23T00:00:00.000Z"
+  }
+}
+```
+
+### List Media Jobs
+
+```http
+GET /media-jobs?cwd=/path/to/project&status=queued&providerPresetId=provider_...&limit=100
+```
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "mediaJobs": []
+}
+```
+
+### Get Media Job
+
+```http
+GET /media-jobs/:id?cwd=/path/to/project
+```
+
+Response:
+
+```json
+{
+  "mediaJob": {
+    "id": "media_job_...",
+    "status": "queued"
+  }
+}
+```
+
 ### Cancel Run
 
 ```http
