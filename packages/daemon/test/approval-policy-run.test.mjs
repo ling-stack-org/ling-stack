@@ -516,7 +516,7 @@ class ArtifactExtractionRunner {
       type: "tool_end",
       toolCallId: "tool_write_artifact",
       toolName: "write",
-      result: { path: "notes/result.md", stdout: "wrote notes/result.md\n" },
+      result: { path: "notes/result.md", content: [{ type: "text", text: "wrote notes/result.md\n" }] },
       isError: false,
     });
 

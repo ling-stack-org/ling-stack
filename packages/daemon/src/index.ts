@@ -1832,6 +1832,11 @@ function collectToolResultTextCandidates(
     const value = result[key];
     if (typeof value === "string" && value.trim()) {
       candidates.push({ title, content: value, type: type ?? inferArtifactTypeFromText(value) });
+      return;
+    }
+    const textContent = readToolResultTextContent(value);
+    if (textContent.trim()) {
+      candidates.push({ title, content: textContent, type: type ?? inferArtifactTypeFromText(textContent) });
     }
   };
 
@@ -1846,6 +1851,27 @@ function collectToolResultTextCandidates(
   addField("text", `${event.toolName} text`);
   addField("content", `${event.toolName} content`);
   return candidates;
+}
+
+function readToolResultTextContent(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+
+  return value
+    .map((item) => {
+      if (!isRecord(item)) {
+        return "";
+      }
+      const type = item.type;
+      const text = item.text;
+      if ((type === undefined || type === "text") && typeof text === "string") {
+        return text;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 function collectGeneratedArtifactPaths(event: Extract<PiRunnerEvent, { readonly type: "tool_end" }>, sourceArgs: unknown): string[] {
