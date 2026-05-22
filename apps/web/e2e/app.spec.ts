@@ -8,6 +8,7 @@ interface MockState {
   tasks: unknown[];
   runs: MockRun[];
   approvals: MockApproval[];
+  artifactsByRun: Record<string, MockArtifact[]>;
 }
 
 interface MockRun {
@@ -45,6 +46,17 @@ interface MockApproval {
   decisionReason?: string;
 }
 
+interface MockArtifact {
+  id: string;
+  runId: string;
+  type: string;
+  path: string;
+  title?: string;
+  contentType?: string;
+  sizeBytes?: number;
+  createdAt: string;
+}
+
 test("workspace readiness surfaces missing provider, expired approval, and failed run repair", async ({ page }) => {
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
@@ -63,7 +75,7 @@ test("approval inbox shows expired approvals without decision buttons", async ({
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await page.getByRole("button", { name: "Approvals" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Approvals" }).click();
   await expect(page.getByRole("heading", { name: "Approval requests" })).toBeVisible();
   await expect(page.locator(".approval-row")).toContainText("expired");
   await expect(page.locator(".approval-row")).toContainText("expired ");
@@ -76,12 +88,48 @@ test("approval inbox resolves pending approvals and refreshes state", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("button", { name: "Approvals" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Approvals" }).click();
   await expect(page.locator(".approval-row")).toContainText("pending");
 
   await page.locator(".approval-row").getByRole("button", { name: "Deny" }).click();
   await expect(page.locator(".approval-row")).toContainText("denied");
   await expect.poll(() => state.approvals[0]?.status).toBe("denied");
+});
+
+test("run detail renders artifact rows from the daemon API", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.artifactsByRun.run_failed = [
+    {
+      id: "artifact_report",
+      runId: "run_failed",
+      type: "markdown",
+      path: "run_failed/001-generated-report.md",
+      title: "Generated report",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 128,
+      createdAt: "2026-05-22T00:01:30.000Z",
+    },
+    {
+      id: "artifact_patch",
+      runId: "run_failed",
+      type: "diff",
+      path: "run_failed/002-edit.diff",
+      title: "edit diff",
+      contentType: "text/x-diff; charset=utf-8",
+      sizeBytes: 256,
+      createdAt: "2026-05-22T00:01:31.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await page.getByRole("button", { name: /run_failed/ }).click();
+
+  await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
+  await expect(page.locator(".artifact-row")).toHaveCount(2);
+  await expect(page.locator(".artifact-row").first()).toContainText("Generated report");
+  await expect(page.locator(".artifact-row").first()).toHaveAttribute("href", /\/artifacts\/artifact_report\/content/);
 });
 
 function createBaseState(options: { approvalStatus: "pending" | "expired" }): MockState {
@@ -146,6 +194,7 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
         decisionReason: options.approvalStatus === "expired" ? "Approval request expired before a decision was received." : undefined,
       },
     ],
+    artifactsByRun: {},
   };
 }
 
@@ -222,7 +271,8 @@ async function handleDaemonRoute(route: Route, state: MockState): Promise<void> 
 
   const runArtifactsMatch = /^\/runs\/([^/]+)\/artifacts$/.exec(path);
   if (request.method() === "GET" && runArtifactsMatch) {
-    await route.fulfill({ json: { runId: decodeURIComponent(runArtifactsMatch[1]), artifacts: [] } });
+    const runId = decodeURIComponent(runArtifactsMatch[1]);
+    await route.fulfill({ json: { runId, artifacts: state.artifactsByRun[runId] ?? [] } });
     return;
   }
 

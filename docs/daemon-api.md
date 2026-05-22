@@ -401,6 +401,8 @@ GET /runs/:id/artifacts?cwd=/path/to/project
 
 Passing `cwd` is recommended after daemon restart. Artifact paths are local paths under `.ling-stack/artifacts` and are served only through the artifact content endpoint.
 
+During run execution the daemon records `artifact_created` events for extracted Pi tool evidence. v0.1 extraction covers text, log, Markdown, diff output, and generated file path metadata. Image/video/media job artifacts are not extracted yet.
+
 Response:
 
 ```json
