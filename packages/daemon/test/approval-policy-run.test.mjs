@@ -160,6 +160,73 @@ test("write outside allowed paths is denied even when write is allowed", async (
   }
 });
 
+test("approval listing lazily expires stale pending requests", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-expiry-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_expiry",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  const runId = "run_stale_approval";
+  const approvalCreatedAt = "2000-01-01T00:00:00.000Z";
+  let approvalId = "";
+  try {
+    const store = createSqliteRunStore(cwd);
+    try {
+      store.createRun({
+        id: runId,
+        cwd,
+        taskId: "task_stale_approval",
+        providerName: "test-provider",
+        providerModel: "test-model",
+        taskSnapshot: { id: "task_stale_approval", title: "Stale approval" },
+        providerSnapshot: { provider: "test-provider", model: "test-model" },
+        requestSnapshot: { cwd },
+        createdAt: approvalCreatedAt,
+      });
+      const approval = store.createApprovalRequest(
+        {
+          runId,
+          taskId: "task_stale_approval",
+          actionType: "bash",
+          risk: "medium",
+          title: "Approve shell command",
+          description: "echo stale",
+          payload: { type: "bash", cwd, command: "echo stale", riskFlags: [] },
+          expiresAt: "2000-01-01T00:01:00.000Z",
+        },
+        approvalCreatedAt,
+      );
+      approvalId = approval.id;
+    } finally {
+      store.close();
+    }
+
+    const pending = await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}&status=pending&runId=${encodeURIComponent(runId)}`);
+    assert.deepEqual(pending.approvals, []);
+
+    const expired = await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}&status=expired&runId=${encodeURIComponent(runId)}`);
+    assert.equal(expired.approvals.length, 1);
+    assert.equal(expired.approvals[0].id, approvalId);
+    assert.equal(expired.approvals[0].status, "expired");
+    assert.equal(expired.approvals[0].resolvedBy, undefined);
+
+    const events = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/events?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(events.events.some((event) => event.type === "approval_expired" && event.data.approvalId === approvalId), true);
+
+    const lateApprove = await fetch(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "too late" }),
+    });
+    assert.equal(lateApprove.status, 400);
+    assert.equal((await lateApprove.json()).error, "approval_not_pending");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provider check persists last check result", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({

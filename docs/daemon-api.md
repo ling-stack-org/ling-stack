@@ -294,6 +294,9 @@ data: {"approvalId":"approval_...","actionType":"bash","risk":"medium",...}
 event: approval_approved
 data: {"approvalId":"approval_...","status":"approved",...}
 
+event: approval_expired
+data: {"approvalId":"approval_...","status":"expired",...}
+
 event: run_end
 data: {"type":"run_end","taskId":"task-1","messageCount":3}
 
@@ -732,7 +735,7 @@ Request body is optional:
 }
 ```
 
-Approval decisions append `approval_approved` or `approval_denied` to the linked run event log when the run still exists.
+Approval decisions append `approval_approved`, `approval_denied`, or `approval_expired` to the linked run event log when the run still exists. Listing or fetching approvals lazily normalizes pending requests whose `expiresAt` is already in the past.
 
 ## Current Limits
 

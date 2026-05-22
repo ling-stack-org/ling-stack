@@ -850,6 +850,7 @@ function handleApprovalsCollection(
 
   try {
     const store = storeRegistry.getStore(cwd);
+    expireStalePendingApprovals(store, url.searchParams.get("runId") ?? undefined);
     writeJson(response, 200, {
       cwd,
       approvals: store.listApprovalRequests({
@@ -881,6 +882,7 @@ async function handleApprovalItem(
   }
 
   const store = storeRegistry.getStore(cwd);
+  expireStaleApproval(store, route.approvalId);
   const approval = store.getApprovalRequest(route.approvalId);
   if (!approval) {
     writeJson(response, 404, { error: "approval_not_found", message: `Approval request not found: ${route.approvalId}` });
@@ -1308,12 +1310,62 @@ function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalRequest)
   if (!run) {
     return;
   }
-  store.appendEvent(approval.runId, approval.status === "approved" ? "approval_approved" : "approval_denied", {
+  store.appendEvent(approval.runId, approvalDecisionEventType(approval), {
     approvalId: approval.id,
     status: approval.status,
     resolvedBy: approval.resolvedBy,
     decisionReason: approval.decisionReason,
   });
+}
+
+function approvalDecisionEventType(approval: ApprovalRequest): Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired"> {
+  if (approval.status === "approved") {
+    return "approval_approved";
+  }
+  if (approval.status === "expired") {
+    return "approval_expired";
+  }
+  return "approval_denied";
+}
+
+function expireStalePendingApprovals(store: RunStore, runId?: string): void {
+  const now = new Date().toISOString();
+  let safety = 0;
+  for (;;) {
+    const pending = store.listApprovalRequests({ status: "pending", runId, limit: 500 });
+    const expired = pending.filter((approval) => approval.expiresAt && approval.expiresAt <= now);
+    if (expired.length === 0) {
+      return;
+    }
+    for (const approval of expired) {
+      expireApproval(store, approval, now);
+    }
+    safety += 1;
+    if (pending.length < 500 || safety > 20) {
+      return;
+    }
+  }
+}
+
+function expireStaleApproval(store: RunStore, approvalId: string): void {
+  const approval = store.getApprovalRequest(approvalId);
+  const now = new Date().toISOString();
+  if (!approval || approval.status !== "pending" || !approval.expiresAt || approval.expiresAt > now) {
+    return;
+  }
+  expireApproval(store, approval, now);
+}
+
+function expireApproval(store: RunStore, approval: ApprovalRequest, now: string): ApprovalRequest | undefined {
+  const expired = store.expireApprovalRequest(
+    approval.id,
+    { reason: "Approval request expired before a decision was received." },
+    now,
+  );
+  if (expired) {
+    appendApprovalDecisionEvent(store, expired);
+  }
+  return expired;
 }
 
 function createRunApprovalHandler(options: {
@@ -1557,7 +1609,7 @@ async function waitForApprovalDecision(store: RunStore, approvalId: string, sign
     await delay(APPROVAL_POLL_INTERVAL_MS);
   }
 
-  const expired = store.denyApprovalRequest(
+  const expired = store.expireApprovalRequest(
     approvalId,
     { reason: "Approval request timed out before a decision was received." },
     new Date().toISOString(),
@@ -1582,7 +1634,7 @@ function streamOrAppendApprovalDecisionEvent(options: {
     return;
   }
 
-  options.appendAndMaybeStream(options.approval.status === "approved" ? "approval_approved" : "approval_denied", {
+  options.appendAndMaybeStream(approvalDecisionEventType(options.approval), {
     approvalId: options.approval.id,
     status: options.approval.status,
     resolvedBy: options.approval.resolvedBy,
@@ -1599,7 +1651,7 @@ function findApprovalDecisionEvent(
     .listEvents(approval.runId, { afterSeq, limit: 1000 })
     .find(
       (event) =>
-        (event.type === "approval_approved" || event.type === "approval_denied") &&
+        (event.type === "approval_approved" || event.type === "approval_denied" || event.type === "approval_expired") &&
         isRecord(event.data) &&
         event.data.approvalId === approval.id,
     );

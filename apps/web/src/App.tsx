@@ -267,7 +267,7 @@ export function App(): JSX.Element {
 
   const latestStatus = run?.status ?? inferRunStatus(events, isRunning);
   const activePendingApprovals = useMemo(
-    () => approvals.filter((approval) => approval.status === "pending" && approval.runId === activeRunId),
+    () => approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending" && approval.runId === activeRunId),
     [approvals, activeRunId],
   );
   const activeRunApprovals = useMemo(
@@ -296,6 +296,7 @@ export function App(): JSX.Element {
     if (activeView === "workspace") {
       void refreshChannels();
       void refreshRuns();
+      void refreshApprovals();
     }
     if (activeView === "runs") {
       void refreshRuns();
@@ -382,7 +383,7 @@ export function App(): JSX.Element {
             setLookupRunId(message.runId);
             return;
           }
-          if (message.event.type === "approval_requested") {
+          if (message.event.type === "approval_requested" || message.event.type === "approval_expired") {
             void refreshApprovals(loadCwd, streamedRunId || undefined);
           }
           setEvents((current) => [...current, message.event]);
@@ -1145,9 +1146,12 @@ export function App(): JSX.Element {
               tasksLoading={tasksLoading}
               runsLoading={runsLoading}
               succeededRunCount={succeededRunCount}
+              runs={runs}
+              approvals={approvals}
               onRefreshDaemon={() => void refreshHealth()}
               onOpenProviders={() => setActiveView("providers")}
               onOpenRuns={() => setActiveView("runs")}
+              onOpenApprovals={() => openApprovalsFromWorkspace()}
               onCreateChannel={() => void saveDefaultChannel()}
               onCreateTask={() => void saveTask()}
             />
@@ -1477,9 +1481,12 @@ function WorkspaceReadiness({
   tasksLoading,
   runsLoading,
   succeededRunCount,
+  runs,
+  approvals,
   onRefreshDaemon,
   onOpenProviders,
   onOpenRuns,
+  onOpenApprovals,
   onCreateChannel,
   onCreateTask,
 }: {
@@ -1492,26 +1499,34 @@ function WorkspaceReadiness({
   readonly tasksLoading: boolean;
   readonly runsLoading: boolean;
   readonly succeededRunCount: number;
+  readonly runs: readonly RunSession[];
+  readonly approvals: readonly ApprovalRequest[];
   readonly onRefreshDaemon: () => void;
   readonly onOpenProviders: () => void;
   readonly onOpenRuns: () => void;
+  readonly onOpenApprovals: () => void;
   readonly onCreateChannel: () => void;
   readonly onCreateTask: () => void;
 }): JSX.Element {
   const runnableProviderCount = providers.filter(canUseProviderForRun).length;
   const readyProviderCount = providers.filter((provider) => providerRunPreflightBlocker(provider) === undefined).length;
+  const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
+  const expiredApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "expired").length;
+  const latestFailedRun = runs.find((item) => item.status === "failed");
   const providerItem = buildProviderReadinessItem(providers.length, runnableProviderCount, readyProviderCount, providersLoading, onOpenProviders);
   const channelItem = buildChannelReadinessItem(channels.length, channelsLoading, onCreateChannel);
   const taskItem = buildTaskReadinessItem(tasks.length, tasksLoading, channels.length > 0, onCreateTask);
-  const runLoopItem = buildRunLoopReadinessItem(succeededRunCount, runsLoading, onOpenRuns);
+  const approvalItem = buildApprovalReadinessItem(pendingApprovalCount, expiredApprovalCount, onOpenApprovals);
+  const runLoopItem = buildRunLoopReadinessItem(succeededRunCount, latestFailedRun, runsLoading, onOpenRuns);
   const items: readonly WorkspaceReadinessItem[] = [
     buildDaemonReadinessItem(daemonHealthy, onRefreshDaemon),
     providerItem,
     channelItem,
     taskItem,
+    approvalItem,
     runLoopItem,
   ];
-  const blockingItems = items.filter((item) => item.id !== "tasks" && item.id !== "run-loop" && item.status !== "ready");
+  const blockingItems = items.filter((item) => !["tasks", "run-loop"].includes(item.id) && item.status !== "ready");
   const ready = blockingItems.length === 0;
 
   return (
@@ -2109,7 +2124,41 @@ function buildTaskReadinessItem(total: number, loading: boolean, hasChannel: boo
   };
 }
 
-function buildRunLoopReadinessItem(succeededRunCount: number, loading: boolean, onOpenRuns: () => void): WorkspaceReadinessItem {
+function buildApprovalReadinessItem(pendingCount: number, expiredCount: number, onOpenApprovals: () => void): WorkspaceReadinessItem {
+  if (pendingCount > 0) {
+    return {
+      id: "approvals",
+      label: "Approvals",
+      detail: `${pendingCount} approval${pendingCount === 1 ? "" : "s"} waiting for a local decision`,
+      status: "attention",
+      actionLabel: "Approvals",
+      onAction: onOpenApprovals,
+    };
+  }
+  if (expiredCount > 0) {
+    return {
+      id: "approvals",
+      label: "Approvals",
+      detail: `${expiredCount} expired approval${expiredCount === 1 ? "" : "s"} need review`,
+      status: "attention",
+      actionLabel: "Approvals",
+      onAction: onOpenApprovals,
+    };
+  }
+  return {
+    id: "approvals",
+    label: "Approvals",
+    detail: "No pending or expired approvals",
+    status: "ready",
+  };
+}
+
+function buildRunLoopReadinessItem(
+  succeededRunCount: number,
+  latestFailedRun: RunSession | undefined,
+  loading: boolean,
+  onOpenRuns: () => void,
+): WorkspaceReadinessItem {
   if (loading) {
     return {
       id: "run-loop",
@@ -2119,6 +2168,16 @@ function buildRunLoopReadinessItem(succeededRunCount: number, loading: boolean, 
       actionLabel: "Runs",
       onAction: onOpenRuns,
       disabled: true,
+    };
+  }
+  if (latestFailedRun) {
+    return {
+      id: "run-loop",
+      label: "Run loop",
+      detail: `Latest failed run needs review: ${latestFailedRun.id}`,
+      status: "info",
+      actionLabel: "Runs",
+      onAction: onOpenRuns,
     };
   }
   if (succeededRunCount === 0) {
@@ -4206,8 +4265,8 @@ function ApprovalRunRepairPanel({
   readonly onOpenRun: () => void;
   readonly onClear: () => void;
 }): JSX.Element {
-  const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
-  const resolvedApprovals = approvals.filter((approval) => approval.status !== "pending");
+  const pendingApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending");
+  const resolvedApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) !== "pending");
   const highestRisk = highestApprovalRisk(approvals);
   const actionTypes = [...new Set(approvals.map((approval) => approval.actionType))];
   const taskLabel = run ? readTaskTitle(run.taskSnapshot) || run.taskId : approvals[0]?.taskId ?? "-";
@@ -4266,9 +4325,11 @@ function ApprovalCard({
   const isResolving = Boolean(resolvingDecision);
   const requiresSecondConfirmation = approval.risk === "high" || approval.risk === "critical";
   const trimmedReason = decisionReason.trim();
+  const effectiveStatus = effectiveApprovalStatus(approval);
+  const timing = approvalTimingLabel(approval);
 
   function submitDecision(decision: ApprovalResolution): void {
-    if (isResolving) {
+    if (isResolving || effectiveStatus !== "pending") {
       return;
     }
 
@@ -4294,7 +4355,7 @@ function ApprovalCard({
       <div className="approval-main">
         <div className="approval-head">
           <strong>{approval.title}</strong>
-          <span className={`approval-state ${approval.status}`}>{approval.status}</span>
+          <span className={`approval-state ${effectiveStatus}`}>{effectiveStatus}</span>
           <span className={`approval-risk ${approval.risk}`}>{approval.risk}</span>
         </div>
         <p>{approval.description}</p>
@@ -4303,12 +4364,13 @@ function ApprovalCard({
           <span>{approval.taskId}</span>
           <span>{approval.runId}</span>
           <time>{formatDateTime(approval.createdAt)}</time>
+          {timing ? <time>{timing}</time> : null}
           {approval.resolvedAt ? <time>resolved {formatDateTime(approval.resolvedAt)}</time> : null}
         </div>
         {approval.decisionReason ? <p className="approval-decision-reason">{approval.decisionReason}</p> : null}
         <pre>{formatEventData(approval.payload)}</pre>
       </div>
-      {approval.status === "pending" ? (
+      {effectiveStatus === "pending" ? (
         <div className="approval-decision-panel">
           <label className="approval-reason-field">
             <span>Decision reason</span>
@@ -5116,13 +5178,14 @@ function buildRunApprovalSummaries(
       continue;
     }
 
-    if (event.type === "approval_approved" || event.type === "approval_denied") {
+    if (event.type === "approval_approved" || event.type === "approval_denied" || event.type === "approval_expired") {
       const approvalId = readDataString(event.data, "approvalId");
       if (!approvalId) {
         continue;
       }
       const existing = summaries.get(approvalId);
-      const status = readApprovalStatus(event.data, event.type === "approval_approved" ? "approved" : "denied");
+      const fallbackStatus = event.type === "approval_approved" ? "approved" : event.type === "approval_expired" ? "expired" : "denied";
+      const status = readApprovalStatus(event.data, fallbackStatus);
       summaries.set(approvalId, {
         id: approvalId,
         runId: event.runId,
@@ -5130,7 +5193,7 @@ function buildRunApprovalSummaries(
         toolCallId: existing?.toolCallId,
         actionType: existing?.actionType ?? "bash",
         risk: existing?.risk ?? "medium",
-        title: existing?.title ?? (status === "approved" ? "Approval approved" : "Approval denied"),
+        title: existing?.title ?? (fallbackStatus === "approved" ? "Approval approved" : fallbackStatus === "expired" ? "Approval expired" : "Approval denied"),
         description: existing?.description ?? "Approval decision recorded.",
         payload: existing?.payload ?? {},
         status,
@@ -5242,6 +5305,29 @@ function readApprovalStatus(data: unknown, fallback: ApprovalStatus): ApprovalSt
     return value as ApprovalStatus;
   }
   return fallback;
+}
+
+function effectiveApprovalStatus(approval: ApprovalRequest): ApprovalStatus {
+  if (approval.status !== "pending" || !approval.expiresAt) {
+    return approval.status;
+  }
+  return new Date(approval.expiresAt).getTime() <= Date.now() ? "expired" : "pending";
+}
+
+function approvalTimingLabel(approval: ApprovalRequest): string {
+  if (!approval.expiresAt) {
+    return "";
+  }
+  const expiresAt = new Date(approval.expiresAt).getTime();
+  if (Number.isNaN(expiresAt)) {
+    return "";
+  }
+  if (approval.status !== "pending" || expiresAt <= Date.now()) {
+    return `expired ${formatDateTime(approval.expiresAt)}`;
+  }
+  const remainingMs = expiresAt - Date.now();
+  const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
+  return `expires in ${remainingMinutes}m`;
 }
 
 function readTaskTitle(taskSnapshot: unknown): string {
