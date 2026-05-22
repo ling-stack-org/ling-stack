@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import {
   approveApproval,
+  artifactContentUrl,
   buildRerunRequest,
   buildRunRequest,
   buildTaskRunRequest,
@@ -42,6 +43,7 @@ import {
   getApprovalPolicy,
   getRun,
   getRunEvents,
+  listRunArtifacts,
   listChannels,
   listApprovals,
   listProviders,
@@ -69,6 +71,7 @@ import type {
   ProviderFormState,
   ProviderPreset,
   ProviderTemplate,
+  RunArtifact,
   RunEventEnvelope,
   RunFormState,
   RunSession,
@@ -247,6 +250,7 @@ export function App(): JSX.Element {
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, ApprovalResolution>>({});
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
+  const [artifacts, setArtifacts] = useState<readonly RunArtifact[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const abortRef = useRef<AbortController | undefined>(undefined);
@@ -361,6 +365,7 @@ export function App(): JSX.Element {
     abortRef.current = controller;
     setErrorMessage("");
     setEvents([]);
+    setArtifacts([]);
     setRun(undefined);
     setActiveRunId("");
     setIsRunning(true);
@@ -409,9 +414,14 @@ export function App(): JSX.Element {
 
     try {
       setErrorMessage("");
-      const [runResult, eventResult] = await Promise.all([getRun(runId.trim(), cwd), getRunEvents(runId.trim(), cwd)]);
+      const [runResult, eventResult, artifactResult] = await Promise.all([
+        getRun(runId.trim(), cwd),
+        getRunEvents(runId.trim(), cwd),
+        listRunArtifacts(runId.trim(), cwd),
+      ]);
       setRun(runResult);
       setEvents(eventResult.events);
+      setArtifacts(artifactResult.artifacts);
       setActiveRunId(runResult.id);
       setLookupRunId(runResult.id);
     } catch (error) {
@@ -1250,6 +1260,7 @@ export function App(): JSX.Element {
             selectedRunId={activeRunId}
             selectedRun={run}
             events={events}
+            artifacts={artifacts}
             assistantText={assistantText}
             approvals={activeRunApprovals}
             approvalsLoading={approvalsLoading}
@@ -1261,6 +1272,7 @@ export function App(): JSX.Element {
               setForm({ ...form, cwd });
               setRun(undefined);
               setEvents([]);
+              setArtifacts([]);
               setActiveRunId("");
               setLookupRunId("");
             }}
@@ -2756,6 +2768,7 @@ function RunHistory({
   selectedRunId,
   selectedRun,
   events,
+  artifacts,
   assistantText,
   approvals,
   approvalsLoading,
@@ -2779,6 +2792,7 @@ function RunHistory({
   readonly selectedRunId: string;
   readonly selectedRun: RunSession | undefined;
   readonly events: readonly RunEventEnvelope[];
+  readonly artifacts: readonly RunArtifact[];
   readonly assistantText: string;
   readonly approvals: readonly ApprovalRequest[];
   readonly approvalsLoading: boolean;
@@ -2855,6 +2869,7 @@ function RunHistory({
       <RunDetailPanel
         run={selectedRun}
         events={events}
+        artifacts={artifacts}
         assistantText={assistantText}
         approvals={approvals}
         approvalsLoading={approvalsLoading}
@@ -2875,6 +2890,7 @@ function RunHistory({
 function RunDetailPanel({
   run,
   events,
+  artifacts,
   assistantText,
   approvals,
   approvalsLoading,
@@ -2890,6 +2906,7 @@ function RunDetailPanel({
 }: {
   readonly run: RunSession | undefined;
   readonly events: readonly RunEventEnvelope[];
+  readonly artifacts: readonly RunArtifact[];
   readonly assistantText: string;
   readonly approvals: readonly ApprovalRequest[];
   readonly approvalsLoading: boolean;
@@ -3076,6 +3093,7 @@ function RunDetailPanel({
             toolEvents={toolEvents}
             assistantText={assistantText}
             approvals={approvals}
+            artifacts={artifacts}
           />
 
           <div className="run-detail-section">
@@ -3110,12 +3128,14 @@ function RunEvidencePanel({
   toolEvents,
   assistantText,
   approvals,
+  artifacts,
 }: {
   readonly run: RunSession;
   readonly terminalEvent: RunEventEnvelope | undefined;
   readonly toolEvents: readonly RunEventEnvelope[];
   readonly assistantText: string;
   readonly approvals: readonly ApprovalRequest[];
+  readonly artifacts: readonly RunArtifact[];
 }): JSX.Element {
   const taskLabel = readTaskTitle(run.taskSnapshot) || run.taskId;
   const providerLabel = `${run.providerName}/${run.providerModel}`;
@@ -3123,6 +3143,7 @@ function RunEvidencePanel({
   const evidenceMessage = readRunEvidenceMessage(run, terminalEvent);
   const assistantPreview = buildAssistantOutputPreview(assistantText);
   const toolSummary = summarizeToolEvents(toolEvents);
+  const artifactCwd = readRunWorkspaceCwd(run, run.cwd);
 
   return (
     <div className="run-detail-section run-evidence">
@@ -3164,10 +3185,25 @@ function RunEvidencePanel({
 
       <div className="run-evidence-block">
         <strong>Artifacts</strong>
-        <div className="artifact-empty-state">
-          <span>No artifacts API connected yet</span>
-          <small>Future slice: wire this panel to GET /runs/:id/artifacts.</small>
-        </div>
+        {artifacts.length === 0 ? (
+          <div className="artifact-empty-state">
+            <span>No artifacts recorded for this run</span>
+            <small>Artifacts will appear here once the daemon records files under .ling-stack/artifacts.</small>
+          </div>
+        ) : (
+          <div className="artifact-list">
+            {artifacts.map((artifact) => (
+              <a className="artifact-row" href={artifactContentUrl(artifact.id, artifactCwd)} key={artifact.id} target="_blank" rel="noreferrer">
+                <span className="artifact-type">{artifact.type}</span>
+                <span className="artifact-main">
+                  <strong>{artifact.title || artifact.path}</strong>
+                  <code>{artifact.path}</code>
+                </span>
+                <small>{formatArtifactSize(artifact.sizeBytes)}</small>
+              </a>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -4986,6 +5022,19 @@ function summarizeToolEvents(toolEvents: readonly RunEventEnvelope[]): { readonl
     total: toolEvents.length,
     errorCount,
   };
+}
+
+function formatArtifactSize(sizeBytes: number | undefined): string {
+  if (sizeBytes === undefined) {
+    return "-";
+  }
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`;
+  }
+  if (sizeBytes < 1024 * 1024) {
+    return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function highestApprovalRisk(approvals: readonly ApprovalRequest[]): ApprovalRisk {

@@ -13,6 +13,7 @@ import type {
   ProviderMutationResponse,
   ProviderTemplateListResponse,
   RunCancelResponse,
+  RunArtifactListResponse,
   RunEventsResponse,
   RunFormState,
   RunListResponse,
@@ -278,6 +279,18 @@ export async function getRunEvents(runId: string, cwd?: string): Promise<RunEven
     throw new Error(await readErrorMessage(response));
   }
   return (await response.json()) as RunEventsResponse;
+}
+
+export async function listRunArtifacts(runId: string, cwd?: string): Promise<RunArtifactListResponse> {
+  const response = await fetch(withCwd(`${daemonBaseUrl}/runs/${encodeURIComponent(runId)}/artifacts`, cwd));
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as RunArtifactListResponse;
+}
+
+export function artifactContentUrl(artifactId: string, cwd?: string): string {
+  return withCwd(`${daemonBaseUrl}/artifacts/${encodeURIComponent(artifactId)}/content`, cwd);
 }
 
 export async function cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {

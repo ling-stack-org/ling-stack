@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
   approvalToolDecisions,
@@ -35,6 +36,7 @@ import {
   type ProviderPresetInput,
   type ProviderPresetUpdateInput,
   type PublicProviderPreset,
+  type RunArtifact,
   type RunEventEnvelope,
   type RunEventType,
   type RunTool,
@@ -233,6 +235,20 @@ async function routeRequest(
   }
   if (request.method === "GET" && runRoute?.kind === "events") {
     handleGetRunEvents(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+  if (request.method === "GET" && runRoute?.kind === "artifacts") {
+    handleListRunArtifacts(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+
+  const artifactRoute = parseArtifactRoute(url.pathname);
+  if (request.method === "GET" && artifactRoute?.kind === "artifact") {
+    handleGetArtifact(response, url, storeRegistry, artifactRoute.artifactId);
+    return;
+  }
+  if (request.method === "GET" && artifactRoute?.kind === "content") {
+    handleGetArtifactContent(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
 
@@ -999,6 +1015,99 @@ function handleGetRunEvents(
   });
 }
 
+function handleListRunArtifacts(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  runId: string,
+): void {
+  const store = storeRegistry.findStoreForRun(runId, url.searchParams.get("cwd") ?? undefined);
+  if (!store?.getRun(runId)) {
+    writeJson(response, 404, {
+      error: "run_not_found",
+      message: "Run was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
+    });
+    return;
+  }
+
+  writeJson(response, 200, {
+    runId,
+    artifacts: store.listArtifacts(runId),
+  });
+}
+
+function handleGetArtifact(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  artifactId: string,
+): void {
+  const lookup = storeRegistry.findStoreForArtifact(artifactId, url.searchParams.get("cwd") ?? undefined);
+  if (!lookup) {
+    writeJson(response, 404, {
+      error: "artifact_not_found",
+      message: "Artifact was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
+    });
+    return;
+  }
+
+  writeJson(response, 200, {
+    artifact: lookup.artifact,
+  });
+}
+
+function handleGetArtifactContent(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  artifactId: string,
+): void {
+  const lookup = storeRegistry.findStoreForArtifact(artifactId, url.searchParams.get("cwd") ?? undefined);
+  if (!lookup) {
+    writeJson(response, 404, {
+      error: "artifact_not_found",
+      message: "Artifact was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
+    });
+    return;
+  }
+
+  let artifactPath: string;
+  try {
+    artifactPath = resolveArtifactContentPath(lookup.store, lookup.artifact);
+  } catch (error) {
+    writeJson(response, 403, {
+      error: "artifact_outside_root",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  try {
+    const stats = statSync(artifactPath);
+    if (!stats.isFile()) {
+      writeJson(response, 404, {
+        error: "artifact_content_not_found",
+        message: `Artifact content is not a file: ${lookup.artifact.id}`,
+      });
+      return;
+    }
+
+    const content = readFileSync(artifactPath);
+    setCorsHeaders(response);
+    response.writeHead(200, {
+      "Content-Type": lookup.artifact.contentType ?? inferArtifactContentType(lookup.artifact),
+      "Content-Length": String(content.byteLength),
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(content);
+  } catch (error) {
+    writeJson(response, 404, {
+      error: "artifact_content_not_found",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function handleCancelRun(
   response: ServerResponse,
   url: URL,
@@ -1531,6 +1640,35 @@ function isPathWithinAllowedWritePaths(inputPath: string, cwd: string, allowedWr
   });
 }
 
+function resolveArtifactContentPath(store: RunStore, artifact: RunArtifact): string {
+  const artifactRoot = store.paths.artifactsDir;
+  const absolutePath = isAbsolute(artifact.path) ? artifact.path : resolvePath(artifactRoot, artifact.path);
+  const relativePath = relative(artifactRoot, absolutePath);
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error(`Artifact content path is outside .ling-stack/artifacts: ${artifact.path}`);
+  }
+  return absolutePath;
+}
+
+function inferArtifactContentType(artifact: RunArtifact): string {
+  if (artifact.type === "json") {
+    return "application/json; charset=utf-8";
+  }
+  if (artifact.type === "markdown") {
+    return "text/markdown; charset=utf-8";
+  }
+  if (artifact.type === "diff") {
+    return "text/x-diff; charset=utf-8";
+  }
+  if (artifact.type === "log") {
+    return "text/plain; charset=utf-8";
+  }
+  if (artifact.type === "image" || artifact.type === "video") {
+    return "application/octet-stream";
+  }
+  return "text/plain; charset=utf-8";
+}
+
 function formatEditPreview(edits: readonly unknown[]): string {
   if (edits.length === 0) {
     return "No edit preview was provided.";
@@ -1708,7 +1846,9 @@ function parseInlineProvider(provider: Record<string, unknown>): PiRunnerProvide
   };
 }
 
-function parseRunRoute(pathname: string): { kind: "run"; runId: string } | { kind: "events"; runId: string } | { kind: "cancel"; runId: string } | undefined {
+function parseRunRoute(
+  pathname: string,
+): { kind: "run"; runId: string } | { kind: "events"; runId: string } | { kind: "artifacts"; runId: string } | { kind: "cancel"; runId: string } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "runs") {
     return { kind: "run", runId: segments[1] };
@@ -1716,8 +1856,22 @@ function parseRunRoute(pathname: string): { kind: "run"; runId: string } | { kin
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "events") {
     return { kind: "events", runId: segments[1] };
   }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "artifacts") {
+    return { kind: "artifacts", runId: segments[1] };
+  }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "cancel") {
     return { kind: "cancel", runId: segments[1] };
+  }
+  return undefined;
+}
+
+function parseArtifactRoute(pathname: string): { kind: "artifact"; artifactId: string } | { kind: "content"; artifactId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "artifacts") {
+    return { kind: "artifact", artifactId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "artifacts" && segments[2] === "content") {
+    return { kind: "content", artifactId: segments[1] };
   }
   return undefined;
 }
@@ -2560,6 +2714,24 @@ class RunStoreRegistry {
       if (store.getRun(runId)) {
         this.rememberRun(runId, store);
         return store;
+      }
+    }
+
+    return undefined;
+  }
+
+  findStoreForArtifact(artifactId: string, cwd?: string): { readonly store: RunStore; readonly artifact: RunArtifact } | undefined {
+    if (cwd) {
+      const store = this.getStore(cwd);
+      const artifact = store.getArtifact(artifactId);
+      return artifact ? { store, artifact } : undefined;
+    }
+
+    for (const store of this.storesByCwd.values()) {
+      const artifact = store.getArtifact(artifactId);
+      if (artifact) {
+        this.rememberRun(artifact.runId, store);
+        return { store, artifact };
       }
     }
 

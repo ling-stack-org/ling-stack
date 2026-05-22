@@ -47,10 +47,14 @@ import {
   type TaskUpdateInput,
 } from "../workspace-types.js";
 import {
+  createArtifactId,
   createEventId,
+  type ArtifactType,
+  type CreateRunArtifactInput,
   type CreateRunInput,
   type ListRunEventsOptions,
   type ListRunsOptions,
+  type RunArtifact,
   type RunEventEnvelope,
   type RunEventType,
   type RunSession,
@@ -72,6 +76,8 @@ const APPROVAL_POLICY_MIGRATION_VERSION = 5;
 const APPROVAL_POLICY_MIGRATION_NAME = "create_approval_policy";
 const PROVIDER_CHECKS_MIGRATION_VERSION = 6;
 const PROVIDER_CHECKS_MIGRATION_NAME = "add_provider_check_results";
+const ARTIFACTS_MIGRATION_VERSION = 7;
+const ARTIFACTS_MIGRATION_NAME = "create_artifacts";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -289,6 +295,65 @@ export class SqliteRunStore implements RunStore {
   countEvents(runId: string): number {
     const row = this.database.prepare("SELECT COUNT(*) AS count FROM run_events WHERE run_id = ?").get(runId);
     return readNumber(row, "count");
+  }
+
+  createArtifact(input: CreateRunArtifactInput): RunArtifact {
+    if (!this.getRun(input.runId)) {
+      throw new Error(`Run session not found: ${input.runId}`);
+    }
+
+    const artifact: RunArtifact = {
+      id: input.id ?? createArtifactId(),
+      runId: input.runId,
+      type: input.type,
+      path: input.path,
+      title: input.title,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      createdAt: input.createdAt,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO artifacts (
+          id,
+          run_id,
+          type,
+          path,
+          title,
+          content_type,
+          size_bytes,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        artifact.id,
+        artifact.runId,
+        artifact.type,
+        artifact.path,
+        artifact.title ?? null,
+        artifact.contentType ?? null,
+        artifact.sizeBytes ?? null,
+        artifact.createdAt,
+      );
+
+    const created = this.getArtifact(artifact.id);
+    if (!created) {
+      throw new Error(`Failed to create artifact: ${artifact.id}`);
+    }
+    return created;
+  }
+
+  getArtifact(artifactId: string): RunArtifact | undefined {
+    const row = this.database.prepare(artifactSelectSql("WHERE id = ?")).get(artifactId);
+    return row ? mapArtifact(row) : undefined;
+  }
+
+  listArtifacts(runId: string): RunArtifact[] {
+    return this.database
+      .prepare(`${artifactSelectSql("WHERE run_id = ?")} ORDER BY created_at ASC, id ASC`)
+      .all(runId)
+      .map(mapArtifact);
   }
 
   recoverStaleRuns(now: string): number {
@@ -1088,6 +1153,27 @@ export class SqliteRunStore implements RunStore {
 
       this.recordMigration(PROVIDER_CHECKS_MIGRATION_VERSION, PROVIDER_CHECKS_MIGRATION_NAME);
     }
+
+    if (!this.hasMigration(ARTIFACTS_MIGRATION_VERSION)) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS artifacts (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          type TEXT NOT NULL,
+          path TEXT NOT NULL,
+          title TEXT,
+          content_type TEXT,
+          size_bytes INTEGER,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
+      `);
+
+      this.recordMigration(ARTIFACTS_MIGRATION_VERSION, ARTIFACTS_MIGRATION_NAME);
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -1317,6 +1403,19 @@ function mapApprovalPolicy(row: Record<string, SQLOutputValue>): ApprovalPolicy 
   };
 }
 
+function mapArtifact(row: Record<string, SQLOutputValue>): RunArtifact {
+  return omitUndefined({
+    id: readString(row, "id"),
+    runId: readString(row, "run_id"),
+    type: readString(row, "type") as ArtifactType,
+    path: readString(row, "path"),
+    title: readNullableString(row, "title"),
+    contentType: readNullableString(row, "content_type"),
+    sizeBytes: readNullableNumber(row, "size_bytes"),
+    createdAt: readString(row, "created_at"),
+  });
+}
+
 function parseApprovalToolDecisions(value: string): ApprovalToolDecisions {
   const parsed = parseJsonObject(value);
   const decisions: Record<RunTool, ApprovalToolDecision> = { ...defaultApprovalToolDecisions };
@@ -1425,6 +1524,22 @@ function approvalPolicySelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM approval_policies
+    ${whereClause}
+  `;
+}
+
+function artifactSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      run_id,
+      type,
+      path,
+      title,
+      content_type,
+      size_bytes,
+      created_at
+    FROM artifacts
     ${whereClause}
   `;
 }

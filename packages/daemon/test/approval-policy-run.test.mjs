@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
+import { createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 
 test("bash=allow lets the runner continue without creating an approval request", async () => {
@@ -259,6 +260,69 @@ test("failed provider checks block daemon preset runs unless skipped", async () 
     );
     assert.ok(runId);
     assert.equal(runner.runs.length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifact APIs list metadata and serve content from the artifacts root", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-artifacts-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_artifact_read",
+    toolName: "read",
+    input: { path: "README.md" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_artifact_api"));
+    assert.ok(runId);
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const artifactDir = resolve(store.paths.artifactsDir, runId);
+      await mkdir(artifactDir, { recursive: true });
+      await writeFile(resolve(artifactDir, "evidence.md"), "# Evidence\n\nRun artifact content.\n", "utf8");
+      store.createArtifact({
+        id: "artifact_api_markdown",
+        runId,
+        type: "markdown",
+        path: `${runId}/evidence.md`,
+        title: "Evidence Markdown",
+        contentType: "text/markdown; charset=utf-8",
+        sizeBytes: 33,
+        createdAt: "2026-05-22T00:00:00.000Z",
+      });
+      store.createArtifact({
+        id: "artifact_api_outside",
+        runId,
+        type: "log",
+        path: resolve(cwd, "outside.log"),
+        title: "Outside log",
+        createdAt: "2026-05-22T00:00:01.000Z",
+      });
+    } finally {
+      store.close();
+    }
+
+    const listed = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.runId, runId);
+    assert.equal(listed.artifacts.length, 2);
+    assert.equal(listed.artifacts[0].id, "artifact_api_markdown");
+    assert.equal(listed.artifacts[0].title, "Evidence Markdown");
+
+    const metadata = await getJson(`${daemon.url}/artifacts/artifact_api_markdown?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(metadata.artifact.runId, runId);
+    assert.equal(metadata.artifact.type, "markdown");
+
+    const content = await fetch(`${daemon.url}/artifacts/artifact_api_markdown/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(content.status, 200);
+    assert.equal(content.headers.get("content-type"), "text/markdown; charset=utf-8");
+    assert.equal(await content.text(), "# Evidence\n\nRun artifact content.\n");
+
+    const outside = await fetch(`${daemon.url}/artifacts/artifact_api_outside/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(outside.status, 403);
+    assert.equal((await outside.json()).error, "artifact_outside_root");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

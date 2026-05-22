@@ -390,6 +390,63 @@ Response:
 }
 ```
 
+### List Run Artifacts
+
+```http
+GET /runs/:id/artifacts?cwd=/path/to/project
+```
+
+Passing `cwd` is recommended after daemon restart. Artifact paths are local paths under `.ling-stack/artifacts` and are served only through the artifact content endpoint.
+
+Response:
+
+```json
+{
+  "runId": "run_...",
+  "artifacts": [
+    {
+      "id": "artifact_...",
+      "runId": "run_...",
+      "type": "markdown",
+      "path": "run_.../summary.md",
+      "title": "Summary",
+      "contentType": "text/markdown; charset=utf-8",
+      "sizeBytes": 1024,
+      "createdAt": "2026-05-22T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Get Artifact Metadata
+
+```http
+GET /artifacts/:id?cwd=/path/to/project
+```
+
+Response:
+
+```json
+{
+  "artifact": {
+    "id": "artifact_...",
+    "runId": "run_...",
+    "type": "markdown",
+    "path": "run_.../summary.md",
+    "title": "Summary",
+    "createdAt": "2026-05-22T00:00:00.000Z"
+  }
+}
+```
+
+### Get Artifact Content
+
+```http
+GET /artifacts/:id/content?cwd=/path/to/project
+```
+
+The daemon resolves artifact content relative to `.ling-stack/artifacts` and rejects paths outside that directory with `403 artifact_outside_root`.
+
 ### Cancel Run
 
 ```http
@@ -684,3 +741,4 @@ Approval decisions append `approval_approved` or `approval_denied` to the linked
 - Inline API keys are accepted in `/runs` for early development only; production desktop builds should use OS keychain or a local secret store.
 - Media provider health checks are static config checks until media job execution exists.
 - v0.1 does not expire provider `lastCheck` by time. Provider edits clear old check state; future versions can add TTL-based recheck prompts.
+- Artifact content is local-only and must live under `.ling-stack/artifacts`.

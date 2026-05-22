@@ -47,6 +47,7 @@ export type RunEventType =
   | "approval_requested"
   | "approval_approved"
   | "approval_denied"
+  | "artifact_created"
   | "result";
 
 export interface RunSession {
@@ -116,6 +117,30 @@ export interface RunSummary {
   readonly errorMessage: string | null;
 }
 
+export type ArtifactType = "file" | "diff" | "log" | "json" | "markdown" | "image" | "video";
+
+export interface RunArtifact {
+  readonly id: string;
+  readonly runId: string;
+  readonly type: ArtifactType;
+  readonly path: string;
+  readonly title?: string;
+  readonly contentType?: string;
+  readonly sizeBytes?: number;
+  readonly createdAt: string;
+}
+
+export interface CreateRunArtifactInput {
+  readonly id?: string;
+  readonly runId: string;
+  readonly type: ArtifactType;
+  readonly path: string;
+  readonly title?: string;
+  readonly contentType?: string;
+  readonly sizeBytes?: number;
+  readonly createdAt: string;
+}
+
 export interface RunStore {
   readonly paths: LingStackRuntimePaths;
   createRun(input: CreateRunInput): RunSession;
@@ -130,6 +155,9 @@ export interface RunStore {
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
   countEvents(runId: string): number;
+  createArtifact(input: CreateRunArtifactInput): RunArtifact;
+  getArtifact(artifactId: string): RunArtifact | undefined;
+  listArtifacts(runId: string): RunArtifact[];
   recoverStaleRuns(now: string): number;
   createChannel(input: CreateChannelInput, now: string): Channel;
   getChannel(id: string): Channel | undefined;
@@ -163,4 +191,8 @@ export function createRunId(): string {
 
 export function createEventId(): string {
   return `evt_${randomUUID()}`;
+}
+
+export function createArtifactId(): string {
+  return `artifact_${randomUUID()}`;
 }

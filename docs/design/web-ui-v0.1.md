@@ -424,11 +424,12 @@ Required regions:
    - timeline rows should stay scannable by default with a short preview, while error/result/tool payloads can be expanded inline for debugging.
 
 5. Evidence:
-   - v0.1 is derived from already-loaded run/session fields, events, approvals, and assistant text; the UI does not fetch summary file contents yet,
+   - v0.1 is derived from already-loaded run/session fields, events, approvals, assistant text, and artifact metadata; the UI does not fetch summary file contents yet,
    - show a run summary preview with status, task, provider, terminal event, error/result summary, assistant output preview, tool counts, errored tool count, and approval count,
    - show session files from `eventLogPath` and `summaryPath` with path wrapping,
    - keep request/provider/terminal raw snapshots below Evidence as debug details,
-   - show the artifacts empty state until artifact APIs are connected.
+   - show recorded artifacts from `GET /runs/:id/artifacts`, with content links through `GET /artifacts/:id/content`,
+   - show a per-run empty state when the artifact API is connected but the run has no artifact records.
 
 6. Artifacts:
    - file/diff/log/media list when available.
@@ -499,17 +500,18 @@ Approval cards also appear in the Run Viewer timeline.
 
 ### Artifacts Panel
 
-Backed by future artifact APIs:
+Backed by artifact APIs:
 
 - `GET /runs/:id/artifacts`
 - `GET /artifacts/:id`
 - `GET /artifacts/:id/content`
 
-v0.1 Run detail shows an Evidence artifacts empty state only:
+v0.1 Run detail shows artifacts inside Evidence:
 
-- `No artifacts API connected yet`,
-- future wiring target: `GET /runs/:id/artifacts`,
-- no daemon API change in this slice.
+- artifact metadata is loaded alongside the selected run and events,
+- each artifact row shows type, title/path, and size when available,
+- content links open `GET /artifacts/:id/content` in a new tab,
+- empty runs show `No artifacts recorded for this run`.
 
 Artifact types:
 
@@ -523,7 +525,7 @@ image
 video
 ```
 
-After the artifact APIs exist, the panel can start with list-only artifacts and basic text previews.
+The first implementation is list-and-open only. Inline previews can be added after artifact volume, binary handling, and redaction rules are clearer.
 
 ## Event Rendering
 
@@ -850,7 +852,7 @@ Required for full Web UI:
 | Approval inbox | approval APIs |
 | Channel pages | channel APIs |
 | Task board | task APIs |
-| Artifacts panel | artifact APIs |
+| Artifacts panel | `GET /runs/:id/artifacts`, `GET /artifacts/:id/content` |
 
 The UI can be built incrementally as these APIs land.
 

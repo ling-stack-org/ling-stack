@@ -64,3 +64,55 @@ test("sqlite store merges and persists approval policy updates", async () => {
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("sqlite store persists run artifacts", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-artifacts-"));
+  const now = "2026-05-22T00:00:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_artifact_test",
+      cwd,
+      taskId: "task_artifact_test",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_artifact_test", title: "Artifact test" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+
+    const created = store.createArtifact({
+      id: "artifact_test_markdown",
+      runId: "run_artifact_test",
+      type: "markdown",
+      path: "run_artifact_test/result.md",
+      title: "Result Markdown",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 42,
+      createdAt: now,
+    });
+
+    assert.equal(created.id, "artifact_test_markdown");
+    assert.equal(created.runId, "run_artifact_test");
+    assert.equal(created.type, "markdown");
+    assert.equal(created.path, "run_artifact_test/result.md");
+    assert.equal(created.title, "Result Markdown");
+    assert.equal(created.contentType, "text/markdown; charset=utf-8");
+    assert.equal(created.sizeBytes, 42);
+    assert.deepEqual(store.listArtifacts("run_artifact_test"), [created]);
+  } finally {
+    store.close();
+  }
+
+  store = createSqliteRunStore(cwd);
+  try {
+    const fetched = store.getArtifact("artifact_test_markdown");
+    assert.ok(fetched);
+    assert.equal(fetched.path, "run_artifact_test/result.md");
+    assert.deepEqual(store.listArtifacts("run_artifact_test"), [fetched]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

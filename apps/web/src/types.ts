@@ -17,6 +17,7 @@ export type RunEventType =
   | "approval_requested"
   | "approval_approved"
   | "approval_denied"
+  | "artifact_created"
   | "result";
 
 export interface RunEventEnvelope {
@@ -65,6 +66,28 @@ export interface RunCancelResponse {
   readonly active: boolean;
   readonly run?: RunSession;
   readonly event?: RunEventEnvelope;
+}
+
+export type ArtifactType = "file" | "diff" | "log" | "json" | "markdown" | "image" | "video";
+
+export interface RunArtifact {
+  readonly id: string;
+  readonly runId: string;
+  readonly type: ArtifactType;
+  readonly path: string;
+  readonly title?: string;
+  readonly contentType?: string;
+  readonly sizeBytes?: number;
+  readonly createdAt: string;
+}
+
+export interface RunArtifactListResponse {
+  readonly runId: string;
+  readonly artifacts: readonly RunArtifact[];
+}
+
+export interface RunArtifactResponse {
+  readonly artifact: RunArtifact;
 }
 
 export type TaskStatus = "todo" | "claimed" | "running" | "blocked" | "review" | "done" | "failed" | "cancelled";

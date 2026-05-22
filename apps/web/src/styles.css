@@ -1181,6 +1181,65 @@ pre {
   line-height: 1.35;
 }
 
+.artifact-list {
+  display: grid;
+  gap: 7px;
+}
+
+.artifact-row {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #e1e6e2;
+  background: #ffffff;
+  color: inherit;
+  text-decoration: none;
+}
+
+.artifact-row:hover {
+  border-color: #9db7ad;
+  background: #f9fbfa;
+}
+
+.artifact-type {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  border: 1px solid #d8ded7;
+  background: #f7faf7;
+  color: #43524e;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.artifact-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.artifact-main strong,
+.artifact-main code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-main strong {
+  color: #17211f;
+  font-size: 12px;
+}
+
+.artifact-main code,
+.artifact-row small {
+  color: #64736e;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
 .tool-event-list {
   display: grid;
   gap: 7px;
@@ -2752,6 +2811,7 @@ pre {
   .run-detail-summary,
   .run-evidence-grid,
   .session-file-list,
+  .artifact-row,
   .runtime-run-repair-meta,
   .tool-event-meta,
   .provider-number-row,

@@ -287,6 +287,7 @@ Implemented:
 - SQLite-backed run session and event persistence.
 - JSONL event audit logs under `.ling-stack/sessions`.
 - `GET /runs`, `GET /runs/:id`, and `GET /runs/:id/events`.
+- Artifact metadata storage plus `GET /runs/:id/artifacts`, `GET /artifacts/:id`, and `GET /artifacts/:id/content`.
 - Best-effort `POST /runs/:id/cancel`.
 - Workspace bootstrap plus persisted channel and task storage.
 - Channel daemon APIs: `GET/POST /channels`, `GET/PATCH/DELETE /channels/:id`.
@@ -301,7 +302,7 @@ Implemented:
 - Pi pre-tool approval gate for `bash`, `edit`, and `write`.
 - Workspace approval policy storage, daemon API, Web settings UI, CLI policy commands, tool decisions, and write path scopes.
 - Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, provider settings, and approval list.
-- Run Evidence panel with session files, summary preview, tool/approval counts, and the v0.1 artifacts API empty state.
+- Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
 - CLI first-loop commands for init, channels, tasks, providers, runs, approvals, approval policy, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
@@ -309,7 +310,7 @@ Not implemented yet:
 
 - Approval gates for external sends, deployments, credential changes, and paid media jobs.
 - Rich task detail views beyond the first edit form.
-- Artifact APIs and automatic artifact extraction from Pi tool outputs and generated diffs.
+- Automatic artifact extraction from Pi tool outputs and generated diffs.
 - OS keychain integration for secrets.
 - Live media provider job checks.
 - Desktop packaging.
