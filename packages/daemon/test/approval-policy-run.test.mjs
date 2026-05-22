@@ -160,6 +160,73 @@ test("write outside allowed paths is denied even when write is allowed", async (
   }
 });
 
+test("approval listing lazily expires stale pending requests", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-expiry-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_expiry",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  const runId = "run_stale_approval";
+  const approvalCreatedAt = "2000-01-01T00:00:00.000Z";
+  let approvalId = "";
+  try {
+    const store = createSqliteRunStore(cwd);
+    try {
+      store.createRun({
+        id: runId,
+        cwd,
+        taskId: "task_stale_approval",
+        providerName: "test-provider",
+        providerModel: "test-model",
+        taskSnapshot: { id: "task_stale_approval", title: "Stale approval" },
+        providerSnapshot: { provider: "test-provider", model: "test-model" },
+        requestSnapshot: { cwd },
+        createdAt: approvalCreatedAt,
+      });
+      const approval = store.createApprovalRequest(
+        {
+          runId,
+          taskId: "task_stale_approval",
+          actionType: "bash",
+          risk: "medium",
+          title: "Approve shell command",
+          description: "echo stale",
+          payload: { type: "bash", cwd, command: "echo stale", riskFlags: [] },
+          expiresAt: "2000-01-01T00:01:00.000Z",
+        },
+        approvalCreatedAt,
+      );
+      approvalId = approval.id;
+    } finally {
+      store.close();
+    }
+
+    const pending = await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}&status=pending&runId=${encodeURIComponent(runId)}`);
+    assert.deepEqual(pending.approvals, []);
+
+    const expired = await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}&status=expired&runId=${encodeURIComponent(runId)}`);
+    assert.equal(expired.approvals.length, 1);
+    assert.equal(expired.approvals[0].id, approvalId);
+    assert.equal(expired.approvals[0].status, "expired");
+    assert.equal(expired.approvals[0].resolvedBy, undefined);
+
+    const events = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/events?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(events.events.some((event) => event.type === "approval_expired" && event.data.approvalId === approvalId), true);
+
+    const lateApprove = await fetch(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "too late" }),
+    });
+    assert.equal(lateApprove.status, 400);
+    assert.equal((await lateApprove.json()).error, "approval_not_pending");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provider check persists last check result", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
@@ -329,6 +396,52 @@ test("artifact APIs list metadata and serve content from the artifacts root", as
   }
 });
 
+test("daemon extracts artifacts from tool outputs and generated file paths", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-extract-artifacts-"));
+  const runner = new ArtifactExtractionRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const { events, runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_artifact_extraction"));
+    assert.ok(runId);
+
+    const listed = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.runId, runId);
+    assert.ok(listed.artifacts.length >= 4);
+    assert.ok(events.some((event) => event.event === "artifact_created"));
+
+    const generatedMarkdown = listed.artifacts.find((artifact) => artifact.title.startsWith("Generated file content:"));
+    assert.ok(generatedMarkdown);
+    assert.equal(generatedMarkdown.type, "markdown");
+    assert.ok(generatedMarkdown.path.startsWith(`${runId}/`));
+    const markdownContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(generatedMarkdown.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(markdownContent.status, 200);
+    const markdownText = await markdownContent.text();
+    assert.match(markdownText, /# Generated report/);
+    assert.doesNotMatch(markdownText, /sk-test_123456789/);
+    assert.match(markdownText, /\[REDACTED\]/);
+
+    const diffArtifact = listed.artifacts.find((artifact) => artifact.type === "diff");
+    assert.ok(diffArtifact);
+    const diffContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(diffArtifact.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(diffContent.status, 200);
+    assert.match(await diffContent.text(), /diff --git/);
+
+    const fileMetadata = listed.artifacts.find((artifact) => artifact.type === "file" && artifact.title.includes("notes/result.md"));
+    assert.ok(fileMetadata);
+    const metadataContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(fileMetadata.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(metadataContent.status, 200);
+    assert.match(await metadataContent.text(), /Content was not copied/);
+
+    for (const artifact of listed.artifacts) {
+      const content = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(artifact.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(content.status, 200, `${artifact.id} should be served from the artifact root`);
+    }
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 class ApprovalProbeRunner {
   constructor(request) {
     this.request = request;
@@ -366,6 +479,60 @@ class ApprovalProbeRunner {
         isError: !decision.approved,
       });
     }
+
+    options.onEvent?.({
+      type: "run_end",
+      taskId: options.task.id,
+      messageCount: 1,
+    });
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+}
+
+class ArtifactExtractionRunner {
+  async runTask(options) {
+    options.onEvent?.({
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    });
+
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: "tool_write_artifact",
+      toolName: "write",
+      args: {
+        path: "notes/result.md",
+        content: "# Generated report\n\nCreated with sk-test_123456789.\n",
+      },
+    });
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId: "tool_write_artifact",
+      toolName: "write",
+      result: { path: "notes/result.md", content: [{ type: "text", text: "wrote notes/result.md\n" }] },
+      isError: false,
+    });
+
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: "tool_edit_artifact",
+      toolName: "edit",
+      args: { path: "src/app.ts", edits: [{ oldText: "const value = 1;", newText: "const value = 2;" }] },
+    });
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId: "tool_edit_artifact",
+      toolName: "edit",
+      result: { diff: "diff --git a/src/app.ts b/src/app.ts\n--- a/src/app.ts\n+++ b/src/app.ts\n@@\n-const value = 1;\n+const value = 2;\n" },
+      isError: false,
+    });
 
     options.onEvent?.({
       type: "run_end",

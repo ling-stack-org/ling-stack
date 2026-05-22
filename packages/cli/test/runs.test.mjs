@@ -19,6 +19,7 @@ test("runs show includes approval state in human-readable output", async () => {
     assert.match(result.stdout, /ID: run_approval/);
     assert.match(result.stdout, /Approvals:/);
     assert.match(result.stdout, /approval_123\s+approved\s+bash\s+medium\s+Looks scoped/);
+    assert.match(result.stdout, /approval_456\s+expired\s+write\s+high\s+Timed out/);
     assert.deepEqual(daemon.requests, [
       "GET /runs/run_approval",
       "GET /runs/run_approval/events",
@@ -68,7 +69,7 @@ async function startRunsDaemon() {
     if (request.method === "GET" && url.pathname === "/runs/run_approval/events") {
       writeJson(response, 200, {
         runId: "run_approval",
-        nextSeq: 4,
+        nextSeq: 5,
         events: [
           {
             id: "evt_1",
@@ -93,6 +94,31 @@ async function startRunsDaemon() {
               approvalId: "approval_123",
               status: "approved",
               decisionReason: "Looks scoped",
+            },
+          },
+          {
+            id: "evt_3",
+            runId: "run_approval",
+            seq: 3,
+            ts: "2026-05-21T00:00:03.000Z",
+            type: "approval_requested",
+            data: {
+              approvalId: "approval_456",
+              actionType: "write",
+              risk: "high",
+              description: "Approve file write",
+            },
+          },
+          {
+            id: "evt_4",
+            runId: "run_approval",
+            seq: 4,
+            ts: "2026-05-21T00:30:03.000Z",
+            type: "approval_expired",
+            data: {
+              approvalId: "approval_456",
+              status: "expired",
+              decisionReason: "Timed out",
             },
           },
         ],

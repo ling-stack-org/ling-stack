@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { readFileSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve as resolvePath } from "node:path";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, extname, isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
   approvalToolDecisions,
   approvalStatuses,
@@ -13,6 +13,7 @@ import {
   providerApis,
   providerCapabilities,
   providerKinds,
+  redactSecrets,
   readOnlyRunTools,
   resolveSecretRef,
   taskStatuses,
@@ -24,6 +25,7 @@ import {
   type ApprovalRisk,
   type ApprovalStatus,
   type ApprovalToolDecision,
+  type ArtifactType,
   type CreateApprovalRequestInput,
   type ChannelUpdateInput,
   type CreateChannelInput,
@@ -89,6 +91,8 @@ const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
 const APPROVAL_PREVIEW_LIMIT = 1_200;
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
+const MAX_EXTRACTED_ARTIFACT_BYTES = 256 * 1024;
+const MAX_EXTRACTED_ARTIFACTS_PER_TOOL = 6;
 
 export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider"> {
   readonly workspaceCwd?: string;
@@ -356,6 +360,8 @@ async function handleRun(
   let runStartedAt: string | undefined;
   let persistedRunError = false;
   let persistenceError: unknown;
+  let extractedArtifactCounter = 0;
+  const toolStartArgsById = new Map<string, unknown>();
   response.on("close", () => {
     clientClosed = true;
   });
@@ -412,7 +418,34 @@ async function handleRun(
         signal: abortController.signal,
       }),
       onEvent: (event: PiRunnerEvent) => {
-        appendAndMaybeStream(event.type, event);
+        if (event.type === "tool_start") {
+          toolStartArgsById.set(event.toolCallId, event.args);
+        }
+        const eventEnvelope = appendAndMaybeStream(event.type, event);
+        if (eventEnvelope && event.type === "tool_end") {
+          const sourceArgs = toolStartArgsById.get(event.toolCallId);
+          try {
+            const artifacts = persistExtractedArtifacts({
+              store,
+              run,
+              event,
+              sourceArgs,
+              nextIndex: () => {
+                extractedArtifactCounter += 1;
+                return extractedArtifactCounter;
+              },
+            });
+            for (const artifact of artifacts) {
+              appendAndMaybeStream("artifact_created", {
+                artifact,
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+              });
+            }
+          } catch {
+            // Artifact extraction is best-effort evidence capture; runner output remains authoritative.
+          }
+        }
       },
       signal: abortController.signal,
     });
@@ -850,6 +883,7 @@ function handleApprovalsCollection(
 
   try {
     const store = storeRegistry.getStore(cwd);
+    expireStalePendingApprovals(store, url.searchParams.get("runId") ?? undefined);
     writeJson(response, 200, {
       cwd,
       approvals: store.listApprovalRequests({
@@ -881,6 +915,7 @@ async function handleApprovalItem(
   }
 
   const store = storeRegistry.getStore(cwd);
+  expireStaleApproval(store, route.approvalId);
   const approval = store.getApprovalRequest(route.approvalId);
   if (!approval) {
     writeJson(response, 404, { error: "approval_not_found", message: `Approval request not found: ${route.approvalId}` });
@@ -1308,12 +1343,62 @@ function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalRequest)
   if (!run) {
     return;
   }
-  store.appendEvent(approval.runId, approval.status === "approved" ? "approval_approved" : "approval_denied", {
+  store.appendEvent(approval.runId, approvalDecisionEventType(approval), {
     approvalId: approval.id,
     status: approval.status,
     resolvedBy: approval.resolvedBy,
     decisionReason: approval.decisionReason,
   });
+}
+
+function approvalDecisionEventType(approval: ApprovalRequest): Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired"> {
+  if (approval.status === "approved") {
+    return "approval_approved";
+  }
+  if (approval.status === "expired") {
+    return "approval_expired";
+  }
+  return "approval_denied";
+}
+
+function expireStalePendingApprovals(store: RunStore, runId?: string): void {
+  const now = new Date().toISOString();
+  let safety = 0;
+  for (;;) {
+    const pending = store.listApprovalRequests({ status: "pending", runId, limit: 500 });
+    const expired = pending.filter((approval) => approval.expiresAt && approval.expiresAt <= now);
+    if (expired.length === 0) {
+      return;
+    }
+    for (const approval of expired) {
+      expireApproval(store, approval, now);
+    }
+    safety += 1;
+    if (pending.length < 500 || safety > 20) {
+      return;
+    }
+  }
+}
+
+function expireStaleApproval(store: RunStore, approvalId: string): void {
+  const approval = store.getApprovalRequest(approvalId);
+  const now = new Date().toISOString();
+  if (!approval || approval.status !== "pending" || !approval.expiresAt || approval.expiresAt > now) {
+    return;
+  }
+  expireApproval(store, approval, now);
+}
+
+function expireApproval(store: RunStore, approval: ApprovalRequest, now: string): ApprovalRequest | undefined {
+  const expired = store.expireApprovalRequest(
+    approval.id,
+    { reason: "Approval request expired before a decision was received." },
+    now,
+  );
+  if (expired) {
+    appendApprovalDecisionEvent(store, expired);
+  }
+  return expired;
 }
 
 function createRunApprovalHandler(options: {
@@ -1557,7 +1642,7 @@ async function waitForApprovalDecision(store: RunStore, approvalId: string, sign
     await delay(APPROVAL_POLL_INTERVAL_MS);
   }
 
-  const expired = store.denyApprovalRequest(
+  const expired = store.expireApprovalRequest(
     approvalId,
     { reason: "Approval request timed out before a decision was received." },
     new Date().toISOString(),
@@ -1582,7 +1667,7 @@ function streamOrAppendApprovalDecisionEvent(options: {
     return;
   }
 
-  options.appendAndMaybeStream(options.approval.status === "approved" ? "approval_approved" : "approval_denied", {
+  options.appendAndMaybeStream(approvalDecisionEventType(options.approval), {
     approvalId: options.approval.id,
     status: options.approval.status,
     resolvedBy: options.approval.resolvedBy,
@@ -1599,7 +1684,7 @@ function findApprovalDecisionEvent(
     .listEvents(approval.runId, { afterSeq, limit: 1000 })
     .find(
       (event) =>
-        (event.type === "approval_approved" || event.type === "approval_denied") &&
+        (event.type === "approval_approved" || event.type === "approval_denied" || event.type === "approval_expired") &&
         isRecord(event.data) &&
         event.data.approvalId === approval.id,
     );
@@ -1640,6 +1725,410 @@ function isPathWithinAllowedWritePaths(inputPath: string, cwd: string, allowedWr
   });
 }
 
+interface ExtractedArtifactCandidate {
+  readonly type: ArtifactType;
+  readonly title: string;
+  readonly contentType?: string;
+  readonly content?: string;
+  readonly existingPath?: string;
+}
+
+function persistExtractedArtifacts(options: {
+  readonly store: RunStore;
+  readonly run: RunSession;
+  readonly event: Extract<PiRunnerEvent, { readonly type: "tool_end" }>;
+  readonly sourceArgs: unknown;
+  readonly nextIndex: () => number;
+}): RunArtifact[] {
+  const candidates = extractArtifactCandidates(options);
+  const artifacts: RunArtifact[] = [];
+  for (const candidate of candidates.slice(0, MAX_EXTRACTED_ARTIFACTS_PER_TOOL)) {
+    const artifact = materializeExtractedArtifact(options.store, options.run.id, candidate, options.nextIndex());
+    if (artifact) {
+      artifacts.push(artifact);
+    }
+  }
+  return artifacts;
+}
+
+function extractArtifactCandidates(options: {
+  readonly store: RunStore;
+  readonly run: RunSession;
+  readonly event: Extract<PiRunnerEvent, { readonly type: "tool_end" }>;
+  readonly sourceArgs: unknown;
+}): ExtractedArtifactCandidate[] {
+  const candidates: ExtractedArtifactCandidate[] = [];
+  const addTextCandidate = (title: string, content: string, type?: ArtifactType): void => {
+    if (!content.trim()) {
+      return;
+    }
+    const artifactType = type ?? inferArtifactTypeFromText(content);
+    candidates.push({
+      type: artifactType,
+      title,
+      content,
+      contentType: contentTypeForArtifactType(artifactType),
+    });
+  };
+
+  collectToolResultTextCandidates(options.event).forEach((candidate) => addTextCandidate(candidate.title, candidate.content, candidate.type));
+
+  const generatedPath = readInputString(options.sourceArgs, "path", "");
+  if (options.event.toolName === "write") {
+    const generatedContent = readInputString(options.sourceArgs, "content", "");
+    if (generatedContent) {
+      addTextCandidate(
+        `Generated file content: ${generatedPath || options.event.toolCallId}`,
+        generatedContent,
+        inferArtifactTypeFromPath(generatedPath, generatedContent),
+      );
+    }
+  }
+
+  if (options.event.toolName === "edit") {
+    const edits = readInputArray(options.sourceArgs, "edits");
+    const hasDiffOutput = candidates.some((candidate) => candidate.type === "diff");
+    if (edits.length > 0 && !hasDiffOutput) {
+      addTextCandidate(`Generated edit diff: ${generatedPath || options.event.toolCallId}`, formatEditPreview(edits), "diff");
+    }
+  }
+
+  for (const rawPath of collectGeneratedArtifactPaths(options.event, options.sourceArgs)) {
+    const existingPath = resolveExistingArtifactPath(options.store.paths.artifactsDir, options.run.cwd, rawPath);
+    if (existingPath) {
+      const artifactType = inferArtifactTypeFromPath(existingPath);
+      candidates.push({
+        type: artifactType,
+        title: `Generated file: ${basename(rawPath) || rawPath}`,
+        existingPath,
+        contentType: contentTypeForArtifactType(artifactType),
+      });
+    } else {
+      candidates.push({
+        type: "file",
+        title: `Generated file metadata: ${rawPath}`,
+        content: formatGeneratedFileMetadata(options.event, rawPath),
+        contentType: contentTypeForArtifactType("file"),
+      });
+    }
+  }
+
+  return dedupeArtifactCandidates(candidates);
+}
+
+function collectToolResultTextCandidates(
+  event: Extract<PiRunnerEvent, { readonly type: "tool_end" }>,
+): Array<{ readonly title: string; readonly content: string; readonly type?: ArtifactType }> {
+  if (typeof event.result === "string") {
+    return [{ title: `${event.toolName} output`, content: event.result, type: inferArtifactTypeFromText(event.result) }];
+  }
+  const result = event.result;
+  if (!isRecord(result)) {
+    return [];
+  }
+
+  const candidates: Array<{ readonly title: string; readonly content: string; readonly type?: ArtifactType }> = [];
+  const addField = (key: string, title: string, type?: ArtifactType): void => {
+    const value = result[key];
+    if (typeof value === "string" && value.trim()) {
+      candidates.push({ title, content: value, type: type ?? inferArtifactTypeFromText(value) });
+      return;
+    }
+    const textContent = readToolResultTextContent(value);
+    if (textContent.trim()) {
+      candidates.push({ title, content: textContent, type: type ?? inferArtifactTypeFromText(textContent) });
+    }
+  };
+
+  addField("diff", `${event.toolName} diff`, "diff");
+  addField("patch", `${event.toolName} patch`, "diff");
+  addField("unifiedDiff", `${event.toolName} diff`, "diff");
+  addField("markdown", `${event.toolName} markdown`, "markdown");
+  addField("stdout", `${event.toolName} stdout`, "log");
+  addField("stderr", `${event.toolName} stderr`, "log");
+  addField("log", `${event.toolName} log`, "log");
+  addField("output", `${event.toolName} output`);
+  addField("text", `${event.toolName} text`);
+  addField("content", `${event.toolName} content`);
+  return candidates;
+}
+
+function readToolResultTextContent(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+
+  return value
+    .map((item) => {
+      if (!isRecord(item)) {
+        return "";
+      }
+      const type = item.type;
+      const text = item.text;
+      if ((type === undefined || type === "text") && typeof text === "string") {
+        return text;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function collectGeneratedArtifactPaths(event: Extract<PiRunnerEvent, { readonly type: "tool_end" }>, sourceArgs: unknown): string[] {
+  const paths = new Set<string>();
+  for (const path of collectPathLikeFields(event.result)) {
+    paths.add(path);
+  }
+
+  if (event.toolName === "write" || event.toolName === "edit") {
+    const path = readInputString(sourceArgs, "path", "");
+    if (looksLikeFilePathString(path)) {
+      paths.add(path);
+    }
+  }
+
+  return [...paths];
+}
+
+function collectPathLikeFields(value: unknown, keyHint = ""): string[] {
+  if (typeof value === "string") {
+    return keyLooksLikePath(keyHint) && looksLikeFilePathString(value) ? [value] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectPathLikeFields(item, keyHint));
+  }
+  if (!isRecord(value)) {
+    return [];
+  }
+  return Object.entries(value).flatMap(([key, item]) => collectPathLikeFields(item, key));
+}
+
+function keyLooksLikePath(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[_-]/g, "");
+  return (
+    normalized === "path" ||
+    normalized === "filepath" ||
+    normalized === "filename" ||
+    normalized === "files" ||
+    normalized === "paths" ||
+    normalized.endsWith("path") ||
+    normalized.endsWith("file") ||
+    normalized.endsWith("files") ||
+    normalized.includes("outputpath") ||
+    normalized.includes("outputfile") ||
+    normalized.includes("artifactpath") ||
+    normalized.includes("targetpath")
+  );
+}
+
+function looksLikeFilePathString(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 512 || trimmed.includes("\n") || /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    return false;
+  }
+  return trimmed.includes("/") || trimmed.includes("\\") || extname(trimmed) !== "";
+}
+
+function resolveExistingArtifactPath(artifactRoot: string, cwd: string, rawPath: string): string | undefined {
+  const candidates = isAbsolute(rawPath)
+    ? [rawPath]
+    : [resolvePath(artifactRoot, rawPath), resolvePath(cwd, rawPath)];
+
+  for (const candidate of candidates) {
+    const absolutePath = resolvePath(candidate);
+    if (!isPathInsideRoot(artifactRoot, absolutePath)) {
+      continue;
+    }
+    const stats = statFileIfPresent(absolutePath);
+    if (stats?.isFile()) {
+      return absolutePath;
+    }
+  }
+  return undefined;
+}
+
+function materializeExtractedArtifact(
+  store: RunStore,
+  runId: string,
+  candidate: ExtractedArtifactCandidate,
+  index: number,
+): RunArtifact | undefined {
+  const createdAt = new Date().toISOString();
+
+  if (candidate.existingPath) {
+    if (!isPathInsideRoot(store.paths.artifactsDir, candidate.existingPath)) {
+      return undefined;
+    }
+    const stats = statFileIfPresent(candidate.existingPath);
+    if (!stats?.isFile()) {
+      return undefined;
+    }
+    return store.createArtifact({
+      runId,
+      type: candidate.type,
+      path: normalizeArtifactPath(relative(store.paths.artifactsDir, candidate.existingPath)),
+      title: candidate.title,
+      contentType: candidate.contentType,
+      sizeBytes: Number(stats.size),
+      createdAt,
+    });
+  }
+
+  if (candidate.content === undefined) {
+    return undefined;
+  }
+
+  const runArtifactDir = resolvePath(store.paths.artifactsDir, runId);
+  mkdirSync(runArtifactDir, { recursive: true });
+  const relativePath = `${runId}/${formatArtifactFilename(index, candidate)}`;
+  const absolutePath = resolvePath(store.paths.artifactsDir, relativePath);
+  const content = truncateExtractedArtifactContent(redactArtifactContent(candidate.content));
+  writeFileSync(absolutePath, content, "utf8");
+  const stats = statSync(absolutePath);
+
+  return store.createArtifact({
+    runId,
+    type: candidate.type,
+    path: relativePath,
+    title: candidate.title,
+    contentType: candidate.contentType,
+    sizeBytes: Number(stats.size),
+    createdAt,
+  });
+}
+
+function dedupeArtifactCandidates(candidates: readonly ExtractedArtifactCandidate[]): ExtractedArtifactCandidate[] {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.type}\0${candidate.title}\0${candidate.existingPath ?? candidate.content ?? ""}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function formatArtifactFilename(index: number, candidate: ExtractedArtifactCandidate): string {
+  const titleSlug = candidate.title
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "artifact";
+  return `${String(index).padStart(3, "0")}-${titleSlug}.${artifactExtensionForType(candidate.type)}`;
+}
+
+function artifactExtensionForType(type: ArtifactType): string {
+  if (type === "markdown") {
+    return "md";
+  }
+  if (type === "diff") {
+    return "diff";
+  }
+  if (type === "json") {
+    return "json";
+  }
+  if (type === "log") {
+    return "log";
+  }
+  return "txt";
+}
+
+function inferArtifactTypeFromPath(path: string, content = ""): ArtifactType {
+  const extension = extname(path).toLowerCase();
+  if (extension === ".md" || extension === ".markdown") {
+    return "markdown";
+  }
+  if (extension === ".diff" || extension === ".patch") {
+    return "diff";
+  }
+  if (extension === ".json") {
+    return "json";
+  }
+  if (extension === ".log" || extension === ".txt" || extension === ".out" || extension === ".err") {
+    return "log";
+  }
+  if (content) {
+    return inferArtifactTypeFromText(content);
+  }
+  return "file";
+}
+
+function inferArtifactTypeFromText(content: string): ArtifactType {
+  if (isDiffLikeContent(content)) {
+    return "diff";
+  }
+  if (isMarkdownLikeContent(content)) {
+    return "markdown";
+  }
+  return "log";
+}
+
+function isDiffLikeContent(content: string): boolean {
+  return /^diff --git /m.test(content) || /^--- .+\n\+\+\+ /m.test(content) || /^@@ /m.test(content);
+}
+
+function isMarkdownLikeContent(content: string): boolean {
+  return /^#{1,6}\s+\S/m.test(content) || /```/.test(content) || /^\s*[-*]\s+\S/m.test(content);
+}
+
+function formatGeneratedFileMetadata(event: Extract<PiRunnerEvent, { readonly type: "tool_end" }>, rawPath: string): string {
+  return [
+    `Generated file path: ${rawPath}`,
+    `Source tool: ${event.toolName}`,
+    `Tool call: ${event.toolCallId}`,
+    "",
+    "Content was not copied because artifact content is served only from .ling-stack/artifacts.",
+  ].join("\n");
+}
+
+function redactArtifactContent(content: string): string {
+  const redacted = redactSecrets(content);
+  return typeof redacted === "string" ? redacted : content;
+}
+
+function truncateExtractedArtifactContent(content: string): string {
+  const bytes = Buffer.byteLength(content, "utf8");
+  if (bytes <= MAX_EXTRACTED_ARTIFACT_BYTES) {
+    return content;
+  }
+  const truncated = Buffer.from(content, "utf8").subarray(0, MAX_EXTRACTED_ARTIFACT_BYTES).toString("utf8");
+  return `${truncated}\n\n[truncated from ${bytes} bytes]`;
+}
+
+function statFileIfPresent(path: string): ReturnType<typeof statSync> | undefined {
+  try {
+    return statSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function isPathInsideRoot(root: string, path: string): boolean {
+  const relativePath = relative(resolvePath(root), resolvePath(path));
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+}
+
+function normalizeArtifactPath(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+function contentTypeForArtifactType(type: ArtifactType): string {
+  if (type === "json") {
+    return "application/json; charset=utf-8";
+  }
+  if (type === "markdown") {
+    return "text/markdown; charset=utf-8";
+  }
+  if (type === "diff") {
+    return "text/x-diff; charset=utf-8";
+  }
+  if (type === "log" || type === "file") {
+    return "text/plain; charset=utf-8";
+  }
+  return "application/octet-stream";
+}
+
 function resolveArtifactContentPath(store: RunStore, artifact: RunArtifact): string {
   const artifactRoot = store.paths.artifactsDir;
   const absolutePath = isAbsolute(artifact.path) ? artifact.path : resolvePath(artifactRoot, artifact.path);
@@ -1651,22 +2140,7 @@ function resolveArtifactContentPath(store: RunStore, artifact: RunArtifact): str
 }
 
 function inferArtifactContentType(artifact: RunArtifact): string {
-  if (artifact.type === "json") {
-    return "application/json; charset=utf-8";
-  }
-  if (artifact.type === "markdown") {
-    return "text/markdown; charset=utf-8";
-  }
-  if (artifact.type === "diff") {
-    return "text/x-diff; charset=utf-8";
-  }
-  if (artifact.type === "log") {
-    return "text/plain; charset=utf-8";
-  }
-  if (artifact.type === "image" || artifact.type === "video") {
-    return "application/octet-stream";
-  }
-  return "text/plain; charset=utf-8";
+  return contentTypeForArtifactType(artifact.type);
 }
 
 function formatEditPreview(edits: readonly unknown[]): string {

@@ -47,6 +47,7 @@ export type RunEventType =
   | "approval_requested"
   | "approval_approved"
   | "approval_denied"
+  | "approval_expired"
   | "artifact_created"
   | "result";
 
@@ -180,6 +181,7 @@ export interface RunStore {
   listApprovalRequests(options?: ListApprovalRequestsOptions): ApprovalRequest[];
   approveApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
+  expireApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   getApprovalPolicy(): ApprovalPolicy;
   updateApprovalPolicy(input: ApprovalPolicyUpdateInput, now: string): ApprovalPolicy;
   close(): void;

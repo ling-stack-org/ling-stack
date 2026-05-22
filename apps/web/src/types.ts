@@ -17,6 +17,7 @@ export type RunEventType =
   | "approval_requested"
   | "approval_approved"
   | "approval_denied"
+  | "approval_expired"
   | "artifact_created"
   | "result";
 

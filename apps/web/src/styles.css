@@ -2488,6 +2488,8 @@ pre {
 }
 
 .approval-state.denied,
+.approval-state.expired,
+.approval-state.cancelled,
 .approval-risk.high,
 .approval-risk.critical {
   border-color: #e7b4a8;

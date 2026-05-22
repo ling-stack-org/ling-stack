@@ -116,3 +116,53 @@ test("sqlite store persists run artifacts", async () => {
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("sqlite store expires pending approval requests", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-expiry-"));
+  const now = "2026-05-22T00:00:00.000Z";
+  const expiredAt = "2026-05-22T00:30:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_approval_expiry",
+      cwd,
+      taskId: "task_approval_expiry",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_approval_expiry", title: "Approval expiry" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+
+    const pending = store.createApprovalRequest(
+      {
+        runId: "run_approval_expiry",
+        taskId: "task_approval_expiry",
+        actionType: "bash",
+        risk: "medium",
+        title: "Approve shell command",
+        description: "echo wait",
+        payload: { type: "bash", cwd, command: "echo wait", riskFlags: [] },
+        expiresAt: expiredAt,
+      },
+      now,
+    );
+
+    const expired = store.expireApprovalRequest(
+      pending.id,
+      { reason: "Approval request expired before a decision was received." },
+      expiredAt,
+    );
+
+    assert.ok(expired);
+    assert.equal(expired.status, "expired");
+    assert.equal(expired.resolvedAt, expiredAt);
+    assert.equal(expired.resolvedBy, undefined);
+    assert.equal(expired.decisionReason, "Approval request expired before a decision was received.");
+    assert.throws(() => store.approveApprovalRequest(pending.id, { reason: "too late" }, expiredAt), /not pending/);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

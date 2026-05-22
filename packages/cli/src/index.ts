@@ -239,6 +239,9 @@ class RunPrinter {
       case "approval_denied":
         this.line(`Approval denied: ${readString(envelope.data, "approvalId") ?? "<unknown>"}`);
         break;
+      case "approval_expired":
+        this.line(`Approval expired: ${readString(envelope.data, "approvalId") ?? "<unknown>"}`);
+        break;
       case "run_error":
         this.line(`Run failed: ${readString(envelope.data, "message") ?? summarizeUnknown(envelope.data, 240)}`);
         break;
@@ -275,7 +278,7 @@ class RunPrinter {
     if (envelope.type === "run_error") {
       this.runFailed = true;
     }
-    if (envelope.type === "approval_denied") {
+    if (envelope.type === "approval_denied" || envelope.type === "approval_expired") {
       this.approvalDenied = true;
     }
   }
@@ -2957,6 +2960,7 @@ function summarizeEvent(event: RunEventEnvelope): string {
       return `${readString(event.data, "approvalId") ?? ""} ${readString(event.data, "actionType") ?? ""} ${readString(event.data, "risk") ?? ""}`;
     case "approval_approved":
     case "approval_denied":
+    case "approval_expired":
       return `${readString(event.data, "approvalId") ?? ""} ${readString(event.data, "status") ?? ""}`;
     case "run_error":
       return readString(event.data, "message") ?? summarizeUnknown(event.data, 120);
@@ -2985,15 +2989,16 @@ function summarizeRunApprovalEvents(events: readonly RunEventEnvelope[]): RunApp
       continue;
     }
 
-    if (event.type === "approval_approved" || event.type === "approval_denied") {
+    if (event.type === "approval_approved" || event.type === "approval_denied" || event.type === "approval_expired") {
       const approvalId = readString(event.data, "approvalId");
       if (!approvalId) {
         continue;
       }
       const current = approvals.get(approvalId);
+      const fallbackStatus = event.type === "approval_approved" ? "approved" : event.type === "approval_expired" ? "expired" : "denied";
       approvals.set(approvalId, {
         id: approvalId,
-        status: readString(event.data, "status") ?? (event.type === "approval_approved" ? "approved" : "denied"),
+        status: readString(event.data, "status") ?? fallbackStatus,
         actionType: current?.actionType ?? "",
         risk: current?.risk ?? "",
         reason: readString(event.data, "decisionReason") ?? current?.reason ?? "",
