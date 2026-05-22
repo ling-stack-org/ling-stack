@@ -238,6 +238,7 @@ export function App(): JSX.Element {
   const [checkingProviderIds, setCheckingProviderIds] = useState<readonly string[]>([]);
   const [providerBatchResult, setProviderBatchResult] = useState<ProviderBatchResult | undefined>();
   const [providerRepairRunId, setProviderRepairRunId] = useState("");
+  const [taskRepairRunId, setTaskRepairRunId] = useState("");
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
   const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
   const [approvalPolicyLoading, setApprovalPolicyLoading] = useState(false);
@@ -278,6 +279,7 @@ export function App(): JSX.Element {
   }, [run, runs]);
   const succeededRunCount = useMemo(() => [...runById.values()].filter((item) => item.status === "succeeded").length, [runById]);
   const providerRepairRun = providerRepairRunId ? runById.get(providerRepairRunId) : undefined;
+  const taskRepairRun = taskRepairRunId ? runById.get(taskRepairRunId) : undefined;
   const approvalRepairRun = approvalRepairRunId ? runById.get(approvalRepairRunId) : undefined;
 
   useEffect(() => {
@@ -681,50 +683,52 @@ export function App(): JSX.Element {
     }
   }
 
-  async function saveTaskEdit(taskId: string): Promise<void> {
+  async function saveTaskEdit(taskId: string): Promise<Task | undefined> {
     if (!taskEditForm.title.trim()) {
       setErrorMessage("请输入 task title");
-      return;
+      return undefined;
     }
     if (!taskEditForm.prompt.trim()) {
       setErrorMessage("请输入 task prompt");
-      return;
+      return undefined;
     }
 
     try {
       setErrorMessage("");
-      await updateTask(form.cwd.trim(), taskId, {
+      const response = await updateTask(form.cwd.trim(), taskId, {
         ...taskEditForm,
         title: taskEditForm.title.trim(),
         prompt: taskEditForm.prompt.trim(),
       });
       await refreshTasks();
+      return response.task;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+      return undefined;
     }
   }
 
-  async function runPersistedTask(task: Task, options: { readonly skipPreflight?: boolean } = {}): Promise<void> {
+  async function runPersistedTask(task: Task, options: { readonly skipPreflight?: boolean } = {}): Promise<boolean> {
     const channel = channels.find((item) => item.id === task.channelId);
     if (!channel) {
       setErrorMessage("找不到 task 所属 channel");
-      return;
+      return false;
     }
     const providerPresetId = taskRunProviderId || channel.defaultProviderPresetId || form.providerPresetId;
     if (!providerPresetId) {
       setErrorMessage("请先选择 provider preset");
-      return;
+      return false;
     }
     const provider = providers.find((item) => item.id === providerPresetId);
     if (!provider || !canUseProviderForRun(provider)) {
       setErrorMessage(provider ? `Provider preset is not runnable: ${providerRunBlockerLabel(provider)}` : "找不到 provider preset");
-      return;
+      return false;
     }
     if (!options.skipPreflight) {
       const blocker = providerRunPreflightBlocker(provider);
       if (blocker) {
         setErrorMessage(blocker);
-        return;
+        return false;
       }
     }
 
@@ -732,18 +736,40 @@ export function App(): JSX.Element {
     await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId), runCwd, async () => {
       await refreshTasks(task.channelId);
     });
+    return true;
   }
 
-  async function checkThenRunPersistedTask(task: Task): Promise<void> {
+  async function checkThenRunPersistedTask(task: Task): Promise<boolean> {
     const channel = channels.find((item) => item.id === task.channelId);
     const providerPresetId = taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId;
     const provider = providerPresetId ? providers.find((item) => item.id === providerPresetId) : undefined;
     if (!provider) {
       setErrorMessage(providerPresetId ? "找不到 provider preset" : "请先选择 provider preset");
-      return;
+      return false;
     }
     if (await checkProviderForRun(provider)) {
-      await runPersistedTask(task, { skipPreflight: true });
+      return await runPersistedTask(task, { skipPreflight: true });
+    }
+    return false;
+  }
+
+  async function runUpdatedTaskFromRepair(task: Task): Promise<void> {
+    const updatedTask = await saveTaskEdit(task.id);
+    if (!updatedTask) {
+      return;
+    }
+    if (await runPersistedTask(updatedTask)) {
+      setTaskRepairRunId("");
+    }
+  }
+
+  async function checkThenRunUpdatedTaskFromRepair(task: Task): Promise<void> {
+    const updatedTask = await saveTaskEdit(task.id);
+    if (!updatedTask) {
+      return;
+    }
+    if (await checkThenRunPersistedTask(updatedTask)) {
+      setTaskRepairRunId("");
     }
   }
 
@@ -1028,6 +1054,7 @@ export function App(): JSX.Element {
     }
 
     setErrorMessage("");
+    setTaskRepairRunId(runToRepair.id);
     setSelectedChannelId(runToRepair.channelId);
     setSelectedTaskId(runToRepair.taskId);
     setTaskRunProviderId("");
@@ -1160,6 +1187,7 @@ export function App(): JSX.Element {
                 activeRunId={activeRunId}
                 latestStatus={latestStatus}
                 runById={runById}
+                repairRun={taskRepairRun}
                 errorMessage={errorMessage}
                 onCwdChange={(cwd) => {
                   setForm({ ...form, cwd });
@@ -1193,11 +1221,14 @@ export function App(): JSX.Element {
                 onSaveTaskEdit={(taskId) => void saveTaskEdit(taskId)}
                 onRunTask={(task) => void runPersistedTask(task)}
                 onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
+                onRunUpdatedTask={(task) => void runUpdatedTaskFromRepair(task)}
+                onCheckThenRunUpdatedTask={(task) => void checkThenRunUpdatedTaskFromRepair(task)}
                 onReviewTask={(taskId) => void moveTaskToReview(taskId)}
                 onDeleteTask={(taskId) => void removeTask(taskId)}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
                 onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : setActiveView("providers")}
+                onClearRepair={() => setTaskRepairRunId("")}
               />
               <RunTimeline
                 events={events}
@@ -2143,6 +2174,7 @@ function ChannelTaskWorkspace({
   activeRunId,
   latestStatus,
   runById,
+  repairRun,
   errorMessage,
   onCwdChange,
   onChannelFormChange,
@@ -2161,11 +2193,14 @@ function ChannelTaskWorkspace({
   onSaveTaskEdit,
   onRunTask,
   onCheckThenRunTask,
+  onRunUpdatedTask,
+  onCheckThenRunUpdatedTask,
   onReviewTask,
   onDeleteTask,
   onOpenRun,
   onOpenApprovals,
   onOpenProviders,
+  onClearRepair,
 }: {
   readonly cwd: string;
   readonly channels: readonly Channel[];
@@ -2185,6 +2220,7 @@ function ChannelTaskWorkspace({
   readonly activeRunId: string;
   readonly latestStatus: string;
   readonly runById: ReadonlyMap<string, RunSession>;
+  readonly repairRun: RunSession | undefined;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onChannelFormChange: (form: ChannelFormState) => void;
@@ -2203,11 +2239,14 @@ function ChannelTaskWorkspace({
   readonly onSaveTaskEdit: (taskId: string) => void;
   readonly onRunTask: (task: Task) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
+  readonly onRunUpdatedTask: (task: Task) => void;
+  readonly onCheckThenRunUpdatedTask: (task: Task) => void;
   readonly onReviewTask: (taskId: string) => void;
   readonly onDeleteTask: (taskId: string) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
+  readonly onClearRepair: () => void;
 }): JSX.Element {
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
@@ -2223,6 +2262,9 @@ function ChannelTaskWorkspace({
   const canRunWithEffectiveProvider = Boolean(effectiveProvider && canUseProviderForRun(effectiveProvider));
   const effectiveProviderPreflightBlocker = providerRunPreflightBlocker(effectiveProvider);
   const canPreflightRunWithEffectiveProvider = Boolean(effectiveProvider && canRunWithEffectiveProvider && effectiveProviderPreflightBlocker === undefined);
+  const selectedTaskRepairRun = selectedTask && repairRun?.taskId === selectedTask.id && repairRun.channelId === selectedTask.channelId
+    ? repairRun
+    : undefined;
 
   return (
     <div className="task-workspace">
@@ -2485,6 +2527,19 @@ function ChannelTaskWorkspace({
                 onOpenRun={onOpenRun}
               />
             ) : null}
+            {selectedTaskRepairRun ? (
+              <TaskRepairHandoffPanel
+                task={selectedTask}
+                run={selectedTaskRepairRun}
+                isRunning={isRunning}
+                canRun={canPreflightRunWithEffectiveProvider}
+                canCheckRun={canRunWithEffectiveProvider}
+                onRunUpdatedTask={onRunUpdatedTask}
+                onCheckThenRunUpdatedTask={onCheckThenRunUpdatedTask}
+                onOpenRun={onOpenRun}
+                onClear={onClearRepair}
+              />
+            ) : null}
             <label className="field wide">
               <span>Title</span>
               <input value={taskEditForm.title} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, title: event.target.value })} />
@@ -2593,6 +2648,66 @@ function ChannelTaskWorkspace({
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function TaskRepairHandoffPanel({
+  task,
+  run,
+  isRunning,
+  canRun,
+  canCheckRun,
+  onRunUpdatedTask,
+  onCheckThenRunUpdatedTask,
+  onOpenRun,
+  onClear,
+}: {
+  readonly task: Task;
+  readonly run: RunSession;
+  readonly isRunning: boolean;
+  readonly canRun: boolean;
+  readonly canCheckRun: boolean;
+  readonly onRunUpdatedTask: (task: Task) => void;
+  readonly onCheckThenRunUpdatedTask: (task: Task) => void;
+  readonly onOpenRun: (runId: string) => void;
+  readonly onClear: () => void;
+}): JSX.Element {
+  const snapshotTitle = readTaskTitle(run.taskSnapshot) || run.taskId;
+  const failedReason = run.errorMessage || "This run failed before completing.";
+
+  return (
+    <div className="task-repair-handoff" aria-label="Task repair handoff">
+      <div className="task-repair-handoff-head">
+        <span>
+          <SquareTerminal size={16} />
+          <strong>Run updated task</strong>
+        </span>
+        <button className="secondary-button compact-button" type="button" onClick={onClear}>
+          Clear
+        </button>
+      </div>
+      <div className="task-repair-handoff-copy">
+        <span>
+          Editing <code>{task.id}</code> to repair failed run <code>{run.id}</code>.
+        </span>
+        <small>Failed snapshot: {snapshotTitle}. {failedReason}</small>
+        <small>Rerun snapshot replays the old request. Save + run updated task uses the current task editor values.</small>
+      </div>
+      <div className="task-repair-handoff-actions">
+        <button className="primary-button compact-button" type="button" onClick={() => onRunUpdatedTask(task)} disabled={isRunning || !canRun}>
+          {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+          Save + run updated task
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunUpdatedTask(task)} disabled={isRunning || !canCheckRun}>
+          {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+          Save + check run
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(run.id)}>
+          <History size={14} />
+          Open failed run
+        </button>
+      </div>
     </div>
   );
 }
@@ -2810,7 +2925,7 @@ function RunDetailPanel({
           </button>
           <button className="primary-button compact-button" type="button" onClick={() => run && onRerun(run)} disabled={!run || isRunning || !providerPresetId}>
             {isRunning ? <Loader2 className="spin" size={15} /> : <RotateCcw size={15} />}
-            Rerun
+            Rerun snapshot
           </button>
         </span>
       </div>
@@ -3033,7 +3148,7 @@ function RuntimeRunRepairPanel({
         </button>
         <button className="primary-button compact-button" type="button" onClick={() => onRerun(run)} disabled={isRunning || !canRerun}>
           {isRunning ? <Loader2 className="spin" size={14} /> : <RotateCcw size={14} />}
-          Rerun
+          Rerun snapshot
         </button>
         <button className="secondary-button compact-button" type="button" onClick={onReload} disabled={isRunning}>
           <RefreshCw size={14} />

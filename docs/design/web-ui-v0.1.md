@@ -207,6 +207,7 @@ Run-after loop:
   - provider/preflight failures -> Providers,
   - pending approvals -> Approvals,
   - tool/runtime failure -> Run detail.
+- runtime/tool repair must distinguish replaying the failed run snapshot from saving and running an edited task; edits to a task do not change the old persisted run request.
 
 Run repair hints:
 
@@ -451,7 +452,8 @@ Runtime/tool run repair flow:
 - if a matching `tool_start` exists, the panel should carry forward useful context such as tool name, command, cwd, and target path,
 - repair actions should keep the loop short: Edit task, Rerun, and Reload,
 - Edit task should switch back to Workspace, select the run's channel/task, and let the user adjust the prompt/status before rerunning,
-- Rerun should reuse the persisted run snapshot and remain disabled when the run cannot be replayed through a provider preset.
+- Rerun should be labeled as snapshot replay, reuse the persisted run request, and remain disabled when the run cannot be replayed through a provider preset,
+- Workspace should carry a focused task repair handoff when Edit task is opened from a failed run; it should show the failed run id, explain that the old snapshot is unchanged, and expose Save + run updated task plus a checked variant.
 
 ### Approval Inbox
 

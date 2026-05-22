@@ -1421,6 +1421,61 @@ pre {
   margin-bottom: 0;
 }
 
+.task-repair-handoff {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d8ded7;
+  background: #f7faf7;
+}
+
+.task-repair-handoff-head,
+.task-repair-handoff-head span,
+.task-repair-handoff-actions {
+  display: flex;
+  align-items: center;
+}
+
+.task-repair-handoff-head {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.task-repair-handoff-head span {
+  gap: 7px;
+  color: #43524e;
+}
+
+.task-repair-handoff-head strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.task-repair-handoff-copy {
+  display: grid;
+  gap: 5px;
+  color: #4f5e59;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.task-repair-handoff-copy code {
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #17211f;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.task-repair-handoff-copy small {
+  overflow-wrap: anywhere;
+}
+
+.task-repair-handoff-actions {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .task-detail-meta {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
