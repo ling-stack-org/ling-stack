@@ -32,6 +32,7 @@ import {
   cancelRun,
   checkProvider,
   createChannel,
+  createMediaJob,
   createProvider,
   createTask,
   daemonBaseUrl,
@@ -46,6 +47,7 @@ import {
   listRunArtifacts,
   listChannels,
   listApprovals,
+  listMediaJobs,
   listProviders,
   listProviderTemplates,
   listRuns,
@@ -67,6 +69,9 @@ import type {
   ApprovalToolDecision,
   Channel,
   ChannelFormState,
+  MediaJob,
+  MediaJobFormState,
+  MediaOperation,
   ProviderCheckResult,
   ProviderFormState,
   ProviderPreset,
@@ -86,7 +91,7 @@ const defaultTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
 const allTools: readonly ToolName[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const riskyTools: readonly ToolName[] = ["bash", "edit", "write"];
 const taskStatuses: readonly TaskStatus[] = ["todo", "claimed", "running", "blocked", "review", "done", "failed", "cancelled"];
-type ViewId = "workspace" | "runs" | "providers" | "approvals" | "settings";
+type ViewId = "workspace" | "runs" | "providers" | "media" | "approvals" | "settings";
 type ApprovalResolution = "approve" | "deny";
 interface ProviderTemplateGroup {
   readonly label: string;
@@ -198,6 +203,13 @@ const defaultTaskEditForm: TaskEditFormState = {
   status: "todo",
 };
 
+const defaultMediaJobForm: MediaJobFormState = {
+  providerPresetId: "",
+  operation: "image_generate",
+  prompt: "Generate a product screenshot style image for the current task.",
+  inputText: "{}",
+};
+
 const defaultApprovalPolicyForm: ApprovalPolicyFormState = {
   toolDecisions: {
     read: "allow",
@@ -241,6 +253,9 @@ export function App(): JSX.Element {
   const [checkingProviderIds, setCheckingProviderIds] = useState<readonly string[]>([]);
   const [providerBatchResult, setProviderBatchResult] = useState<ProviderBatchResult | undefined>();
   const [providerRepairRunId, setProviderRepairRunId] = useState("");
+  const [mediaJobs, setMediaJobs] = useState<readonly MediaJob[]>([]);
+  const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
+  const [mediaJobForm, setMediaJobForm] = useState<MediaJobFormState>(defaultMediaJobForm);
   const [taskRepairRunId, setTaskRepairRunId] = useState("");
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
   const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
@@ -305,6 +320,10 @@ export function App(): JSX.Element {
       void refreshProviderTemplates();
       void refreshProviders();
     }
+    if (activeView === "media") {
+      void refreshProviders();
+      void refreshMediaJobs();
+    }
     if (activeView === "approvals") {
       void refreshApprovals();
     }
@@ -343,6 +362,16 @@ export function App(): JSX.Element {
       status: selectedTask.status,
     });
   }, [selectedTaskId, tasks]);
+
+  useEffect(() => {
+    setMediaJobForm((current) => {
+      if (current.providerPresetId && providers.some((provider) => provider.id === current.providerPresetId)) {
+        return current;
+      }
+      const firstMediaProvider = providers.find(isMediaProvider);
+      return firstMediaProvider ? { ...current, providerPresetId: firstMediaProvider.id } : current;
+    });
+  }, [providers]);
 
   async function refreshHealth(): Promise<void> {
     try {
@@ -472,6 +501,53 @@ export function App(): JSX.Element {
       setProviderTemplates(response.templates);
     } catch {
       setProviderTemplates([]);
+    }
+  }
+
+  async function refreshMediaJobs(cwd = form.cwd.trim()): Promise<void> {
+    if (!cwd) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    setMediaJobsLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await listMediaJobs(cwd);
+      setMediaJobs(response.mediaJobs);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMediaJobsLoading(false);
+    }
+  }
+
+  async function saveMediaJob(): Promise<void> {
+    if (!form.cwd.trim()) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+    if (!mediaJobForm.providerPresetId) {
+      setErrorMessage("请选择 media provider preset");
+      return;
+    }
+    if (!mediaJobForm.prompt.trim()) {
+      setErrorMessage("请输入 media prompt");
+      return;
+    }
+
+    setMediaJobsLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await createMediaJob(form.cwd.trim(), {
+        ...mediaJobForm,
+        prompt: mediaJobForm.prompt.trim(),
+      });
+      setMediaJobs((current) => [response.mediaJob, ...current.filter((job) => job.id !== response.mediaJob.id)]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMediaJobsLoading(false);
     }
   }
 
@@ -1113,6 +1189,7 @@ export function App(): JSX.Element {
           <NavItem icon={<Workflow />} label="Workspace" active={activeView === "workspace"} onClick={() => setActiveView("workspace")} />
           <NavItem icon={<History />} label="Runs" active={activeView === "runs"} onClick={() => setActiveView("runs")} />
           <NavItem icon={<PlugZap />} label="Providers" active={activeView === "providers"} onClick={() => setActiveView("providers")} />
+          <NavItem icon={<Database />} label="Media Jobs" active={activeView === "media"} onClick={() => setActiveView("media")} />
           <NavItem
             icon={<ShieldCheck />}
             label="Approvals"
@@ -1335,7 +1412,22 @@ export function App(): JSX.Element {
             onClearRepair={() => setProviderRepairRunId("")}
           />
           ) : (
-            activeView === "settings" ? (
+            activeView === "media" ? (
+              <MediaJobsPage
+                cwd={form.cwd}
+                providers={providers}
+                jobs={mediaJobs}
+                form={mediaJobForm}
+                isLoading={mediaJobsLoading}
+                errorMessage={errorMessage}
+                onCwdChange={(cwd) => setForm({ ...form, cwd })}
+                onFormChange={setMediaJobForm}
+                onRefresh={() => void refreshMediaJobs()}
+                onCreate={() => void saveMediaJob()}
+                onOpenProviders={() => setActiveView("providers")}
+              />
+            ) : (
+              activeView === "settings" ? (
               <SettingsPage
                 cwd={form.cwd}
                 policy={approvalPolicy}
@@ -1347,28 +1439,29 @@ export function App(): JSX.Element {
                 onRefresh={() => void refreshApprovalPolicy()}
                 onSave={() => void saveApprovalPolicy()}
               />
-            ) : (
-              <ApprovalsPage
-                cwd={form.cwd}
-                approvals={approvals}
-                repairRunId={approvalRepairRunId}
-                repairRun={approvalRepairRun}
-                isLoading={approvalsLoading}
-                resolvingApprovals={resolvingApprovals}
-                errorMessage={errorMessage}
-                onCwdChange={(cwd) => {
-                  setApprovalRepairRunId("");
-                  setForm({ ...form, cwd });
-                }}
-                onRefresh={() => void refreshApprovals()}
-                onRefreshRepair={(runId) => {
-                  void refreshApprovals(form.cwd.trim(), runId);
-                  void loadRun(runId, form.cwd.trim());
-                }}
-                onResolve={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
-                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
-                onClearRepair={() => setApprovalRepairRunId("")}
-              />
+              ) : (
+                <ApprovalsPage
+                  cwd={form.cwd}
+                  approvals={approvals}
+                  repairRunId={approvalRepairRunId}
+                  repairRun={approvalRepairRun}
+                  isLoading={approvalsLoading}
+                  resolvingApprovals={resolvingApprovals}
+                  errorMessage={errorMessage}
+                  onCwdChange={(cwd) => {
+                    setApprovalRepairRunId("");
+                    setForm({ ...form, cwd });
+                  }}
+                  onRefresh={() => void refreshApprovals()}
+                  onRefreshRepair={(runId) => {
+                    void refreshApprovals(form.cwd.trim(), runId);
+                    void loadRun(runId, form.cwd.trim());
+                  }}
+                  onResolve={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+                  onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                  onClearRepair={() => setApprovalRepairRunId("")}
+                />
+              )
             )
           )
         )}
@@ -3981,6 +4074,10 @@ function buildProviderRepairItems(providers: readonly ProviderPreset[]): readonl
 }
 
 function buildProviderRepairItem(provider: ProviderPreset): ProviderRepairItem | undefined {
+  if (isMediaProvider(provider)) {
+    return undefined;
+  }
+
   if (providerPreflightReady(provider)) {
     return undefined;
   }
@@ -4056,6 +4153,171 @@ function ProviderEnvHint({ apiKeyRef }: { readonly apiKeyRef: string }): JSX.Ele
       <span>
         Shell: <code>export {envName}=...</code>. Restart or reload the daemon after setting env.
       </span>
+    </div>
+  );
+}
+
+function MediaJobsPage({
+  cwd,
+  providers,
+  jobs,
+  form,
+  isLoading,
+  errorMessage,
+  onCwdChange,
+  onFormChange,
+  onRefresh,
+  onCreate,
+  onOpenProviders,
+}: {
+  readonly cwd: string;
+  readonly providers: readonly ProviderPreset[];
+  readonly jobs: readonly MediaJob[];
+  readonly form: MediaJobFormState;
+  readonly isLoading: boolean;
+  readonly errorMessage: string;
+  readonly onCwdChange: (cwd: string) => void;
+  readonly onFormChange: (form: MediaJobFormState) => void;
+  readonly onRefresh: () => void;
+  readonly onCreate: () => void;
+  readonly onOpenProviders: () => void;
+}): JSX.Element {
+  const mediaProviders = providers.filter(isMediaProvider);
+  const enabledMediaProviders = mediaProviders.filter((provider) => provider.enabled);
+  const selectedProvider = providers.find((provider) => provider.id === form.providerPresetId);
+  const providerSupportsOperation = Boolean(selectedProvider?.capabilities.includes(form.operation));
+  const canCreate = Boolean(selectedProvider && selectedProvider.enabled && providerSupportsOperation && form.prompt.trim());
+
+  return (
+    <div className="media-jobs-layout">
+      <section className="panel media-job-list-panel" aria-labelledby="media-jobs-title">
+        <div className="panel-title split">
+          <span>
+            <Database size={18} />
+            <h2 id="media-jobs-title">Media jobs</h2>
+          </span>
+          <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
+            {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+            Refresh
+          </button>
+        </div>
+
+        <label className="field wide runs-cwd">
+          <span>Workspace path</span>
+          <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
+        </label>
+
+        {errorMessage ? (
+          <div className="inline-error">
+            <CircleAlert size={17} />
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <div className="provider-onboarding-strip" aria-label="Media job status">
+          <MetaRow label="Media providers" value={String(mediaProviders.length)} compact />
+          <MetaRow label="Enabled" value={String(enabledMediaProviders.length)} compact />
+          <MetaRow label="Queued jobs" value={String(jobs.filter((job) => job.status === "queued").length)} compact />
+          <MetaRow label="Artifacts linked" value={String(jobs.reduce((count, job) => count + job.artifactIds.length, 0))} compact />
+        </div>
+
+        <div className="media-job-list">
+          {jobs.length === 0 ? (
+            <div className="empty-state compact-empty">
+              {isLoading ? <Loader2 className="spin" /> : <Database />}
+              <span>{isLoading ? "Loading media jobs..." : "No media jobs recorded for this workspace"}</span>
+            </div>
+          ) : (
+            jobs.map((job) => {
+              const provider = providers.find((item) => item.id === job.providerPresetId);
+              return (
+                <article key={job.id} className="media-job-row">
+                  <div className="media-job-row-head">
+                    <strong>{job.operation}</strong>
+                    <StatusBadge status={job.status} />
+                  </div>
+                  <p>{job.prompt}</p>
+                  <div className="provider-meta-line">
+                    <span>{provider?.displayName ?? job.providerPresetId}</span>
+                    <span>{job.artifactIds.length} artifacts</span>
+                    <time>{formatDateTime(job.createdAt)}</time>
+                  </div>
+                  {job.errorMessage ? <small className="media-job-error">{job.errorMessage}</small> : null}
+                </article>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+      <section className="panel media-job-form-panel" aria-labelledby="media-job-form-title">
+        <div className="panel-title split">
+          <span>
+            <Plus size={18} />
+            <h2 id="media-job-form-title">Create stub job</h2>
+          </span>
+          <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
+            <PlugZap size={14} />
+            Providers
+          </button>
+        </div>
+
+        <div className={mediaProviders.length > 0 ? "provider-next-action ok" : "provider-next-action"}>
+          {mediaProviders.length > 0 ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
+          <span>
+            {mediaProviders.length > 0
+              ? "Media providers are configured for media job metadata. Coding task runs still require chat providers."
+              : "Create a Jimeng, Seedream, or Seedance media provider before recording media jobs."}
+          </span>
+        </div>
+
+        <label className="field wide">
+          <span>Media provider</span>
+          <select
+            value={form.providerPresetId}
+            onChange={(event) => onFormChange({ ...form, providerPresetId: event.target.value })}
+            disabled={mediaProviders.length === 0}
+          >
+            <option value="">Select media provider</option>
+            {mediaProviders.map((provider) => (
+              <option key={provider.id} value={provider.id} disabled={!provider.enabled}>
+                {provider.displayName} / {provider.model}{provider.enabled ? "" : " - disabled"}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="field wide">
+          <span>Operation</span>
+          <select value={form.operation} onChange={(event) => onFormChange({ ...form, operation: event.target.value as MediaOperation })}>
+            <option value="image_generate">Image generate</option>
+            <option value="image_edit">Image edit</option>
+            <option value="video_generate">Video generate</option>
+          </select>
+        </label>
+
+        {selectedProvider && !providerSupportsOperation ? (
+          <div className="provider-run-notice">
+            <CircleAlert size={16} />
+            <span>{selectedProvider.displayName} does not support {form.operation}.</span>
+          </div>
+        ) : null}
+
+        <label className="field wide">
+          <span>Prompt</span>
+          <textarea value={form.prompt} rows={6} onChange={(event) => onFormChange({ ...form, prompt: event.target.value })} />
+        </label>
+
+        <label className="field wide">
+          <span>Input JSON</span>
+          <textarea value={form.inputText} rows={6} onChange={(event) => onFormChange({ ...form, inputText: event.target.value })} />
+        </label>
+
+        <button className="primary-button" type="button" onClick={onCreate} disabled={isLoading || !canCreate}>
+          {isLoading ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+          Create media job
+        </button>
+      </section>
     </div>
   );
 }
@@ -5438,12 +5700,16 @@ function providerNeedsSecret(provider: Pick<ProviderPreset, "api" | "authHeader"
   return provider.api === "anthropic-messages" || provider.authHeader !== false || Boolean(provider.apiKeyRef);
 }
 
+function isMediaProvider(provider: ProviderPreset): boolean {
+  return provider.api === "media-job";
+}
+
 function providerRunBlockerLabel(provider: ProviderPreset): string {
   if (!provider.enabled) {
     return "disabled";
   }
   if (provider.api === "media-job") {
-    return "media only";
+    return "media job only";
   }
   if (!provider.capabilities.includes("chat")) {
     return "no chat";
@@ -5618,6 +5884,9 @@ function viewTitle(view: ViewId): string {
   if (view === "approvals") {
     return "Approvals";
   }
+  if (view === "media") {
+    return "Media jobs";
+  }
   if (view === "settings") {
     return "Settings";
   }
@@ -5633,6 +5902,9 @@ function viewDescription(view: ViewId): string {
   }
   if (view === "approvals") {
     return "查看和处理需要人工决策的高风险动作；bash、edit、write 会在执行前等待审批。";
+  }
+  if (view === "media") {
+    return "创建和查看媒体 job 元数据；当前切片只验证模型与适配器边界，不调用真实媒体生成 API。";
   }
   if (view === "settings") {
     return "配置 workspace 级 approval policy，控制工具自动允许、询问或拒绝，以及写入路径边界。";

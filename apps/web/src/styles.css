@@ -1816,6 +1816,53 @@ pre {
   min-height: 640px;
 }
 
+.media-jobs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 16px;
+  align-items: start;
+}
+
+.media-job-list-panel,
+.media-job-form-panel {
+  min-height: 520px;
+}
+
+.media-job-list {
+  display: grid;
+  gap: 10px;
+}
+
+.media-job-row {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e1e6e2;
+  background: #fbfcfa;
+}
+
+.media-job-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.media-job-row-head strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.media-job-row p {
+  color: #4f5e59;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.media-job-error {
+  color: #9a341f;
+}
+
 .provider-list {
   display: grid;
   gap: 10px;
@@ -2660,7 +2707,8 @@ pre {
 @media (max-width: 1500px) {
   .run-history-layout,
   .workspace-task-grid,
-  .provider-layout {
+  .provider-layout,
+  .media-jobs-layout {
     grid-template-columns: 1fr;
   }
 
@@ -2675,7 +2723,9 @@ pre {
   .run-history-layout .runs-panel,
   .run-history-layout .run-detail-panel,
   .provider-list-panel,
-  .provider-form-panel {
+  .provider-form-panel,
+  .media-job-list-panel,
+  .media-job-form-panel {
     min-height: auto;
   }
 }
@@ -2701,7 +2751,7 @@ pre {
   }
 
   nav {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .nav-item {
@@ -2735,6 +2785,10 @@ pre {
   }
 
   .provider-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .media-jobs-layout {
     grid-template-columns: 1fr;
   }
 }

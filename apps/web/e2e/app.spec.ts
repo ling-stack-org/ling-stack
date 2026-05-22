@@ -8,6 +8,7 @@ interface MockState {
   tasks: unknown[];
   runs: MockRun[];
   approvals: MockApproval[];
+  mediaJobs: MockMediaJob[];
   artifactsByRun: Record<string, MockArtifact[]>;
 }
 
@@ -55,6 +56,19 @@ interface MockArtifact {
   contentType?: string;
   sizeBytes?: number;
   createdAt: string;
+}
+
+interface MockMediaJob {
+  id: string;
+  workspaceId: string;
+  providerPresetId: string;
+  operation: string;
+  prompt: string;
+  input: Record<string, unknown>;
+  artifactIds: string[];
+  status: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 test("workspace readiness surfaces missing provider, expired approval, and failed run repair", async ({ page }) => {
@@ -132,6 +146,81 @@ test("run detail renders artifact rows from the daemon API", async ({ page }) =>
   await expect(page.locator(".artifact-row").first()).toHaveAttribute("href", /\/artifacts\/artifact_report\/content/);
 });
 
+test("media jobs page lists stub jobs and creates metadata-only jobs", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    {
+      id: "provider_seedream",
+      kind: "seedream",
+      displayName: "Seedream Image",
+      providerId: "seedream",
+      model: "seedream",
+      api: "media-job",
+      apiKeyRef: "env:SEEDREAM_API_KEY",
+      apiKeyConfigured: false,
+      headers: {},
+      input: ["text", "image"],
+      compat: {},
+      capabilities: ["image_generate", "image_edit"],
+      enabled: true,
+      createdAt: "2026-05-23T00:00:00.000Z",
+      updatedAt: "2026-05-23T00:00:00.000Z",
+    },
+    {
+      id: "provider_local",
+      kind: "openai-compatible",
+      displayName: "Local Relay",
+      providerId: "local-relay",
+      model: "dpv4",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:8317/v1",
+      apiKeyRef: "env:LOCAL_RELAY_API_KEY",
+      apiKeyConfigured: true,
+      headers: {},
+      authHeader: true,
+      reasoning: true,
+      input: ["text"],
+      compat: {},
+      capabilities: ["chat", "tool_call"],
+      enabled: true,
+      lastCheck: {
+        ok: true,
+        code: "ready",
+        message: "Provider is reachable and accepted the configured model.",
+        checkedAt: "2026-05-23T00:00:00.000Z",
+      },
+      createdAt: "2026-05-23T00:00:00.000Z",
+      updatedAt: "2026-05-23T00:00:00.000Z",
+    },
+  ];
+  state.mediaJobs = [
+    {
+      id: "media_job_existing",
+      workspaceId: "workspace_default",
+      providerPresetId: "provider_seedream",
+      operation: "image_generate",
+      prompt: "Existing product mockup.",
+      input: {},
+      artifactIds: [],
+      status: "queued",
+      createdAt: "2026-05-23T00:00:00.000Z",
+      updatedAt: "2026-05-23T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Jobs" }).click();
+  await expect(page.getByRole("heading", { name: "Media jobs", level: 1 })).toBeVisible();
+  await expect(page.locator(".media-job-row")).toContainText("Existing product mockup.");
+
+  await page.getByRole("textbox", { name: "Prompt" }).fill("New campaign image.");
+  await page.getByRole("button", { name: "Create media job" }).click();
+
+  await expect(page.locator(".media-job-row").first()).toContainText("New campaign image.");
+  await expect.poll(() => state.mediaJobs.length).toBe(2);
+});
+
 function createBaseState(options: { approvalStatus: "pending" | "expired" }): MockState {
   const run: MockRun = {
     id: "run_failed",
@@ -194,6 +283,7 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
         decisionReason: options.approvalStatus === "expired" ? "Approval request expired before a decision was received." : undefined,
       },
     ],
+    mediaJobs: [],
     artifactsByRun: {},
   };
 }
@@ -237,6 +327,38 @@ async function handleDaemonRoute(route: Route, state: MockState): Promise<void> 
     const runId = url.searchParams.get("runId");
     const approvals = state.approvals.filter((approval) => !runId || approval.runId === runId);
     await route.fulfill({ json: { cwd, approvals } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/media-jobs") {
+    await route.fulfill({ json: { cwd, mediaJobs: state.mediaJobs } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/media-jobs") {
+    const body = (await request.postDataJSON()) as {
+      providerPresetId: string;
+      operation: string;
+      prompt: string;
+      input?: Record<string, unknown>;
+    };
+    const provider = state.providers.find((item) => isRecord(item) && item.id === body.providerPresetId);
+    if (!provider || !isRecord(provider) || provider.api !== "media-job") {
+      await route.fulfill({ status: 400, json: { error: "unsupported_capability" } });
+      return;
+    }
+    const job: MockMediaJob = {
+      id: `media_job_${state.mediaJobs.length + 1}`,
+      workspaceId: "workspace_default",
+      providerPresetId: body.providerPresetId,
+      operation: body.operation,
+      prompt: body.prompt,
+      input: body.input ?? {},
+      artifactIds: [],
+      status: "queued",
+      createdAt: "2026-05-23T00:02:00.000Z",
+      updatedAt: "2026-05-23T00:02:00.000Z",
+    };
+    state.mediaJobs.unshift(job);
+    await route.fulfill({ status: 201, json: { mediaJob: job } });
     return;
   }
 
@@ -292,4 +414,8 @@ async function handleDaemonRoute(route: Route, state: MockState): Promise<void> 
   }
 
   await route.fulfill({ status: 404, json: { error: "not_found", path } });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
