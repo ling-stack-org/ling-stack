@@ -3070,10 +3070,18 @@ function RunDetailPanel({
             )}
           </div>
 
+          <RunEvidencePanel
+            run={run}
+            terminalEvent={terminalEvent}
+            toolEvents={toolEvents}
+            assistantText={assistantText}
+            approvals={approvals}
+          />
+
           <div className="run-detail-section">
             <div className="panel-title tight">
               <Database size={16} />
-              <h3>Snapshots</h3>
+              <h3>Debug snapshots</h3>
             </div>
             <details className="json-details">
               <summary>Request snapshot</summary>
@@ -3093,6 +3101,75 @@ function RunDetailPanel({
         </div>
       )}
     </section>
+  );
+}
+
+function RunEvidencePanel({
+  run,
+  terminalEvent,
+  toolEvents,
+  assistantText,
+  approvals,
+}: {
+  readonly run: RunSession;
+  readonly terminalEvent: RunEventEnvelope | undefined;
+  readonly toolEvents: readonly RunEventEnvelope[];
+  readonly assistantText: string;
+  readonly approvals: readonly ApprovalRequest[];
+}): JSX.Element {
+  const taskLabel = readTaskTitle(run.taskSnapshot) || run.taskId;
+  const providerLabel = `${run.providerName}/${run.providerModel}`;
+  const terminalLabel = terminalEvent ? `#${terminalEvent.seq} ${terminalEvent.type}` : "-";
+  const evidenceMessage = readRunEvidenceMessage(run, terminalEvent);
+  const assistantPreview = buildAssistantOutputPreview(assistantText);
+  const toolSummary = summarizeToolEvents(toolEvents);
+
+  return (
+    <div className="run-detail-section run-evidence">
+      <div className="panel-title tight split">
+        <span>
+          <CheckCircle2 size={16} />
+          <h3>Evidence</h3>
+        </span>
+        <span className="event-count">audit preview</span>
+      </div>
+
+      <div className="run-evidence-block">
+        <strong>Run summary preview</strong>
+        <div className="run-evidence-grid">
+          <MetaRow label="Status" value={run.status} compact />
+          <MetaRow label="Task" value={taskLabel} compact />
+          <MetaRow label="Provider" value={providerLabel} compact />
+          <MetaRow label="Terminal event" value={terminalLabel} compact />
+          <MetaRow label="Tool events" value={String(toolSummary.total)} compact />
+          <MetaRow label="Errored tools" value={String(toolSummary.errorCount)} compact />
+          <MetaRow label="Approvals" value={String(approvals.length)} compact />
+        </div>
+        <p className={`run-evidence-copy${run.status === "failed" ? " error" : ""}`}>{evidenceMessage}</p>
+        <p className="run-evidence-copy">
+          <strong>Assistant output</strong>
+          {assistantPreview}
+        </p>
+      </div>
+
+      <div className="run-evidence-block">
+        <strong>Session files</strong>
+        <div className="session-file-list">
+          <span>Event log</span>
+          <code>{run.eventLogPath}</code>
+          <span>Summary</span>
+          <code>{run.summaryPath ?? "-"}</code>
+        </div>
+      </div>
+
+      <div className="run-evidence-block">
+        <strong>Artifacts</strong>
+        <div className="artifact-empty-state">
+          <span>No artifacts API connected yet</span>
+          <small>Future slice: wire this panel to GET /runs/:id/artifacts.</small>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -4858,6 +4935,57 @@ function readRunEventIssueText(event: RunEventEnvelope | undefined): string {
     || readDataString(event.data, "error")
     || readDataString(event.data, "detail")
     || readDataString(event.data, "reason");
+}
+
+function readRunEvidenceMessage(run: RunSession, terminalEvent: RunEventEnvelope | undefined): string {
+  const runError = run.errorMessage?.trim();
+  if (runError) {
+    return runError;
+  }
+
+  const terminalIssue = readRunEventIssueText(terminalEvent).trim();
+  if (terminalIssue) {
+    return terminalIssue;
+  }
+
+  const terminalPreview = terminalEvent ? formatEventPreview(terminalEvent.data) : "";
+  if (terminalPreview) {
+    return terminalPreview;
+  }
+
+  if (run.status === "succeeded") {
+    return "Run completed without a result payload.";
+  }
+  if (run.status === "failed") {
+    return "Run failed without a captured error message.";
+  }
+  if (run.status === "cancelled") {
+    return "Run was cancelled.";
+  }
+  if (run.status === "waiting_for_approval") {
+    return "Run is waiting for approval.";
+  }
+  if (run.status === "running") {
+    return "Run is still running.";
+  }
+  return "Run is queued.";
+}
+
+function buildAssistantOutputPreview(assistantText: string): string {
+  return formatUnknownPreview(assistantText, 260) || "No assistant output captured.";
+}
+
+function summarizeToolEvents(toolEvents: readonly RunEventEnvelope[]): { readonly total: number; readonly errorCount: number } {
+  let errorCount = 0;
+  for (const event of toolEvents) {
+    if (readDataBoolean(event.data, "isError") || Boolean(readDataString(event.data, "error"))) {
+      errorCount += 1;
+    }
+  }
+  return {
+    total: toolEvents.length,
+    errorCount,
+  };
 }
 
 function highestApprovalRisk(approvals: readonly ApprovalRequest[]): ApprovalRisk {

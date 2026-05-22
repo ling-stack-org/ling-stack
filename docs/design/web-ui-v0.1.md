@@ -423,7 +423,14 @@ Required regions:
    - event type filter.
    - timeline rows should stay scannable by default with a short preview, while error/result/tool payloads can be expanded inline for debugging.
 
-5. Artifacts:
+5. Evidence:
+   - v0.1 is derived only from already-loaded run/session fields and events; the UI does not fetch summary file contents yet,
+   - show a run summary preview with status, task, provider, terminal event, error/result summary, assistant output preview, tool counts, errored tool count, and approval count,
+   - show session files from `eventLogPath` and `summaryPath` with path wrapping,
+   - keep request/provider/terminal raw snapshots below Evidence as debug details,
+   - show the artifacts empty state until artifact APIs are connected.
+
+6. Artifacts:
    - file/diff/log/media list when available.
 
 Run viewer must support both live and historical modes.
@@ -498,6 +505,12 @@ Backed by future artifact APIs:
 - `GET /artifacts/:id`
 - `GET /artifacts/:id/content`
 
+v0.1 Run detail shows an Evidence artifacts empty state only:
+
+- `No artifacts API connected yet`,
+- future wiring target: `GET /runs/:id/artifacts`,
+- no daemon API change in this slice.
+
 Artifact types:
 
 ```text
@@ -510,7 +523,7 @@ image
 video
 ```
 
-v0.1 can start with list-only artifacts and basic text previews.
+After the artifact APIs exist, the panel can start with list-only artifacts and basic text previews.
 
 ## Event Rendering
 

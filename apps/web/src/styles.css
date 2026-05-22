@@ -1082,6 +1082,105 @@ pre {
   gap: 7px;
 }
 
+.run-evidence {
+  padding: 12px;
+  border: 1px solid #d8ded7;
+  background: #f7faf7;
+}
+
+.run-evidence-block {
+  display: grid;
+  gap: 8px;
+}
+
+.run-evidence-block > strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.run-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid #e1e6e2;
+  background: #e1e6e2;
+}
+
+.run-evidence-copy {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #e1e6e2;
+  background: #ffffff;
+  color: #43524e;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.run-evidence-copy.error {
+  border-color: #e7b4a8;
+  background: #fff8f5;
+  color: #9a341f;
+}
+
+.run-evidence-copy strong {
+  color: #17211f;
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.session-file-list {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 1px;
+  border: 1px solid #e1e6e2;
+  background: #e1e6e2;
+}
+
+.session-file-list span,
+.session-file-list code {
+  padding: 10px;
+  background: #ffffff;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.session-file-list span {
+  color: #6a7973;
+  font-weight: 700;
+}
+
+.session-file-list code {
+  color: #1d2925;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.artifact-empty-state {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px dashed #c7d1cc;
+  background: #fbfcfa;
+}
+
+.artifact-empty-state span {
+  color: #17211f;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.artifact-empty-state small {
+  color: #64736e;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .tool-event-list {
   display: grid;
   gap: 7px;
@@ -2651,6 +2750,8 @@ pre {
   .task-provider-readiness,
   .task-provider-readiness-meta,
   .run-detail-summary,
+  .run-evidence-grid,
+  .session-file-list,
   .runtime-run-repair-meta,
   .tool-event-meta,
   .provider-number-row,
