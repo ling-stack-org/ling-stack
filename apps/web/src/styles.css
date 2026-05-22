@@ -887,6 +887,29 @@ textarea:disabled {
   font-size: 11px;
 }
 
+.event-body {
+  min-width: 0;
+}
+
+.event-payload {
+  min-width: 0;
+}
+
+.event-payload summary {
+  cursor: pointer;
+  color: #596963;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.event-payload summary span {
+  overflow-wrap: anywhere;
+}
+
+.event-payload pre {
+  margin-top: 8px;
+}
+
 pre {
   margin: 0;
   overflow: auto;
@@ -1065,38 +1088,76 @@ pre {
 }
 
 .tool-event-row {
+  border: 1px solid #e1e6e2;
+  background: #fbfcfa;
+}
+
+.tool-event-row.error {
+  border-color: #e7b4a8;
+  background: #fff8f5;
+}
+
+.tool-event-summary {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 9px;
   padding: 9px 10px;
-  border: 1px solid #e1e6e2;
-  background: #fbfcfa;
+  cursor: pointer;
+  list-style: none;
 }
 
-.tool-event-row span,
-.tool-event-row small {
+.tool-event-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-event-summary span,
+.tool-event-summary small {
   color: #6d7d77;
   font-size: 11px;
   white-space: nowrap;
 }
 
-.tool-event-row strong,
-.tool-event-row code {
+.tool-event-summary strong,
+.tool-event-summary code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tool-event-row strong {
+.tool-event-summary strong {
   color: #17211f;
   font-size: 12px;
 }
 
-.tool-event-row code {
+.tool-event-summary code {
   color: #50605b;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
+}
+
+.tool-event-details {
+  display: grid;
+  gap: 9px;
+  padding: 0 10px 10px;
+}
+
+.tool-event-preview {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid #e1e6e2;
+  color: #4f5e59;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.tool-event-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid #e1e6e2;
+  background: #e1e6e2;
 }
 
 .run-detail-events {
@@ -1119,6 +1180,14 @@ pre {
 
 .json-details pre {
   padding: 0 10px 10px;
+}
+
+.compact-json summary {
+  padding: 8px 10px;
+}
+
+.compact-json pre {
+  max-height: 180px;
 }
 
 .channel-panel,
@@ -2528,6 +2597,7 @@ pre {
   .task-provider-readiness-meta,
   .run-detail-summary,
   .runtime-run-repair-meta,
+  .tool-event-meta,
   .provider-number-row,
   .provider-onboarding-strip,
   .provider-repair-item,
@@ -2536,7 +2606,7 @@ pre {
     grid-template-columns: 1fr;
   }
 
-  .tool-event-row {
+  .tool-event-summary {
     grid-template-columns: 42px minmax(0, 1fr);
   }
 

@@ -2932,12 +2932,7 @@ function RunDetailPanel({
             ) : (
               <div className="tool-event-list">
                 {toolEvents.map((event) => (
-                  <article className="tool-event-row" key={event.id}>
-                    <span>#{event.seq}</span>
-                    <strong>{readDataString(event.data, "toolName") || event.type.replace("tool_", "")}</strong>
-                    <code>{event.type}</code>
-                    <small>{readDataBoolean(event.data, "isError") ? "error" : formatDateTime(event.ts)}</small>
-                  </article>
+                  <ToolEventDetails key={event.id} event={event} events={events} />
                 ))}
               </div>
             )}
@@ -3046,6 +3041,49 @@ function RuntimeRunRepairPanel({
         </button>
       </div>
     </div>
+  );
+}
+
+function ToolEventDetails({
+  event,
+  events,
+}: {
+  readonly event: RunEventEnvelope;
+  readonly events: readonly RunEventEnvelope[];
+}): JSX.Element {
+  const isError = readDataBoolean(event.data, "isError");
+  const toolName = readDataString(event.data, "toolName") || event.type.replace("tool_", "");
+  const relatedToolStart = event.type === "tool_start" ? undefined : findRelatedToolStart(events, event);
+  const toolCallId = readDeepDataScalarString(event.data, ["toolCallId"]) || readDeepDataScalarString(relatedToolStart?.data, ["toolCallId"]);
+  const command = readDeepDataScalarString(event.data, ["command", "cmd", "script"]) || readDeepDataScalarString(relatedToolStart?.data, ["command", "cmd", "script"]);
+  const cwd = readDeepDataScalarString(event.data, ["cwd", "workdir", "workingDirectory"]) || readDeepDataScalarString(relatedToolStart?.data, ["cwd", "workdir", "workingDirectory"]);
+  const targetPath = readDeepDataScalarString(event.data, ["path", "filePath", "targetPath", "target"])
+    || readDeepDataScalarString(relatedToolStart?.data, ["path", "filePath", "targetPath", "target"]);
+  const outputPreview = readDeepDataPreview(event.data, ["message", "error", "detail", "reason", "result", "partialResult", "output", "stdout", "stderr"]);
+  const summaryPreview = outputPreview || command || formatEventPreview(event.data);
+
+  return (
+    <details className={`tool-event-row${isError ? " error" : ""}`} open={isError}>
+      <summary className="tool-event-summary">
+        <span>#{event.seq}</span>
+        <strong>{toolName}</strong>
+        <code>{event.type}</code>
+        <small>{isError ? "error" : formatDateTime(event.ts)}</small>
+      </summary>
+      <div className="tool-event-details">
+        {summaryPreview ? <p className="tool-event-preview">{summaryPreview}</p> : null}
+        <div className="tool-event-meta">
+          <MetaRow label="Tool call" value={toolCallId || "-"} compact />
+          <MetaRow label="Command" value={command || "-"} compact />
+          <MetaRow label="Cwd" value={cwd || "-"} compact />
+          <MetaRow label="Target path" value={targetPath || "-"} compact />
+        </div>
+        <details className="json-details compact-json">
+          <summary>Raw tool payload</summary>
+          <pre>{formatEventData(event.data)}</pre>
+        </details>
+      </div>
+    </details>
   );
 }
 
@@ -4335,6 +4373,9 @@ function RunTimeline({
 }
 
 function EventRow({ event }: { readonly event: RunEventEnvelope }): JSX.Element {
+  const preview = formatEventPreview(event.data);
+  const payloadOpen = event.type === "run_error" || event.type === "result" || (event.type === "tool_end" && readDataBoolean(event.data, "isError"));
+
   return (
     <article className={`event-row ${event.type}`}>
       <div className="event-seq">#{event.seq}</div>
@@ -4343,7 +4384,12 @@ function EventRow({ event }: { readonly event: RunEventEnvelope }): JSX.Element 
           <span>{event.type}</span>
           <time>{new Date(event.ts).toLocaleTimeString()}</time>
         </div>
-        <pre>{formatEventData(event.data)}</pre>
+        <details className="event-payload" open={payloadOpen}>
+          <summary>
+            <span>{preview || "Payload"}</span>
+          </summary>
+          <pre>{formatEventData(event.data)}</pre>
+        </details>
       </div>
     </article>
   );
@@ -4650,6 +4696,45 @@ function buildRuntimeRepairSuggestion(toolName: string, command: string, targetP
   return "Inspect the failed event, fix the task or workspace state, then rerun from the same persisted snapshot.";
 }
 
+function readDeepDataScalarString(data: unknown, keys: readonly string[]): string {
+  for (const source of readDataContainers(data)) {
+    for (const key of keys) {
+      const value = readDataField(source, key);
+      if (typeof value === "string" && value) {
+        return value;
+      }
+      if (typeof value === "number" || typeof value === "boolean") {
+        return String(value);
+      }
+    }
+  }
+  return "";
+}
+
+function readDeepDataPreview(data: unknown, keys: readonly string[]): string {
+  for (const source of readDataContainers(data)) {
+    for (const key of keys) {
+      const value = readDataField(source, key);
+      const preview = formatUnknownPreview(value, 220);
+      if (preview) {
+        return preview;
+      }
+    }
+  }
+  return "";
+}
+
+function readDataContainers(data: unknown): readonly unknown[] {
+  return [
+    data,
+    readDataField(data, "args"),
+    readDataField(data, "input"),
+    readDataField(data, "payload"),
+    readDataField(data, "result"),
+    readDataField(data, "partialResult"),
+  ].filter((value) => value !== undefined && value !== null);
+}
+
 function readRunEventIssueText(event: RunEventEnvelope | undefined): string {
   if (!event) {
     return "";
@@ -4801,6 +4886,36 @@ function readDataField(data: unknown, key: string): unknown {
     return (data as Record<string, unknown>)[key];
   }
   return undefined;
+}
+
+function formatEventPreview(data: unknown): string {
+  const preview = readDeepDataPreview(data, ["message", "error", "detail", "reason", "command", "text", "result", "partialResult"]);
+  if (preview) {
+    return preview;
+  }
+  return formatUnknownPreview(data, 160);
+}
+
+function formatUnknownPreview(value: unknown, maxLength: number): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return truncatePreview(value, maxLength);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return truncatePreview(JSON.stringify(value), maxLength);
+  } catch {
+    return truncatePreview(String(value), maxLength);
+  }
+}
+
+function truncatePreview(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
 }
 
 function formatEventData(data: unknown): string {

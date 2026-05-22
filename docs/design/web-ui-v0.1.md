@@ -414,11 +414,13 @@ Required regions:
    - args preview,
    - result/error preview,
    - duration if available later.
+   - each tool row should be expandable and show the raw event payload plus useful fields such as `toolCallId`, command, cwd, target path, and result/error output when present.
 
 4. Raw events:
    - collapsible debug panel,
    - event sequence numbers,
    - event type filter.
+   - timeline rows should stay scannable by default with a short preview, while error/result/tool payloads can be expanded inline for debugging.
 
 5. Artifacts:
    - file/diff/log/media list when available.
