@@ -69,6 +69,7 @@ interface MockMediaJob {
   input: Record<string, unknown>;
   artifactIds: string[];
   status: string;
+  errorMessage?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -197,6 +198,19 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
   ];
   state.mediaJobs = [
     {
+      id: "media_job_live_failed",
+      workspaceId: "workspace_default",
+      providerPresetId: "provider_seedream",
+      operation: "image_generate",
+      prompt: "Live gated product mockup.",
+      input: {},
+      artifactIds: [],
+      status: "failed",
+      errorMessage: "Seedream live vendor HTTP adapter is not implemented yet. No vendor HTTP request was made.",
+      createdAt: "2026-05-23T00:00:30.000Z",
+      updatedAt: "2026-05-23T00:01:00.000Z",
+    },
+    {
       id: "media_job_existing",
       workspaceId: "workspace_default",
       providerPresetId: "provider_seedream",
@@ -214,9 +228,12 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Jobs" }).click();
   await expect(page.getByRole("heading", { name: "Media jobs", level: 1 })).toBeVisible();
-  await expect(page.locator(".media-job-row")).toContainText("Existing product mockup.");
+  const failedJob = page.locator(".media-job-row").filter({ hasText: "Live gated product mockup." });
+  await expect(failedJob).toContainText("failed");
+  await expect(failedJob).toContainText("live vendor HTTP adapter is not implemented yet");
 
   const existingJob = page.locator(".media-job-row").filter({ hasText: "Existing product mockup." });
+  await expect(existingJob).toContainText("Existing product mockup.");
   await existingJob.getByRole("button", { name: "Run" }).click();
   await expect(existingJob).toContainText("succeeded");
   await expect(existingJob.locator(".artifact-row")).toContainText("Image generate static result");
@@ -226,7 +243,7 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
   await page.getByRole("button", { name: "Create media job" }).click();
 
   await expect(page.locator(".media-job-row").first()).toContainText("New campaign image.");
-  await expect.poll(() => state.mediaJobs.length).toBe(2);
+  await expect.poll(() => state.mediaJobs.length).toBe(3);
 });
 
 function createBaseState(options: { approvalStatus: "pending" | "expired" }): MockState {

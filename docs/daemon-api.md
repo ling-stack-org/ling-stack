@@ -552,7 +552,7 @@ Response:
 POST /media-jobs/:id/run?cwd=/path/to/project
 ```
 
-The current execution interface uses the media adapter contract and provider-kind registry. `jimeng`, `seedream`, and `seedance` resolve to local static adapter stubs that emit a redacted vendor request plan and use a disabled-by-default vendor transport seam. The daemon re-validates the media provider preset, moves the job through `running`, and then records `succeeded` with a Markdown artifact under `.ling-stack/artifacts/media_jobs/:id/`. No Jimeng, Seedream, Seedance, billing, or `media_cost` approval call is made.
+The current execution interface uses the media adapter contract and provider-kind registry. `jimeng`, `seedream`, and `seedance` resolve to local static adapter stubs that emit a redacted vendor request plan and use a disabled-by-default vendor transport seam. A provider preset can set `compat.mediaVendorTransport.mode = "live"` to enter the fail-closed live gate; the daemon then requires `baseUrl`, `apiKeyRef`, and a configured env secret, but still returns a failed job with `live vendor HTTP adapter is not implemented yet` instead of making a vendor HTTP request. No Jimeng, Seedream, Seedance, billing, or `media_cost` approval call is made.
 
 Runnable statuses are `queued`, `failed`, and `cancelled`. `running` and `succeeded` jobs return `409 media_job_not_runnable`. Tests can force the failure path with `input.forceFailure: true`.
 
@@ -721,6 +721,26 @@ DELETE /providers/:id?cwd=/path/to/project
 
 `PATCH` accepts partial provider fields. The daemon validates the merged provider shape before writing.
 
+Media provider presets can prepare the live transport gate without changing the media job API:
+
+```json
+{
+  "baseUrl": "https://media.example.invalid",
+  "apiKeyRef": "env:SEEDREAM_API_KEY",
+  "compat": {
+    "mediaVendorTransport": {
+      "mode": "live"
+    }
+  }
+}
+```
+
+CLI equivalent:
+
+```bash
+ling-stack provider update provider_... --base-url https://media.example.invalid --api-key-ref env:SEEDREAM_API_KEY --compat-json '{"mediaVendorTransport":{"mode":"live"}}'
+```
+
 ### Check Provider
 
 ```http
@@ -738,7 +758,7 @@ Response:
 }
 ```
 
-The check validates base URL format, required secret refs, enabled state, and supported capabilities. For `openai-completions`, `openai-responses`, and `anthropic-messages`, it also performs a small live model request with a 10 second timeout. Common failure codes include `secret_missing`, `network_failed`, `auth_failed`, `model_unsupported`, `rate_limited`, `provider_disabled`, and `provider_error`.
+The check validates base URL format, required secret refs, enabled state, and supported capabilities. For `media-job` presets, the check remains static: default disabled transport reports no live vendor HTTP, while `compat.mediaVendorTransport.mode = "live"` validates the live gate configuration and reports that live adapters are not implemented yet. For `openai-completions`, `openai-responses`, and `anthropic-messages`, it also performs a small live model request with a 10 second timeout. Common failure codes include `secret_missing`, `network_failed`, `auth_failed`, `model_unsupported`, `rate_limited`, `provider_disabled`, and `provider_error`.
 
 ## Approval Policy and Requests
 
