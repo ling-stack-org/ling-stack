@@ -80,6 +80,8 @@ export interface MediaAdapterProviderConfig {
   readonly providerId: string;
   readonly model: string;
   readonly api: string;
+  readonly baseUrl?: string;
+  readonly apiKeyRef?: string;
   readonly capabilities: readonly ProviderCapability[];
 }
 
@@ -127,6 +129,32 @@ export interface MediaAdapterFactory {
   readonly id: string;
   readonly providerKinds: readonly string[];
   create(provider: MediaAdapterProviderConfig): MediaAdapter;
+}
+
+export interface MediaVendorAdapterDefinition {
+  readonly kind: string;
+  readonly displayName: string;
+  readonly capabilities: readonly MediaOperation[];
+}
+
+export interface MediaVendorRequestPlan {
+  readonly mode: "static_vendor_request_plan";
+  readonly liveCall: false;
+  readonly vendor: string;
+  readonly operation: MediaOperation;
+  readonly provider: {
+    readonly presetId: string;
+    readonly kind: string;
+    readonly providerId: string;
+    readonly model: string;
+    readonly baseUrl?: string;
+    readonly apiKeyRef?: string;
+  };
+  readonly payload: {
+    readonly prompt: string;
+    readonly input: unknown;
+  };
+  readonly notes: readonly string[];
 }
 
 export interface MediaAdapterRegistryOptions {
@@ -329,24 +357,63 @@ export function createStaticMediaAdapter(options: StaticMediaAdapterOptions = {}
 
 export function createDefaultMediaAdapterRegistry(): MediaAdapterRegistry {
   return new MediaAdapterRegistry({
-    factories: [
-      createStaticVendorMediaAdapterFactory("jimeng", "Jimeng"),
-      createStaticVendorMediaAdapterFactory("seedream", "Seedream"),
-      createStaticVendorMediaAdapterFactory("seedance", "Seedance"),
-    ],
+    factories: defaultMediaVendorAdapterDefinitions().map((definition) =>
+      createStaticVendorMediaAdapterFactory(definition.kind, definition.displayName),
+    ),
   });
 }
 
 export function createStaticVendorMediaAdapterFactory(kind: string, displayName: string): MediaAdapterFactory {
+  const definition = getMediaVendorAdapterDefinition(kind) ?? {
+    kind,
+    displayName,
+    capabilities: ["image_generate", "image_edit", "video_generate"],
+  };
   return {
     id: `${kind}-static-factory`,
     providerKinds: [kind],
     create(): MediaAdapter {
-      return createStaticMediaAdapter({
+      return createStaticVendorMediaAdapter({
         id: `${kind}-static`,
         displayName: `${displayName} Static Adapter`,
+        definition: {
+          ...definition,
+          displayName,
+        },
       });
     },
+  };
+}
+
+export function defaultMediaVendorAdapterDefinitions(): readonly MediaVendorAdapterDefinition[] {
+  return defaultMediaVendorDefinitions;
+}
+
+export function createMediaVendorRequestPlan(
+  definition: MediaVendorAdapterDefinition,
+  request: MediaExecutionRequest,
+): MediaVendorRequestPlan {
+  return {
+    mode: "static_vendor_request_plan",
+    liveCall: false,
+    vendor: definition.kind,
+    operation: request.operation,
+    provider: {
+      presetId: request.provider.id,
+      kind: request.provider.kind,
+      providerId: request.provider.providerId,
+      model: request.provider.model,
+      baseUrl: request.provider.baseUrl,
+      apiKeyRef: request.provider.apiKeyRef,
+    },
+    payload: {
+      prompt: request.prompt,
+      input: redactSecrets(request.input),
+    },
+    notes: [
+      `${definition.displayName} is resolved through the media adapter registry.`,
+      "This is a local request plan only. No live vendor HTTP request was made.",
+    ],
   };
 }
 
@@ -380,6 +447,83 @@ function renderStaticMediaResult(request: MediaExecutionRequest): string {
     "",
     "```json",
     redactedInput,
+    "```",
+    "",
+    "This artifact was produced by the local static media adapter. No vendor media API was called.",
+    "",
+  ].join("\n");
+}
+
+function createStaticVendorMediaAdapter(options: StaticMediaAdapterOptions & {
+  readonly definition: MediaVendorAdapterDefinition;
+}): MediaAdapter {
+  const capabilities = options.definition.capabilities;
+  return {
+    id: options.id ?? `${options.definition.kind}-static`,
+    displayName: options.displayName ?? `${options.definition.displayName} Static Adapter`,
+    capabilities,
+
+    supports(operation: MediaOperation): boolean {
+      return capabilities.includes(operation);
+    },
+
+    async execute(request: MediaExecutionRequest): Promise<MediaExecutionResult> {
+      if (!capabilities.includes(request.operation)) {
+        throw new MediaAdapterExecutionError(
+          "unsupported_capability",
+          `${options.definition.displayName} static adapter does not support ${request.operation}.`,
+        );
+      }
+
+      if (request.input.forceFailure === true) {
+        return {
+          status: "failed",
+          artifacts: [],
+          errorCode: "provider_internal_error",
+          errorMessage: "Static media adapter forced failure from input.forceFailure.",
+        };
+      }
+
+      const forcedErrorCode = readForcedErrorCode(request.input);
+      if (forcedErrorCode) {
+        throw new MediaAdapterExecutionError(forcedErrorCode, `Static media adapter forced ${forcedErrorCode}.`);
+      }
+
+      return {
+        status: "succeeded",
+        artifacts: [
+          {
+            type: "markdown",
+            title: `${options.definition.displayName} ${formatMediaOperationLabel(request.operation)} request plan`,
+            contentType: "text/markdown; charset=utf-8",
+            pathHint: "vendor-request-plan.md",
+            content: renderStaticVendorMediaResult(options.definition, request),
+          },
+        ],
+      };
+    },
+  };
+}
+
+function renderStaticVendorMediaResult(definition: MediaVendorAdapterDefinition, request: MediaExecutionRequest): string {
+  const requestPlan = JSON.stringify(createMediaVendorRequestPlan(definition, request), null, 2);
+  return [
+    "# Media job static result",
+    "",
+    `- Job: ${request.jobId}`,
+    `- Operation: ${request.operation}`,
+    `- Vendor: ${definition.displayName} (${definition.kind})`,
+    `- Provider: ${request.provider.displayName} (${request.provider.providerId}/${request.provider.model})`,
+    `- Generated at: ${request.requestedAt}`,
+    "",
+    "## Prompt",
+    "",
+    request.prompt,
+    "",
+    "## Vendor request plan",
+    "",
+    "```json",
+    requestPlan,
     "```",
     "",
     "This artifact was produced by the local static media adapter. No vendor media API was called.",
@@ -452,3 +596,25 @@ const mediaAdapterErrorCodes: readonly MediaAdapterErrorCode[] = [
   "provider_internal_error",
   "invalid_request",
 ];
+
+const defaultMediaVendorDefinitions: readonly MediaVendorAdapterDefinition[] = [
+  {
+    kind: "jimeng",
+    displayName: "Jimeng",
+    capabilities: ["image_generate", "image_edit"],
+  },
+  {
+    kind: "seedream",
+    displayName: "Seedream",
+    capabilities: ["image_generate", "image_edit"],
+  },
+  {
+    kind: "seedance",
+    displayName: "Seedance",
+    capabilities: ["video_generate"],
+  },
+];
+
+function getMediaVendorAdapterDefinition(kind: string): MediaVendorAdapterDefinition | undefined {
+  return defaultMediaVendorDefinitions.find((definition) => definition.kind === kind);
+}

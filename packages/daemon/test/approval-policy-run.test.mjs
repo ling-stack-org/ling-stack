@@ -337,6 +337,9 @@ test("media job run uses the media adapter contract and links artifacts", async 
     assert.match(content.headers.get("content-type") ?? "", /text\/markdown/);
     const text = await content.text();
     assert.match(text, /Media job static result/);
+    assert.match(text, /Vendor request plan/);
+    assert.match(text, /"mode": "static_vendor_request_plan"/);
+    assert.match(text, /"liveCall": false/);
     assert.match(text, /No vendor media API was called/);
     assert.doesNotMatch(text, /sk-test_123456789/);
 

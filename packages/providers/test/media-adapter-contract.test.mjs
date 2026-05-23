@@ -4,7 +4,9 @@ import {
   MediaAdapterExecutionError,
   MediaAdapterRegistry,
   createDefaultMediaAdapterRegistry,
+  createMediaVendorRequestPlan,
   createStaticMediaAdapter,
+  defaultMediaVendorAdapterDefinitions,
   executeMediaJob,
   normalizeMediaAdapterError,
   resolveMediaAdapter,
@@ -17,6 +19,8 @@ const provider = {
   providerId: "seedream",
   model: "seedream",
   api: "media-job",
+  baseUrl: "https://media.example.invalid",
+  apiKeyRef: "env:SEEDREAM_API_KEY",
   capabilities: ["image_generate", "image_edit"],
 };
 
@@ -117,9 +121,24 @@ test("media adapter execution errors keep their normalized code", () => {
 test("default media adapter registry maps vendor providers to static adapter stubs", async () => {
   const registry = createDefaultMediaAdapterRegistry();
   const vendorCases = [
-    { kind: "jimeng", id: "jimeng-static", displayName: "Jimeng Static Adapter" },
-    { kind: "seedream", id: "seedream-static", displayName: "Seedream Static Adapter" },
-    { kind: "seedance", id: "seedance-static", displayName: "Seedance Static Adapter" },
+    {
+      kind: "jimeng",
+      id: "jimeng-static",
+      displayName: "Jimeng Static Adapter",
+      capabilities: ["image_generate", "image_edit"],
+    },
+    {
+      kind: "seedream",
+      id: "seedream-static",
+      displayName: "Seedream Static Adapter",
+      capabilities: ["image_generate", "image_edit"],
+    },
+    {
+      kind: "seedance",
+      id: "seedance-static",
+      displayName: "Seedance Static Adapter",
+      capabilities: ["video_generate"],
+    },
   ];
 
   for (const vendor of vendorCases) {
@@ -128,10 +147,11 @@ test("default media adapter registry maps vendor providers to static adapter stu
     assert.ok(resolution.adapter);
     assert.equal(resolution.adapter.id, vendor.id);
     assert.equal(resolution.adapter.displayName, vendor.displayName);
+    assert.deepEqual(resolution.adapter.capabilities, vendor.capabilities);
   }
 });
 
-test("resolved vendor adapter stubs do not call live media vendors", async () => {
+test("resolved vendor adapter stubs emit redacted request plans without live calls", async () => {
   const resolution = resolveMediaAdapter(createDefaultMediaAdapterRegistry(), provider);
 
   assert.equal(resolution.ok, true);
@@ -141,11 +161,68 @@ test("resolved vendor adapter stubs do not call live media vendors", async () =>
     provider,
     operation: "image_generate",
     prompt: "Create a product mockup.",
-    input: {},
+    input: {
+      imageUrl: "file://input.png",
+      apiKey: "sk-test_123456789",
+      nested: { token: "Bearer secret-token" },
+    },
     requestedAt: "2026-05-23T00:00:00.000Z",
   });
   assert.equal(result.status, "succeeded");
+  assert.match(result.artifacts[0].content ?? "", /Vendor request plan/);
+  assert.match(result.artifacts[0].content ?? "", /"mode": "static_vendor_request_plan"/);
+  assert.match(result.artifacts[0].content ?? "", /"liveCall": false/);
+  assert.match(result.artifacts[0].content ?? "", /"apiKeyRef": "env:SEEDREAM_API_KEY"/);
   assert.match(result.artifacts[0].content ?? "", /No vendor media API was called/);
+  assert.doesNotMatch(result.artifacts[0].content ?? "", /sk-test_123456789/);
+  assert.doesNotMatch(result.artifacts[0].content ?? "", /secret-token/);
+});
+
+test("seedance vendor adapter only exposes video generation", async () => {
+  const resolution = resolveMediaAdapter(createDefaultMediaAdapterRegistry(), {
+    ...provider,
+    kind: "seedance",
+    capabilities: ["video_generate"],
+  });
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  assert.equal(resolution.adapter.supports("video_generate"), true);
+  assert.equal(resolution.adapter.supports("image_generate"), false);
+
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_seedance_wrong_operation",
+    provider: { ...provider, kind: "seedance", capabilities: ["video_generate"] },
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorCode, "unsupported_capability");
+  assert.deepEqual(result.artifacts, []);
+});
+
+test("media vendor request plan is stable and redacted", () => {
+  const seedream = defaultMediaVendorAdapterDefinitions().find((definition) => definition.kind === "seedream");
+  assert.ok(seedream);
+
+  const plan = createMediaVendorRequestPlan(seedream, {
+    jobId: "media_job_plan",
+    provider,
+    operation: "image_edit",
+    prompt: "Edit this product shot.",
+    input: { maskUrl: "file://mask.png", apiKey: "sk-test_123456789" },
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(plan.mode, "static_vendor_request_plan");
+  assert.equal(plan.liveCall, false);
+  assert.equal(plan.vendor, "seedream");
+  assert.equal(plan.operation, "image_edit");
+  assert.equal(plan.provider.presetId, "provider_seedream");
+  assert.equal(plan.provider.apiKeyRef, "env:SEEDREAM_API_KEY");
+  assert.deepEqual(plan.payload.input, { maskUrl: "file://mask.png", apiKey: "[REDACTED]" });
 });
 
 test("media adapter registry reports clear missing adapter errors when fallback is disabled", () => {

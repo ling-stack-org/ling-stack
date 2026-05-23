@@ -304,7 +304,7 @@ Implemented:
 - Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, provider settings, and approval list.
 - Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
 - Automatic artifact extraction from Pi tool outputs, generated text/log/Markdown/diff content, and generated file path metadata.
-- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, media adapter contract, provider-kind registry wiring, static execution adapter, local Markdown artifacts, and Web Media Jobs panel.
+- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, media adapter contract, provider-kind registry wiring, vendor request planning, static execution adapter, local Markdown artifacts, and Web Media Jobs panel.
 - CLI first-loop commands for init, channels, tasks, providers, runs, approvals, approval policy, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
