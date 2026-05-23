@@ -4297,7 +4297,7 @@ function MediaJobsPage({
                         type="button"
                         onClick={() => onRun(job.id)}
                         disabled={isLoading || isRunningJob || !isRunnable}
-                        title={isRunnable ? "Run static media adapter" : `Cannot run from ${job.status}`}
+                        title={isRunnable ? "Run media adapter" : `Cannot run from ${job.status}`}
                       >
                         {isRunningJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                         Run
@@ -4348,7 +4348,7 @@ function MediaJobsPage({
           {mediaProviders.length > 0 ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
           <span>
             {mediaProviders.length > 0
-              ? "Media providers can run the local static media adapter. Coding task runs still require chat providers."
+              ? "Media providers can run through the media adapter contract. Coding task runs still require chat providers."
               : "Create a Jimeng, Seedream, or Seedance media provider before recording media jobs."}
           </span>
         </div>

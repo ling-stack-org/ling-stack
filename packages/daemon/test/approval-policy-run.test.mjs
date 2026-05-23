@@ -301,7 +301,7 @@ test("media job API creates, lists, and shows queued jobs without running on cre
   }
 });
 
-test("media job run uses the static adapter and links artifacts", async () => {
+test("media job run uses the media adapter contract and links artifacts", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-run-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job_run",
@@ -349,7 +349,7 @@ test("media job run uses the static adapter and links artifacts", async () => {
   }
 });
 
-test("media job run records static adapter failures", async () => {
+test("media job run records media adapter failures", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-run-failure-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job_run_failure",
@@ -372,6 +372,18 @@ test("media job run records static adapter failures", async () => {
     assert.match(executed.mediaJob.errorMessage, /forced failure/);
     assert.deepEqual(executed.mediaJob.artifactIds, []);
     assert.deepEqual(executed.artifacts, []);
+
+    const errorJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: createdProvider.provider.id,
+      operation: "image_generate",
+      prompt: "Create a local static artifact error.",
+      input: { forceErrorCode: "rate_limited" },
+    });
+    const errorExecuted = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(errorJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(errorExecuted.mediaJob.status, "failed");
+    assert.match(errorExecuted.mediaJob.errorMessage, /rate_limited/);
+    assert.deepEqual(errorExecuted.mediaJob.artifactIds, []);
+    assert.deepEqual(errorExecuted.artifacts, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
