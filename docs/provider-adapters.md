@@ -85,6 +85,7 @@ Current implementation:
 - `createStaticMediaAdapter()` is the only executable media adapter,
 - `createDefaultMediaAdapterRegistry()` maps `jimeng`, `seedream`, and `seedance` provider kinds to static adapter factory stubs,
 - static vendor stubs expose vendor-specific operation capabilities and emit a redacted `static_vendor_request_plan`,
+- `MediaVendorTransport` is present as a disabled-by-default seam; tests can inject fake transports, but the default path does not call a network,
 - unknown media providers fall back to the static adapter by default, while tests can disable that fallback to assert missing-adapter errors,
 - it produces redacted Markdown artifact candidates for success,
 - it exposes deterministic failure/error paths for contract tests,
@@ -188,7 +189,7 @@ Every adapter should have contract tests for:
 - Rate-limit or provider error normalization.
 - Secret redaction in logs.
 
-Current media contract coverage lives in `packages/providers/test/media-adapter-contract.test.mjs` and covers static success, forced failure, thrown error normalization, unsupported capability rejection, provider-kind registry wiring, vendor request planning, vendor operation capability boundaries, missing adapter errors, non-media provider rejection, and secret redaction.
+Current media contract coverage lives in `packages/providers/test/media-adapter-contract.test.mjs` and covers static success, forced failure, thrown error normalization, unsupported capability rejection, provider-kind registry wiring, vendor request planning, disabled/fake transport seams, vendor operation capability boundaries, missing adapter errors, non-media provider rejection, and secret redaction.
 
 ## Error Normalization
 
