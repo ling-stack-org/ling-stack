@@ -83,6 +83,8 @@ interface MediaAdapter {
 Current implementation:
 
 - `createStaticMediaAdapter()` is the only executable media adapter,
+- `createDefaultMediaAdapterRegistry()` maps `jimeng`, `seedream`, and `seedance` provider kinds to static adapter factory stubs,
+- unknown media providers fall back to the static adapter by default, while tests can disable that fallback to assert missing-adapter errors,
 - it produces redacted Markdown artifact candidates for success,
 - it exposes deterministic failure/error paths for contract tests,
 - it does not call Jimeng, Seedream, Seedance, billing, or approval services.
@@ -185,7 +187,7 @@ Every adapter should have contract tests for:
 - Rate-limit or provider error normalization.
 - Secret redaction in logs.
 
-Current media contract coverage lives in `packages/providers/test/media-adapter-contract.test.mjs` and covers static success, forced failure, thrown error normalization, unsupported capability rejection, and secret redaction.
+Current media contract coverage lives in `packages/providers/test/media-adapter-contract.test.mjs` and covers static success, forced failure, thrown error normalization, unsupported capability rejection, provider-kind registry wiring, missing adapter errors, non-media provider rejection, and secret redaction.
 
 ## Error Normalization
 

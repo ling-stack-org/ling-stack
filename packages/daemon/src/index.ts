@@ -64,10 +64,13 @@ import {
   type PiRunnerRunOptions,
 } from "@ling-stack/runner-pi";
 import {
-  createStaticMediaAdapter,
+  createDefaultMediaAdapterRegistry,
   executeMediaJob as executeMediaAdapterJob,
+  resolveMediaAdapter,
   type MediaExecutionArtifact,
 } from "@ling-stack/providers";
+
+const mediaAdapterRegistry = createDefaultMediaAdapterRegistry();
 
 export interface DaemonConfig {
   readonly host?: string;
@@ -988,9 +991,11 @@ async function handleRunMediaJob(
       jobId: job.id,
       provider: {
         id: provider.id,
+        kind: provider.kind,
         displayName: provider.displayName,
         providerId: provider.providerId,
         model: provider.model,
+        api: provider.api,
         capabilities: provider.capabilities,
       },
       operation: job.operation,
@@ -2241,10 +2246,19 @@ function materializeExtractedArtifact(
 }
 
 function createMediaAdapterForProvider(provider: ProviderPreset) {
-  if (provider.api !== "media-job") {
-    throw new HttpError(400, "unsupported_capability", "Media jobs require a media-job provider preset");
+  const resolution = resolveMediaAdapter(mediaAdapterRegistry, {
+    id: provider.id,
+    kind: provider.kind,
+    displayName: provider.displayName,
+    providerId: provider.providerId,
+    model: provider.model,
+    api: provider.api,
+    capabilities: provider.capabilities,
+  });
+  if (!resolution.ok || !resolution.adapter) {
+    throw new HttpError(400, resolution.errorCode ?? "unsupported_capability", resolution.errorMessage ?? "Media adapter is not available.");
   }
-  return createStaticMediaAdapter();
+  return resolution.adapter;
 }
 
 function createMediaJobArtifacts(

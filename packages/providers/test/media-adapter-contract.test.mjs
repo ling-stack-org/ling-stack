@@ -2,16 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   MediaAdapterExecutionError,
+  MediaAdapterRegistry,
+  createDefaultMediaAdapterRegistry,
   createStaticMediaAdapter,
   executeMediaJob,
   normalizeMediaAdapterError,
+  resolveMediaAdapter,
 } from "../dist/index.js";
 
 const provider = {
   id: "provider_seedream",
+  kind: "seedream",
   displayName: "Seedream Image",
   providerId: "seedream",
   model: "seedream",
+  api: "media-job",
   capabilities: ["image_generate", "image_edit"],
 };
 
@@ -107,4 +112,55 @@ test("media adapter execution errors keep their normalized code", () => {
     code: "auth_failed",
     message: "Missing API key.",
   });
+});
+
+test("default media adapter registry maps vendor providers to static adapter stubs", async () => {
+  const registry = createDefaultMediaAdapterRegistry();
+  const vendorCases = [
+    { kind: "jimeng", id: "jimeng-static", displayName: "Jimeng Static Adapter" },
+    { kind: "seedream", id: "seedream-static", displayName: "Seedream Static Adapter" },
+    { kind: "seedance", id: "seedance-static", displayName: "Seedance Static Adapter" },
+  ];
+
+  for (const vendor of vendorCases) {
+    const resolution = resolveMediaAdapter(registry, { ...provider, kind: vendor.kind });
+    assert.equal(resolution.ok, true);
+    assert.ok(resolution.adapter);
+    assert.equal(resolution.adapter.id, vendor.id);
+    assert.equal(resolution.adapter.displayName, vendor.displayName);
+  }
+});
+
+test("resolved vendor adapter stubs do not call live media vendors", async () => {
+  const resolution = resolveMediaAdapter(createDefaultMediaAdapterRegistry(), provider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_registry_static",
+    provider,
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+  assert.equal(result.status, "succeeded");
+  assert.match(result.artifacts[0].content ?? "", /No vendor media API was called/);
+});
+
+test("media adapter registry reports clear missing adapter errors when fallback is disabled", () => {
+  const registry = new MediaAdapterRegistry({ enableStaticFallback: false });
+  const resolution = resolveMediaAdapter(registry, { ...provider, kind: "unknown-media" });
+
+  assert.equal(resolution.ok, false);
+  assert.equal(resolution.errorCode, "unsupported_capability");
+  assert.match(resolution.errorMessage ?? "", /No media adapter is registered/);
+});
+
+test("media adapter registry rejects non-media provider presets", () => {
+  const resolution = resolveMediaAdapter(createDefaultMediaAdapterRegistry(), { ...provider, api: "openai-completions" });
+
+  assert.equal(resolution.ok, false);
+  assert.equal(resolution.errorCode, "unsupported_capability");
+  assert.match(resolution.errorMessage ?? "", /media-job provider preset/);
 });

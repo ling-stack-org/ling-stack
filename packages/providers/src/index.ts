@@ -75,9 +75,11 @@ export type MediaAdapterErrorCode =
 
 export interface MediaAdapterProviderConfig {
   readonly id: string;
+  readonly kind: string;
   readonly displayName: string;
   readonly providerId: string;
   readonly model: string;
+  readonly api: string;
   readonly capabilities: readonly ProviderCapability[];
 }
 
@@ -112,6 +114,73 @@ export interface MediaAdapter {
 
   supports(operation: MediaOperation): boolean;
   execute(request: MediaExecutionRequest): Promise<MediaExecutionResult>;
+}
+
+export interface MediaAdapterResolution {
+  readonly ok: boolean;
+  readonly adapter?: MediaAdapter;
+  readonly errorCode?: MediaAdapterErrorCode;
+  readonly errorMessage?: string;
+}
+
+export interface MediaAdapterFactory {
+  readonly id: string;
+  readonly providerKinds: readonly string[];
+  create(provider: MediaAdapterProviderConfig): MediaAdapter;
+}
+
+export interface MediaAdapterRegistryOptions {
+  readonly factories?: readonly MediaAdapterFactory[];
+  readonly enableStaticFallback?: boolean;
+}
+
+export class MediaAdapterRegistry {
+  private readonly factoriesByKind = new Map<string, MediaAdapterFactory>();
+  private readonly enableStaticFallback: boolean;
+
+  constructor(options: MediaAdapterRegistryOptions = {}) {
+    this.enableStaticFallback = options.enableStaticFallback ?? true;
+    for (const factory of options.factories ?? []) {
+      this.register(factory);
+    }
+  }
+
+  register(factory: MediaAdapterFactory): void {
+    for (const kind of factory.providerKinds) {
+      this.factoriesByKind.set(kind, factory);
+    }
+  }
+
+  resolve(provider: MediaAdapterProviderConfig): MediaAdapterResolution {
+    if (provider.api !== "media-job") {
+      return {
+        ok: false,
+        errorCode: "unsupported_capability",
+        errorMessage: "Media adapters require a media-job provider preset.",
+      };
+    }
+
+    const factory = this.factoriesByKind.get(provider.kind);
+    if (factory) {
+      return {
+        ok: true,
+        adapter: factory.create(provider),
+      };
+    }
+
+    if (this.enableStaticFallback) {
+      return {
+        ok: true,
+        adapter: createStaticMediaAdapter(),
+      };
+    }
+
+    return {
+      ok: false,
+      errorCode: "unsupported_capability",
+      errorMessage: `No media adapter is registered for provider kind ${provider.kind}.`,
+    };
+  }
 }
 
 export interface NormalizedMediaAdapterError {
@@ -211,11 +280,16 @@ export function normalizeMediaAdapterError(error: unknown): NormalizedMediaAdapt
   };
 }
 
-export function createStaticMediaAdapter(): MediaAdapter {
+export interface StaticMediaAdapterOptions {
+  readonly id?: string;
+  readonly displayName?: string;
+}
+
+export function createStaticMediaAdapter(options: StaticMediaAdapterOptions = {}): MediaAdapter {
   const capabilities: readonly MediaOperation[] = ["image_generate", "image_edit", "video_generate"];
   return {
-    id: "static-media",
-    displayName: "Static Media Adapter",
+    id: options.id ?? "static-media",
+    displayName: options.displayName ?? "Static Media Adapter",
     capabilities,
 
     supports(operation: MediaOperation): boolean {
@@ -251,6 +325,33 @@ export function createStaticMediaAdapter(): MediaAdapter {
       };
     },
   };
+}
+
+export function createDefaultMediaAdapterRegistry(): MediaAdapterRegistry {
+  return new MediaAdapterRegistry({
+    factories: [
+      createStaticVendorMediaAdapterFactory("jimeng", "Jimeng"),
+      createStaticVendorMediaAdapterFactory("seedream", "Seedream"),
+      createStaticVendorMediaAdapterFactory("seedance", "Seedance"),
+    ],
+  });
+}
+
+export function createStaticVendorMediaAdapterFactory(kind: string, displayName: string): MediaAdapterFactory {
+  return {
+    id: `${kind}-static-factory`,
+    providerKinds: [kind],
+    create(): MediaAdapter {
+      return createStaticMediaAdapter({
+        id: `${kind}-static`,
+        displayName: `${displayName} Static Adapter`,
+      });
+    },
+  };
+}
+
+export function resolveMediaAdapter(registry: MediaAdapterRegistry, provider: MediaAdapterProviderConfig): MediaAdapterResolution {
+  return registry.resolve(provider);
 }
 
 function readForcedErrorCode(input: Record<string, unknown>): MediaAdapterErrorCode | undefined {
