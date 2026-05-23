@@ -996,6 +996,8 @@ async function handleRunMediaJob(
         providerId: provider.providerId,
         model: provider.model,
         api: provider.api,
+        baseUrl: provider.baseUrl,
+        apiKeyRef: provider.apiKeyRef,
         capabilities: provider.capabilities,
       },
       operation: job.operation,
@@ -2253,6 +2255,8 @@ function createMediaAdapterForProvider(provider: ProviderPreset) {
     providerId: provider.providerId,
     model: provider.model,
     api: provider.api,
+    baseUrl: provider.baseUrl,
+    apiKeyRef: provider.apiKeyRef,
     capabilities: provider.capabilities,
   });
   if (!resolution.ok || !resolution.adapter) {
