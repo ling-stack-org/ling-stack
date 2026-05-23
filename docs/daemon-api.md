@@ -552,7 +552,7 @@ Response:
 POST /media-jobs/:id/run?cwd=/path/to/project
 ```
 
-The current execution interface uses the media adapter contract with the local static adapter implementation. It re-validates the media provider preset, moves the job through `running`, and then records `succeeded` with a Markdown artifact under `.ling-stack/artifacts/media_jobs/:id/`. No Jimeng, Seedream, Seedance, billing, or `media_cost` approval call is made.
+The current execution interface uses the media adapter contract and provider-kind registry. `jimeng`, `seedream`, and `seedance` resolve to local static adapter stubs. The daemon re-validates the media provider preset, moves the job through `running`, and then records `succeeded` with a Markdown artifact under `.ling-stack/artifacts/media_jobs/:id/`. No Jimeng, Seedream, Seedance, billing, or `media_cost` approval call is made.
 
 Runnable statuses are `queued`, `failed`, and `cancelled`. `running` and `succeeded` jobs return `409 media_job_not_runnable`. Tests can force the failure path with `input.forceFailure: true`.
 
