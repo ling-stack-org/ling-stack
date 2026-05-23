@@ -157,9 +157,35 @@ export interface MediaVendorRequestPlan {
   readonly notes: readonly string[];
 }
 
+export type MediaVendorTransportMode = "disabled" | "fake" | "live";
+
+export interface MediaVendorTransportRequest {
+  readonly vendor: MediaVendorAdapterDefinition;
+  readonly requestPlan: MediaVendorRequestPlan;
+  readonly jobId: string;
+  readonly requestedAt: string;
+}
+
+export interface MediaVendorTransportResult {
+  readonly status: MediaExecutionStatus;
+  readonly artifacts?: readonly MediaExecutionArtifact[];
+  readonly errorCode?: MediaAdapterErrorCode;
+  readonly errorMessage?: string;
+}
+
+export interface MediaVendorTransport {
+  readonly mode: MediaVendorTransportMode;
+  execute(request: MediaVendorTransportRequest): Promise<MediaVendorTransportResult>;
+}
+
 export interface MediaAdapterRegistryOptions {
   readonly factories?: readonly MediaAdapterFactory[];
   readonly enableStaticFallback?: boolean;
+}
+
+export interface DefaultMediaAdapterRegistryOptions {
+  readonly enableStaticFallback?: boolean;
+  readonly mediaVendorTransport?: MediaVendorTransport;
 }
 
 export class MediaAdapterRegistry {
@@ -355,15 +381,26 @@ export function createStaticMediaAdapter(options: StaticMediaAdapterOptions = {}
   };
 }
 
-export function createDefaultMediaAdapterRegistry(): MediaAdapterRegistry {
+export function createDefaultMediaAdapterRegistry(options: DefaultMediaAdapterRegistryOptions = {}): MediaAdapterRegistry {
   return new MediaAdapterRegistry({
+    enableStaticFallback: options.enableStaticFallback,
     factories: defaultMediaVendorAdapterDefinitions().map((definition) =>
-      createStaticVendorMediaAdapterFactory(definition.kind, definition.displayName),
+      createStaticVendorMediaAdapterFactory(definition.kind, definition.displayName, {
+        transport: options.mediaVendorTransport,
+      }),
     ),
   });
 }
 
-export function createStaticVendorMediaAdapterFactory(kind: string, displayName: string): MediaAdapterFactory {
+export interface StaticVendorMediaAdapterFactoryOptions {
+  readonly transport?: MediaVendorTransport;
+}
+
+export function createStaticVendorMediaAdapterFactory(
+  kind: string,
+  displayName: string,
+  options: StaticVendorMediaAdapterFactoryOptions = {},
+): MediaAdapterFactory {
   const definition = getMediaVendorAdapterDefinition(kind) ?? {
     kind,
     displayName,
@@ -380,6 +417,7 @@ export function createStaticVendorMediaAdapterFactory(kind: string, displayName:
           ...definition,
           displayName,
         },
+        transport: options.transport,
       });
     },
   };
@@ -414,6 +452,18 @@ export function createMediaVendorRequestPlan(
       `${definition.displayName} is resolved through the media adapter registry.`,
       "This is a local request plan only. No live vendor HTTP request was made.",
     ],
+  };
+}
+
+export function createDisabledMediaVendorTransport(): MediaVendorTransport {
+  return {
+    mode: "disabled",
+    async execute(): Promise<MediaVendorTransportResult> {
+      return {
+        status: "succeeded",
+        artifacts: [],
+      };
+    },
   };
 }
 
@@ -456,8 +506,10 @@ function renderStaticMediaResult(request: MediaExecutionRequest): string {
 
 function createStaticVendorMediaAdapter(options: StaticMediaAdapterOptions & {
   readonly definition: MediaVendorAdapterDefinition;
+  readonly transport?: MediaVendorTransport;
 }): MediaAdapter {
   const capabilities = options.definition.capabilities;
+  const transport = options.transport ?? createDisabledMediaVendorTransport();
   return {
     id: options.id ?? `${options.definition.kind}-static`,
     displayName: options.displayName ?? `${options.definition.displayName} Static Adapter`,
@@ -489,6 +541,22 @@ function createStaticVendorMediaAdapter(options: StaticMediaAdapterOptions & {
         throw new MediaAdapterExecutionError(forcedErrorCode, `Static media adapter forced ${forcedErrorCode}.`);
       }
 
+      const requestPlan = createMediaVendorRequestPlan(options.definition, request);
+      const transportResult = await transport.execute({
+        vendor: options.definition,
+        requestPlan,
+        jobId: request.jobId,
+        requestedAt: request.requestedAt,
+      });
+      if (transportResult.status === "failed") {
+        return {
+          status: "failed",
+          artifacts: [],
+          errorCode: transportResult.errorCode ?? "provider_internal_error",
+          errorMessage: transportResult.errorMessage ?? "Media vendor transport failed.",
+        };
+      }
+
       return {
         status: "succeeded",
         artifacts: [
@@ -497,16 +565,22 @@ function createStaticVendorMediaAdapter(options: StaticMediaAdapterOptions & {
             title: `${options.definition.displayName} ${formatMediaOperationLabel(request.operation)} request plan`,
             contentType: "text/markdown; charset=utf-8",
             pathHint: "vendor-request-plan.md",
-            content: renderStaticVendorMediaResult(options.definition, request),
+            content: renderStaticVendorMediaResult(options.definition, request, requestPlan, transport.mode),
           },
+          ...(transportResult.artifacts ?? []),
         ],
       };
     },
   };
 }
 
-function renderStaticVendorMediaResult(definition: MediaVendorAdapterDefinition, request: MediaExecutionRequest): string {
-  const requestPlan = JSON.stringify(createMediaVendorRequestPlan(definition, request), null, 2);
+function renderStaticVendorMediaResult(
+  definition: MediaVendorAdapterDefinition,
+  request: MediaExecutionRequest,
+  plan: MediaVendorRequestPlan,
+  transportMode: MediaVendorTransportMode,
+): string {
+  const requestPlan = JSON.stringify(plan, null, 2);
   return [
     "# Media job static result",
     "",
@@ -514,6 +588,7 @@ function renderStaticVendorMediaResult(definition: MediaVendorAdapterDefinition,
     `- Operation: ${request.operation}`,
     `- Vendor: ${definition.displayName} (${definition.kind})`,
     `- Provider: ${request.provider.displayName} (${request.provider.providerId}/${request.provider.model})`,
+    `- Transport: ${transportMode}`,
     `- Generated at: ${request.requestedAt}`,
     "",
     "## Prompt",

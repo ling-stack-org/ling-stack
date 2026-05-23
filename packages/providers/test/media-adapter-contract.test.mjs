@@ -4,8 +4,10 @@ import {
   MediaAdapterExecutionError,
   MediaAdapterRegistry,
   createDefaultMediaAdapterRegistry,
+  createDisabledMediaVendorTransport,
   createMediaVendorRequestPlan,
   createStaticMediaAdapter,
+  createStaticVendorMediaAdapterFactory,
   defaultMediaVendorAdapterDefinitions,
   executeMediaJob,
   normalizeMediaAdapterError,
@@ -173,6 +175,7 @@ test("resolved vendor adapter stubs emit redacted request plans without live cal
   assert.match(result.artifacts[0].content ?? "", /"mode": "static_vendor_request_plan"/);
   assert.match(result.artifacts[0].content ?? "", /"liveCall": false/);
   assert.match(result.artifacts[0].content ?? "", /"apiKeyRef": "env:SEEDREAM_API_KEY"/);
+  assert.match(result.artifacts[0].content ?? "", /Transport: disabled/);
   assert.match(result.artifacts[0].content ?? "", /No vendor media API was called/);
   assert.doesNotMatch(result.artifacts[0].content ?? "", /sk-test_123456789/);
   assert.doesNotMatch(result.artifacts[0].content ?? "", /secret-token/);
@@ -223,6 +226,113 @@ test("media vendor request plan is stable and redacted", () => {
   assert.equal(plan.provider.presetId, "provider_seedream");
   assert.equal(plan.provider.apiKeyRef, "env:SEEDREAM_API_KEY");
   assert.deepEqual(plan.payload.input, { maskUrl: "file://mask.png", apiKey: "[REDACTED]" });
+});
+
+test("disabled media vendor transport is the default no-network seam", async () => {
+  const transport = createDisabledMediaVendorTransport();
+  const seedream = defaultMediaVendorAdapterDefinitions().find((definition) => definition.kind === "seedream");
+  assert.ok(seedream);
+  const plan = createMediaVendorRequestPlan(seedream, {
+    jobId: "media_job_disabled_transport",
+    provider,
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  const result = await transport.execute({
+    vendor: seedream,
+    requestPlan: plan,
+    jobId: "media_job_disabled_transport",
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(transport.mode, "disabled");
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(result.artifacts, []);
+});
+
+test("fake media vendor transport receives redacted request mapping and can add artifacts", async () => {
+  let capturedPlan;
+  const fakeTransport = {
+    mode: "fake",
+    async execute(request) {
+      capturedPlan = request.requestPlan;
+      return {
+        status: "succeeded",
+        artifacts: [
+          {
+            type: "json",
+            title: "Fake vendor response",
+            contentType: "application/json; charset=utf-8",
+            pathHint: "fake-vendor-response.json",
+            content: JSON.stringify({
+              mode: request.requestPlan.mode,
+              vendor: request.vendor.kind,
+              operation: request.requestPlan.operation,
+            }, null, 2),
+          },
+        ],
+      };
+    },
+  };
+  const registry = createDefaultMediaAdapterRegistry({ mediaVendorTransport: fakeTransport });
+  const resolution = resolveMediaAdapter(registry, provider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_fake_transport",
+    provider,
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: { apiKey: "sk-test_123456789" },
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.artifacts.length, 2);
+  assert.equal(result.artifacts[1].type, "json");
+  assert.match(result.artifacts[0].content ?? "", /Transport: fake/);
+  assert.deepEqual(capturedPlan?.payload.input, { apiKey: "[REDACTED]" });
+  assert.doesNotMatch(JSON.stringify(capturedPlan), /sk-test_123456789/);
+});
+
+test("media vendor transport failures normalize through the media adapter result", async () => {
+  const registry = new MediaAdapterRegistry({
+    factories: [
+      createStaticVendorMediaAdapterFactory("seedream", "Seedream", {
+        transport: {
+          mode: "fake",
+          async execute() {
+            return {
+              status: "failed",
+              errorCode: "rate_limited",
+              errorMessage: "Fake vendor rate limit.",
+            };
+          },
+        },
+      }),
+    ],
+  });
+  const resolution = resolveMediaAdapter(registry, provider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_fake_transport_failure",
+    provider,
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorCode, "rate_limited");
+  assert.match(result.errorMessage ?? "", /rate limit/);
+  assert.deepEqual(result.artifacts, []);
 });
 
 test("media adapter registry reports clear missing adapter errors when fallback is disabled", () => {
