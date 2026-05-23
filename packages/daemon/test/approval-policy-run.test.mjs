@@ -251,12 +251,72 @@ test("provider check persists last check result", async () => {
     const checkResult = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(checkResult.ok, true);
     assert.equal(checkResult.code, "static_check");
+    assert.match(checkResult.message, /transport is disabled/);
 
     const fetched = await getJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(fetched.provider.lastCheck.ok, true);
     assert.equal(fetched.provider.lastCheck.code, "static_check");
     assert.equal(fetched.provider.lastCheck.checkedAt, checkResult.checkedAt);
   } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media provider check distinguishes disabled, live-gated, and invalid transport config", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-media-gate-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_gate",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  process.env.LING_STACK_TEST_MEDIA_KEY = "test-key";
+  try {
+    const disabled = await createMediaProvider(daemon.url, cwd, {
+      displayName: "Seedream Disabled Gate",
+      capabilities: ["image_generate"],
+    });
+    const disabledCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(disabled.provider.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(disabledCheck.ok, true);
+    assert.equal(disabledCheck.code, "static_check");
+    assert.match(disabledCheck.message, /transport is disabled/);
+
+    const live = await createMediaProvider(daemon.url, cwd, {
+      displayName: "Seedream Live Gate",
+      capabilities: ["image_generate"],
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    const liveCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(live.provider.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(liveCheck.ok, true);
+    assert.equal(liveCheck.code, "static_check");
+    assert.match(liveCheck.message, /live transport gate is enabled/);
+    assert.match(liveCheck.message, /not implemented yet/);
+
+    const missingSecret = await createMediaProvider(daemon.url, cwd, {
+      displayName: "Seedream Missing Secret",
+      capabilities: ["image_generate"],
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY_MISSING",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    const missingSecretCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(missingSecret.provider.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(missingSecretCheck.ok, false);
+    assert.equal(missingSecretCheck.code, "secret_missing");
+    assert.match(missingSecretCheck.message, /env:LING_STACK_TEST_MEDIA_KEY_MISSING/);
+
+    const invalid = await createMediaProvider(daemon.url, cwd, {
+      displayName: "Seedream Invalid Gate",
+      capabilities: ["image_generate"],
+      compat: { mediaVendorTransport: { mode: "fake" } },
+    });
+    const invalidCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(invalid.provider.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(invalidCheck.ok, false);
+    assert.equal(invalidCheck.code, "invalid_request");
+    assert.match(invalidCheck.message, /reserved for test injection/);
+  } finally {
+    delete process.env.LING_STACK_TEST_MEDIA_KEY;
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
@@ -388,6 +448,42 @@ test("media job run records media adapter failures", async () => {
     assert.deepEqual(errorExecuted.mediaJob.artifactIds, []);
     assert.deepEqual(errorExecuted.artifacts, []);
   } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media job live transport gate fails closed without vendor HTTP", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-live-gate-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_job_live_gate",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  process.env.LING_STACK_TEST_MEDIA_KEY = "test-key";
+  try {
+    const createdProvider = await createMediaProvider(daemon.url, cwd, {
+      displayName: "Seedream Live Gate",
+      capabilities: ["image_generate"],
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    const createdJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: createdProvider.provider.id,
+      operation: "image_generate",
+      prompt: "Create a live gated artifact.",
+      input: { size: "1024x1024" },
+    });
+
+    const executed = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(executed.mediaJob.status, "failed");
+    assert.match(executed.mediaJob.errorMessage, /live vendor HTTP adapter is not implemented yet/);
+    assert.match(executed.mediaJob.errorMessage, /No vendor HTTP request was made/);
+    assert.deepEqual(executed.mediaJob.artifactIds, []);
+    assert.deepEqual(executed.artifacts, []);
+  } finally {
+    delete process.env.LING_STACK_TEST_MEDIA_KEY;
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }

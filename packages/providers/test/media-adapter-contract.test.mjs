@@ -5,6 +5,7 @@ import {
   MediaAdapterRegistry,
   createDefaultMediaAdapterRegistry,
   createDisabledMediaVendorTransport,
+  createLiveMediaVendorTransport,
   createMediaVendorRequestPlan,
   createStaticMediaAdapter,
   createStaticVendorMediaAdapterFactory,
@@ -12,6 +13,7 @@ import {
   executeMediaJob,
   normalizeMediaAdapterError,
   resolveMediaAdapter,
+  resolveMediaVendorTransportGateConfig,
 } from "../dist/index.js";
 
 const provider = {
@@ -251,6 +253,113 @@ test("disabled media vendor transport is the default no-network seam", async () 
   assert.equal(transport.mode, "disabled");
   assert.equal(result.status, "succeeded");
   assert.deepEqual(result.artifacts, []);
+});
+
+test("media vendor transport gate defaults to disabled and rejects preset fake mode", () => {
+  assert.deepEqual(resolveMediaVendorTransportGateConfig(undefined), {
+    ok: true,
+    config: { mode: "disabled" },
+  });
+  assert.deepEqual(resolveMediaVendorTransportGateConfig({}), {
+    ok: true,
+    config: { mode: "disabled" },
+  });
+  assert.deepEqual(resolveMediaVendorTransportGateConfig({ mediaVendorTransport: { mode: "live" } }), {
+    ok: true,
+    config: { mode: "live" },
+  });
+
+  const fake = resolveMediaVendorTransportGateConfig({ mediaVendorTransport: { mode: "fake" } });
+  assert.equal(fake.ok, false);
+  assert.equal(fake.errorCode, "invalid_request");
+  assert.match(fake.errorMessage ?? "", /reserved for test injection/);
+
+  const invalid = resolveMediaVendorTransportGateConfig({ mediaVendorTransport: { mode: "other" } });
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.errorCode, "invalid_request");
+  assert.match(invalid.errorMessage ?? "", /disabled or live/);
+});
+
+test("live media vendor transport fails closed before any vendor HTTP implementation", async () => {
+  const seedream = defaultMediaVendorAdapterDefinitions().find((definition) => definition.kind === "seedream");
+  assert.ok(seedream);
+  const plan = createMediaVendorRequestPlan(seedream, {
+    jobId: "media_job_live_transport",
+    provider,
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+  const request = {
+    vendor: seedream,
+    requestPlan: plan,
+    jobId: "media_job_live_transport",
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  };
+
+  const missingBaseUrl = await createLiveMediaVendorTransport({
+    apiKeyRef: "env:SEEDREAM_API_KEY",
+    apiKeyConfigured: true,
+  }).execute(request);
+  assert.equal(missingBaseUrl.status, "failed");
+  assert.equal(missingBaseUrl.errorCode, "invalid_request");
+  assert.match(missingBaseUrl.errorMessage ?? "", /baseUrl/);
+
+  const missingKeyRef = await createLiveMediaVendorTransport({
+    baseUrl: "https://media.example.invalid",
+    apiKeyConfigured: true,
+  }).execute(request);
+  assert.equal(missingKeyRef.status, "failed");
+  assert.equal(missingKeyRef.errorCode, "auth_failed");
+  assert.match(missingKeyRef.errorMessage ?? "", /apiKeyRef/);
+
+  const missingSecret = await createLiveMediaVendorTransport({
+    baseUrl: "https://media.example.invalid",
+    apiKeyRef: "env:SEEDREAM_API_KEY",
+    apiKeyConfigured: false,
+  }).execute(request);
+  assert.equal(missingSecret.status, "failed");
+  assert.equal(missingSecret.errorCode, "auth_failed");
+  assert.match(missingSecret.errorMessage ?? "", /env:SEEDREAM_API_KEY/);
+
+  const notImplemented = await createLiveMediaVendorTransport({
+    baseUrl: "https://media.example.invalid",
+    apiKeyRef: "env:SEEDREAM_API_KEY",
+    apiKeyConfigured: true,
+  }).execute(request);
+  assert.equal(notImplemented.status, "failed");
+  assert.equal(notImplemented.errorCode, "provider_internal_error");
+  assert.match(notImplemented.errorMessage ?? "", /not implemented yet/);
+  assert.match(notImplemented.errorMessage ?? "", /No vendor HTTP request was made/);
+});
+
+test("live media vendor transport gate keeps adapter execution fail-closed", async () => {
+  const registry = createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:SEEDREAM_API_KEY",
+      apiKeyConfigured: true,
+    }),
+  });
+  const resolution = resolveMediaAdapter(registry, provider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_live_gate_fail_closed",
+    provider,
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: { apiKey: "sk-test_123456789" },
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorCode, "provider_internal_error");
+  assert.match(result.errorMessage ?? "", /not implemented yet/);
+  assert.deepEqual(result.artifacts, []);
+  assert.doesNotMatch(result.errorMessage ?? "", /sk-test_123456789/);
 });
 
 test("fake media vendor transport receives redacted request mapping and can add artifacts", async () => {

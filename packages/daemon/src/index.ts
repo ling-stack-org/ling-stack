@@ -65,12 +65,12 @@ import {
 } from "@ling-stack/runner-pi";
 import {
   createDefaultMediaAdapterRegistry,
+  createLiveMediaVendorTransport,
   executeMediaJob as executeMediaAdapterJob,
   resolveMediaAdapter,
+  resolveMediaVendorTransportGateConfig,
   type MediaExecutionArtifact,
 } from "@ling-stack/providers";
-
-const mediaAdapterRegistry = createDefaultMediaAdapterRegistry();
 
 export interface DaemonConfig {
   readonly host?: string;
@@ -1578,7 +1578,7 @@ function assertProviderRunPreflight(preset: ProviderPreset, skipProviderPrefligh
 }
 
 function providerSecretPreflightBlocker(preset: ProviderPreset): string | undefined {
-  const needsSecret = preset.api === "anthropic-messages" || preset.authHeader !== false;
+  const needsSecret = preset.api !== "media-job" && (preset.api === "anthropic-messages" || preset.authHeader !== false);
   if (needsSecret && !preset.apiKeyRef) {
     return "missing apiKeyRef.";
   }
@@ -2248,7 +2248,20 @@ function materializeExtractedArtifact(
 }
 
 function createMediaAdapterForProvider(provider: ProviderPreset) {
-  const resolution = resolveMediaAdapter(mediaAdapterRegistry, {
+  const gate = resolveMediaVendorTransportGateConfig(provider.compat);
+  if (!gate.ok) {
+    throw new HttpError(400, gate.errorCode ?? "invalid_request", gate.errorMessage ?? "Invalid media vendor transport configuration.");
+  }
+  const registry = createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: gate.config?.mode === "live"
+      ? createLiveMediaVendorTransport({
+        baseUrl: provider.baseUrl,
+        apiKeyRef: provider.apiKeyRef,
+        apiKeyConfigured: resolveSecretRef(provider.apiKeyRef).configured,
+      })
+      : undefined,
+  });
+  const resolution = resolveMediaAdapter(registry, {
     id: provider.id,
     kind: provider.kind,
     displayName: provider.displayName,
@@ -3018,10 +3031,36 @@ async function checkProviderPreset(preset: ProviderPreset): Promise<ProviderChec
   }
 
   if (preset.api === "media-job") {
+    const gate = resolveMediaVendorTransportGateConfig(preset.compat);
+    if (!gate.ok) {
+      return {
+        ok: false,
+        code: gate.errorCode ?? "invalid_request",
+        message: gate.errorMessage ?? "Invalid media vendor transport configuration.",
+        checkedAt,
+      };
+    }
+    if (gate.config?.mode === "live") {
+      if (!preset.baseUrl) {
+        return { ok: false, code: "bad_request", message: "baseUrl is required for live media vendor transport.", checkedAt };
+      }
+      if (!preset.apiKeyRef) {
+        return { ok: false, code: "secret_missing", message: "Secret is not configured: apiKeyRef is required for live media vendor transport.", checkedAt };
+      }
+      if (!resolveSecretRef(preset.apiKeyRef).configured) {
+        return { ok: false, code: "secret_missing", message: `Secret is not configured: ${preset.apiKeyRef}`, checkedAt };
+      }
+      return {
+        ok: true,
+        code: "static_check",
+        message: "Media provider live transport gate is enabled and configuration is complete. Live vendor HTTP adapters are not implemented yet, so media job runs fail closed without network.",
+        checkedAt,
+      };
+    }
     return {
       ok: true,
       code: "static_check",
-      message: "Media provider configuration is valid. Live media job checks are not implemented yet.",
+      message: "Media provider configuration is valid. Media vendor transport is disabled by default and no live vendor HTTP request will be made.",
       checkedAt,
     };
   }

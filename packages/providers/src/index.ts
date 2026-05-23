@@ -178,6 +178,25 @@ export interface MediaVendorTransport {
   execute(request: MediaVendorTransportRequest): Promise<MediaVendorTransportResult>;
 }
 
+export type MediaVendorTransportGateMode = "disabled" | "live";
+
+export interface MediaVendorTransportGateConfig {
+  readonly mode: MediaVendorTransportGateMode;
+}
+
+export interface MediaVendorTransportGateResolution {
+  readonly ok: boolean;
+  readonly config?: MediaVendorTransportGateConfig;
+  readonly errorCode?: MediaAdapterErrorCode;
+  readonly errorMessage?: string;
+}
+
+export interface LiveMediaVendorTransportOptions {
+  readonly baseUrl?: string;
+  readonly apiKeyRef?: string;
+  readonly apiKeyConfigured: boolean;
+}
+
 export interface MediaAdapterRegistryOptions {
   readonly factories?: readonly MediaAdapterFactory[];
   readonly enableStaticFallback?: boolean;
@@ -467,6 +486,85 @@ export function createDisabledMediaVendorTransport(): MediaVendorTransport {
   };
 }
 
+export function createLiveMediaVendorTransport(options: LiveMediaVendorTransportOptions): MediaVendorTransport {
+  return {
+    mode: "live",
+    async execute(request: MediaVendorTransportRequest): Promise<MediaVendorTransportResult> {
+      if (!options.baseUrl) {
+        return {
+          status: "failed",
+          errorCode: "invalid_request",
+          errorMessage: `${request.vendor.displayName} live media transport requires provider baseUrl.`,
+        };
+      }
+      if (!options.apiKeyRef) {
+        return {
+          status: "failed",
+          errorCode: "auth_failed",
+          errorMessage: `${request.vendor.displayName} live media transport requires provider apiKeyRef.`,
+        };
+      }
+      if (!options.apiKeyConfigured) {
+        return {
+          status: "failed",
+          errorCode: "auth_failed",
+          errorMessage: `${request.vendor.displayName} live media transport secret is not configured: ${options.apiKeyRef}.`,
+        };
+      }
+      return {
+        status: "failed",
+        errorCode: "provider_internal_error",
+        errorMessage: `${request.vendor.displayName} live vendor HTTP adapter is not implemented yet. No vendor HTTP request was made.`,
+      };
+    },
+  };
+}
+
+export function resolveMediaVendorTransportGateConfig(compat: unknown): MediaVendorTransportGateResolution {
+  const disabled: MediaVendorTransportGateResolution = {
+    ok: true,
+    config: { mode: "disabled" },
+  };
+  if (!isRecord(compat)) {
+    return disabled;
+  }
+
+  const mediaVendorTransport = compat.mediaVendorTransport;
+  if (mediaVendorTransport === undefined) {
+    return disabled;
+  }
+  if (!isRecord(mediaVendorTransport)) {
+    return {
+      ok: false,
+      errorCode: "invalid_request",
+      errorMessage: "compat.mediaVendorTransport must be an object with mode disabled or live.",
+    };
+  }
+
+  const mode = mediaVendorTransport.mode;
+  if (mode === undefined || mode === "disabled") {
+    return disabled;
+  }
+  if (mode === "live") {
+    return {
+      ok: true,
+      config: { mode },
+    };
+  }
+  if (mode === "fake") {
+    return {
+      ok: false,
+      errorCode: "invalid_request",
+      errorMessage: "compat.mediaVendorTransport.mode=fake is reserved for test injection and cannot be enabled from provider presets.",
+    };
+  }
+  return {
+    ok: false,
+    errorCode: "invalid_request",
+    errorMessage: "compat.mediaVendorTransport.mode must be disabled or live.",
+  };
+}
+
 export function resolveMediaAdapter(registry: MediaAdapterRegistry, provider: MediaAdapterProviderConfig): MediaAdapterResolution {
   return registry.resolve(provider);
 }
@@ -618,6 +716,10 @@ function formatMediaOperationLabel(operation: MediaOperation): string {
 
 function redactSecrets(value: unknown): unknown {
   return redactValue(value, new WeakSet<object>());
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function redactValue(value: unknown, seen: WeakSet<object>): unknown {
