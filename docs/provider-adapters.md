@@ -83,7 +83,7 @@ interface MediaAdapter {
 Current implementation:
 
 - `createStaticMediaAdapter()` remains the local fallback adapter,
-- `createDefaultMediaAdapterRegistry()` maps `jimeng`, `seedream`, and `seedance` provider kinds to static adapter factory stubs,
+- `createDefaultMediaAdapterRegistry()` maps `jimeng`, `seedream`, and `seedance` provider kinds to vendor adapter factory stubs,
 - static vendor stubs expose vendor-specific operation capabilities and emit a redacted `static_vendor_request_plan`,
 - `MediaVendorTransport` is present as a disabled-by-default seam; tests can inject fake transports, and provider preset `compat.mediaVendorTransport.mode = "live"` enables the live gate,
 - live transport currently supports only Seedream `image_generate` through the OpenAI-compatible `/images/generations` endpoint and records redacted JSON metadata artifacts without downloading image bytes,

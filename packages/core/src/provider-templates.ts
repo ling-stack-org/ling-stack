@@ -96,9 +96,10 @@ export function defaultProviderTemplates(): readonly ProviderTemplate[] {
       templateId: "seedream-image",
       kind: "seedream",
       displayName: "Seedream Image",
-      description: "Seedream image generation/editing capability placeholder for the future media job runtime.",
+      description: "Seedream image provider. image_generate can use live Ark HTTP when mediaVendorTransport.mode is explicitly set to live; image_edit remains deferred.",
       providerId: "seedream",
       model: "seedream",
+      baseUrl: "https://ark.ap-southeast.bytepluses.com/api/v3",
       apiKeyRef: "env:SEEDREAM_API_KEY",
       capabilities: ["image_generate", "image_edit"],
     }),
@@ -145,6 +146,7 @@ function mediaProviderTemplate(input: {
   readonly description: string;
   readonly providerId: string;
   readonly model: string;
+  readonly baseUrl?: string;
   readonly apiKeyRef: string;
   readonly capabilities: ProviderPresetInput["capabilities"];
 }): ProviderTemplate {
@@ -155,6 +157,7 @@ function mediaProviderTemplate(input: {
     description: input.description,
     providerId: input.providerId,
     model: input.model,
+    baseUrl: input.baseUrl,
     api: "media-job",
     apiKeyRef: input.apiKeyRef,
     capabilities: input.capabilities,

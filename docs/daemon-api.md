@@ -725,7 +725,7 @@ Media provider presets can prepare the live transport gate without changing the 
 
 ```json
 {
-  "baseUrl": "https://media.example.invalid",
+  "baseUrl": "https://ark.ap-southeast.bytepluses.com/api/v3",
   "apiKeyRef": "env:SEEDREAM_API_KEY",
   "compat": {
     "mediaVendorTransport": {
