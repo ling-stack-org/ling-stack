@@ -193,7 +193,7 @@ node packages/cli/dist/index.js provider update provider_... \
   --compat-json '{"mediaVendorTransport":{"mode":"live"}}'
 ```
 
-This validates `baseUrl` and `apiKeyRef`, but media job runs still fail with a clear "live vendor HTTP adapter is not implemented yet" message instead of calling Jimeng, Seedream, or Seedance.
+This validates `baseUrl` and `apiKeyRef`. A live-gated media job first creates a `media_cost` approval and moves to `waiting_for_approval`; after approval, execution still fails closed with a clear "live vendor HTTP adapter is not implemented yet" message instead of calling Jimeng, Seedream, or Seedance.
 
 ```bash
 export LOCAL_RELAY_API_KEY=sk-local
@@ -315,13 +315,13 @@ Implemented:
 - Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, provider settings, and approval list.
 - Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
 - Automatic artifact extraction from Pi tool outputs, generated text/log/Markdown/diff content, and generated file path metadata.
-- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, media adapter contract, provider-kind registry wiring, vendor request planning, disabled-by-default vendor transport seam, fail-closed live transport gate, static execution adapter, local Markdown artifacts, and Web Media Jobs panel.
+- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, media adapter contract, provider-kind registry wiring, vendor request planning, disabled-by-default vendor transport seam, fail-closed live transport gate, `media_cost` approval gate for live execution, static execution adapter, local Markdown artifacts, and Web Media Jobs panel.
 - CLI first-loop commands for init, channels, tasks, providers, runs, approvals, approval policy, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
 Not implemented yet:
 
-- Approval gates for external sends, deployments, credential changes, and paid media jobs.
+- Approval gates for external sends, deployments, and credential changes.
 - Rich task detail views beyond the first edit form.
 - Real media vendor execution and image/video artifact outputs.
 - Live Jimeng/Seedream/Seedance execution.

@@ -1869,6 +1869,10 @@ pre {
   color: #9a341f;
 }
 
+.media-job-approval {
+  color: #8a5b00;
+}
+
 .media-job-artifacts {
   padding-top: 2px;
 }
@@ -2556,6 +2560,25 @@ pre {
   border-color: #e7b4a8;
   background: #fff1ed;
   color: #9a341f;
+}
+
+.approval-payload-summary {
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid #e1e6e2;
+  background: #f7faf7;
+  color: #42504c;
+  font-size: 12px;
+}
+
+.approval-payload-summary span {
+  font-weight: 700;
+}
+
+.approval-payload-summary p {
+  margin: 0;
+  line-height: 1.45;
 }
 
 .approval-decision-panel {

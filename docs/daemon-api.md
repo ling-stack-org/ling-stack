@@ -491,7 +491,7 @@ Rules:
 - `providerPresetId` must reference an enabled provider preset with `api: "media-job"`.
 - The provider preset must include the requested media operation in `capabilities`.
 - Chat provider presets return `unsupported_capability`.
-- Creation only records queued metadata. Live vendor calls, cost approval, and image/video media bytes are still out of scope.
+- Creation only records queued metadata. Live vendor calls, billing, and image/video media bytes are still out of scope.
 
 Response:
 
@@ -552,9 +552,11 @@ Response:
 POST /media-jobs/:id/run?cwd=/path/to/project
 ```
 
-The current execution interface uses the media adapter contract and provider-kind registry. `jimeng`, `seedream`, and `seedance` resolve to local static adapter stubs that emit a redacted vendor request plan and use a disabled-by-default vendor transport seam. A provider preset can set `compat.mediaVendorTransport.mode = "live"` to enter the fail-closed live gate; the daemon then requires `baseUrl`, `apiKeyRef`, and a configured env secret, but still returns a failed job with `live vendor HTTP adapter is not implemented yet` instead of making a vendor HTTP request. No Jimeng, Seedream, Seedance, billing, or `media_cost` approval call is made.
+The current execution interface uses the media adapter contract and provider-kind registry. `jimeng`, `seedream`, and `seedance` resolve to local static adapter stubs that emit a redacted vendor request plan and use a disabled-by-default vendor transport seam. A provider preset can set `compat.mediaVendorTransport.mode = "live"` to enter the live gate; the daemon then requires `baseUrl`, `apiKeyRef`, and a configured env secret.
 
-Runnable statuses are `queued`, `failed`, and `cancelled`. `running` and `succeeded` jobs return `409 media_job_not_runnable`. Tests can force the failure path with `input.forceFailure: true`.
+Live-gated jobs do not execute immediately. The first run creates a pending `media_cost` approval, returns it in the response, and moves the job to `waiting_for_approval`. Re-running while the approval is pending returns the existing approval instead of creating a duplicate. Once approved, the next run proceeds to the adapter; in the current fail-closed implementation this still returns a failed job with `live vendor HTTP adapter is not implemented yet` instead of making a vendor HTTP request. Denied or expired approvals fail the job without executing the adapter.
+
+Runnable statuses are `queued`, `waiting_for_approval`, `failed`, and `cancelled`. `running` and `succeeded` jobs return `409 media_job_not_runnable`. Tests can force the static failure path with `input.forceFailure: true`.
 
 Response:
 
@@ -575,6 +577,33 @@ Response:
       "contentType": "text/markdown; charset=utf-8"
     }
   ]
+}
+```
+
+Live approval response:
+
+```json
+{
+  "mediaJob": {
+    "id": "media_job_...",
+    "status": "waiting_for_approval",
+    "artifactIds": []
+  },
+  "approval": {
+    "id": "approval_...",
+    "mediaJobId": "media_job_...",
+    "actionType": "media_cost",
+    "risk": "high",
+    "payload": {
+      "type": "media_cost",
+      "providerPresetId": "provider_...",
+      "model": "seedream",
+      "operation": "image_generate",
+      "promptPreview": "Create a clean product screenshot style image."
+    },
+    "status": "pending"
+  },
+  "artifacts": []
 }
 ```
 
@@ -846,6 +875,7 @@ Optional query parameters:
 
 - `status`: one of `pending`, `approved`, `denied`, `expired`, `cancelled`.
 - `runId`: filter by run id.
+- `mediaJobId`: filter by media job id.
 - `limit`: integer from `1` to `500`, default `100`.
 
 Response:
@@ -899,6 +929,7 @@ Request body is optional:
 ```
 
 Approval decisions append `approval_approved`, `approval_denied`, or `approval_expired` to the linked run event log when the run still exists. Listing or fetching approvals lazily normalizes pending requests whose `expiresAt` is already in the past.
+Media job approvals are owned by `mediaJobId`; they are listed and resolved through the same approval endpoints, but do not append media job event stream entries in this slice.
 
 ## Current Limits
 
