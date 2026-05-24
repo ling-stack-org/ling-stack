@@ -184,16 +184,16 @@ node packages/cli/dist/index.js doctor
 
 The Web UI exposes the same flow in Providers: choose a GPT, Claude, relay, domestic AI, or media template; save the preset; set the shown `env:NAME`; run Check; then use only preflight-ready providers in Workspace.
 
-Media vendor live transport is still fail-closed. For testing the gate only, configure a media preset through the CLI:
+Seedream `image_generate` can run through the live transport gate. Configure a media preset through the CLI:
 
 ```bash
 node packages/cli/dist/index.js provider update provider_... \
-  --base-url https://media.example.invalid \
+  --base-url https://ark.ap-southeast.bytepluses.com/api/v3 \
   --api-key-ref env:SEEDREAM_API_KEY \
   --compat-json '{"mediaVendorTransport":{"mode":"live"}}'
 ```
 
-This validates `baseUrl` and `apiKeyRef`, but media job runs still fail with a clear "live vendor HTTP adapter is not implemented yet" message instead of calling Jimeng, Seedream, or Seedance.
+This keeps live calls behind the explicit gate. Automated tests use mock HTTP; real smoke requires `SEEDREAM_API_KEY`. The adapter records request/response metadata artifacts only and does not download image bytes.
 
 ```bash
 export LOCAL_RELAY_API_KEY=sk-local
@@ -315,7 +315,7 @@ Implemented:
 - Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, provider settings, and approval list.
 - Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
 - Automatic artifact extraction from Pi tool outputs, generated text/log/Markdown/diff content, and generated file path metadata.
-- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, media adapter contract, provider-kind registry wiring, vendor request planning, disabled-by-default vendor transport seam, fail-closed live transport gate, static execution adapter, local Markdown artifacts, and Web Media Jobs panel.
+- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, media adapter contract, provider-kind registry wiring, vendor request planning, disabled-by-default vendor transport seam, Seedream `image_generate` live HTTP adapter behind an explicit gate, static execution adapter, local metadata artifacts, and Web Media Jobs panel.
 - CLI first-loop commands for init, channels, tasks, providers, runs, approvals, approval policy, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
@@ -323,10 +323,10 @@ Not implemented yet:
 
 - Approval gates for external sends, deployments, credential changes, and paid media jobs.
 - Rich task detail views beyond the first edit form.
-- Real media vendor execution and image/video artifact outputs.
-- Live Jimeng/Seedream/Seedance execution.
+- Real media image/video artifact byte outputs.
+- Live Jimeng/Seedance execution and Seedream operations beyond `image_generate`.
 - OS keychain integration for secrets.
-- Live media provider HTTP adapters and live media provider job checks.
+- Live media provider generation checks.
 - Desktop packaging.
 
 ## License

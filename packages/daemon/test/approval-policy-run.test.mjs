@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
@@ -291,8 +292,8 @@ test("media provider check distinguishes disabled, live-gated, and invalid trans
     const liveCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(live.provider.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(liveCheck.ok, true);
     assert.equal(liveCheck.code, "static_check");
-    assert.match(liveCheck.message, /live transport gate is enabled/);
-    assert.match(liveCheck.message, /not implemented yet/);
+    assert.match(liveCheck.message, /Seedream image_generate live transport/);
+    assert.match(liveCheck.message, /does not create media/);
 
     const missingSecret = await createMediaProvider(daemon.url, cwd, {
       displayName: "Seedream Missing Secret",
@@ -305,6 +306,21 @@ test("media provider check distinguishes disabled, live-gated, and invalid trans
     assert.equal(missingSecretCheck.ok, false);
     assert.equal(missingSecretCheck.code, "secret_missing");
     assert.match(missingSecretCheck.message, /env:LING_STACK_TEST_MEDIA_KEY_MISSING/);
+
+    const unsupported = await createMediaProvider(daemon.url, cwd, {
+      kind: "seedance",
+      displayName: "Seedance Live Gate",
+      providerId: "seedance",
+      model: "seedance",
+      capabilities: ["video_generate"],
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    const unsupportedCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(unsupported.provider.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(unsupportedCheck.ok, false);
+    assert.equal(unsupportedCheck.code, "unsupported_capability");
+    assert.match(unsupportedCheck.message, /Seedream image_generate only/);
 
     const invalid = await createMediaProvider(daemon.url, cwd, {
       displayName: "Seedream Invalid Gate",
@@ -453,19 +469,20 @@ test("media job run records media adapter failures", async () => {
   }
 });
 
-test("media job live transport gate fails closed without vendor HTTP", async () => {
+test("media job live transport calls Seedream image_generate through HTTP and links artifacts", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-live-gate-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job_live_gate",
     toolName: "bash",
     input: { command: "echo unused" },
   }));
+  const seedream = await startMockSeedreamServer();
   process.env.LING_STACK_TEST_MEDIA_KEY = "test-key";
   try {
     const createdProvider = await createMediaProvider(daemon.url, cwd, {
       displayName: "Seedream Live Gate",
       capabilities: ["image_generate"],
-      baseUrl: "https://media.example.invalid",
+      baseUrl: seedream.url,
       apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
       compat: { mediaVendorTransport: { mode: "live" } },
     });
@@ -477,13 +494,30 @@ test("media job live transport gate fails closed without vendor HTTP", async () 
     });
 
     const executed = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(executed.mediaJob.status, "failed");
-    assert.match(executed.mediaJob.errorMessage, /live vendor HTTP adapter is not implemented yet/);
-    assert.match(executed.mediaJob.errorMessage, /No vendor HTTP request was made/);
-    assert.deepEqual(executed.mediaJob.artifactIds, []);
-    assert.deepEqual(executed.artifacts, []);
+    assert.equal(executed.mediaJob.status, "succeeded");
+    assert.equal(executed.artifacts.length, 2);
+    assert.equal(seedream.requests.length, 1);
+    assert.equal(seedream.requests[0].path, "/images/generations");
+    assert.equal(seedream.requests[0].authorization, "Bearer test-key");
+    assert.deepEqual(seedream.requests[0].body, {
+      model: "seedream",
+      prompt: "Create a live gated artifact.",
+      response_format: "url",
+      size: "1024x1024",
+    });
+    assert.deepEqual(executed.mediaJob.artifactIds, executed.artifacts.map((artifact) => artifact.id));
+    assert.equal(executed.artifacts[0].type, "markdown");
+    assert.equal(executed.artifacts[1].type, "json");
+
+    const liveArtifact = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(executed.artifacts[1].id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(liveArtifact.status, 200);
+    const text = await liveArtifact.text();
+    assert.match(text, /live_seedream_image_generate/);
+    assert.match(text, /image-1\.png/);
+    assert.doesNotMatch(text, /test-key/);
   } finally {
     delete process.env.LING_STACK_TEST_MEDIA_KEY;
+    await seedream.close();
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
@@ -908,6 +942,40 @@ async function createMediaProvider(baseUrl, cwd, overrides = {}) {
     enabled: true,
     ...overrides,
   });
+}
+
+async function startMockSeedreamServer() {
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const bodyText = Buffer.concat(chunks).toString("utf8");
+    const body = bodyText ? JSON.parse(bodyText) : {};
+    requests.push({
+      method: request.method,
+      path: request.url,
+      authorization: request.headers.authorization,
+      body,
+    });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      created: 1779537600,
+      data: [{ url: "https://media.example.invalid/generated/image-1.png" }],
+      debug: { echo: request.headers.authorization },
+    }));
+  });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () => new Promise((resolveClose, rejectClose) => {
+      server.close((error) => error ? rejectClose(error) : resolveClose());
+    }),
+  };
 }
 
 async function mediaJobCount(baseUrl, cwd) {

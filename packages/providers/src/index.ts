@@ -195,7 +195,27 @@ export interface LiveMediaVendorTransportOptions {
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly apiKeyConfigured: boolean;
+  readonly apiKey?: string;
+  readonly httpClient?: MediaVendorHttpClient;
+  readonly timeoutMs?: number;
 }
+
+export interface MediaVendorHttpRequestInit {
+  readonly method: "POST";
+  readonly headers: Record<string, string>;
+  readonly body: string;
+  readonly signal?: AbortSignal;
+}
+
+export interface MediaVendorHttpResponse {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly statusText: string;
+  json(): Promise<unknown>;
+  text(): Promise<string>;
+}
+
+export type MediaVendorHttpClient = (url: string, init: MediaVendorHttpRequestInit) => Promise<MediaVendorHttpResponse>;
 
 export interface MediaAdapterRegistryOptions {
   readonly factories?: readonly MediaAdapterFactory[];
@@ -511,11 +531,28 @@ export function createLiveMediaVendorTransport(options: LiveMediaVendorTransport
           errorMessage: `${request.vendor.displayName} live media transport secret is not configured: ${options.apiKeyRef}.`,
         };
       }
-      return {
-        status: "failed",
-        errorCode: "provider_internal_error",
-        errorMessage: `${request.vendor.displayName} live vendor HTTP adapter is not implemented yet. No vendor HTTP request was made.`,
-      };
+      if (!options.apiKey) {
+        return {
+          status: "failed",
+          errorCode: "auth_failed",
+          errorMessage: `${request.vendor.displayName} live media transport secret value is not available for ${options.apiKeyRef}.`,
+        };
+      }
+      if (request.vendor.kind !== "seedream") {
+        return {
+          status: "failed",
+          errorCode: "unsupported_capability",
+          errorMessage: `Live media vendor transport currently supports seedream image_generate only, not ${request.vendor.kind}.`,
+        };
+      }
+      if (request.requestPlan.operation !== "image_generate") {
+        return {
+          status: "failed",
+          errorCode: "unsupported_capability",
+          errorMessage: "Seedream live media transport currently supports image_generate only.",
+        };
+      }
+      return await executeSeedreamImageGeneration(request, options);
     },
   };
 }
@@ -563,6 +600,132 @@ export function resolveMediaVendorTransportGateConfig(compat: unknown): MediaVen
     errorCode: "invalid_request",
     errorMessage: "compat.mediaVendorTransport.mode must be disabled or live.",
   };
+}
+
+async function executeSeedreamImageGeneration(
+  request: MediaVendorTransportRequest,
+  options: LiveMediaVendorTransportOptions,
+): Promise<MediaVendorTransportResult> {
+  const endpoint = `${options.baseUrl?.replace(/\/+$/, "")}/images/generations`;
+  const payload = buildSeedreamImageGenerationPayload(request.requestPlan);
+  const httpClient = options.httpClient ?? defaultMediaVendorHttpClient;
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), options.timeoutMs ?? 30_000);
+  try {
+    const response = await httpClient(endpoint, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${options.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: abortController.signal,
+    });
+    if (!response.ok) {
+      return await normalizeSeedreamHttpFailure(response, options.apiKey);
+    }
+
+    const json = await response.json();
+    const imageCount = countSeedreamImages(json);
+    if (imageCount === 0) {
+      return {
+        status: "failed",
+        errorCode: "invalid_request",
+        errorMessage: "Seedream image generation response did not include image data.",
+      };
+    }
+
+    return {
+      status: "succeeded",
+      artifacts: [
+        {
+          type: "json",
+          title: "Seedream image_generate response",
+          contentType: "application/json; charset=utf-8",
+          pathHint: "seedream-image-response.json",
+          content: JSON.stringify(redactSecrets({
+            mode: "live_seedream_image_generate",
+            vendor: request.vendor.kind,
+            operation: request.requestPlan.operation,
+            endpoint,
+            imageCount,
+            request: payload,
+            response: json,
+          }, [options.apiKey]), null, 2),
+        },
+      ],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      status: "failed",
+      errorCode: error instanceof Error && error.name === "AbortError" ? "timeout" : "network_error",
+      errorMessage: redactSecretText(message, [options.apiKey]),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildSeedreamImageGenerationPayload(plan: MediaVendorRequestPlan): Record<string, unknown> {
+  const input = isRecord(plan.payload.input) ? plan.payload.input : {};
+  return removeUndefined({
+    model: plan.provider.model,
+    prompt: plan.payload.prompt,
+    response_format: typeof input.response_format === "string" ? input.response_format : "url",
+    size: typeof input.size === "string" ? input.size : undefined,
+    n: typeof input.n === "number" ? input.n : undefined,
+    watermark: typeof input.watermark === "boolean" ? input.watermark : undefined,
+    seed: typeof input.seed === "number" ? input.seed : undefined,
+  });
+}
+
+async function normalizeSeedreamHttpFailure(response: MediaVendorHttpResponse, apiKey: string | undefined): Promise<MediaVendorTransportResult> {
+  const body = await readHttpResponseBody(response);
+  const redactedBody = redactSecretText(body, [apiKey]);
+  return {
+    status: "failed",
+    errorCode: mapSeedreamHttpStatus(response.status),
+    errorMessage: `Seedream image generation failed with HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.${redactedBody ? ` ${redactedBody}` : ""}`.trim(),
+  };
+}
+
+async function readHttpResponseBody(response: MediaVendorHttpResponse): Promise<string> {
+  try {
+    return await response.text();
+  } catch {
+    return "";
+  }
+}
+
+function mapSeedreamHttpStatus(status: number): MediaAdapterErrorCode {
+  if (status === 401 || status === 403) {
+    return "auth_failed";
+  }
+  if (status === 404) {
+    return "model_not_found";
+  }
+  if (status === 408 || status === 504) {
+    return "timeout";
+  }
+  if (status === 429) {
+    return "rate_limited";
+  }
+  if (status >= 400 && status < 500) {
+    return "invalid_request";
+  }
+  return "provider_internal_error";
+}
+
+function countSeedreamImages(value: unknown): number {
+  if (!isRecord(value) || !Array.isArray(value.data)) {
+    return 0;
+  }
+  return value.data.filter((item) => isRecord(item) && (typeof item.url === "string" || typeof item.b64_json === "string")).length;
+}
+
+async function defaultMediaVendorHttpClient(url: string, init: MediaVendorHttpRequestInit): Promise<MediaVendorHttpResponse> {
+  return await fetch(url, init);
 }
 
 export function resolveMediaAdapter(registry: MediaAdapterRegistry, provider: MediaAdapterProviderConfig): MediaAdapterResolution {
@@ -714,24 +877,36 @@ function formatMediaOperationLabel(operation: MediaOperation): string {
   return "Video generate";
 }
 
-function redactSecrets(value: unknown): unknown {
-  return redactValue(value, new WeakSet<object>());
+function redactSecrets(value: unknown, extraSecrets: readonly (string | undefined)[] = []): unknown {
+  return redactValue(value, new WeakSet<object>(), extraSecrets.filter((secret): secret is string => Boolean(secret)));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function redactValue(value: unknown, seen: WeakSet<object>): unknown {
+function removeUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T;
+}
+
+function redactSecretText(value: string, extraSecrets: readonly (string | undefined)[] = []): string {
+  const secrets = extraSecrets.filter((secret): secret is string => Boolean(secret));
+  return redactValue(value, new WeakSet<object>(), secrets) as string;
+}
+
+function redactValue(value: unknown, seen: WeakSet<object>, extraSecrets: readonly string[]): unknown {
   if (typeof value === "string") {
-    return value.replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g, "[REDACTED]");
+    return extraSecrets.reduce(
+      (text, secret) => text.split(secret).join("[REDACTED]"),
+      value.replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g, "[REDACTED]"),
+    );
   }
   if (Array.isArray(value)) {
     if (seen.has(value)) {
       return "[Circular]";
     }
     seen.add(value);
-    return value.map((item) => redactValue(item, seen));
+    return value.map((item) => redactValue(item, seen, extraSecrets));
   }
   if (typeof value === "object" && value !== null) {
     if (seen.has(value)) {
@@ -739,7 +914,7 @@ function redactValue(value: unknown, seen: WeakSet<object>): unknown {
     }
     seen.add(value);
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, shouldRedactKey(key) ? "[REDACTED]" : redactValue(item, seen)]),
+      Object.entries(value).map(([key, item]) => [key, shouldRedactKey(key) ? "[REDACTED]" : redactValue(item, seen, extraSecrets)]),
     );
   }
   return value;
