@@ -368,7 +368,7 @@ test("live media vendor transport calls Seedream image generation through the Op
     provider,
     operation: "image_generate",
     prompt: "Create a product mockup.",
-    input: { apiKey: "sk-test_123456789", size: "1024x1024", watermark: false },
+    input: { apiKey: "sk-test_123456789", size: "2K", watermark: false },
     requestedAt: "2026-05-23T00:00:00.000Z",
   });
 
@@ -386,7 +386,7 @@ test("live media vendor transport calls Seedream image generation through the Op
     model: "seedream",
     prompt: "Create a product mockup.",
     response_format: "url",
-    size: "1024x1024",
+    size: "2K",
     watermark: false,
   });
 });

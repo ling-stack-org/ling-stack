@@ -481,7 +481,7 @@ Content-Type: application/json
   "operation": "image_generate",
   "prompt": "Create a clean product screenshot style image.",
   "input": {
-    "size": "1024x1024"
+    "size": "2K"
   }
 }
 ```
@@ -504,7 +504,7 @@ Response:
     "operation": "image_generate",
     "prompt": "Create a clean product screenshot style image.",
     "input": {
-      "size": "1024x1024"
+      "size": "2K"
     },
     "artifactIds": [],
     "status": "queued",

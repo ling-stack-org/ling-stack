@@ -490,7 +490,7 @@ test("media job live transport calls Seedream image_generate through HTTP and li
       providerPresetId: createdProvider.provider.id,
       operation: "image_generate",
       prompt: "Create a live gated artifact.",
-      input: { size: "1024x1024" },
+      input: { size: "2K" },
     });
 
     const firstRun = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
@@ -525,7 +525,7 @@ test("media job live transport calls Seedream image_generate through HTTP and li
       model: "seedream",
       prompt: "Create a live gated artifact.",
       response_format: "url",
-      size: "1024x1024",
+      size: "2K",
     });
     assert.deepEqual(executed.mediaJob.artifactIds, executed.artifacts.map((artifact) => artifact.id));
     assert.equal(executed.artifacts[0].type, "markdown");
