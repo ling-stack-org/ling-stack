@@ -60,6 +60,7 @@ import {
   updateTaskStatus,
   updateProvider,
 } from "./api.js";
+import { LanguageSwitcher, useI18n, type Translate } from "./i18n.js";
 import { streamRun } from "./sse.js";
 import type {
   ApprovalRequest,
@@ -154,7 +155,7 @@ const defaultForm: RunFormState = {
   providerPresetId: "",
   taskId: `task-${new Date().toISOString().slice(0, 10)}`,
   title: "Inspect Ling Stack workspace",
-  prompt: "查看当前项目结构，给出下一步实现建议。不要修改文件。",
+  prompt: "Inspect the current project structure, give next implementation advice, and do not modify files.",
   provider: "local-relay",
   model: "gpt-5.5",
   baseUrl: "http://127.0.0.1:8317/v1",
@@ -196,7 +197,7 @@ const defaultChannelEditForm: ChannelFormState = {
 
 const defaultTaskForm: TaskFormState = {
   title: "Inspect workspace",
-  prompt: "查看当前项目结构，给出下一步实现建议。不要修改文件。",
+  prompt: "Inspect the current project structure, give next implementation advice, and do not modify files.",
 };
 
 const defaultTaskEditForm: TaskEditFormState = {
@@ -226,7 +227,12 @@ const defaultApprovalPolicyForm: ApprovalPolicyFormState = {
 };
 
 export function App(): JSX.Element {
-  const [form, setForm] = useState<RunFormState>(defaultForm);
+  const { t } = useI18n();
+  const [form, setForm] = useState<RunFormState>(() => ({
+    ...defaultForm,
+    title: t(defaultForm.title),
+    prompt: t(defaultForm.prompt),
+  }));
   const [activeView, setActiveView] = useState<ViewId>("workspace");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
   const [activeRunId, setActiveRunId] = useState("");
@@ -244,7 +250,11 @@ export function App(): JSX.Element {
   const [channelEditForm, setChannelEditForm] = useState<ChannelFormState>(defaultChannelEditForm);
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
-  const [taskForm, setTaskForm] = useState<TaskFormState>(defaultTaskForm);
+  const [taskForm, setTaskForm] = useState<TaskFormState>(() => ({
+    ...defaultTaskForm,
+    title: t(defaultTaskForm.title),
+    prompt: t(defaultTaskForm.prompt),
+  }));
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
@@ -1235,31 +1245,31 @@ export function App(): JSX.Element {
           <div className="brand-mark">L</div>
           <div>
             <strong>Ling Stack</strong>
-            <span>AI teammate workspace</span>
+            <span>{t("AI teammate workspace")}</span>
           </div>
         </div>
         <nav>
-          <NavItem icon={<Workflow />} label="Workspace" active={activeView === "workspace"} onClick={() => setActiveView("workspace")} />
-          <NavItem icon={<History />} label="Runs" active={activeView === "runs"} onClick={() => setActiveView("runs")} />
-          <NavItem icon={<PlugZap />} label="Providers" active={activeView === "providers"} onClick={() => setActiveView("providers")} />
-          <NavItem icon={<Database />} label="Media Jobs" active={activeView === "media"} onClick={() => setActiveView("media")} />
+          <NavItem icon={<Workflow />} label={t("Workspace")} active={activeView === "workspace"} onClick={() => setActiveView("workspace")} />
+          <NavItem icon={<History />} label={t("Runs")} active={activeView === "runs"} onClick={() => setActiveView("runs")} />
+          <NavItem icon={<PlugZap />} label={t("Providers")} active={activeView === "providers"} onClick={() => setActiveView("providers")} />
+          <NavItem icon={<Database />} label={t("Media Jobs")} active={activeView === "media"} onClick={() => setActiveView("media")} />
           <NavItem
             icon={<ShieldCheck />}
-            label="Approvals"
+            label={t("Approvals")}
             active={activeView === "approvals"}
             onClick={() => {
               setApprovalRepairRunId("");
               setActiveView("approvals");
             }}
           />
-          <NavItem icon={<Settings />} label="Settings" active={activeView === "settings"} onClick={() => setActiveView("settings")} />
+          <NavItem icon={<Settings />} label={t("Settings")} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
         </nav>
       </aside>
       <section className="workspace">
         <div className="workspace-head">
           <div>
-            <h1>{viewTitle(activeView)}</h1>
-            <p>{viewDescription(activeView)}</p>
+            <h1>{t(viewTitle(activeView))}</h1>
+            <p>{t(viewDescription(activeView))}</p>
           </div>
           <StatusBadge status={latestStatus} />
         </div>
@@ -1545,6 +1555,8 @@ function TopBar({
   readonly provider: string;
   readonly onRefresh: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
+
   return (
     <header className="top-bar">
       <div className="top-path">
@@ -1554,13 +1566,14 @@ function TopBar({
       <div className="top-status">
         <span className={daemonHealthy ? "health ok" : "health down"}>
           <Activity size={15} />
-          {daemonHealthy === undefined ? "Checking daemon" : daemonHealthy ? "Daemon ready" : "Daemon offline"}
+          {daemonHealthy === undefined ? t("Checking daemon") : daemonHealthy ? t("Daemon ready") : t("Daemon offline")}
         </span>
         <span className="provider-pill">
           <Bot size={15} />
           {provider}
         </span>
-        <button className="icon-button" type="button" onClick={onRefresh} aria-label="Refresh daemon health">
+        <LanguageSwitcher />
+        <button className="icon-button" type="button" onClick={onRefresh} aria-label={t("Refresh daemon health")}>
           <RefreshCw size={16} />
         </button>
       </div>
@@ -1581,6 +1594,8 @@ function NavItem({
   readonly disabled?: boolean;
   readonly onClick?: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
+
   return (
     <button className={active ? "nav-item active" : "nav-item"} type="button" disabled={disabled} onClick={onClick}>
       {icon}
@@ -1596,10 +1611,12 @@ function ProviderPresetOptions({
   readonly runnableProviders: readonly ProviderPreset[];
   readonly blockedProviders: readonly ProviderPreset[];
 }): JSX.Element {
+  const { t } = useI18n();
+
   return (
     <>
       {runnableProviders.length > 0 ? (
-        <optgroup label="Runnable chat presets">
+        <optgroup label={t("Runnable chat presets")}>
           {runnableProviders.map((provider) => (
             <option key={provider.id} value={provider.id}>
               {provider.displayName} / {provider.model}
@@ -1608,7 +1625,7 @@ function ProviderPresetOptions({
         </optgroup>
       ) : null}
       {blockedProviders.length > 0 ? (
-        <optgroup label="Needs setup">
+        <optgroup label={t("Needs setup")}>
           {blockedProviders.map((provider) => (
             <option key={provider.id} value={provider.id} disabled>
               {provider.displayName} / {provider.model} - {providerRunBlockerLabel(provider)}
@@ -1657,18 +1674,19 @@ function WorkspaceReadiness({
   readonly onCreateChannel: () => void;
   readonly onCreateTask: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const runnableProviderCount = providers.filter(canUseProviderForRun).length;
   const readyProviderCount = providers.filter((provider) => providerRunPreflightBlocker(provider) === undefined).length;
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
   const expiredApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "expired").length;
   const latestFailedRun = runs.find((item) => item.status === "failed");
-  const providerItem = buildProviderReadinessItem(providers.length, runnableProviderCount, readyProviderCount, providersLoading, onOpenProviders);
-  const channelItem = buildChannelReadinessItem(channels.length, channelsLoading, onCreateChannel);
-  const taskItem = buildTaskReadinessItem(tasks.length, tasksLoading, channels.length > 0, onCreateTask);
-  const approvalItem = buildApprovalReadinessItem(pendingApprovalCount, expiredApprovalCount, onOpenApprovals);
-  const runLoopItem = buildRunLoopReadinessItem(succeededRunCount, latestFailedRun, runsLoading, onOpenRuns);
+  const providerItem = buildProviderReadinessItem(providers.length, runnableProviderCount, readyProviderCount, providersLoading, onOpenProviders, t);
+  const channelItem = buildChannelReadinessItem(channels.length, channelsLoading, onCreateChannel, t);
+  const taskItem = buildTaskReadinessItem(tasks.length, tasksLoading, channels.length > 0, onCreateTask, t);
+  const approvalItem = buildApprovalReadinessItem(pendingApprovalCount, expiredApprovalCount, onOpenApprovals, t);
+  const runLoopItem = buildRunLoopReadinessItem(succeededRunCount, latestFailedRun, runsLoading, onOpenRuns, t);
   const items: readonly WorkspaceReadinessItem[] = [
-    buildDaemonReadinessItem(daemonHealthy, onRefreshDaemon),
+    buildDaemonReadinessItem(daemonHealthy, onRefreshDaemon, t),
     providerItem,
     channelItem,
     taskItem,
@@ -1683,11 +1701,11 @@ function WorkspaceReadiness({
       <div className="panel-title split readiness-title">
         <span>
           <ShieldCheck size={18} />
-          <h2 id="workspace-readiness-title">Workspace readiness</h2>
+          <h2 id="workspace-readiness-title">{t("Workspace readiness")}</h2>
         </span>
         <span className={ready ? "readiness-summary ok" : "readiness-summary attention"}>
           {ready ? <CheckCircle2 size={15} /> : <CircleAlert size={15} />}
-          {ready ? "Ready" : `${blockingItems.length} blocked`}
+          {ready ? t("Ready") : t("{count} blocked", { count: blockingItems.length })}
         </span>
       </div>
       <div className="readiness-grid">
@@ -1762,6 +1780,7 @@ function FirstRunFlow({
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
 }): JSX.Element | null {
+  const { t } = useI18n();
   const readyProvider = providers.find(providerPreflightReady);
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
@@ -1784,17 +1803,17 @@ function FirstRunFlow({
         <div className="first-run-copy">
           <span>
             <Loader2 className="spin" size={17} />
-            <strong id="first-run-flow-title">Run in progress</strong>
-          </span>
-          <small>
-            {activeRun ? readTaskTitle(activeRun.taskSnapshot) || activeRun.taskId : "Active task"} is {latestStatus}. {activeRunId}
-          </small>
-        </div>
-        <div className="first-run-actions">
-          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(activeRunId)}>
-            <History size={14} />
-            Open run
-          </button>
+	            <strong id="first-run-flow-title">{t("Run in progress")}</strong>
+	          </span>
+	          <small>
+	            {activeRun ? readTaskTitle(activeRun.taskSnapshot) || activeRun.taskId : t("Active task")} is {latestStatus}. {activeRunId}
+	          </small>
+	        </div>
+	        <div className="first-run-actions">
+	          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(activeRunId)}>
+	            <History size={14} />
+	            {t("Open run")}
+	          </button>
         </div>
       </section>
     );
@@ -1803,12 +1822,12 @@ function FirstRunFlow({
   if (selectedTask && selectedTaskRunId) {
     const repairHint = buildRunRepairHint(selectedTaskRun, pendingApprovalCount, selectedTaskRunStatus);
     const needsRepair = selectedTaskRunStatus === "failed" || selectedTaskRunStatus === "waiting_for_approval";
-    const runStatusClass = selectedTaskRunStatus === "succeeded" ? "ready" : needsRepair ? "attention" : "active";
-    const title = selectedTaskRunStatus === "succeeded"
-      ? "Run loop complete"
-      : needsRepair
-        ? "Run needs attention"
-        : "Current run linked";
+	    const runStatusClass = selectedTaskRunStatus === "succeeded" ? "ready" : needsRepair ? "attention" : "active";
+	    const title = selectedTaskRunStatus === "succeeded"
+	      ? t("Run loop complete")
+	      : needsRepair
+	        ? t("Run needs attention")
+	        : t("Current run linked");
     const detail = repairHint
       ? `${selectedTask.title} latest run is ${selectedTaskRunStatus}. ${repairHint.detail}`
       : `${selectedTask.title} latest run is ${selectedTaskRunStatus}.${selectedTaskRun?.errorMessage ? ` ${selectedTaskRun.errorMessage}` : ""}`;
@@ -1826,25 +1845,25 @@ function FirstRunFlow({
         <div className="first-run-actions">
           {primaryAction === "providers" ? (
             <button className="secondary-button compact-button" type="button" onClick={() => onOpenProviders(selectedTaskRun)}>
-              <PlugZap size={14} />
-              {repairHint?.actionLabel ?? "Providers"}
-            </button>
+	              <PlugZap size={14} />
+	              {repairHint?.actionLabel ?? t("Providers")}
+	            </button>
           ) : null}
           {primaryAction === "approvals" ? (
             <button className="secondary-button compact-button" type="button" onClick={() => onOpenApprovals(selectedTaskRunId)}>
-              <ShieldCheck size={14} />
-              {repairHint?.actionLabel ?? "Approvals"}
-            </button>
+	              <ShieldCheck size={14} />
+	              {repairHint?.actionLabel ?? t("Approvals")}
+	            </button>
           ) : null}
           <button className={primaryAction === "run" ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(selectedTaskRunId)}>
-            <History size={14} />
-            {primaryAction === "run" ? (repairHint?.actionLabel ?? "Open run") : "Open run"}
-          </button>
+	            <History size={14} />
+	            {primaryAction === "run" ? (repairHint?.actionLabel ?? t("Open run")) : t("Open run")}
+	          </button>
           {selectedTaskRunStatus === "succeeded" ? (
             <button className="primary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !runReady}>
-              <Play size={14} />
-              Run again
-            </button>
+	              <Play size={14} />
+	              {t("Run again")}
+	            </button>
           ) : null}
         </div>
       </section>
@@ -1857,42 +1876,42 @@ function FirstRunFlow({
         <div className="first-run-copy">
           <span>
             <CheckCircle2 size={17} />
-            <strong id="first-run-flow-title">First run ready</strong>
-          </span>
-          <small>
-            {selectedTask.title} can run with {effectiveProvider.displayName}.
-          </small>
+	            <strong id="first-run-flow-title">{t("First run ready")}</strong>
+	          </span>
+	          <small>
+	            {t("{taskTitle} can run with {providerName}.", { taskTitle: selectedTask.title, providerName: effectiveProvider.displayName })}
+	          </small>
         </div>
         <div className="first-run-actions">
           <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(selectedTask)} disabled={isRunning}>
-            {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-            Check run
-          </button>
+	            {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+	            {t("Check run")}
+	          </button>
           <button className="primary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning}>
-            {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-            Run
-          </button>
+	            {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+	            {t("Run")}
+	          </button>
         </div>
       </section>
     );
   }
 
   const steps: readonly FirstRunStep[] = [
-    buildFirstRunProviderStep(readyProvider, providersLoading, () => onOpenProviders()),
-    buildFirstRunChannelStep(Boolean(selectedChannel), Boolean(readyProvider), channelsLoading, onCreateDefaultChannel),
-    buildFirstRunChannelProviderStep(selectedChannel, readyProvider, channelHasReadyDefault, onSetChannelProvider),
-    buildFirstRunTaskStep(Boolean(selectedChannel), tasks.length, tasksLoading, onCreateTask),
-    buildFirstRunRunStep(selectedTask, effectiveProvider, runReady, isRunning, onCheckThenRunTask, onRunTask),
-  ];
+	    buildFirstRunProviderStep(readyProvider, providersLoading, () => onOpenProviders(), t),
+	    buildFirstRunChannelStep(Boolean(selectedChannel), Boolean(readyProvider), channelsLoading, onCreateDefaultChannel, t),
+	    buildFirstRunChannelProviderStep(selectedChannel, readyProvider, channelHasReadyDefault, onSetChannelProvider, t),
+	    buildFirstRunTaskStep(Boolean(selectedChannel), tasks.length, tasksLoading, onCreateTask, t),
+	    buildFirstRunRunStep(selectedTask, effectiveProvider, runReady, isRunning, onCheckThenRunTask, onRunTask, t),
+	  ];
 
   return (
     <section className="first-run-flow panel" aria-labelledby="first-run-flow-title">
       <div className="panel-title split first-run-title">
         <span>
           <Play size={18} />
-          <h2 id="first-run-flow-title">First run</h2>
-        </span>
-        <span className="event-count">setup loop</span>
+	          <h2 id="first-run-flow-title">{t("First run")}</h2>
+	        </span>
+	        <span className="event-count">{t("setup loop")}</span>
       </div>
       <div className="first-run-steps">
         {steps.map((step) => (
@@ -1905,7 +1924,7 @@ function FirstRunFlow({
             <span className="first-run-step-actions">
               {step.actionLabel && step.onAction ? (
                 <button className="secondary-button compact-button" type="button" onClick={step.onAction} disabled={step.disabled}>
-                  {step.status === "pending" ? <Loader2 className="spin" size={14} /> : firstRunActionIcon(step.actionLabel)}
+	                  {step.status === "pending" ? <Loader2 className="spin" size={14} /> : firstRunActionIcon(step)}
                   {step.actionLabel}
                 </button>
               ) : null}
@@ -1927,14 +1946,15 @@ function buildFirstRunProviderStep(
   readyProvider: ProviderPreset | undefined,
   loading: boolean,
   onOpenProviders: () => void,
+  t: Translate,
 ): FirstRunStep {
   if (loading) {
     return {
       id: "provider",
-      label: "Provider",
-      detail: "Loading provider presets",
+      label: t("Provider"),
+      detail: t("Loading provider presets"),
       status: "pending",
-      actionLabel: "Providers",
+      actionLabel: t("Providers"),
       onAction: onOpenProviders,
       disabled: true,
     };
@@ -1942,17 +1962,17 @@ function buildFirstRunProviderStep(
   if (!readyProvider) {
     return {
       id: "provider",
-      label: "Provider",
-      detail: "Create or repair a preflight-ready chat provider first.",
+      label: t("Provider"),
+      detail: t("Create or repair a preflight-ready chat provider first."),
       status: "attention",
-      actionLabel: "Providers",
+      actionLabel: t("Providers"),
       onAction: onOpenProviders,
     };
   }
   return {
     id: "provider",
-    label: "Provider",
-    detail: `${readyProvider.displayName} is preflight-ready.`,
+    label: t("Provider"),
+    detail: t("{providerName} is preflight-ready.", { providerName: readyProvider.displayName }),
     status: "ready",
   };
 }
@@ -1962,12 +1982,13 @@ function buildFirstRunChannelStep(
   hasReadyProvider: boolean,
   loading: boolean,
   onCreateDefaultChannel: () => void,
+  t: Translate,
 ): FirstRunStep {
   if (loading) {
     return {
       id: "channel",
-      label: "Channel",
-      detail: "Loading channels",
+      label: t("Channel"),
+      detail: t("Loading channels"),
       status: "pending",
       disabled: true,
     };
@@ -1975,18 +1996,18 @@ function buildFirstRunChannelStep(
   if (!hasChannel) {
     return {
       id: "channel",
-      label: "Channel",
-      detail: hasReadyProvider ? "Create an Engineering channel with the ready provider as default." : "Create a channel after provider setup.",
+      label: t("Channel"),
+      detail: hasReadyProvider ? t("Create an Engineering channel with the ready provider as default.") : t("Create a channel after provider setup."),
       status: "attention",
-      actionLabel: "Create default",
+      actionLabel: t("Create default"),
       onAction: onCreateDefaultChannel,
       disabled: !hasReadyProvider,
     };
   }
   return {
     id: "channel",
-    label: "Channel",
-    detail: "A channel is selected.",
+    label: t("Channel"),
+    detail: t("A channel is selected."),
     status: "ready",
   };
 }
@@ -1996,29 +2017,30 @@ function buildFirstRunChannelProviderStep(
   readyProvider: ProviderPreset | undefined,
   channelHasReadyDefault: boolean,
   onSetChannelProvider: (channelId: string, providerId: string) => void,
+  t: Translate,
 ): FirstRunStep {
   if (!channel) {
     return {
       id: "channel-provider",
-      label: "Channel provider",
-      detail: "Create or select a channel first.",
+      label: t("Channel provider"),
+      detail: t("Create or select a channel first."),
       status: "pending",
     };
   }
   if (channelHasReadyDefault) {
     return {
       id: "channel-provider",
-      label: "Channel provider",
-      detail: "Selected channel has a preflight-ready default provider.",
+      label: t("Channel provider"),
+      detail: t("Selected channel has a preflight-ready default provider."),
       status: "ready",
     };
   }
   return {
     id: "channel-provider",
-    label: "Channel provider",
-    detail: readyProvider ? `Set ${readyProvider.displayName} as the channel default.` : "Repair a provider before setting the channel default.",
+    label: t("Channel provider"),
+    detail: readyProvider ? t("Set {providerName} as the channel default.", { providerName: readyProvider.displayName }) : t("Repair a provider before setting the channel default."),
     status: "attention",
-    actionLabel: "Set provider",
+    actionLabel: t("Set provider"),
     onAction: readyProvider ? () => onSetChannelProvider(channel.id, readyProvider.id) : undefined,
     disabled: !readyProvider,
   };
@@ -2029,30 +2051,31 @@ function buildFirstRunTaskStep(
   taskCount: number,
   loading: boolean,
   onCreateTask: () => void,
+  t: Translate,
 ): FirstRunStep {
   if (loading) {
     return {
       id: "task",
-      label: "Task",
-      detail: "Loading selected channel tasks",
+      label: t("Task"),
+      detail: t("Loading selected channel tasks"),
       status: "pending",
     };
   }
   if (taskCount === 0) {
     return {
       id: "task",
-      label: "Task",
-      detail: hasChannel ? "Create the first task from the default prompt." : "Create a channel first.",
+      label: t("Task"),
+      detail: hasChannel ? t("Create the first task from the default prompt.") : t("Create a channel first."),
       status: "attention",
-      actionLabel: "Create first task",
+      actionLabel: t("Create first task"),
       onAction: hasChannel ? onCreateTask : undefined,
       disabled: !hasChannel,
     };
   }
   return {
     id: "task",
-    label: "Task",
-    detail: `${taskCount} task${taskCount === 1 ? "" : "s"} available.`,
+    label: t("Task"),
+    detail: t(taskCount === 1 ? "{count} task available." : "{count} tasks available.", { count: taskCount }),
     status: "ready",
   };
 }
@@ -2064,42 +2087,43 @@ function buildFirstRunRunStep(
   isRunning: boolean,
   onCheckThenRunTask: (task: Task) => void,
   onRunTask: (task: Task) => void,
+  t: Translate,
 ): FirstRunStep {
   if (!task) {
     return {
       id: "run",
-      label: "Run",
-      detail: "Create a task first.",
+      label: t("Run"),
+      detail: t("Create a task first."),
       status: "pending",
     };
   }
   if (!provider) {
     return {
       id: "run",
-      label: "Run",
-      detail: "Select or set a provider before running.",
+      label: t("Run"),
+      detail: t("Select or set a provider before running."),
       status: "attention",
     };
   }
   if (!runReady) {
     return {
       id: "run",
-      label: "Run",
-      detail: providerRunPreflightBlocker(provider) ?? "Provider is not ready.",
+      label: t("Run"),
+      detail: providerRunPreflightBlocker(provider) ?? t("Provider is not ready."),
       status: "attention",
-      actionLabel: "Check run",
+      actionLabel: t("Check run"),
       onAction: () => onCheckThenRunTask(task),
       disabled: isRunning || !canUseProviderForRun(provider),
     };
   }
   return {
     id: "run",
-    label: "Run",
-    detail: "Task and provider are ready.",
+    label: t("Run"),
+    detail: t("Task and provider are ready."),
     status: "ready",
-    actionLabel: "Check run",
+    actionLabel: t("Check run"),
     onAction: () => onCheckThenRunTask(task),
-    secondaryActionLabel: "Run",
+    secondaryActionLabel: t("Run"),
     onSecondaryAction: () => onRunTask(task),
     disabled: isRunning,
   };
@@ -2115,45 +2139,44 @@ function firstRunStepIcon(status: FirstRunStep["status"]): JSX.Element {
   return <CircleAlert size={17} />;
 }
 
-function firstRunActionIcon(label: string): JSX.Element {
-  const normalized = label.toLowerCase();
-  if (normalized.includes("provider")) {
+function firstRunActionIcon(step: FirstRunStep): JSX.Element {
+  if (step.id === "provider" || step.id === "channel-provider") {
     return <PlugZap size={14} />;
   }
-  if (normalized.includes("create")) {
+  if (step.id === "channel" || step.id === "task") {
     return <Plus size={14} />;
   }
-  if (normalized.includes("check")) {
+  if (step.id === "run") {
     return <CheckCircle2 size={14} />;
   }
   return <Save size={14} />;
 }
 
-function buildDaemonReadinessItem(daemonHealthy: boolean | undefined, onRefreshDaemon: () => void): WorkspaceReadinessItem {
+function buildDaemonReadinessItem(daemonHealthy: boolean | undefined, onRefreshDaemon: () => void, t: Translate): WorkspaceReadinessItem {
   if (daemonHealthy === undefined) {
     return {
       id: "daemon",
-      label: "Daemon",
-      detail: "Checking local daemon",
+      label: t("Daemon"),
+      detail: t("Checking local daemon"),
       status: "loading",
-      actionLabel: "Retry",
+      actionLabel: t("Retry"),
       onAction: onRefreshDaemon,
     };
   }
   if (!daemonHealthy) {
     return {
       id: "daemon",
-      label: "Daemon",
-      detail: "Daemon is offline",
+      label: t("Daemon"),
+      detail: t("Daemon is offline"),
       status: "attention",
-      actionLabel: "Retry",
+      actionLabel: t("Retry"),
       onAction: onRefreshDaemon,
     };
   }
   return {
     id: "daemon",
-    label: "Daemon",
-    detail: "Local daemon is reachable",
+    label: t("Daemon"),
+    detail: t("Local daemon is reachable"),
     status: "ready",
   };
 }
@@ -2164,14 +2187,15 @@ function buildProviderReadinessItem(
   ready: number,
   loading: boolean,
   onOpenProviders: () => void,
+  t: Translate,
 ): WorkspaceReadinessItem {
   if (loading) {
     return {
       id: "providers",
-      label: "Provider",
-      detail: "Loading provider presets",
+      label: t("Provider"),
+      detail: t("Loading provider presets"),
       status: "loading",
-      actionLabel: "Providers",
+      actionLabel: t("Providers"),
       onAction: onOpenProviders,
       disabled: true,
     };
@@ -2179,51 +2203,51 @@ function buildProviderReadinessItem(
   if (total === 0) {
     return {
       id: "providers",
-      label: "Provider",
-      detail: "No provider presets",
+      label: t("Provider"),
+      detail: t("No provider presets"),
       status: "attention",
-      actionLabel: "Providers",
+      actionLabel: t("Providers"),
       onAction: onOpenProviders,
     };
   }
   if (runnable === 0) {
     return {
       id: "providers",
-      label: "Provider",
-      detail: `${total} configured, none runnable`,
+      label: t("Provider"),
+      detail: t("{total} configured, none runnable", { total }),
       status: "attention",
-      actionLabel: "Providers",
+      actionLabel: t("Providers"),
       onAction: onOpenProviders,
     };
   }
   if (ready === 0) {
     return {
       id: "providers",
-      label: "Provider",
-      detail: `${runnable} runnable, check required`,
+      label: t("Provider"),
+      detail: t("{runnable} runnable, check required", { runnable }),
       status: "attention",
-      actionLabel: "Providers",
+      actionLabel: t("Providers"),
       onAction: onOpenProviders,
     };
   }
   return {
     id: "providers",
-    label: "Provider",
-    detail: `${ready}/${total} preflight ready`,
+    label: t("Provider"),
+    detail: t("{ready}/{total} preflight ready", { ready, total }),
     status: "ready",
-    actionLabel: "Providers",
+    actionLabel: t("Providers"),
     onAction: onOpenProviders,
   };
 }
 
-function buildChannelReadinessItem(total: number, loading: boolean, onCreateChannel: () => void): WorkspaceReadinessItem {
+function buildChannelReadinessItem(total: number, loading: boolean, onCreateChannel: () => void, t: Translate): WorkspaceReadinessItem {
   if (loading) {
     return {
       id: "channels",
-      label: "Channel",
-      detail: "Loading channels",
+      label: t("Channel"),
+      detail: t("Loading channels"),
       status: "loading",
-      actionLabel: "Create",
+      actionLabel: t("Create"),
       onAction: onCreateChannel,
       disabled: true,
     };
@@ -2231,73 +2255,73 @@ function buildChannelReadinessItem(total: number, loading: boolean, onCreateChan
   if (total === 0) {
     return {
       id: "channels",
-      label: "Channel",
-      detail: "No channel yet",
+      label: t("Channel"),
+      detail: t("No channel yet"),
       status: "attention",
-      actionLabel: "Create",
+      actionLabel: t("Create"),
       onAction: onCreateChannel,
     };
   }
   return {
     id: "channels",
-    label: "Channel",
-    detail: `${total} channel${total === 1 ? "" : "s"} available`,
+    label: t("Channel"),
+    detail: t(total === 1 ? "{total} channel available" : "{total} channels available", { total }),
     status: "ready",
   };
 }
 
-function buildTaskReadinessItem(total: number, loading: boolean, hasChannel: boolean, onCreateTask: () => void): WorkspaceReadinessItem {
+function buildTaskReadinessItem(total: number, loading: boolean, hasChannel: boolean, onCreateTask: () => void, t: Translate): WorkspaceReadinessItem {
   if (loading) {
     return {
       id: "tasks",
-      label: "Tasks",
-      detail: "Loading selected channel tasks",
+      label: t("Tasks"),
+      detail: t("Loading selected channel tasks"),
       status: "loading",
     };
   }
   if (total === 0) {
     return {
       id: "tasks",
-      label: "Tasks",
-      detail: hasChannel ? "No task in selected channel" : "Create a channel first",
+      label: t("Tasks"),
+      detail: hasChannel ? t("No task in selected channel") : t("Create a channel first"),
       status: hasChannel ? "info" : "attention",
-      actionLabel: hasChannel ? "Create" : undefined,
+      actionLabel: hasChannel ? t("Create") : undefined,
       onAction: hasChannel ? onCreateTask : undefined,
     };
   }
   return {
     id: "tasks",
-    label: "Tasks",
-    detail: `${total} task${total === 1 ? "" : "s"} in selected channel`,
+    label: t("Tasks"),
+    detail: t(total === 1 ? "{total} task in selected channel" : "{total} tasks in selected channel", { total }),
     status: "ready",
   };
 }
 
-function buildApprovalReadinessItem(pendingCount: number, expiredCount: number, onOpenApprovals: () => void): WorkspaceReadinessItem {
+function buildApprovalReadinessItem(pendingCount: number, expiredCount: number, onOpenApprovals: () => void, t: Translate): WorkspaceReadinessItem {
   if (pendingCount > 0) {
     return {
       id: "approvals",
-      label: "Approvals",
-      detail: `${pendingCount} approval${pendingCount === 1 ? "" : "s"} waiting for a local decision`,
+      label: t("Approvals"),
+      detail: t(pendingCount === 1 ? "{count} approval waiting for a local decision" : "{count} approvals waiting for a local decision", { count: pendingCount }),
       status: "attention",
-      actionLabel: "Approvals",
+      actionLabel: t("Approvals"),
       onAction: onOpenApprovals,
     };
   }
   if (expiredCount > 0) {
     return {
       id: "approvals",
-      label: "Approvals",
-      detail: `${expiredCount} expired approval${expiredCount === 1 ? "" : "s"} need review`,
+      label: t("Approvals"),
+      detail: t(expiredCount === 1 ? "{count} expired approval need review" : "{count} expired approvals need review", { count: expiredCount }),
       status: "attention",
-      actionLabel: "Approvals",
+      actionLabel: t("Approvals"),
       onAction: onOpenApprovals,
     };
   }
   return {
     id: "approvals",
-    label: "Approvals",
-    detail: "No pending or expired approvals",
+    label: t("Approvals"),
+    detail: t("No pending or expired approvals"),
     status: "ready",
   };
 }
@@ -2307,14 +2331,15 @@ function buildRunLoopReadinessItem(
   latestFailedRun: RunSession | undefined,
   loading: boolean,
   onOpenRuns: () => void,
+  t: Translate,
 ): WorkspaceReadinessItem {
   if (loading) {
     return {
       id: "run-loop",
-      label: "Run loop",
-      detail: "Loading run history",
+      label: t("Run loop"),
+      detail: t("Loading run history"),
       status: "loading",
-      actionLabel: "Runs",
+      actionLabel: t("Runs"),
       onAction: onOpenRuns,
       disabled: true,
     };
@@ -2322,29 +2347,29 @@ function buildRunLoopReadinessItem(
   if (latestFailedRun) {
     return {
       id: "run-loop",
-      label: "Run loop",
-      detail: `Latest failed run needs review: ${latestFailedRun.id}`,
+      label: t("Run loop"),
+      detail: t("Latest failed run needs review: {runId}", { runId: latestFailedRun.id }),
       status: "info",
-      actionLabel: "Runs",
+      actionLabel: t("Runs"),
       onAction: onOpenRuns,
     };
   }
   if (succeededRunCount === 0) {
     return {
       id: "run-loop",
-      label: "Run loop",
-      detail: "No successful run yet",
+      label: t("Run loop"),
+      detail: t("No successful run yet"),
       status: "info",
-      actionLabel: "Runs",
+      actionLabel: t("Runs"),
       onAction: onOpenRuns,
     };
   }
   return {
     id: "run-loop",
-    label: "Run loop",
-    detail: `${succeededRunCount} successful run${succeededRunCount === 1 ? "" : "s"}`,
+    label: t("Run loop"),
+    detail: t(succeededRunCount === 1 ? "{count} successful run" : "{count} successful runs", { count: succeededRunCount }),
     status: "ready",
-    actionLabel: "Runs",
+    actionLabel: t("Runs"),
     onAction: onOpenRuns,
   };
 }
@@ -2363,13 +2388,13 @@ function readinessIcon(status: WorkspaceReadinessItem["status"]): JSX.Element {
 }
 
 function readinessActionIcon(item: WorkspaceReadinessItem): JSX.Element {
-  if (item.actionLabel === "Providers") {
+  if (item.id === "providers") {
     return <PlugZap size={14} />;
   }
-  if (item.actionLabel === "Runs") {
+  if (item.id === "run-loop") {
     return <History size={14} />;
   }
-  if (item.actionLabel === "Create") {
+  if (item.id === "channels" || item.id === "tasks") {
     return <Plus size={14} />;
   }
   return <RefreshCw size={14} />;
@@ -2468,6 +2493,7 @@ function ChannelTaskWorkspace({
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly onClearRepair: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
   const selectedTaskRun = selectedTask?.currentRunId ? runById.get(selectedTask.currentRunId) : undefined;
@@ -2492,16 +2518,16 @@ function ChannelTaskWorkspace({
         <div className="panel-title split">
           <span>
             <Workflow size={18} />
-            <h2 id="channels-title">Channels</h2>
+            <h2 id="channels-title">{t("Channels")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onRefreshChannels} disabled={channelsLoading}>
             {channelsLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            Refresh
+            {t("Refresh")}
           </button>
         </div>
 
         <label className="field wide">
-          <span>Workspace path</span>
+          <span>{t("Workspace path")}</span>
           <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
         </label>
 
@@ -2516,7 +2542,7 @@ function ChannelTaskWorkspace({
           {channels.length === 0 ? (
             <div className="empty-state compact-empty">
               {channelsLoading ? <Loader2 className="spin" /> : <Workflow />}
-              <span>{channelsLoading ? "Loading channels..." : "No channels yet"}</span>
+              <span>{channelsLoading ? t("Loading channels...") : t("No channels yet")}</span>
             </div>
           ) : (
             channels.map((channel) => (
@@ -2526,48 +2552,48 @@ function ChannelTaskWorkspace({
                 type="button"
                 onClick={() => onSelectChannel(channel.id)}
               >
-                <span className="channel-row-main">
-                  <strong>{channel.name}</strong>
-                  <small>Execution: {channel.boundPath ?? cwd}</small>
-                </span>
+	                <span className="channel-row-main">
+	                  <strong>{channel.name}</strong>
+	                  <small>{t("Execution")}: {channel.boundPath ?? cwd}</small>
+	                </span>
                 <span className="channel-tools">{channel.allowedTools.join(", ")}</span>
               </button>
             ))
           )}
         </div>
 
-        {selectedChannel ? (
-          <div className="channel-detail" aria-label="Channel detail">
+	        {selectedChannel ? (
+	          <div className="channel-detail" aria-label={t("Channel detail")}>
             <div className="panel-title tight split">
               <span>
                 <Pencil size={16} />
-                <h3>Channel detail</h3>
-              </span>
-              <span className="event-count">{selectedChannel.allowedTools.length} tools</span>
-            </div>
-            <div className="channel-detail-meta">
-              <MetaRow label="Channel id" value={selectedChannel.id} compact />
-              <MetaRow label="Workspace path" value={cwd} compact />
-              <MetaRow label="Execution path" value={selectedChannel.boundPath ?? cwd} compact />
-            </div>
-            <label className="field wide">
-              <span>Name</span>
+	                <h3>{t("Channel detail")}</h3>
+	              </span>
+	              <span className="event-count">{selectedChannel.allowedTools.length} tools</span>
+	            </div>
+	            <div className="channel-detail-meta">
+	              <MetaRow label={t("Channel id")} value={selectedChannel.id} compact />
+	              <MetaRow label={t("Workspace path")} value={cwd} compact />
+	              <MetaRow label={t("Execution path")} value={selectedChannel.boundPath ?? cwd} compact />
+	            </div>
+	            <label className="field wide">
+	              <span>{t("Name")}</span>
               <input value={channelEditForm.name} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, name: event.target.value })} />
             </label>
-            <label className="field wide">
-              <span>Execution path</span>
+	            <label className="field wide">
+	              <span>{t("Execution path")}</span>
               <input
                 value={channelEditForm.boundPath}
                 onChange={(event) => onChannelEditFormChange({ ...channelEditForm, boundPath: event.target.value })}
               />
             </label>
-            <label className="field wide">
-              <span>Default provider</span>
+	            <label className="field wide">
+	              <span>{t("Default provider")}</span>
               <select
                 value={channelEditForm.defaultProviderPresetId}
                 onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
               >
-                <option value="">None</option>
+	                <option value="">{t("None")}</option>
                 <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
               </select>
             </label>
@@ -2591,33 +2617,33 @@ function ChannelTaskWorkspace({
                 </label>
               ))}
             </div>
-            <button className="primary-button full" type="button" onClick={() => onSaveChannelEdit(selectedChannel.id)}>
-              <Save size={16} />
-              Save channel
-            </button>
+	            <button className="primary-button full" type="button" onClick={() => onSaveChannelEdit(selectedChannel.id)}>
+	              <Save size={16} />
+	              {t("Save channel")}
+	            </button>
           </div>
         ) : null}
 
         <div className="channel-create">
           <div className="panel-title tight">
             <Plus size={16} />
-            <h3>New channel</h3>
+	            <h3>{t("New channel")}</h3>
           </div>
           <label className="field wide">
-            <span>Name</span>
+	            <span>{t("Name")}</span>
             <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} />
           </label>
           <label className="field wide">
-            <span>Execution path</span>
+	            <span>{t("Execution path")}</span>
             <input value={channelForm.boundPath} onChange={(event) => onChannelFormChange({ ...channelForm, boundPath: event.target.value })} />
           </label>
           <label className="field wide">
-            <span>Default provider</span>
+	            <span>{t("Default provider")}</span>
             <select
               value={channelForm.defaultProviderPresetId}
               onChange={(event) => onChannelFormChange({ ...channelForm, defaultProviderPresetId: event.target.value })}
             >
-              <option value="">None</option>
+	              <option value="">{t("None")}</option>
               <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
             </select>
           </label>
@@ -2641,10 +2667,10 @@ function ChannelTaskWorkspace({
               </label>
             ))}
           </div>
-          <button className="primary-button full" type="button" onClick={onCreateChannel}>
-            <Plus size={16} />
-            Create channel
-          </button>
+	          <button className="primary-button full" type="button" onClick={onCreateChannel}>
+	            <Plus size={16} />
+	            {t("Create channel")}
+	          </button>
         </div>
       </section>
 
@@ -2652,31 +2678,31 @@ function ChannelTaskWorkspace({
         <div className="panel-title split">
           <span>
             <SquareTerminal size={18} />
-            <h2 id="tasks-title">Tasks</h2>
+	            <h2 id="tasks-title">{t("Tasks")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onRefreshTasks} disabled={!selectedChannelId || tasksLoading}>
             {tasksLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            Refresh
+	            {t("Refresh")}
           </button>
         </div>
 
         <div className="selected-channel-strip">
           <div>
-            <span>Channel</span>
-            <strong>{selectedChannel?.name ?? "None selected"}</strong>
+	            <span>{t("Channel")}</span>
+	            <strong>{selectedChannel?.name ?? t("None selected")}</strong>
           </div>
           {selectedChannel ? (
             <button className="secondary-button compact-button danger" type="button" onClick={() => onDeleteChannel(selectedChannel.id)}>
-              <Trash2 size={14} />
-              Delete
-            </button>
+	              <Trash2 size={14} />
+	              {t("Delete")}
+	            </button>
           ) : null}
         </div>
 
         <label className="field wide">
-          <span>Run provider</span>
+	          <span>{t("Run provider")}</span>
           <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providers.length === 0}>
-            <option value="">Select provider preset</option>
+	            <option value="">{t("Select provider preset")}</option>
             <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
           </select>
         </label>
@@ -2685,55 +2711,55 @@ function ChannelTaskWorkspace({
             {canPreflightRunWithEffectiveProvider ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
             <span>
               {providers.length === 0
-                ? "No saved provider presets. Create one from GPT, Claude, relay, or domestic templates."
-                : runnableProviders.length === 0
-                  ? "No runnable provider presets. Enable a chat provider and configure its env key."
-                  : effectiveProvider
-                    ? (effectiveProviderPreflightBlocker ?? `${effectiveProvider.displayName}: ${providerRunBlockerLabel(effectiveProvider)}.`)
-                    : "Select a provider preset before running tasks."}
-            </span>
+	                ? t("No saved provider presets. Create one from GPT, Claude, relay, or domestic templates.")
+	                : runnableProviders.length === 0
+	                  ? t("No runnable provider presets. Enable a chat provider and configure its env key.")
+	                  : effectiveProvider
+	                    ? (effectiveProviderPreflightBlocker ?? `${effectiveProvider.displayName}: ${providerRunBlockerLabel(effectiveProvider)}.`)
+	                    : t("Select a provider preset before running tasks.")}
+	            </span>
             <button className="secondary-button compact-button" type="button" onClick={() => onOpenProviders()}>
-              Providers
+	              {t("Providers")}
             </button>
           </div>
         ) : null}
 
         <div className="task-create">
           <label className="field wide">
-            <span>Title</span>
+	            <span>{t("Title")}</span>
             <input value={taskForm.title} onChange={(event) => onTaskFormChange({ ...taskForm, title: event.target.value })} />
           </label>
           <label className="field wide">
-            <span>Prompt</span>
+	            <span>{t("Prompt")}</span>
             <textarea value={taskForm.prompt} rows={5} onChange={(event) => onTaskFormChange({ ...taskForm, prompt: event.target.value })} />
           </label>
           <button className="primary-button" type="button" onClick={onCreateTask} disabled={!selectedChannelId}>
-            <Plus size={16} />
-            Create task
+	            <Plus size={16} />
+	            {t("Create task")}
           </button>
         </div>
 
         {selectedTask ? (
-          <div className="task-detail" aria-label="Task detail">
+	          <div className="task-detail" aria-label={t("Task detail")}>
             <div className="panel-title tight split">
               <span>
                 <Pencil size={16} />
-                <h3>Task detail</h3>
+	                <h3>{t("Task detail")}</h3>
               </span>
               <span className={`task-status ${selectedTask.status}`}>{selectedTask.status}</span>
             </div>
             <div className="task-detail-meta">
-              <MetaRow label="Task id" value={selectedTask.id} compact />
-              <MetaRow label="Channel" value={selectedTask.channelId} compact />
-              <MetaRow label="Current run" value={selectedTask.currentRunId ?? "-"} compact />
+	              <MetaRow label={t("Task id")} value={selectedTask.id} compact />
+	              <MetaRow label={t("Channel")} value={selectedTask.channelId} compact />
+	              <MetaRow label={t("Current run")} value={selectedTask.currentRunId ?? "-"} compact />
             </div>
             {selectedTask.currentRunId ? (
               <div className="task-run-link">
                 <StatusBadge status={selectedTaskRunStatus} />
                 <code>{selectedTask.currentRunId}</code>
                 <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(selectedTask.currentRunId ?? "")}>
-                  <History size={14} />
-                  Open run
+	                  <History size={14} />
+	                  {t("Open run")}
                 </button>
               </div>
             ) : null}
@@ -2761,11 +2787,11 @@ function ChannelTaskWorkspace({
               />
             ) : null}
             <label className="field wide">
-              <span>Title</span>
+              <span>{t("Title")}</span>
               <input value={taskEditForm.title} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, title: event.target.value })} />
             </label>
             <label className="field wide">
-              <span>Status</span>
+              <span>{t("Status")}</span>
               <select value={taskEditForm.status} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, status: event.target.value as TaskStatus })}>
                 {taskStatuses.map((status) => (
                   <option key={status} value={status}>
@@ -2775,22 +2801,22 @@ function ChannelTaskWorkspace({
               </select>
             </label>
             <label className="field wide">
-              <span>Prompt</span>
+              <span>{t("Prompt")}</span>
               <textarea value={taskEditForm.prompt} rows={7} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, prompt: event.target.value })} />
             </label>
             <TaskProviderReadiness provider={effectiveProvider} onOpenProviders={() => onOpenProviders()} />
             <div className="task-actions">
               <button className="primary-button" type="button" onClick={() => onSaveTaskEdit(selectedTask.id)}>
                 <Save size={16} />
-                Save task
+                {t("Save task")}
               </button>
               <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(selectedTask)} disabled={isRunning || !canRunWithEffectiveProvider}>
                 {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                Check run
+                {t("Check run")}
               </button>
               <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !canPreflightRunWithEffectiveProvider}>
                 {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                Run
+                {t("Run")}
               </button>
             </div>
           </div>
@@ -2800,7 +2826,7 @@ function ChannelTaskWorkspace({
           {tasks.length === 0 ? (
             <div className="empty-state compact-empty">
               {tasksLoading ? <Loader2 className="spin" /> : <Clock3 />}
-              <span>{tasksLoading ? "Loading tasks..." : "No tasks in this channel"}</span>
+              <span>{tasksLoading ? t("Loading tasks...") : t("No tasks in this channel")}</span>
             </div>
           ) : (
             tasks.map((task) => {
@@ -2825,8 +2851,8 @@ function ChannelTaskWorkspace({
                       <StatusBadge status={linkedRunStatus} />
                       <code>{task.currentRunId}</code>
                       <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
-                        <History size={14} />
-                        Open run
+	                        <History size={14} />
+	                        {t("Open run")}
                       </button>
                     </div>
                   ) : null}
@@ -2842,24 +2868,24 @@ function ChannelTaskWorkspace({
                   ) : null}
                   <div className="task-actions">
                     <button className="secondary-button compact-button" type="button" onClick={() => onSelectTask(task.id)}>
-                      <Pencil size={14} />
-                      Edit
+	                      <Pencil size={14} />
+	                      {t("Edit")}
                     </button>
                     <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={isRunning || !canRunWithEffectiveProvider}>
                       {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                      Check run
+	                      {t("Check run")}
                     </button>
                     <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || !canPreflightRunWithEffectiveProvider}>
                       {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                      Run
+	                      {t("Run")}
                     </button>
                     <button className="secondary-button compact-button" type="button" onClick={() => onReviewTask(task.id)} disabled={task.status === "review"}>
-                      <CheckCircle2 size={14} />
-                      Review
+	                      <CheckCircle2 size={14} />
+	                      {t("Review")}
                     </button>
                     <button className="secondary-button compact-button danger" type="button" onClick={() => onDeleteTask(task.id)}>
-                      <Trash2 size={14} />
-                      Delete
+	                      <Trash2 size={14} />
+	                      {t("Delete")}
                     </button>
                   </div>
                 </article>
@@ -2939,32 +2965,33 @@ function TaskProviderReadiness({
   readonly provider: ProviderPreset | undefined;
   readonly onOpenProviders: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const blocker = providerRunPreflightBlocker(provider);
   const ready = Boolean(provider && !blocker);
   const lastCheck = provider?.lastCheck;
-  const checkedAt = lastCheck ? formatDateTime(lastCheck.checkedAt) : "not checked";
+  const checkedAt = lastCheck ? formatDateTime(lastCheck.checkedAt) : t("not checked");
 
   return (
     <div className={ready ? "task-provider-readiness ok" : "task-provider-readiness"}>
       {ready ? <CheckCircle2 size={17} /> : <CircleAlert size={17} />}
       <div className="task-provider-readiness-copy">
         <div className="task-provider-readiness-head">
-          <strong>{ready ? "Provider ready" : "Provider needs attention"}</strong>
+	          <strong>{ready ? t("Provider ready") : t("Provider needs attention")}</strong>
           <span className={provider ? providerLastCheckClass(provider) : "provider-state check-unknown"}>
-            {provider ? providerLastCheckLabel(provider) : "no provider"}
+	            {provider ? providerLastCheckLabel(provider) : t("no provider")}
           </span>
         </div>
         <p>{taskProviderReadinessMessage(provider, blocker)}</p>
         <div className="task-provider-readiness-meta">
-          <MetaRow label="Provider" value={provider ? provider.displayName : "-"} compact />
-          <MetaRow label="Model" value={provider ? provider.model : "-"} compact />
-          <MetaRow label="Checked" value={checkedAt} compact />
+	          <MetaRow label={t("Provider")} value={provider ? provider.displayName : "-"} compact />
+	          <MetaRow label={t("Model")} value={provider ? provider.model : "-"} compact />
+	          <MetaRow label={t("Checked")} value={checkedAt} compact />
         </div>
         {lastCheck && !lastCheck.ok ? <small>{lastCheck.message}</small> : null}
         <small>{taskProviderReadinessGuidance(provider)}</small>
       </div>
       <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
-        Providers
+	        {t("Providers")}
       </button>
     </div>
   );
@@ -3019,22 +3046,24 @@ function RunHistory({
   readonly onEditTask: (run: RunSession) => void;
   readonly onSelect: (runId: string) => void;
 }): JSX.Element {
+  const { t } = useI18n();
+
   return (
     <div className="run-history-layout">
       <section className="panel runs-panel" aria-labelledby="run-history-title">
         <div className="panel-title split">
           <span>
             <History size={18} />
-            <h2 id="run-history-title">Recent runs</h2>
+            <h2 id="run-history-title">{t("Recent runs")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
             {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            Refresh
+            {t("Refresh")}
           </button>
         </div>
 
         <label className="field wide runs-cwd">
-          <span>Workspace path</span>
+          <span>{t("Workspace path")}</span>
           <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
         </label>
 
@@ -3049,7 +3078,7 @@ function RunHistory({
           {runs.length === 0 ? (
             <div className="empty-state compact-empty">
               {isLoading ? <Loader2 className="spin" /> : <Clock3 />}
-              <span>{isLoading ? "Loading runs..." : "No persisted runs for this workspace"}</span>
+              <span>{isLoading ? t("Loading runs...") : t("No persisted runs for this workspace")}</span>
             </div>
           ) : (
             runs.map((item) => (
@@ -3128,6 +3157,7 @@ function RunDetailPanel({
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onEditTask: (run: RunSession) => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   const terminalEvent = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));
   const workspaceCwd = run ? readDataString(run.requestSnapshot, "workspaceCwd") || run.cwd : "-";
@@ -3141,16 +3171,16 @@ function RunDetailPanel({
       <div className="panel-title split">
         <span>
           <Activity size={18} />
-          <h2 id="run-detail-title">Run detail</h2>
+	          <h2 id="run-detail-title">{t("Run detail")}</h2>
         </span>
         <span className="run-detail-actions">
           <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={!run || isRunning}>
             <RefreshCw size={15} />
-            Reload
+	            {t("Reload")}
           </button>
           <button className="primary-button compact-button" type="button" onClick={() => run && onRerun(run)} disabled={!run || isRunning || !providerPresetId}>
             {isRunning ? <Loader2 className="spin" size={15} /> : <RotateCcw size={15} />}
-            Rerun snapshot
+	            {t("Rerun snapshot")}
           </button>
         </span>
       </div>
@@ -3158,20 +3188,20 @@ function RunDetailPanel({
       {!run ? (
         <div className="empty-state">
           <Search />
-          <span>Select a run to inspect execution details</span>
+	          <span>{t("Select a run to inspect execution details")}</span>
         </div>
       ) : (
         <div className="run-detail-content">
           <div className="run-detail-summary">
-            <MetaRow label="Status" value={run.status} compact />
-            <MetaRow label="Workspace cwd" value={workspaceCwd} compact />
-            <MetaRow label="Execution cwd" value={run.cwd} compact />
-            <MetaRow label="Provider" value={`${run.providerName}/${run.providerModel}`} compact />
-            <MetaRow label="Provider preset" value={providerPresetId || "-"} compact />
-            <MetaRow label="Task" value={run.taskId} compact />
-            <MetaRow label="Channel" value={run.channelId ?? "-"} compact />
-            <MetaRow label="Created" value={formatDateTime(run.createdAt)} compact />
-            <MetaRow label="Ended" value={run.endedAt ? formatDateTime(run.endedAt) : "-"} compact />
+	            <MetaRow label={t("Status")} value={run.status} compact />
+	            <MetaRow label={t("Workspace cwd")} value={workspaceCwd} compact />
+	            <MetaRow label={t("Execution cwd")} value={run.cwd} compact />
+	            <MetaRow label={t("Provider")} value={`${run.providerName}/${run.providerModel}`} compact />
+	            <MetaRow label={t("Provider preset")} value={providerPresetId || "-"} compact />
+	            <MetaRow label={t("Task")} value={run.taskId} compact />
+	            <MetaRow label={t("Channel")} value={run.channelId ?? "-"} compact />
+	            <MetaRow label={t("Created")} value={formatDateTime(run.createdAt)} compact />
+	            <MetaRow label={t("Ended")} value={run.endedAt ? formatDateTime(run.endedAt) : "-"} compact />
           </div>
 
           {repairHint ? (
@@ -3207,13 +3237,13 @@ function RunDetailPanel({
             <div className="panel-title tight split">
               <span>
                 <ShieldCheck size={16} />
-                <h3>Approval state</h3>
+	                <h3>{t("Approval state")}</h3>
               </span>
               <span className="approval-section-actions">
-                <span className="event-count">{approvals.length} approval events</span>
+	                <span className="event-count">{t("{count} approval events", { count: approvals.length })}</span>
                 <button className="secondary-button compact-button" type="button" onClick={onRefreshApprovals} disabled={approvalsLoading}>
                   {approvalsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-                  Refresh
+	                  {t("Refresh")}
                 </button>
               </span>
             </div>
@@ -3221,13 +3251,15 @@ function RunDetailPanel({
               <div className="approval-waiting-banner" role="status">
                 <Clock3 size={16} />
                 <span>
-                  Waiting for {pendingApprovals.length} approval{pendingApprovals.length > 1 ? "s" : ""}:{" "}
-                  {pendingApprovals.map((approval) => approval.actionType).join(", ")}
+	                  {t(pendingApprovals.length === 1 ? "Waiting for {count} approval: {actions}" : "Waiting for {count} approvals: {actions}", {
+	                    count: pendingApprovals.length,
+	                    actions: pendingApprovals.map((approval) => approval.actionType).join(", "),
+	                  })}
                 </span>
               </div>
             ) : null}
             {approvals.length === 0 ? (
-              <p className="muted">No approval gates recorded for this run.</p>
+	              <p className="muted">{t("No approval gates recorded for this run.")}</p>
             ) : (
               <div className="run-approval-list">
                 {approvals.map((approval) => (
@@ -3245,7 +3277,7 @@ function RunDetailPanel({
 
           {assistantText ? (
             <div className="assistant-output">
-              <span>Assistant output</span>
+	              <span>{t("Assistant output")}</span>
               <p>{assistantText}</p>
             </div>
           ) : null}
@@ -3253,22 +3285,22 @@ function RunDetailPanel({
           <div className="run-detail-section">
             <div className="panel-title tight">
               <Bot size={16} />
-              <h3>Task snapshot</h3>
+	              <h3>{t("Task snapshot")}</h3>
             </div>
             <strong>{readTaskTitle(run.taskSnapshot) || run.taskId}</strong>
-            <p>{readTaskPrompt(run.taskSnapshot) || "No prompt snapshot."}</p>
+	            <p>{readTaskPrompt(run.taskSnapshot) || t("No prompt snapshot.")}</p>
           </div>
 
           <div className="run-detail-section">
             <div className="panel-title tight split">
               <span>
                 <SquareTerminal size={16} />
-                <h3>Tool activity</h3>
+	                <h3>{t("Tool activity")}</h3>
               </span>
-              <span className="event-count">{toolEvents.length} tool events</span>
+	              <span className="event-count">{t("{count} tool events", { count: toolEvents.length })}</span>
             </div>
             {toolEvents.length === 0 ? (
-              <p className="muted">No tool activity recorded.</p>
+	              <p className="muted">{t("No tool activity recorded.")}</p>
             ) : (
               <div className="tool-event-list">
                 {toolEvents.map((event) => (
@@ -3282,12 +3314,12 @@ function RunDetailPanel({
             <div className="panel-title tight split">
               <span>
                 <Database size={16} />
-                <h3>Event timeline</h3>
+	                <h3>{t("Event timeline")}</h3>
               </span>
-              <span className="event-count">{events.length} events</span>
+	              <span className="event-count">{t("{count} events", { count: events.length })}</span>
             </div>
             {events.length === 0 ? (
-              <p className="muted">No events loaded.</p>
+	              <p className="muted">{t("No events loaded.")}</p>
             ) : (
               <div className="event-list run-detail-events">
                 {events.map((event) => <EventRow key={event.id} event={event} />)}
@@ -3345,6 +3377,7 @@ function RunEvidencePanel({
   readonly approvals: readonly ApprovalRequest[];
   readonly artifacts: readonly RunArtifact[];
 }): JSX.Element {
+  const { t } = useI18n();
   const taskLabel = readTaskTitle(run.taskSnapshot) || run.taskId;
   const providerLabel = `${run.providerName}/${run.providerModel}`;
   const terminalLabel = terminalEvent ? `#${terminalEvent.seq} ${terminalEvent.type}` : "-";
@@ -3358,45 +3391,45 @@ function RunEvidencePanel({
       <div className="panel-title tight split">
         <span>
           <CheckCircle2 size={16} />
-          <h3>Evidence</h3>
-        </span>
-        <span className="event-count">audit preview</span>
+	          <h3>{t("Evidence")}</h3>
+	        </span>
+	        <span className="event-count">{t("audit preview")}</span>
       </div>
 
       <div className="run-evidence-block">
-        <strong>Run summary preview</strong>
-        <div className="run-evidence-grid">
-          <MetaRow label="Status" value={run.status} compact />
-          <MetaRow label="Task" value={taskLabel} compact />
-          <MetaRow label="Provider" value={providerLabel} compact />
-          <MetaRow label="Terminal event" value={terminalLabel} compact />
-          <MetaRow label="Tool events" value={String(toolSummary.total)} compact />
-          <MetaRow label="Errored tools" value={String(toolSummary.errorCount)} compact />
-          <MetaRow label="Approvals" value={String(approvals.length)} compact />
+	        <strong>{t("Run summary preview")}</strong>
+	        <div className="run-evidence-grid">
+	          <MetaRow label={t("Status")} value={run.status} compact />
+	          <MetaRow label={t("Task")} value={taskLabel} compact />
+	          <MetaRow label={t("Provider")} value={providerLabel} compact />
+	          <MetaRow label={t("Terminal event")} value={terminalLabel} compact />
+	          <MetaRow label={t("Tool events")} value={String(toolSummary.total)} compact />
+	          <MetaRow label={t("Errored tools")} value={String(toolSummary.errorCount)} compact />
+	          <MetaRow label={t("Approvals")} value={String(approvals.length)} compact />
         </div>
         <p className={`run-evidence-copy${run.status === "failed" ? " error" : ""}`}>{evidenceMessage}</p>
         <p className="run-evidence-copy">
-          <strong>Assistant output</strong>
+	          <strong>{t("Assistant output")}</strong>
           {assistantPreview}
         </p>
       </div>
 
       <div className="run-evidence-block">
-        <strong>Session files</strong>
+	        <strong>{t("Session files")}</strong>
         <div className="session-file-list">
-          <span>Event log</span>
+	          <span>{t("Event log")}</span>
           <code>{run.eventLogPath}</code>
-          <span>Summary</span>
+	          <span>{t("Summary")}</span>
           <code>{run.summaryPath ?? "-"}</code>
         </div>
       </div>
 
       <div className="run-evidence-block">
-        <strong>Artifacts</strong>
+	        <strong>{t("Artifacts")}</strong>
         {artifacts.length === 0 ? (
           <div className="artifact-empty-state">
-            <span>No artifacts recorded for this run</span>
-            <small>Artifacts will appear here once the daemon records files under .ling-stack/artifacts.</small>
+	            <span>{t("No artifacts recorded for this run")}</span>
+	            <small>{t("Artifacts will appear here once the daemon records files under .ling-stack/artifacts.")}</small>
           </div>
         ) : (
           <div className="artifact-list">
@@ -3582,6 +3615,7 @@ function ProviderSettings({
   readonly onOpenRun: (runId: string) => void;
   readonly onClearRepair: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const compatibleProviderCount = providers.filter(canUseProviderForRun).length;
   const preflightReadyProviderCount = providers.filter(providerPreflightReady).length;
   const batchCheckProviderCount = providers.filter(canBatchCheckProvider).length;
@@ -3612,22 +3646,22 @@ function ProviderSettings({
         <div className="panel-title split">
           <span>
             <PlugZap size={18} />
-            <h2 id="provider-list-title">Provider presets</h2>
+	            <h2 id="provider-list-title">{t("Provider presets")}</h2>
           </span>
           <div className="provider-title-actions">
             <button className="secondary-button compact-button" type="button" onClick={onCheckBatch} disabled={isCheckingProviders || batchCheckProviderCount === 0}>
               {isCheckingProviders ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}
-              Check all
+	              {t("Check all")}
             </button>
             <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading || isCheckingProviders}>
               {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-              Refresh
+	              {t("Refresh")}
             </button>
           </div>
         </div>
 
         <label className="field wide runs-cwd">
-          <span>Workspace path</span>
+	          <span>{t("Workspace path")}</span>
           <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
         </label>
 
@@ -3639,10 +3673,10 @@ function ProviderSettings({
         ) : null}
 
         <div className="provider-onboarding-strip" aria-label="Provider onboarding status">
-          <MetaRow label="Compatible chat" value={String(compatibleProviderCount)} compact />
-          <MetaRow label="Preflight ready" value={String(preflightReadyProviderCount)} compact />
-          <MetaRow label="Missing env" value={String(missingSecretCount)} compact />
-          <MetaRow label="Templates" value={`${chatTemplateCount} chat / ${mediaTemplateCount} media`} compact />
+	          <MetaRow label={t("Compatible chat")} value={String(compatibleProviderCount)} compact />
+	          <MetaRow label={t("Preflight ready")} value={String(preflightReadyProviderCount)} compact />
+	          <MetaRow label={t("Missing env")} value={String(missingSecretCount)} compact />
+	          <MetaRow label={t("Templates")} value={`${chatTemplateCount} chat / ${mediaTemplateCount} media`} compact />
         </div>
 
         <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={isLoading} />
@@ -3678,7 +3712,7 @@ function ProviderSettings({
           {providers.length === 0 ? (
             <div className="empty-state compact-empty">
               {isLoading ? <Loader2 className="spin" /> : <PlugZap />}
-              <span>{isLoading ? "Loading providers..." : "Create a preset from GPT, Claude, relay, or domestic provider templates"}</span>
+	              <span>{isLoading ? t("Loading providers...") : t("Create a preset from GPT, Claude, relay, or domestic provider templates")}</span>
             </div>
           ) : (
             providers.map((provider) => (
@@ -3687,13 +3721,13 @@ function ProviderSettings({
                   <div className="provider-row-head">
                     <strong>{provider.displayName}</strong>
                     <span className={provider.enabled ? "provider-state enabled" : "provider-state disabled"}>
-                      {provider.enabled ? "enabled" : "disabled"}
+	                      {provider.enabled ? t("enabled") : t("disabled")}
                     </span>
                     <span className={provider.apiKeyConfigured ? "provider-state key-ok" : "provider-state key-missing"}>
-                      {provider.apiKeyRef ? (provider.apiKeyConfigured ? "key ready" : "key missing") : "no key ref"}
+	                      {provider.apiKeyRef ? (provider.apiKeyConfigured ? t("key ready") : t("key missing")) : t("no key ref")}
                     </span>
                     <span className={providerPreflightReady(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
-                      {providerPreflightReady(provider) ? "preflight ready" : canUseProviderForRun(provider) ? "needs check" : providerRunBlockerLabel(provider)}
+	                      {providerPreflightReady(provider) ? t("preflight ready") : canUseProviderForRun(provider) ? t("needs check") : providerRunBlockerLabel(provider)}
                     </span>
                     <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider)}>
                       {providerLastCheckLabel(provider)}
@@ -3704,7 +3738,7 @@ function ProviderSettings({
                     <span>{provider.providerId}</span>
                     <span>{provider.model}</span>
                     <span>{provider.api}</span>
-                    <span>{provider.lastCheck ? `last check ${formatDateTime(provider.lastCheck.checkedAt)}` : "not checked"}</span>
+	                    <span>{provider.lastCheck ? t("last check {time}", { time: formatDateTime(provider.lastCheck.checkedAt) }) : t("not checked")}</span>
                   </div>
                   <div className="provider-meta-line mono">
                     <span>{provider.baseUrl ?? "default endpoint"}</span>
@@ -3724,19 +3758,19 @@ function ProviderSettings({
                     onClick={() => onUse(provider)}
                   >
                     <Play size={14} />
-                    Use
+	                    {t("Use")}
                   </button>
                   <button className="secondary-button compact-button" type="button" onClick={() => onEdit(provider)}>
                     <Pencil size={14} />
-                    Edit
+	                    {t("Edit")}
                   </button>
                   <button className="secondary-button compact-button" type="button" disabled={isCheckingProviders} onClick={() => onCheck(provider.id)}>
                     {checkingProviderIds.includes(provider.id) ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                    Check
+	                    {t("Check")}
                   </button>
                   <button className="secondary-button compact-button danger" type="button" onClick={() => onDelete(provider.id)}>
                     <Trash2 size={14} />
-                    Delete
+	                    {t("Delete")}
                   </button>
                 </div>
               </article>
@@ -3749,19 +3783,19 @@ function ProviderSettings({
         <div className="panel-title split">
           <span>
             <Settings size={18} />
-            <h2 id="provider-form-title">{editingProviderId ? "Edit preset" : "New preset"}</h2>
+	            <h2 id="provider-form-title">{editingProviderId ? t("Edit preset") : t("New preset")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onNew}>
             <Plus size={14} />
-            New
+	            {t("New")}
           </button>
         </div>
 
-        <div className="provider-template-board" aria-label="Provider templates">
+	        <div className="provider-template-board" aria-label={t("Provider templates")}>
           {templateGroups.length === 0 ? (
             <div className="empty-state compact-empty">
               <PlugZap />
-              <span>No templates available.</span>
+	              <span>{t("No templates available.")}</span>
             </div>
           ) : (
             templateGroups.map((group) => (
@@ -3793,7 +3827,7 @@ function ProviderSettings({
 
         <div className="field-row">
           <label className="field">
-            <span>Kind</span>
+	            <span>{t("Kind")}</span>
             <select value={form.kind} onChange={(event) => onFormChange({ ...form, kind: event.target.value as ProviderFormState["kind"] })}>
               <option value="openai">OpenAI</option>
               <option value="anthropic">Anthropic</option>
@@ -3808,25 +3842,25 @@ function ProviderSettings({
             </select>
           </label>
           <label className="field">
-            <span>Display name</span>
+	            <span>{t("Display name")}</span>
             <input value={form.displayName} onChange={(event) => onFormChange({ ...form, displayName: event.target.value })} />
           </label>
         </div>
 
         <div className="field-row">
           <label className="field">
-            <span>Provider id</span>
+	            <span>{t("Provider id")}</span>
             <input value={form.providerId} onChange={(event) => onFormChange({ ...form, providerId: event.target.value })} />
           </label>
           <label className="field">
-            <span>Model</span>
+	            <span>{t("Model")}</span>
             <input value={form.model} onChange={(event) => onFormChange({ ...form, model: event.target.value })} />
           </label>
         </div>
 
         <div className="field-row">
           <label className="field">
-            <span>API protocol</span>
+	            <span>{t("API protocol")}</span>
             <select value={form.api} onChange={(event) => onFormChange({ ...form, api: event.target.value as ProviderFormState["api"] })}>
               <option value="openai-completions">OpenAI completions</option>
               <option value="openai-responses">OpenAI responses</option>
@@ -3837,49 +3871,49 @@ function ProviderSettings({
             </select>
           </label>
           <label className="field">
-            <span>Base URL</span>
+	            <span>{t("Base URL")}</span>
             <input value={form.baseUrl} onChange={(event) => onFormChange({ ...form, baseUrl: event.target.value })} />
           </label>
         </div>
 
         <label className="field wide">
-          <span>API key ref</span>
+	          <span>{t("API key ref")}</span>
           <input value={form.apiKeyRef} placeholder="env:LOCAL_RELAY_API_KEY" onChange={(event) => onFormChange({ ...form, apiKeyRef: event.target.value })} />
         </label>
         <ProviderEnvHint apiKeyRef={form.apiKeyRef} />
 
         <div className="field-row provider-number-row">
           <label className="field">
-            <span>Input</span>
+	            <span>{t("Input")}</span>
             <input value={form.inputText} onChange={(event) => onFormChange({ ...form, inputText: event.target.value })} />
           </label>
           <label className="field">
-            <span>Context</span>
+	            <span>{t("Context")}</span>
             <input value={form.contextWindow} inputMode="numeric" onChange={(event) => onFormChange({ ...form, contextWindow: event.target.value })} />
           </label>
           <label className="field">
-            <span>Max tokens</span>
+	            <span>{t("Max tokens")}</span>
             <input value={form.maxTokens} inputMode="numeric" onChange={(event) => onFormChange({ ...form, maxTokens: event.target.value })} />
           </label>
         </div>
 
         <label className="field wide">
-          <span>Capabilities</span>
+	          <span>{t("Capabilities")}</span>
           <input value={form.capabilitiesText} onChange={(event) => onFormChange({ ...form, capabilitiesText: event.target.value })} />
         </label>
 
         <div className="provider-toggle-row">
           <label className="settings-toggle">
             <input type="checkbox" checked={form.enabled} onChange={(event) => onFormChange({ ...form, enabled: event.target.checked })} />
-            <span>Enabled</span>
+	            <span>{t("Enabled")}</span>
           </label>
           <label className="settings-toggle">
             <input type="checkbox" checked={form.authHeader} onChange={(event) => onFormChange({ ...form, authHeader: event.target.checked })} />
-            <span>Auth header</span>
+	            <span>{t("Auth header")}</span>
           </label>
           <label className="settings-toggle">
             <input type="checkbox" checked={form.reasoning} onChange={(event) => onFormChange({ ...form, reasoning: event.target.checked })} />
-            <span>Reasoning</span>
+	            <span>{t("Reasoning")}</span>
           </label>
         </div>
 
@@ -3888,7 +3922,7 @@ function ProviderSettings({
             {checkResult.ok ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
             <div className="check-result-copy">
               <span className="check-result-status">{providerCheckStatusLabel(checkResult)}</span>
-              <strong>{checkedProvider ? checkedProvider.displayName : "Provider check"}</strong>
+	              <strong>{checkedProvider ? checkedProvider.displayName : t("Provider check")}</strong>
               <span>{checkResult.message}</span>
               <small>{providerCheckGuidance(checkResult, checkedProvider ?? (editingProviderId ? providers.find((provider) => provider.id === editingProviderId) : undefined))}</small>
             </div>
@@ -3898,15 +3932,15 @@ function ProviderSettings({
         <div className="action-row">
           <button className="primary-button" type="button" onClick={onSave}>
             <Save size={16} />
-            {editingProviderId ? "Save changes" : "Create preset"}
+	            {editingProviderId ? t("Save changes") : t("Create preset")}
           </button>
           <button className="secondary-button" type="button" disabled={!editingProviderId || isCheckingProviders} onClick={() => onCheck(editingProviderId)}>
             {checkingProviderIds.includes(editingProviderId) ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
-            Check preset
+	            {t("Check preset")}
           </button>
         </div>
         <div className="provider-form-hint">
-          {editingProviderId ? "Run Check after saving to validate env, base URL, and model access." : "Create the preset first, then run Check before using it in Workspace."}
+	          {editingProviderId ? t("Run Check after saving to validate env, base URL, and model access.") : t("Create the preset first, then run Check before using it in Workspace.")}
         </div>
       </section>
     </div>
@@ -3922,6 +3956,8 @@ function ProviderNextAction({
   readonly nextActionProvider: ProviderPreset | undefined;
   readonly isLoading: boolean;
 }): JSX.Element | null {
+  const { t } = useI18n();
+
   if (isLoading) {
     return null;
   }
@@ -3930,7 +3966,7 @@ function ProviderNextAction({
     return (
       <div className="provider-next-action">
         <CircleAlert size={16} />
-        <span>Next: choose a template, save the preset, then run Check before using it.</span>
+        <span>{t("Next: choose a template, save the preset, then run Check before using it.")}</span>
       </div>
     );
   }
@@ -3941,7 +3977,7 @@ function ProviderNextAction({
       <div className="provider-next-action ok">
         <CheckCircle2 size={16} />
         <span>
-          Ready: {readyProvider.displayName} passed preflight and can run tasks. Re-check after env, base URL, or model changes.
+	          {t("Ready: {providerName} passed preflight and can run tasks. Re-check after env, base URL, or model changes.", { providerName: readyProvider.displayName })}
         </span>
       </div>
     );
@@ -3953,7 +3989,7 @@ function ProviderNextAction({
       <div className="provider-next-action">
         <CircleAlert size={16} />
         <span>
-          Next: set <code>{envName}</code> for {nextActionProvider.displayName}, restart the daemon, then run Check.
+	          {t("Next: set {envName} for {providerName}, restart the daemon, then run Check.", { envName, providerName: nextActionProvider.displayName })}
         </span>
       </div>
     );
@@ -3964,7 +4000,7 @@ function ProviderNextAction({
       return (
         <div className="provider-next-action">
           <CircleAlert size={16} />
-          <span>Next: run Check for {nextActionProvider.displayName} before using it in Workspace.</span>
+	          <span>{t("Next: run Check for {providerName} before using it in Workspace.", { providerName: nextActionProvider.displayName })}</span>
         </div>
       );
     }
@@ -3983,7 +4019,7 @@ function ProviderNextAction({
   return (
     <div className="provider-next-action">
       <CircleAlert size={16} />
-      <span>Next: enable a chat provider with a supported API protocol, then run Check.</span>
+	      <span>{t("Next: enable a chat provider with a supported API protocol, then run Check.")}</span>
     </div>
   );
 }
@@ -4244,6 +4280,7 @@ function MediaJobsPage({
   readonly onRun: (jobId: string) => void;
   readonly onOpenProviders: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const mediaProviders = providers.filter(isMediaProvider);
   const enabledMediaProviders = mediaProviders.filter((provider) => provider.enabled);
   const selectedProvider = providers.find((provider) => provider.id === form.providerPresetId);
@@ -4256,16 +4293,16 @@ function MediaJobsPage({
         <div className="panel-title split">
           <span>
             <Database size={18} />
-            <h2 id="media-jobs-title">Media jobs</h2>
+	            <h2 id="media-jobs-title">{t("Media jobs")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
             {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            Refresh
+	            {t("Refresh")}
           </button>
         </div>
 
         <label className="field wide runs-cwd">
-          <span>Workspace path</span>
+	          <span>{t("Workspace path")}</span>
           <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
         </label>
 
@@ -4277,17 +4314,17 @@ function MediaJobsPage({
         ) : null}
 
         <div className="provider-onboarding-strip" aria-label="Media job status">
-          <MetaRow label="Media providers" value={String(mediaProviders.length)} compact />
-          <MetaRow label="Enabled" value={String(enabledMediaProviders.length)} compact />
-          <MetaRow label="Queued jobs" value={String(jobs.filter((job) => job.status === "queued").length)} compact />
-          <MetaRow label="Artifacts linked" value={String(jobs.reduce((count, job) => count + job.artifactIds.length, 0))} compact />
+	          <MetaRow label={t("Media providers")} value={String(mediaProviders.length)} compact />
+	          <MetaRow label={t("Enabled")} value={String(enabledMediaProviders.length)} compact />
+	          <MetaRow label={t("Queued jobs")} value={String(jobs.filter((job) => job.status === "queued").length)} compact />
+	          <MetaRow label={t("Artifacts linked")} value={String(jobs.reduce((count, job) => count + job.artifactIds.length, 0))} compact />
         </div>
 
         <div className="media-job-list">
           {jobs.length === 0 ? (
             <div className="empty-state compact-empty">
               {isLoading ? <Loader2 className="spin" /> : <Database />}
-              <span>{isLoading ? "Loading media jobs..." : "No media jobs recorded for this workspace"}</span>
+	              <span>{isLoading ? t("Loading media jobs...") : t("No media jobs recorded for this workspace")}</span>
             </div>
           ) : (
             jobs.map((job) => {
@@ -4306,20 +4343,20 @@ function MediaJobsPage({
                         type="button"
                         onClick={() => onRun(job.id)}
                         disabled={isLoading || isRunningJob || !isRunnable}
-                        title={isRunnable ? "Run media adapter" : `Cannot run from ${job.status}`}
+	                        title={isRunnable ? t("Run media adapter") : t("Cannot run from {status}", { status: job.status })}
                       >
                         {isRunningJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                        Run
+	                        {t("Run")}
                       </button>
                     </span>
                   </div>
                   <p>{job.prompt}</p>
                   <div className="provider-meta-line">
                     <span>{provider?.displayName ?? job.providerPresetId}</span>
-                    <span>{job.artifactIds.length} artifacts</span>
+	                    <span>{t("{count} artifacts", { count: job.artifactIds.length })}</span>
                     <time>{formatDateTime(job.createdAt)}</time>
                   </div>
-                  {job.status === "waiting_for_approval" ? <small className="media-job-approval">Approval required before live execution</small> : null}
+	                  {job.status === "waiting_for_approval" ? <small className="media-job-approval">{t("Approval required before live execution")}</small> : null}
                   {job.errorMessage ? <small className="media-job-error">{job.errorMessage}</small> : null}
                   {jobArtifacts.length > 0 ? (
                     <div className="media-job-artifacts artifact-list" aria-label={`Artifacts for ${job.id}`}>
@@ -4346,68 +4383,68 @@ function MediaJobsPage({
         <div className="panel-title split">
           <span>
             <Plus size={18} />
-            <h2 id="media-job-form-title">Create media job</h2>
+	            <h2 id="media-job-form-title">{t("Create media job")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
             <PlugZap size={14} />
-            Providers
+	            {t("Providers")}
           </button>
         </div>
 
         <div className={mediaProviders.length > 0 ? "provider-next-action ok" : "provider-next-action"}>
           {mediaProviders.length > 0 ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
           <span>
-            {mediaProviders.length > 0
-              ? "Media providers can run through the media adapter contract. Coding task runs still require chat providers."
-              : "Create a Jimeng, Seedream, or Seedance media provider before recording media jobs."}
+	            {mediaProviders.length > 0
+	              ? t("Media providers can run through the media adapter contract. Coding task runs still require chat providers.")
+	              : t("Create a Jimeng, Seedream, or Seedance media provider before recording media jobs.")}
           </span>
         </div>
 
         <label className="field wide">
-          <span>Media provider</span>
+	          <span>{t("Media provider")}</span>
           <select
             value={form.providerPresetId}
             onChange={(event) => onFormChange({ ...form, providerPresetId: event.target.value })}
             disabled={mediaProviders.length === 0}
           >
-            <option value="">Select media provider</option>
+	            <option value="">{t("Select media provider")}</option>
             {mediaProviders.map((provider) => (
               <option key={provider.id} value={provider.id} disabled={!provider.enabled}>
-                {provider.displayName} / {provider.model}{provider.enabled ? "" : " - disabled"}
+	                {provider.displayName} / {provider.model}{provider.enabled ? "" : ` - ${t("disabled")}`}
               </option>
             ))}
           </select>
         </label>
 
         <label className="field wide">
-          <span>Operation</span>
+	          <span>{t("Operation")}</span>
           <select value={form.operation} onChange={(event) => onFormChange({ ...form, operation: event.target.value as MediaOperation })}>
-            <option value="image_generate">Image generate</option>
-            <option value="image_edit">Image edit</option>
-            <option value="video_generate">Video generate</option>
+	            <option value="image_generate">{t("Image generate")}</option>
+	            <option value="image_edit">{t("Image edit")}</option>
+	            <option value="video_generate">{t("Video generate")}</option>
           </select>
         </label>
 
         {selectedProvider && !providerSupportsOperation ? (
           <div className="provider-run-notice">
             <CircleAlert size={16} />
-            <span>{selectedProvider.displayName} does not support {form.operation}.</span>
+	            <span>{t("{providerName} does not support {operation}.", { providerName: selectedProvider.displayName, operation: form.operation })}</span>
           </div>
         ) : null}
 
         <label className="field wide">
-          <span>Prompt</span>
+	          <span>{t("Prompt")}</span>
           <textarea value={form.prompt} rows={6} onChange={(event) => onFormChange({ ...form, prompt: event.target.value })} />
         </label>
 
         <label className="field wide">
-          <span>Input JSON</span>
+	          <span>{t("Input JSON")}</span>
           <textarea value={form.inputText} rows={6} onChange={(event) => onFormChange({ ...form, inputText: event.target.value })} />
         </label>
 
         <button className="primary-button" type="button" onClick={onCreate} disabled={isLoading || !canCreate}>
           {isLoading ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
-          Create media job
+	          {t("Create media job")}
         </button>
       </section>
     </div>
@@ -4435,21 +4472,23 @@ function SettingsPage({
   readonly onRefresh: () => void;
   readonly onSave: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
+
   return (
     <section className="panel settings-panel" aria-labelledby="settings-title">
       <div className="panel-title split">
         <span>
           <Settings size={18} />
-          <h2 id="settings-title">Approval policy</h2>
+	          <h2 id="settings-title">{t("Approval policy")}</h2>
         </span>
         <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
           {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-          Refresh
+	          {t("Refresh")}
         </button>
       </div>
 
       <label className="field wide runs-cwd">
-        <span>Workspace path</span>
+	        <span>{t("Workspace path")}</span>
         <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
       </label>
 
@@ -4461,11 +4500,11 @@ function SettingsPage({
       ) : null}
 
       <div className="policy-meta">
-        <MetaRow label="Workspace" value={policy?.workspaceId ?? "-"} compact />
-        <MetaRow label="Updated" value={policy ? formatDateTime(policy.updatedAt) : "-"} compact />
+	        <MetaRow label={t("Workspace")} value={policy?.workspaceId ?? "-"} compact />
+	        <MetaRow label={t("Updated")} value={policy ? formatDateTime(policy.updatedAt) : "-"} compact />
       </div>
 
-      <div className="policy-tool-grid" aria-label="Tool approval decisions">
+	      <div className="policy-tool-grid" aria-label={t("Tool approval decisions")}>
         {allTools.map((tool) => (
           <label key={tool} className={`policy-tool-row${riskyTools.includes(tool) ? " risky" : ""}`}>
             <span>{tool}</span>
@@ -4481,16 +4520,16 @@ function SettingsPage({
                 })
               }
             >
-              <option value="allow">Allow</option>
-              <option value="ask">Ask</option>
-              <option value="deny">Deny</option>
+	              <option value="allow">{t("Allow")}</option>
+	              <option value="ask">{t("Ask")}</option>
+	              <option value="deny">{t("Deny")}</option>
             </select>
           </label>
         ))}
       </div>
 
       <label className="field wide">
-        <span>Allowed write paths</span>
+	        <span>{t("Allowed write paths")}</span>
         <textarea
           value={form.allowedWritePathsText}
           onChange={(event) => onFormChange({ ...form, allowedWritePathsText: event.target.value })}
@@ -4500,7 +4539,7 @@ function SettingsPage({
       <div className="action-row">
         <button className="primary-button" type="button" onClick={onSave} disabled={isLoading}>
           {isLoading ? <Loader2 className="spin" size={16} /> : <Save size={16} />}
-          Save policy
+	          {t("Save policy")}
         </button>
       </div>
     </section>
@@ -4536,15 +4575,16 @@ function ApprovalsPage({
   readonly onOpenRun: (runId: string) => void;
   readonly onClearRepair: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const focusedApprovals = repairRunId ? approvals.filter((approval) => approval.runId === repairRunId) : approvals;
-  const listEmptyCopy = repairRunId ? "No approval records for this run" : "No approval requests for this workspace";
+  const listEmptyCopy = repairRunId ? t("No approval records for this run") : t("No approval requests for this workspace");
 
   return (
     <section className="panel approvals-panel" aria-labelledby="approvals-title">
       <div className="panel-title split">
         <span>
           <ShieldCheck size={18} />
-          <h2 id="approvals-title">Approval requests</h2>
+	          <h2 id="approvals-title">{t("Approval requests")}</h2>
         </span>
         <button
           className="secondary-button compact-button"
@@ -4553,12 +4593,12 @@ function ApprovalsPage({
           disabled={isLoading}
         >
           {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-          Refresh
+	          {t("Refresh")}
         </button>
       </div>
 
       <label className="field wide runs-cwd">
-        <span>Workspace path</span>
+	        <span>{t("Workspace path")}</span>
         <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
       </label>
 
@@ -4585,7 +4625,7 @@ function ApprovalsPage({
         {focusedApprovals.length === 0 ? (
           <div className="empty-state compact-empty">
             {isLoading ? <Loader2 className="spin" /> : <ShieldCheck />}
-            <span>{isLoading ? "Loading approvals..." : listEmptyCopy}</span>
+	            <span>{isLoading ? t("Loading approvals...") : listEmptyCopy}</span>
           </div>
         ) : (
           focusedApprovals.map((approval) => (
@@ -4673,6 +4713,7 @@ function ApprovalCard({
   readonly resolvingDecision?: ApprovalResolution;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const [decisionReason, setDecisionReason] = useState("");
   const [confirmDecision, setConfirmDecision] = useState<ApprovalResolution | undefined>();
   const [reasonError, setReasonError] = useState("");
@@ -4688,16 +4729,16 @@ function ApprovalCard({
       return;
     }
 
-    if (decision === "approve" && requiresSecondConfirmation) {
-      if (confirmDecision !== "approve") {
-        setConfirmDecision("approve");
-        setReasonError(trimmedReason ? "" : "High-risk approvals need a decision reason.");
-        return;
-      }
-      if (!trimmedReason) {
-        setReasonError("High-risk approvals need a decision reason.");
-        return;
-      }
+	    if (decision === "approve" && requiresSecondConfirmation) {
+	      if (confirmDecision !== "approve") {
+	        setConfirmDecision("approve");
+	        setReasonError(trimmedReason ? "" : t("High-risk approvals need a decision reason."));
+	        return;
+	      }
+	      if (!trimmedReason) {
+	        setReasonError(t("High-risk approvals need a decision reason."));
+	        return;
+	      }
     }
 
     setConfirmDecision(undefined);
@@ -4719,7 +4760,7 @@ function ApprovalCard({
           {ownerLabels.map((label) => <span key={label}>{label}</span>)}
           <time>{formatDateTime(approval.createdAt)}</time>
           {timing ? <time>{timing}</time> : null}
-          {approval.resolvedAt ? <time>resolved {formatDateTime(approval.resolvedAt)}</time> : null}
+	          {approval.resolvedAt ? <time>{t("resolved {time}", { time: formatDateTime(approval.resolvedAt) })}</time> : null}
         </div>
         {approval.decisionReason ? <p className="approval-decision-reason">{approval.decisionReason}</p> : null}
         <ApprovalPayloadSummary approval={approval} />
@@ -4728,11 +4769,11 @@ function ApprovalCard({
       {effectiveStatus === "pending" ? (
         <div className="approval-decision-panel">
           <label className="approval-reason-field">
-            <span>Decision reason</span>
+	            <span>{t("Decision reason")}</span>
             <textarea
               value={decisionReason}
               rows={compact ? 2 : 3}
-              placeholder={requiresSecondConfirmation ? "Required before approving high-risk requests" : "Optional note for the audit log"}
+	              placeholder={requiresSecondConfirmation ? t("Required before approving high-risk requests") : t("Optional note for the audit log")}
               disabled={isResolving}
               onChange={(event) => {
                 setDecisionReason(event.target.value);
@@ -4746,9 +4787,9 @@ function ApprovalCard({
           {confirmDecision === "approve" ? (
             <div className="approval-confirm-panel" role="alert">
               <CircleAlert size={15} />
-              <span>High-risk approval. Review the payload and reason, then confirm.</span>
+	              <span>{t("High-risk approval. Review the payload and reason, then confirm.")}</span>
               <button className="secondary-button compact-button" type="button" onClick={() => setConfirmDecision(undefined)} disabled={isResolving}>
-                Cancel
+	                {t("Cancel")}
               </button>
             </div>
           ) : null}
@@ -4760,7 +4801,7 @@ function ApprovalCard({
               disabled={isResolving}
             >
               {resolvingDecision === "approve" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-              {resolvingDecision === "approve" ? "Approving" : confirmDecision === "approve" ? "Confirm approve" : "Approve"}
+	              {resolvingDecision === "approve" ? t("Approving") : confirmDecision === "approve" ? t("Confirm approve") : t("Approve")}
             </button>
             <button
               className="secondary-button compact-button danger"
@@ -4769,7 +4810,7 @@ function ApprovalCard({
               disabled={isResolving}
             >
               {resolvingDecision === "deny" ? <Loader2 className="spin" size={14} /> : <CircleAlert size={14} />}
-              {resolvingDecision === "deny" ? "Denying" : "Deny"}
+	              {resolvingDecision === "deny" ? t("Denying") : t("Deny")}
             </button>
           </div>
         </div>
@@ -4779,6 +4820,8 @@ function ApprovalCard({
 }
 
 function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalRequest }): JSX.Element | null {
+  const { t } = useI18n();
+
   if (approval.actionType !== "media_cost" || readDataString(approval.payload, "type") !== "media_cost") {
     return null;
   }
@@ -4788,11 +4831,11 @@ function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalReque
   const operation = readDataString(approval.payload, "operation") || "-";
   const promptPreview = readDataString(approval.payload, "promptPreview");
 
-  return (
-    <div className="approval-payload-summary" aria-label="Media cost approval summary">
-      <span>provider {providerPresetId}</span>
-      <span>model {model}</span>
-      <span>operation {operation}</span>
+	return (
+	  <div className="approval-payload-summary" aria-label="Media cost approval summary">
+	    <span>{t("provider {providerPresetId}", { providerPresetId })}</span>
+	    <span>{t("model {model}", { model })}</span>
+	    <span>{t("operation {operation}", { operation })}</span>
       {promptPreview ? <p>{promptPreview}</p> : null}
     </div>
   );
@@ -4973,14 +5016,16 @@ function RunTimeline({
   readonly onRefreshApprovals: () => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
 }): JSX.Element {
+  const { t } = useI18n();
+
   return (
     <section className="panel timeline" aria-labelledby="run-timeline-title">
       <div className="panel-title split">
         <span>
           <Database size={18} />
-          <h2 id="run-timeline-title">Event stream</h2>
-        </span>
-        <span className="event-count">{events.length} events</span>
+	          <h2 id="run-timeline-title">{t("Event stream")}</h2>
+	        </span>
+	        <span className="event-count">{t("{count} events", { count: events.length })}</span>
       </div>
 
       {errorMessage ? (
@@ -4992,7 +5037,7 @@ function RunTimeline({
 
       {assistantText ? (
         <div className="assistant-output">
-          <span>Assistant</span>
+	          <span>{t("Assistant")}</span>
           <p>{assistantText}</p>
         </div>
       ) : null}
@@ -5002,11 +5047,11 @@ function RunTimeline({
           <div className="inline-approval-head">
             <span>
               <ShieldCheck size={16} />
-              Pending approval
+	              {t("Pending approval")}
             </span>
             <button className="secondary-button compact-button" type="button" onClick={onRefreshApprovals} disabled={approvalsLoading}>
               {approvalsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-              Refresh
+	              {t("Refresh")}
             </button>
           </div>
           <div className="inline-approval-list">
@@ -5027,7 +5072,7 @@ function RunTimeline({
         {events.length === 0 ? (
           <div className="empty-state">
             {isRunning ? <Loader2 className="spin" /> : <Clock3 />}
-            <span>{isRunning ? "Waiting for runner events..." : "No run loaded yet"}</span>
+	            <span>{isRunning ? t("Waiting for runner events...") : t("No run loaded yet")}</span>
           </div>
         ) : (
           events.map((event) => <EventRow key={event.id} event={event} />)
@@ -5038,6 +5083,7 @@ function RunTimeline({
 }
 
 function EventRow({ event }: { readonly event: RunEventEnvelope }): JSX.Element {
+  const { t } = useI18n();
   const preview = formatEventPreview(event.data);
   const payloadOpen = event.type === "run_error" || event.type === "result" || (event.type === "tool_end" && readDataBoolean(event.data, "isError"));
 
@@ -5051,7 +5097,7 @@ function EventRow({ event }: { readonly event: RunEventEnvelope }): JSX.Element 
         </div>
         <details className="event-payload" open={payloadOpen}>
           <summary>
-            <span>{preview || "Payload"}</span>
+	            <span>{preview || t("Payload")}</span>
           </summary>
           <pre>{formatEventData(event.data)}</pre>
         </details>
@@ -5075,33 +5121,34 @@ function RunInspector({
   readonly onLookupRunIdChange: (runId: string) => void;
   readonly onLoadRun: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   return (
     <section className="inspector" aria-label="Run inspector">
       <div className="panel-title">
         <Search size={18} />
-        <h2>Run context</h2>
+	        <h2>{t("Run context")}</h2>
       </div>
       <label className="field wide">
-        <span>Run id</span>
+	        <span>{t("Run id")}</span>
         <input value={lookupRunId || activeRunId} onChange={(event) => onLookupRunIdChange(event.target.value)} />
       </label>
       <button className="secondary-button full" type="button" onClick={onLoadRun}>
-        Load persisted run
+	        {t("Load persisted run")}
       </button>
 
       <div className="meta-list">
-        <MetaRow label="Status" value={run?.status ?? "not loaded"} />
-        <MetaRow label="Task" value={run?.taskId ?? "-"} />
-        <MetaRow label="Provider" value={run ? `${run.providerName}/${run.providerModel}` : "-"} />
-        <MetaRow label="Event log" value={run?.eventLogPath ?? "-"} compact />
-        <MetaRow label="Summary" value={run?.summaryPath ?? "-"} compact />
+	        <MetaRow label={t("Status")} value={run?.status ?? t("not loaded")} />
+	        <MetaRow label={t("Task")} value={run?.taskId ?? "-"} />
+	        <MetaRow label={t("Provider")} value={run ? `${run.providerName}/${run.providerModel}` : "-"} />
+	        <MetaRow label={t("Event log")} value={run?.eventLogPath ?? "-"} compact />
+	        <MetaRow label={t("Summary")} value={run?.summaryPath ?? "-"} compact />
       </div>
 
       <div className="inspector-block">
-        <h3>Tool calls</h3>
+	        <h3>{t("Tool calls")}</h3>
         {toolEvents.length === 0 ? (
-          <p className="muted">No tool activity yet.</p>
+	          <p className="muted">{t("No tool activity yet.")}</p>
         ) : (
           toolEvents.map((event) => (
             <div className="tool-row" key={event.id}>
@@ -5113,7 +5160,7 @@ function RunInspector({
       </div>
 
       <div className="inspector-block">
-        <h3>Persistence</h3>
+	        <h3>{t("Persistence")}</h3>
         <div className="persistence-line">
           <CheckCircle2 size={16} />
           SQLite index
@@ -5165,9 +5212,10 @@ function RunRepairHintBanner({
   readonly onOpenRun?: (runId: string) => void;
   readonly onReload?: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const canOpenRun = hint.target === "run" && Boolean(onOpenRun);
   const canReload = hint.target === "run" && !onOpenRun && Boolean(onReload);
-  const actionLabel = canReload ? "Reload" : hint.actionLabel;
+	  const actionLabel = canReload ? "Reload" : hint.actionLabel;
   const onAction = hint.target === "providers"
     ? onOpenProviders
     : hint.target === "approvals"
@@ -5182,13 +5230,13 @@ function RunRepairHintBanner({
     <div className={`run-repair-hint ${hint.target}${compact ? " compact" : ""}`}>
       <span className="run-repair-icon">{runRepairIcon(hint.target)}</span>
       <span className="run-repair-copy">
-        <strong>{hint.title}</strong>
-        <small>{hint.detail}</small>
+	        <strong>{t(hint.title)}</strong>
+	        <small>{t(hint.detail)}</small>
       </span>
       {onAction ? (
         <button className="secondary-button compact-button" type="button" onClick={onAction}>
           {runRepairIcon(hint.target)}
-          {actionLabel}
+	          {t(actionLabel)}
         </button>
       ) : null}
     </div>

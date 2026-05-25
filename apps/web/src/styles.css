@@ -79,6 +79,33 @@ button {
   gap: 10px;
 }
 
+.language-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid #d8ded7;
+  background: #ffffff;
+}
+
+.language-switcher button {
+  min-width: 42px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: #5f6d68;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.language-switcher button.active,
+.language-switcher button:hover {
+  background: #e5eee9;
+  color: #0f211d;
+}
+
 .health,
 .provider-pill {
   gap: 6px;
@@ -2846,7 +2873,16 @@ pre {
 
   .top-status {
     display: grid;
-    grid-template-columns: 1fr 1fr 34px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .top-status .icon-button,
+  .top-status .language-switcher {
+    width: 100%;
+  }
+
+  .top-status .language-switcher {
+    justify-content: center;
   }
 
   .readiness-item {

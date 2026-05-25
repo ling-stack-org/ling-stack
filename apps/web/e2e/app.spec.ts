@@ -89,6 +89,31 @@ test("workspace readiness surfaces missing provider, expired approval, and faile
   await expect(page.getByLabel("Task detail").getByText("Inspect run failure")).toBeVisible();
 });
 
+test("language switcher toggles Chinese and English UI labels", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("ling-stack.locale")) {
+      localStorage.setItem("ling-stack.locale", "en-US");
+    }
+  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
+
+  await page.getByRole("button", { name: "中文" }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  await expect(page.getByRole("heading", { name: "工作区就绪状态" })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "审批" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBe("zh-CN");
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "工作区就绪状态" })).toBeVisible();
+
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
+  await expect(page.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
+});
+
 test("approval inbox shows expired approvals without decision buttons", async ({ page }) => {
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
