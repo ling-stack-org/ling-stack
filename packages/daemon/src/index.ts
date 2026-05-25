@@ -2406,15 +2406,19 @@ function createMediaJobArtifact(
   index: number,
   createdAt: string,
 ): RunArtifact | undefined {
-  if (candidate.content === undefined) {
+  if (candidate.content === undefined && candidate.contentBytes === undefined) {
     return undefined;
   }
   const artifactDir = resolvePath(store.paths.artifactsDir, "media_jobs", job.id);
   mkdirSync(artifactDir, { recursive: true });
   const relativePath = normalizeArtifactPath(`media_jobs/${job.id}/${formatMediaArtifactFilename(index, candidate, createdAt)}`);
   const absolutePath = resolvePath(store.paths.artifactsDir, relativePath);
-  const content = redactArtifactContent(candidate.content);
-  writeFileSync(absolutePath, content, "utf8");
+  if (candidate.contentBytes !== undefined) {
+    writeFileSync(absolutePath, Buffer.from(candidate.contentBytes));
+  } else {
+    const content = redactArtifactContent(candidate.content ?? "");
+    writeFileSync(absolutePath, content, "utf8");
+  }
   const stats = statSync(absolutePath);
 
   return store.createArtifact({
@@ -2476,6 +2480,12 @@ function artifactExtensionForType(type: ArtifactType): string {
   }
   if (type === "log") {
     return "log";
+  }
+  if (type === "image") {
+    return "png";
+  }
+  if (type === "video") {
+    return "mp4";
   }
   return "txt";
 }
@@ -2571,6 +2581,12 @@ function contentTypeForArtifactType(type: ArtifactType): string {
   }
   if (type === "log" || type === "file") {
     return "text/plain; charset=utf-8";
+  }
+  if (type === "image") {
+    return "image/png";
+  }
+  if (type === "video") {
+    return "video/mp4";
   }
   return "application/octet-stream";
 }
