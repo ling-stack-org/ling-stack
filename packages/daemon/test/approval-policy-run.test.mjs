@@ -493,6 +493,28 @@ test("media job live transport calls Seedream image_generate through HTTP and li
       input: { size: "1024x1024" },
     });
 
+    const firstRun = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(firstRun.mediaJob.status, "waiting_for_approval");
+    assert.equal(firstRun.approval.actionType, "media_cost");
+    assert.equal(firstRun.approval.mediaJobId, createdJob.mediaJob.id);
+    assert.equal(firstRun.approval.status, "pending");
+    assert.equal(firstRun.approval.payload.type, "media_cost");
+    assert.equal(firstRun.approval.payload.providerPresetId, createdProvider.provider.id);
+    assert.equal(firstRun.approval.payload.operation, "image_generate");
+    assert.equal(firstRun.approval.payload.promptPreview, "Create a live gated artifact.");
+    assert.deepEqual(firstRun.artifacts, []);
+
+    const repeatRun = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(repeatRun.mediaJob.status, "waiting_for_approval");
+    assert.equal(repeatRun.approval.id, firstRun.approval.id);
+    const pendingApprovals = await listApprovals(daemon.url, cwd, { mediaJobId: createdJob.mediaJob.id, status: "pending" });
+    assert.equal(pendingApprovals.length, 1);
+
+    const approved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(firstRun.approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "approved for live gate smoke",
+    });
+    assert.equal(approved.approval.status, "approved");
+
     const executed = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(executed.mediaJob.status, "succeeded");
     assert.equal(executed.artifacts.length, 2);
@@ -518,6 +540,68 @@ test("media job live transport calls Seedream image_generate through HTTP and li
   } finally {
     delete process.env.LING_STACK_TEST_MEDIA_KEY;
     await seedream.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media job live transport gate fails denied or expired media approvals", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-live-approval-fail-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_job_approval_fail",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  process.env.LING_STACK_TEST_MEDIA_KEY = "test-key";
+  try {
+    const createdProvider = await createMediaProvider(daemon.url, cwd, {
+      displayName: "Seedream Live Gate",
+      capabilities: ["image_generate"],
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+
+    const deniedJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: createdProvider.provider.id,
+      operation: "image_generate",
+      prompt: "Create a denied live artifact.",
+    });
+    const deniedGate = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(deniedJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(deniedGate.approval.id)}/deny?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "too expensive for this smoke",
+    });
+    const deniedRun = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(deniedJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(deniedRun.mediaJob.status, "failed");
+    assert.match(deniedRun.mediaJob.errorMessage, /approval denied/);
+    assert.equal(deniedRun.approval.id, deniedGate.approval.id);
+    assert.deepEqual(deniedRun.artifacts, []);
+
+    const expiredJob = await postJson(`${daemon.url}/media-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: createdProvider.provider.id,
+      operation: "image_generate",
+      prompt: "Create an expired live artifact.",
+    });
+    const expiredGate = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(expiredJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    const store = createSqliteRunStore(cwd);
+    try {
+      const expired = store.expireApprovalRequest(
+        expiredGate.approval.id,
+        { reason: "Approval request expired before a decision was received." },
+        "2026-05-24T00:30:00.000Z",
+      );
+      assert.ok(expired);
+      assert.equal(expired.status, "expired");
+    } finally {
+      store.close();
+    }
+    const expiredRun = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(expiredJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(expiredRun.mediaJob.status, "failed");
+    assert.match(expiredRun.mediaJob.errorMessage, /approval expired/);
+    assert.equal(expiredRun.approval.id, expiredGate.approval.id);
+    assert.deepEqual(expiredRun.artifacts, []);
+  } finally {
+    delete process.env.LING_STACK_TEST_MEDIA_KEY;
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
@@ -987,8 +1071,23 @@ async function patchPolicy(baseUrl, cwd, body) {
   return await patchJson(`${baseUrl}/approval-policy?cwd=${encodeURIComponent(cwd)}`, body);
 }
 
-async function listApprovals(baseUrl, cwd, runId) {
-  const response = await getJson(`${baseUrl}/approvals?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+async function listApprovals(baseUrl, cwd, filters) {
+  const url = new URL(`${baseUrl}/approvals`);
+  url.searchParams.set("cwd", cwd);
+  if (typeof filters === "string") {
+    url.searchParams.set("runId", filters);
+  } else {
+    if (filters.runId) {
+      url.searchParams.set("runId", filters.runId);
+    }
+    if (filters.mediaJobId) {
+      url.searchParams.set("mediaJobId", filters.mediaJobId);
+    }
+    if (filters.status) {
+      url.searchParams.set("status", filters.status);
+    }
+  }
+  const response = await getJson(url.toString());
   return response.approvals;
 }
 

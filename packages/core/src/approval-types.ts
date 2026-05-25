@@ -72,8 +72,9 @@ export type ApprovalPayload =
 
 export interface ApprovalRequest {
   readonly id: string;
-  readonly runId: string;
-  readonly taskId: string;
+  readonly runId?: string;
+  readonly taskId?: string;
+  readonly mediaJobId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
   readonly actionType: ApprovalActionType;
@@ -90,8 +91,9 @@ export interface ApprovalRequest {
 }
 
 export interface CreateApprovalRequestInput {
-  readonly runId: string;
-  readonly taskId: string;
+  readonly runId?: string;
+  readonly taskId?: string;
+  readonly mediaJobId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
   readonly actionType: ApprovalActionType;
@@ -110,6 +112,7 @@ export interface ResolveApprovalRequestInput {
 export interface ListApprovalRequestsOptions {
   readonly status?: ApprovalStatus;
   readonly runId?: string;
+  readonly mediaJobId?: string;
   readonly limit?: number;
 }
 

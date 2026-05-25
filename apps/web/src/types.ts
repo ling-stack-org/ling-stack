@@ -97,7 +97,7 @@ export interface RunArtifactResponse {
   readonly artifact: RunArtifact;
 }
 
-export type MediaJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type MediaJobStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
 export type MediaOperation = "image_generate" | "image_edit" | "video_generate";
 
@@ -123,6 +123,7 @@ export interface MediaJobListResponse {
 export interface MediaJobMutationResponse {
   readonly mediaJob: MediaJob;
   readonly artifacts?: readonly RunArtifact[];
+  readonly approval?: ApprovalRequest;
 }
 
 export type TaskStatus = "todo" | "claimed" | "running" | "blocked" | "review" | "done" | "failed" | "cancelled";
@@ -285,8 +286,9 @@ export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "ca
 
 export interface ApprovalRequest {
   readonly id: string;
-  readonly runId: string;
-  readonly taskId: string;
+  readonly runId?: string;
+  readonly taskId?: string;
+  readonly mediaJobId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
   readonly actionType: ApprovalActionType;

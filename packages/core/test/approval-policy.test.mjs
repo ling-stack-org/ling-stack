@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
   createSqliteRunStore,
@@ -232,6 +233,183 @@ test("sqlite store expires pending approval requests", async () => {
     assert.equal(expired.resolvedBy, undefined);
     assert.equal(expired.decisionReason, "Approval request expired before a decision was received.");
     assert.throws(() => store.approveApprovalRequest(pending.id, { reason: "too late" }, expiredAt), /not pending/);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite store creates and resolves media approval requests", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-media-approval-"));
+  const createdAt = "2026-05-24T00:00:00.000Z";
+  const expiresAt = "2026-05-24T00:30:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  try {
+    const job = store.createMediaJob(
+      {
+        providerPresetId: "provider_seedream",
+        operation: "image_generate",
+        prompt: "Generate a product image.",
+      },
+      createdAt,
+    );
+
+    const approval = store.createApprovalRequest(
+      {
+        mediaJobId: job.id,
+        actionType: "media_cost",
+        risk: "high",
+        title: "Approve media job cost",
+        description: "Seedream image_generate requires approval before live media execution.",
+        payload: {
+          type: "media_cost",
+          providerPresetId: "provider_seedream",
+          model: "seedream",
+          operation: "image_generate",
+          promptPreview: "Generate a product image.",
+        },
+        expiresAt,
+      },
+      createdAt,
+    );
+
+    assert.equal(approval.runId, undefined);
+    assert.equal(approval.taskId, undefined);
+    assert.equal(approval.mediaJobId, job.id);
+    assert.deepEqual(store.listApprovalRequests({ mediaJobId: job.id }), [approval]);
+    assert.deepEqual(store.listApprovalRequests({ runId: "run_missing" }), []);
+
+    const approved = store.approveApprovalRequest(approval.id, { reason: "Approved for smoke." }, "2026-05-24T00:05:00.000Z");
+    assert.ok(approved);
+    assert.equal(approved.status, "approved");
+    assert.equal(approved.mediaJobId, job.id);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite migration preserves legacy run approval owners", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-migration-"));
+  const rootDir = resolve(cwd, ".ling-stack");
+  const databasePath = resolve(rootDir, "ling-stack.sqlite");
+  const now = "2026-05-24T00:00:00.000Z";
+  await mkdir(rootDir, { recursive: true });
+  const legacy = new DatabaseSync(databasePath);
+  try {
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+
+      CREATE TABLE run_sessions (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        channel_id TEXT,
+        teammate_id TEXT,
+        provider_preset_id TEXT,
+        provider_name TEXT NOT NULL,
+        provider_model TEXT NOT NULL,
+        task_snapshot_json TEXT NOT NULL,
+        provider_snapshot_json TEXT NOT NULL,
+        request_snapshot_json TEXT NOT NULL,
+        event_log_path TEXT NOT NULL,
+        summary_path TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        ended_at TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE approval_requests (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        channel_id TEXT,
+        tool_call_id TEXT,
+        action_type TEXT NOT NULL,
+        risk TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        resolved_at TEXT,
+        resolved_by TEXT,
+        decision_reason TEXT,
+        FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE
+      );
+    `);
+    legacy.prepare(`
+      INSERT INTO run_sessions (
+        id,
+        status,
+        cwd,
+        task_id,
+        provider_name,
+        provider_model,
+        task_snapshot_json,
+        provider_snapshot_json,
+        request_snapshot_json,
+        event_log_path,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "run_legacy_approval",
+      "waiting_for_approval",
+      cwd,
+      "task_legacy_approval",
+      "test-provider",
+      "test-model",
+      "{}",
+      "{}",
+      "{}",
+      ".ling-stack/sessions/run_legacy_approval.jsonl",
+      now,
+      now,
+    );
+    legacy.prepare(`
+      INSERT INTO approval_requests (
+        id,
+        run_id,
+        task_id,
+        action_type,
+        risk,
+        title,
+        description,
+        payload_json,
+        status,
+        created_at,
+        expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "approval_legacy",
+      "run_legacy_approval",
+      "task_legacy_approval",
+      "bash",
+      "medium",
+      "Approve shell command",
+      "echo legacy",
+      JSON.stringify({ type: "bash", cwd, command: "echo legacy", riskFlags: [] }),
+      "pending",
+      now,
+      "2026-05-24T00:30:00.000Z",
+    );
+  } finally {
+    legacy.close();
+  }
+
+  const store = createSqliteRunStore(cwd);
+  try {
+    const approvals = store.listApprovalRequests({ runId: "run_legacy_approval" });
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].id, "approval_legacy");
+    assert.equal(approvals[0].runId, "run_legacy_approval");
+    assert.equal(approvals[0].taskId, "task_legacy_approval");
+    assert.equal(approvals[0].mediaJobId, undefined);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

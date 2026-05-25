@@ -10,7 +10,7 @@ This design depends on:
 - [Provider presets](provider-presets.md)
 - [Approval policy](approval-policy.md)
 
-The current `apps/web` package now provides the local app shell, provider settings with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, channel/task workspace, channel detail editing, task detail editing, and first task-run entry. This document remains the target design for the remaining richer workspace flows.
+The current `apps/web` package now provides the local app shell, provider settings with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, channel/task workspace, channel detail editing, task detail editing, first task-run entry, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
 
 ## Goal
 
@@ -776,6 +776,18 @@ Minimum requirements:
 - text does not overflow panels,
 - compact but readable font sizes.
 
+## Localization
+
+v0.1 Web UI supports a lightweight locale layer for product chrome and core workflow text:
+
+- locales: `en-US` and `zh-CN`,
+- default locale: saved `localStorage` value, then browser language, then `en-US`,
+- persistence key: `ling-stack.locale`,
+- switcher location: top bar,
+- scope: navigation, page titles, readiness, channel/task workflow, run history/detail, provider settings, media jobs, approval inbox, and policy settings.
+
+Daemon payloads, provider names, task prompts, run ids, event types, raw JSON, and artifact content remain source data and are not machine-translated by the UI.
+
 ## Responsive Behavior
 
 Desktop-first is acceptable because this is a local developer tool, but the UI should not break on narrow screens.
@@ -908,11 +920,12 @@ Then verify:
 11. Add historical run loader.
 12. Add approval inbox shell.
 13. Add artifact panel shell.
-14. Add responsive layout.
-15. Add component tests or minimal browser tests.
-16. Run `corepack pnpm typecheck`.
-17. Run `corepack pnpm build`.
-18. Start local dev server and verify with browser.
+14. Add English / Chinese locale switcher.
+15. Add responsive layout.
+16. Add component tests or minimal browser tests.
+17. Run `corepack pnpm typecheck`.
+18. Run `corepack pnpm build`.
+19. Start local dev server and verify with browser.
 
 ## Open Decisions
 

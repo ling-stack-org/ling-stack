@@ -199,8 +199,9 @@ type ApprovalStatus =
 
 interface ApprovalRequest {
   id: string;
-  runId: string;
-  taskId: string;
+  runId?: string;
+  taskId?: string;
+  mediaJobId?: string;
   channelId?: string;
   toolCallId?: string;
   actionType: ApprovalActionType;
@@ -326,8 +327,9 @@ CREATE TABLE approval_policies (
 
 CREATE TABLE approval_requests (
   id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL,
-  task_id TEXT NOT NULL,
+  run_id TEXT,
+  task_id TEXT,
+  media_job_id TEXT,
   channel_id TEXT,
   tool_call_id TEXT,
   action_type TEXT NOT NULL,
@@ -341,12 +343,18 @@ CREATE TABLE approval_requests (
   resolved_at TEXT,
   resolved_by TEXT,
   decision_reason TEXT,
-  FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE
+  CHECK (
+    (run_id IS NOT NULL AND task_id IS NOT NULL AND media_job_id IS NULL)
+    OR (run_id IS NULL AND task_id IS NULL AND media_job_id IS NOT NULL)
+  ),
+  FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY(media_job_id) REFERENCES media_jobs(id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_approval_requests_status ON approval_requests(status);
 CREATE INDEX idx_approval_requests_run ON approval_requests(run_id);
 CREATE INDEX idx_approval_requests_task ON approval_requests(task_id);
+CREATE INDEX idx_approval_requests_media_job ON approval_requests(media_job_id);
 CREATE INDEX idx_approval_requests_created_at ON approval_requests(created_at);
 ```
 
@@ -450,6 +458,7 @@ Approval payloads must be redacted before persistence and UI delivery.
 GET /approvals
 GET /approvals?status=pending
 GET /approvals?runId=run_...
+GET /approvals?mediaJobId=media_job_...
 ```
 
 Response:
@@ -461,6 +470,7 @@ Response:
       "id": "approval_...",
       "runId": "run_...",
       "taskId": "task_...",
+      "mediaJobId": null,
       "actionType": "bash",
       "risk": "high",
       "title": "Run shell command",
@@ -671,6 +681,8 @@ Media approval payload should show:
 - prompt preview,
 - estimated cost if available,
 - output visibility.
+
+Live media job approvals are owned by `mediaJobId`, not `runId`. A live-gated media job creates or reuses a pending `media_cost` approval before adapter execution, moves to `waiting_for_approval`, and only continues after approval. Denied or expired media approvals fail the media job without executing the adapter.
 
 ## Provider Change Approval
 

@@ -90,6 +90,8 @@ const MEDIA_JOBS_MIGRATION_VERSION = 8;
 const MEDIA_JOBS_MIGRATION_NAME = "create_media_jobs";
 const MEDIA_JOB_ARTIFACTS_MIGRATION_VERSION = 9;
 const MEDIA_JOB_ARTIFACTS_MIGRATION_NAME = "allow_media_job_artifacts";
+const APPROVAL_MEDIA_JOB_OWNER_MIGRATION_VERSION = 10;
+const APPROVAL_MEDIA_JOB_OWNER_MIGRATION_NAME = "allow_media_job_approval_owners";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -913,10 +915,29 @@ export class SqliteRunStore implements RunStore {
   }
 
   createApprovalRequest(input: CreateApprovalRequestInput, now: string): ApprovalRequest {
+    const runId = normalizeOptionalOwnerId(input.runId);
+    const taskId = normalizeOptionalOwnerId(input.taskId);
+    const mediaJobId = normalizeOptionalOwnerId(input.mediaJobId);
+    const hasRunOwner = Boolean(runId && taskId);
+    const hasMediaOwner = Boolean(mediaJobId);
+    if (Boolean(runId) !== Boolean(taskId)) {
+      throw new Error("Run approval requests require both runId and taskId.");
+    }
+    if (hasRunOwner === hasMediaOwner) {
+      throw new Error("Approval requests require exactly one owner: runId/taskId or mediaJobId.");
+    }
+    if (runId && !this.getRun(runId)) {
+      throw new Error(`Run not found: ${runId}`);
+    }
+    if (mediaJobId && !this.getMediaJob(mediaJobId)) {
+      throw new Error(`Media job not found: ${mediaJobId}`);
+    }
+
     const approval: ApprovalRequest = {
       id: createApprovalRequestId(),
-      runId: input.runId,
-      taskId: input.taskId,
+      runId,
+      taskId,
+      mediaJobId,
       channelId: input.channelId,
       toolCallId: input.toolCallId,
       actionType: input.actionType,
@@ -935,6 +956,7 @@ export class SqliteRunStore implements RunStore {
           id,
           run_id,
           task_id,
+          media_job_id,
           channel_id,
           tool_call_id,
           action_type,
@@ -948,12 +970,13 @@ export class SqliteRunStore implements RunStore {
           resolved_at,
           resolved_by,
           decision_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         approval.id,
-        approval.runId,
-        approval.taskId,
+        approval.runId ?? null,
+        approval.taskId ?? null,
+        approval.mediaJobId ?? null,
         approval.channelId ?? null,
         approval.toolCallId ?? null,
         approval.actionType,
@@ -991,6 +1014,10 @@ export class SqliteRunStore implements RunStore {
     if (options.runId) {
       clauses.push("run_id = ?");
       params.push(options.runId);
+    }
+    if (options.mediaJobId) {
+      clauses.push("media_job_id = ?");
+      params.push(options.mediaJobId);
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
@@ -1389,6 +1416,88 @@ export class SqliteRunStore implements RunStore {
 
       this.recordMigration(MEDIA_JOB_ARTIFACTS_MIGRATION_VERSION, MEDIA_JOB_ARTIFACTS_MIGRATION_NAME);
     }
+
+    if (!this.hasMigration(APPROVAL_MEDIA_JOB_OWNER_MIGRATION_VERSION)) {
+      this.database.exec(`
+        DROP TABLE IF EXISTS approval_requests_next;
+
+        CREATE TABLE approval_requests_next (
+          id TEXT PRIMARY KEY,
+          run_id TEXT,
+          task_id TEXT,
+          media_job_id TEXT,
+          channel_id TEXT,
+          tool_call_id TEXT,
+          action_type TEXT NOT NULL,
+          risk TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT,
+          resolved_at TEXT,
+          resolved_by TEXT,
+          decision_reason TEXT,
+          CHECK (
+            (run_id IS NOT NULL AND task_id IS NOT NULL AND media_job_id IS NULL)
+            OR (run_id IS NULL AND task_id IS NULL AND media_job_id IS NOT NULL)
+          ),
+          FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
+          FOREIGN KEY(media_job_id) REFERENCES media_jobs(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO approval_requests_next (
+          id,
+          run_id,
+          task_id,
+          media_job_id,
+          channel_id,
+          tool_call_id,
+          action_type,
+          risk,
+          title,
+          description,
+          payload_json,
+          status,
+          created_at,
+          expires_at,
+          resolved_at,
+          resolved_by,
+          decision_reason
+        )
+        SELECT
+          id,
+          run_id,
+          task_id,
+          NULL,
+          channel_id,
+          tool_call_id,
+          action_type,
+          risk,
+          title,
+          description,
+          payload_json,
+          status,
+          created_at,
+          expires_at,
+          resolved_at,
+          resolved_by,
+          decision_reason
+        FROM approval_requests;
+
+        DROP TABLE approval_requests;
+        ALTER TABLE approval_requests_next RENAME TO approval_requests;
+
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_run ON approval_requests(run_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_task ON approval_requests(task_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_media_job ON approval_requests(media_job_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_created_at ON approval_requests(created_at);
+      `);
+
+      this.recordMigration(APPROVAL_MEDIA_JOB_OWNER_MIGRATION_VERSION, APPROVAL_MEDIA_JOB_OWNER_MIGRATION_NAME);
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -1590,8 +1699,9 @@ function mapProviderPreset(row: Record<string, SQLOutputValue>): ProviderPreset 
 function mapApprovalRequest(row: Record<string, SQLOutputValue>): ApprovalRequest {
   return omitUndefined({
     id: readString(row, "id"),
-    runId: readString(row, "run_id"),
-    taskId: readString(row, "task_id"),
+    runId: readNullableString(row, "run_id"),
+    taskId: readNullableString(row, "task_id"),
+    mediaJobId: readNullableString(row, "media_job_id"),
     channelId: readNullableString(row, "channel_id"),
     toolCallId: readNullableString(row, "tool_call_id"),
     actionType: readString(row, "action_type") as ApprovalRequest["actionType"],
@@ -1737,6 +1847,7 @@ function approvalRequestSelectSql(whereClause: string): string {
       id,
       run_id,
       task_id,
+      media_job_id,
       channel_id,
       tool_call_id,
       action_type,

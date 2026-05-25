@@ -983,6 +983,16 @@ async function handleRunMediaJob(
       input: job.input,
     });
 
+    const approvalGate = applyMediaCostApprovalGate(store, job, provider);
+    if (approvalGate.kind === "waiting_for_approval") {
+      writeJson(response, 200, { mediaJob: approvalGate.mediaJob, approval: approvalGate.approval, artifacts: [] });
+      return;
+    }
+    if (approvalGate.kind === "blocked") {
+      writeJson(response, 200, { mediaJob: approvalGate.mediaJob, approval: approvalGate.approval, artifacts: [] });
+      return;
+    }
+
     job = store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, new Date().toISOString()) ?? job;
     startedExecution = true;
 
@@ -1133,12 +1143,16 @@ function handleApprovalsCollection(
 
   try {
     const store = storeRegistry.getStore(cwd);
-    expireStalePendingApprovals(store, url.searchParams.get("runId") ?? undefined);
+    expireStalePendingApprovals(store, {
+      runId: url.searchParams.get("runId") ?? undefined,
+      mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
+    });
     writeJson(response, 200, {
       cwd,
       approvals: store.listApprovalRequests({
         status: readOptionalApprovalStatusQuery(url),
         runId: url.searchParams.get("runId") ?? undefined,
+        mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       }),
     });
@@ -1589,6 +1603,9 @@ function providerSecretPreflightBlocker(preset: ProviderPreset): string | undefi
 }
 
 function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalRequest): void {
+  if (!approval.runId) {
+    return;
+  }
   const run = store.getRun(approval.runId);
   if (!run) {
     return;
@@ -1611,11 +1628,11 @@ function approvalDecisionEventType(approval: ApprovalRequest): Extract<RunEventT
   return "approval_denied";
 }
 
-function expireStalePendingApprovals(store: RunStore, runId?: string): void {
+function expireStalePendingApprovals(store: RunStore, options: { readonly runId?: string; readonly mediaJobId?: string } = {}): void {
   const now = new Date().toISOString();
   let safety = 0;
   for (;;) {
-    const pending = store.listApprovalRequests({ status: "pending", runId, limit: 500 });
+    const pending = store.listApprovalRequests({ status: "pending", runId: options.runId, mediaJobId: options.mediaJobId, limit: 500 });
     const expired = pending.filter((approval) => approval.expiresAt && approval.expiresAt <= now);
     if (expired.length === 0) {
       return;
@@ -1930,6 +1947,9 @@ function findApprovalDecisionEvent(
   approval: ApprovalRequest,
   afterSeq: number,
 ): RunEventEnvelope | undefined {
+  if (!approval.runId) {
+    return undefined;
+  }
   return store
     .listEvents(approval.runId, { afterSeq, limit: 1000 })
     .find(
@@ -2278,6 +2298,94 @@ function createMediaAdapterForProvider(provider: ProviderPreset) {
     throw new HttpError(400, resolution.errorCode ?? "unsupported_capability", resolution.errorMessage ?? "Media adapter is not available.");
   }
   return resolution.adapter;
+}
+
+type MediaCostApprovalGateResult =
+  | { readonly kind: "not_required" }
+  | { readonly kind: "approved"; readonly approval: ApprovalRequest }
+  | { readonly kind: "waiting_for_approval"; readonly mediaJob: MediaJob; readonly approval: ApprovalRequest }
+  | { readonly kind: "blocked"; readonly mediaJob: MediaJob; readonly approval: ApprovalRequest };
+
+function applyMediaCostApprovalGate(store: RunStore, job: MediaJob, provider: ProviderPreset): MediaCostApprovalGateResult {
+  const gate = resolveMediaVendorTransportGateConfig(provider.compat);
+  if (!gate.ok || gate.config?.mode !== "live") {
+    return { kind: "not_required" };
+  }
+
+  expireStalePendingApprovals(store, { mediaJobId: job.id });
+  const approvals = store
+    .listApprovalRequests({ mediaJobId: job.id, limit: 500 })
+    .filter((approval) => approval.actionType === "media_cost");
+
+  for (const approval of approvals) {
+    if (approval.status === "pending") {
+      return {
+        kind: "waiting_for_approval",
+        mediaJob: markMediaJobWaitingForApproval(store, job),
+        approval,
+      };
+    }
+    if (approval.status === "approved") {
+      return { kind: "approved", approval };
+    }
+    if (approval.status === "denied" || approval.status === "expired") {
+      return {
+        kind: "blocked",
+        mediaJob: failMediaJobForApprovalDecision(store, job, approval),
+        approval,
+      };
+    }
+  }
+
+  const approval = store.createApprovalRequest(createMediaCostApprovalInput(job, provider), new Date().toISOString());
+  return {
+    kind: "waiting_for_approval",
+    mediaJob: markMediaJobWaitingForApproval(store, job),
+    approval,
+  };
+}
+
+function createMediaCostApprovalInput(job: MediaJob, provider: ProviderPreset): CreateApprovalRequestInput {
+  return {
+    mediaJobId: job.id,
+    actionType: "media_cost",
+    risk: "high",
+    title: "Approve media job cost",
+    description: `${provider.displayName} ${job.operation} requires approval before live media execution.`,
+    payload: {
+      type: "media_cost",
+      providerPresetId: provider.id,
+      model: provider.model,
+      operation: job.operation,
+      promptPreview: truncatePreview(job.prompt),
+    },
+    expiresAt: new Date(Date.now() + APPROVAL_TIMEOUT_MS).toISOString(),
+  };
+}
+
+function markMediaJobWaitingForApproval(store: RunStore, job: MediaJob): MediaJob {
+  if (job.status === "waiting_for_approval" && !job.errorMessage) {
+    return job;
+  }
+  return store.updateMediaJobStatus(
+    job.id,
+    {
+      status: "waiting_for_approval",
+      errorMessage: null,
+    },
+    new Date().toISOString(),
+  ) ?? job;
+}
+
+function failMediaJobForApprovalDecision(store: RunStore, job: MediaJob, approval: ApprovalRequest): MediaJob {
+  return store.updateMediaJobStatus(
+    job.id,
+    {
+      status: "failed",
+      errorMessage: `Media cost approval ${approval.status} before live media execution.`,
+    },
+    new Date().toISOString(),
+  ) ?? job;
 }
 
 function createMediaJobArtifacts(
@@ -2878,7 +2986,7 @@ function assertMediaJobProvider(store: RunStore, input: CreateMediaJobInput): Pr
 }
 
 function isRunnableMediaJobStatus(status: MediaJobStatus): boolean {
-  return status === "queued" || status === "failed" || status === "cancelled";
+  return status === "queued" || status === "waiting_for_approval" || status === "failed" || status === "cancelled";
 }
 
 function shouldForceStaticMediaFailure(input: Record<string, unknown>): boolean {

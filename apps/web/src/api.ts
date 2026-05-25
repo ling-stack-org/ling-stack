@@ -229,7 +229,7 @@ export async function checkProvider(cwd: string, providerId: string): Promise<Pr
 
 export async function listApprovals(
   cwd: string,
-  options: { readonly status?: string; readonly runId?: string } = {},
+  options: { readonly status?: string; readonly runId?: string; readonly mediaJobId?: string } = {},
 ): Promise<ApprovalListResponse> {
   const parsed = new URL(`${daemonBaseUrl}/approvals`);
   parsed.searchParams.set("cwd", cwd);
@@ -238,6 +238,9 @@ export async function listApprovals(
   }
   if (options.runId) {
     parsed.searchParams.set("runId", options.runId);
+  }
+  if (options.mediaJobId) {
+    parsed.searchParams.set("mediaJobId", options.mediaJobId);
   }
   const response = await fetch(parsed.toString());
   if (!response.ok) {

@@ -33,8 +33,9 @@ interface MockRun {
 
 interface MockApproval {
   id: string;
-  runId: string;
-  taskId: string;
+  runId?: string;
+  taskId?: string;
+  mediaJobId?: string;
   actionType: string;
   risk: string;
   title: string;
@@ -86,6 +87,31 @@ test("workspace readiness surfaces missing provider, expired approval, and faile
   await expect(page.getByLabel("Task detail")).toContainText("Task detail");
   await expect(page.getByLabel("Task detail")).toContainText("run_failed");
   await expect(page.getByLabel("Task detail").getByText("Inspect run failure")).toBeVisible();
+});
+
+test("language switcher toggles Chinese and English UI labels", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("ling-stack.locale")) {
+      localStorage.setItem("ling-stack.locale", "en-US");
+    }
+  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
+
+  await page.getByRole("button", { name: "中文" }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  await expect(page.getByRole("heading", { name: "工作区就绪状态" })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "审批" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBe("zh-CN");
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "工作区就绪状态" })).toBeVisible();
+
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
+  await expect(page.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
 });
 
 test("approval inbox shows expired approvals without decision buttons", async ({ page }) => {
@@ -246,6 +272,68 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
   await expect.poll(() => state.mediaJobs.length).toBe(3);
 });
 
+test("media jobs page surfaces live media cost approvals", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    {
+      id: "provider_seedream",
+      kind: "seedream",
+      displayName: "Seedream Image",
+      providerId: "seedream",
+      model: "seedream",
+      api: "media-job",
+      apiKeyRef: "env:SEEDREAM_API_KEY",
+      apiKeyConfigured: true,
+      headers: {},
+      input: ["text", "image"],
+      compat: { mediaVendorTransport: { mode: "live" } },
+      capabilities: ["image_generate"],
+      enabled: true,
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:00:00.000Z",
+    },
+  ];
+  state.mediaJobs = [
+    {
+      id: "media_job_live_pending",
+      workspaceId: "workspace_default",
+      providerPresetId: "provider_seedream",
+      operation: "image_generate",
+      prompt: "Approval gated product mockup.",
+      input: {},
+      artifactIds: [],
+      status: "queued",
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Jobs" }).click();
+  const jobRow = page.locator(".media-job-row").filter({ hasText: "Approval gated product mockup." });
+  await jobRow.getByRole("button", { name: "Run" }).click();
+  await expect(jobRow).toContainText("waiting_for_approval");
+  await expect(jobRow).toContainText("Approval required before live execution");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Approvals" }).click();
+  const mediaApproval = page.locator(".approval-row").filter({ hasText: "Approve media job cost" });
+  await expect(mediaApproval).toContainText("media_cost");
+  await expect(mediaApproval).toContainText("media job media_job_live_pending");
+  await expect(mediaApproval.getByLabel("Media cost approval summary")).toContainText("provider provider_seedream");
+  await expect(mediaApproval.getByLabel("Media cost approval summary")).toContainText("Approval gated product mockup.");
+
+  await mediaApproval.getByLabel("Decision reason").fill("Approved for local smoke.");
+  await mediaApproval.getByRole("button", { name: "Approve" }).click();
+  await mediaApproval.getByRole("button", { name: "Confirm approve" }).click();
+  await expect(mediaApproval).toContainText("approved");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Jobs" }).click();
+  await jobRow.getByRole("button", { name: "Run" }).click();
+  await expect(jobRow).toContainText("succeeded");
+  await expect(jobRow.locator(".artifact-row")).toContainText("Image generate live result");
+});
+
 function createBaseState(options: { approvalStatus: "pending" | "expired" }): MockState {
   const run: MockRun = {
     id: "run_failed",
@@ -351,7 +439,10 @@ async function handleDaemonRoute(route: Route, state: MockState): Promise<void> 
   }
   if (request.method() === "GET" && path === "/approvals") {
     const runId = url.searchParams.get("runId");
-    const approvals = state.approvals.filter((approval) => !runId || approval.runId === runId);
+    const mediaJobId = url.searchParams.get("mediaJobId");
+    const approvals = state.approvals.filter((approval) =>
+      (!runId || approval.runId === runId) && (!mediaJobId || approval.mediaJobId === mediaJobId)
+    );
     await route.fulfill({ json: { cwd, approvals } });
     return;
   }
@@ -396,15 +487,61 @@ async function handleDaemonRoute(route: Route, state: MockState): Promise<void> 
       return;
     }
     if (job.status !== "queued" && job.status !== "failed" && job.status !== "cancelled") {
-      await route.fulfill({ status: 409, json: { error: "media_job_not_runnable" } });
-      return;
+      if (job.status !== "waiting_for_approval") {
+        await route.fulfill({ status: 409, json: { error: "media_job_not_runnable" } });
+        return;
+      }
+    }
+    const provider = state.providers.find((item) => isRecord(item) && item.id === job.providerPresetId);
+    const liveGate = isRecord(provider) &&
+      isRecord(provider.compat) &&
+      isRecord(provider.compat.mediaVendorTransport) &&
+      provider.compat.mediaVendorTransport.mode === "live";
+    if (liveGate) {
+      const existingApproval = state.approvals.find((approval) => approval.mediaJobId === job.id && approval.actionType === "media_cost");
+      if (!existingApproval) {
+        const approval: MockApproval = {
+          id: `approval_${job.id}`,
+          mediaJobId: job.id,
+          actionType: "media_cost",
+          risk: "high",
+          title: "Approve media job cost",
+          description: "Seedream Image image_generate requires approval before live media execution.",
+          payload: {
+            type: "media_cost",
+            providerPresetId: job.providerPresetId,
+            model: "seedream",
+            operation: job.operation,
+            promptPreview: job.prompt,
+          },
+          status: "pending",
+          createdAt: "2026-05-24T00:01:00.000Z",
+          expiresAt: "2099-01-01T00:01:00.000Z",
+        };
+        state.approvals.unshift(approval);
+        job.status = "waiting_for_approval";
+        job.updatedAt = "2026-05-24T00:01:00.000Z";
+        await route.fulfill({ json: { mediaJob: job, approval, artifacts: [] } });
+        return;
+      }
+      if (existingApproval.status === "pending") {
+        job.status = "waiting_for_approval";
+        await route.fulfill({ json: { mediaJob: job, approval: existingApproval, artifacts: [] } });
+        return;
+      }
+      if (existingApproval.status === "denied" || existingApproval.status === "expired") {
+        job.status = "failed";
+        job.errorMessage = `Media cost approval ${existingApproval.status} before live media execution.`;
+        await route.fulfill({ json: { mediaJob: job, approval: existingApproval, artifacts: [] } });
+        return;
+      }
     }
     const artifact: MockArtifact = {
       id: `artifact_${job.id}`,
       mediaJobId: job.id,
       type: "markdown",
       path: `media_jobs/${job.id}/static-result.md`,
-      title: "Image generate static result",
+      title: liveGate ? "Image generate live result" : "Image generate static result",
       contentType: "text/markdown; charset=utf-8",
       sizeBytes: 192,
       createdAt: "2026-05-23T00:03:00.000Z",

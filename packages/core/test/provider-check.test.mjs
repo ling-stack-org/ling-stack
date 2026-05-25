@@ -11,7 +11,8 @@ test("default provider templates include Seedream live HTTP base URL without ena
   assert.ok(seedream);
   assert.equal(seedream.kind, "seedream");
   assert.equal(seedream.api, "media-job");
-  assert.equal(seedream.baseUrl, "https://ark.ap-southeast.bytepluses.com/api/v3");
+  assert.equal(seedream.model, "doubao-seedream-5-0-260128");
+  assert.equal(seedream.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
   assert.equal(seedream.apiKeyRef, "env:SEEDREAM_API_KEY");
   assert.deepEqual(seedream.capabilities, ["image_generate", "image_edit"]);
   assert.equal(seedream.compat, undefined);
