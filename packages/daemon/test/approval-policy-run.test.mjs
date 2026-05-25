@@ -517,8 +517,8 @@ test("media job live transport calls Seedream image_generate through HTTP and li
 
     const executed = await postJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(executed.mediaJob.status, "succeeded");
-    assert.equal(executed.artifacts.length, 2);
-    assert.equal(seedream.requests.length, 1);
+    assert.equal(executed.artifacts.length, 3);
+    assert.equal(seedream.requests.length, 2);
     assert.equal(seedream.requests[0].path, "/images/generations");
     assert.equal(seedream.requests[0].authorization, "Bearer test-key");
     assert.deepEqual(seedream.requests[0].body, {
@@ -527,9 +527,15 @@ test("media job live transport calls Seedream image_generate through HTTP and li
       response_format: "url",
       size: "2K",
     });
+    assert.equal(seedream.requests[1].method, "GET");
+    assert.equal(seedream.requests[1].path, "/generated/image-1.png");
+    assert.equal(seedream.requests[1].authorization, undefined);
     assert.deepEqual(executed.mediaJob.artifactIds, executed.artifacts.map((artifact) => artifact.id));
     assert.equal(executed.artifacts[0].type, "markdown");
     assert.equal(executed.artifacts[1].type, "json");
+    assert.equal(executed.artifacts[2].type, "image");
+    assert.equal(executed.artifacts[2].contentType, "image/png");
+    assert.equal(executed.artifacts[2].sizeBytes, 8);
 
     const liveArtifact = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(executed.artifacts[1].id)}/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(liveArtifact.status, 200);
@@ -537,6 +543,11 @@ test("media job live transport calls Seedream image_generate through HTTP and li
     assert.match(text, /live_seedream_image_generate/);
     assert.match(text, /image-1\.png/);
     assert.doesNotMatch(text, /test-key/);
+
+    const imageArtifact = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(executed.artifacts[2].id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(imageArtifact.status, 200);
+    assert.equal(imageArtifact.headers.get("content-type"), "image/png");
+    assert.deepEqual(new Uint8Array(await imageArtifact.arrayBuffer()), Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]));
   } finally {
     delete process.env.LING_STACK_TEST_MEDIA_KEY;
     await seedream.close();
@@ -1031,6 +1042,17 @@ async function createMediaProvider(baseUrl, cwd, overrides = {}) {
 async function startMockSeedreamServer() {
   const requests = [];
   const server = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/generated/image-1.png") {
+      requests.push({
+        method: request.method,
+        path: request.url,
+        authorization: request.headers.authorization,
+        body: {},
+      });
+      response.writeHead(200, { "content-type": "image/png" });
+      response.end(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+      return;
+    }
     const chunks = [];
     for await (const chunk of request) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -1046,7 +1068,7 @@ async function startMockSeedreamServer() {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       created: 1779537600,
-      data: [{ url: "https://media.example.invalid/generated/image-1.png" }],
+      data: [{ url: `http://${request.headers.host}/generated/image-1.png` }],
       debug: { echo: request.headers.authorization },
     }));
   });

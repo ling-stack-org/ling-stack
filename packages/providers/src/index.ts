@@ -98,6 +98,7 @@ export interface MediaExecutionArtifact {
   readonly type: MediaAdapterArtifactType;
   readonly title: string;
   readonly content?: string;
+  readonly contentBytes?: Uint8Array;
   readonly contentType?: string;
   readonly pathHint?: string;
 }
@@ -201,9 +202,9 @@ export interface LiveMediaVendorTransportOptions {
 }
 
 export interface MediaVendorHttpRequestInit {
-  readonly method: "POST";
+  readonly method: "GET" | "POST";
   readonly headers: Record<string, string>;
-  readonly body: string;
+  readonly body?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -211,11 +212,17 @@ export interface MediaVendorHttpResponse {
   readonly ok: boolean;
   readonly status: number;
   readonly statusText: string;
+  readonly headers?: {
+    get(name: string): string | null;
+  };
   json(): Promise<unknown>;
   text(): Promise<string>;
+  arrayBuffer(): Promise<ArrayBuffer>;
 }
 
 export type MediaVendorHttpClient = (url: string, init: MediaVendorHttpRequestInit) => Promise<MediaVendorHttpResponse>;
+
+const MAX_MEDIA_VENDOR_IMAGE_BYTES = 25 * 1024 * 1024;
 
 export interface MediaAdapterRegistryOptions {
   readonly factories?: readonly MediaAdapterFactory[];
@@ -626,14 +633,15 @@ async function executeSeedreamImageGeneration(
     }
 
     const json = await response.json();
-    const imageCount = countSeedreamImages(json);
-    if (imageCount === 0) {
+    const imageUrls = extractSeedreamImageUrls(json);
+    if (imageUrls.length === 0) {
       return {
         status: "failed",
         errorCode: "invalid_request",
-        errorMessage: "Seedream image generation response did not include image data.",
+        errorMessage: "Seedream image generation response did not include image URL data.",
       };
     }
+    const imageArtifacts = await downloadSeedreamImageArtifacts(imageUrls, httpClient, abortController.signal);
 
     return {
       status: "succeeded",
@@ -648,14 +656,22 @@ async function executeSeedreamImageGeneration(
             vendor: request.vendor.kind,
             operation: request.requestPlan.operation,
             endpoint,
-            imageCount,
+            imageCount: imageUrls.length,
             request: payload,
             response: json,
           }, [options.apiKey]), null, 2),
         },
+        ...imageArtifacts,
       ],
     };
   } catch (error) {
+    if (error instanceof MediaAdapterExecutionError) {
+      return {
+        status: "failed",
+        errorCode: error.code,
+        errorMessage: redactSecretText(error.message, [options.apiKey]),
+      };
+    }
     const message = error instanceof Error ? error.message : String(error);
     return {
       status: "failed",
@@ -678,6 +694,98 @@ function buildSeedreamImageGenerationPayload(plan: MediaVendorRequestPlan): Reco
     watermark: typeof input.watermark === "boolean" ? input.watermark : undefined,
     seed: typeof input.seed === "number" ? input.seed : undefined,
   });
+}
+
+async function downloadSeedreamImageArtifacts(
+  imageUrls: readonly string[],
+  httpClient: MediaVendorHttpClient,
+  signal: AbortSignal,
+): Promise<MediaExecutionArtifact[]> {
+  const artifacts: MediaExecutionArtifact[] = [];
+  for (const [index, imageUrl] of imageUrls.entries()) {
+    const parsedUrl = parseMediaImageUrl(imageUrl);
+    const response = await httpClient(parsedUrl.toString(), {
+      method: "GET",
+      headers: {},
+      signal,
+    });
+    if (!response.ok) {
+      throw new MediaAdapterExecutionError(
+        mapSeedreamHttpStatus(response.status),
+        `Seedream image download failed with HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.`,
+      );
+    }
+    const contentType = getMediaVendorResponseHeader(response, "content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (!contentType.startsWith("image/")) {
+      throw new MediaAdapterExecutionError(
+        "invalid_request",
+        `Seedream image URL returned non-image content type: ${contentType || "unknown"}.`,
+      );
+    }
+    const declaredLength = parseContentLength(getMediaVendorResponseHeader(response, "content-length"));
+    if (declaredLength !== undefined && declaredLength > MAX_MEDIA_VENDOR_IMAGE_BYTES) {
+      throw new MediaAdapterExecutionError(
+        "invalid_request",
+        `Seedream image exceeds ${MAX_MEDIA_VENDOR_IMAGE_BYTES} byte limit.`,
+      );
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > MAX_MEDIA_VENDOR_IMAGE_BYTES) {
+      throw new MediaAdapterExecutionError(
+        "invalid_request",
+        `Seedream image exceeds ${MAX_MEDIA_VENDOR_IMAGE_BYTES} byte limit.`,
+      );
+    }
+    artifacts.push({
+      type: "image",
+      title: `Seedream image ${index + 1}`,
+      contentType,
+      pathHint: `seedream-image-${index + 1}.${imageExtensionForContentType(contentType)}`,
+      contentBytes: bytes,
+    });
+  }
+  return artifacts;
+}
+
+function parseMediaImageUrl(value: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new MediaAdapterExecutionError("invalid_request", "Seedream image response included an invalid image URL.");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new MediaAdapterExecutionError("invalid_request", "Seedream image URL must use http or https.");
+  }
+  return url;
+}
+
+function getMediaVendorResponseHeader(response: MediaVendorHttpResponse, name: string): string | undefined {
+  return response.headers?.get(name) ?? response.headers?.get(name.toLowerCase()) ?? undefined;
+}
+
+function parseContentLength(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function imageExtensionForContentType(contentType: string): string {
+  if (contentType === "image/jpeg" || contentType === "image/jpg") {
+    return "jpg";
+  }
+  if (contentType === "image/webp") {
+    return "webp";
+  }
+  if (contentType === "image/gif") {
+    return "gif";
+  }
+  if (contentType === "image/svg+xml") {
+    return "svg";
+  }
+  return "png";
 }
 
 async function normalizeSeedreamHttpFailure(response: MediaVendorHttpResponse, apiKey: string | undefined): Promise<MediaVendorTransportResult> {
@@ -717,11 +825,13 @@ function mapSeedreamHttpStatus(status: number): MediaAdapterErrorCode {
   return "provider_internal_error";
 }
 
-function countSeedreamImages(value: unknown): number {
+function extractSeedreamImageUrls(value: unknown): string[] {
   if (!isRecord(value) || !Array.isArray(value.data)) {
-    return 0;
+    return [];
   }
-  return value.data.filter((item) => isRecord(item) && (typeof item.url === "string" || typeof item.b64_json === "string")).length;
+  return value.data
+    .filter((item): item is Record<string, unknown> => isRecord(item) && typeof item.url === "string")
+    .map((item) => item.url as string);
 }
 
 async function defaultMediaVendorHttpClient(url: string, init: MediaVendorHttpRequestInit): Promise<MediaVendorHttpResponse> {

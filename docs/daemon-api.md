@@ -401,7 +401,7 @@ GET /runs/:id/artifacts?cwd=/path/to/project
 
 Passing `cwd` is recommended after daemon restart. Artifact paths are local paths under `.ling-stack/artifacts` and are served only through the artifact content endpoint.
 
-During run execution the daemon records `artifact_created` events for extracted Pi tool evidence. v0.1 extraction covers text, log, Markdown, diff output, and generated file path metadata. Image/video media bytes are not extracted yet.
+During run execution the daemon records `artifact_created` events for extracted Pi tool evidence. v0.1 extraction covers text, log, Markdown, diff output, and generated file path metadata. Media job artifacts use the same artifact API; Seedream `image_generate` can now store returned image URL bytes as local image artifacts, while video and other media byte outputs remain deferred.
 
 Response:
 
@@ -459,7 +459,7 @@ Media jobs are persisted metadata for media-capable provider presets. By default
 Supported statuses:
 
 ```text
-queued, running, succeeded, failed, cancelled
+queued, running, waiting_for_approval, succeeded, failed, cancelled
 ```
 
 Supported operations:
@@ -491,7 +491,7 @@ Rules:
 - `providerPresetId` must reference an enabled provider preset with `api: "media-job"`.
 - The provider preset must include the requested media operation in `capabilities`.
 - Chat provider presets return `unsupported_capability`.
-- Creation only records queued metadata. Live vendor calls, billing, and image/video media bytes are still out of scope.
+- Creation only records queued metadata. Live vendor calls happen only through explicit run execution after required approvals; billing, video bytes, and non-Seedream media byte outputs are still out of scope.
 
 Response:
 
@@ -552,7 +552,7 @@ Response:
 POST /media-jobs/:id/run?cwd=/path/to/project
 ```
 
-The current execution interface uses the media adapter contract and provider-kind registry. `jimeng`, `seedream`, and `seedance` resolve to vendor adapter stubs that emit a redacted vendor request plan and use a disabled-by-default vendor transport seam. A provider preset can set `compat.mediaVendorTransport.mode = "live"` to enter the live gate; the daemon then requires `baseUrl`, `apiKeyRef`, and a configured env secret. Live transport currently supports only Seedream `image_generate` through the OpenAI-compatible `/images/generations` endpoint and records JSON metadata artifacts; it does not download image bytes. Jimeng, Seedance, billing, and other Seedream operations remain out of scope.
+The current execution interface uses the media adapter contract and provider-kind registry. `jimeng`, `seedream`, and `seedance` resolve to vendor adapter stubs that emit a redacted vendor request plan and use a disabled-by-default vendor transport seam. A provider preset can set `compat.mediaVendorTransport.mode = "live"` to enter the live gate; the daemon then requires `baseUrl`, `apiKeyRef`, and a configured env secret. Live transport currently supports only Seedream `image_generate` through the OpenAI-compatible `/images/generations` endpoint. It records JSON metadata artifacts and downloads returned HTTP(S) image URLs into local image artifacts under `.ling-stack/artifacts` without sending the provider authorization header to those image URLs. Jimeng, Seedance, billing, video bytes, and other Seedream operations remain out of scope.
 
 Live-gated jobs do not execute immediately. The first run creates a pending `media_cost` approval, returns it in the response, and moves the job to `waiting_for_approval`. Re-running while the approval is pending returns the existing approval instead of creating a duplicate. Once approved, the next run proceeds to the adapter; for Seedream `image_generate`, the adapter calls the configured `/images/generations` endpoint. Denied or expired approvals fail the job without executing the adapter.
 

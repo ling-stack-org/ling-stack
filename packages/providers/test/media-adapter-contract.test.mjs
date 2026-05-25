@@ -334,8 +334,8 @@ test("live media vendor transport validates config before Seedream HTTP", async 
 });
 
 test("live media vendor transport calls Seedream image generation through the OpenAI-compatible images API", async () => {
-  let capturedUrl;
-  let capturedInit;
+  const capturedRequests = [];
+  const imageBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: createLiveMediaVendorTransport({
       baseUrl: "https://media.example.invalid",
@@ -343,8 +343,10 @@ test("live media vendor transport calls Seedream image generation through the Op
       apiKeyConfigured: true,
       apiKey: "test-key",
       httpClient: async (url, init) => {
-        capturedUrl = url;
-        capturedInit = init;
+        capturedRequests.push({ url, init });
+        if (init.method === "GET") {
+          return binaryResponse(200, "OK", imageBytes, { "content-type": "image/png" });
+        }
         return jsonResponse(200, {
           created: 1779537600,
           data: [
@@ -374,21 +376,28 @@ test("live media vendor transport calls Seedream image generation through the Op
 
   assert.equal(result.status, "succeeded");
   assert.equal(result.errorCode, undefined);
-  assert.equal(result.artifacts.length, 2);
+  assert.equal(result.artifacts.length, 3);
   assert.match(result.artifacts[0].content ?? "", /Transport: live/);
   assert.equal(result.artifacts[1].type, "json");
   assert.match(result.artifacts[1].content ?? "", /live_seedream_image_generate/);
   assert.match(result.artifacts[1].content ?? "", /image-1\.png/);
   assert.doesNotMatch(result.artifacts[1].content ?? "", /test-key/);
-  assert.equal(capturedUrl, "https://media.example.invalid/images/generations");
-  assert.equal(capturedInit?.headers.authorization, "Bearer test-key");
-  assert.deepEqual(JSON.parse(capturedInit?.body ?? "{}"), {
+  assert.equal(result.artifacts[2].type, "image");
+  assert.equal(result.artifacts[2].contentType, "image/png");
+  assert.deepEqual(result.artifacts[2].contentBytes, imageBytes);
+  assert.equal(capturedRequests.length, 2);
+  assert.equal(capturedRequests[0].url, "https://media.example.invalid/images/generations");
+  assert.equal(capturedRequests[0].init.headers.authorization, "Bearer test-key");
+  assert.deepEqual(JSON.parse(capturedRequests[0].init.body ?? "{}"), {
     model: "seedream",
     prompt: "Create a product mockup.",
     response_format: "url",
     size: "2K",
     watermark: false,
   });
+  assert.equal(capturedRequests[1].url, "https://media.example.invalid/generated/image-1.png");
+  assert.equal(capturedRequests[1].init.method, "GET");
+  assert.deepEqual(capturedRequests[1].init.headers, {});
 });
 
 test("live media vendor transport normalizes Seedream HTTP failures", async () => {
@@ -421,6 +430,108 @@ test("live media vendor transport normalizes Seedream HTTP failures", async () =
   assert.match(result.errorMessage ?? "", /HTTP 429/);
   assert.match(result.errorMessage ?? "", /rate limited/);
   assert.doesNotMatch(result.errorMessage ?? "", /test-key/);
+});
+
+test("live media vendor transport rejects invalid image downloads", async () => {
+  const seedream = defaultMediaVendorAdapterDefinitions().find((definition) => definition.kind === "seedream");
+  assert.ok(seedream);
+  const plan = createMediaVendorRequestPlan(seedream, {
+    jobId: "media_job_live_transport_invalid_image",
+    provider,
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  const missingUrl = await createLiveMediaVendorTransport({
+    baseUrl: "https://media.example.invalid/",
+    apiKeyRef: "env:SEEDREAM_API_KEY",
+    apiKeyConfigured: true,
+    apiKey: "test-key",
+    httpClient: async () => jsonResponse(200, { data: [{ b64_json: "not-supported-in-this-slice" }] }),
+  }).execute({
+    vendor: seedream,
+    requestPlan: plan,
+    jobId: "media_job_live_transport_missing_url",
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+  assert.equal(missingUrl.status, "failed");
+  assert.equal(missingUrl.errorCode, "invalid_request");
+  assert.match(missingUrl.errorMessage ?? "", /did not include image URL data/);
+
+  const invalidProtocol = await createLiveMediaVendorTransport({
+    baseUrl: "https://media.example.invalid/",
+    apiKeyRef: "env:SEEDREAM_API_KEY",
+    apiKeyConfigured: true,
+    apiKey: "test-key",
+    httpClient: async () => jsonResponse(200, { data: [{ url: "file:///tmp/image.png" }] }),
+  }).execute({
+    vendor: seedream,
+    requestPlan: plan,
+    jobId: "media_job_live_transport_invalid_protocol",
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+  assert.equal(invalidProtocol.status, "failed");
+  assert.equal(invalidProtocol.errorCode, "invalid_request");
+  assert.match(invalidProtocol.errorMessage ?? "", /must use http or https/);
+
+  const nonImage = await createLiveMediaVendorTransport({
+    baseUrl: "https://media.example.invalid/",
+    apiKeyRef: "env:SEEDREAM_API_KEY",
+    apiKeyConfigured: true,
+    apiKey: "test-key",
+    httpClient: async (_url, init) => init.method === "GET"
+      ? textResponse(200, "OK", "not an image", { "content-type": "text/plain" })
+      : jsonResponse(200, { data: [{ url: "https://media.example.invalid/generated/image-1.txt" }] }),
+  }).execute({
+    vendor: seedream,
+    requestPlan: plan,
+    jobId: "media_job_live_transport_invalid_image",
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+  assert.equal(nonImage.status, "failed");
+  assert.equal(nonImage.errorCode, "invalid_request");
+  assert.match(nonImage.errorMessage ?? "", /non-image content type/);
+
+  const failedDownload = await createLiveMediaVendorTransport({
+    baseUrl: "https://media.example.invalid/",
+    apiKeyRef: "env:SEEDREAM_API_KEY",
+    apiKeyConfigured: true,
+    apiKey: "test-key",
+    httpClient: async (_url, init) => init.method === "GET"
+      ? textResponse(404, "Not Found", "missing")
+      : jsonResponse(200, { data: [{ url: "https://media.example.invalid/generated/missing.png" }] }),
+  }).execute({
+    vendor: seedream,
+    requestPlan: plan,
+    jobId: "media_job_live_transport_missing_image",
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+  assert.equal(failedDownload.status, "failed");
+  assert.equal(failedDownload.errorCode, "model_not_found");
+  assert.match(failedDownload.errorMessage ?? "", /image download failed with HTTP 404/);
+
+  const tooLarge = await createLiveMediaVendorTransport({
+    baseUrl: "https://media.example.invalid/",
+    apiKeyRef: "env:SEEDREAM_API_KEY",
+    apiKeyConfigured: true,
+    apiKey: "test-key",
+    httpClient: async (_url, init) => init.method === "GET"
+      ? binaryResponse(200, "OK", Uint8Array.from([1, 2, 3]), {
+        "content-type": "image/png",
+        "content-length": String(26 * 1024 * 1024),
+      })
+      : jsonResponse(200, { data: [{ url: "https://media.example.invalid/generated/too-large.png" }] }),
+  }).execute({
+    vendor: seedream,
+    requestPlan: plan,
+    jobId: "media_job_live_transport_large_image",
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+  assert.equal(tooLarge.status, "failed");
+  assert.equal(tooLarge.errorCode, "invalid_request");
+  assert.match(tooLarge.errorMessage ?? "", /byte limit/);
 });
 
 test("fake media vendor transport receives redacted request mapping and can add artifacts", async () => {
@@ -522,30 +633,69 @@ test("media adapter registry rejects non-media provider presets", () => {
   assert.match(resolution.errorMessage ?? "", /media-job provider preset/);
 });
 
-function jsonResponse(status, body) {
+function jsonResponse(status, body, headers = { "content-type": "application/json" }) {
+  const text = JSON.stringify(body);
   return {
     ok: status >= 200 && status < 300,
     status,
     statusText: status >= 200 && status < 300 ? "OK" : "Error",
+    headers: headersObject(headers),
     async json() {
       return body;
     },
     async text() {
-      return JSON.stringify(body);
+      return text;
+    },
+    async arrayBuffer() {
+      return new TextEncoder().encode(text).buffer;
     },
   };
 }
 
-function textResponse(status, statusText, body) {
+function textResponse(status, statusText, body, headers = { "content-type": "text/plain" }) {
   return {
     ok: status >= 200 && status < 300,
     status,
     statusText,
+    headers: headersObject(headers),
     async json() {
       return JSON.parse(body);
     },
     async text() {
       return body;
+    },
+    async arrayBuffer() {
+      return new TextEncoder().encode(body).buffer;
+    },
+  };
+}
+
+function binaryResponse(status, statusText, bytes, headers) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText,
+    headers: headersObject({
+      "content-length": String(bytes.byteLength),
+      ...headers,
+    }),
+    async json() {
+      throw new Error("binary response is not JSON");
+    },
+    async text() {
+      return Buffer.from(bytes).toString("binary");
+    },
+    async arrayBuffer() {
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    },
+  };
+}
+
+function headersObject(headers) {
+  const normalized = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
+  return {
+    get(name) {
+      return normalized.get(name.toLowerCase()) ?? null;
     },
   };
 }
