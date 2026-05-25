@@ -454,7 +454,7 @@ The daemon resolves artifact content relative to `.ling-stack/artifacts` and rej
 
 ## Media Jobs
 
-Media jobs are persisted metadata for media-capable provider presets. By default the execution interface uses local static adapters and does not call live media APIs. Seedream `image_generate` can make live HTTP calls only when the provider preset explicitly sets `compat.mediaVendorTransport.mode = "live"`.
+Media jobs are persisted metadata for media-capable provider presets. By default the execution interface uses local static adapters and does not call live media APIs. Seedream `image_generate` can make live HTTP calls only when the provider preset explicitly sets `compat.mediaVendorTransport.mode = "live"`. See [Seedream live smoke](seedream-live-smoke.md) for the full live approval, execution, and artifact verification path.
 
 Supported statuses:
 

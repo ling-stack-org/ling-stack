@@ -13,6 +13,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [v0.1 detailed design](docs/v0.1-detailed-design.md)
 - [Daemon API](docs/daemon-api.md)
 - [Provider adapters](docs/provider-adapters.md)
+- [Seedream live smoke](docs/seedream-live-smoke.md)
 - [Provider presets](docs/design/provider-presets.md)
 - [Approval policy](docs/design/approval-policy.md)
 - [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
@@ -194,7 +195,7 @@ node packages/cli/dist/index.js provider update provider_... \
   --compat-json '{"mediaVendorTransport":{"mode":"live"}}'
 ```
 
-This validates `baseUrl` and `apiKeyRef`. A live-gated media job first creates a `media_cost` approval and moves to `waiting_for_approval`; after approval, Seedream `image_generate` can call the configured OpenAI-compatible `/images/generations` endpoint. Automated tests use mock HTTP; real smoke requires `SEEDREAM_API_KEY`. The adapter records request/response metadata and downloads returned HTTP(S) image URLs into local `.ling-stack/artifacts` image artifacts without forwarding the provider authorization header to the image URL.
+This validates `baseUrl` and `apiKeyRef`. A live-gated media job first creates a `media_cost` approval and moves to `waiting_for_approval`; after approval, Seedream `image_generate` can call the configured OpenAI-compatible `/images/generations` endpoint. Automated tests use mock HTTP; real smoke requires `SEEDREAM_API_KEY`. The adapter records request/response metadata and downloads returned HTTP(S) image URLs into local `.ling-stack/artifacts` image artifacts without forwarding the provider authorization header to the image URL. See [Seedream live smoke](docs/seedream-live-smoke.md) for the full approval, run, artifact, and Web verification path.
 
 ```bash
 export LOCAL_RELAY_API_KEY=sk-local
