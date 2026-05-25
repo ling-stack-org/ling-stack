@@ -162,6 +162,16 @@ test("run detail renders artifact rows from the daemon API", async ({ page }) =>
       sizeBytes: 256,
       createdAt: "2026-05-22T00:01:31.000Z",
     },
+    {
+      id: "artifact_image",
+      runId: "run_failed",
+      type: "image",
+      path: "run_failed/003-seedream-image.png",
+      title: "Seedream image 1",
+      contentType: "image/png",
+      sizeBytes: 2048,
+      createdAt: "2026-05-22T00:01:32.000Z",
+    },
   ];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -170,9 +180,16 @@ test("run detail renders artifact rows from the daemon API", async ({ page }) =>
   await page.getByRole("button", { name: /run_failed/ }).click();
 
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
-  await expect(page.locator(".artifact-row")).toHaveCount(2);
+  await expect(page.locator(".artifact-row")).toHaveCount(3);
   await expect(page.locator(".artifact-row").first()).toContainText("Generated report");
   await expect(page.locator(".artifact-row").first()).toHaveAttribute("href", /\/artifacts\/artifact_report\/content/);
+  const imageRow = page.locator(".artifact-row").filter({ hasText: "Seedream image 1" });
+  await expect(imageRow).toContainText("image");
+  await expect(imageRow).toContainText("2.0 KB");
+  await expect(imageRow.getByRole("link", { name: "Open" })).toHaveAttribute("href", /\/artifacts\/artifact_image\/content/);
+  const downloadLink = imageRow.getByRole("link", { name: "Download" });
+  await expect(downloadLink).toHaveAttribute("href", /\/artifacts\/artifact_image\/content/);
+  await expect(downloadLink).toHaveAttribute("download", "003-seedream-image.png");
 });
 
 test("media jobs page lists, runs, and creates media jobs", async ({ page }) => {
@@ -237,6 +254,18 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
       updatedAt: "2026-05-23T00:01:00.000Z",
     },
     {
+      id: "media_job_succeeded_image",
+      workspaceId: "workspace_default",
+      providerPresetId: "provider_seedream",
+      operation: "image_generate",
+      prompt: "Generated Seedream image artifact.",
+      input: {},
+      artifactIds: ["artifact_media_image"],
+      status: "succeeded",
+      createdAt: "2026-05-23T00:00:45.000Z",
+      updatedAt: "2026-05-23T00:01:15.000Z",
+    },
+    {
       id: "media_job_existing",
       workspaceId: "workspace_default",
       providerPresetId: "provider_seedream",
@@ -249,6 +278,18 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
       updatedAt: "2026-05-23T00:00:00.000Z",
     },
   ];
+  state.artifactsByMediaJob.media_job_succeeded_image = [
+    {
+      id: "artifact_media_image",
+      mediaJobId: "media_job_succeeded_image",
+      type: "image",
+      path: "media_jobs/media_job_succeeded_image/001-seedream-image.png",
+      title: "Seedream image 1",
+      contentType: "image/png",
+      sizeBytes: 4096,
+      createdAt: "2026-05-23T00:01:15.000Z",
+    },
+  ];
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -257,6 +298,14 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
   const failedJob = page.locator(".media-job-row").filter({ hasText: "Live gated product mockup." });
   await expect(failedJob).toContainText("failed");
   await expect(failedJob).toContainText("Seedream image generation failed with HTTP 429");
+  const imageJob = page.locator(".media-job-row").filter({ hasText: "Generated Seedream image artifact." });
+  const imageArtifactRow = imageJob.locator(".artifact-row").filter({ hasText: "Seedream image 1" });
+  await expect(imageArtifactRow).toContainText("image");
+  await expect(imageArtifactRow).toContainText("4.0 KB");
+  await expect(imageArtifactRow.getByRole("link", { name: "Open" })).toHaveAttribute("href", /\/artifacts\/artifact_media_image\/content/);
+  const mediaDownloadLink = imageArtifactRow.getByRole("link", { name: "Download" });
+  await expect(mediaDownloadLink).toHaveAttribute("href", /\/artifacts\/artifact_media_image\/content/);
+  await expect(mediaDownloadLink).toHaveAttribute("download", "001-seedream-image.png");
 
   const existingJob = page.locator(".media-job-row").filter({ hasText: "Existing product mockup." });
   await expect(existingJob).toContainText("Existing product mockup.");
@@ -269,7 +318,7 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
   await page.getByRole("button", { name: "Create media job" }).click();
 
   await expect(page.locator(".media-job-row").first()).toContainText("New campaign image.");
-  await expect.poll(() => state.mediaJobs.length).toBe(3);
+  await expect.poll(() => state.mediaJobs.length).toBe(4);
 });
 
 test("media jobs page surfaces live media cost approvals", async ({ page }) => {
