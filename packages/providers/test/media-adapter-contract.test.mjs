@@ -280,7 +280,7 @@ test("media vendor transport gate defaults to disabled and rejects preset fake m
   assert.match(invalid.errorMessage ?? "", /disabled or live/);
 });
 
-test("live media vendor transport fails closed before any vendor HTTP implementation", async () => {
+test("live media vendor transport validates config before Seedream HTTP", async () => {
   const seedream = defaultMediaVendorAdapterDefinitions().find((definition) => definition.kind === "seedream");
   assert.ok(seedream);
   const plan = createMediaVendorRequestPlan(seedream, {
@@ -323,23 +323,40 @@ test("live media vendor transport fails closed before any vendor HTTP implementa
   assert.equal(missingSecret.errorCode, "auth_failed");
   assert.match(missingSecret.errorMessage ?? "", /env:SEEDREAM_API_KEY/);
 
-  const notImplemented = await createLiveMediaVendorTransport({
+  const missingSecretValue = await createLiveMediaVendorTransport({
     baseUrl: "https://media.example.invalid",
     apiKeyRef: "env:SEEDREAM_API_KEY",
     apiKeyConfigured: true,
   }).execute(request);
-  assert.equal(notImplemented.status, "failed");
-  assert.equal(notImplemented.errorCode, "provider_internal_error");
-  assert.match(notImplemented.errorMessage ?? "", /not implemented yet/);
-  assert.match(notImplemented.errorMessage ?? "", /No vendor HTTP request was made/);
+  assert.equal(missingSecretValue.status, "failed");
+  assert.equal(missingSecretValue.errorCode, "auth_failed");
+  assert.match(missingSecretValue.errorMessage ?? "", /secret value is not available/);
 });
 
-test("live media vendor transport gate keeps adapter execution fail-closed", async () => {
+test("live media vendor transport calls Seedream image generation through the OpenAI-compatible images API", async () => {
+  let capturedUrl;
+  let capturedInit;
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: createLiveMediaVendorTransport({
       baseUrl: "https://media.example.invalid",
       apiKeyRef: "env:SEEDREAM_API_KEY",
       apiKeyConfigured: true,
+      apiKey: "test-key",
+      httpClient: async (url, init) => {
+        capturedUrl = url;
+        capturedInit = init;
+        return jsonResponse(200, {
+          created: 1779537600,
+          data: [
+            {
+              url: "https://media.example.invalid/generated/image-1.png",
+            },
+          ],
+          debug: {
+            echoedSecret: "test-key",
+          },
+        });
+      },
     }),
   });
   const resolution = resolveMediaAdapter(registry, provider);
@@ -347,19 +364,63 @@ test("live media vendor transport gate keeps adapter execution fail-closed", asy
   assert.equal(resolution.ok, true);
   assert.ok(resolution.adapter);
   const result = await executeMediaJob(resolution.adapter, {
-    jobId: "media_job_live_gate_fail_closed",
+    jobId: "media_job_live_seedream",
     provider,
     operation: "image_generate",
     prompt: "Create a product mockup.",
-    input: { apiKey: "sk-test_123456789" },
+    input: { apiKey: "sk-test_123456789", size: "2K", watermark: false },
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.errorCode, undefined);
+  assert.equal(result.artifacts.length, 2);
+  assert.match(result.artifacts[0].content ?? "", /Transport: live/);
+  assert.equal(result.artifacts[1].type, "json");
+  assert.match(result.artifacts[1].content ?? "", /live_seedream_image_generate/);
+  assert.match(result.artifacts[1].content ?? "", /image-1\.png/);
+  assert.doesNotMatch(result.artifacts[1].content ?? "", /test-key/);
+  assert.equal(capturedUrl, "https://media.example.invalid/images/generations");
+  assert.equal(capturedInit?.headers.authorization, "Bearer test-key");
+  assert.deepEqual(JSON.parse(capturedInit?.body ?? "{}"), {
+    model: "seedream",
+    prompt: "Create a product mockup.",
+    response_format: "url",
+    size: "2K",
+    watermark: false,
+  });
+});
+
+test("live media vendor transport normalizes Seedream HTTP failures", async () => {
+  const seedream = defaultMediaVendorAdapterDefinitions().find((definition) => definition.kind === "seedream");
+  assert.ok(seedream);
+  const plan = createMediaVendorRequestPlan(seedream, {
+    jobId: "media_job_live_transport_http_failure",
+    provider,
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  const result = await createLiveMediaVendorTransport({
+    baseUrl: "https://media.example.invalid/",
+    apiKeyRef: "env:SEEDREAM_API_KEY",
+    apiKeyConfigured: true,
+    apiKey: "test-key",
+    httpClient: async () => textResponse(429, "Too Many Requests", "{\"error\":\"rate limited\",\"echo\":\"test-key\"}"),
+  }).execute({
+    vendor: seedream,
+    requestPlan: plan,
+    jobId: "media_job_live_transport_http_failure",
     requestedAt: "2026-05-23T00:00:00.000Z",
   });
 
   assert.equal(result.status, "failed");
-  assert.equal(result.errorCode, "provider_internal_error");
-  assert.match(result.errorMessage ?? "", /not implemented yet/);
-  assert.deepEqual(result.artifacts, []);
-  assert.doesNotMatch(result.errorMessage ?? "", /sk-test_123456789/);
+  assert.equal(result.errorCode, "rate_limited");
+  assert.match(result.errorMessage ?? "", /HTTP 429/);
+  assert.match(result.errorMessage ?? "", /rate limited/);
+  assert.doesNotMatch(result.errorMessage ?? "", /test-key/);
 });
 
 test("fake media vendor transport receives redacted request mapping and can add artifacts", async () => {
@@ -460,3 +521,31 @@ test("media adapter registry rejects non-media provider presets", () => {
   assert.equal(resolution.errorCode, "unsupported_capability");
   assert.match(resolution.errorMessage ?? "", /media-job provider preset/);
 });
+
+function jsonResponse(status, body) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status >= 200 && status < 300 ? "OK" : "Error",
+    async json() {
+      return body;
+    },
+    async text() {
+      return JSON.stringify(body);
+    },
+  };
+}
+
+function textResponse(status, statusText, body) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText,
+    async json() {
+      return JSON.parse(body);
+    },
+    async text() {
+      return body;
+    },
+  };
+}

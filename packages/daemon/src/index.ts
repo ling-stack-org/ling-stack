@@ -2272,12 +2272,14 @@ function createMediaAdapterForProvider(provider: ProviderPreset) {
   if (!gate.ok) {
     throw new HttpError(400, gate.errorCode ?? "invalid_request", gate.errorMessage ?? "Invalid media vendor transport configuration.");
   }
+  const secret = resolveSecretRef(provider.apiKeyRef);
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: gate.config?.mode === "live"
       ? createLiveMediaVendorTransport({
         baseUrl: provider.baseUrl,
         apiKeyRef: provider.apiKeyRef,
-        apiKeyConfigured: resolveSecretRef(provider.apiKeyRef).configured,
+        apiKeyConfigured: secret.configured,
+        apiKey: secret.value,
       })
       : undefined,
   });
@@ -3158,10 +3160,18 @@ async function checkProviderPreset(preset: ProviderPreset): Promise<ProviderChec
       if (!resolveSecretRef(preset.apiKeyRef).configured) {
         return { ok: false, code: "secret_missing", message: `Secret is not configured: ${preset.apiKeyRef}`, checkedAt };
       }
+      if (preset.kind !== "seedream" || !preset.capabilities.includes("image_generate")) {
+        return {
+          ok: false,
+          code: "unsupported_capability",
+          message: "Live media vendor transport currently supports Seedream image_generate only.",
+          checkedAt,
+        };
+      }
       return {
         ok: true,
         code: "static_check",
-        message: "Media provider live transport gate is enabled and configuration is complete. Live vendor HTTP adapters are not implemented yet, so media job runs fail closed without network.",
+        message: "Seedream image_generate live transport configuration is complete. Provider check does not create media or make generation requests.",
         checkedAt,
       };
     }

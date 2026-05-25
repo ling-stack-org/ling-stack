@@ -454,7 +454,7 @@ The daemon resolves artifact content relative to `.ling-stack/artifacts` and rej
 
 ## Media Jobs
 
-Media jobs are persisted metadata for media-capable provider presets. The current execution interface uses a local fake/static adapter, so it does not call Jimeng, Seedream, Seedance, or any other live media API.
+Media jobs are persisted metadata for media-capable provider presets. By default the execution interface uses local static adapters and does not call live media APIs. Seedream `image_generate` can make live HTTP calls only when the provider preset explicitly sets `compat.mediaVendorTransport.mode = "live"`.
 
 Supported statuses:
 
@@ -481,7 +481,7 @@ Content-Type: application/json
   "operation": "image_generate",
   "prompt": "Create a clean product screenshot style image.",
   "input": {
-    "size": "1024x1024"
+    "size": "2K"
   }
 }
 ```
@@ -504,7 +504,7 @@ Response:
     "operation": "image_generate",
     "prompt": "Create a clean product screenshot style image.",
     "input": {
-      "size": "1024x1024"
+      "size": "2K"
     },
     "artifactIds": [],
     "status": "queued",
@@ -552,9 +552,9 @@ Response:
 POST /media-jobs/:id/run?cwd=/path/to/project
 ```
 
-The current execution interface uses the media adapter contract and provider-kind registry. `jimeng`, `seedream`, and `seedance` resolve to local static adapter stubs that emit a redacted vendor request plan and use a disabled-by-default vendor transport seam. A provider preset can set `compat.mediaVendorTransport.mode = "live"` to enter the live gate; the daemon then requires `baseUrl`, `apiKeyRef`, and a configured env secret.
+The current execution interface uses the media adapter contract and provider-kind registry. `jimeng`, `seedream`, and `seedance` resolve to vendor adapter stubs that emit a redacted vendor request plan and use a disabled-by-default vendor transport seam. A provider preset can set `compat.mediaVendorTransport.mode = "live"` to enter the live gate; the daemon then requires `baseUrl`, `apiKeyRef`, and a configured env secret. Live transport currently supports only Seedream `image_generate` through the OpenAI-compatible `/images/generations` endpoint and records JSON metadata artifacts; it does not download image bytes. Jimeng, Seedance, billing, and other Seedream operations remain out of scope.
 
-Live-gated jobs do not execute immediately. The first run creates a pending `media_cost` approval, returns it in the response, and moves the job to `waiting_for_approval`. Re-running while the approval is pending returns the existing approval instead of creating a duplicate. Once approved, the next run proceeds to the adapter; in the current fail-closed implementation this still returns a failed job with `live vendor HTTP adapter is not implemented yet` instead of making a vendor HTTP request. Denied or expired approvals fail the job without executing the adapter.
+Live-gated jobs do not execute immediately. The first run creates a pending `media_cost` approval, returns it in the response, and moves the job to `waiting_for_approval`. Re-running while the approval is pending returns the existing approval instead of creating a duplicate. Once approved, the next run proceeds to the adapter; for Seedream `image_generate`, the adapter calls the configured `/images/generations` endpoint. Denied or expired approvals fail the job without executing the adapter.
 
 Runnable statuses are `queued`, `waiting_for_approval`, `failed`, and `cancelled`. `running` and `succeeded` jobs return `409 media_job_not_runnable`. Tests can force the static failure path with `input.forceFailure: true`.
 
@@ -597,7 +597,7 @@ Live approval response:
     "payload": {
       "type": "media_cost",
       "providerPresetId": "provider_...",
-      "model": "seedream",
+      "model": "doubao-seedream-5-0-260128",
       "operation": "image_generate",
       "promptPreview": "Create a clean product screenshot style image."
     },
@@ -754,7 +754,8 @@ Media provider presets can prepare the live transport gate without changing the 
 
 ```json
 {
-  "baseUrl": "https://media.example.invalid",
+  "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+  "model": "doubao-seedream-5-0-260128",
   "apiKeyRef": "env:SEEDREAM_API_KEY",
   "compat": {
     "mediaVendorTransport": {
@@ -767,7 +768,7 @@ Media provider presets can prepare the live transport gate without changing the 
 CLI equivalent:
 
 ```bash
-ling-stack provider update provider_... --base-url https://media.example.invalid --api-key-ref env:SEEDREAM_API_KEY --compat-json '{"mediaVendorTransport":{"mode":"live"}}'
+ling-stack provider update provider_... --base-url https://ark.cn-beijing.volces.com/api/v3 --model doubao-seedream-5-0-260128 --api-key-ref env:SEEDREAM_API_KEY --compat-json '{"mediaVendorTransport":{"mode":"live"}}'
 ```
 
 ### Check Provider
@@ -787,7 +788,7 @@ Response:
 }
 ```
 
-The check validates base URL format, required secret refs, enabled state, and supported capabilities. For `media-job` presets, the check remains static: default disabled transport reports no live vendor HTTP, while `compat.mediaVendorTransport.mode = "live"` validates the live gate configuration and reports that live adapters are not implemented yet. For `openai-completions`, `openai-responses`, and `anthropic-messages`, it also performs a small live model request with a 10 second timeout. Common failure codes include `secret_missing`, `network_failed`, `auth_failed`, `model_unsupported`, `rate_limited`, `provider_disabled`, and `provider_error`.
+The check validates base URL format, required secret refs, enabled state, and supported capabilities. For `media-job` presets, the check remains static: default disabled transport reports no live vendor HTTP, while `compat.mediaVendorTransport.mode = "live"` validates the Seedream `image_generate` live gate configuration without creating media. For `openai-completions`, `openai-responses`, and `anthropic-messages`, it also performs a small live model request with a 10 second timeout. Common failure codes include `secret_missing`, `network_failed`, `auth_failed`, `model_unsupported`, `rate_limited`, `provider_disabled`, and `provider_error`.
 
 ## Approval Policy and Requests
 

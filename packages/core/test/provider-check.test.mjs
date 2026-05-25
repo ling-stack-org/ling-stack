@@ -3,7 +3,21 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { createSqliteRunStore } from "../dist/index.js";
+import { createSqliteRunStore, defaultProviderTemplates } from "../dist/index.js";
+
+test("default provider templates include Seedream live HTTP base URL without enabling live mode", () => {
+  const seedream = defaultProviderTemplates().find((template) => template.templateId === "seedream-image");
+
+  assert.ok(seedream);
+  assert.equal(seedream.kind, "seedream");
+  assert.equal(seedream.api, "media-job");
+  assert.equal(seedream.model, "doubao-seedream-5-0-260128");
+  assert.equal(seedream.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
+  assert.equal(seedream.apiKeyRef, "env:SEEDREAM_API_KEY");
+  assert.deepEqual(seedream.capabilities, ["image_generate", "image_edit"]);
+  assert.equal(seedream.compat, undefined);
+  assert.equal(seedream.enabled, false);
+});
 
 test("sqlite store persists provider check results", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-provider-"));

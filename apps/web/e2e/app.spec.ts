@@ -232,7 +232,7 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
       input: {},
       artifactIds: [],
       status: "failed",
-      errorMessage: "Seedream live vendor HTTP adapter is not implemented yet. No vendor HTTP request was made.",
+      errorMessage: "Seedream image generation failed with HTTP 429 Too Many Requests. rate limited",
       createdAt: "2026-05-23T00:00:30.000Z",
       updatedAt: "2026-05-23T00:01:00.000Z",
     },
@@ -256,7 +256,7 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "Media jobs", level: 1 })).toBeVisible();
   const failedJob = page.locator(".media-job-row").filter({ hasText: "Live gated product mockup." });
   await expect(failedJob).toContainText("failed");
-  await expect(failedJob).toContainText("live vendor HTTP adapter is not implemented yet");
+  await expect(failedJob).toContainText("Seedream image generation failed with HTTP 429");
 
   const existingJob = page.locator(".media-job-row").filter({ hasText: "Existing product mockup." });
   await expect(existingJob).toContainText("Existing product mockup.");

@@ -82,14 +82,15 @@ interface MediaAdapter {
 
 Current implementation:
 
-- `createStaticMediaAdapter()` is the only executable media adapter,
-- `createDefaultMediaAdapterRegistry()` maps `jimeng`, `seedream`, and `seedance` provider kinds to static adapter factory stubs,
+- `createStaticMediaAdapter()` remains the local fallback adapter,
+- `createDefaultMediaAdapterRegistry()` maps `jimeng`, `seedream`, and `seedance` provider kinds to vendor adapter factory stubs,
 - static vendor stubs expose vendor-specific operation capabilities and emit a redacted `static_vendor_request_plan`,
-- `MediaVendorTransport` is present as a disabled-by-default seam; tests can inject fake transports, and provider preset `compat.mediaVendorTransport.mode = "live"` can enable a fail-closed live gate without making HTTP calls,
+- `MediaVendorTransport` is present as a disabled-by-default seam; tests can inject fake transports, and provider preset `compat.mediaVendorTransport.mode = "live"` enables the live gate,
+- live transport currently supports only Seedream `image_generate` through the OpenAI-compatible `/images/generations` endpoint and records redacted JSON metadata artifacts without downloading image bytes,
 - unknown media providers fall back to the static adapter by default, while tests can disable that fallback to assert missing-adapter errors,
 - it produces redacted Markdown artifact candidates for success,
 - it exposes deterministic failure/error paths for contract tests,
-- it does not call Jimeng, Seedream, Seedance, billing, or approval services.
+- it does not call Jimeng, Seedance, Seedream operations beyond `image_generate`, billing, or approval services.
 
 ## Initial Adapter List
 
@@ -174,7 +175,7 @@ Target capabilities:
 - `image_edit`
 - `video_generate`
 
-These should be modeled as async media jobs, not synchronous chat completions.
+These should be modeled as async media jobs, not synchronous chat completions. Seedream `image_generate` is the first live HTTP adapter behind `compat.mediaVendorTransport.mode = "live"`. All other Jimeng, Seedream, and Seedance live operations remain deferred.
 
 ## Contract Tests
 
@@ -189,7 +190,7 @@ Every adapter should have contract tests for:
 - Rate-limit or provider error normalization.
 - Secret redaction in logs.
 
-Current media contract coverage lives in `packages/providers/test/media-adapter-contract.test.mjs` and covers static success, forced failure, thrown error normalization, unsupported capability rejection, provider-kind registry wiring, vendor request planning, disabled/fake/live transport seams, live gate validation, vendor operation capability boundaries, missing adapter errors, non-media provider rejection, and secret redaction.
+Current media contract coverage lives in `packages/providers/test/media-adapter-contract.test.mjs` and covers static success, forced failure, thrown error normalization, unsupported capability rejection, provider-kind registry wiring, vendor request planning, disabled/fake/live transport seams, live gate validation, Seedream `image_generate` mock HTTP success/failure, vendor operation capability boundaries, missing adapter errors, non-media provider rejection, and secret redaction.
 
 ## Error Normalization
 
