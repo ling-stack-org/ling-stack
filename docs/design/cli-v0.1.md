@@ -832,18 +832,20 @@ Command:
 
 ```bash
 ling-stack approvals list --status pending
+ling-stack approvals list --status pending --media-job-id media_job_...
 ```
 
 Calls:
 
 ```http
 GET /approvals?status=pending
+GET /approvals?status=pending&mediaJobId=media_job_...
 ```
 
 Columns:
 
 ```text
-ID | Risk | Action | Run | Title | Created
+ID | Status | Risk | Action | Owner | Title | Created
 ```
 
 ### `ling-stack approvals show <id>`
