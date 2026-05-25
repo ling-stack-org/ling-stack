@@ -587,6 +587,11 @@ export function App(): JSX.Element {
         : { artifacts: response.artifacts ?? [] };
       setMediaJobs((current) => current.map((job) => (job.id === response.mediaJob.id ? response.mediaJob : job)));
       setMediaJobArtifacts((current) => ({ ...current, [response.mediaJob.id]: artifactsResponse.artifacts }));
+      const mediaApproval = response.approval;
+      if (mediaApproval) {
+        setApprovals((current) => upsertApproval(current, mediaApproval));
+        void refreshApprovals(cwd);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
       void refreshMediaJobs(cwd);
@@ -1014,6 +1019,7 @@ export function App(): JSX.Element {
       setApprovals((current) => upsertApproval(current, response.approval));
 
       const resolvedRunId = response.approval.runId || approvalBeforeResolution?.runId;
+      const resolvedMediaJobId = response.approval.mediaJobId || approvalBeforeResolution?.mediaJobId;
       const workspaceCwd = form.cwd.trim();
       await refreshApprovals(workspaceCwd, resolvedRunId);
       if (resolvedRunId && (resolvedRunId === activeRunId || resolvedRunId === lookupRunId || resolvedRunId === approvalRepairRunId)) {
@@ -1023,6 +1029,9 @@ export function App(): JSX.Element {
           void refreshRuns(workspaceCwd);
           void refreshApprovals(workspaceCwd, resolvedRunId);
         }, 750);
+      }
+      if (resolvedMediaJobId) {
+        await refreshMediaJobs(workspaceCwd);
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -4284,7 +4293,7 @@ function MediaJobsPage({
             jobs.map((job) => {
               const provider = providers.find((item) => item.id === job.providerPresetId);
               const jobArtifacts = artifactsByJob[job.id] ?? [];
-              const isRunnable = job.status === "queued" || job.status === "failed" || job.status === "cancelled";
+              const isRunnable = job.status === "queued" || job.status === "waiting_for_approval" || job.status === "failed" || job.status === "cancelled";
               const isRunningJob = runningJobId === job.id;
               return (
                 <article key={job.id} className="media-job-row">
@@ -4310,6 +4319,7 @@ function MediaJobsPage({
                     <span>{job.artifactIds.length} artifacts</span>
                     <time>{formatDateTime(job.createdAt)}</time>
                   </div>
+                  {job.status === "waiting_for_approval" ? <small className="media-job-approval">Approval required before live execution</small> : null}
                   {job.errorMessage ? <small className="media-job-error">{job.errorMessage}</small> : null}
                   {jobArtifacts.length > 0 ? (
                     <div className="media-job-artifacts artifact-list" aria-label={`Artifacts for ${job.id}`}>
@@ -4671,6 +4681,7 @@ function ApprovalCard({
   const trimmedReason = decisionReason.trim();
   const effectiveStatus = effectiveApprovalStatus(approval);
   const timing = approvalTimingLabel(approval);
+  const ownerLabels = approvalOwnerLabels(approval);
 
   function submitDecision(decision: ApprovalResolution): void {
     if (isResolving || effectiveStatus !== "pending") {
@@ -4705,13 +4716,13 @@ function ApprovalCard({
         <p>{approval.description}</p>
         <div className="provider-meta-line">
           <span>{approval.actionType}</span>
-          <span>{approval.taskId}</span>
-          <span>{approval.runId}</span>
+          {ownerLabels.map((label) => <span key={label}>{label}</span>)}
           <time>{formatDateTime(approval.createdAt)}</time>
           {timing ? <time>{timing}</time> : null}
           {approval.resolvedAt ? <time>resolved {formatDateTime(approval.resolvedAt)}</time> : null}
         </div>
         {approval.decisionReason ? <p className="approval-decision-reason">{approval.decisionReason}</p> : null}
+        <ApprovalPayloadSummary approval={approval} />
         <pre>{formatEventData(approval.payload)}</pre>
       </div>
       {effectiveStatus === "pending" ? (
@@ -4764,6 +4775,26 @@ function ApprovalCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalRequest }): JSX.Element | null {
+  if (approval.actionType !== "media_cost" || readDataString(approval.payload, "type") !== "media_cost") {
+    return null;
+  }
+
+  const providerPresetId = readDataString(approval.payload, "providerPresetId") || "-";
+  const model = readDataString(approval.payload, "model") || "-";
+  const operation = readDataString(approval.payload, "operation") || "-";
+  const promptPreview = readDataString(approval.payload, "promptPreview");
+
+  return (
+    <div className="approval-payload-summary" aria-label="Media cost approval summary">
+      <span>provider {providerPresetId}</span>
+      <span>model {model}</span>
+      <span>operation {operation}</span>
+      {promptPreview ? <p>{promptPreview}</p> : null}
+    </div>
   );
 }
 
@@ -5560,6 +5591,16 @@ function mergeApprovalsForRun(
 ): readonly ApprovalRequest[] {
   const otherApprovals = current.filter((approval) => approval.runId !== runId);
   return [...nextRunApprovals, ...otherApprovals];
+}
+
+function approvalOwnerLabels(approval: ApprovalRequest): readonly string[] {
+  if (approval.mediaJobId) {
+    return [`media job ${approval.mediaJobId}`];
+  }
+  return [
+    approval.taskId ? `task ${approval.taskId}` : "",
+    approval.runId ? `run ${approval.runId}` : "",
+  ].filter(Boolean);
 }
 
 function upsertApproval(current: readonly ApprovalRequest[], next: ApprovalRequest): readonly ApprovalRequest[] {

@@ -1399,13 +1399,14 @@ async function handleApprovals(args: readonly string[], options: GlobalOptions):
 
 async function handleApprovalsList(args: readonly string[], options: GlobalOptions): Promise<number> {
   const parsed = parseCommandArgs(args, {
-    stringFlags: new Set(["status", "run-id", "limit"]),
+    stringFlags: new Set(["status", "run-id", "media-job-id", "limit"]),
   });
   assertNoPositionals(parsed.positionals, "approvals list");
   const response = await requestJson(options, "GET", "/approvals", {
     cwd: options.cwd,
     status: getFlag(parsed, "status"),
     runId: getFlag(parsed, "run-id"),
+    mediaJobId: getFlag(parsed, "media-job-id"),
     limit: getFlag(parsed, "limit"),
   });
   if (options.json) {
@@ -2807,13 +2808,13 @@ function printApprovalsList(response: unknown): void {
     return;
   }
   printTable(
-    ["ID", "Status", "Risk", "Action", "Run", "Title", "Created"],
+    ["ID", "Status", "Risk", "Action", "Owner", "Title", "Created"],
     approvals.map((approval) => [
       truncate(readString(approval, "id") ?? "", 32),
       readString(approval, "status") ?? "",
       readString(approval, "risk") ?? "",
       readString(approval, "actionType") ?? "",
-      truncate(readString(approval, "runId") ?? "", 18),
+      truncate(approvalOwnerLabel(approval), 24),
       truncate(readString(approval, "title") ?? "", 36),
       truncate(readString(approval, "createdAt") ?? "", 24),
     ]),
@@ -2832,6 +2833,10 @@ function printApprovalDetail(response: unknown): void {
   console.log(`Action: ${readString(approval, "actionType") ?? ""}`);
   console.log(`Run: ${readString(approval, "runId") ?? ""}`);
   console.log(`Task: ${readString(approval, "taskId") ?? ""}`);
+  const mediaJobId = readString(approval, "mediaJobId");
+  if (mediaJobId) {
+    console.log(`Media job: ${mediaJobId}`);
+  }
   console.log(`Title: ${readString(approval, "title") ?? ""}`);
   console.log(`Description: ${readString(approval, "description") ?? ""}`);
   console.log(`Created: ${readString(approval, "createdAt") ?? ""}`);
@@ -2868,6 +2873,15 @@ function printRunsList(response: unknown): void {
       truncate(readString(run, "updatedAt") ?? "", 24),
     ]),
   );
+}
+
+function approvalOwnerLabel(approval: unknown): string {
+  const mediaJobId = readString(approval, "mediaJobId");
+  if (mediaJobId) {
+    return `media:${mediaJobId}`;
+  }
+  const runId = readString(approval, "runId");
+  return runId ? `run:${runId}` : "";
 }
 
 function printRunDetail(run: unknown, eventsResponse?: unknown): void {
@@ -3391,7 +3405,7 @@ Decisions:
 
 function printApprovalsHelp(): void {
   console.log(`Usage:
-  ling-stack approvals list [--status pending] [--run-id <id>] [--limit <n>]
+  ling-stack approvals list [--status pending] [--run-id <id>] [--media-job-id <id>] [--limit <n>]
   ling-stack approvals show <id>
   ling-stack approvals approve <id> [--reason <text>]
   ling-stack approvals deny <id> [--reason <text>]
