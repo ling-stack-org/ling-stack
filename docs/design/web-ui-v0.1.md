@@ -511,6 +511,7 @@ v0.1 Run detail shows artifacts inside Evidence:
 - artifact metadata is loaded alongside the selected run and events,
 - each artifact row shows type, title/path, and size when available,
 - content links open `GET /artifacts/:id/content` in a new tab,
+- image artifacts keep the list-and-open surface but also show explicit `Open` and `Download` actions for the same content endpoint,
 - empty runs show `No artifacts recorded for this run`.
 
 Artifact types:
@@ -525,7 +526,7 @@ image
 video
 ```
 
-The first implementation is list-and-open only. Inline previews can be added after artifact volume, binary handling, and redaction rules are clearer.
+The first implementation is list-and-open only. Image artifacts have explicit open/download actions, but no inline preview. Inline previews can be added after artifact volume, binary handling, and redaction rules are clearer.
 
 ## Event Rendering
 

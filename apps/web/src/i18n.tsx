@@ -200,6 +200,9 @@ const dictionaries: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     "Event log": "事件日志",
     "Summary": "摘要",
     "Artifacts": "产物",
+    "Image artifact": "图片产物",
+    "Open": "打开",
+    "Download": "下载",
     "No artifacts recorded for this run": "这个运行没有记录产物",
     "Artifacts will appear here once the daemon records files under .ling-stack/artifacts.": "daemon 在 .ling-stack/artifacts 下记录文件后，产物会显示在这里。",
 
