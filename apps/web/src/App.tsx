@@ -184,6 +184,23 @@ const defaultProviderForm: ProviderFormState = {
   maxTokens: "16384",
 };
 
+const customOpenAICompatibleForm: ProviderFormState = {
+  kind: "openai-compatible",
+  displayName: "Custom OpenAI-compatible",
+  providerId: "custom-openai-compatible",
+  model: "your-model-id",
+  api: "openai-completions",
+  baseUrl: "https://api.example.com/v1",
+  apiKeyRef: "env:CUSTOM_MODEL_API_KEY",
+  capabilitiesText: "chat,tool_call,reasoning",
+  inputText: "text",
+  enabled: true,
+  authHeader: true,
+  reasoning: true,
+  contextWindow: "128000",
+  maxTokens: "16384",
+};
+
 const defaultChannelForm: ChannelFormState = {
   name: "Engineering",
   boundPath: "/Users/tianxiao/ling-stack",
@@ -1254,7 +1271,7 @@ export function App(): JSX.Element {
         <nav>
           <NavItem icon={<Workflow />} label={t("Workspace")} active={activeView === "workspace"} onClick={() => setActiveView("workspace")} />
           <NavItem icon={<History />} label={t("Runs")} active={activeView === "runs"} onClick={() => setActiveView("runs")} />
-          <NavItem icon={<PlugZap />} label={t("Providers")} active={activeView === "providers"} onClick={() => setActiveView("providers")} />
+          <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeView === "providers"} onClick={() => setActiveView("providers")} />
           <NavItem icon={<Database />} label={t("Media Jobs")} active={activeView === "media"} onClick={() => setActiveView("media")} />
           <NavItem
             icon={<ShieldCheck />}
@@ -1619,7 +1636,7 @@ function ProviderPresetOptions({
   return (
     <>
       {runnableProviders.length > 0 ? (
-        <optgroup label={t("Runnable chat presets")}>
+        <optgroup label={t("Ready coding task presets")}>
           {runnableProviders.map((provider) => (
             <option key={provider.id} value={provider.id}>
               {provider.displayName} / {provider.model}
@@ -1628,7 +1645,7 @@ function ProviderPresetOptions({
         </optgroup>
       ) : null}
       {blockedProviders.length > 0 ? (
-        <optgroup label={t("Needs setup")}>
+        <optgroup label={t("Needs setup before task runs")}>
           {blockedProviders.map((provider) => (
             <option key={provider.id} value={provider.id} disabled>
               {provider.displayName} / {provider.model} - {providerRunBlockerLabel(provider)}
@@ -1849,7 +1866,7 @@ function FirstRunFlow({
           {primaryAction === "providers" ? (
             <button className="secondary-button compact-button" type="button" onClick={() => onOpenProviders(selectedTaskRun)}>
 	              <PlugZap size={14} />
-	              {repairHint?.actionLabel ?? t("Providers")}
+	              {repairHint?.actionLabel ?? t("Model Workbench")}
 	            </button>
           ) : null}
           {primaryAction === "approvals" ? (
@@ -1954,10 +1971,10 @@ function buildFirstRunProviderStep(
   if (loading) {
     return {
       id: "provider",
-      label: t("Provider"),
-      detail: t("Loading provider presets"),
+      label: t("Model Workbench"),
+      detail: t("Loading model presets"),
       status: "pending",
-      actionLabel: t("Providers"),
+      actionLabel: t("Model Workbench"),
       onAction: onOpenProviders,
       disabled: true,
     };
@@ -1965,16 +1982,16 @@ function buildFirstRunProviderStep(
   if (!readyProvider) {
     return {
       id: "provider",
-      label: t("Provider"),
+      label: t("Model Workbench"),
       detail: t("Create or repair a preflight-ready chat provider first."),
       status: "attention",
-      actionLabel: t("Providers"),
+      actionLabel: t("Model Workbench"),
       onAction: onOpenProviders,
     };
   }
   return {
     id: "provider",
-    label: t("Provider"),
+    label: t("Model Workbench"),
     detail: t("{providerName} is preflight-ready.", { providerName: readyProvider.displayName }),
     status: "ready",
   };
@@ -2195,10 +2212,10 @@ function buildProviderReadinessItem(
   if (loading) {
     return {
       id: "providers",
-      label: t("Provider"),
-      detail: t("Loading provider presets"),
+      label: t("Model Workbench"),
+      detail: t("Loading model presets"),
       status: "loading",
-      actionLabel: t("Providers"),
+      actionLabel: t("Model Workbench"),
       onAction: onOpenProviders,
       disabled: true,
     };
@@ -2206,39 +2223,39 @@ function buildProviderReadinessItem(
   if (total === 0) {
     return {
       id: "providers",
-      label: t("Provider"),
-      detail: t("No provider presets"),
+      label: t("Model Workbench"),
+      detail: t("No model presets"),
       status: "attention",
-      actionLabel: t("Providers"),
+      actionLabel: t("Model Workbench"),
       onAction: onOpenProviders,
     };
   }
   if (runnable === 0) {
     return {
       id: "providers",
-      label: t("Provider"),
+      label: t("Model Workbench"),
       detail: t("{total} configured, none runnable", { total }),
       status: "attention",
-      actionLabel: t("Providers"),
+      actionLabel: t("Model Workbench"),
       onAction: onOpenProviders,
     };
   }
   if (ready === 0) {
     return {
       id: "providers",
-      label: t("Provider"),
+      label: t("Model Workbench"),
       detail: t("{runnable} runnable, check required", { runnable }),
       status: "attention",
-      actionLabel: t("Providers"),
+      actionLabel: t("Model Workbench"),
       onAction: onOpenProviders,
     };
   }
   return {
     id: "providers",
-    label: t("Provider"),
+    label: t("Model Workbench"),
     detail: t("{ready}/{total} preflight ready", { ready, total }),
     status: "ready",
-    actionLabel: t("Providers"),
+    actionLabel: t("Model Workbench"),
     onAction: onOpenProviders,
   };
 }
@@ -2505,8 +2522,9 @@ function ChannelTaskWorkspace({
     : "";
   const selectedTaskRepairHint = buildRunRepairHint(selectedTaskRun, 0, selectedTaskRunStatus);
   const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId) ?? "";
-  const runnableProviders = providers.filter(canUseProviderForRun);
-  const blockedProviders = providers.filter((provider) => !canUseProviderForRun(provider));
+  const taskReadyProviders = providers.filter(providerPreflightReady);
+  const setupChatProviders = providers.filter((provider) => !isMediaProvider(provider) && !providerPreflightReady(provider));
+  const mediaProviders = providers.filter(isMediaProvider);
   const effectiveProvider = providers.find((provider) => provider.id === effectiveProviderId);
   const canRunWithEffectiveProvider = Boolean(effectiveProvider && canUseProviderForRun(effectiveProvider));
   const effectiveProviderPreflightBlocker = providerRunPreflightBlocker(effectiveProvider);
@@ -2597,9 +2615,15 @@ function ChannelTaskWorkspace({
                 onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
               >
 	                <option value="">{t("None")}</option>
-                <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
+                <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
               </select>
             </label>
+            {mediaProviders.length > 0 ? (
+              <div className="provider-run-notice neutral">
+                <Database size={16} />
+                <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
+              </div>
+            ) : null}
             <div className="tool-grid compact-tools" aria-label="Channel detail allowed tools">
               {allTools.map((tool) => (
                 <label
@@ -2647,9 +2671,15 @@ function ChannelTaskWorkspace({
               onChange={(event) => onChannelFormChange({ ...channelForm, defaultProviderPresetId: event.target.value })}
             >
 	              <option value="">{t("None")}</option>
-              <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
+              <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
             </select>
           </label>
+          {mediaProviders.length > 0 ? (
+            <div className="provider-run-notice neutral">
+              <Database size={16} />
+              <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
+            </div>
+          ) : null}
           <div className="tool-grid compact-tools" aria-label="Channel allowed tools">
             {allTools.map((tool) => (
               <label
@@ -2706,24 +2736,30 @@ function ChannelTaskWorkspace({
 	          <span>{t("Run provider")}</span>
           <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providers.length === 0}>
 	            <option value="">{t("Select provider preset")}</option>
-            <ProviderPresetOptions runnableProviders={runnableProviders} blockedProviders={blockedProviders} />
+            <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
           </select>
         </label>
-        {providers.length === 0 || runnableProviders.length === 0 || !effectiveProvider || effectiveProviderPreflightBlocker ? (
+        {providers.length === 0 || taskReadyProviders.length === 0 || !effectiveProvider || effectiveProviderPreflightBlocker ? (
           <div className={canPreflightRunWithEffectiveProvider ? "provider-run-notice ok" : "provider-run-notice"}>
             {canPreflightRunWithEffectiveProvider ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
             <span>
               {providers.length === 0
 	                ? t("No saved provider presets. Create one from GPT, Claude, relay, or domestic templates.")
-	                : runnableProviders.length === 0
-	                  ? t("No runnable provider presets. Enable a chat provider and configure its env key.")
+	                : taskReadyProviders.length === 0
+	                  ? t("No ready coding provider. Open Model Workbench, repair env/base URL/model, then run Check.")
 	                  : effectiveProvider
 	                    ? (effectiveProviderPreflightBlocker ?? `${effectiveProvider.displayName}: ${providerRunBlockerLabel(effectiveProvider)}.`)
 	                    : t("Select a provider preset before running tasks.")}
 	            </span>
             <button className="secondary-button compact-button" type="button" onClick={() => onOpenProviders()}>
-	              {t("Providers")}
+	              {t("Model Workbench")}
             </button>
+          </div>
+        ) : null}
+        {mediaProviders.length > 0 ? (
+          <div className="provider-run-notice neutral">
+            <Database size={16} />
+            <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
           </div>
         ) : null}
 
@@ -2994,7 +3030,7 @@ function TaskProviderReadiness({
         <small>{taskProviderReadinessGuidance(provider)}</small>
       </div>
       <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
-	        {t("Providers")}
+	        {t("Model Workbench")}
       </button>
     </div>
   );
@@ -3687,7 +3723,7 @@ function ProviderSettings({
         <div className="panel-title split">
           <span>
             <PlugZap size={18} />
-	            <h2 id="provider-list-title">{t("Provider presets")}</h2>
+	            <h2 id="provider-list-title">{t("Model Workbench")}</h2>
           </span>
           <div className="provider-title-actions">
             <button className="secondary-button compact-button" type="button" onClick={onCheckBatch} disabled={isCheckingProviders || batchCheckProviderCount === 0}>
@@ -3714,8 +3750,8 @@ function ProviderSettings({
         ) : null}
 
         <div className="provider-onboarding-strip" aria-label="Provider onboarding status">
-	          <MetaRow label={t("Compatible chat")} value={String(compatibleProviderCount)} compact />
-	          <MetaRow label={t("Preflight ready")} value={String(preflightReadyProviderCount)} compact />
+	          <MetaRow label={t("Chat-capable")} value={String(compatibleProviderCount)} compact />
+	          <MetaRow label={t("Coding ready")} value={String(preflightReadyProviderCount)} compact />
 	          <MetaRow label={t("Missing env")} value={String(missingSecretCount)} compact />
 	          <MetaRow label={t("Templates")} value={`${chatTemplateCount} chat / ${mediaTemplateCount} media`} compact />
         </div>
@@ -3753,7 +3789,7 @@ function ProviderSettings({
           {providers.length === 0 ? (
             <div className="empty-state compact-empty">
               {isLoading ? <Loader2 className="spin" /> : <PlugZap />}
-	              <span>{isLoading ? t("Loading providers...") : t("Create a preset from GPT, Claude, relay, or domestic provider templates")}</span>
+	              <span>{isLoading ? t("Loading providers...") : t("Create a model preset from GPT, Claude, domestic, relay, or custom OpenAI-compatible entries")}</span>
             </div>
           ) : (
             providers.map((provider) => (
@@ -3769,6 +3805,9 @@ function ProviderSettings({
                     </span>
                     <span className={providerPreflightReady(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
 	                      {providerPreflightReady(provider) ? t("preflight ready") : canUseProviderForRun(provider) ? t("needs check") : providerRunBlockerLabel(provider)}
+                    </span>
+                    <span className={providerPreflightReady(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
+                      {t("Coding task")}: {providerCodingTaskLabel(provider)}
                     </span>
                     <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider)}>
                       {providerLastCheckLabel(provider)}
@@ -3832,7 +3871,24 @@ function ProviderSettings({
           </button>
         </div>
 
-	        <div className="provider-template-board" aria-label={t("Provider templates")}>
+	        <div className="provider-template-board" aria-label={t("Model templates")}>
+          <div className="provider-template-group custom-provider-group">
+            <div className="provider-template-group-head">
+              <span>{t("Custom access")}</span>
+              <small>1</small>
+            </div>
+            <button
+              className="provider-template-card custom-provider-card"
+              type="button"
+              onClick={() => onTemplateSelect(providerFormToTemplate(customOpenAICompatibleForm))}
+            >
+              <span className="provider-template-kind">{t("Custom")}</span>
+              <strong>{t("Custom OpenAI-compatible")}</strong>
+              <span className="provider-template-model">baseUrl + model + env:NAME</span>
+              <small>{t("Use this for domestic gateways, private relays, One API, New API, LiteLLM, or any OpenAI-compatible endpoint.")}</small>
+              <code>env:CUSTOM_MODEL_API_KEY</code>
+            </button>
+          </div>
           {templateGroups.length === 0 ? (
             <div className="empty-state compact-empty">
               <PlugZap />
@@ -3842,7 +3898,7 @@ function ProviderSettings({
             templateGroups.map((group) => (
               <div key={group.label} className="provider-template-group">
                 <div className="provider-template-group-head">
-                  <span>{group.label}</span>
+                  <span>{t(group.label)}</span>
                   <small>{group.templates.length}</small>
                 </div>
                 <div className="provider-template-grid">
@@ -3853,7 +3909,7 @@ function ProviderSettings({
                       type="button"
                       onClick={() => onTemplateSelect(template)}
                     >
-                      <span className="provider-template-kind">{providerTemplateKindLabel(template)}</span>
+                      <span className="provider-template-kind">{t(providerTemplateKindLabel(template))}</span>
                       <strong>{template.displayName}</strong>
                       <span className="provider-template-model">{template.model}</span>
                       <small>{template.description}</small>
@@ -4421,7 +4477,7 @@ function MediaJobsPage({
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
             <PlugZap size={14} />
-	            {t("Providers")}
+	            {t("Model Workbench")}
           </button>
         </div>
 
@@ -5327,7 +5383,7 @@ function buildRunRepairHint(
       target: "providers",
       title: "Provider repair needed",
       detail: "The failure looks related to provider auth, preflight, endpoint, or model configuration.",
-      actionLabel: "Providers",
+      actionLabel: "Model Workbench",
     };
   }
 
@@ -5897,6 +5953,35 @@ function approvalPolicyToForm(policy: ApprovalPolicy): ApprovalPolicyFormState {
   };
 }
 
+function providerFormToTemplate(form: ProviderFormState): ProviderTemplate {
+  return {
+    templateId: "custom-openai-compatible",
+    description: "Custom OpenAI-compatible endpoint.",
+    kind: form.kind,
+    displayName: form.displayName,
+    providerId: form.providerId,
+    model: form.model,
+    api: form.api,
+    baseUrl: form.baseUrl,
+    apiKeyRef: form.apiKeyRef,
+    authHeader: form.authHeader,
+    reasoning: form.reasoning,
+    input: splitProviderCsv(form.inputText) as ProviderTemplate["input"],
+    contextWindow: form.contextWindow ? Number(form.contextWindow) : undefined,
+    maxTokens: form.maxTokens ? Number(form.maxTokens) : undefined,
+    compat: {},
+    capabilities: splitProviderCsv(form.capabilitiesText) as ProviderTemplate["capabilities"],
+    enabled: form.enabled,
+  };
+}
+
+function splitProviderCsv(value: string): readonly string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function canUseProviderForRun(provider: ProviderPreset): boolean {
   return provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat") && providerSecretReady(provider);
 }
@@ -5915,6 +6000,11 @@ function providerNeedsSecret(provider: Pick<ProviderPreset, "api" | "authHeader"
 
 function isMediaProvider(provider: ProviderPreset): boolean {
   return provider.api === "media-job";
+}
+
+function providerCodingTaskLabel(provider: ProviderPreset): string {
+  const blocker = providerRunPreflightBlocker(provider);
+  return blocker ? `blocked - ${blocker}` : "ready";
 }
 
 function providerRunBlockerLabel(provider: ProviderPreset): string {
@@ -5970,7 +6060,7 @@ function taskProviderReadinessGuidance(provider: ProviderPreset | undefined): st
   if (!canUseProviderForRun(provider)) {
     return providerNeedsSecret(provider) && !provider.apiKeyConfigured
       ? `Set ${provider.apiKeyRef ? envNameFromRef(provider.apiKeyRef) : "the API key env"}, restart daemon, then run Check.`
-      : "Open Providers to enable a chat-capable preset before running.";
+      : "Open Model Workbench to enable a chat-capable preset before running.";
   }
   if (!provider.lastCheck) {
     return "Use Check run to validate env, base URL, and model access before starting.";
@@ -6014,7 +6104,7 @@ function providerTemplateKindLabel(template: ProviderTemplate): string {
     return "global";
   }
   if (template.kind === "openai-compatible") {
-    return "relay";
+    return template.templateId.includes("local") || template.providerId.includes("relay") ? "relay" : "custom";
   }
   return "domestic";
 }
@@ -6022,7 +6112,8 @@ function providerTemplateKindLabel(template: ProviderTemplate): string {
 function groupProviderTemplates(templates: readonly ProviderTemplate[]): readonly ProviderTemplateGroup[] {
   const groups: ProviderTemplateGroup[] = [
     { label: "GPT / Claude", templates: templates.filter((template) => providerTemplateKindLabel(template) === "global") },
-    { label: "Relays", templates: templates.filter((template) => providerTemplateKindLabel(template) === "relay") },
+    { label: "OpenAI-compatible relay", templates: templates.filter((template) => providerTemplateKindLabel(template) === "relay") },
+    { label: "Custom access", templates: templates.filter((template) => providerTemplateKindLabel(template) === "custom") },
     { label: "Domestic AI", templates: templates.filter((template) => providerTemplateKindLabel(template) === "domestic") },
     { label: "Media", templates: templates.filter((template) => providerTemplateKindLabel(template) === "media") },
   ];
@@ -6103,7 +6194,7 @@ function viewTitle(view: ViewId): string {
   if (view === "settings") {
     return "Settings";
   }
-  return "Provider presets";
+  return "Model Workbench";
 }
 
 function viewDescription(view: ViewId): string {
@@ -6122,5 +6213,5 @@ function viewDescription(view: ViewId): string {
   if (view === "settings") {
     return "配置 workspace 级 approval policy，控制工具自动允许、询问或拒绝，以及写入路径边界。";
   }
-  return "管理本地 provider preset，用 env:NAME 引用密钥，并在 run 启动时选择预设。";
+  return "管理多模型和自定义国内模型接入，用 env:NAME 引用密钥，Check 通过后用于工作区任务。";
 }

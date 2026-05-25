@@ -2325,6 +2325,11 @@ pre {
   background: #f2faf6;
 }
 
+.custom-provider-card {
+  border-color: #b7d7cc;
+  background: #f6fbf8;
+}
+
 .provider-template-card strong {
   font-size: 13px;
 }
@@ -2370,6 +2375,12 @@ pre {
   border-color: #a9cfc0;
   background: #e7f5ef;
   color: #116149;
+}
+
+.provider-run-notice.neutral {
+  border-color: #d8ded7;
+  background: #f7faf8;
+  color: #44534f;
 }
 
 .check-result-status {

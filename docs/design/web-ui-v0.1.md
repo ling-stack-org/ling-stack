@@ -10,7 +10,7 @@ This design depends on:
 - [Provider presets](provider-presets.md)
 - [Approval policy](approval-policy.md)
 
-The current `apps/web` package now provides the local app shell, provider settings with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, channel/task workspace, channel detail editing, task detail editing, first task-run entry, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
+The current `apps/web` package now provides the local app shell, Model Workbench provider setup with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, channel/task workspace, channel detail editing, task detail editing, first task-run entry, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
 
 ## Goal
 
@@ -97,7 +97,7 @@ Use a three-region app shell:
 │              │                      │              │
 │ Channels     │ Task board / run     │ Run context  │
 │ Runs         │ viewer / settings    │ approvals    │
-│ Providers    │                      │ artifacts    │
+│ Model WB     │                      │ artifacts    │
 │ Approvals    │                      │              │
 └──────────────┴──────────────────────┴──────────────┘
 ```
@@ -123,7 +123,7 @@ Routes:
 /channels/:channelId      -> Channel task board
 /tasks/:taskId            -> Task detail
 /runs/:runId              -> Run viewer
-/providers                -> Provider settings
+/providers                -> Model Workbench
 /approvals                -> Approval inbox
 /settings                 -> Local app settings
 ```
@@ -160,7 +160,7 @@ Primary actions:
 Empty state priority:
 
 1. no daemon: show connection error and retry.
-2. no provider: guide to Provider Settings.
+2. no provider: guide to Model Workbench.
 3. no channel: guide to Channel Setup.
 4. ready: show task form.
 
@@ -172,14 +172,14 @@ Compact readiness checklist:
 - shows status for daemon, provider preflight, channel setup, and task availability,
 - provider readiness requires the same run preflight as the Run button: enabled, chat-capable, non-media, secret configured, and `lastCheck.ok === true`,
 - task availability is informational, not blocking, because a user can create the first task from the same screen,
-- each blocked item should expose the next action: retry daemon health, open Providers, create/select channel, or create task.
+- each blocked item should expose the next action: retry daemon health, open Model Workbench, create/select channel, or create task.
 
 Example:
 
 ```text
 Workspace readiness
 Daemon       Ready
-Provider     Needs check     Open Providers
+Provider     Needs check     Open Model Workbench
 Channel      Ready
 Tasks        Empty           Create task
 ```
@@ -204,7 +204,7 @@ Run-after loop:
 - while a run is active, the first-run panel should show the active run id/status and offer `Open run` instead of looking like a fresh setup flow,
 - after a successful run, Workspace readiness should include a compact run-history signal that the local loop has completed at least once,
 - failed runs should point to the right repair surface:
-  - provider/preflight failures -> Providers,
+  - provider/preflight failures -> Model Workbench,
   - pending approvals -> Approvals,
   - tool/runtime failure -> Run detail.
 - runtime/tool repair must distinguish replaying the failed run snapshot from saving and running an edited task; edits to a task do not change the old persisted run request.
@@ -213,11 +213,13 @@ Run repair hints:
 
 - the run repair classifier should be shared by first-run, task cards, and run detail,
 - `waiting_for_approval` and runs with pending approval records should show an Approvals action,
-- failed runs whose error mentions provider auth, preflight, key, secret, model, base URL, endpoint, or token should show a Providers action,
+- failed runs whose error mentions provider auth, preflight, key, secret, model, base URL, endpoint, or token should show a Model Workbench action,
 - all other failed tool/runtime runs should show an Open run / run-detail action,
 - run detail should show the repair hint near the status summary so the user does not need to infer the next repair surface from raw events.
 
-### Provider Settings
+### Model Workbench
+
+Model Workbench is the Web name for provider preset setup. It still uses the existing provider APIs, but the user-facing job is broader than a settings page: configure models, prove readiness, and pick a runnable provider for workspace tasks.
 
 Backed by:
 
@@ -230,14 +232,15 @@ Backed by:
 
 Required UI:
 
-- provider list,
+- provider list with explicit coding-task readiness,
 - add provider form,
 - edit provider form,
 - health check button,
 - enabled/disabled toggle,
 - secret configured indicator,
 - capability chips,
-- provider kind filter.
+- provider kind/template grouping,
+- custom OpenAI-compatible access card for domestic gateways, private relays, One API, New API, LiteLLM, and similar endpoints.
 
 Provider kinds:
 
@@ -269,17 +272,31 @@ Form fields:
 | Input modes | checkbox group |
 | Enabled | toggle |
 
+Custom compatible access should default to:
+
+```text
+kind: openai-compatible
+api: openai-completions
+displayName: Custom OpenAI-compatible
+baseUrl: https://api.example.com/v1
+model: your-model-id
+apiKeyRef: env:CUSTOM_MODEL_API_KEY
+capabilities: chat, tool_call, reasoning
+input: text
+```
+
 Rules:
 
 - never ask for raw API key in v0.1 persistent UI,
 - only ask for `apiKeyRef`,
+- show the export/restart/check sequence for missing `env:NAME` values,
 - show `apiKeyConfigured: true/false`,
 - do not reveal secret values,
 - show health check result with stable error code.
 
 Provider onboarding and repair:
 
-- Provider Settings must make the path from template to runnable preset explicit: choose template, save preset, set env if needed, run Check, then Use.
+- Model Workbench must make the path from template to runnable preset explicit: choose template, save preset, set env if needed, run Check, then Use.
 - The list summary should distinguish chat-compatible providers from preflight-ready providers. Compatibility means enabled, non-media, chat-capable, and secret-present; preflight-ready additionally requires `lastCheck.ok === true`.
 - The primary batch action should read as `Check all` and only target enabled chat providers whose hard compatibility rules can be checked.
 - A compact repair queue should show the next blocked providers before the full list:
@@ -289,10 +306,17 @@ Provider onboarding and repair:
   - disabled/media/no-chat preset: show Edit action.
 - The `Use` shortcut should only be enabled for preflight-ready chat providers, because the daemon run gate will reject unchecked or failed presets.
 
+Workspace provider selection:
+
+- only preflight-ready chat providers should appear as runnable coding providers,
+- unchecked or failed chat providers can be shown as setup-blocked entries with repair text,
+- media providers must not appear in the normal coding task provider selection,
+- if a task run is blocked by provider readiness, the action should open Model Workbench with the related provider/run context when available.
+
 Provider run repair flow:
 
-- when a failed run routes to Providers, the app should carry the failed `runId` and provider preset into Provider Settings,
-- Provider Settings should show a focused repair panel above the normal queue with: failed run id, provider preset, failure text, and next actions,
+- when a failed run routes to Model Workbench, the app should carry the failed `runId` and provider preset into provider settings,
+- Model Workbench should show a focused repair panel above the normal queue with: failed run id, provider preset, failure text, and next actions,
 - repair actions should be executable without leaving the page: edit provider, save changes through the existing form, run Check, rerun after the provider becomes preflight-ready, or return to the failed run detail,
 - rerun remains disabled until the provider used by the failed run is preflight-ready, matching the daemon run gate,
 - clearing the repair panel should not delete the run or provider; it only exits the guided repair context.
@@ -715,7 +739,7 @@ Daemon unavailable:
 
 No providers:
 
-- show Provider Settings action.
+- show Model Workbench action.
 
 No channel:
 
