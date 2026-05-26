@@ -76,12 +76,14 @@ export interface DaemonConfig {
   readonly host?: string;
   readonly port?: number;
   readonly maxBodyBytes?: number;
+  readonly defaultWorkspaceCwd?: string;
 }
 
 export interface ResolvedDaemonConfig {
   readonly host: string;
   readonly port: number;
   readonly maxBodyBytes: number;
+  readonly defaultWorkspaceCwd: string;
 }
 
 export interface RunnerAdapter {
@@ -199,7 +201,11 @@ async function routeRequest(
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
 
   if (request.method === "GET" && url.pathname === "/health") {
-    writeJson(response, 200, { ok: true, service: "ling-stack-daemon" });
+    writeJson(response, 200, {
+      ok: true,
+      service: "ling-stack-daemon",
+      defaultWorkspaceCwd: config.defaultWorkspaceCwd,
+    });
     return;
   }
 
@@ -3355,6 +3361,7 @@ function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     host: config.host ?? "127.0.0.1",
     port: config.port ?? 17891,
     maxBodyBytes: config.maxBodyBytes ?? 1024 * 1024,
+    defaultWorkspaceCwd: resolvePath(config.defaultWorkspaceCwd ?? process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? process.cwd()),
   };
 }
 

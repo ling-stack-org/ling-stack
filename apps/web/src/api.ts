@@ -7,6 +7,7 @@ import type {
   ChannelFormState,
   ChannelListResponse,
   ChannelMutationResponse,
+  DaemonHealthResponse,
   MediaJobFormState,
   MediaJobArtifactListResponse,
   MediaJobListResponse,
@@ -33,13 +34,21 @@ import type {
 export const daemonBaseUrl =
   import.meta.env.VITE_LING_STACK_DAEMON_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:17891";
 
-export async function getDaemonHealth(): Promise<boolean> {
+export async function getDaemonHealth(): Promise<DaemonHealthResponse> {
   const response = await fetch(`${daemonBaseUrl}/health`);
   if (!response.ok) {
-    return false;
+    return { ok: false };
   }
-  const body = (await response.json()) as { ok?: unknown };
-  return body.ok === true;
+  const body = (await response.json()) as {
+    ok?: unknown;
+    service?: unknown;
+    defaultWorkspaceCwd?: unknown;
+  };
+  return {
+    ok: body.ok === true,
+    service: typeof body.service === "string" ? body.service : undefined,
+    defaultWorkspaceCwd: typeof body.defaultWorkspaceCwd === "string" ? body.defaultWorkspaceCwd : undefined,
+  };
 }
 
 export async function getRun(runId: string, cwd?: string): Promise<RunSession> {
@@ -580,16 +589,23 @@ function withCwd(url: string, cwd?: string): string {
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
+  let message = `${response.status} ${response.statusText}`;
   try {
     const body = (await response.json()) as { message?: unknown; error?: unknown };
     if (typeof body.message === "string") {
-      return body.message;
-    }
-    if (typeof body.error === "string") {
-      return body.error;
+      message = body.message;
+    } else if (typeof body.error === "string") {
+      message = body.error;
     }
   } catch {
-    return `${response.status} ${response.statusText}`;
+    return friendlyErrorMessage(message);
   }
-  return `${response.status} ${response.statusText}`;
+  return friendlyErrorMessage(message);
+}
+
+function friendlyErrorMessage(message: string): string {
+  if ((message.includes("EACCES") || message.includes("ENOENT")) && message.includes(".ling-stack")) {
+    return `Workspace path does not exist or is not writable. Use the absolute path to your local checkout. ${message}`;
+  }
+  return message;
 }

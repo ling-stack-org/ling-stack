@@ -7,6 +7,34 @@ import { test } from "node:test";
 import { createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 
+test("health includes the configured default workspace cwd", async () => {
+  const defaultWorkspaceCwd = await mkdtemp(resolve(tmpdir(), "ling-stack-health-cwd-"));
+  const daemon = createDaemonServer({
+    host: "127.0.0.1",
+    port: 0,
+    defaultWorkspaceCwd,
+  }, {
+    runner: new ApprovalProbeRunner({
+      toolCallId: "tool_health",
+      toolName: "bash",
+      input: { command: "echo unused" },
+    }),
+  });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+
+  try {
+    const health = await getJson(`http://127.0.0.1:${address.port}/health`);
+    assert.equal(health.ok, true);
+    assert.equal(health.service, "ling-stack-daemon");
+    assert.equal(health.defaultWorkspaceCwd, defaultWorkspaceCwd);
+  } finally {
+    await daemon.stop();
+    await rm(defaultWorkspaceCwd, { recursive: true, force: true });
+  }
+});
+
 test("bash=allow lets the runner continue without creating an approval request", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-"));
   const runner = new ApprovalProbeRunner({

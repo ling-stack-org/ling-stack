@@ -97,6 +97,8 @@ const defaultTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
 const allTools: readonly ToolName[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const riskyTools: readonly ToolName[] = ["bash", "edit", "write"];
 const taskStatuses: readonly TaskStatus[] = ["todo", "claimed", "running", "blocked", "review", "done", "failed", "cancelled"];
+const workspaceCwdStorageKey = "ling-stack.workspaceCwd";
+const viteDefaultWorkspaceCwd = import.meta.env.VITE_LING_STACK_DEFAULT_WORKSPACE_CWD?.trim() ?? "";
 type ViewId = "workspace" | "runs" | "providers" | "media" | "approvals" | "settings";
 type ApprovalResolution = "approve" | "deny";
 interface ProviderTemplateGroup {
@@ -154,7 +156,7 @@ interface FirstRunStep {
 }
 
 const defaultForm: RunFormState = {
-  cwd: "/Users/tianxiao/ling-stack",
+  cwd: "",
   providerPresetId: "",
   taskId: `task-${new Date().toISOString().slice(0, 10)}`,
   title: "Inspect Ling Stack workspace",
@@ -186,7 +188,7 @@ const defaultProviderForm: ProviderFormState = {
 
 const defaultChannelForm: ChannelFormState = {
   name: "Engineering",
-  boundPath: "/Users/tianxiao/ling-stack",
+  boundPath: "",
   defaultProviderPresetId: "",
   allowedTools: defaultTools,
 };
@@ -229,10 +231,37 @@ const defaultApprovalPolicyForm: ApprovalPolicyFormState = {
   allowedWritePathsText: ".",
 };
 
+function readSavedWorkspaceCwd(): string {
+  try {
+    return globalThis.localStorage?.getItem(workspaceCwdStorageKey)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeSavedWorkspaceCwd(cwd: string): void {
+  try {
+    const trimmed = cwd.trim();
+    if (trimmed) {
+      globalThis.localStorage?.setItem(workspaceCwdStorageKey, trimmed);
+    } else {
+      globalThis.localStorage?.removeItem(workspaceCwdStorageKey);
+    }
+  } catch {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
+function readInitialWorkspaceCwd(): string {
+  return readSavedWorkspaceCwd() || viteDefaultWorkspaceCwd;
+}
+
 export function App(): JSX.Element {
   const { t } = useI18n();
+  const initialWorkspaceCwd = readInitialWorkspaceCwd();
   const [form, setForm] = useState<RunFormState>(() => ({
     ...defaultForm,
+    cwd: initialWorkspaceCwd,
     title: t(defaultForm.title),
     prompt: t(defaultForm.prompt),
   }));
@@ -249,7 +278,10 @@ export function App(): JSX.Element {
   const [channels, setChannels] = useState<readonly Channel[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
   const [selectedChannelId, setSelectedChannelId] = useState("");
-  const [channelForm, setChannelForm] = useState<ChannelFormState>(defaultChannelForm);
+  const [channelForm, setChannelForm] = useState<ChannelFormState>(() => ({
+    ...defaultChannelForm,
+    boundPath: initialWorkspaceCwd,
+  }));
   const [channelEditForm, setChannelEditForm] = useState<ChannelFormState>(defaultChannelEditForm);
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
@@ -390,9 +422,44 @@ export function App(): JSX.Element {
     });
   }, [providers]);
 
+  function updateWorkspaceCwd(cwd: string): void {
+    const previousCwd = form.cwd;
+    writeSavedWorkspaceCwd(cwd);
+    setForm({ ...form, cwd });
+    setChannelForm((current) => ({
+      ...current,
+      boundPath: current.boundPath === previousCwd || !current.boundPath ? cwd : current.boundPath,
+    }));
+  }
+
   async function refreshHealth(): Promise<void> {
     try {
-      setDaemonHealthy(await getDaemonHealth());
+      const health = await getDaemonHealth();
+      setDaemonHealthy(health.ok);
+      const defaultWorkspaceCwd = health.defaultWorkspaceCwd?.trim() || viteDefaultWorkspaceCwd;
+      const canApplyDaemonDefault =
+        !readSavedWorkspaceCwd() &&
+        (!form.cwd.trim() || form.cwd.trim() === viteDefaultWorkspaceCwd);
+      if (health.ok && defaultWorkspaceCwd && canApplyDaemonDefault) {
+        setForm((current) =>
+          current.cwd.trim() && current.cwd.trim() !== viteDefaultWorkspaceCwd
+            ? current
+            : { ...current, cwd: defaultWorkspaceCwd },
+        );
+        setChannelForm((current) =>
+          current.boundPath.trim() && current.boundPath.trim() !== viteDefaultWorkspaceCwd
+            ? current
+            : { ...current, boundPath: defaultWorkspaceCwd },
+        );
+        void Promise.all([
+          refreshProviders(defaultWorkspaceCwd),
+          refreshChannels(defaultWorkspaceCwd),
+          refreshRuns(defaultWorkspaceCwd),
+          refreshApprovals(defaultWorkspaceCwd),
+        ]).catch((error: unknown) => {
+          setErrorMessage(error instanceof Error ? error.message : String(error));
+        });
+      }
     } catch {
       setDaemonHealthy(false);
     }
@@ -478,7 +545,7 @@ export function App(): JSX.Element {
 
   async function refreshRuns(cwd = form.cwd.trim()): Promise<void> {
     if (!cwd) {
-      setErrorMessage("请输入 workspace path");
+      setRuns([]);
       return;
     }
 
@@ -494,16 +561,16 @@ export function App(): JSX.Element {
     }
   }
 
-  async function refreshProviders(): Promise<void> {
-    if (!form.cwd.trim()) {
-      setErrorMessage("请输入 workspace path");
+  async function refreshProviders(cwd = form.cwd.trim()): Promise<void> {
+    if (!cwd) {
+      setProviders([]);
       return;
     }
 
     setProvidersLoading(true);
     try {
       setErrorMessage("");
-      const response = await listProviders(form.cwd.trim());
+      const response = await listProviders(cwd);
       setProviders(response.providers);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -523,7 +590,8 @@ export function App(): JSX.Element {
 
   async function refreshMediaJobs(cwd = form.cwd.trim()): Promise<void> {
     if (!cwd) {
-      setErrorMessage("请输入 workspace path");
+      setMediaJobs([]);
+      setMediaJobArtifacts({});
       return;
     }
 
@@ -613,16 +681,17 @@ export function App(): JSX.Element {
     }
   }
 
-  async function refreshChannels(): Promise<void> {
-    if (!form.cwd.trim()) {
-      setErrorMessage("请输入 workspace path");
+  async function refreshChannels(cwd = form.cwd.trim()): Promise<void> {
+    if (!cwd) {
+      setChannels([]);
+      setSelectedChannelId("");
       return;
     }
 
     setChannelsLoading(true);
     try {
       setErrorMessage("");
-      const response = await listChannels(form.cwd.trim());
+      const response = await listChannels(cwd);
       setChannels(response.channels);
       setSelectedChannelId((current) => {
         if (response.channels.some((channel) => channel.id === current)) {
@@ -960,7 +1029,7 @@ export function App(): JSX.Element {
 
   async function refreshApprovals(cwd = form.cwd.trim(), runId?: string): Promise<void> {
     if (!cwd.trim()) {
-      setErrorMessage("请输入 workspace path");
+      setApprovals([]);
       return;
     }
 
@@ -978,7 +1047,7 @@ export function App(): JSX.Element {
 
   async function refreshApprovalPolicy(): Promise<void> {
     if (!form.cwd.trim()) {
-      setErrorMessage("请输入 workspace path");
+      setApprovalPolicy(undefined);
       return;
     }
 
@@ -1346,13 +1415,7 @@ export function App(): JSX.Element {
                 runById={runById}
                 repairRun={taskRepairRun}
                 errorMessage={errorMessage}
-                onCwdChange={(cwd) => {
-                  setForm({ ...form, cwd });
-                  setChannelForm((current) => ({
-                    ...current,
-                    boundPath: current.boundPath === form.cwd || !current.boundPath ? cwd : current.boundPath,
-                  }));
-                }}
+                onCwdChange={updateWorkspaceCwd}
                 onChannelFormChange={setChannelForm}
                 onChannelEditFormChange={setChannelEditForm}
                 onTaskFormChange={setTaskForm}
@@ -1416,7 +1479,7 @@ export function App(): JSX.Element {
             isRunning={isRunning}
             errorMessage={errorMessage}
             onCwdChange={(cwd) => {
-              setForm({ ...form, cwd });
+              updateWorkspaceCwd(cwd);
               setRun(undefined);
               setEvents([]);
               setArtifacts([]);
@@ -1450,7 +1513,7 @@ export function App(): JSX.Element {
             selectedProviderId={form.providerPresetId}
             repairRun={providerRepairRun}
             isRunning={isRunning}
-            onCwdChange={(cwd) => setForm({ ...form, cwd })}
+            onCwdChange={updateWorkspaceCwd}
             onFormChange={setProviderForm}
             onTemplateSelect={(template) => {
               setProviderRepairRunId("");
@@ -1488,7 +1551,7 @@ export function App(): JSX.Element {
                 isLoading={mediaJobsLoading}
                 runningJobId={runningMediaJobId}
                 errorMessage={errorMessage}
-                onCwdChange={(cwd) => setForm({ ...form, cwd })}
+                onCwdChange={updateWorkspaceCwd}
                 onFormChange={setMediaJobForm}
                 onRefresh={() => void refreshMediaJobs()}
                 onCreate={() => void saveMediaJob()}
@@ -1503,7 +1566,7 @@ export function App(): JSX.Element {
                 form={approvalPolicyForm}
                 isLoading={approvalPolicyLoading}
                 errorMessage={errorMessage}
-                onCwdChange={(cwd) => setForm({ ...form, cwd })}
+                onCwdChange={updateWorkspaceCwd}
                 onFormChange={setApprovalPolicyForm}
                 onRefresh={() => void refreshApprovalPolicy()}
                 onSave={() => void saveApprovalPolicy()}
@@ -1519,7 +1582,7 @@ export function App(): JSX.Element {
                   errorMessage={errorMessage}
                   onCwdChange={(cwd) => {
                     setApprovalRepairRunId("");
-                    setForm({ ...form, cwd });
+                    updateWorkspaceCwd(cwd);
                   }}
                   onRefresh={() => void refreshApprovals()}
                   onRefreshRepair={(runId) => {

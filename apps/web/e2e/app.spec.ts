@@ -1,6 +1,7 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-const cwd = "/Users/tianxiao/ling-stack";
+const cwd = "/tmp/ling-stack-workspace";
 
 interface MockState {
   providers: unknown[];
@@ -112,6 +113,42 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
+});
+
+test("workspace path initializes from daemon default and persists edits", async ({ page }) => {
+  const daemonCwd = "/tmp/daemon-default-workspace";
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), { defaultWorkspaceCwd: daemonCwd });
+  await page.goto("/");
+
+  const workspaceInput = page.getByLabel("Workspace path").first();
+  await expect(workspaceInput).toHaveValue(daemonCwd);
+
+  await workspaceInput.fill("/tmp/custom-workspace");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.workspaceCwd"))).toBe("/tmp/custom-workspace");
+
+  await page.reload();
+  await expect(page.getByLabel("Workspace path").first()).toHaveValue("/tmp/custom-workspace");
+});
+
+test("saved workspace path wins over daemon default", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.workspaceCwd", "/tmp/saved-workspace");
+  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), {
+    defaultWorkspaceCwd: "/tmp/daemon-default-workspace",
+  });
+  await page.goto("/");
+
+  await expect(page.getByLabel("Workspace path").first()).toHaveValue("/tmp/saved-workspace");
+});
+
+test("workspace defaults do not hardcode personal machine paths", async () => {
+  const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const e2eSource = await readFile(new URL("./app.spec.ts", import.meta.url), "utf8");
+  const personalPath = ["/Users", "tianxiao", "ling-stack"].join("/");
+
+  expect(appSource).not.toContain(personalPath);
+  expect(e2eSource).not.toContain(personalPath);
 });
 
 test("approval inbox shows expired approvals without decision buttons", async ({ page }) => {
@@ -451,19 +488,33 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
   };
 }
 
-async function mockDaemon(page: Page, state: MockState): Promise<void> {
+async function mockDaemon(
+  page: Page,
+  state: MockState,
+  options: { readonly defaultWorkspaceCwd?: string } = {},
+): Promise<void> {
   await page.route("http://127.0.0.1:17891/**", async (route) => {
-    await handleDaemonRoute(route, state);
+    await handleDaemonRoute(route, state, options);
   });
 }
 
-async function handleDaemonRoute(route: Route, state: MockState): Promise<void> {
+async function handleDaemonRoute(
+  route: Route,
+  state: MockState,
+  options: { readonly defaultWorkspaceCwd?: string },
+): Promise<void> {
   const request = route.request();
   const url = new URL(request.url());
   const path = url.pathname;
 
   if (request.method() === "GET" && path === "/health") {
-    await route.fulfill({ json: { ok: true, service: "ling-stack-daemon" } });
+    await route.fulfill({
+      json: {
+        ok: true,
+        service: "ling-stack-daemon",
+        defaultWorkspaceCwd: options.defaultWorkspaceCwd ?? cwd,
+      },
+    });
     return;
   }
   if (request.method() === "GET" && path === "/provider-templates") {

@@ -1,5 +1,11 @@
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
+export interface DaemonHealthResponse {
+  readonly ok: boolean;
+  readonly service?: string;
+  readonly defaultWorkspaceCwd?: string;
+}
+
 export type RunEventType =
   | "run_created"
   | "run_start"
