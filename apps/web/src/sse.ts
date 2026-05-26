@@ -75,16 +75,23 @@ function parseSseBlock(block: string): { event: string; data: string } | undefin
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
+  let message = `${response.status} ${response.statusText}`;
   try {
     const body = (await response.json()) as { message?: unknown; error?: unknown };
     if (typeof body.message === "string") {
-      return body.message;
-    }
-    if (typeof body.error === "string") {
-      return body.error;
+      message = body.message;
+    } else if (typeof body.error === "string") {
+      message = body.error;
     }
   } catch {
-    return `${response.status} ${response.statusText}`;
+    return friendlyErrorMessage(message);
   }
-  return `${response.status} ${response.statusText}`;
+  return friendlyErrorMessage(message);
+}
+
+function friendlyErrorMessage(message: string): string {
+  if ((message.includes("EACCES") || message.includes("ENOENT")) && message.includes(".ling-stack")) {
+    return `Workspace path does not exist or is not writable. Use the absolute path to your local checkout. ${message}`;
+  }
+  return message;
 }

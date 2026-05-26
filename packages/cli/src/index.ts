@@ -153,6 +153,7 @@ interface InitResult {
 interface DaemonListenOptions {
   readonly host: string;
   readonly port: number;
+  readonly defaultWorkspaceCwd: string;
 }
 
 interface UiOptions {
@@ -774,7 +775,7 @@ async function handleUi(args: readonly string[], options: GlobalOptions): Promis
       console.log("Start it in another terminal:");
       console.log("  ling-stack daemon start --foreground");
     }
-    return await runWebForeground(uiOptions, options.daemonUrl);
+    return await runWebForeground(uiOptions, options.daemonUrl, options.cwd);
   }
 
   const status = {
@@ -1629,7 +1630,7 @@ function readDaemonListenOptions(parsed: ParsedCommandArgs, options: GlobalOptio
   }
   const host = getFlag(parsed, "host") ?? daemonUrl.hostname;
   const port = getFlag(parsed, "port") ? readRequiredPort(getFlag(parsed, "port") as string, "--port") : readPortFromDaemonUrl(daemonUrl);
-  return { host, port };
+  return { host, port, defaultWorkspaceCwd: options.cwd };
 }
 
 function readPortFromDaemonUrl(url: URL): number {
@@ -1660,6 +1661,7 @@ async function runDaemonForeground(options: DaemonListenOptions): Promise<number
       ...process.env,
       LING_STACK_HOST: options.host,
       LING_STACK_PORT: String(options.port),
+      LING_STACK_DEFAULT_WORKSPACE_CWD: options.defaultWorkspaceCwd,
     },
     stdio: "inherit",
   });
@@ -1753,7 +1755,7 @@ async function isWebUiReachable(url: string): Promise<boolean> {
   }
 }
 
-async function runWebForeground(options: UiOptions, daemonUrl: string): Promise<number> {
+async function runWebForeground(options: UiOptions, daemonUrl: string, defaultWorkspaceCwd: string): Promise<number> {
   const webDir = resolveWebPackageDir();
   const viteCliPath = resolveViteCliPath(webDir);
   const child = spawn(process.execPath, [viteCliPath, "--host", options.host, "--port", String(options.port), "--strictPort"], {
@@ -1761,6 +1763,7 @@ async function runWebForeground(options: UiOptions, daemonUrl: string): Promise<
     env: {
       ...process.env,
       VITE_LING_STACK_DAEMON_URL: daemonUrl,
+      VITE_LING_STACK_DEFAULT_WORKSPACE_CWD: defaultWorkspaceCwd,
     },
     stdio: "inherit",
   });
@@ -3430,6 +3433,7 @@ function printUiHelp(): void {
 Behavior:
   Without --foreground, checks Web UI and daemon status and prints the next command.
   With --foreground, starts the Vite Web UI in this terminal and injects VITE_LING_STACK_DAEMON_URL.
+  The current --cwd is also injected as VITE_LING_STACK_DEFAULT_WORKSPACE_CWD for first-run Web defaults.
 `);
 }
 
@@ -3444,6 +3448,7 @@ Not implemented yet:
 
 Notes:
   Without --host/--port, start uses --daemon-url, LING_STACK_DAEMON_URL, or LING_STACK_HOST/LING_STACK_PORT.
+  The current --cwd is passed to the daemon as LING_STACK_DEFAULT_WORKSPACE_CWD for first-run Web defaults.
   Background process management is not implemented yet; use --foreground and stop with Ctrl-C.
 `);
 }

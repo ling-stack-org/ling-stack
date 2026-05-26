@@ -316,7 +316,7 @@ Human output:
 ```text
 Ling Stack doctor
 Daemon: ok http://127.0.0.1:17891 (12ms)
-Workspace: /Users/tianxiao/ling-stack
+Workspace: /path/to/ling-stack
 Providers: 3 total, 2 runnable, 1 preflight ready
 Channels: 1 total, 1 with default provider
 Tasks: 4 total
@@ -344,7 +344,7 @@ JSON output:
     "service": "ling-stack-daemon"
   },
   "workspace": {
-    "cwd": "/Users/tianxiao/ling-stack"
+    "cwd": "/path/to/ling-stack"
   },
   "providers": {
     "total": 3,
@@ -547,7 +547,7 @@ Command:
 ```bash
 ling-stack channel create \
   --name engineering \
-  --path /Users/tianxiao/ling-stack \
+  --path /path/to/ling-stack \
   --provider provider_local_relay
 ```
 
