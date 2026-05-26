@@ -3125,6 +3125,23 @@ textarea {
   box-shadow: none;
 }
 
+.conversation-placeholder-body {
+  display: grid;
+  min-height: 0;
+  padding: 14px;
+}
+
+.conversation-empty-state {
+  min-height: 320px;
+  border: 1px solid rgba(37, 42, 45, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.conversation-empty-state svg {
+  color: #69706e;
+}
+
 .channel-header {
   display: flex;
   align-items: center;

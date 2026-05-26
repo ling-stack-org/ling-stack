@@ -151,6 +151,30 @@ test("workspace defaults do not hardcode personal machine paths", async () => {
   expect(e2eSource).not.toContain(personalPath);
 });
 
+test("sidebar selection is exclusive for workspace, tasks, channels, teammates, and direct messages", async ({ page }) => {
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: ["Workspace"], selectedRows: [] });
+
+  await navigation.getByRole("button", { name: "Tasks" }).click();
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: ["Tasks"], selectedRows: [] });
+
+  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Engineering"] });
+
+  await navigation.getByRole("button", { name: /Ada/ }).click();
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ada"] });
+  await expect(page.getByRole("heading", { name: "Ada" })).toBeVisible();
+  await expect(page.getByText("This conversation entry is not connected yet.")).toBeVisible();
+
+  await navigation.getByRole("button", { name: /Tian/ }).click();
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Tian"] });
+  await expect(page.getByRole("heading", { name: "Tian" })).toBeVisible();
+  await expect(page.getByText("Direct message", { exact: true })).toBeVisible();
+});
+
 test("model workbench creates custom OpenAI-compatible presets and surfaces readiness", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
@@ -557,6 +581,19 @@ test("media jobs page surfaces live media cost approvals", async ({ page }) => {
   await expect(jobRow).toContainText("succeeded");
   await expect(jobRow.locator(".artifact-row")).toContainText("Image generate live result");
 });
+
+async function readSidebarSelection(page: Page): Promise<{ readonly activeNav: string[]; readonly selectedRows: string[] }> {
+  return await page.evaluate(() => {
+    const navLabel = (element: Element): string => element.querySelector("span")?.textContent?.trim() ?? "";
+    const rowLabel = (element: Element): string =>
+      element.querySelector("span:not(.avatar-initial)")?.textContent?.trim() ?? "";
+
+    return {
+      activeNav: [...document.querySelectorAll(".nav-item.active")].map(navLabel),
+      selectedRows: [...document.querySelectorAll(".sidebar-row.selected")].map(rowLabel),
+    };
+  });
+}
 
 function createBaseState(options: { approvalStatus: "pending" | "expired" }): MockState {
   const run: MockRun = {

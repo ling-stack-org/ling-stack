@@ -106,7 +106,17 @@ const taskStatuses: readonly TaskStatus[] = ["todo", "claimed", "running", "bloc
 const workspaceCwdStorageKey = "ling-stack.workspaceCwd";
 const viteDefaultWorkspaceCwd = import.meta.env.VITE_LING_STACK_DEFAULT_WORKSPACE_CWD?.trim() ?? "";
 type ViewId = "workspace" | "runs" | "providers" | "media" | "approvals" | "settings";
+type SidebarViewTarget = ViewId | "tasks";
+type SidebarConversationKind = "teammate" | "direct";
+type SidebarTarget = SidebarViewTarget | `channel:${string}` | `${SidebarConversationKind}:${string}`;
 type ApprovalResolution = "approve" | "deny";
+interface SidebarConversationItem {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: SidebarConversationKind;
+  readonly avatarLabel: string;
+  readonly tone?: "default" | "orange" | "teal" | "violet";
+}
 interface ProviderTemplateGroup {
   readonly label: string;
   readonly templates: readonly ProviderTemplate[];
@@ -253,6 +263,15 @@ const defaultApprovalPolicyForm: ApprovalPolicyFormState = {
   },
   allowedWritePathsText: ".",
 };
+const sidebarTeammates: readonly SidebarConversationItem[] = [
+  { id: "ada", label: "Ada", kind: "teammate", avatarLabel: "A", tone: "orange" },
+  { id: "hopper", label: "Hopper", kind: "teammate", avatarLabel: "H", tone: "teal" },
+];
+const sidebarDirectMessages: readonly SidebarConversationItem[] = [
+  { id: "tian", label: "Tian", kind: "direct", avatarLabel: "T" },
+  { id: "mia", label: "Mia", kind: "direct", avatarLabel: "M", tone: "violet" },
+];
+const sidebarConversations: readonly SidebarConversationItem[] = [...sidebarTeammates, ...sidebarDirectMessages];
 
 function readSavedWorkspaceCwd(): string {
   try {
@@ -289,6 +308,7 @@ export function App(): JSX.Element {
     prompt: t(defaultForm.prompt),
   }));
   const [activeView, setActiveView] = useState<ViewId>("workspace");
+  const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
   const [activeRunId, setActiveRunId] = useState("");
   const [lookupRunId, setLookupRunId] = useState("");
@@ -1268,6 +1288,7 @@ export function App(): JSX.Element {
   async function openRunFromWorkspace(runId: string): Promise<void> {
     await selectRun(runId);
     setActiveView("runs");
+    setActiveSidebarTarget("runs");
   }
 
   function openApprovalsFromWorkspace(runId?: string): void {
@@ -1278,6 +1299,7 @@ export function App(): JSX.Element {
     }
     void refreshApprovals(form.cwd.trim(), targetRunId || undefined);
     setActiveView("approvals");
+    setActiveSidebarTarget("approvals");
   }
 
   function openProvidersFromRun(runToRepair?: RunSession): void {
@@ -1290,6 +1312,7 @@ export function App(): JSX.Element {
       editProvider(provider);
     }
     setActiveView("providers");
+    setActiveSidebarTarget("providers");
   }
 
   async function openTaskFromRun(runToRepair: RunSession): Promise<void> {
@@ -1304,6 +1327,7 @@ export function App(): JSX.Element {
     setSelectedTaskId(runToRepair.taskId);
     setTaskRunProviderId("");
     setActiveView("workspace");
+    setActiveSidebarTarget(channelSidebarTarget(runToRepair.channelId));
     await refreshTasks(runToRepair.channelId);
     setSelectedTaskId(runToRepair.taskId);
   }
@@ -1332,13 +1356,19 @@ export function App(): JSX.Element {
     }
   }
 
+  function openPlainView(view: ViewId): void {
+    setActiveView(view);
+    setActiveSidebarTarget(view);
+  }
+
+  const activeConversation = findSidebarConversation(activeSidebarTarget);
+
   return (
     <main className="app-shell">
       <TopBar daemonHealthy={daemonHealthy} provider={`${form.provider}/${form.model}`} onRefresh={refreshHealth} />
       <SidebarNavigation
-        activeView={activeView}
+        activeSidebarTarget={activeSidebarTarget}
         channels={channels}
-        selectedChannelId={selectedChannelId}
         approvals={approvals}
         providers={providers}
         onOpenView={(view) => {
@@ -1346,15 +1376,27 @@ export function App(): JSX.Element {
             setApprovalRepairRunId("");
           }
           setActiveView(view);
+          setActiveSidebarTarget(view);
+        }}
+        onOpenTasks={() => {
+          setActiveView("workspace");
+          setActiveSidebarTarget("tasks");
         }}
         onSelectChannel={(channelId) => {
           setSelectedChannelId(channelId);
           setTaskRunProviderId("");
           setActiveView("workspace");
+          setActiveSidebarTarget(channelSidebarTarget(channelId));
+        }}
+        onSelectConversation={(item) => {
+          setActiveView("workspace");
+          setActiveSidebarTarget(conversationSidebarTarget(item));
         }}
       />
       <section className={activeView === "workspace" ? "workspace workspace-client-surface" : "workspace"}>
-        {activeView === "workspace" ? (
+        {activeView === "workspace" && activeConversation ? (
+          <ConversationPlaceholderView item={activeConversation} />
+        ) : activeView === "workspace" ? (
           <WorkspaceClientView
             cwd={form.cwd}
             daemonHealthy={daemonHealthy}
@@ -1391,6 +1433,7 @@ export function App(): JSX.Element {
             onSelectChannel={(channelId) => {
               setSelectedChannelId(channelId);
               setTaskRunProviderId("");
+              setActiveSidebarTarget(channelSidebarTarget(channelId));
             }}
             onRefreshChannels={() => void refreshChannels()}
             onCreateDefaultChannel={() => void saveDefaultChannel()}
@@ -1402,7 +1445,7 @@ export function App(): JSX.Element {
             onRunTask={(task) => void runPersistedTask(task)}
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
-            onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : setActiveView("providers")}
+            onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers")}
           />
         ) : (
           <>
@@ -1504,7 +1547,7 @@ export function App(): JSX.Element {
                 onRefresh={() => void refreshMediaJobs()}
                 onCreate={() => void saveMediaJob()}
                 onRun={(jobId) => void executeMediaJob(jobId)}
-                onOpenProviders={() => setActiveView("providers")}
+                onOpenProviders={() => openPlainView("providers")}
               />
             ) : activeView === "settings" ? (
               <SettingsPage
@@ -1559,8 +1602,8 @@ export function App(): JSX.Element {
               runs={runs}
               approvals={approvals}
               onRefreshDaemon={() => void refreshHealth()}
-              onOpenProviders={() => setActiveView("providers")}
-              onOpenRuns={() => setActiveView("runs")}
+              onOpenProviders={() => openPlainView("providers")}
+              onOpenRuns={() => openPlainView("runs")}
               onOpenApprovals={() => openApprovalsFromWorkspace()}
               onCreateChannel={() => void saveDefaultChannel()}
               onCreateTask={() => void saveTask()}
@@ -1582,7 +1625,7 @@ export function App(): JSX.Element {
               currentRun={run}
               runById={runById}
               pendingApprovalCount={activePendingApprovals.length}
-              onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : setActiveView("providers")}
+              onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers")}
               onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
               onOpenRun={(runId) => void openRunFromWorkspace(runId)}
               onCreateDefaultChannel={() => void saveDefaultChannel()}
@@ -1619,21 +1662,23 @@ export function App(): JSX.Element {
 }
 
 function SidebarNavigation({
-  activeView,
+  activeSidebarTarget,
   channels,
-  selectedChannelId,
   approvals,
   providers,
   onOpenView,
+  onOpenTasks,
   onSelectChannel,
+  onSelectConversation,
 }: {
-  readonly activeView: ViewId;
+  readonly activeSidebarTarget: SidebarTarget;
   readonly channels: readonly Channel[];
-  readonly selectedChannelId: string;
   readonly approvals: readonly ApprovalRequest[];
   readonly providers: readonly ProviderPreset[];
   readonly onOpenView: (view: ViewId) => void;
+  readonly onOpenTasks: () => void;
   readonly onSelectChannel: (channelId: string) => void;
+  readonly onSelectConversation: (item: SidebarConversationItem) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
@@ -1650,10 +1695,10 @@ function SidebarNavigation({
       </div>
 
       <nav className="primary-nav">
-        <NavItem icon={<Workflow />} label={t("Workspace")} active={activeView === "workspace"} onClick={() => onOpenView("workspace")} />
-        <NavItem icon={<Inbox />} label={t("Inbox")} active={activeView === "approvals"} onClick={() => onOpenView("approvals")} />
-        <NavItem icon={<SquareTerminal />} label={t("Tasks")} active={activeView === "workspace"} onClick={() => onOpenView("workspace")} />
-        <NavItem icon={<History />} label={t("Runs")} active={activeView === "runs"} onClick={() => onOpenView("runs")} />
+        <NavItem icon={<Workflow />} label={t("Workspace")} active={activeSidebarTarget === "workspace"} onClick={() => onOpenView("workspace")} />
+        <NavItem icon={<Inbox />} label={t("Inbox")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
+        <NavItem icon={<SquareTerminal />} label={t("Tasks")} active={activeSidebarTarget === "tasks"} onClick={onOpenTasks} />
+        <NavItem icon={<History />} label={t("Runs")} active={activeSidebarTarget === "runs"} onClick={() => onOpenView("runs")} />
       </nav>
 
       <SidebarSection title={t("Channels")} actionLabel={channels.length === 0 ? t("Create") : undefined}>
@@ -1666,7 +1711,7 @@ function SidebarNavigation({
           channels.map((channel) => (
             <button
               key={channel.id}
-              className={channel.id === selectedChannelId && activeView === "workspace" ? "sidebar-row selected" : "sidebar-row"}
+              className={activeSidebarTarget === channelSidebarTarget(channel.id) ? "sidebar-row selected" : "sidebar-row"}
               type="button"
               onClick={() => onSelectChannel(channel.id)}
             >
@@ -1678,27 +1723,32 @@ function SidebarNavigation({
       </SidebarSection>
 
       <SidebarSection title={t("AI Teammates")}>
-        <button className="sidebar-row" type="button" onClick={() => onOpenView("workspace")}>
-          <AvatarInitial label="A" tone="orange" />
-          <span>Ada</span>
-          <small>AI</small>
-        </button>
-        <button className="sidebar-row" type="button" onClick={() => onOpenView("workspace")}>
-          <AvatarInitial label="H" tone="teal" />
-          <span>Hopper</span>
-          <small>AI</small>
-        </button>
+        {sidebarTeammates.map((item) => (
+          <button
+            key={item.id}
+            className={activeSidebarTarget === conversationSidebarTarget(item) ? "sidebar-row selected" : "sidebar-row"}
+            type="button"
+            onClick={() => onSelectConversation(item)}
+          >
+            <AvatarInitial label={item.avatarLabel} tone={item.tone} />
+            <span>{item.label}</span>
+            <small>AI</small>
+          </button>
+        ))}
       </SidebarSection>
 
       <SidebarSection title={t("Direct Messages")}>
-        <button className="sidebar-row" type="button" onClick={() => onOpenView("workspace")}>
-          <AvatarInitial label="T" />
-          <span>Tian</span>
-        </button>
-        <button className="sidebar-row" type="button" onClick={() => onOpenView("workspace")}>
-          <AvatarInitial label="M" tone="violet" />
-          <span>Mia</span>
-        </button>
+        {sidebarDirectMessages.map((item) => (
+          <button
+            key={item.id}
+            className={activeSidebarTarget === conversationSidebarTarget(item) ? "sidebar-row selected" : "sidebar-row"}
+            type="button"
+            onClick={() => onSelectConversation(item)}
+          >
+            <AvatarInitial label={item.avatarLabel} tone={item.tone} />
+            <span>{item.label}</span>
+          </button>
+        ))}
       </SidebarSection>
 
       <div className="sidebar-config">
@@ -1706,7 +1756,7 @@ function SidebarNavigation({
         <div className="config-grid">
           <button
             type="button"
-            className={activeView === "providers" ? "config-button active" : "config-button"}
+            className={activeSidebarTarget === "providers" ? "config-button active" : "config-button"}
             onClick={() => onOpenView("providers")}
             title={t("Model Workbench")}
             aria-label={t("Model Workbench")}
@@ -1716,7 +1766,7 @@ function SidebarNavigation({
           </button>
           <button
             type="button"
-            className={activeView === "approvals" ? "config-button active" : "config-button"}
+            className={activeSidebarTarget === "approvals" ? "config-button active" : "config-button"}
             onClick={() => onOpenView("approvals")}
             title={t("Approvals")}
             aria-label={t("Approvals")}
@@ -1726,7 +1776,7 @@ function SidebarNavigation({
           </button>
           <button
             type="button"
-            className={activeView === "media" ? "config-button active" : "config-button"}
+            className={activeSidebarTarget === "media" ? "config-button active" : "config-button"}
             onClick={() => onOpenView("media")}
             title={t("Media Jobs")}
             aria-label={t("Media Jobs")}
@@ -1735,7 +1785,7 @@ function SidebarNavigation({
           </button>
           <button
             type="button"
-            className={activeView === "settings" ? "config-button active" : "config-button"}
+            className={activeSidebarTarget === "settings" ? "config-button active" : "config-button"}
             onClick={() => onOpenView("settings")}
             title={t("Settings")}
             aria-label={t("Settings")}
@@ -1770,6 +1820,50 @@ function SidebarSection({
 
 function AvatarInitial({ label, tone = "default" }: { readonly label: string; readonly tone?: "default" | "orange" | "teal" | "violet" }): JSX.Element {
   return <span className={`avatar-initial ${tone}`}>{label}</span>;
+}
+
+function channelSidebarTarget(channelId: string): SidebarTarget {
+  return `channel:${channelId}`;
+}
+
+function conversationSidebarTarget(item: SidebarConversationItem): SidebarTarget {
+  return `${item.kind}:${item.id}` as SidebarTarget;
+}
+
+function findSidebarConversation(target: SidebarTarget): SidebarConversationItem | undefined {
+  const match = /^(teammate|direct):(.+)$/.exec(target);
+  if (!match) {
+    return undefined;
+  }
+  const kind = match[1] as SidebarConversationKind;
+  const id = match[2];
+  return sidebarConversations.find((item) => item.kind === kind && item.id === id);
+}
+
+function ConversationPlaceholderView({ item }: { readonly item: SidebarConversationItem }): JSX.Element {
+  const { t } = useI18n();
+  const kindLabel = item.kind === "teammate" ? t("AI teammate") : t("Direct message");
+  const icon = item.kind === "teammate" ? <Bot size={22} /> : <MessageSquare size={22} />;
+
+  return (
+    <div className="client-window conversation-placeholder" aria-label={item.label}>
+      <header className="channel-header">
+        <div>
+          <div className="channel-title-line">
+            <AvatarInitial label={item.avatarLabel} tone={item.tone} />
+            <h1>{item.label}</h1>
+          </div>
+          <p>{kindLabel}</p>
+        </div>
+      </header>
+      <div className="conversation-placeholder-body">
+        <div className="client-empty-state conversation-empty-state">
+          {icon}
+          <span>{t("This conversation entry is not connected yet.")}</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function WorkspaceClientView({
