@@ -647,9 +647,10 @@ Provider setup should present a short, repeatable path:
 choose template -> save preset -> set env -> check provider -> use in workspace
 ```
 
-Web Provider Settings should expose:
+Web Model Workbench should expose:
 
-- template groups for GPT/Claude, OpenAI-compatible relays, domestic AI, and media providers,
+- template groups for GPT/Claude, OpenAI-compatible relays, custom OpenAI-compatible access, domestic AI, and media providers,
+- a custom compatible card for domestic gateways, private relays, One API, New API, LiteLLM, and similar endpoints,
 - summary counters for chat-compatible providers, preflight-ready providers, missing env refs, and templates,
 - a compact repair queue ordered by next action,
 - `Check all` for enabled chat providers,
@@ -662,6 +663,7 @@ Repair queue rules:
 - failed checks should show `lastCheck.code` and guidance,
 - disabled, media-only, or no-chat providers should point to `Edit`,
 - `Use` is enabled only when provider preflight is ready, not merely when hard compatibility checks pass.
+- Workspace task provider pickers should include preflight-ready chat providers and setup-blocked chat providers, but should keep `media-job` presets out of coding task selection.
 
 CLI `doctor` and Web readiness should use the same readiness meaning: a provider can start product runs only when it passes the daemon preflight gate.
 

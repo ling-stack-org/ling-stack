@@ -81,7 +81,7 @@ test("workspace readiness surfaces missing provider, expired approval, and faile
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
-  await expect(page.getByText("No provider presets")).toBeVisible();
+  await expect(page.getByText("No model presets")).toBeVisible();
   await expect(page.getByText("1 expired approval need review")).toBeVisible();
   await expect(page.getByText(/Latest failed run needs review: run_failed/)).toBeVisible();
 
@@ -149,6 +149,144 @@ test("workspace defaults do not hardcode personal machine paths", async () => {
 
   expect(appSource).not.toContain(personalPath);
   expect(e2eSource).not.toContain(personalPath);
+});
+
+test("model workbench creates custom OpenAI-compatible presets and surfaces readiness", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_missing_key",
+      displayName: "Missing Key Gateway",
+      apiKeyConfigured: false,
+      apiKeyRef: "env:MISSING_GATEWAY_KEY",
+    }),
+    createChatProvider({
+      id: "provider_unchecked",
+      displayName: "Unchecked Domestic Gateway",
+      providerId: "domestic-gateway",
+      model: "domestic-chat",
+      baseUrl: "https://domestic.example.com/v1",
+    }),
+    createChatProvider({
+      id: "provider_failed",
+      displayName: "Auth Failed Gateway",
+      lastCheck: {
+        ok: false,
+        code: "auth_failed",
+        message: "Invalid API key.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Local Relay",
+      lastCheck: {
+        ok: true,
+        code: "ready",
+        message: "Provider is reachable.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
+    createMediaProvider(),
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
+  await expect(page.getByText("Chat-capable")).toBeVisible();
+  await expect(page.getByText("Coding ready")).toBeVisible();
+
+  await expect(page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" })).toContainText("key missing");
+  await expect(page.locator(".provider-row").filter({ hasText: "Unchecked Domestic Gateway" })).toContainText("unchecked");
+  await expect(page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" })).toContainText("auth failed");
+  await expect(page.locator(".provider-row").filter({ hasText: "Ready Local Relay" })).toContainText("check ready");
+  await expect(page.locator(".provider-row").filter({ hasText: "Seedream Image" })).toContainText("Coding task: blocked");
+
+  await page.getByRole("button", { name: /Custom OpenAI-compatible/ }).click();
+  await expect(page.getByLabel("Display name")).toHaveValue("Custom OpenAI-compatible");
+  await expect(page.getByLabel("Base URL")).toHaveValue("https://api.example.com/v1");
+  await expect(page.getByLabel("API key ref")).toHaveValue("env:CUSTOM_MODEL_API_KEY");
+  await expect(page.getByLabel("Capabilities")).toHaveValue("chat, tool_call, reasoning");
+
+  await page.getByRole("button", { name: "Create preset" }).click();
+  const customProviderRow = page.locator(".provider-row").filter({ hasText: "Custom OpenAI-compatible" });
+  await expect(customProviderRow).toContainText("env:CUSTOM_MODEL_API_KEY");
+  await expect(customProviderRow).toContainText("key missing");
+  await expect.poll(() => state.providers.some((provider) => isRecord(provider) && provider.displayName === "Custom OpenAI-compatible")).toBe(true);
+});
+
+test("workspace task runs only expose preflight-ready coding providers", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Local Relay",
+      lastCheck: {
+        ok: true,
+        code: "ready",
+        message: "Provider is reachable.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
+    createChatProvider({
+      id: "provider_missing_key",
+      displayName: "Missing Key Gateway",
+      apiKeyConfigured: false,
+      apiKeyRef: "env:MISSING_GATEWAY_KEY",
+    }),
+    createMediaProvider(),
+  ];
+  state.channels = state.channels.map((channel) => isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel);
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
+  await expect(providerSelect.locator("option").filter({ hasText: "Ready Local Relay" })).toHaveCount(1);
+  await expect(providerSelect.locator("option").filter({ hasText: "Missing Key Gateway" })).toHaveCount(1);
+  await expect(providerSelect.locator("option").filter({ hasText: "Seedream Image" })).toHaveCount(0);
+  await expect(page.getByText("Media providers stay in Media Jobs and cannot run coding tasks.").first()).toBeVisible();
+
+  await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
+  await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
+  await expect(page.locator(".task-detail")).toContainText("run_2");
+  await expect.poll(() => state.tasks.some((task) => isRecord(task) && task.currentRunId === "run_2")).toBe(true);
+});
+
+test("failed provider runs route repair back to Model Workbench", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_failed",
+      displayName: "Auth Failed Gateway",
+      lastCheck: {
+        ok: false,
+        code: "auth_failed",
+        message: "Invalid API key.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
+  ];
+  state.runs = state.runs.map((run) => ({
+    ...run,
+    providerPresetId: "provider_failed",
+    providerName: "auth-failed-gateway",
+    providerModel: "domestic-chat",
+    requestSnapshot: { cwd, providerPresetId: "provider_failed" },
+    errorMessage: "Provider auth failed for configured endpoint.",
+  }));
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await page.getByRole("button", { name: /run_failed/ }).click();
+  const providerRepair = page.locator(".run-repair-hint.providers");
+  await expect(providerRepair).toContainText("Provider repair needed");
+  await providerRepair.getByRole("button", { name: "Model Workbench" }).click();
+
+  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Display name")).toHaveValue("Auth Failed Gateway");
+  await expect(page.getByLabel("Provider run repair")).toContainText("run_failed");
 });
 
 test("approval inbox shows expired approvals without decision buttons", async ({ page }) => {
@@ -488,6 +626,91 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
   };
 }
 
+function createChatProvider(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "provider_local",
+    kind: "openai-compatible",
+    displayName: "Local Relay",
+    providerId: "local-relay",
+    model: "dpv4",
+    api: "openai-completions",
+    baseUrl: "http://127.0.0.1:8317/v1",
+    apiKeyRef: "env:LOCAL_RELAY_API_KEY",
+    apiKeyConfigured: true,
+    headers: {},
+    authHeader: true,
+    reasoning: true,
+    input: ["text"],
+    compat: {},
+    capabilities: ["chat", "tool_call", "reasoning"],
+    enabled: true,
+    createdAt: "2026-05-25T00:00:00.000Z",
+    updatedAt: "2026-05-25T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createMediaProvider(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "provider_seedream",
+    kind: "seedream",
+    displayName: "Seedream Image",
+    providerId: "seedream",
+    model: "doubao-seedream-5-0-260128",
+    api: "media-job",
+    apiKeyRef: "env:SEEDREAM_API_KEY",
+    apiKeyConfigured: true,
+    headers: {},
+    input: ["text", "image"],
+    compat: {},
+    capabilities: ["image_generate"],
+    enabled: true,
+    createdAt: "2026-05-25T00:00:00.000Z",
+    updatedAt: "2026-05-25T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createProviderFromBody(body: Record<string, unknown>, id: string): Record<string, unknown> {
+  const apiKeyRef = typeof body.apiKeyRef === "string" ? body.apiKeyRef : undefined;
+  return {
+    id,
+    kind: typeof body.kind === "string" ? body.kind : "openai-compatible",
+    displayName: typeof body.displayName === "string" ? body.displayName : "Custom Provider",
+    providerId: typeof body.providerId === "string" ? body.providerId : "custom-provider",
+    model: typeof body.model === "string" ? body.model : "custom-model",
+    api: typeof body.api === "string" ? body.api : "openai-completions",
+    baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
+    apiKeyRef,
+    apiKeyConfigured: apiKeyRef === "env:LOCAL_RELAY_API_KEY",
+    headers: {},
+    authHeader: body.authHeader === true,
+    reasoning: body.reasoning === true,
+    input: Array.isArray(body.input) ? body.input : ["text"],
+    compat: {},
+    capabilities: Array.isArray(body.capabilities) ? body.capabilities : ["chat"],
+    enabled: body.enabled === true,
+    contextWindow: typeof body.contextWindow === "number" ? body.contextWindow : undefined,
+    maxTokens: typeof body.maxTokens === "number" ? body.maxTokens : undefined,
+    createdAt: "2026-05-25T00:10:00.000Z",
+    updatedAt: "2026-05-25T00:10:00.000Z",
+  };
+}
+
+function buildProviderCheckResult(provider: Record<string, unknown>): Record<string, unknown> {
+  const checkedAt = "2026-05-25T00:11:00.000Z";
+  if (provider.enabled === false) {
+    return { ok: false, code: "provider_disabled", message: "Provider is disabled.", checkedAt };
+  }
+  if (provider.apiKeyRef && provider.apiKeyConfigured !== true) {
+    return { ok: false, code: "secret_missing", message: `${String(provider.apiKeyRef)} is not configured.`, checkedAt };
+  }
+  if (String(provider.displayName).includes("Auth Failed")) {
+    return { ok: false, code: "auth_failed", message: "Invalid API key.", checkedAt };
+  }
+  return { ok: true, code: "ready", message: "Provider is reachable and accepted the configured model.", checkedAt };
+}
+
 async function mockDaemon(
   page: Page,
   state: MockState,
@@ -525,6 +748,44 @@ async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, providers: state.providers } });
     return;
   }
+  if (request.method() === "POST" && path === "/providers") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const provider = createProviderFromBody(body, `provider_created_${state.providers.length + 1}`);
+    state.providers.push(provider);
+    await route.fulfill({ status: 201, json: { provider } });
+    return;
+  }
+  const providerMatch = /^\/providers\/([^/]+)$/.exec(path);
+  if (providerMatch && request.method() === "PATCH") {
+    const providerId = decodeURIComponent(providerMatch[1]);
+    const providerIndex = state.providers.findIndex((item) => isRecord(item) && item.id === providerId);
+    if (providerIndex === -1) {
+      await route.fulfill({ status: 404, json: { error: "provider_not_found" } });
+      return;
+    }
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const existing = state.providers[providerIndex];
+    const provider = isRecord(existing)
+      ? { ...existing, ...createProviderFromBody(body, providerId), id: providerId, updatedAt: "2026-05-25T00:10:00.000Z" }
+      : createProviderFromBody(body, providerId);
+    state.providers[providerIndex] = provider;
+    await route.fulfill({ json: { provider } });
+    return;
+  }
+  const providerCheckMatch = /^\/providers\/([^/]+)\/check$/.exec(path);
+  if (providerCheckMatch && request.method() === "POST") {
+    const providerId = decodeURIComponent(providerCheckMatch[1]);
+    const provider = state.providers.find((item) => isRecord(item) && item.id === providerId);
+    if (!provider || !isRecord(provider)) {
+      await route.fulfill({ status: 404, json: { error: "provider_not_found" } });
+      return;
+    }
+    const result = buildProviderCheckResult(provider);
+    provider.lastCheck = result;
+    provider.updatedAt = result.checkedAt;
+    await route.fulfill({ json: result });
+    return;
+  }
   if (request.method() === "GET" && path === "/channels") {
     await route.fulfill({ json: { cwd, channels: state.channels } });
     return;
@@ -535,6 +796,53 @@ async function handleDaemonRoute(
   }
   if (request.method() === "GET" && path === "/runs") {
     await route.fulfill({ json: { cwd, runs: state.runs } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/runs") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const task = isRecord(body.task) ? body.task : {};
+    const taskId = typeof task.id === "string" ? task.id : "task_generated";
+    const providerPresetId = typeof body.providerPresetId === "string" ? body.providerPresetId : undefined;
+    const provider = state.providers.find((item) => isRecord(item) && item.id === providerPresetId);
+    const runId = `run_${state.runs.length + 1}`;
+    const run: MockRun = {
+      id: runId,
+      status: "succeeded",
+      cwd,
+      taskId,
+      channelId: typeof body.channelId === "string" ? body.channelId : "channel_engineering",
+      providerPresetId,
+      providerName: isRecord(provider) && typeof provider.providerId === "string" ? provider.providerId : "unknown-provider",
+      providerModel: isRecord(provider) && typeof provider.model === "string" ? provider.model : "unknown-model",
+      taskSnapshot: { id: taskId, title: typeof task.title === "string" ? task.title : "Generated task" },
+      providerSnapshot: provider ?? {},
+      requestSnapshot: body,
+      eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+      createdAt: "2026-05-25T00:20:00.000Z",
+      updatedAt: "2026-05-25T00:20:30.000Z",
+    };
+    state.runs.unshift(run);
+    state.tasks = state.tasks.map((item) =>
+      isRecord(item) && item.id === taskId
+        ? { ...item, status: "done", currentRunId: runId, updatedAt: run.updatedAt }
+        : item
+    );
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: ready\ndata: ${JSON.stringify({ runId })}`,
+        `event: message\ndata: ${JSON.stringify({
+          id: `evt_${runId}_end`,
+          runId,
+          seq: 1,
+          ts: run.updatedAt,
+          type: "run_end",
+          data: { status: "succeeded" },
+        })}`,
+        "",
+      ].join("\n\n"),
+    });
     return;
   }
   if (request.method() === "GET" && path === "/approvals") {
