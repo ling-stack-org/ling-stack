@@ -18,6 +18,33 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Approval policy](docs/design/approval-policy.md)
 - [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
 
+## UI Direction
+
+The Web UI and the future desktop app should follow the same product direction: a client-style AI teammate workspace, not a marketing homepage or a configuration dashboard.
+
+Concept direction:
+
+![Ling Stack client UI direction](docs/design/assets/ling-stack-client-ui-direction.png)
+
+Current Web homepage reference:
+
+![Ling Stack Web homepage desktop](docs/design/assets/ling-stack-web-homepage-desktop.png)
+
+Mobile collapse reference:
+
+![Ling Stack Web homepage mobile](docs/design/assets/ling-stack-web-homepage-mobile.png)
+
+Design intent:
+
+- Open directly into a default configured workspace and selected channel.
+- Keep the left sidebar focused on workspace, inbox, tasks, runs, channels, AI teammates, direct messages, and a compact configuration rail.
+- Keep the center as the main work surface: channel activity, task cards, run actions, and a task composer.
+- Keep provider setup, approval policy, media jobs, and settings out of the homepage flow; expose them through configuration entry points and dedicated pages.
+- Keep the right panel for context: readiness, first-run state, approvals, artifacts, provider health, and live events.
+- Use a macOS-like, minimal, frosted-glass visual system with restrained gradients, readable operational density, and no decorative hero sections.
+
+This direction is recorded as the reference for both `apps/web` and the future desktop client. The detailed Web design contract lives in [Web UI v0.1 Design](docs/design/web-ui-v0.1.md).
+
 ## Why This Exists
 
 AI coding and agent tools are getting powerful, but most of them still live in separate boxes:

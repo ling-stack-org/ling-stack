@@ -10,7 +10,7 @@ This design depends on:
 - [Provider presets](provider-presets.md)
 - [Approval policy](approval-policy.md)
 
-The current `apps/web` package now provides the local app shell, Model Workbench provider setup with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, channel/task workspace, channel detail editing, task detail editing, first task-run entry, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
+The current `apps/web` package now provides the local app shell, Model Workbench provider setup with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, a client-style channel workspace, compact task creation/running, contextual readiness and first-run panels, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
 
 ## Goal
 
@@ -59,6 +59,15 @@ This is an operational tool. It should feel dense, calm, inspectable, and built 
 - explicit approval cards,
 - no decorative sections that hide the workflow.
 
+The default Web entry should now behave like a lightweight desktop client:
+
+- open directly into the selected channel, usually `# engineering`,
+- keep workspace, channels, AI teammates, and direct messages in the left sidebar,
+- keep provider setup, approval inbox/policy, media jobs, and settings in the configuration rail or dedicated pages,
+- keep the center focused on channel activity, task cards, and the task composer,
+- keep readiness, first-run guidance, approvals, and live events in the right context panel,
+- avoid showing channel/provider/policy forms as the first thing a ready user sees.
+
 ## Application Shape
 
 Recommended stack:
@@ -87,19 +96,20 @@ VITE_LING_STACK_DAEMON_URL=http://127.0.0.1:17891
 
 ## Layout
 
-Use a three-region app shell:
+Use a three-region app shell with macOS-style glass surfaces:
 
 ```text
-┌────────────────────────────────────────────────────┐
-│ Top bar: workspace, daemon status, provider health │
-├──────────────┬──────────────────────┬──────────────┤
-│ Left nav     │ Main workspace       │ Right panel  │
-│              │                      │              │
-│ Channels     │ Task board / run     │ Run context  │
-│ Runs         │ viewer / settings    │ approvals    │
-│ Model WB     │                      │ artifacts    │
-│ Approvals    │                      │              │
-└──────────────┴──────────────────────┴──────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ Mac top bar: daemon status, provider status, language    │
+├──────────────┬──────────────────────────────┬────────────┤
+│ Sidebar      │ Channel workspace            │ Context    │
+│ Workspace    │ # engineering activity       │ readiness  │
+│ Inbox/Tasks  │ task cards + composer        │ first-run   │
+│ Channels     │                              │ approvals  │
+│ AI teammates │                              │ event feed  │
+│ DMs          │                              │            │
+│ Config rail  │                              │            │
+└──────────────┴──────────────────────────────┴────────────┘
 ```
 
 Desktop widths:
@@ -139,6 +149,13 @@ Purpose:
 - show whether Ling Stack is ready to run,
 - expose the next action,
 - avoid empty dashboard noise.
+
+Current homepage shape:
+
+- left sidebar owns workspace navigation, channel selection, AI teammate presence, direct messages, and compact configuration icons,
+- center channel window shows the selected channel header, daemon/provider chips, activity messages, task cards, and a task composer,
+- right context panel shows readiness, first-run state, pending approvals, and event stream,
+- channel creation and other configuration controls are collapsed or moved out of the primary center flow.
 
 Content:
 

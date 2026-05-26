@@ -1,17 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   Bot,
   CheckCircle2,
   CircleAlert,
   Clock3,
+  Command,
   Database,
   Download,
   ExternalLink,
   Folder,
+  Hash,
   History,
   Image as ImageIcon,
+  Inbox,
   Loader2,
+  MessageSquare,
   Pencil,
   Play,
   PlugZap,
@@ -20,10 +24,12 @@ import {
   RotateCcw,
   Save,
   Search,
+  Send,
   Settings,
   ShieldCheck,
   SquareTerminal,
   Trash2,
+  Users,
   Workflow,
 } from "lucide-react";
 import {
@@ -1329,43 +1335,218 @@ export function App(): JSX.Element {
   return (
     <main className="app-shell">
       <TopBar daemonHealthy={daemonHealthy} provider={`${form.provider}/${form.model}`} onRefresh={refreshHealth} />
-      <aside className="left-nav" aria-label="Ling Stack navigation">
-        <div className="brand">
-          <div className="brand-mark">L</div>
-          <div>
-            <strong>Ling Stack</strong>
-            <span>{t("AI teammate workspace")}</span>
-          </div>
-        </div>
-        <nav>
-          <NavItem icon={<Workflow />} label={t("Workspace")} active={activeView === "workspace"} onClick={() => setActiveView("workspace")} />
-          <NavItem icon={<History />} label={t("Runs")} active={activeView === "runs"} onClick={() => setActiveView("runs")} />
-          <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeView === "providers"} onClick={() => setActiveView("providers")} />
-          <NavItem icon={<Database />} label={t("Media Jobs")} active={activeView === "media"} onClick={() => setActiveView("media")} />
-          <NavItem
-            icon={<ShieldCheck />}
-            label={t("Approvals")}
-            active={activeView === "approvals"}
-            onClick={() => {
-              setApprovalRepairRunId("");
-              setActiveView("approvals");
-            }}
-          />
-          <NavItem icon={<Settings />} label={t("Settings")} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
-        </nav>
-      </aside>
-      <section className="workspace">
-        <div className="workspace-head">
-          <div>
-            <h1>{t(viewTitle(activeView))}</h1>
-            <p>{t(viewDescription(activeView))}</p>
-          </div>
-          <StatusBadge status={latestStatus} />
-        </div>
-
+      <SidebarNavigation
+        activeView={activeView}
+        channels={channels}
+        selectedChannelId={selectedChannelId}
+        approvals={approvals}
+        providers={providers}
+        onOpenView={(view) => {
+          if (view === "approvals") {
+            setApprovalRepairRunId("");
+          }
+          setActiveView(view);
+        }}
+        onSelectChannel={(channelId) => {
+          setSelectedChannelId(channelId);
+          setTaskRunProviderId("");
+          setActiveView("workspace");
+        }}
+      />
+      <section className={activeView === "workspace" ? "workspace workspace-client-surface" : "workspace"}>
         {activeView === "workspace" ? (
+          <WorkspaceClientView
+            cwd={form.cwd}
+            daemonHealthy={daemonHealthy}
+            providerLabel={`${form.provider}/${form.model}`}
+            channels={channels}
+            selectedChannelId={selectedChannelId}
+            channelForm={channelForm}
+            tasks={tasks}
+            taskForm={taskForm}
+            selectedTaskId={selectedTaskId}
+            providers={providers}
+            taskRunProviderId={taskRunProviderId}
+            fallbackProviderId={form.providerPresetId}
+            channelsLoading={channelsLoading}
+            tasksLoading={tasksLoading}
+            providersLoading={providersLoading}
+            approvals={approvals}
+            runs={runs}
+            runById={runById}
+            activeRunId={activeRunId}
+            latestStatus={latestStatus}
+            isRunning={isRunning}
+            errorMessage={errorMessage}
+            onCwdChange={updateWorkspaceCwd}
+            onChannelFormChange={setChannelForm}
+            onTaskFormChange={setTaskForm}
+            onProviderSelect={(providerId) => {
+              setTaskRunProviderId(providerId);
+              const provider = providers.find((item) => item.id === providerId);
+              if (provider) {
+                applyProviderToRun(provider);
+              }
+            }}
+            onSelectChannel={(channelId) => {
+              setSelectedChannelId(channelId);
+              setTaskRunProviderId("");
+            }}
+            onRefreshChannels={() => void refreshChannels()}
+            onCreateDefaultChannel={() => void saveDefaultChannel()}
+            onCreateChannel={() => void saveChannel()}
+            onCreateTask={() => void saveTask()}
+            onRefreshTasks={() => void refreshTasks()}
+            onSelectTask={setSelectedTaskId}
+            onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
+            onRunTask={(task) => void runPersistedTask(task)}
+            onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+            onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
+            onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : setActiveView("providers")}
+          />
+        ) : (
           <>
-            <WorkspaceReadiness
+            <div className="workspace-head">
+              <div>
+                <h1>{t(viewTitle(activeView))}</h1>
+                <p>{t(viewDescription(activeView))}</p>
+              </div>
+              <StatusBadge status={latestStatus} />
+            </div>
+            {activeView === "runs" ? (
+              <RunHistory
+                cwd={form.cwd}
+                runs={runs}
+                selectedRunId={activeRunId}
+                selectedRun={run}
+                events={events}
+                artifacts={artifacts}
+                assistantText={assistantText}
+                approvals={activeRunApprovals}
+                approvalsLoading={approvalsLoading}
+                resolvingApprovals={resolvingApprovals}
+                isLoading={runsLoading}
+                isRunning={isRunning}
+                errorMessage={errorMessage}
+                onCwdChange={(cwd) => {
+                  updateWorkspaceCwd(cwd);
+                  setRun(undefined);
+                  setEvents([]);
+                  setArtifacts([]);
+                  setActiveRunId("");
+                  setLookupRunId("");
+                }}
+                onRefresh={() => void refreshRuns()}
+                onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
+                onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
+                onRerun={(sourceRun) => void rerunRun(sourceRun)}
+                onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+                onOpenProviders={(sourceRun) => openProvidersFromRun(sourceRun)}
+                onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
+                onEditTask={(sourceRun) => void openTaskFromRun(sourceRun)}
+                onSelect={(runId) => void selectRun(runId)}
+              />
+            ) : activeView === "providers" ? (
+              <ProviderSettings
+                cwd={form.cwd}
+                providers={providers}
+                templates={providerTemplates}
+                form={providerForm}
+                editingProviderId={editingProviderId}
+                isLoading={providersLoading}
+                checkingProviderIds={checkingProviderIds}
+                errorMessage={errorMessage}
+                checkResult={providerCheck}
+                checkedProviderId={providerCheckTargetId}
+                batchResult={providerBatchResult}
+                selectedProviderId={form.providerPresetId}
+                repairRun={providerRepairRun}
+                isRunning={isRunning}
+                onCwdChange={updateWorkspaceCwd}
+                onFormChange={setProviderForm}
+                onTemplateSelect={(template) => {
+                  setProviderRepairRunId("");
+                  setEditingProviderId("");
+                  setProviderCheck(undefined);
+                  setProviderCheckTargetId("");
+                  setProviderForm(providerTemplateToForm(template));
+                }}
+                onNew={() => {
+                  setProviderRepairRunId("");
+                  setEditingProviderId("");
+                  setProviderCheck(undefined);
+                  setProviderCheckTargetId("");
+                  setProviderForm(defaultProviderForm);
+                }}
+                onSave={() => void saveProvider()}
+                onRefresh={() => void refreshProviders()}
+                onEdit={editProvider}
+                onDelete={(providerId) => void removeProvider(providerId)}
+                onCheck={(providerId) => void runProviderCheck(providerId)}
+                onCheckBatch={() => void runProviderBatchCheck()}
+                onUse={applyProviderToRun}
+                onRerun={(sourceRun) => void rerunRun(sourceRun)}
+                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onClearRepair={() => setProviderRepairRunId("")}
+              />
+            ) : activeView === "media" ? (
+              <MediaJobsPage
+                cwd={form.cwd}
+                providers={providers}
+                jobs={mediaJobs}
+                artifactsByJob={mediaJobArtifacts}
+                form={mediaJobForm}
+                isLoading={mediaJobsLoading}
+                runningJobId={runningMediaJobId}
+                errorMessage={errorMessage}
+                onCwdChange={updateWorkspaceCwd}
+                onFormChange={setMediaJobForm}
+                onRefresh={() => void refreshMediaJobs()}
+                onCreate={() => void saveMediaJob()}
+                onRun={(jobId) => void executeMediaJob(jobId)}
+                onOpenProviders={() => setActiveView("providers")}
+              />
+            ) : activeView === "settings" ? (
+              <SettingsPage
+                cwd={form.cwd}
+                policy={approvalPolicy}
+                form={approvalPolicyForm}
+                isLoading={approvalPolicyLoading}
+                errorMessage={errorMessage}
+                onCwdChange={updateWorkspaceCwd}
+                onFormChange={setApprovalPolicyForm}
+                onRefresh={() => void refreshApprovalPolicy()}
+                onSave={() => void saveApprovalPolicy()}
+              />
+            ) : (
+              <ApprovalsPage
+                cwd={form.cwd}
+                approvals={approvals}
+                repairRunId={approvalRepairRunId}
+                repairRun={approvalRepairRun}
+                isLoading={approvalsLoading}
+                resolvingApprovals={resolvingApprovals}
+                errorMessage={errorMessage}
+                onCwdChange={(cwd) => {
+                  setApprovalRepairRunId("");
+                  updateWorkspaceCwd(cwd);
+                }}
+                onRefresh={() => void refreshApprovals()}
+                onRefreshRepair={(runId) => {
+                  void refreshApprovals(form.cwd.trim(), runId);
+                  void loadRun(runId, form.cwd.trim());
+                }}
+                onResolve={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onClearRepair={() => setApprovalRepairRunId("")}
+              />
+            )}
+          </>
+        )}
+      </section>
+      <aside className="right-panel">
+        {activeView === "workspace" ? (
+          <WorkspaceContextPanel
               daemonHealthy={daemonHealthy}
               providers={providers}
               channels={channels}
@@ -1383,7 +1564,7 @@ export function App(): JSX.Element {
               onOpenApprovals={() => openApprovalsFromWorkspace()}
               onCreateChannel={() => void saveDefaultChannel()}
               onCreateTask={() => void saveTask()}
-            />
+          >
             <FirstRunFlow
               providers={providers}
               channels={channels}
@@ -1410,222 +1591,628 @@ export function App(): JSX.Element {
               onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
               onRunTask={(task) => void runPersistedTask(task)}
             />
-            <div className="workspace-task-grid">
-              <ChannelTaskWorkspace
-                cwd={form.cwd}
-                channels={channels}
-                selectedChannelId={selectedChannelId}
-                channelForm={channelForm}
-                channelEditForm={channelEditForm}
-                tasks={tasks}
-                taskForm={taskForm}
-                selectedTaskId={selectedTaskId}
-                taskEditForm={taskEditForm}
-                providers={providers}
-                taskRunProviderId={taskRunProviderId}
-                fallbackProviderId={form.providerPresetId}
-                channelsLoading={channelsLoading}
-                tasksLoading={tasksLoading}
-                isRunning={isRunning}
-                activeRunId={activeRunId}
-                latestStatus={latestStatus}
-                runById={runById}
-                repairRun={taskRepairRun}
-                errorMessage={errorMessage}
-                onCwdChange={updateWorkspaceCwd}
-                onChannelFormChange={setChannelForm}
-                onChannelEditFormChange={setChannelEditForm}
-                onTaskFormChange={setTaskForm}
-                onTaskEditFormChange={setTaskEditForm}
-                onProviderSelect={(providerId) => {
-                  setTaskRunProviderId(providerId);
-                  const provider = providers.find((item) => item.id === providerId);
-                  if (provider) {
-                    applyProviderToRun(provider);
-                  }
-                }}
-                onSelectChannel={(channelId) => {
-                  setSelectedChannelId(channelId);
-                  setTaskRunProviderId("");
-                }}
-                onCreateChannel={() => void saveChannel()}
-                onSaveChannelEdit={(channelId) => void saveChannelEdit(channelId)}
-                onDeleteChannel={(channelId) => void removeChannel(channelId)}
-                onRefreshChannels={() => void refreshChannels()}
-                onCreateTask={() => void saveTask()}
-                onRefreshTasks={() => void refreshTasks()}
-                onSelectTask={setSelectedTaskId}
-                onSaveTaskEdit={(taskId) => void saveTaskEdit(taskId)}
-                onRunTask={(task) => void runPersistedTask(task)}
-                onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
-                onRunUpdatedTask={(task) => void runUpdatedTaskFromRepair(task)}
-                onCheckThenRunUpdatedTask={(task) => void checkThenRunUpdatedTaskFromRepair(task)}
-                onReviewTask={(taskId) => void moveTaskToReview(taskId)}
-                onDeleteTask={(taskId) => void removeTask(taskId)}
-                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
-                onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
-                onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : setActiveView("providers")}
-                onClearRepair={() => setTaskRepairRunId("")}
-              />
-              <RunTimeline
-                events={events}
-                assistantText={assistantText}
-                errorMessage={errorMessage}
-                isRunning={isRunning}
-                pendingApprovals={activePendingApprovals}
-                approvalsLoading={approvalsLoading}
-                resolvingApprovals={resolvingApprovals}
-                onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
-                onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
-              />
-            </div>
-          </>
-        ) : activeView === "runs" ? (
-          <RunHistory
-            cwd={form.cwd}
-            runs={runs}
-            selectedRunId={activeRunId}
-            selectedRun={run}
-            events={events}
-            artifacts={artifacts}
-            assistantText={assistantText}
-            approvals={activeRunApprovals}
-            approvalsLoading={approvalsLoading}
-            resolvingApprovals={resolvingApprovals}
-            isLoading={runsLoading}
-            isRunning={isRunning}
-            errorMessage={errorMessage}
-            onCwdChange={(cwd) => {
-              updateWorkspaceCwd(cwd);
-              setRun(undefined);
-              setEvents([]);
-              setArtifacts([]);
-              setActiveRunId("");
-              setLookupRunId("");
-            }}
-            onRefresh={() => void refreshRuns()}
-            onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
-            onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
-            onRerun={(sourceRun) => void rerunRun(sourceRun)}
-            onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
-            onOpenProviders={(sourceRun) => openProvidersFromRun(sourceRun)}
-            onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
-            onEditTask={(sourceRun) => void openTaskFromRun(sourceRun)}
-            onSelect={(runId) => void selectRun(runId)}
-          />
+            <RunTimeline
+              events={events}
+              assistantText={assistantText}
+              errorMessage={errorMessage}
+              isRunning={isRunning}
+              pendingApprovals={activePendingApprovals}
+              approvalsLoading={approvalsLoading}
+              resolvingApprovals={resolvingApprovals}
+              onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
+              onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+            />
+          </WorkspaceContextPanel>
         ) : (
-          activeView === "providers" ? (
-          <ProviderSettings
-            cwd={form.cwd}
-            providers={providers}
-            templates={providerTemplates}
-            form={providerForm}
-            editingProviderId={editingProviderId}
-            isLoading={providersLoading}
-            checkingProviderIds={checkingProviderIds}
-            errorMessage={errorMessage}
-            checkResult={providerCheck}
-            checkedProviderId={providerCheckTargetId}
-            batchResult={providerBatchResult}
-            selectedProviderId={form.providerPresetId}
-            repairRun={providerRepairRun}
-            isRunning={isRunning}
-            onCwdChange={updateWorkspaceCwd}
-            onFormChange={setProviderForm}
-            onTemplateSelect={(template) => {
-              setProviderRepairRunId("");
-              setEditingProviderId("");
-              setProviderCheck(undefined);
-              setProviderCheckTargetId("");
-              setProviderForm(providerTemplateToForm(template));
-            }}
-            onNew={() => {
-              setProviderRepairRunId("");
-              setEditingProviderId("");
-              setProviderCheck(undefined);
-              setProviderCheckTargetId("");
-              setProviderForm(defaultProviderForm);
-            }}
-            onSave={() => void saveProvider()}
-            onRefresh={() => void refreshProviders()}
-            onEdit={editProvider}
-            onDelete={(providerId) => void removeProvider(providerId)}
-            onCheck={(providerId) => void runProviderCheck(providerId)}
-            onCheckBatch={() => void runProviderBatchCheck()}
-            onUse={applyProviderToRun}
-            onRerun={(sourceRun) => void rerunRun(sourceRun)}
-            onOpenRun={(runId) => void openRunFromWorkspace(runId)}
-            onClearRepair={() => setProviderRepairRunId("")}
+          <RunInspector
+            activeRunId={activeRunId}
+            lookupRunId={lookupRunId}
+            run={run}
+            events={events}
+            onLookupRunIdChange={setLookupRunId}
+            onLoadRun={() => void loadRun()}
           />
-          ) : (
-            activeView === "media" ? (
-              <MediaJobsPage
-                cwd={form.cwd}
-                providers={providers}
-                jobs={mediaJobs}
-                artifactsByJob={mediaJobArtifacts}
-                form={mediaJobForm}
-                isLoading={mediaJobsLoading}
-                runningJobId={runningMediaJobId}
-                errorMessage={errorMessage}
-                onCwdChange={updateWorkspaceCwd}
-                onFormChange={setMediaJobForm}
-                onRefresh={() => void refreshMediaJobs()}
-                onCreate={() => void saveMediaJob()}
-                onRun={(jobId) => void executeMediaJob(jobId)}
-                onOpenProviders={() => setActiveView("providers")}
-              />
-            ) : (
-              activeView === "settings" ? (
-              <SettingsPage
-                cwd={form.cwd}
-                policy={approvalPolicy}
-                form={approvalPolicyForm}
-                isLoading={approvalPolicyLoading}
-                errorMessage={errorMessage}
-                onCwdChange={updateWorkspaceCwd}
-                onFormChange={setApprovalPolicyForm}
-                onRefresh={() => void refreshApprovalPolicy()}
-                onSave={() => void saveApprovalPolicy()}
-              />
-              ) : (
-                <ApprovalsPage
-                  cwd={form.cwd}
-                  approvals={approvals}
-                  repairRunId={approvalRepairRunId}
-                  repairRun={approvalRepairRun}
-                  isLoading={approvalsLoading}
-                  resolvingApprovals={resolvingApprovals}
-                  errorMessage={errorMessage}
-                  onCwdChange={(cwd) => {
-                    setApprovalRepairRunId("");
-                    updateWorkspaceCwd(cwd);
-                  }}
-                  onRefresh={() => void refreshApprovals()}
-                  onRefreshRepair={(runId) => {
-                    void refreshApprovals(form.cwd.trim(), runId);
-                    void loadRun(runId, form.cwd.trim());
-                  }}
-                  onResolve={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
-                  onOpenRun={(runId) => void openRunFromWorkspace(runId)}
-                  onClearRepair={() => setApprovalRepairRunId("")}
-                />
-              )
-            )
-          )
         )}
-      </section>
-      <aside className="right-panel">
-        <RunInspector
-          activeRunId={activeRunId}
-          lookupRunId={lookupRunId}
-          run={run}
-          events={events}
-          onLookupRunIdChange={setLookupRunId}
-          onLoadRun={() => void loadRun()}
-        />
       </aside>
     </main>
+  );
+}
+
+function SidebarNavigation({
+  activeView,
+  channels,
+  selectedChannelId,
+  approvals,
+  providers,
+  onOpenView,
+  onSelectChannel,
+}: {
+  readonly activeView: ViewId;
+  readonly channels: readonly Channel[];
+  readonly selectedChannelId: string;
+  readonly approvals: readonly ApprovalRequest[];
+  readonly providers: readonly ProviderPreset[];
+  readonly onOpenView: (view: ViewId) => void;
+  readonly onSelectChannel: (channelId: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
+  const readyProviderCount = providers.filter(providerPreflightReady).length;
+
+  return (
+    <aside className="left-nav" aria-label="Ling Stack navigation">
+      <div className="brand">
+        <div className="brand-mark">L</div>
+        <div>
+          <strong>Ling Stack</strong>
+          <span>{t("AI teammate workspace")}</span>
+        </div>
+      </div>
+
+      <nav className="primary-nav">
+        <NavItem icon={<Workflow />} label={t("Workspace")} active={activeView === "workspace"} onClick={() => onOpenView("workspace")} />
+        <NavItem icon={<Inbox />} label={t("Inbox")} active={activeView === "approvals"} onClick={() => onOpenView("approvals")} />
+        <NavItem icon={<SquareTerminal />} label={t("Tasks")} active={activeView === "workspace"} onClick={() => onOpenView("workspace")} />
+        <NavItem icon={<History />} label={t("Runs")} active={activeView === "runs"} onClick={() => onOpenView("runs")} />
+      </nav>
+
+      <SidebarSection title={t("Channels")} actionLabel={channels.length === 0 ? t("Create") : undefined}>
+        {channels.length === 0 ? (
+          <button className="sidebar-row muted-row" type="button" onClick={() => onOpenView("workspace")}>
+            <Hash size={14} />
+            <span>{t("No channel yet")}</span>
+          </button>
+        ) : (
+          channels.map((channel) => (
+            <button
+              key={channel.id}
+              className={channel.id === selectedChannelId && activeView === "workspace" ? "sidebar-row selected" : "sidebar-row"}
+              type="button"
+              onClick={() => onSelectChannel(channel.id)}
+            >
+              <Hash size={14} />
+              <span>{channel.name}</span>
+            </button>
+          ))
+        )}
+      </SidebarSection>
+
+      <SidebarSection title={t("AI Teammates")}>
+        <button className="sidebar-row" type="button" onClick={() => onOpenView("workspace")}>
+          <AvatarInitial label="A" tone="orange" />
+          <span>Ada</span>
+          <small>AI</small>
+        </button>
+        <button className="sidebar-row" type="button" onClick={() => onOpenView("workspace")}>
+          <AvatarInitial label="H" tone="teal" />
+          <span>Hopper</span>
+          <small>AI</small>
+        </button>
+      </SidebarSection>
+
+      <SidebarSection title={t("Direct Messages")}>
+        <button className="sidebar-row" type="button" onClick={() => onOpenView("workspace")}>
+          <AvatarInitial label="T" />
+          <span>Tian</span>
+        </button>
+        <button className="sidebar-row" type="button" onClick={() => onOpenView("workspace")}>
+          <AvatarInitial label="M" tone="violet" />
+          <span>Mia</span>
+        </button>
+      </SidebarSection>
+
+      <div className="sidebar-config">
+        <span>{t("Configuration")}</span>
+        <div className="config-grid">
+          <button
+            type="button"
+            className={activeView === "providers" ? "config-button active" : "config-button"}
+            onClick={() => onOpenView("providers")}
+            title={t("Model Workbench")}
+            aria-label={t("Model Workbench")}
+          >
+            <PlugZap size={16} />
+            <small>{readyProviderCount}</small>
+          </button>
+          <button
+            type="button"
+            className={activeView === "approvals" ? "config-button active" : "config-button"}
+            onClick={() => onOpenView("approvals")}
+            title={t("Approvals")}
+            aria-label={t("Approvals")}
+          >
+            <ShieldCheck size={16} />
+            <small>{pendingApprovalCount}</small>
+          </button>
+          <button
+            type="button"
+            className={activeView === "media" ? "config-button active" : "config-button"}
+            onClick={() => onOpenView("media")}
+            title={t("Media Jobs")}
+            aria-label={t("Media Jobs")}
+          >
+            <Database size={16} />
+          </button>
+          <button
+            type="button"
+            className={activeView === "settings" ? "config-button active" : "config-button"}
+            onClick={() => onOpenView("settings")}
+            title={t("Settings")}
+            aria-label={t("Settings")}
+          >
+            <Settings size={16} />
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function SidebarSection({
+  title,
+  actionLabel,
+  children,
+}: {
+  readonly title: string;
+  readonly actionLabel?: string;
+  readonly children: ReactNode;
+}): JSX.Element {
+  return (
+    <section className="sidebar-section">
+      <div className="sidebar-section-title">
+        <span>{title}</span>
+        {actionLabel ? <small>{actionLabel}</small> : null}
+      </div>
+      <div className="sidebar-section-list">{children}</div>
+    </section>
+  );
+}
+
+function AvatarInitial({ label, tone = "default" }: { readonly label: string; readonly tone?: "default" | "orange" | "teal" | "violet" }): JSX.Element {
+  return <span className={`avatar-initial ${tone}`}>{label}</span>;
+}
+
+function WorkspaceClientView({
+  cwd,
+  daemonHealthy,
+  providerLabel,
+  channels,
+  selectedChannelId,
+  channelForm,
+  tasks,
+  taskForm,
+  selectedTaskId,
+  providers,
+  taskRunProviderId,
+  fallbackProviderId,
+  channelsLoading,
+  tasksLoading,
+  providersLoading,
+  approvals,
+  runs,
+  runById,
+  activeRunId,
+  latestStatus,
+  isRunning,
+  errorMessage,
+  onCwdChange,
+  onChannelFormChange,
+  onTaskFormChange,
+  onProviderSelect,
+  onSelectChannel,
+  onRefreshChannels,
+  onCreateDefaultChannel,
+  onCreateChannel,
+  onCreateTask,
+  onRefreshTasks,
+  onSelectTask,
+  onCheckThenRunTask,
+  onRunTask,
+  onOpenRun,
+  onOpenApprovals,
+  onOpenProviders,
+}: {
+  readonly cwd: string;
+  readonly daemonHealthy: boolean | undefined;
+  readonly providerLabel: string;
+  readonly channels: readonly Channel[];
+  readonly selectedChannelId: string;
+  readonly channelForm: ChannelFormState;
+  readonly tasks: readonly Task[];
+  readonly taskForm: TaskFormState;
+  readonly selectedTaskId: string;
+  readonly providers: readonly ProviderPreset[];
+  readonly taskRunProviderId: string;
+  readonly fallbackProviderId: string;
+  readonly channelsLoading: boolean;
+  readonly tasksLoading: boolean;
+  readonly providersLoading: boolean;
+  readonly approvals: readonly ApprovalRequest[];
+  readonly runs: readonly RunSession[];
+  readonly runById: ReadonlyMap<string, RunSession>;
+  readonly activeRunId: string;
+  readonly latestStatus: string;
+  readonly isRunning: boolean;
+  readonly errorMessage: string;
+  readonly onCwdChange: (cwd: string) => void;
+  readonly onChannelFormChange: (form: ChannelFormState) => void;
+  readonly onTaskFormChange: (form: TaskFormState) => void;
+  readonly onProviderSelect: (providerId: string) => void;
+  readonly onSelectChannel: (channelId: string) => void;
+  readonly onRefreshChannels: () => void;
+  readonly onCreateDefaultChannel: () => void;
+  readonly onCreateChannel: () => void;
+  readonly onCreateTask: () => void;
+  readonly onRefreshTasks: () => void;
+  readonly onSelectTask: (taskId: string) => void;
+  readonly onCheckThenRunTask: (task: Task) => void;
+  readonly onRunTask: (task: Task) => void;
+  readonly onOpenRun: (runId: string) => void;
+  readonly onOpenApprovals: (runId?: string) => void;
+  readonly onOpenProviders: (run?: RunSession) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
+  const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
+  const readyProvider = providers.find(providerPreflightReady);
+  const taskReadyProviders = providers.filter(providerPreflightReady);
+  const setupChatProviders = providers.filter((provider) => !isMediaProvider(provider) && !providerPreflightReady(provider));
+  const mediaProviders = providers.filter(isMediaProvider);
+  const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId || readyProvider?.id) ?? "";
+  const effectiveProvider = providers.find((provider) => provider.id === effectiveProviderId);
+  const providerBlocker = providerRunPreflightBlocker(effectiveProvider);
+  const latestRun = activeRunId ? runById.get(activeRunId) : runs[0];
+  const channelStatusText = selectedChannel
+    ? `${selectedChannel.allowedTools.length} tools · ${selectedChannel.boundPath ?? cwd}`
+    : t("No channel yet");
+
+  return (
+    <div className="client-window" aria-label={t("Workspace")}>
+      <header className="channel-header">
+        <div>
+          <div className="channel-title-line">
+            <Hash size={21} />
+            <h1>{selectedChannel?.name ?? "engineering"}</h1>
+          </div>
+          <label className="channel-path-field">
+            <span>{t("Workspace path")}</span>
+            <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
+          </label>
+          <p>{channelStatusText}</p>
+        </div>
+        <div className="channel-header-actions">
+          <span className={daemonHealthy ? "glass-chip ok" : "glass-chip attention"}>
+            <Activity size={14} />
+            {daemonHealthy === undefined ? t("Checking daemon") : daemonHealthy ? t("Daemon ready") : t("Daemon offline")}
+          </span>
+          <span className={providerBlocker ? "glass-chip attention" : "glass-chip ok"}>
+            <Bot size={14} />
+            {effectiveProvider?.displayName ?? providerLabel}
+          </span>
+        </div>
+      </header>
+
+      <div className="client-main">
+        <section className="conversation-panel" aria-label={t("Channel activity")}>
+          {errorMessage ? (
+            <div className="inline-error">
+              <CircleAlert size={17} />
+              {errorMessage}
+            </div>
+          ) : null}
+
+          <div className="message-feed">
+            <MessageBubble
+              avatar={<AvatarInitial label="L" tone="orange" />}
+              author="Ling Stack"
+              time={t("Now")}
+              body={selectedChannel ? t("Default workspace is ready. This channel is bound to {path}.", { path: selectedChannel.boundPath ?? cwd }) : t("Create a default channel to start the workspace loop.")}
+            />
+            <MessageBubble
+              avatar={<AvatarInitial label="T" />}
+              author="Tian"
+              time={t("Just now")}
+              body={selectedTask ? selectedTask.prompt : taskForm.prompt}
+            />
+            <MessageBubble
+              avatar={<AvatarInitial label="A" tone="teal" />}
+              author="Ada"
+              tag="AI"
+              time={t("Ready")}
+              body={providerBlocker ? providerBlocker : t("I can run this task with {providerName}. Risky tools will wait for approval.", { providerName: effectiveProvider?.displayName ?? providerLabel })}
+            />
+            {latestRun ? (
+              <MessageBubble
+                avatar={<AvatarInitial label="H" tone="violet" />}
+                author="Hopper"
+                tag="AI"
+                time={formatDateTime(latestRun.updatedAt)}
+                body={t("Latest run {runId} is {status}.", { runId: latestRun.id, status: latestRun.status })}
+                action={
+                  <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(latestRun.id)}>
+                    <History size={14} />
+                    {t("Open run")}
+                  </button>
+                }
+              />
+            ) : null}
+          </div>
+
+          <section className="task-strip" aria-label={t("Tasks")}>
+            <div className="task-strip-head">
+              <span>
+                <SquareTerminal size={16} />
+                <strong>{t("Tasks")}</strong>
+              </span>
+              <button className="icon-button" type="button" onClick={onRefreshTasks} disabled={!selectedChannelId || tasksLoading} aria-label={t("Refresh")}>
+                {tasksLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+              </button>
+            </div>
+            <div className="client-task-list">
+              {tasks.length === 0 ? (
+                <div className="client-empty-state">
+                  {tasksLoading ? <Loader2 className="spin" /> : <SquareTerminal />}
+                  <span>{tasksLoading ? t("Loading tasks...") : t("No tasks in this channel")}</span>
+                </div>
+              ) : (
+                tasks.map((task) => {
+                  const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
+                  const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
+                  const repairHint = buildRunRepairHint(linkedRun, pendingApprovalCount, linkedRunStatus);
+                  return (
+                    <article
+                      key={task.id}
+                      className={task.id === selectedTask?.id ? "client-task-card task-detail selected" : "client-task-card"}
+                      aria-label={task.id === selectedTask?.id ? t("Task detail") : undefined}
+                    >
+                      {task.id === selectedTask?.id ? <span className="client-task-kicker">{t("Task detail")}</span> : null}
+                      <button type="button" className="client-task-main" onClick={() => onSelectTask(task.id)}>
+                        <span>
+                          <strong>{task.title}</strong>
+                          <small>{task.prompt}</small>
+                        </span>
+                        <span className={`task-status ${task.status}`}>{task.status}</span>
+                      </button>
+                      {task.currentRunId ? (
+                        <div className="task-run-link compact">
+                          <StatusBadge status={linkedRunStatus} />
+                          <code>{task.currentRunId}</code>
+                          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
+                            <History size={14} />
+                            {t("Open run")}
+                          </button>
+                        </div>
+                      ) : null}
+                      {task.currentRunId && repairHint ? (
+                        <RunRepairHintBanner
+                          hint={repairHint}
+                          runId={task.currentRunId}
+                          compact
+                          onOpenProviders={() => onOpenProviders(linkedRun)}
+                          onOpenApprovals={onOpenApprovals}
+                          onOpenRun={onOpenRun}
+                        />
+                      ) : null}
+                      <div className="task-actions">
+                        <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={isRunning || !effectiveProvider || !canUseProviderForRun(effectiveProvider)}>
+                          {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                          {t("Check run")}
+                        </button>
+                        <button className="primary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || Boolean(providerBlocker)}>
+                          {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                          {t("Run")}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })
+              )}
+            </div>
+          </section>
+
+          <section className="composer-panel" aria-label={t("New task")}>
+            <div className="composer-head">
+              <span>
+                <MessageSquare size={16} />
+                {t("New task")}
+              </span>
+              <label className="field run-provider-field">
+                <span>{t("Run provider")}</span>
+                <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providersLoading || providers.length === 0}>
+                  <option value="">{t("Select provider preset")}</option>
+                  <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
+                </select>
+              </label>
+            </div>
+            <input
+              className="composer-title"
+              value={taskForm.title}
+              onChange={(event) => onTaskFormChange({ ...taskForm, title: event.target.value })}
+              placeholder={t("Title")}
+            />
+            <textarea
+              value={taskForm.prompt}
+              rows={3}
+              onChange={(event) => onTaskFormChange({ ...taskForm, prompt: event.target.value })}
+              placeholder={t("Prompt")}
+            />
+            {mediaProviders.length > 0 ? (
+              <div className="provider-run-notice neutral client-provider-notice">
+                <Database size={16} />
+                <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
+              </div>
+            ) : null}
+            <div className="composer-footer">
+              <div className="tool-token-list" aria-label={t("Tool calls")}>
+                {(selectedChannel?.allowedTools ?? defaultTools).map((tool) => (
+                  <span key={tool} className={riskyTools.includes(tool) ? "tool-token risky" : "tool-token"}>{tool}</span>
+                ))}
+              </div>
+              <button className="primary-button" type="button" onClick={onCreateTask} disabled={!selectedChannelId || !taskForm.prompt.trim()}>
+                <Send size={15} />
+                {t("Create task")}
+              </button>
+            </div>
+          </section>
+        </section>
+
+        <aside className="workspace-config-dock" aria-label={t("Workspace configuration")}>
+          <div className="dock-card">
+            <div className="dock-card-head">
+              <Command size={16} />
+              <strong>{t("Workspace")}</strong>
+            </div>
+            <label className="field wide">
+              <span>{t("Workspace path")}</span>
+              <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
+            </label>
+          </div>
+          <div className="dock-card">
+            <div className="dock-card-head">
+              <Workflow size={16} />
+              <strong>{t("Channels")}</strong>
+              <button className="icon-button" type="button" onClick={onRefreshChannels} disabled={channelsLoading} aria-label={t("Refresh")}>
+                {channelsLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+              </button>
+            </div>
+            <div className="mini-channel-list">
+              {channels.map((channel) => (
+                <button key={channel.id} type="button" className={channel.id === selectedChannelId ? "mini-channel active" : "mini-channel"} onClick={() => onSelectChannel(channel.id)}>
+                  <Hash size={13} />
+                  {channel.name}
+                </button>
+              ))}
+              {channels.length === 0 ? (
+                <button className="secondary-button compact-button full" type="button" onClick={onCreateDefaultChannel} disabled={channelsLoading || !readyProvider}>
+                  <Plus size={14} />
+                  {t("Create default")}
+                </button>
+              ) : null}
+            </div>
+            <details className="config-disclosure">
+              <summary>{t("New channel")}</summary>
+              <label className="field wide">
+                <span>{t("Name")}</span>
+                <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} />
+              </label>
+              <label className="field wide">
+                <span>{t("Execution path")}</span>
+                <input value={channelForm.boundPath} onChange={(event) => onChannelFormChange({ ...channelForm, boundPath: event.target.value })} />
+              </label>
+              <button className="secondary-button compact-button full" type="button" onClick={onCreateChannel}>
+                <Plus size={14} />
+                {t("Create channel")}
+              </button>
+            </details>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function MessageBubble({
+  avatar,
+  author,
+  tag,
+  time,
+  body,
+  action,
+}: {
+  readonly avatar: JSX.Element;
+  readonly author: string;
+  readonly tag?: string;
+  readonly time: string;
+  readonly body: string;
+  readonly action?: JSX.Element;
+}): JSX.Element {
+  return (
+    <article className="message-bubble">
+      {avatar}
+      <div className="message-content">
+        <div className="message-meta">
+          <strong>{author}</strong>
+          {tag ? <small>{tag}</small> : null}
+          <time>{time}</time>
+        </div>
+        <p>{body}</p>
+        {action ? <div className="message-action">{action}</div> : null}
+      </div>
+    </article>
+  );
+}
+
+function WorkspaceContextPanel({
+  daemonHealthy,
+  providers,
+  channels,
+  tasks,
+  providersLoading,
+  channelsLoading,
+  tasksLoading,
+  runsLoading,
+  succeededRunCount,
+  runs,
+  approvals,
+  onRefreshDaemon,
+  onOpenProviders,
+  onOpenRuns,
+  onOpenApprovals,
+  onCreateChannel,
+  onCreateTask,
+  children,
+}: {
+  readonly daemonHealthy: boolean | undefined;
+  readonly providers: readonly ProviderPreset[];
+  readonly channels: readonly Channel[];
+  readonly tasks: readonly Task[];
+  readonly providersLoading: boolean;
+  readonly channelsLoading: boolean;
+  readonly tasksLoading: boolean;
+  readonly runsLoading: boolean;
+  readonly succeededRunCount: number;
+  readonly runs: readonly RunSession[];
+  readonly approvals: readonly ApprovalRequest[];
+  readonly onRefreshDaemon: () => void;
+  readonly onOpenProviders: () => void;
+  readonly onOpenRuns: () => void;
+  readonly onOpenApprovals: () => void;
+  readonly onCreateChannel: () => void;
+  readonly onCreateTask: () => void;
+  readonly children: ReactNode;
+}): JSX.Element {
+  const { t } = useI18n();
+
+  return (
+    <div className="workspace-context-stack">
+      <section className="context-panel-card" aria-label={t("Run context")}>
+        <div className="panel-title tight">
+          <Users size={16} />
+          <h2>{t("Context")}</h2>
+        </div>
+        <WorkspaceReadiness
+          daemonHealthy={daemonHealthy}
+          providers={providers}
+          channels={channels}
+          tasks={tasks}
+          providersLoading={providersLoading}
+          channelsLoading={channelsLoading}
+          tasksLoading={tasksLoading}
+          runsLoading={runsLoading}
+          succeededRunCount={succeededRunCount}
+          runs={runs}
+          approvals={approvals}
+          onRefreshDaemon={onRefreshDaemon}
+          onOpenProviders={onOpenProviders}
+          onOpenRuns={onOpenRuns}
+          onOpenApprovals={onOpenApprovals}
+          onCreateChannel={onCreateChannel}
+          onCreateTask={onCreateTask}
+        />
+      </section>
+      {children}
+    </div>
   );
 }
 
