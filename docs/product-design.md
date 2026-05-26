@@ -18,7 +18,7 @@ Model Workbench owns that loop:
 
 - group GPT/Claude, domestic AI, OpenAI-compatible relay, custom compatible access, and media providers clearly,
 - accept custom OpenAI-compatible endpoints with `displayName`, `baseUrl`, `model`, `apiKeyRef`, capabilities, reasoning, context, and max token fields,
-- keep secrets as `env:NAME` references until OS keychain support exists,
+- keep secrets as `env:NAME` or fail-closed `keychain:NAME` refs, never raw keys,
 - show whether a provider is usable for coding tasks: enabled, key-ready, check-ready, chat-capable, and not media-only,
 - keep media providers visible but outside the normal coding task provider picker.
 

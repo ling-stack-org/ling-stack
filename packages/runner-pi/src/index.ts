@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { Api, Model, ModelThinkingLevel, OpenAICompletionsCompat } from "@earendil-works/pi-ai";
+import type { RunnerExtensionMetadata } from "@ling-stack/plugin-sdk";
 import {
   AuthStorage,
   createAgentSession,
@@ -96,8 +97,58 @@ export interface PiRunnerResult {
 }
 
 const DEFAULT_TOOLS: readonly PiRunnerToolName[] = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const SUPPORTED_PROVIDER_APIS: readonly PiRunnerProviderApi[] = [
+  "openai-completions",
+  "openai-responses",
+  "anthropic-messages",
+  "google-generative-ai",
+  "mistral-conversations",
+];
 const APPROVAL_REQUIRED_TOOLS = new Set<string>(DEFAULT_TOOLS);
 const SIDE_EFFECT_TOOLS = new Set<string>(["bash", "edit", "write"]);
+
+export const PI_RUNNER_EXTENSION_ID = "runner:pi";
+
+export function getPiRunnerExtension(): RunnerExtensionMetadata {
+  return {
+    manifest: {
+      id: PI_RUNNER_EXTENSION_ID,
+      name: "Pi Runner",
+      version: "0.1.0",
+      kind: "runner",
+      trustLevel: "internal",
+      capabilities: [
+        "runner:pi",
+        ...DEFAULT_TOOLS.map((tool) => `tool:${tool}`),
+        ...SUPPORTED_PROVIDER_APIS.map((api) => `provider-api:${api}`),
+      ],
+      requiredApprovals: [
+        {
+          decision: "ask",
+          risk: "medium",
+          tools: ["bash", "edit", "write"],
+          reason: "Pi runner can invoke local tools; risky tools remain gated by approval policy.",
+        },
+      ],
+    },
+    runnerId: "pi",
+    supportedTools: [...DEFAULT_TOOLS],
+    supportedProviderApis: [...SUPPORTED_PROVIDER_APIS],
+    eventTypes: [
+      "run_start",
+      "turn_start",
+      "turn_end",
+      "assistant_text_delta",
+      "assistant_thinking_delta",
+      "tool_start",
+      "tool_update",
+      "tool_end",
+      "message_end",
+      "run_end",
+      "run_error",
+    ],
+  };
+}
 
 export class PiRunnerAdapter {
   async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {

@@ -17,6 +17,15 @@ importers:
 
   apps/web:
     dependencies:
+      '@ling-stack/api-client':
+        specifier: workspace:*
+        version: link:../../packages/api-client
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@ling-stack/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       lucide-react:
         specifier: ^0.468.0
         version: 0.468.0(react@18.3.1)
@@ -43,6 +52,12 @@ importers:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@22.19.19)(jiti@2.7.0)(yaml@2.9.0)
 
+  packages/api-client:
+    dependencies:
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/cli:
     dependencies:
       '@ling-stack/core':
@@ -55,13 +70,22 @@ importers:
         specifier: workspace:*
         version: link:../../apps/web
 
-  packages/core: {}
+  packages/contracts: {}
+
+  packages/core:
+    dependencies:
+      '@ling-stack/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
 
   packages/daemon:
     dependencies:
       '@ling-stack/core':
         specifier: workspace:*
         version: link:../core
+      '@ling-stack/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
       '@ling-stack/providers':
         specifier: workspace:*
         version: link:../providers
@@ -69,7 +93,13 @@ importers:
         specifier: workspace:*
         version: link:../runner-pi
 
-  packages/providers: {}
+  packages/plugin-sdk: {}
+
+  packages/providers:
+    dependencies:
+      '@ling-stack/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
 
   packages/runner-pi:
     dependencies:
@@ -79,6 +109,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: ^0.75.3
         version: 0.75.3(ws@8.20.1)(zod@4.4.3)
+      '@ling-stack/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
 
 packages:
 

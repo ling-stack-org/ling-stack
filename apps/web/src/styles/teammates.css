@@ -1,0 +1,778 @@
+.teammates-page {
+  display: grid;
+  gap: 12px;
+  min-height: calc(100vh - 134px);
+}
+
+.teammate-command-strip,
+.teammate-template-panel,
+.teammate-detail-panel,
+.teammate-add-panel,
+.teammate-workflow-panel {
+  border: 1px solid rgba(37, 42, 45, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.56);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+.teammate-command-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 74px;
+  padding: 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.76), rgba(234, 244, 239, 0.46)),
+    rgba(255, 255, 255, 0.48);
+  backdrop-filter: blur(22px);
+}
+
+.teammate-command-strip > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.teammate-command-strip strong {
+  color: #1f2528;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.teammate-command-strip small,
+.teammate-pack-label {
+  color: #727773;
+  font-size: 12px;
+}
+
+.teammate-pack-label {
+  color: #13715f;
+  font-weight: 800;
+}
+
+.teammate-command-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.teammate-wizard {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr) 290px;
+  grid-template-areas:
+    "steps stage preview"
+    "steps actions preview";
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(33, 38, 42, 0.1);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(107, 198, 176, 0.2), transparent 34%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(238, 241, 238, 0.52));
+  box-shadow: 0 18px 48px rgba(31, 37, 40, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(26px);
+}
+
+.teammate-step-rail {
+  grid-area: steps;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.teammate-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-height: 58px;
+  padding: 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #58635f;
+  text-align: left;
+}
+
+.teammate-step span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(33, 38, 42, 0.12);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.62);
+  color: #59625f;
+  font-size: 11px;
+  font-weight: 820;
+}
+
+.teammate-step strong,
+.teammate-step small {
+  grid-column: 2;
+}
+
+.teammate-step strong {
+  color: #242c2a;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.teammate-step small {
+  color: #6d7471;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.teammate-step.active,
+.teammate-step:hover {
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: inset 0 0 0 1px rgba(33, 38, 42, 0.08);
+}
+
+.teammate-step.active span,
+.teammate-step.done span {
+  border-color: rgba(22, 140, 120, 0.28);
+  background: linear-gradient(180deg, #48b7a5, #0e6f5d);
+  color: #ffffff;
+}
+
+.teammate-wizard-stage,
+.teammate-live-preview {
+  min-height: 430px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.56);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.teammate-wizard-stage {
+  grid-area: stage;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.teammate-stage-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.teammate-stage-title span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #18211f;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.teammate-stage-title small {
+  max-width: 360px;
+  color: #687370;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.teammate-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.teammate-filter-tabs button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #5a6460;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.teammate-filter-tabs button.active,
+.teammate-filter-tabs button:hover {
+  border-color: rgba(22, 140, 120, 0.26);
+  background: rgba(234, 248, 243, 0.82);
+  color: #116149;
+}
+
+.teammate-template-cards,
+.teammate-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.teammate-template-card,
+.teammate-provider-card {
+  display: grid;
+  gap: 9px;
+  min-height: 142px;
+  padding: 11px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #26302d;
+  text-align: left;
+}
+
+.teammate-template-card {
+  grid-template-columns: 34px minmax(0, 1fr);
+}
+
+.teammate-template-card .avatar-initial {
+  width: 34px;
+  height: 34px;
+  font-size: 12px;
+}
+
+.teammate-template-card > span:not(.avatar-initial),
+.teammate-template-card p,
+.teammate-template-card footer {
+  grid-column: 2;
+}
+
+.teammate-template-card strong,
+.teammate-provider-card strong {
+  color: #17211f;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.teammate-template-card small,
+.teammate-provider-card small {
+  color: #687370;
+  font-size: 11px;
+}
+
+.teammate-template-card p,
+.teammate-provider-card p,
+.teammate-live-preview p {
+  color: #59635f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.teammate-template-card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.teammate-template-card.selected,
+.teammate-template-card:hover,
+.teammate-provider-card.selected,
+.teammate-provider-card:hover {
+  border-color: rgba(22, 140, 120, 0.3);
+  background: rgba(238, 251, 247, 0.78);
+  box-shadow: 0 10px 26px rgba(16, 67, 58, 0.08);
+}
+
+.teammate-template-card.custom-card {
+  background: rgba(246, 246, 243, 0.68);
+}
+
+.teammate-provider-card {
+  align-content: start;
+  min-height: 118px;
+}
+
+.teammate-profile-form,
+.teammate-scope-grid {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.48fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.teammate-avatar-preview {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  min-height: 190px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 10%, rgba(22, 140, 120, 0.14), transparent 38%),
+    rgba(255, 255, 255, 0.52);
+}
+
+.teammate-avatar-preview .avatar-initial {
+  width: 64px;
+  height: 64px;
+  font-size: 20px;
+}
+
+.teammate-avatar-preview span {
+  color: #1e2825;
+  font-size: 14px;
+  font-weight: 780;
+}
+
+.teammate-section.compact {
+  margin-top: 0;
+}
+
+.teammate-scope-grid section {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+}
+
+.teammate-chip-grid,
+.teammate-memory-list {
+  display: grid;
+  gap: 7px;
+}
+
+.teammate-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #3f4a46;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.teammate-chip.selected {
+  border-color: rgba(22, 140, 120, 0.28);
+  background: rgba(233, 248, 243, 0.86);
+  color: #116149;
+}
+
+.teammate-muted-note {
+  color: #76807c;
+  font-size: 12px;
+}
+
+.teammate-toggle {
+  display: grid;
+  grid-template-columns: 18px 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.54);
+  color: #46514d;
+}
+
+.teammate-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: #0e7a63;
+}
+
+.teammate-toggle span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.teammate-toggle strong {
+  color: #202a27;
+  font-size: 12px;
+}
+
+.teammate-toggle small {
+  color: #6d7773;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.teammate-live-preview {
+  grid-area: preview;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.teammate-preview-hero {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.teammate-preview-hero .avatar-initial {
+  width: 46px;
+  height: 46px;
+  font-size: 14px;
+}
+
+.teammate-preview-hero strong,
+.teammate-preview-hero small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-preview-hero strong {
+  color: #17211f;
+  font-size: 16px;
+}
+
+.teammate-preview-hero small {
+  color: #67726f;
+  font-size: 12px;
+}
+
+.teammate-preview-meta {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(33, 38, 42, 0.08);
+}
+
+.teammate-preview-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.teammate-preview-skills span {
+  min-height: 24px;
+  padding: 4px 7px;
+  border: 1px solid rgba(22, 140, 120, 0.14);
+  border-radius: 999px;
+  background: rgba(240, 252, 248, 0.72);
+  color: #13715f;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.teammate-wizard-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.teammate-management-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.7fr) minmax(280px, 0.8fr) minmax(360px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.teammate-template-panel,
+.teammate-detail-panel,
+.teammate-add-panel,
+.teammate-workflow-panel {
+  padding: 14px;
+}
+
+.teammate-template-list,
+.teammate-skill-list,
+.teammate-draft-list {
+  display: grid;
+  gap: 8px;
+}
+
+.teammate-template-row,
+.teammate-draft-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 62px;
+  padding: 9px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.46);
+  color: #303738;
+  text-align: left;
+}
+
+.teammate-template-row:hover,
+.teammate-template-row.selected {
+  border-color: rgba(22, 140, 120, 0.28);
+  background: rgba(240, 252, 248, 0.72);
+}
+
+.teammate-template-row .avatar-initial,
+.teammate-draft-row .avatar-initial,
+.teammate-detail-hero .avatar-initial {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+
+.teammate-template-row span,
+.teammate-draft-row span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.teammate-template-row strong,
+.teammate-draft-row strong,
+.teammate-skill-row strong,
+.workflow-step-card strong {
+  overflow: hidden;
+  color: #1f2528;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-template-row small,
+.teammate-draft-row small,
+.teammate-skill-row small,
+.workflow-step-card small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #6d7370;
+  font-size: 12px;
+  line-height: 1.38;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.template-skill-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 23px;
+  padding: 0 7px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #13715f;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.teammate-detail-hero {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(33, 38, 42, 0.08);
+}
+
+.teammate-detail-hero .avatar-initial {
+  width: 42px;
+  height: 42px;
+  font-size: 14px;
+}
+
+.teammate-detail-hero h2 {
+  margin-bottom: 4px;
+  color: #1f2528;
+  font-size: 18px;
+}
+
+.teammate-detail-hero p,
+.teammate-workflow-panel p {
+  color: #555f5c;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.approval-profile-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid rgba(33, 38, 42, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #606765;
+  font-size: 11px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.approval-profile-badge.standard {
+  color: #8a5a0a;
+}
+
+.approval-profile-badge.strict {
+  color: #a13d35;
+}
+
+.approval-profile-badge.compact {
+  min-height: 22px;
+  padding: 0 7px;
+  font-size: 10px;
+}
+
+.teammate-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 14px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  background: rgba(33, 38, 42, 0.08);
+}
+
+.teammate-section {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.teammate-section h3 {
+  color: #59605e;
+}
+
+.teammate-skill-row,
+.workflow-step-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 9px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.phase-token {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 68px;
+  min-height: 23px;
+  padding: 0 7px;
+  border: 1px solid rgba(22, 140, 120, 0.18);
+  border-radius: 999px;
+  background: rgba(240, 252, 248, 0.7);
+  color: #13715f;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.phase-token.ship,
+.phase-token.secure {
+  border-color: rgba(161, 61, 53, 0.18);
+  background: rgba(255, 244, 241, 0.72);
+  color: #a13d35;
+}
+
+.phase-token.implement,
+.phase-token.test {
+  border-color: rgba(138, 90, 10, 0.18);
+  background: rgba(255, 250, 240, 0.72);
+  color: #8a5a0a;
+}
+
+.teammate-prompt-preview {
+  padding: 10px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(248, 247, 243, 0.6);
+  color: #4b5451;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.teammate-add-panel .field {
+  margin-bottom: 10px;
+}
+
+.teammate-empty {
+  min-height: 86px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(248, 247, 243, 0.48);
+}
+
+.teammate-draft-row {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  min-height: 58px;
+}
+
+.teammate-draft-row.hidden-row {
+  opacity: 0.68;
+}
+
+.teammate-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.teammate-row-actions .icon-button.active {
+  border-color: rgba(22, 140, 120, 0.24);
+  background: rgba(233, 248, 243, 0.88);
+  color: #116149;
+}
+
+.teammate-workflow-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.teammate-workflow-panel .panel-title small {
+  color: #13715f;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.workflow-step-lane {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workflow-step-card {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.workflow-step-card .approval-profile-badge {
+  grid-column: 2;
+  justify-self: start;
+}
+
+.workflow-step-index {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: linear-gradient(180deg, #222930, #11161c);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.teammate-pack-card .meta-list {
+  margin-bottom: 0;
+}
+
+.right-panel {
+  padding: 0;
+  border-left: 0;
+  border-radius: 8px;
+  background: rgba(245, 242, 235, 0.48);
+}

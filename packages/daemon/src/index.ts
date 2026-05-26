@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
   approvalToolDecisions,
@@ -7,8 +7,11 @@ import {
   createRunId,
   createSqliteRunStore,
   defaultApprovalToolDecisions,
+  DEFAULT_WORKSPACE_ID,
   defaultProviderTemplates,
   getRunSummaryPath,
+  listBuiltinSkillPackExtensions,
+  listBuiltinToolExtensions,
   isSupportedSecretRef,
   mediaJobStatuses,
   mediaOperations,
@@ -17,7 +20,8 @@ import {
   providerKinds,
   redactSecrets,
   readOnlyRunTools,
-  resolveSecretRef,
+  createCompositeSecretResolver,
+  secretPurposes,
   taskStatuses,
   writeRunSummary,
   type ApprovalPayload,
@@ -30,6 +34,7 @@ import {
   type ArtifactType,
   type CreateApprovalRequestInput,
   type ChannelUpdateInput,
+  type Channel,
   type CreateMediaJobInput,
   type CreateChannelInput,
   type CreateTaskInput,
@@ -52,11 +57,16 @@ import {
   type RunStore,
   type RunSummary,
   type RunStatus,
+  type ResourceLease,
+  type ResolvedSecret,
+  type SecretPurpose,
+  type SecretResolver,
   type TaskStatus,
   type TaskUpdateInput,
 } from "@ling-stack/core";
 import {
   createPiRunner,
+  getPiRunnerExtension,
   type PiRunnerApprovalRequest,
   type PiRunnerEvent,
   type PiRunnerProviderConfig,
@@ -67,10 +77,16 @@ import {
   createDefaultMediaAdapterRegistry,
   createLiveMediaVendorTransport,
   executeMediaJob as executeMediaAdapterJob,
+  listBuiltinProviderExtensions,
   resolveMediaAdapter,
   resolveMediaVendorTransportGateConfig,
   type MediaExecutionArtifact,
 } from "@ling-stack/providers";
+import {
+  createLingExtensionRegistry,
+  type ChannelSourceExtensionMetadata,
+  type LingExtensionRegistry,
+} from "@ling-stack/plugin-sdk";
 
 export interface DaemonConfig {
   readonly host?: string;
@@ -95,6 +111,8 @@ export type RunStoreFactory = (cwd: string) => RunStore;
 export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly storeFactory?: RunStoreFactory;
+  readonly extensionRegistry?: LingExtensionRegistry;
+  readonly secretResolver?: SecretResolver;
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -115,11 +133,21 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly providerPresetId?: string;
   readonly provider?: PiRunnerProviderConfig;
   readonly skipProviderPreflight?: boolean;
+  readonly idempotencyKey?: string;
 }
+
+interface PreparedRunConcurrency {
+  readonly channel?: Channel;
+  readonly taskExists: boolean;
+  readonly leases: readonly ResourceLease[];
+}
+
+const RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
 
 export interface DaemonServer {
   readonly server: Server;
   readonly config: ResolvedDaemonConfig;
+  readonly extensionRegistry: LingExtensionRegistry;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -130,11 +158,13 @@ export function createDaemonServer(
 ): DaemonServer {
   const resolvedConfig = resolveConfig(config);
   const runner = dependencies.runner ?? createPiRunner();
+  const extensionRegistry = dependencies.extensionRegistry ?? createDefaultLingExtensionRegistry();
+  const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver();
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore);
   const activeRuns = new ActiveRunRegistry();
   const server = createServer(async (request, response) => {
     try {
-      await routeRequest(request, response, resolvedConfig, runner, storeRegistry, activeRuns);
+      await routeRequest(request, response, resolvedConfig, runner, storeRegistry, activeRuns, secretResolver);
     } catch (error) {
       if (!response.headersSent) {
         writeJson(response, 500, {
@@ -150,6 +180,7 @@ export function createDaemonServer(
   return {
     server,
     config: resolvedConfig,
+    extensionRegistry,
     start: () =>
       new Promise<void>((resolve, reject) => {
         server.once("error", reject);
@@ -173,6 +204,39 @@ export function createDaemonServer(
   };
 }
 
+export const LOCAL_CHANNEL_SOURCE_EXTENSION_ID = "channel-source:local";
+
+export function createDefaultLingExtensionRegistry(): LingExtensionRegistry {
+  const registry = createLingExtensionRegistry();
+  registry.register(getLocalChannelSourceExtension());
+  registry.register(getPiRunnerExtension());
+  for (const extension of listBuiltinToolExtensions()) {
+    registry.register(extension);
+  }
+  for (const extension of listBuiltinSkillPackExtensions()) {
+    registry.register(extension);
+  }
+  for (const extension of listBuiltinProviderExtensions()) {
+    registry.register(extension);
+  }
+  return registry;
+}
+
+export function getLocalChannelSourceExtension(): ChannelSourceExtensionMetadata {
+  return {
+    manifest: {
+      id: LOCAL_CHANNEL_SOURCE_EXTENSION_ID,
+      name: "Local Channel Source",
+      version: "0.1.0",
+      kind: "channel-source",
+      trustLevel: "internal",
+      capabilities: ["channel-source:local", "source:web", "source:cli"],
+    },
+    sourceKind: "local",
+    eventTypes: ["web", "cli", "local"],
+  };
+}
+
 export async function startDaemon(
   config: DaemonConfig = defaultDaemonConfig,
   dependencies: DaemonDependencies = {},
@@ -189,6 +253,7 @@ async function routeRequest(
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
+  secretResolver: SecretResolver,
 ): Promise<void> {
   setCorsHeaders(response);
 
@@ -220,12 +285,12 @@ async function routeRequest(
   }
 
   if (url.pathname === "/providers") {
-    await handleProvidersCollection(request, response, config, storeRegistry);
+    await handleProvidersCollection(request, response, config, storeRegistry, secretResolver);
     return;
   }
 
   if (url.pathname === "/media-jobs") {
-    await handleMediaJobsCollection(request, response, config, storeRegistry);
+    await handleMediaJobsCollection(request, response, config, storeRegistry, secretResolver);
     return;
   }
 
@@ -244,8 +309,23 @@ async function routeRequest(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/state-transitions") {
+    handleListStateTransitions(response, url, storeRegistry);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/runtime/leases") {
+    handleListResourceLeases(response, url, storeRegistry);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/secrets/status") {
+    handleSecretStatus(response, url, secretResolver);
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/runs") {
-    await handleRun(request, response, config, runner, storeRegistry, activeRuns);
+    await handleRun(request, response, config, runner, storeRegistry, activeRuns, secretResolver);
     return;
   }
   if (request.method === "GET" && url.pathname === "/runs") {
@@ -289,20 +369,28 @@ async function routeRequest(
 
   const taskRoute = parseTaskRoute(url.pathname);
   if (taskRoute) {
+    if (request.method === "POST" && taskRoute.action === "run") {
+      await handleTaskRunRequest(request, response, config, runner, storeRegistry, activeRuns, secretResolver, taskRoute.taskId);
+      return;
+    }
+    if (taskRoute.action) {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for task ${taskRoute.action}` });
+      return;
+    }
     await handleTaskItem(request, response, config, storeRegistry, taskRoute.taskId);
     return;
   }
 
   const providerRoute = parseProviderRoute(url.pathname);
   if (providerRoute) {
-    await handleProviderItem(request, response, config, storeRegistry, providerRoute);
+    await handleProviderItem(request, response, config, storeRegistry, secretResolver, providerRoute);
     return;
   }
 
   const mediaJobRoute = parseMediaJobRoute(url.pathname);
   if (mediaJobRoute) {
     if (request.method === "POST" && mediaJobRoute.action === "run") {
-      await handleRunMediaJob(response, url, storeRegistry, mediaJobRoute.mediaJobId);
+      await handleRunMediaJob(response, url, storeRegistry, secretResolver, mediaJobRoute.mediaJobId);
       return;
     }
     if (request.method === "GET" && mediaJobRoute.action === "artifacts") {
@@ -326,6 +414,21 @@ async function routeRequest(
   writeJson(response, 404, { error: "not_found", message: `No route for ${request.method} ${url.pathname}` });
 }
 
+function handleSecretStatus(response: ServerResponse, url: URL, secretResolver: SecretResolver): void {
+  const ref = url.searchParams.get("ref");
+  if (!ref) {
+    writeJson(response, 400, { error: "bad_request", message: "ref query parameter is required" });
+    return;
+  }
+  const purpose = readOptionalSecretPurposeQuery(url);
+  if (purpose === null) {
+    writeJson(response, 400, { error: "bad_request", message: "purpose is not supported" });
+    return;
+  }
+  const status = secretResolver.status(ref, purpose);
+  writeJson(response, 200, { status });
+}
+
 async function handleRun(
   request: IncomingMessage,
   response: ServerResponse,
@@ -333,6 +436,7 @@ async function handleRun(
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
+  secretResolver: SecretResolver,
 ): Promise<void> {
   let runRequest: RunRequest;
   try {
@@ -346,13 +450,26 @@ async function handleRun(
     return;
   }
 
-  let store: RunStore;
-  let run: RunSession;
+  await executeRunRequest(runRequest, response, runner, storeRegistry, activeRuns, secretResolver);
+}
+
+async function executeRunRequest(
+  runRequest: RunRequest,
+  response: ServerResponse,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
+  secretResolver: SecretResolver,
+): Promise<void> {
+  let store: RunStore | undefined;
+  let run: RunSession | undefined;
   let runnerRequest: PiRunnerRunOptions;
+  let preparedConcurrency: PreparedRunConcurrency = { taskExists: false, leases: [] };
+  let resolvedSecretValues: readonly (string | undefined)[] = [];
   try {
     const workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
     store = storeRegistry.getStore(workspaceCwd);
-    const resolvedProvider = resolveProviderForRun(store, runRequest);
+    const resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver);
     runnerRequest = {
       cwd: runRequest.cwd,
       task: runRequest.task,
@@ -363,13 +480,20 @@ async function handleRun(
       appendSystemPrompt: runRequest.appendSystemPrompt,
       agentDir: runRequest.agentDir,
     };
+    resolvedSecretValues = [resolvedProvider.apiKey];
     const runId = createRunId();
     const createdAt = new Date().toISOString();
+    preparedConcurrency = prepareRunConcurrency({
+      store,
+      runRequest,
+      runId,
+      now: createdAt,
+    });
     run = store.createRun({
       id: runId,
       cwd: runRequest.cwd,
       taskId: runRequest.task.id,
-      channelId: runRequest.task.channelId,
+      channelId: preparedConcurrency.channel?.id ?? runRequest.task.channelId,
       providerPresetId: runRequest.providerPresetId,
       providerName: resolvedProvider.provider,
       providerModel: resolvedProvider.model,
@@ -385,13 +509,35 @@ async function handleRun(
       cwd: run.cwd,
       providerName: run.providerName,
       providerModel: run.providerModel,
+      leases: preparedConcurrency.leases.map((lease) => ({
+        id: lease.id,
+        resourceType: lease.resourceType,
+        resourceKey: lease.resourceKey,
+      })),
     });
   } catch (error) {
+    if (preparedConcurrency.leases.length > 0) {
+      const now = new Date().toISOString();
+      for (const lease of preparedConcurrency.leases) {
+        store?.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
+      }
+    }
+    if (error instanceof DuplicateRunRequestError) {
+      writeSseHead(response);
+      writeSse(response, "ready", { ok: true, runId: error.runId, duplicate: true });
+      response.end();
+      return;
+    }
     const statusCode = error instanceof HttpError ? error.statusCode : 500;
     writeJson(response, statusCode, {
       error: error instanceof HttpError ? error.code : "run_storage_unavailable",
       message: error instanceof Error ? error.message : String(error),
     });
+    return;
+  }
+
+  if (!store || !run) {
+    writeJson(response, 500, { error: "run_storage_unavailable", message: "Run was not initialized." });
     return;
   }
 
@@ -432,7 +578,7 @@ async function handleRun(
     }
 
     try {
-      const envelope = store.appendEvent(run.id, type, data);
+      const envelope = store.appendEvent(run.id, type, redactSecrets(data, resolvedSecretValues));
       if (type === "run_error") {
         persistedRunError = true;
       }
@@ -446,8 +592,30 @@ async function handleRun(
 
   try {
     runStartedAt = new Date().toISOString();
-    store.markRunStarted(run.id, runStartedAt);
-    updateLinkedTaskForRun(store, run.taskId, { status: "running", currentRunId: run.id });
+    const runStartTransition = store.transitionRunStatus({
+      runId: run.id,
+      expectedStatus: "queued",
+      event: "runner_started",
+      actor: "runner",
+      now: runStartedAt,
+      startedAt: runStartedAt,
+    });
+    if (!runStartTransition.ok) {
+      throw new Error(`Run transition failed: ${runStartTransition.code}`);
+    }
+    if (preparedConcurrency.taskExists) {
+      const taskStartTransition = store.transitionTaskStatus({
+        taskId: run.taskId,
+        expectedStatus: "claimed",
+        event: "start_run",
+        actor: "runner",
+        now: runStartedAt,
+        currentRunId: run.id,
+      });
+      if (!taskStartTransition.ok) {
+        throw new Error(`Task transition failed: ${taskStartTransition.code}`);
+      }
+    }
     const approvalPolicy = store.getApprovalPolicy();
 
     const result = await runner.runTask({
@@ -477,6 +645,7 @@ async function handleRun(
                 extractedArtifactCounter += 1;
                 return extractedArtifactCounter;
               },
+              extraSecrets: resolvedSecretValues,
             });
             for (const artifact of artifacts) {
               appendAndMaybeStream("artifact_created", {
@@ -523,8 +692,26 @@ async function handleRun(
       endedAt,
       errorMessage: null,
     });
-    store.markRunSucceeded(run.id, endedAt, summaryPath);
-    updateLinkedTaskForRun(store, run.taskId, { status: "done", currentRunId: run.id });
+    store.transitionRunStatus({
+      runId: run.id,
+      expectedStatus: "running",
+      event: "runner_succeeded",
+      actor: "runner",
+      now: endedAt,
+      endedAt,
+      summaryPath,
+      errorMessage: null,
+    });
+    if (preparedConcurrency.taskExists) {
+      store.transitionTaskStatus({
+        taskId: run.taskId,
+        expectedStatus: "running",
+        event: "run_succeeded",
+        actor: "runner",
+        now: endedAt,
+        currentRunId: run.id,
+      });
+    }
 
     if (!clientClosed) {
       response.end();
@@ -545,7 +732,7 @@ async function handleRun(
       }
       return;
     }
-    const message = error instanceof Error ? error.message : String(error);
+    const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), resolvedSecretValues);
     const endedAt = new Date().toISOString();
     const failureEvent = persistedRunError
       ? undefined
@@ -559,14 +746,186 @@ async function handleRun(
       endedAt,
       errorMessage: message,
     });
-    store.markRunFailed(run.id, endedAt, message, summaryPath);
-    updateLinkedTaskForRun(store, run.taskId, { status: "failed", currentRunId: run.id });
+    store.transitionRunStatus({
+      runId: run.id,
+      expectedStatus: "running",
+      event: "runner_failed",
+      actor: "runner",
+      reason: message,
+      now: endedAt,
+      endedAt,
+      summaryPath,
+      errorMessage: message,
+    });
+    if (preparedConcurrency.taskExists) {
+      store.transitionTaskStatus({
+        taskId: run.taskId,
+        expectedStatus: "running",
+        event: "run_failed",
+        actor: "runner",
+        reason: message,
+        now: endedAt,
+        currentRunId: run.id,
+      });
+    }
 
     if (!clientClosed) {
       response.end();
     }
   } finally {
+    store.releaseResourceLeasesForOwner("run", run.id, new Date().toISOString());
     activeRuns.delete(run.id);
+  }
+}
+
+function prepareRunConcurrency(input: {
+  readonly store: RunStore;
+  readonly runRequest: RunRequest;
+  readonly runId: string;
+  readonly now: string;
+}): PreparedRunConcurrency {
+  input.store.expireResourceLeases(input.now);
+
+  const taskId = input.runRequest.task.id;
+  const task = input.store.getTask(taskId);
+  const channelId = input.runRequest.task.channelId ?? task?.channelId;
+  const channel = channelId ? input.store.getChannel(channelId) : undefined;
+  if (channelId && !channel) {
+    throw new HttpError(404, "channel_not_found", `Channel not found: ${channelId}`);
+  }
+  if (channel?.status === "paused") {
+    throw new HttpError(409, "channel_paused", `Channel is paused: ${channel.id}`);
+  }
+  if (channel?.status === "archived") {
+    throw new HttpError(409, "channel_archived", `Channel is archived: ${channel.id}`);
+  }
+
+  if (task && input.runRequest.idempotencyKey) {
+    const duplicate = input.store.findStateTransitionByIdempotency("task", task.id, input.runRequest.idempotencyKey);
+    if (duplicate) {
+      const runId = duplicate.reason?.startsWith("run:") ? duplicate.reason.slice("run:".length) : undefined;
+      if (runId) {
+        throw new DuplicateRunRequestError(runId);
+      }
+      throw new HttpError(409, "duplicate_run_request", "Duplicate run request");
+    }
+  }
+
+  const leases: ResourceLease[] = [];
+  const leaseInputs = buildRunLeaseInputs({
+    runId: input.runId,
+    runRequest: input.runRequest,
+    channel,
+    taskId,
+    now: input.now,
+  });
+
+  for (const leaseInput of leaseInputs) {
+    const lease = input.store.acquireResourceLease(leaseInput);
+    if (!lease) {
+      const blockingLease = input.store.getBlockingResourceLease(leaseInput.resourceType, leaseInput.resourceKey);
+      for (const acquiredLease of leases) {
+        input.store.releaseResourceLeasesForOwner(acquiredLease.ownerType, acquiredLease.ownerId, input.now);
+      }
+      throw new HttpError(
+        409,
+        "resource_conflict",
+        blockingLease
+          ? `Resource is locked by ${blockingLease.ownerType}:${blockingLease.ownerId}: ${blockingLease.resourceType}:${blockingLease.resourceKey}`
+          : `Resource is locked: ${leaseInput.resourceType}:${leaseInput.resourceKey}`,
+      );
+    }
+    leases.push(lease);
+  }
+
+  if (task) {
+    const claimEvent = task.status === "todo" ? "claim" : task.status === "failed" ? "retry" : undefined;
+    if (claimEvent) {
+      const result = input.store.transitionTaskStatus({
+        taskId: task.id,
+        expectedStatus: task.status,
+        event: claimEvent,
+        actor: "system",
+        reason: `run:${input.runId}`,
+        idempotencyKey: input.runRequest.idempotencyKey,
+        now: input.now,
+      });
+      if (!result.ok) {
+        for (const lease of leases) {
+          input.store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, input.now);
+        }
+        throw new HttpError(409, result.code, `Task transition failed: ${result.code}`);
+      }
+    } else if (task.status !== "claimed") {
+      for (const lease of leases) {
+        input.store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, input.now);
+      }
+      throw new HttpError(409, "task_not_runnable", `Task ${task.id} is ${task.status}`);
+    }
+  }
+
+  return {
+    channel,
+    taskExists: Boolean(task),
+    leases,
+  };
+}
+
+function buildRunLeaseInputs(input: {
+  readonly runId: string;
+  readonly runRequest: RunRequest;
+  readonly channel?: Channel;
+  readonly taskId: string;
+  readonly now: string;
+}): Parameters<RunStore["acquireResourceLease"]>[0][] {
+  const expiresAt = new Date(new Date(input.now).getTime() + RESOURCE_LEASE_TTL_MS).toISOString();
+  const base = {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    ownerType: "run" as const,
+    ownerId: input.runId,
+    acquiredAt: input.now,
+    expiresAt,
+  };
+  const leases: Parameters<RunStore["acquireResourceLease"]>[0][] = [
+    {
+      ...base,
+      resourceType: "task",
+      resourceKey: input.taskId,
+    },
+  ];
+
+  if (input.channel?.runtimePolicy.executionMode === "serial") {
+    leases.push({
+      ...base,
+      resourceType: "channel",
+      resourceKey: input.channel.id,
+    });
+  }
+
+  if (usesSideEffectTools(input.runRequest.tools ?? [])) {
+    const scope = input.channel?.runtimePolicy.writeLockScope ?? "boundPath";
+    if (scope === "workspace") {
+      leases.push({ ...base, resourceType: "workspace", resourceKey: DEFAULT_WORKSPACE_ID });
+    } else if (scope === "channel" || !input.channel?.boundPath) {
+      leases.push({ ...base, resourceType: "channel", resourceKey: input.channel?.id ?? input.taskId });
+    } else {
+      leases.push({ ...base, resourceType: "bound_path", resourceKey: canonicalResourcePath(input.channel.boundPath) });
+    }
+  }
+
+  return leases;
+}
+
+function usesSideEffectTools(tools: readonly RunTool[]): boolean {
+  return tools.some((tool) => tool === "bash" || tool === "edit" || tool === "write");
+}
+
+function canonicalResourcePath(path: string): string {
+  const resolved = resolvePath(path);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
   }
 }
 
@@ -765,11 +1124,80 @@ async function handleTaskItem(
   }
 }
 
+async function handleTaskRunRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
+  secretResolver: SecretResolver,
+  taskId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const workspaceCwd = url.searchParams.get("cwd");
+  if (!workspaceCwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    if (!isRecord(body)) {
+      throw new Error("Task run request must be a JSON object");
+    }
+    const providerPresetId = readString(body, "providerPresetId");
+    const store = storeRegistry.getStore(workspaceCwd);
+    const task = store.getTask(taskId);
+    if (!task) {
+      writeJson(response, 404, { error: "task_not_found", message: `Task not found: ${taskId}` });
+      return;
+    }
+    const channel = store.getChannel(task.channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${task.channelId}` });
+      return;
+    }
+
+    await executeRunRequest(
+      {
+        workspaceCwd,
+        cwd: channel.boundPath ?? workspaceCwd,
+        providerPresetId,
+        skipProviderPreflight: readOptionalBoolean(body, "skipProviderPreflight") ?? false,
+        idempotencyKey: readOptionalString(body, "idempotencyKey"),
+        task: {
+          id: task.id,
+          title: task.title,
+          prompt: task.prompt,
+          channelId: task.channelId,
+        },
+        tools: readOptionalRunTools(body, "tools") ?? channel.allowedTools,
+        thinkingLevel: readOptionalThinkingLevel(body, "thinkingLevel"),
+        systemPrompt: readOptionalString(body, "systemPrompt"),
+        appendSystemPrompt: readOptionalStringArray(body, "appendSystemPrompt"),
+        agentDir: readOptionalString(body, "agentDir"),
+      },
+      response,
+      runner,
+      storeRegistry,
+      activeRuns,
+      secretResolver,
+    );
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function handleProvidersCollection(
   request: IncomingMessage,
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -782,7 +1210,7 @@ async function handleProvidersCollection(
   if (request.method === "GET") {
     writeJson(response, 200, {
       cwd,
-      providers: store.listProviderPresets().map(toPublicProviderPreset),
+      providers: store.listProviderPresets().map((preset) => toPublicProviderPreset(preset, secretResolver)),
     });
     return;
   }
@@ -791,7 +1219,7 @@ async function handleProvidersCollection(
     try {
       const body = await readJsonBody(request, config.maxBodyBytes);
       const preset = store.createProviderPreset(parseProviderPresetInput(body), new Date().toISOString());
-      writeJson(response, 201, { provider: toPublicProviderPreset(preset) });
+      writeJson(response, 201, { provider: toPublicProviderPreset(preset, secretResolver) });
     } catch (error) {
       writeJson(response, 400, {
         error: "bad_request",
@@ -809,6 +1237,7 @@ async function handleProviderItem(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
   route: { readonly providerId: string; readonly action?: "check" },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -826,7 +1255,7 @@ async function handleProviderItem(
   }
 
   if (request.method === "POST" && route.action === "check") {
-    const checkResult = await checkProviderPreset(preset);
+    const checkResult = await checkProviderPreset(preset, secretResolver);
     store.recordProviderCheckResult(route.providerId, checkResult);
     writeJson(response, 200, checkResult);
     return;
@@ -838,7 +1267,7 @@ async function handleProviderItem(
   }
 
   if (request.method === "GET") {
-    writeJson(response, 200, { provider: toPublicProviderPreset(preset) });
+    writeJson(response, 200, { provider: toPublicProviderPreset(preset, secretResolver) });
     return;
   }
 
@@ -852,7 +1281,7 @@ async function handleProviderItem(
         writeJson(response, 404, { error: "provider_not_found", message: `Provider preset not found: ${route.providerId}` });
         return;
       }
-      writeJson(response, 200, { provider: toPublicProviderPreset(updated) });
+      writeJson(response, 200, { provider: toPublicProviderPreset(updated, secretResolver) });
     } catch (error) {
       writeJson(response, 400, {
         error: "bad_request",
@@ -876,6 +1305,7 @@ async function handleMediaJobsCollection(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -901,7 +1331,7 @@ async function handleMediaJobsCollection(
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseCreateMediaJobInput(body);
-      assertMediaJobProvider(store, input);
+      assertMediaJobProvider(store, input, secretResolver);
       const job = store.createMediaJob(input, new Date().toISOString());
       writeJson(response, 201, { mediaJob: job });
       return;
@@ -956,6 +1386,7 @@ async function handleRunMediaJob(
   response: ServerResponse,
   url: URL,
   storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
   mediaJobId: string,
 ): Promise<void> {
   const cwd = url.searchParams.get("cwd");
@@ -987,7 +1418,9 @@ async function handleRunMediaJob(
       operation: job.operation,
       prompt: job.prompt,
       input: job.input,
-    });
+    }, secretResolver);
+    const mediaSecret = provider.apiKeyRef ? secretResolver.resolve(provider.apiKeyRef, "provider_api_key") : undefined;
+    const mediaSecretValues = [mediaSecret?.value];
 
     const approvalGate = applyMediaCostApprovalGate(store, job, provider);
     if (approvalGate.kind === "waiting_for_approval") {
@@ -1003,7 +1436,7 @@ async function handleRunMediaJob(
     startedExecution = true;
 
     const requestedAt = new Date().toISOString();
-    const execution = await executeMediaAdapterJob(createMediaAdapterForProvider(provider), {
+    const execution = await executeMediaAdapterJob(createMediaAdapterForProvider(provider, secretResolver), {
       jobId: job.id,
       provider: {
         id: provider.id,
@@ -1036,7 +1469,7 @@ async function handleRunMediaJob(
     }
 
     const completedAt = new Date().toISOString();
-    const artifacts = createMediaJobArtifacts(store, job, execution.artifacts, completedAt);
+    const artifacts = createMediaJobArtifacts(store, job, execution.artifacts, completedAt, mediaSecretValues);
     const artifactIds = [...new Set([...job.artifactIds, ...artifacts.map((artifact) => artifact.id)])];
     const succeeded = store.updateMediaJobStatus(
       job.id,
@@ -1051,7 +1484,9 @@ async function handleRunMediaJob(
     writeJson(response, 200, { mediaJob: succeeded, artifacts });
   } catch (error) {
     const statusCode = error instanceof HttpError ? error.statusCode : startedExecution ? 500 : 400;
-    const message = error instanceof Error ? error.message : String(error);
+    const provider = store && job ? store.getProviderPreset(job.providerPresetId) : undefined;
+    const mediaSecret = provider?.apiKeyRef ? secretResolver.resolve(provider.apiKeyRef, "provider_api_key") : undefined;
+    const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [mediaSecret?.value]);
     const failed = store && job && startedExecution
       ? store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, new Date().toISOString())
       : undefined;
@@ -1261,6 +1696,60 @@ function handleListRuns(response: ServerResponse, url: URL, storeRegistry: RunSt
       error: "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+function handleListStateTransitions(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  const entityType = url.searchParams.get("entityType") ?? undefined;
+  if (entityType !== undefined && !["task", "run", "approval", "media_job", "workflow", "workflow_step"].includes(entityType)) {
+    writeJson(response, 400, { error: "bad_request", message: "entityType is invalid" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    writeJson(response, 200, {
+      cwd,
+      transitions: store.listStateTransitionEvents({
+        entityType: entityType as NonNullable<Parameters<RunStore["listStateTransitionEvents"]>[0]>["entityType"] | undefined,
+        entityId: url.searchParams.get("entityId") ?? undefined,
+        limit: readOptionalIntegerQuery(url, "limit", 1),
+      }),
+    });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+function handleListResourceLeases(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  const status = url.searchParams.get("status") ?? undefined;
+  if (status !== undefined && !["active", "released", "expired"].includes(status)) {
+    writeJson(response, 400, { error: "bad_request", message: "status is invalid" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    writeJson(response, 200, {
+      cwd,
+      leases: store.listResourceLeases({
+        status: status as NonNullable<Parameters<RunStore["listResourceLeases"]>[0]>["status"] | undefined,
+        ownerId: url.searchParams.get("ownerId") ?? undefined,
+        limit: readOptionalIntegerQuery(url, "limit", 1),
+      }),
+    });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -1496,8 +1985,30 @@ function ensureRunCancelled(input: {
     endedAt,
     errorMessage: null,
   });
-  input.store.markRunCancelled(input.runId, endedAt, summaryPath);
-  updateLinkedTaskForRun(input.store, input.taskId, { status: "cancelled", currentRunId: input.runId });
+  input.store.transitionRunStatus({
+    runId: input.runId,
+    expectedStatus: current.status,
+    event: "cancel",
+    actor: "local-user",
+    reason: input.reason,
+    now: endedAt,
+    endedAt,
+    summaryPath,
+    errorMessage: null,
+  });
+  const task = input.store.getTask(input.taskId);
+  if (task && task.status !== "done" && task.status !== "cancelled") {
+    input.store.transitionTaskStatus({
+      taskId: input.taskId,
+      expectedStatus: task.status,
+      event: "cancel",
+      actor: "local-user",
+      reason: input.reason,
+      now: endedAt,
+      currentRunId: input.runId,
+    });
+  }
+  input.store.releaseResourceLeasesForOwner("run", input.runId, endedAt);
   return { event };
 }
 
@@ -1530,7 +2041,7 @@ function appendFailureEvent(
   }
 }
 
-function resolveProviderForRun(store: RunStore, runRequest: RunRequest): PiRunnerProviderConfig {
+function resolveProviderForRun(store: RunStore, runRequest: RunRequest, secretResolver: SecretResolver): PiRunnerProviderConfig {
   if (runRequest.providerPresetId && runRequest.provider) {
     throw new HttpError(400, "bad_request", "providerPresetId and inline provider cannot both be supplied");
   }
@@ -1549,8 +2060,8 @@ function resolveProviderForRun(store: RunStore, runRequest: RunRequest): PiRunne
     if (!preset.capabilities.includes("chat")) {
       throw new HttpError(400, "unsupported_capability", "Provider preset must include chat capability for coding runs");
     }
-    assertProviderRunPreflight(preset, runRequest.skipProviderPreflight === true);
-    const secret = resolveSecretRef(preset.apiKeyRef);
+    assertProviderRunPreflight(preset, runRequest.skipProviderPreflight === true, secretResolver);
+    const secret: ResolvedSecret = preset.apiKeyRef ? secretResolver.resolve(preset.apiKeyRef, "provider_api_key") : { configured: false };
     return removeUndefined({
       provider: preset.providerId,
       model: preset.model,
@@ -1575,12 +2086,12 @@ function resolveProviderForRun(store: RunStore, runRequest: RunRequest): PiRunne
   return runRequest.provider;
 }
 
-function assertProviderRunPreflight(preset: ProviderPreset, skipProviderPreflight: boolean): void {
+function assertProviderRunPreflight(preset: ProviderPreset, skipProviderPreflight: boolean, secretResolver: SecretResolver): void {
   if (skipProviderPreflight) {
     return;
   }
 
-  const secretBlocker = providerSecretPreflightBlocker(preset);
+  const secretBlocker = providerSecretPreflightBlocker(preset, secretResolver);
   if (secretBlocker) {
     throw new HttpError(400, "provider_preflight_failed", `${preset.displayName}: ${secretBlocker}`);
   }
@@ -1597,13 +2108,16 @@ function assertProviderRunPreflight(preset: ProviderPreset, skipProviderPrefligh
   }
 }
 
-function providerSecretPreflightBlocker(preset: ProviderPreset): string | undefined {
+function providerSecretPreflightBlocker(preset: ProviderPreset, secretResolver: SecretResolver): string | undefined {
   const needsSecret = preset.api !== "media-job" && (preset.api === "anthropic-messages" || preset.authHeader !== false);
   if (needsSecret && !preset.apiKeyRef) {
     return "missing apiKeyRef.";
   }
-  if (preset.apiKeyRef && !resolveSecretRef(preset.apiKeyRef).configured) {
-    return `missing ${preset.apiKeyRef}.`;
+  if (preset.apiKeyRef) {
+    const status = secretResolver.status(preset.apiKeyRef, "provider_api_key");
+    if (!status.configured) {
+      return `${status.message ?? `missing ${preset.apiKeyRef}.`}`;
+    }
   }
   return undefined;
 }
@@ -1719,11 +2233,49 @@ function createRunApprovalHandler(options: {
 
     const approval = options.store.createApprovalRequest(approvalInput, new Date().toISOString());
     const waitingAt = new Date().toISOString();
-    options.store.markRunWaitingForApproval(options.run.id, waitingAt);
+    options.store.transitionRunStatus({
+      runId: options.run.id,
+      expectedStatus: "running",
+      event: "approval_requested",
+      actor: "system",
+      now: waitingAt,
+    });
     const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(approval));
 
     const resolvedApproval = await waitForApprovalDecision(options.store, approval.id, options.signal);
-    options.store.markRunRunning(options.run.id, new Date().toISOString());
+    const resolvedAt = new Date().toISOString();
+    if (resolvedApproval.status === "approved") {
+      options.store.transitionRunStatus({
+        runId: options.run.id,
+        expectedStatus: "waiting_for_approval",
+        event: "approval_approved",
+        actor: "local-user",
+        reason: resolvedApproval.decisionReason,
+        now: resolvedAt,
+      });
+    } else if (resolvedApproval.status === "expired") {
+      options.store.transitionRunStatus({
+        runId: options.run.id,
+        expectedStatus: "waiting_for_approval",
+        event: "approval_expired",
+        actor: "system",
+        reason: resolvedApproval.decisionReason,
+        now: resolvedAt,
+        endedAt: resolvedAt,
+        errorMessage: resolvedApproval.decisionReason ?? "Approval expired.",
+      });
+    } else {
+      options.store.transitionRunStatus({
+        runId: options.run.id,
+        expectedStatus: "waiting_for_approval",
+        event: "approval_denied",
+        actor: "local-user",
+        reason: resolvedApproval.decisionReason,
+        now: resolvedAt,
+        endedAt: resolvedAt,
+        errorMessage: resolvedApproval.decisionReason ?? "Approval denied.",
+      });
+    }
     streamOrAppendApprovalDecisionEvent({
       store: options.store,
       approval: resolvedApproval,
@@ -2015,11 +2567,12 @@ function persistExtractedArtifacts(options: {
   readonly event: Extract<PiRunnerEvent, { readonly type: "tool_end" }>;
   readonly sourceArgs: unknown;
   readonly nextIndex: () => number;
+  readonly extraSecrets?: readonly (string | undefined)[];
 }): RunArtifact[] {
   const candidates = extractArtifactCandidates(options);
   const artifacts: RunArtifact[] = [];
   for (const candidate of candidates.slice(0, MAX_EXTRACTED_ARTIFACTS_PER_TOOL)) {
-    const artifact = materializeExtractedArtifact(options.store, options.run.id, candidate, options.nextIndex());
+    const artifact = materializeExtractedArtifact(options.store, options.run.id, candidate, options.nextIndex(), options.extraSecrets ?? []);
     if (artifact) {
       artifacts.push(artifact);
     }
@@ -2228,6 +2781,7 @@ function materializeExtractedArtifact(
   runId: string,
   candidate: ExtractedArtifactCandidate,
   index: number,
+  extraSecrets: readonly (string | undefined)[] = [],
 ): RunArtifact | undefined {
   const createdAt = new Date().toISOString();
 
@@ -2258,7 +2812,7 @@ function materializeExtractedArtifact(
   mkdirSync(runArtifactDir, { recursive: true });
   const relativePath = `${runId}/${formatArtifactFilename(index, candidate)}`;
   const absolutePath = resolvePath(store.paths.artifactsDir, relativePath);
-  const content = truncateExtractedArtifactContent(redactArtifactContent(candidate.content));
+  const content = truncateExtractedArtifactContent(redactArtifactContent(candidate.content, extraSecrets));
   writeFileSync(absolutePath, content, "utf8");
   const stats = statSync(absolutePath);
 
@@ -2273,12 +2827,12 @@ function materializeExtractedArtifact(
   });
 }
 
-function createMediaAdapterForProvider(provider: ProviderPreset) {
+function createMediaAdapterForProvider(provider: ProviderPreset, secretResolver: SecretResolver) {
   const gate = resolveMediaVendorTransportGateConfig(provider.compat);
   if (!gate.ok) {
     throw new HttpError(400, gate.errorCode ?? "invalid_request", gate.errorMessage ?? "Invalid media vendor transport configuration.");
   }
-  const secret = resolveSecretRef(provider.apiKeyRef);
+  const secret: ResolvedSecret = provider.apiKeyRef ? secretResolver.resolve(provider.apiKeyRef, "provider_api_key") : { configured: false };
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: gate.config?.mode === "live"
       ? createLiveMediaVendorTransport({
@@ -2399,9 +2953,10 @@ function createMediaJobArtifacts(
   job: MediaJob,
   candidates: readonly MediaExecutionArtifact[],
   createdAt: string,
+  extraSecrets: readonly (string | undefined)[] = [],
 ): RunArtifact[] {
   return candidates
-    .map((candidate, index) => createMediaJobArtifact(store, job, candidate, index, createdAt))
+    .map((candidate, index) => createMediaJobArtifact(store, job, candidate, index, createdAt, extraSecrets))
     .filter((artifact): artifact is RunArtifact => Boolean(artifact));
 }
 
@@ -2411,6 +2966,7 @@ function createMediaJobArtifact(
   candidate: MediaExecutionArtifact,
   index: number,
   createdAt: string,
+  extraSecrets: readonly (string | undefined)[] = [],
 ): RunArtifact | undefined {
   if (candidate.content === undefined && candidate.contentBytes === undefined) {
     return undefined;
@@ -2422,7 +2978,7 @@ function createMediaJobArtifact(
   if (candidate.contentBytes !== undefined) {
     writeFileSync(absolutePath, Buffer.from(candidate.contentBytes));
   } else {
-    const content = redactArtifactContent(candidate.content ?? "");
+    const content = redactArtifactContent(candidate.content ?? "", extraSecrets);
     writeFileSync(absolutePath, content, "utf8");
   }
   const stats = statSync(absolutePath);
@@ -2544,8 +3100,13 @@ function formatGeneratedFileMetadata(event: Extract<PiRunnerEvent, { readonly ty
   ].join("\n");
 }
 
-function redactArtifactContent(content: string): string {
-  const redacted = redactSecrets(content);
+function redactArtifactContent(content: string, extraSecrets: readonly (string | undefined)[] = []): string {
+  const redacted = redactSecrets(content, extraSecrets);
+  return typeof redacted === "string" ? redacted : content;
+}
+
+function redactTextWithSecrets(content: string, extraSecrets: readonly (string | undefined)[] = []): string {
+  const redacted = redactSecrets(content, extraSecrets);
   return typeof redacted === "string" ? redacted : content;
 }
 
@@ -2734,6 +3295,7 @@ function parseRunRequest(value: unknown): RunRequest {
   const provider = value.provider;
   const providerPresetId = readOptionalString(value, "providerPresetId");
   const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
+  const idempotencyKey = readOptionalString(value, "idempotencyKey");
 
   if (!isRecord(task)) {
     throw new Error("task must be an object");
@@ -2753,6 +3315,7 @@ function parseRunRequest(value: unknown): RunRequest {
     workspaceCwd,
     providerPresetId,
     skipProviderPreflight,
+    idempotencyKey,
     task: {
       id: readString(task, "id"),
       title: readString(task, "title"),
@@ -2826,10 +3389,13 @@ function parseChannelRoute(pathname: string): { readonly channelId: string } | u
   return undefined;
 }
 
-function parseTaskRoute(pathname: string): { readonly taskId: string } | undefined {
+function parseTaskRoute(pathname: string): { readonly taskId: string; readonly action?: "run" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "tasks") {
     return { taskId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "tasks" && segments[2] === "run") {
+    return { taskId: segments[1], action: "run" };
   }
   return undefined;
 }
@@ -2891,10 +3457,12 @@ function parseCreateChannelInput(value: unknown): CreateChannelInput {
   }
   const input: CreateChannelInput = {
     name: readString(value, "name"),
+    status: readOptionalChannelStatus(value, "status"),
     boundPath: readOptionalString(value, "boundPath"),
     defaultProviderPresetId: readOptionalString(value, "defaultProviderPresetId"),
     defaultTeammateId: readOptionalString(value, "defaultTeammateId"),
     allowedTools: readOptionalRunTools(value, "allowedTools"),
+    runtimePolicy: readOptionalChannelRuntimePolicy(value, "runtimePolicy"),
   };
   validateChannelInput(input);
   return input;
@@ -2906,10 +3474,12 @@ function parseChannelUpdateInput(value: unknown): ChannelUpdateInput {
   }
   const input: ChannelUpdateInput = {
     name: readOptionalString(value, "name"),
+    status: readOptionalChannelStatus(value, "status"),
     boundPath: readNullableString(value, "boundPath"),
     defaultProviderPresetId: readNullableString(value, "defaultProviderPresetId"),
     defaultTeammateId: readNullableString(value, "defaultTeammateId"),
     allowedTools: readOptionalRunTools(value, "allowedTools"),
+    runtimePolicy: readOptionalChannelRuntimePolicy(value, "runtimePolicy"),
   };
   validateChannelInput(input);
   return input;
@@ -2990,7 +3560,8 @@ function validateMediaJobInput(input: CreateMediaJobInput): void {
   }
 }
 
-function assertMediaJobProvider(store: RunStore, input: CreateMediaJobInput): ProviderPreset {
+function assertMediaJobProvider(store: RunStore, input: CreateMediaJobInput, secretResolver?: SecretResolver): ProviderPreset {
+  void secretResolver;
   const preset = store.getProviderPreset(input.providerPresetId);
   if (!preset) {
     throw new HttpError(404, "provider_not_found", `Provider preset not found: ${input.providerPresetId}`);
@@ -3113,7 +3684,7 @@ function validateProviderPresetShape(input: {
     validateUrl(input.baseUrl, "baseUrl");
   }
   if (input.apiKeyRef && !isSupportedSecretRef(input.apiKeyRef)) {
-    throw new Error("apiKeyRef must use env:NAME");
+    throw new Error("apiKeyRef must use env:NAME or keychain:NAME");
   }
   if (!input.capabilities || input.capabilities.length === 0) {
     throw new Error("capabilities must contain at least one capability");
@@ -3132,14 +3703,16 @@ function validateProviderPresetShape(input: {
   }
 }
 
-function toPublicProviderPreset(preset: ProviderPreset): PublicProviderPreset {
+function toPublicProviderPreset(preset: ProviderPreset, secretResolver: SecretResolver): PublicProviderPreset {
+  const apiKeyStatus = preset.apiKeyRef ? secretResolver.status(preset.apiKeyRef, "provider_api_key") : undefined;
   return {
     ...preset,
-    apiKeyConfigured: resolveSecretRef(preset.apiKeyRef).configured,
+    apiKeyConfigured: apiKeyStatus?.configured ?? false,
+    apiKeyStatus,
   };
 }
 
-async function checkProviderPreset(preset: ProviderPreset): Promise<ProviderCheckResult> {
+async function checkProviderPreset(preset: ProviderPreset, secretResolver: SecretResolver): Promise<ProviderCheckResult> {
   const checkedAt = new Date().toISOString();
   if (preset.baseUrl) {
     try {
@@ -3152,8 +3725,16 @@ async function checkProviderPreset(preset: ProviderPreset): Promise<ProviderChec
   if (needsSecret && !preset.apiKeyRef) {
     return { ok: false, code: "secret_missing", message: "Secret is not configured: apiKeyRef is required for live checks.", checkedAt };
   }
-  if (preset.apiKeyRef && !resolveSecretRef(preset.apiKeyRef).configured) {
-    return { ok: false, code: "secret_missing", message: `Secret is not configured: ${preset.apiKeyRef}`, checkedAt };
+  if (preset.apiKeyRef) {
+    const secretStatus = secretResolver.status(preset.apiKeyRef, "provider_api_key");
+    if (!secretStatus.configured) {
+      return {
+        ok: false,
+        code: secretStatus.errorCode ?? "secret_missing",
+        message: secretStatus.message ?? `Secret is not configured: ${preset.apiKeyRef}`,
+        checkedAt,
+      };
+    }
   }
   if (preset.api !== "media-job" && !preset.capabilities.includes("chat")) {
     return { ok: false, code: "unsupported_capability", message: "Provider preset cannot run chat tasks.", checkedAt };
@@ -3179,8 +3760,14 @@ async function checkProviderPreset(preset: ProviderPreset): Promise<ProviderChec
       if (!preset.apiKeyRef) {
         return { ok: false, code: "secret_missing", message: "Secret is not configured: apiKeyRef is required for live media vendor transport.", checkedAt };
       }
-      if (!resolveSecretRef(preset.apiKeyRef).configured) {
-        return { ok: false, code: "secret_missing", message: `Secret is not configured: ${preset.apiKeyRef}`, checkedAt };
+      const secretStatus = secretResolver.status(preset.apiKeyRef, "provider_api_key");
+      if (!secretStatus.configured) {
+        return {
+          ok: false,
+          code: secretStatus.errorCode ?? "secret_missing",
+          message: secretStatus.message ?? `Secret is not configured: ${preset.apiKeyRef}`,
+          checkedAt,
+        };
       }
       if (preset.kind !== "seedream" || !preset.capabilities.includes("image_generate")) {
         return {
@@ -3214,14 +3801,14 @@ async function checkProviderPreset(preset: ProviderPreset): Promise<ProviderChec
     };
   }
 
-  return await probeChatProvider(preset, checkedAt);
+  return await probeChatProvider(preset, checkedAt, secretResolver);
 }
 
-async function probeChatProvider(preset: ProviderPreset, checkedAt: string): Promise<ProviderCheckResult> {
+async function probeChatProvider(preset: ProviderPreset, checkedAt: string, secretResolver: SecretResolver): Promise<ProviderCheckResult> {
   try {
     const response = await fetch(buildProviderCheckUrl(preset), {
       method: "POST",
-      headers: buildProviderCheckHeaders(preset),
+      headers: buildProviderCheckHeaders(preset, secretResolver),
       body: JSON.stringify(buildProviderCheckBody(preset)),
       signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
     });
@@ -3267,8 +3854,8 @@ function normalizeProviderBaseUrl(preset: ProviderPreset): string {
   return "https://api.openai.com/v1";
 }
 
-function buildProviderCheckHeaders(preset: ProviderPreset): Record<string, string> {
-  const secret = resolveSecretRef(preset.apiKeyRef);
+function buildProviderCheckHeaders(preset: ProviderPreset, secretResolver: SecretResolver): Record<string, string> {
+  const secret: ResolvedSecret = preset.apiKeyRef ? secretResolver.resolve(preset.apiKeyRef, "provider_api_key") : { configured: false };
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...preset.headers,
@@ -3508,7 +4095,7 @@ function readOptionalObject(record: Record<string, unknown>, key: string): Recor
 function readOptionalApiKeyRef(record: Record<string, unknown>): string | undefined {
   const value = readOptionalString(record, "apiKeyRef");
   if (value && !isSupportedSecretRef(value)) {
-    throw new Error("apiKeyRef must use env:NAME");
+    throw new Error("apiKeyRef must use env:NAME or keychain:NAME");
   }
   return value;
 }
@@ -3516,7 +4103,7 @@ function readOptionalApiKeyRef(record: Record<string, unknown>): string | undefi
 function readNullableApiKeyRef(record: Record<string, unknown>): string | null | undefined {
   const value = readNullableString(record, "apiKeyRef");
   if (typeof value === "string" && !isSupportedSecretRef(value)) {
-    throw new Error("apiKeyRef must use env:NAME");
+    throw new Error("apiKeyRef must use env:NAME or keychain:NAME");
   }
   return value;
 }
@@ -3583,6 +4170,69 @@ function readOptionalTaskStatus(record: Record<string, unknown>, key: string): T
     throw new Error(`${key} must be one of: ${taskStatuses.join(", ")}`);
   }
   return value as TaskStatus;
+}
+
+function readOptionalChannelStatus(record: Record<string, unknown>, key: string): Channel["status"] | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "active" && value !== "paused" && value !== "archived") {
+    throw new Error(`${key} must be one of: active, paused, archived`);
+  }
+  return value;
+}
+
+function readOptionalChannelRuntimePolicy(
+  record: Record<string, unknown>,
+  key: string,
+): CreateChannelInput["runtimePolicy"] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  const policy: {
+    maxConcurrentRuns?: number;
+    executionMode?: "serial" | "parallel";
+    writeLockScope?: "channel" | "boundPath" | "workspace";
+    allowReadOnlyParallel?: boolean;
+    queueOnConflict?: boolean;
+  } = {};
+  const maxConcurrentRuns = value.maxConcurrentRuns;
+  if (maxConcurrentRuns !== undefined) {
+    if (typeof maxConcurrentRuns !== "number" || !Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1 || maxConcurrentRuns > 20) {
+      throw new Error(`${key}.maxConcurrentRuns must be an integer between 1 and 20`);
+    }
+    policy.maxConcurrentRuns = maxConcurrentRuns;
+  }
+  if (value.executionMode !== undefined) {
+    if (value.executionMode !== "serial" && value.executionMode !== "parallel") {
+      throw new Error(`${key}.executionMode must be serial or parallel`);
+    }
+    policy.executionMode = value.executionMode;
+  }
+  if (value.writeLockScope !== undefined) {
+    if (value.writeLockScope !== "channel" && value.writeLockScope !== "boundPath" && value.writeLockScope !== "workspace") {
+      throw new Error(`${key}.writeLockScope must be channel, boundPath, or workspace`);
+    }
+    policy.writeLockScope = value.writeLockScope;
+  }
+  if (value.allowReadOnlyParallel !== undefined) {
+    if (typeof value.allowReadOnlyParallel !== "boolean") {
+      throw new Error(`${key}.allowReadOnlyParallel must be a boolean`);
+    }
+    policy.allowReadOnlyParallel = value.allowReadOnlyParallel;
+  }
+  if (value.queueOnConflict !== undefined) {
+    if (typeof value.queueOnConflict !== "boolean") {
+      throw new Error(`${key}.queueOnConflict must be a boolean`);
+    }
+    policy.queueOnConflict = value.queueOnConflict;
+  }
+  return policy;
 }
 
 function readProviderKind(record: Record<string, unknown>, key: string): ProviderKind {
@@ -3690,6 +4340,17 @@ function readOptionalMediaJobStatusQuery(url: URL): MediaJobStatus | undefined {
   return value as MediaJobStatus;
 }
 
+function readOptionalSecretPurposeQuery(url: URL): SecretPurpose | null | undefined {
+  const value = url.searchParams.get("purpose");
+  if (value === null) {
+    return undefined;
+  }
+  if (!secretPurposes.includes(value as SecretPurpose)) {
+    return null;
+  }
+  return value as SecretPurpose;
+}
+
 function validateUrl(value: string, fieldName: string): void {
   try {
     new URL(value);
@@ -3713,6 +4374,12 @@ class HttpError extends Error {
     message: string,
   ) {
     super(message);
+  }
+}
+
+class DuplicateRunRequestError extends Error {
+  constructor(readonly runId: string) {
+    super(`Duplicate run request for ${runId}`);
   }
 }
 

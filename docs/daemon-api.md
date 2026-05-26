@@ -60,10 +60,18 @@ Response:
       "id": "channel_...",
       "workspaceId": "workspace_default",
       "name": "Engineering",
+      "status": "active",
       "boundPath": "/path/to/project",
       "defaultProviderPresetId": "provider_...",
       "defaultTeammateId": null,
       "allowedTools": ["read", "grep", "find", "ls"],
+      "runtimePolicy": {
+        "maxConcurrentRuns": 1,
+        "executionMode": "serial",
+        "writeLockScope": "boundPath",
+        "allowReadOnlyParallel": true,
+        "queueOnConflict": true
+      },
       "createdAt": "2026-05-21T00:00:00.000Z",
       "updatedAt": "2026-05-21T00:00:00.000Z"
     }
@@ -81,14 +89,23 @@ Content-Type: application/json
 ```json
 {
   "name": "Engineering",
+  "status": "active",
   "boundPath": "/path/to/project",
   "defaultProviderPresetId": "provider_...",
   "defaultTeammateId": "teammate_...",
-  "allowedTools": ["read", "grep", "find", "ls"]
+  "allowedTools": ["read", "grep", "find", "ls"],
+  "runtimePolicy": {
+    "maxConcurrentRuns": 1,
+    "executionMode": "serial",
+    "writeLockScope": "boundPath",
+    "allowReadOnlyParallel": true,
+    "queueOnConflict": true
+  }
 }
 ```
 
 `allowedTools` may contain `read`, `grep`, `find`, `ls`, `bash`, `edit`, or `write`.
+`status` may be `active`, `paused`, or `archived`. Paused channels can be edited but cannot start new runs. `runtimePolicy.writeLockScope` controls whether side-effectful runs lock the channel, bound path, or whole workspace.
 
 ### Get, Update, Delete Channel
 
@@ -165,6 +182,27 @@ DELETE /tasks/:id?cwd=/path/to/project
 
 When a persisted task is run through `/runs`, the daemon updates the linked task status to `running`, then `done`, `failed`, or `cancelled`.
 
+### Run Persisted Task
+
+```http
+POST /tasks/:id/run?cwd=/path/to/project
+Content-Type: application/json
+Accept: text/event-stream
+```
+
+```json
+{
+  "providerPresetId": "provider_...",
+  "teammateId": "engineer",
+  "idempotencyKey": "client-generated-key",
+  "tools": ["read", "grep", "find", "ls"]
+}
+```
+
+The daemon loads the task and channel, rejects paused or archived channels, checks provider readiness, acquires resource leases, claims the task with compare-and-set, creates a run, streams events, and releases leases on terminal state. Repeating the same `idempotencyKey` returns the original run id and does not start another runner.
+
+Conflicts return `409 resource_conflict` with the blocking resource in the message. v0.1 exposes conflict visibility; durable queued-attempt scheduling is a later slice.
+
 ## Run Task
 
 ```http
@@ -197,6 +235,19 @@ Request with inline provider config:
   "thinkingLevel": "medium"
 }
 ```
+
+## Runtime Diagnostics
+
+These endpoints are read-only and intended for Web timelines, CLI doctor, and debugging stuck work.
+
+```http
+GET /state-transitions?cwd=/path/to/project&entityType=task&entityId=task_...
+GET /runtime/leases?cwd=/path/to/project&status=active
+```
+
+`/state-transitions` returns persisted transition facts for `task`, `run`, `approval`, `media_job`, `workflow`, or `workflow_step`.
+
+`/runtime/leases` returns active, released, or expired leases. Resource types are `channel`, `bound_path`, `workspace`, `provider`, `task`, and `workflow_step`.
 
 Inline provider config is useful for development, but normal product flows should use provider presets so raw API keys are not persisted in workspace records.
 
@@ -645,7 +696,7 @@ Response:
 
 ## Provider Presets
 
-Provider presets store reusable non-secret provider configuration. API keys are represented as `apiKeyRef`, currently `env:NAME`.
+Provider presets store reusable non-secret provider configuration. API keys are represented as `apiKeyRef`, using `env:NAME` or `keychain:NAME`.
 
 ### List Provider Templates
 
@@ -676,7 +727,7 @@ Response:
 }
 ```
 
-Templates are reusable request bodies for `POST /providers`. They are disabled by default and use env secret refs only.
+Templates are reusable request bodies for `POST /providers`. They are disabled by default and use secret refs rather than raw keys.
 
 ### List Providers
 
@@ -700,6 +751,11 @@ Response:
       "baseUrl": "http://127.0.0.1:8317/v1",
       "apiKeyRef": "env:LOCAL_RELAY_API_KEY",
       "apiKeyConfigured": true,
+      "apiKeyStatus": {
+        "ref": "env:LOCAL_RELAY_API_KEY",
+        "kind": "env",
+        "configured": true
+      },
       "headers": {},
       "input": ["text"],
       "compat": {},
@@ -711,6 +767,8 @@ Response:
   ]
 }
 ```
+
+`apiKeyStatus` is status-only metadata. It never includes the resolved secret value.
 
 ### Create Provider
 
@@ -738,7 +796,7 @@ Content-Type: application/json
 }
 ```
 
-Raw `apiKey` is not accepted for persistent provider presets.
+Raw `apiKey` is not accepted for persistent provider presets. `apiKeyRef` accepts only supported secret refs such as `env:LOCAL_RELAY_API_KEY` or `keychain:provider_local`.
 
 ### Get, Update, Delete
 
@@ -789,6 +847,44 @@ Response:
 ```
 
 The check validates base URL format, required secret refs, enabled state, and supported capabilities. For `media-job` presets, the check remains static: default disabled transport reports no live vendor HTTP, while `compat.mediaVendorTransport.mode = "live"` validates the Seedream `image_generate` live gate configuration without creating media. For `openai-completions`, `openai-responses`, and `anthropic-messages`, it also performs a small live model request with a 10 second timeout. Common failure codes include `secret_missing`, `network_failed`, `auth_failed`, `model_unsupported`, `rate_limited`, `provider_disabled`, and `provider_error`.
+
+## Secrets
+
+### Get Secret Status
+
+```http
+GET /secrets/status?ref=env%3AOPENAI_API_KEY&purpose=provider_api_key
+```
+
+`purpose` is optional. Supported values are `provider_api_key`, `github_token`, `webhook_secret`, `custom_header`, and `automation_token`.
+
+Response:
+
+```json
+{
+  "status": {
+    "ref": "env:OPENAI_API_KEY",
+    "kind": "env",
+    "configured": true
+  }
+}
+```
+
+For unavailable keychain storage:
+
+```json
+{
+  "status": {
+    "ref": "keychain:provider_local",
+    "kind": "keychain",
+    "configured": false,
+    "errorCode": "secret_store_unavailable",
+    "message": "Keychain secret store is unavailable in this runtime."
+  }
+}
+```
+
+This endpoint is read-only and never returns a raw secret value.
 
 ## Approval Policy and Requests
 

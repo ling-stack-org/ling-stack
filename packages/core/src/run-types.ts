@@ -33,6 +33,22 @@ import type {
   Task,
   TaskUpdateInput,
 } from "./workspace-types.js";
+import type {
+  CreateResourceLeaseInput,
+  CreateStateTransitionEventInput,
+  ListResourceLeasesOptions,
+  ListStateTransitionEventsOptions,
+  ResourceLease,
+  ResourceLeaseOwnerType,
+  ResourceLeaseStatus,
+  StateTransitionEvent,
+} from "./channel-runtime-types.js";
+import type {
+  RunTransitionEvent,
+  StateTransitionActor,
+  TaskTransitionEvent,
+  TransitionResult,
+} from "./state-machines.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
@@ -169,6 +185,42 @@ export interface RunStore {
   listArtifacts(runId: string): RunArtifact[];
   listMediaJobArtifacts(mediaJobId: string): RunArtifact[];
   recoverStaleRuns(now: string): number;
+  listStateTransitionEvents(options?: ListStateTransitionEventsOptions): StateTransitionEvent[];
+  recordStateTransitionEvent(input: CreateStateTransitionEventInput): StateTransitionEvent;
+  findStateTransitionByIdempotency(
+    entityType: StateTransitionEvent["entityType"],
+    entityId: string,
+    idempotencyKey: string,
+  ): StateTransitionEvent | undefined;
+  transitionTaskStatus(input: {
+    readonly taskId: string;
+    readonly expectedStatus?: Task["status"];
+    readonly event: TaskTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+    readonly currentRunId?: string | null;
+    readonly assigneeTeammateId?: string | null;
+  }): TransitionResult<Task["status"]>;
+  transitionRunStatus(input: {
+    readonly runId: string;
+    readonly expectedStatus?: RunStatus;
+    readonly event: RunTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+    readonly startedAt?: string;
+    readonly endedAt?: string;
+    readonly summaryPath?: string;
+    readonly errorMessage?: string | null;
+  }): TransitionResult<RunStatus>;
+  acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined;
+  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerType, ownerId: string, releasedAt: string): number;
+  expireResourceLeases(now: string): number;
+  listResourceLeases(options?: ListResourceLeasesOptions): ResourceLease[];
+  getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined;
   createChannel(input: CreateChannelInput, now: string): Channel;
   getChannel(id: string): Channel | undefined;
   listChannels(options?: ListChannelsOptions): Channel[];

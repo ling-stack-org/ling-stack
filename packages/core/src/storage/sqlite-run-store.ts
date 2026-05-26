@@ -36,7 +36,10 @@ import {
   DEFAULT_WORKSPACE_ID,
   createChannelId,
   createTaskId,
+  normalizeChannelRuntimePolicy,
   type Channel,
+  type ChannelRuntimePolicy,
+  type ChannelStatus,
   type ChannelUpdateInput,
   type CreateChannelInput,
   type CreateTaskInput,
@@ -61,6 +64,27 @@ import {
   type RunStore,
   type RunStatus,
 } from "../run-types.js";
+import {
+  createResourceLeaseId,
+  createStateTransitionEventId,
+  type CreateResourceLeaseInput,
+  type CreateStateTransitionEventInput,
+  type ListResourceLeasesOptions,
+  type ListStateTransitionEventsOptions,
+  type ResourceLease,
+  type ResourceLeaseOwnerType,
+  type ResourceLeaseStatus,
+  type StateTransitionEvent,
+} from "../channel-runtime-types.js";
+import {
+  transitionRun,
+  transitionTask,
+  type RunTransitionEvent,
+  type StateEntityType,
+  type StateTransitionActor,
+  type TaskTransitionEvent,
+  type TransitionResult,
+} from "../state-machines.js";
 import {
   createMediaJobId,
   type CreateMediaJobInput,
@@ -92,6 +116,8 @@ const MEDIA_JOB_ARTIFACTS_MIGRATION_VERSION = 9;
 const MEDIA_JOB_ARTIFACTS_MIGRATION_NAME = "allow_media_job_artifacts";
 const APPROVAL_MEDIA_JOB_OWNER_MIGRATION_VERSION = 10;
 const APPROVAL_MEDIA_JOB_OWNER_MIGRATION_NAME = "allow_media_job_approval_owners";
+const CHANNEL_RUNTIME_MIGRATION_VERSION = 11;
+const CHANNEL_RUNTIME_MIGRATION_NAME = "add_channel_runtime_state_and_leases";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -389,6 +415,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   recoverStaleRuns(now: string): number {
+    this.expireResourceLeases(now);
     const staleRuns = this.database
       .prepare("SELECT id FROM run_sessions WHERE status IN ('queued', 'running', 'waiting_for_approval')")
       .all()
@@ -404,15 +431,353 @@ export class SqliteRunStore implements RunStore {
     return staleRuns.length;
   }
 
+  listStateTransitionEvents(options: ListStateTransitionEventsOptions = {}): StateTransitionEvent[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.entityType) {
+      clauses.push("entity_type = ?");
+      params.push(options.entityType);
+    }
+    if (options.entityId) {
+      clauses.push("entity_id = ?");
+      params.push(options.entityId);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.database
+      .prepare(`${stateTransitionSelectSql(whereClause)} ORDER BY created_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapStateTransitionEvent);
+  }
+
+  recordStateTransitionEvent(input: CreateStateTransitionEventInput): StateTransitionEvent {
+    const event: StateTransitionEvent = {
+      id: createStateTransitionEventId(),
+      workspaceId: input.workspaceId,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      fromStatus: input.fromStatus,
+      toStatus: input.toStatus,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: input.createdAt,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO state_transition_events (
+          id,
+          workspace_id,
+          entity_type,
+          entity_id,
+          from_status,
+          to_status,
+          event,
+          actor,
+          reason,
+          idempotency_key,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        event.id,
+        event.workspaceId,
+        event.entityType,
+        event.entityId,
+        event.fromStatus,
+        event.toStatus,
+        event.event,
+        event.actor,
+        event.reason ?? null,
+        event.idempotencyKey ?? null,
+        event.createdAt,
+      );
+    return event;
+  }
+
+  findStateTransitionByIdempotency(
+    entityType: StateTransitionEvent["entityType"],
+    entityId: string,
+    idempotencyKey: string,
+  ): StateTransitionEvent | undefined {
+    const row = this.database
+      .prepare(stateTransitionSelectSql("WHERE entity_type = ? AND entity_id = ? AND idempotency_key = ?"))
+      .get(entityType, entityId, idempotencyKey);
+    return row ? mapStateTransitionEvent(row) : undefined;
+  }
+
+  transitionTaskStatus(input: {
+    readonly taskId: string;
+    readonly expectedStatus?: TaskStatus;
+    readonly event: TaskTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+    readonly currentRunId?: string | null;
+    readonly assigneeTeammateId?: string | null;
+  }): TransitionResult<TaskStatus> {
+    const task = this.getTask(input.taskId);
+    if (!task) {
+      return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
+    }
+    if (input.idempotencyKey) {
+      const existing = this.findStateTransitionByIdempotency("task", input.taskId, input.idempotencyKey);
+      if (existing) {
+        return { ok: true, from: task.status, to: task.status, duplicate: true };
+      }
+    }
+
+    const result = transitionTask({
+      entityId: input.taskId,
+      currentStatus: task.status,
+      expectedStatus: input.expectedStatus,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!result.ok) {
+      return result;
+    }
+
+    const update = this.database
+      .prepare(`
+        UPDATE tasks
+        SET
+          status = ?,
+          current_run_id = ?,
+          assignee_teammate_id = ?,
+          updated_at = ?
+        WHERE id = ? AND status = ?
+      `)
+      .run(
+        result.to,
+        input.currentRunId === undefined ? task.currentRunId ?? null : input.currentRunId,
+        input.assigneeTeammateId === undefined ? task.assigneeTeammateId ?? null : input.assigneeTeammateId,
+        input.now,
+        input.taskId,
+        result.from,
+      );
+    if (Number(update.changes) === 0) {
+      const current = this.getTask(input.taskId);
+      return { ok: false, code: "stale_transition", currentStatus: current?.status ?? task.status };
+    }
+
+    this.recordStateTransitionEvent({
+      workspaceId: task.workspaceId,
+      entityType: "task",
+      entityId: input.taskId,
+      fromStatus: result.from,
+      toStatus: result.to,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: input.now,
+    });
+    return result;
+  }
+
+  transitionRunStatus(input: {
+    readonly runId: string;
+    readonly expectedStatus?: RunStatus;
+    readonly event: RunTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+    readonly startedAt?: string;
+    readonly endedAt?: string;
+    readonly summaryPath?: string;
+    readonly errorMessage?: string | null;
+  }): TransitionResult<RunStatus> {
+    const run = this.getRun(input.runId);
+    if (!run) {
+      return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
+    }
+    if (input.idempotencyKey) {
+      const existing = this.findStateTransitionByIdempotency("run", input.runId, input.idempotencyKey);
+      if (existing) {
+        return { ok: true, from: run.status, to: run.status, duplicate: true };
+      }
+    }
+
+    const result = transitionRun({
+      entityId: input.runId,
+      currentStatus: run.status,
+      expectedStatus: input.expectedStatus,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!result.ok) {
+      return result;
+    }
+
+    const update = this.database
+      .prepare(`
+        UPDATE run_sessions
+        SET
+          status = ?,
+          started_at = ?,
+          ended_at = ?,
+          error_message = ?,
+          summary_path = ?,
+          updated_at = ?
+        WHERE id = ? AND status = ?
+      `)
+      .run(
+        result.to,
+        input.startedAt ?? run.startedAt ?? null,
+        input.endedAt === undefined ? run.endedAt ?? null : input.endedAt,
+        input.errorMessage === undefined ? run.errorMessage ?? null : input.errorMessage,
+        input.summaryPath ?? run.summaryPath ?? null,
+        input.now,
+        input.runId,
+        result.from,
+      );
+    if (Number(update.changes) === 0) {
+      const current = this.getRun(input.runId);
+      return { ok: false, code: "stale_transition", currentStatus: current?.status ?? run.status };
+    }
+
+    this.recordStateTransitionEvent({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      entityType: "run",
+      entityId: input.runId,
+      fromStatus: result.from,
+      toStatus: result.to,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: input.now,
+    });
+    return result;
+  }
+
+  acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined {
+    const lease: ResourceLease = {
+      id: createResourceLeaseId(),
+      workspaceId: input.workspaceId,
+      resourceType: input.resourceType,
+      resourceKey: input.resourceKey,
+      ownerType: input.ownerType,
+      ownerId: input.ownerId,
+      status: "active",
+      acquiredAt: input.acquiredAt,
+      expiresAt: input.expiresAt,
+    };
+    try {
+      this.database
+        .prepare(`
+          INSERT INTO resource_leases (
+            id,
+            workspace_id,
+            resource_type,
+            resource_key,
+            owner_type,
+            owner_id,
+            status,
+            acquired_at,
+            expires_at,
+            released_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          lease.id,
+          lease.workspaceId,
+          lease.resourceType,
+          lease.resourceKey,
+          lease.ownerType,
+          lease.ownerId,
+          lease.status,
+          lease.acquiredAt,
+          lease.expiresAt,
+          null,
+        );
+      return lease;
+    } catch {
+      return undefined;
+    }
+  }
+
+  releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerType, ownerId: string, releasedAt: string): number {
+    const result = this.database
+      .prepare(`
+        UPDATE resource_leases
+        SET status = 'released', released_at = ?
+        WHERE owner_type = ? AND owner_id = ? AND status = 'active'
+      `)
+      .run(releasedAt, ownerType, ownerId);
+    return Number(result.changes);
+  }
+
+  expireResourceLeases(now: string): number {
+    const result = this.database
+      .prepare(`
+        UPDATE resource_leases
+        SET status = 'expired', released_at = ?
+        WHERE status = 'active' AND expires_at <= ?
+      `)
+      .run(now, now);
+    return Number(result.changes);
+  }
+
+  listResourceLeases(options: ListResourceLeasesOptions = {}): ResourceLease[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.ownerType) {
+      clauses.push("owner_type = ?");
+      params.push(options.ownerType);
+    }
+    if (options.ownerId) {
+      clauses.push("owner_id = ?");
+      params.push(options.ownerId);
+    }
+    if (options.resourceType) {
+      clauses.push("resource_type = ?");
+      params.push(options.resourceType);
+    }
+    if (options.resourceKey) {
+      clauses.push("resource_key = ?");
+      params.push(options.resourceKey);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.database
+      .prepare(`${resourceLeaseSelectSql(whereClause)} ORDER BY acquired_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapResourceLease);
+  }
+
+  getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined {
+    const row = this.database
+      .prepare(resourceLeaseSelectSql("WHERE workspace_id = ? AND resource_type = ? AND resource_key = ? AND status = 'active'"))
+      .get(DEFAULT_WORKSPACE_ID, resourceType, resourceKey);
+    return row ? mapResourceLease(row) : undefined;
+  }
+
   createChannel(input: CreateChannelInput, now: string): Channel {
     const channel: Channel = {
       id: createChannelId(),
       workspaceId: DEFAULT_WORKSPACE_ID,
       name: input.name,
+      status: input.status ?? "active",
       boundPath: input.boundPath,
       defaultProviderPresetId: input.defaultProviderPresetId,
       defaultTeammateId: input.defaultTeammateId,
       allowedTools: input.allowedTools ?? [...readOnlyRunTools],
+      runtimePolicy: normalizeChannelRuntimePolicy(input.runtimePolicy),
       createdAt: now,
       updatedAt: now,
     };
@@ -423,22 +788,26 @@ export class SqliteRunStore implements RunStore {
           id,
           workspace_id,
           name,
+          status,
           bound_path,
           default_provider_preset_id,
           default_teammate_id,
           allowed_tools_json,
+          runtime_policy_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         channel.id,
         channel.workspaceId,
         channel.name,
+        channel.status,
         channel.boundPath ?? null,
         channel.defaultProviderPresetId ?? null,
         channel.defaultTeammateId ?? null,
         stringifyJson(channel.allowedTools),
+        stringifyJson(channel.runtimePolicy),
         channel.createdAt,
         channel.updatedAt,
       );
@@ -472,10 +841,12 @@ export class SqliteRunStore implements RunStore {
     const next: Channel = {
       ...existing,
       name: input.name ?? existing.name,
+      status: input.status ?? existing.status,
       boundPath: nullableUpdate(input.boundPath, existing.boundPath),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, existing.defaultProviderPresetId),
       defaultTeammateId: nullableUpdate(input.defaultTeammateId, existing.defaultTeammateId),
       allowedTools: input.allowedTools ?? existing.allowedTools,
+      runtimePolicy: input.runtimePolicy ? normalizeChannelRuntimePolicy({ ...existing.runtimePolicy, ...input.runtimePolicy }) : existing.runtimePolicy,
       updatedAt: now,
     };
 
@@ -484,19 +855,23 @@ export class SqliteRunStore implements RunStore {
         UPDATE channels
         SET
           name = ?,
+          status = ?,
           bound_path = ?,
           default_provider_preset_id = ?,
           default_teammate_id = ?,
           allowed_tools_json = ?,
+          runtime_policy_json = ?,
           updated_at = ?
         WHERE id = ?
       `)
       .run(
         next.name,
+        next.status,
         next.boundPath ?? null,
         next.defaultProviderPresetId ?? null,
         next.defaultTeammateId ?? null,
         stringifyJson(next.allowedTools),
+        stringifyJson(next.runtimePolicy),
         next.updatedAt,
         id,
       );
@@ -1498,6 +1873,65 @@ export class SqliteRunStore implements RunStore {
 
       this.recordMigration(APPROVAL_MEDIA_JOB_OWNER_MIGRATION_VERSION, APPROVAL_MEDIA_JOB_OWNER_MIGRATION_NAME);
     }
+
+    if (!this.hasMigration(CHANNEL_RUNTIME_MIGRATION_VERSION)) {
+      if (!this.hasColumn("channels", "status")) {
+        this.database.exec("ALTER TABLE channels ADD COLUMN status TEXT NOT NULL DEFAULT 'active';");
+      }
+      if (!this.hasColumn("channels", "runtime_policy_json")) {
+        this.database.exec(
+          `ALTER TABLE channels ADD COLUMN runtime_policy_json TEXT NOT NULL DEFAULT '${stringifyJson(normalizeChannelRuntimePolicy(undefined))}';`,
+        );
+      }
+
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS state_transition_events (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          from_status TEXT NOT NULL,
+          to_status TEXT NOT NULL,
+          event TEXT NOT NULL,
+          actor TEXT NOT NULL,
+          reason TEXT,
+          idempotency_key TEXT,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_state_transition_idempotency
+        ON state_transition_events(entity_type, entity_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_state_transition_entity
+        ON state_transition_events(entity_type, entity_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS resource_leases (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          resource_type TEXT NOT NULL,
+          resource_key TEXT NOT NULL,
+          owner_type TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          acquired_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          released_at TEXT
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_active_resource_lease
+        ON resource_leases(workspace_id, resource_type, resource_key)
+        WHERE status = 'active';
+
+        CREATE INDEX IF NOT EXISTS idx_resource_leases_owner
+        ON resource_leases(owner_type, owner_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_resource_leases_expiry
+        ON resource_leases(status, expires_at);
+      `);
+
+      this.recordMigration(CHANNEL_RUNTIME_MIGRATION_VERSION, CHANNEL_RUNTIME_MIGRATION_NAME);
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -1647,10 +2081,12 @@ function mapChannel(row: Record<string, SQLOutputValue>): Channel {
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
     name: readString(row, "name"),
+    status: readString(row, "status") as ChannelStatus,
     boundPath: readNullableString(row, "bound_path"),
     defaultProviderPresetId: readNullableString(row, "default_provider_preset_id"),
     defaultTeammateId: readNullableString(row, "default_teammate_id"),
     allowedTools: parseJsonStringArray(readString(row, "allowed_tools_json")) as RunTool[],
+    runtimePolicy: parseChannelRuntimePolicy(readString(row, "runtime_policy_json")),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
@@ -1766,6 +2202,37 @@ function mapMediaJob(row: Record<string, SQLOutputValue>): MediaJob {
   });
 }
 
+function mapStateTransitionEvent(row: Record<string, SQLOutputValue>): StateTransitionEvent {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    entityType: readString(row, "entity_type") as StateEntityType,
+    entityId: readString(row, "entity_id"),
+    fromStatus: readString(row, "from_status"),
+    toStatus: readString(row, "to_status"),
+    event: readString(row, "event"),
+    actor: readString(row, "actor") as StateTransitionActor,
+    reason: readNullableString(row, "reason"),
+    idempotencyKey: readNullableString(row, "idempotency_key"),
+    createdAt: readString(row, "created_at"),
+  });
+}
+
+function mapResourceLease(row: Record<string, SQLOutputValue>): ResourceLease {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    resourceType: readString(row, "resource_type") as ResourceLease["resourceType"],
+    resourceKey: readString(row, "resource_key"),
+    ownerType: readString(row, "owner_type") as ResourceLease["ownerType"],
+    ownerId: readString(row, "owner_id"),
+    status: readString(row, "status") as ResourceLeaseStatus,
+    acquiredAt: readString(row, "acquired_at"),
+    expiresAt: readString(row, "expires_at"),
+    releasedAt: readNullableString(row, "released_at"),
+  });
+}
+
 function parseApprovalToolDecisions(value: string): ApprovalToolDecisions {
   const parsed = parseJsonObject(value);
   const decisions: Record<RunTool, ApprovalToolDecision> = { ...defaultApprovalToolDecisions };
@@ -1778,19 +2245,72 @@ function parseApprovalToolDecisions(value: string): ApprovalToolDecisions {
   return decisions;
 }
 
+function parseChannelRuntimePolicy(value: string): ChannelRuntimePolicy {
+  const parsed = parseJsonObject(value);
+  return normalizeChannelRuntimePolicy({
+    maxConcurrentRuns: typeof parsed.maxConcurrentRuns === "number" ? parsed.maxConcurrentRuns : undefined,
+    executionMode: parsed.executionMode === "parallel" ? "parallel" : parsed.executionMode === "serial" ? "serial" : undefined,
+    writeLockScope:
+      parsed.writeLockScope === "channel" || parsed.writeLockScope === "boundPath" || parsed.writeLockScope === "workspace"
+        ? parsed.writeLockScope
+        : undefined,
+    allowReadOnlyParallel: typeof parsed.allowReadOnlyParallel === "boolean" ? parsed.allowReadOnlyParallel : undefined,
+    queueOnConflict: typeof parsed.queueOnConflict === "boolean" ? parsed.queueOnConflict : undefined,
+  });
+}
+
 function channelSelectSql(whereClause: string): string {
   return `
     SELECT
       id,
       workspace_id,
       name,
+      status,
       bound_path,
       default_provider_preset_id,
       default_teammate_id,
       allowed_tools_json,
+      runtime_policy_json,
       created_at,
       updated_at
     FROM channels
+    ${whereClause}
+  `;
+}
+
+function stateTransitionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      entity_type,
+      entity_id,
+      from_status,
+      to_status,
+      event,
+      actor,
+      reason,
+      idempotency_key,
+      created_at
+    FROM state_transition_events
+    ${whereClause}
+  `;
+}
+
+function resourceLeaseSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      resource_type,
+      resource_key,
+      owner_type,
+      owner_id,
+      status,
+      acquired_at,
+      expires_at,
+      released_at
+    FROM resource_leases
     ${whereClause}
   `;
 }

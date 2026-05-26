@@ -5,14 +5,17 @@
   "private": true,
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc -p tsconfig.json && vite build",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json && vite build",
+    "typecheck": "corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json --noEmit",
     "preview": "vite preview --host 127.0.0.1",
     "lint": "echo \"lint not configured yet\"",
     "test": "echo \"tests not configured yet\"",
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@ling-stack/api-client": "workspace:*",
+    "@ling-stack/contracts": "workspace:*",
+    "@ling-stack/core": "workspace:*",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

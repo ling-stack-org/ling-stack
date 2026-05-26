@@ -1,0 +1,357 @@
+.workspace-context-stack {
+  display: grid;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+  overflow: auto;
+}
+
+.context-panel-card,
+.workspace-context-stack > .first-run-flow,
+.workspace-context-stack > .timeline {
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.workspace-context-stack .workspace-readiness {
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workspace-context-stack .readiness-grid,
+.workspace-context-stack .first-run-steps {
+  grid-template-columns: 1fr;
+}
+
+.workspace-context-stack .readiness-item {
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 46px;
+  padding: 8px;
+  border-radius: 7px;
+}
+
+.workspace-context-stack .readiness-item .secondary-button {
+  grid-column: 2;
+  justify-self: start;
+}
+
+.workspace-context-stack .first-run-flow.ready,
+.workspace-context-stack .first-run-flow.active,
+.workspace-context-stack .first-run-flow.attention,
+.workspace-context-stack .first-run-flow {
+  grid-template-columns: 1fr;
+  padding: 12px;
+}
+
+.workspace-context-stack .first-run-actions {
+  justify-content: flex-start;
+}
+
+.workspace-context-stack .timeline {
+  min-height: auto;
+  max-height: none;
+}
+
+.panel,
+.inspector {
+  border-radius: 8px;
+}
+
+input,
+select,
+textarea {
+  border-color: rgba(37, 42, 45, 0.12);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+@media (max-width: 1500px) {
+  .run-history-layout,
+  .workspace-task-grid,
+  .provider-layout,
+  .media-jobs-layout,
+  .teammate-management-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .teammate-wizard {
+    grid-template-columns: 160px minmax(0, 1fr);
+    grid-template-areas:
+      "steps stage"
+      "steps preview"
+      "steps actions";
+  }
+
+  .teammate-live-preview {
+    min-height: auto;
+  }
+
+  .first-run-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .readiness-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .run-history-layout .runs-panel,
+  .run-history-layout .run-detail-panel,
+  .provider-list-panel,
+  .provider-form-panel,
+  .media-job-list-panel,
+  .media-job-form-panel {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 1120px) {
+  .app-shell {
+    grid-template-areas:
+      "top"
+      "nav"
+      "workspace"
+      "inspector";
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto;
+  }
+
+  .left-nav {
+    border-right: 0;
+    border-bottom: 1px solid #d8ded7;
+  }
+
+  .brand {
+    padding-bottom: 10px;
+  }
+
+  nav {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .nav-item {
+    justify-content: center;
+  }
+
+  .right-panel {
+    border-left: 0;
+    border-top: 1px solid #d8ded7;
+  }
+
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .run-history-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-task-grid,
+  .task-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .first-run-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .readiness-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .media-jobs-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-step-lane {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .teammate-wizard {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "steps"
+      "stage"
+      "preview"
+      "actions";
+  }
+
+  .teammate-step-rail {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .teammate-step {
+    min-height: 74px;
+  }
+}
+
+@media (max-width: 720px) {
+  .top-bar,
+  .top-status,
+  .workspace-head,
+  .channel-header,
+  .field-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .top-bar {
+    height: auto;
+    padding: 12px;
+  }
+
+  .top-status {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .top-status .icon-button,
+  .top-status .language-switcher {
+    width: 100%;
+  }
+
+  .top-status .language-switcher {
+    justify-content: center;
+  }
+
+  .readiness-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .task-run-link {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .run-repair-hint {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .run-repair-hint .secondary-button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .channel-path-field {
+    grid-template-columns: 1fr;
+  }
+
+  .first-run-flow.ready,
+  .first-run-flow.active,
+  .first-run-flow.attention,
+  .first-run-steps,
+  .first-run-step {
+    grid-template-columns: 1fr;
+  }
+
+  .first-run-step-actions,
+  .first-run-actions {
+    justify-content: flex-start;
+  }
+
+  .readiness-item .secondary-button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  nav {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .workspace,
+  .right-panel {
+    padding: 14px;
+  }
+
+  .field-row,
+  .tool-grid,
+  .compact-tools,
+  .channel-detail-meta,
+  .task-detail-meta,
+  .task-provider-readiness,
+  .task-provider-readiness-meta,
+  .run-detail-summary,
+  .run-evidence-grid,
+  .session-file-list,
+  .artifact-row,
+  .runtime-run-repair-meta,
+  .tool-event-meta,
+  .provider-number-row,
+  .provider-onboarding-strip,
+  .provider-repair-item,
+  .provider-template-grid,
+  .provider-run-notice {
+    grid-template-columns: 1fr;
+  }
+
+  .teammate-command-strip,
+  .teammate-detail-hero,
+  .teammate-template-row,
+  .teammate-draft-row,
+  .teammate-skill-row,
+  .workflow-step-card,
+  .teammate-meta-grid,
+  .workflow-step-lane,
+  .teammate-template-cards,
+  .teammate-provider-grid,
+  .teammate-profile-form,
+  .teammate-scope-grid,
+  .teammate-preview-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .teammate-command-strip {
+    align-items: stretch;
+  }
+
+  .teammate-step-rail {
+    grid-template-columns: 1fr;
+  }
+
+  .teammate-stage-title,
+  .teammate-wizard-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .teammate-stage-title small {
+    max-width: none;
+    text-align: left;
+  }
+
+  .teammate-detail-hero .approval-profile-badge,
+  .teammate-skill-row .approval-profile-badge,
+  .workflow-step-card .approval-profile-badge {
+    justify-self: start;
+  }
+
+  .phase-token {
+    justify-content: flex-start;
+    width: fit-content;
+  }
+
+  .tool-event-summary {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .provider-row {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-actions,
+  .run-detail-actions,
+  .approval-actions {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .approval-row {
+    grid-template-columns: 1fr;
+  }
+}

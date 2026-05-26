@@ -1,3 +1,4 @@
+import { LingDaemonClient, daemonBaseUrlFromEnv } from "@ling-stack/api-client";
 import type {
   ApprovalListResponse,
   ApprovalMutationResponse,
@@ -7,6 +8,8 @@ import type {
   ChannelFormState,
   ChannelListResponse,
   ChannelMutationResponse,
+  CreateChannelRequest,
+  CreateMediaJobRequest,
   DaemonHealthResponse,
   MediaJobFormState,
   MediaJobArtifactListResponse,
@@ -15,270 +18,144 @@ import type {
   ProviderCheckResult,
   ProviderFormState,
   ProviderListResponse,
+  ProviderMutationRequest,
   ProviderMutationResponse,
   ProviderTemplateListResponse,
+  ResourceLeaseListResponse,
   RunCancelResponse,
   RunArtifactListResponse,
   RunEventsResponse,
   RunFormState,
   RunListResponse,
   RunSession,
+  SecretPurpose,
+  SecretStatusResponse,
+  StateEntityType,
+  StateTransitionListResponse,
   Task,
   TaskEditFormState,
   TaskFormState,
   TaskListResponse,
   TaskMutationResponse,
   ToolName,
+  UpdateChannelRequest,
+  UpdateTaskRequest,
 } from "./types.js";
 
-export const daemonBaseUrl =
-  import.meta.env.VITE_LING_STACK_DAEMON_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:17891";
+export const daemonBaseUrl = daemonBaseUrlFromEnv(import.meta.env as Record<string, string | undefined>);
+
+const daemonClient = new LingDaemonClient({ baseUrl: daemonBaseUrl });
 
 export async function getDaemonHealth(): Promise<DaemonHealthResponse> {
-  const response = await fetch(`${daemonBaseUrl}/health`);
-  if (!response.ok) {
-    return { ok: false };
-  }
-  const body = (await response.json()) as {
-    ok?: unknown;
-    service?: unknown;
-    defaultWorkspaceCwd?: unknown;
-  };
-  return {
-    ok: body.ok === true,
-    service: typeof body.service === "string" ? body.service : undefined,
-    defaultWorkspaceCwd: typeof body.defaultWorkspaceCwd === "string" ? body.defaultWorkspaceCwd : undefined,
-  };
+  return daemonClient.getHealth();
 }
 
 export async function getRun(runId: string, cwd?: string): Promise<RunSession> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/runs/${encodeURIComponent(runId)}`, cwd));
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as RunSession;
+  return daemonClient.getRun(runId, cwd);
 }
 
 export async function listRuns(cwd: string, limit = 50): Promise<RunListResponse> {
-  const parsed = new URL(`${daemonBaseUrl}/runs`);
-  parsed.searchParams.set("cwd", cwd);
-  parsed.searchParams.set("limit", String(limit));
-  const response = await fetch(parsed.toString());
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as RunListResponse;
+  return daemonClient.listRuns(cwd, limit);
 }
 
 export async function listProviders(cwd: string): Promise<ProviderListResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/providers`, cwd));
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ProviderListResponse;
+  return daemonClient.listProviders(cwd);
 }
 
 export async function listProviderTemplates(): Promise<ProviderTemplateListResponse> {
-  const response = await fetch(`${daemonBaseUrl}/provider-templates`);
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ProviderTemplateListResponse;
+  return daemonClient.listProviderTemplates();
 }
 
 export async function listChannels(cwd: string): Promise<ChannelListResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/channels`, cwd));
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ChannelListResponse;
+  return daemonClient.listChannels(cwd);
 }
 
 export async function createChannel(cwd: string, form: ChannelFormState): Promise<ChannelMutationResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/channels`, cwd), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(channelFormToPayload(form)),
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ChannelMutationResponse;
+  return daemonClient.createChannel(cwd, channelFormToPayload(form));
 }
 
 export async function updateChannel(cwd: string, channelId: string, form: ChannelFormState): Promise<ChannelMutationResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/channels/${encodeURIComponent(channelId)}`, cwd), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(channelFormToUpdatePayload(form)),
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ChannelMutationResponse;
+  return daemonClient.updateChannel(cwd, channelId, channelFormToUpdatePayload(form));
 }
 
 export async function deleteChannel(cwd: string, channelId: string): Promise<void> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/channels/${encodeURIComponent(channelId)}`, cwd), {
-    method: "DELETE",
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
+  await daemonClient.deleteChannel(cwd, channelId);
 }
 
 export async function listTasks(cwd: string, channelId?: string): Promise<TaskListResponse> {
-  const parsed = new URL(`${daemonBaseUrl}/tasks`);
-  parsed.searchParams.set("cwd", cwd);
-  if (channelId) {
-    parsed.searchParams.set("channelId", channelId);
-  }
-  const response = await fetch(parsed.toString());
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as TaskListResponse;
+  return daemonClient.listTasks(cwd, { channelId });
 }
 
 export async function createTask(cwd: string, channelId: string, form: TaskFormState): Promise<TaskMutationResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/tasks`, cwd), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      channelId,
-      title: form.title,
-      prompt: form.prompt,
-    }),
+  return daemonClient.createTask(cwd, {
+    channelId,
+    title: form.title,
+    prompt: form.prompt,
   });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as TaskMutationResponse;
 }
 
 export async function updateTaskStatus(cwd: string, taskId: string, status: Task["status"]): Promise<TaskMutationResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/tasks/${encodeURIComponent(taskId)}`, cwd), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status }),
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as TaskMutationResponse;
+  return daemonClient.updateTask(cwd, taskId, { status });
 }
 
 export async function updateTask(cwd: string, taskId: string, form: TaskEditFormState): Promise<TaskMutationResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/tasks/${encodeURIComponent(taskId)}`, cwd), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      title: form.title,
-      prompt: form.prompt,
-      status: form.status,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as TaskMutationResponse;
+  return daemonClient.updateTask(cwd, taskId, taskEditFormToPayload(form));
 }
 
 export async function deleteTask(cwd: string, taskId: string): Promise<void> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/tasks/${encodeURIComponent(taskId)}`, cwd), {
-    method: "DELETE",
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
+  await daemonClient.deleteTask(cwd, taskId);
+}
+
+export async function listStateTransitions(
+  cwd: string,
+  options: { readonly entityType?: StateEntityType; readonly entityId?: string; readonly limit?: number } = {},
+): Promise<StateTransitionListResponse> {
+  return daemonClient.listStateTransitions(cwd, options);
+}
+
+export async function listResourceLeases(
+  cwd: string,
+  options: { readonly status?: "active" | "released" | "expired"; readonly ownerId?: string; readonly limit?: number } = {},
+): Promise<ResourceLeaseListResponse> {
+  return daemonClient.listResourceLeases(cwd, options);
+}
+
+export async function getSecretStatus(ref: string, purpose?: SecretPurpose): Promise<SecretStatusResponse> {
+  return daemonClient.getSecretStatus(ref, purpose);
 }
 
 export async function createProvider(cwd: string, form: ProviderFormState): Promise<ProviderMutationResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/providers`, cwd), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(providerFormToPayload(form)),
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ProviderMutationResponse;
+  return daemonClient.createProvider(cwd, providerFormToPayload(form));
 }
 
 export async function updateProvider(cwd: string, providerId: string, form: ProviderFormState): Promise<ProviderMutationResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/providers/${encodeURIComponent(providerId)}`, cwd), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(providerFormToPayload(form)),
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ProviderMutationResponse;
+  return daemonClient.updateProvider(cwd, providerId, providerFormToPayload(form));
 }
 
 export async function deleteProvider(cwd: string, providerId: string): Promise<void> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/providers/${encodeURIComponent(providerId)}`, cwd), {
-    method: "DELETE",
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
+  await daemonClient.deleteProvider(cwd, providerId);
 }
 
 export async function checkProvider(cwd: string, providerId: string): Promise<ProviderCheckResult> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/providers/${encodeURIComponent(providerId)}/check`, cwd), {
-    method: "POST",
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ProviderCheckResult;
+  return daemonClient.checkProvider(cwd, providerId);
 }
 
 export async function listApprovals(
   cwd: string,
   options: { readonly status?: string; readonly runId?: string; readonly mediaJobId?: string } = {},
 ): Promise<ApprovalListResponse> {
-  const parsed = new URL(`${daemonBaseUrl}/approvals`);
-  parsed.searchParams.set("cwd", cwd);
-  if (options.status) {
-    parsed.searchParams.set("status", options.status);
-  }
-  if (options.runId) {
-    parsed.searchParams.set("runId", options.runId);
-  }
-  if (options.mediaJobId) {
-    parsed.searchParams.set("mediaJobId", options.mediaJobId);
-  }
-  const response = await fetch(parsed.toString());
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ApprovalListResponse;
+  return daemonClient.listApprovals(cwd, options);
 }
 
 export async function getApprovalPolicy(cwd: string): Promise<ApprovalPolicyResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/approval-policy`, cwd));
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ApprovalPolicyResponse;
+  return daemonClient.getApprovalPolicy(cwd);
 }
 
 export async function updateApprovalPolicy(cwd: string, form: ApprovalPolicyFormState): Promise<ApprovalPolicyResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/approval-policy`, cwd), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      toolDecisions: form.toolDecisions,
-      allowedWritePaths: splitLines(form.allowedWritePathsText),
-    }),
+  return daemonClient.updateApprovalPolicy(cwd, {
+    toolDecisions: form.toolDecisions,
+    allowedWritePaths: splitLines(form.allowedWritePathsText),
   });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ApprovalPolicyResponse;
 }
 
 export async function approveApproval(cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
@@ -290,74 +167,35 @@ export async function denyApproval(cwd: string, approvalId: string, reason?: str
 }
 
 export async function getRunEvents(runId: string, cwd?: string): Promise<RunEventsResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/runs/${encodeURIComponent(runId)}/events`, cwd));
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as RunEventsResponse;
+  return daemonClient.getRunEvents(runId, cwd);
 }
 
 export async function listRunArtifacts(runId: string, cwd?: string): Promise<RunArtifactListResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/runs/${encodeURIComponent(runId)}/artifacts`, cwd));
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as RunArtifactListResponse;
+  return daemonClient.listRunArtifacts(runId, cwd);
 }
 
 export async function listMediaJobs(cwd: string, limit = 100): Promise<MediaJobListResponse> {
-  const parsed = new URL(`${daemonBaseUrl}/media-jobs`);
-  parsed.searchParams.set("cwd", cwd);
-  parsed.searchParams.set("limit", String(limit));
-  const response = await fetch(parsed.toString());
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as MediaJobListResponse;
+  return daemonClient.listMediaJobs(cwd, limit);
 }
 
 export async function createMediaJob(cwd: string, form: MediaJobFormState): Promise<MediaJobMutationResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/media-jobs`, cwd), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(mediaJobFormToPayload(form)),
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as MediaJobMutationResponse;
+  return daemonClient.createMediaJob(cwd, mediaJobFormToPayload(form));
 }
 
 export async function runMediaJob(cwd: string, mediaJobId: string): Promise<MediaJobMutationResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/media-jobs/${encodeURIComponent(mediaJobId)}/run`, cwd), {
-    method: "POST",
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as MediaJobMutationResponse;
+  return daemonClient.runMediaJob(cwd, mediaJobId);
 }
 
 export async function listMediaJobArtifacts(mediaJobId: string, cwd?: string): Promise<MediaJobArtifactListResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/media-jobs/${encodeURIComponent(mediaJobId)}/artifacts`, cwd));
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as MediaJobArtifactListResponse;
+  return daemonClient.listMediaJobArtifacts(mediaJobId, cwd);
 }
 
 export function artifactContentUrl(artifactId: string, cwd?: string): string {
-  return withCwd(`${daemonBaseUrl}/artifacts/${encodeURIComponent(artifactId)}/content`, cwd);
+  return daemonClient.artifactContentUrl(artifactId, cwd);
 }
 
 export async function cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/runs/${encodeURIComponent(runId)}/cancel`, cwd), {
-    method: "POST",
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as RunCancelResponse;
+  return daemonClient.cancelRun(cwd, runId);
 }
 
 export function buildRunRequest(form: RunFormState): unknown {
@@ -446,18 +284,12 @@ async function resolveApproval(
   action: "approve" | "deny",
   reason?: string,
 ): Promise<ApprovalMutationResponse> {
-  const response = await fetch(withCwd(`${daemonBaseUrl}/approvals/${encodeURIComponent(approvalId)}/${action}`, cwd), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reason }),
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  return (await response.json()) as ApprovalMutationResponse;
+  return action === "approve"
+    ? daemonClient.approveApproval(cwd, approvalId, reason)
+    : daemonClient.denyApproval(cwd, approvalId, reason);
 }
 
-function providerFormToPayload(form: ProviderFormState): unknown {
+function providerFormToPayload(form: ProviderFormState): ProviderMutationRequest {
   return {
     kind: form.kind,
     displayName: form.displayName,
@@ -476,25 +308,37 @@ function providerFormToPayload(form: ProviderFormState): unknown {
   };
 }
 
-function channelFormToPayload(form: ChannelFormState): unknown {
+function channelFormToPayload(form: ChannelFormState): CreateChannelRequest {
   return {
     name: form.name.trim(),
+    status: form.status,
     boundPath: form.boundPath.trim() || undefined,
     defaultProviderPresetId: form.defaultProviderPresetId || undefined,
     allowedTools: form.allowedTools.filter(isRunnerTool),
+    runtimePolicy: form.runtimePolicy,
   };
 }
 
-function channelFormToUpdatePayload(form: ChannelFormState): unknown {
+function channelFormToUpdatePayload(form: ChannelFormState): UpdateChannelRequest {
   return {
     name: form.name.trim(),
+    status: form.status,
     boundPath: form.boundPath.trim() || null,
     defaultProviderPresetId: form.defaultProviderPresetId || null,
     allowedTools: form.allowedTools.filter(isRunnerTool),
+    runtimePolicy: form.runtimePolicy,
   };
 }
 
-function mediaJobFormToPayload(form: MediaJobFormState): unknown {
+function taskEditFormToPayload(form: TaskEditFormState): UpdateTaskRequest {
+  return {
+    title: form.title,
+    prompt: form.prompt,
+    status: form.status,
+  };
+}
+
+function mediaJobFormToPayload(form: MediaJobFormState): CreateMediaJobRequest {
   return {
     providerPresetId: form.providerPresetId,
     operation: form.operation,
@@ -577,35 +421,4 @@ function readToolArray(value: Record<string, unknown>, key: string): ToolName[] 
 
 function removeUndefined(input: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
-}
-
-function withCwd(url: string, cwd?: string): string {
-  if (!cwd) {
-    return url;
-  }
-  const parsed = new URL(url);
-  parsed.searchParams.set("cwd", cwd);
-  return parsed.toString();
-}
-
-async function readErrorMessage(response: Response): Promise<string> {
-  let message = `${response.status} ${response.statusText}`;
-  try {
-    const body = (await response.json()) as { message?: unknown; error?: unknown };
-    if (typeof body.message === "string") {
-      message = body.message;
-    } else if (typeof body.error === "string") {
-      message = body.error;
-    }
-  } catch {
-    return friendlyErrorMessage(message);
-  }
-  return friendlyErrorMessage(message);
-}
-
-function friendlyErrorMessage(message: string): string {
-  if ((message.includes("EACCES") || message.includes("ENOENT")) && message.includes(".ling-stack")) {
-    return `Workspace path does not exist or is not writable. Use the absolute path to your local checkout. ${message}`;
-  }
-  return message;
 }

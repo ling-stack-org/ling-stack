@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { SecretStatus } from "./secrets.js";
 
 export type ProviderKind =
   | "openai"
@@ -95,6 +96,7 @@ export interface ProviderPresetUpdateInput {
 
 export interface PublicProviderPreset extends ProviderPreset {
   readonly apiKeyConfigured: boolean;
+  readonly apiKeyStatus?: SecretStatus;
 }
 
 export interface ProviderCheckResult {

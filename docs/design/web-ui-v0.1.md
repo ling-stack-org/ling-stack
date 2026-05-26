@@ -10,7 +10,9 @@ This design depends on:
 - [Provider presets](provider-presets.md)
 - [Approval policy](approval-policy.md)
 
-The current `apps/web` package now provides the local app shell, Model Workbench provider setup with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, a client-style channel workspace, compact task creation/running, contextual readiness and first-run panels, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
+The current `apps/web` package now provides the local app shell, Model Workbench provider setup with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, a client-style channel workspace, compact task creation/running, channel runtime policy controls, active lease/conflict signals, state-machine timelines, contextual readiness and first-run panels, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
+
+The AI teammates page now uses the same client direction: a Helio-inspired, macOS-like wizard for choosing a default role, binding a model, filling profile details, and scoping channels/memory/files. It is still a local draft flow until the daemon teammate API exists.
 
 ## Goal
 
@@ -64,6 +66,7 @@ The default Web entry should now behave like a lightweight desktop client:
 - open directly into the selected channel, usually `# engineering`,
 - keep workspace, channels, AI teammates, and direct messages in the left sidebar,
 - keep provider setup, approval inbox/policy, media jobs, and settings in the configuration rail or dedicated pages,
+- give AI teammates a dedicated management page instead of leaving them as decorative sidebar presence,
 - keep the center focused on channel activity, task cards, and the task composer,
 - keep readiness, first-run guidance, approvals, and live events in the right context panel,
 - avoid showing channel/provider/policy forms as the first thing a ready user sees.
@@ -155,6 +158,7 @@ Current homepage shape:
 - left sidebar owns workspace navigation, channel selection, AI teammate presence, direct messages, and compact configuration icons,
 - center channel window shows the selected channel header, daemon/provider chips, activity messages, task cards, and a task composer,
 - right context panel shows readiness, first-run state, pending approvals, and event stream,
+- runtime state panel shows active runs, pending approvals, active resource leases, and recent state transitions,
 - channel creation and other configuration controls are collapsed or moved out of the primary center flow.
 
 Content:
@@ -173,6 +177,31 @@ Primary actions:
 - configure provider,
 - create channel,
 - open latest run.
+
+### AI Teammates Management
+
+Purpose:
+
+- expose the default Ling/gstack-inspired AI teammate bench,
+- make teammate roles, skills, tools, provider capability needs, and approval profiles inspectable,
+- support a first `Add teammate` interaction without claiming persistence before the daemon contract exists.
+
+Current page shape:
+
+- left sidebar `AI Teammates` opens the management page,
+- main area starts with a four-step teammate wizard: `Role -> Model -> Profile -> Scope`,
+- role selection prioritizes built-in `gstack-default` templates and also supports `Start from blank`,
+- model selection binds a provider preset per teammate instead of assuming one global model,
+- scope selection lets the user choose channels and planned memory/file sources,
+- below the wizard, local teammate drafts, built-in roles, selected template detail, and the `autoplan-lite` workflow remain inspectable,
+- the left sidebar shows teammate presence and supports lightweight pin/hide controls,
+- right context panel summarizes the active skill pack, local draft count, and strict approval skills.
+
+Current boundary:
+
+- adding a teammate creates a local UI draft only,
+- sidebar pin/hide is local UI state only,
+- teammate persistence, channel assignment persistence, custom skill packs, isolated memory stores, model override APIs, and AGENTS.md import remain future daemon/DB work.
 
 Empty state priority:
 
@@ -306,14 +335,14 @@ Rules:
 
 - never ask for raw API key in v0.1 persistent UI,
 - only ask for `apiKeyRef`,
-- show the export/restart/check sequence for missing `env:NAME` values,
+- show the setup/restart/check sequence for missing `env:NAME` values and fail-closed `keychain:NAME` refs,
 - show `apiKeyConfigured: true/false`,
 - do not reveal secret values,
 - show health check result with stable error code.
 
 Provider onboarding and repair:
 
-- Model Workbench must make the path from template to runnable preset explicit: choose template, save preset, set env if needed, run Check, then Use.
+- Model Workbench must make the path from template to runnable preset explicit: choose template, save preset, configure the secret ref if needed, run Check, then Use.
 - The list summary should distinguish chat-compatible providers from preflight-ready providers. Compatibility means enabled, non-media, chat-capable, and secret-present; preflight-ready additionally requires `lastCheck.ok === true`.
 - The primary batch action should read as `Check all` and only target enabled chat providers whose hard compatibility rules can be checked.
 - A compact repair queue should show the next blocked providers before the full list:

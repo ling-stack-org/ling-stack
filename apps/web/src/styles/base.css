@@ -1,0 +1,138 @@
+:root {
+  color: #17211f;
+  background: #f4f6f3;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f4f6f3;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-areas:
+    "top top top"
+    "nav workspace inspector";
+  grid-template-columns: 236px minmax(0, 1fr) 360px;
+  grid-template-rows: 56px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.top-bar {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 18px;
+  border-bottom: 1px solid #d8ded7;
+  background: #fbfcfa;
+}
+
+.top-path,
+.top-status,
+.health,
+.provider-pill,
+.panel-title,
+.panel-title span,
+.action-row,
+.persistence-line {
+  display: flex;
+  align-items: center;
+}
+
+.top-path {
+  gap: 8px;
+  color: #5f6d68;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.top-path span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-status {
+  gap: 10px;
+}
+
+.language-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid #d8ded7;
+  background: #ffffff;
+}
+
+.language-switcher button {
+  min-width: 42px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: #5f6d68;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.language-switcher button.active,
+.language-switcher button:hover {
+  background: #e5eee9;
+  color: #0f211d;
+}
+
+.health,
+.provider-pill {
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #d8ded7;
+  background: #ffffff;
+  color: #43524e;
+  font-size: 12px;
+}
+
+.health.ok {
+  border-color: #a9cfc0;
+  color: #116149;
+}
+
+.health.down {
+  border-color: #e7b4a8;
+  color: #9a341f;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #d8ded7;
+  background: #ffffff;
+  color: #43524e;
+}

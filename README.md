@@ -11,11 +11,22 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Product design](docs/product-design.md)
 - [Architecture](docs/architecture.md)
 - [v0.1 detailed design](docs/v0.1-detailed-design.md)
+- [Architecture Decision Records](docs/adr/README.md)
 - [Daemon API](docs/daemon-api.md)
 - [Provider adapters](docs/provider-adapters.md)
 - [Seedream live smoke](docs/seedream-live-smoke.md)
 - [Provider presets](docs/design/provider-presets.md)
 - [Approval policy](docs/design/approval-policy.md)
+- [AI teammates and skills](docs/design/ai-teammates-and-skills.md)
+- [Platform architecture](docs/design/platform-architecture.md)
+- [GitHub automation](docs/design/github-automation.md)
+- [Web modularization](docs/design/web-modularization.md)
+- [Contracts / API Client](docs/design/contracts-api-client.md)
+- [Internal Registry / Plugin SDK](docs/design/internal-registry-plugin-sdk.md)
+- [Desktop Shell](docs/design/desktop-shell.md)
+- [Secrets / Keychain](docs/design/secrets-keychain.md)
+- [State machines and recovery](docs/design/state-machine-recovery.md)
+- [Multi-channel concurrency](docs/design/multi-channel-concurrency.md)
 - [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
 
 ## UI Direction
@@ -39,6 +50,7 @@ Design intent:
 - Open directly into a default configured workspace and selected channel.
 - Keep the left sidebar focused on workspace, inbox, tasks, runs, channels, AI teammates, direct messages, and a compact configuration rail.
 - Keep the center as the main work surface: channel activity, task cards, run actions, and a task composer.
+- Make AI teammate creation a client-style wizard: choose default role or blank, bind model, fill profile, then choose channel and memory/file scope.
 - Keep provider setup, approval policy, media jobs, and settings out of the homepage flow; expose them through configuration entry points and dedicated pages.
 - Keep the right panel for context: readiness, first-run state, approvals, artifacts, provider health, and live events.
 - Use a macOS-like, minimal, frosted-glass visual system with restrained gradients, readable operational density, and no decorative hero sections.
@@ -67,7 +79,9 @@ Separate the product layer from the agent kernel.
 ```text
 workspace and channels
 + tasks and AI teammates
++ skills and teammate bindings
 + approval and audit policy
++ durable state machines and recovery
 + provider routing
 + maintained coding-agent kernel
 + streamed runtime events
@@ -92,6 +106,8 @@ Ling Stack owns the workspace. Pi owns the first coding-agent runtime.
 - **Provider flexibility:** GPT, Claude, DeepSeek / DPV4-compatible endpoints, MiniMax, GLM, Doubao, Jimeng, and OpenAI-compatible relays can sit behind one workspace policy.
 - **Multilingual by design:** the product is not limited to Chinese users; the initial provider emphasis is domestic AI vendor support.
 - **Auditable execution:** runner events are streamed as first-class workspace events instead of disappearing inside a terminal.
+- **Durable recovery:** tasks, runs, approvals, media jobs, and future multi-teammate workflows should transition through explicit state machines so disconnects and retries do not corrupt work.
+- **Composable skills:** AI teammates can use workflow templates inspired by gstack while execution remains governed by tools, provider capabilities, approval policy, and state machines.
 - **Approval-ready workflow:** file writes, shell commands, external sends, deployments, and high-cost media jobs can route through human review.
 - **Local-first adoption:** the first useful version can run as a CLI, local daemon, and local web UI before cloud/team sync exists.
 - **Desktop later, not blocking:** macOS, Windows, and Linux apps can wrap the local daemon after the runtime is useful.
@@ -100,11 +116,13 @@ Ling Stack owns the workspace. Pi owns the first coding-agent runtime.
 
 - Do not build another generic chat client.
 - Keep channels, tasks, approvals, artifacts, and audit logs as the core product surface.
+- Treat skills as workflow templates, not direct execution permission.
 - Treat model providers as capability adapters, not just chat endpoints.
 - Use Pi for the coding-agent kernel and maintain only a thin adapter.
 - Keep domestic AI vendors first-class without making the product China-only.
 - Keep GPT, Claude, and OpenAI-compatible relay entry points first-class.
 - Make risky side effects visible and approvable.
+- Treat status transitions as durable state machine events, not transient UI state.
 - Store enough runtime evidence to explain what happened after the fact.
 - Keep the desktop shell downstream of the daemon API.
 
@@ -342,6 +360,7 @@ Implemented:
 - Pi pre-tool approval gate for `bash`, `edit`, and `write`.
 - Workspace approval policy storage, daemon API, Web settings UI, CLI policy commands, tool decisions, and write path scopes.
 - Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, Model Workbench provider setup, approval list, and persisted English / Chinese UI language switching.
+- AI Teammates Web wizard for local drafts with `gstack-default` roles, per-teammate model selection, channel/memory/file scoping, and sidebar pin/hide controls. Persistence remains a follow-up daemon/DB slice.
 - Model Workbench grouping for GPT/Claude, domestic AI, OpenAI-compatible relays, custom compatible access, and media providers, with coding-task readiness shown separately from media-only capabilities.
 - Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
 - Automatic artifact extraction from Pi tool outputs, generated text/log/Markdown/diff content, and generated file path metadata.

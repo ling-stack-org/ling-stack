@@ -292,6 +292,143 @@ test("provider check persists last check result", async () => {
   }
 });
 
+test("secret status reports configured, missing, unavailable, and invalid refs without values", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-secret-status-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_secret_status",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  process.env.LING_STACK_SECRET_STATUS_KEY = "status-secret-value";
+  try {
+    const configured = await getJson(`${daemon.url}/secrets/status?ref=env%3ALING_STACK_SECRET_STATUS_KEY&purpose=provider_api_key`);
+    assert.equal(configured.status.configured, true);
+    assert.equal(configured.status.kind, "env");
+    assert.doesNotMatch(JSON.stringify(configured), /status-secret-value/);
+    assert.equal("value" in configured.status, false);
+
+    const missing = await getJson(`${daemon.url}/secrets/status?ref=env%3ALING_STACK_SECRET_STATUS_MISSING`);
+    assert.equal(missing.status.configured, false);
+    assert.equal(missing.status.errorCode, "secret_missing");
+    assert.equal("value" in missing.status, false);
+
+    const unavailable = await getJson(`${daemon.url}/secrets/status?ref=keychain%3Aprovider_local&purpose=provider_api_key`);
+    assert.equal(unavailable.status.configured, false);
+    assert.equal(unavailable.status.kind, "keychain");
+    assert.equal(unavailable.status.errorCode, "secret_store_unavailable");
+    assert.equal("value" in unavailable.status, false);
+
+    const invalid = await getJson(`${daemon.url}/secrets/status?ref=sk-test_123456789&purpose=provider_api_key`);
+    assert.equal(invalid.status.configured, false);
+    assert.equal(invalid.status.errorCode, "invalid_secret_ref");
+    assert.equal("value" in invalid.status, false);
+
+    const unsupportedPurpose = await fetch(`${daemon.url}/secrets/status?ref=env%3ALING_STACK_SECRET_STATUS_KEY&purpose=unknown`);
+    assert.equal(unsupportedPurpose.status, 400);
+  } finally {
+    delete process.env.LING_STACK_SECRET_STATUS_KEY;
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("provider create and update accept keychain refs and reject raw or unknown secret schemes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-secret-ref-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_provider_secret_ref",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const created = await createStaticChatProvider(daemon.url, cwd, {
+      authHeader: true,
+      apiKeyRef: "keychain:provider_local",
+    });
+    assert.equal(created.provider.apiKeyRef, "keychain:provider_local");
+    assert.equal(created.provider.apiKeyStatus.configured, false);
+    assert.equal(created.provider.apiKeyStatus.errorCode, "secret_store_unavailable");
+    assert.equal("value" in created.provider.apiKeyStatus, false);
+
+    const updated = await patchJson(`${daemon.url}/providers/${encodeURIComponent(created.provider.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      apiKeyRef: "env:LING_STACK_TEST_PROVIDER_KEY",
+    });
+    assert.equal(updated.provider.apiKeyRef, "env:LING_STACK_TEST_PROVIDER_KEY");
+
+    const rawRejected = await postJsonExpectError(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "glm",
+      displayName: "Raw Secret",
+      providerId: "raw-secret",
+      model: "static-model",
+      api: "google-generative-ai",
+      capabilities: ["chat"],
+      input: ["text"],
+      authHeader: true,
+      enabled: true,
+      apiKeyRef: "sk-test_123456789",
+    });
+    assert.equal(rawRejected.status, 400);
+    assert.match(rawRejected.body.message, /env:NAME or keychain:NAME/);
+
+    const unknownRejected = await postJsonExpectError(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "glm",
+      displayName: "Unknown Scheme",
+      providerId: "unknown-secret",
+      model: "static-model",
+      api: "google-generative-ai",
+      capabilities: ["chat"],
+      input: ["text"],
+      authHeader: true,
+      enabled: true,
+      apiKeyRef: "file:secret",
+    });
+    assert.equal(unknownRejected.status, 400);
+    assert.match(unknownRejected.body.message, /env:NAME or keychain:NAME/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("provider check and run startup use the injected secret resolver without leaking resolved values", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-secret-resolver-"));
+  const secretValue = "resolved-keychain-secret";
+  const runner = new SecretEchoRunner(secretValue);
+  const daemon = await startDaemonForTest(runner, {
+    secretResolver: createTestSecretResolver("keychain:provider_ready", secretValue),
+  });
+  try {
+    const created = await createStaticChatProvider(daemon.url, cwd, {
+      displayName: "Keychain Ready",
+      providerId: "keychain-ready",
+      authHeader: true,
+      apiKeyRef: "keychain:provider_ready",
+    });
+    const providerId = created.provider.id;
+
+    const checkResult = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(checkResult.ok, true);
+
+    const { runId } = await postRunAndCollectEvents(daemon.url, providerRunBody(cwd, "task_provider_secret_resolver", providerId));
+    assert.ok(runId);
+    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.runs[0].apiKey, secretValue);
+
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    const events = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/events?cwd=${encodeURIComponent(cwd)}`);
+    const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.doesNotMatch(JSON.stringify({ run, events, artifacts }), new RegExp(secretValue));
+
+    for (const artifact of artifacts.artifacts) {
+      const content = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(artifact.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(content.status, 200);
+      assert.doesNotMatch(await content.text(), new RegExp(secretValue));
+    }
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("media provider check distinguishes disabled, live-gated, and invalid transport config", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-media-gate-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
@@ -780,6 +917,213 @@ test("failed provider checks block daemon preset runs unless skipped", async () 
   }
 });
 
+test("task run endpoint rejects paused channels before runner start", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-paused-channel-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_paused_channel",
+    toolName: "read",
+    input: { path: "README.md" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Paused Engineering",
+      status: "paused",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const task = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      title: "Paused task",
+      prompt: "This task must not start while paused.",
+    });
+
+    const blocked = await postJsonExpectError(
+      `${daemon.url}/tasks/${encodeURIComponent(task.task.id)}/run?cwd=${encodeURIComponent(cwd)}`,
+      {
+        providerPresetId: provider.provider.id,
+        skipProviderPreflight: true,
+        tools: ["read", "write"],
+        idempotencyKey: "paused-channel-key",
+      },
+    );
+
+    assert.equal(blocked.status, 409);
+    assert.equal(blocked.body.error, "channel_paused");
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("same idempotency key returns the original task run without starting a duplicate", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-idempotent-run-"));
+  const runner = new BlockingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const task = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      title: "Idempotent task",
+      prompt: "Start once even if the browser retries.",
+    });
+
+    const body = {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["read", "write"],
+      idempotencyKey: "client-retry-key",
+    };
+    const firstResponse = await postTaskRunStream(daemon.url, cwd, task.task.id, body);
+    const firstSse = createSseReader(firstResponse);
+    const firstReady = await firstSse.nextEvent();
+    assert.equal(firstReady.event, "ready");
+    const runId = firstReady.data.runId;
+    await runner.waitUntilStarted();
+
+    const duplicateResponse = await postTaskRunStream(daemon.url, cwd, task.task.id, body);
+    const duplicateEvents = parseSseText(await duplicateResponse.text());
+    assert.equal(duplicateEvents[0].event, "ready");
+    assert.equal(duplicateEvents[0].data.runId, runId);
+    assert.equal(duplicateEvents[0].data.duplicate, true);
+    assert.equal(runner.runs.length, 1);
+
+    runner.release();
+    await firstSse.collectRemaining();
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("write runs in channels sharing a bound path conflict through resource leases", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-bound-path-lock-"));
+  const runner = new BlockingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const firstChannel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering A",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const secondChannel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering B",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const firstTask = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: firstChannel.channel.id,
+      title: "First writer",
+      prompt: "Hold the path lock.",
+    });
+    const secondTask = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: secondChannel.channel.id,
+      title: "Second writer",
+      prompt: "Wait for the path lock.",
+    });
+
+    const firstResponse = await postTaskRunStream(daemon.url, cwd, firstTask.task.id, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["write"],
+      idempotencyKey: "first-writer",
+    });
+    const firstSse = createSseReader(firstResponse);
+    const firstReady = await firstSse.nextEvent();
+    const runId = firstReady.data.runId;
+    await runner.waitUntilStarted();
+
+    const activeLeases = await getJson(`${daemon.url}/runtime/leases?cwd=${encodeURIComponent(cwd)}&status=active`);
+    assert.equal(activeLeases.leases.some((lease) => lease.ownerId === runId && lease.resourceType === "bound_path"), true);
+    assert.equal(activeLeases.leases.some((lease) => lease.ownerId === runId && lease.resourceType === "task"), true);
+
+    const blocked = await postJsonExpectError(
+      `${daemon.url}/tasks/${encodeURIComponent(secondTask.task.id)}/run?cwd=${encodeURIComponent(cwd)}`,
+      {
+        providerPresetId: provider.provider.id,
+        skipProviderPreflight: true,
+        tools: ["write"],
+        idempotencyKey: "second-writer",
+      },
+    );
+    assert.equal(blocked.status, 409);
+    assert.equal(blocked.body.error, "resource_conflict");
+    assert.match(blocked.body.message, /bound_path/);
+
+    const transitions = await getJson(
+      `${daemon.url}/state-transitions?cwd=${encodeURIComponent(cwd)}&entityType=task&entityId=${encodeURIComponent(firstTask.task.id)}`,
+    );
+    assert.equal(transitions.transitions.some((event) => event.event === "claim" && event.toStatus === "claimed"), true);
+    assert.equal(transitions.transitions.some((event) => event.event === "start_run" && event.toStatus === "running"), true);
+
+    runner.release();
+    await firstSse.collectRemaining();
+
+    const remainingLeases = await getJson(`${daemon.url}/runtime/leases?cwd=${encodeURIComponent(cwd)}&status=active`);
+    assert.equal(remainingLeases.leases.some((lease) => lease.ownerId === runId), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("cancelled runs are not overwritten when a late runner reports success", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-cancel-race-"));
+  const runner = new BlockingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const task = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      title: "Cancelable task",
+      prompt: "Cancel while runner is still active.",
+    });
+
+    const response = await postTaskRunStream(daemon.url, cwd, task.task.id, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["read", "write"],
+      idempotencyKey: "cancel-race",
+    });
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const runId = ready.data.runId;
+    await runner.waitUntilStarted();
+
+    const cancel = await postJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/cancel?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cancel.cancelled, true);
+    assert.equal(cancel.run.status, "cancelled");
+
+    runner.release();
+    await sse.collectRemaining();
+
+    const finalRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(finalRun.status, "cancelled");
+    assert.equal(runner.runs.length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("artifact APIs list metadata and serve content from the artifacts root", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-artifacts-"));
   const runner = new ApprovalProbeRunner({
@@ -901,6 +1245,7 @@ class ApprovalProbeRunner {
       cwd: options.cwd,
       provider: options.provider.provider,
       model: options.provider.model,
+      apiKey: options.provider.apiKey,
       taskId: options.task.id,
     });
     options.onEvent?.({
@@ -936,6 +1281,59 @@ class ApprovalProbeRunner {
       taskId: options.task.id,
       events: [],
       messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+}
+
+class SecretEchoRunner {
+  constructor(secretValue) {
+    this.secretValue = secretValue;
+    this.runs = [];
+  }
+
+  async runTask(options) {
+    this.runs.push({
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+      apiKey: options.provider.apiKey,
+      taskId: options.task.id,
+    });
+    options.onEvent?.({
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    });
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: "tool_secret_echo",
+      toolName: "write",
+      args: {
+        path: "secret-output.txt",
+        content: `secret=${this.secretValue}`,
+      },
+    });
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId: "tool_secret_echo",
+      toolName: "write",
+      result: {
+        content: `runner observed ${this.secretValue}`,
+        path: "secret-output.txt",
+      },
+      isError: false,
+    });
+    options.onEvent?.({
+      type: "run_end",
+      taskId: options.task.id,
+      messageCount: 1,
+    });
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: `done ${this.secretValue}` }],
     };
   }
 }
@@ -994,14 +1392,100 @@ class ArtifactExtractionRunner {
   }
 }
 
-async function startDaemonForTest(runner) {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner });
+class BlockingRunner {
+  constructor() {
+    this.runs = [];
+    this._startedCount = 0;
+    this._startedResolvers = [];
+    this._releasePromise = new Promise((resolveRelease) => {
+      this._release = resolveRelease;
+    });
+  }
+
+  async runTask(options) {
+    this.runs.push({
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+      taskId: options.task.id,
+    });
+    options.onEvent?.({
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    });
+    this._startedCount += 1;
+    for (const resolveStarted of this._startedResolvers.splice(0)) {
+      resolveStarted();
+    }
+
+    await this._releasePromise;
+
+    options.onEvent?.({
+      type: "run_end",
+      taskId: options.task.id,
+      messageCount: 1,
+    });
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+
+  async waitUntilStarted(count = 1) {
+    if (this._startedCount >= count) {
+      return;
+    }
+    await withTimeout(
+      new Promise((resolveStarted) => {
+        this._startedResolvers.push(resolveStarted);
+      }),
+      5_000,
+      "Timed out waiting for blocking runner to start.",
+    );
+  }
+
+  release() {
+    this._release?.();
+  }
+}
+
+async function startDaemonForTest(runner, dependencies = {}) {
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner, ...dependencies });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
   return {
     url: `http://127.0.0.1:${address.port}`,
     close: () => daemon.stop(),
+  };
+}
+
+function createTestSecretResolver(expectedRef, value) {
+  return {
+    status(ref) {
+      if (ref !== expectedRef) {
+        return {
+          ref,
+          kind: ref.startsWith("keychain:") ? "keychain" : "env",
+          configured: false,
+          errorCode: "secret_missing",
+          message: `Secret is not configured: ${ref}`,
+        };
+      }
+      return {
+        ref,
+        kind: ref.startsWith("keychain:") ? "keychain" : "env",
+        configured: true,
+      };
+    },
+    resolve(ref) {
+      const status = this.status(ref);
+      return status.configured ? { ref, configured: true, value, status } : { ref, configured: false, status };
+    },
   };
 }
 
@@ -1153,6 +1637,19 @@ async function postRunAndCollectEvents(baseUrl, body) {
 
 async function postRunStream(baseUrl, body) {
   const response = await fetch(`${baseUrl}/runs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.status !== 200) {
+    assert.fail(await response.text());
+  }
+  assert.ok(response.body);
+  return response;
+}
+
+async function postTaskRunStream(baseUrl, cwd, taskId, body) {
+  const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}/run?cwd=${encodeURIComponent(cwd)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

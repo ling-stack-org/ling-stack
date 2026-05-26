@@ -173,7 +173,7 @@ Field notes:
 
 ## Secret References
 
-Development mode secret refs:
+Supported secret refs:
 
 ```text
 env:OPENAI_API_KEY
@@ -184,18 +184,22 @@ env:MINIMAX_API_KEY
 env:GLM_API_KEY
 env:LOCAL_RELAY_API_KEY
 env:JIMENG_API_KEY
-```
-
-Future desktop refs:
-
-```text
 keychain:provider_<id>
 ```
+
+Desktop keychain storage is fail-closed in v0.1 unless a trusted desktop/keychain resolver is injected:
+
+```text
+keychain:provider_local
+```
+
+The full SecretResolver and keychain plan lives in [Secrets and Keychain](secrets-keychain.md).
 
 Rules:
 
 - SQLite stores only `api_key_ref`.
 - `.env` can define keys during development.
+- `keychain:` refs are stable but report `secret_store_unavailable` without a keychain resolver.
 - Daemon resolves the secret at run or health-check time.
 - Resolved secret values are never returned from API responses.
 - Redacted API responses may show whether a secret is configured:
@@ -203,7 +207,12 @@ Rules:
 ```json
 {
   "apiKeyConfigured": true,
-  "apiKeyRef": "env:OPENAI_API_KEY"
+  "apiKeyRef": "env:OPENAI_API_KEY",
+  "apiKeyStatus": {
+    "ref": "env:OPENAI_API_KEY",
+    "kind": "env",
+    "configured": true
+  }
 }
 ```
 
@@ -677,7 +686,7 @@ Provider preset validation:
 - `model` must be non-empty unless the provider is a model-list-only future adapter.
 - `api` must be compatible with `kind`.
 - `baseUrl` is required for `openai-compatible` and most domestic compatible presets.
-- `apiKeyRef` must use a supported scheme: `env:` now, `keychain:` later.
+- `apiKeyRef` must use a supported scheme: `env:` or `keychain:`.
 - `capabilities` must be non-empty.
 - `media-job` presets must include at least one media capability.
 - non-media coding presets must include `chat`.
@@ -907,4 +916,5 @@ Recommendation: yes. Create disabled templates for OpenAI, Claude, local relay, 
 
 Question: should `.env` be the only v0.1 secret source?
 
-Recommendation: yes for development. Design `SecretResolver` so OS keychain can be added without changing provider presets.
+Recommendation: yes for development. `SecretResolver` is now the shared boundary for `env:` and fail-closed `keychain:` refs, so OS keychain storage can be added without changing provider presets.
+The follow-up design is [Secrets and Keychain](secrets-keychain.md).

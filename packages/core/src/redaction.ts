@@ -3,13 +3,13 @@ const SECRET_KEY_NAMES = new Set(["apikey", "apikeyref", "authorization", "cooki
 const OPENAI_STYLE_SECRET_PATTERN = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g;
 const AUTH_VALUE_PATTERN = /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi;
 
-export function redactSecrets(value: unknown): unknown {
-  return redactValue(value, new WeakSet<object>());
+export function redactSecrets(value: unknown, extraSecrets: readonly (string | undefined)[] = []): unknown {
+  return redactValue(value, new WeakSet<object>(), extraSecrets.filter((secret): secret is string => Boolean(secret)));
 }
 
-function redactValue(value: unknown, seen: WeakSet<object>): unknown {
+function redactValue(value: unknown, seen: WeakSet<object>, extraSecrets: readonly string[]): unknown {
   if (typeof value === "string") {
-    return redactString(value);
+    return redactString(value, extraSecrets);
   }
 
   if (Array.isArray(value)) {
@@ -17,7 +17,7 @@ function redactValue(value: unknown, seen: WeakSet<object>): unknown {
       return "[Circular]";
     }
     seen.add(value);
-    return value.map((item) => redactValue(item, seen));
+    return value.map((item) => redactValue(item, seen, extraSecrets));
   }
 
   if (typeof value === "object" && value !== null) {
@@ -28,7 +28,7 @@ function redactValue(value: unknown, seen: WeakSet<object>): unknown {
 
     const result: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
-      result[key] = shouldRedactKey(key) ? REDACTED : redactValue(item, seen);
+      result[key] = shouldRedactKey(key) ? REDACTED : redactValue(item, seen, extraSecrets);
     }
     return result;
   }
@@ -47,11 +47,12 @@ function shouldRedactKey(key: string): boolean {
   );
 }
 
-function redactString(value: string): string {
+function redactString(value: string, extraSecrets: readonly string[]): string {
+  const extraRedacted = extraSecrets.reduce((text, secret) => text.split(secret).join(REDACTED), value);
   if (AUTH_VALUE_PATTERN.test(value)) {
     AUTH_VALUE_PATTERN.lastIndex = 0;
-    return value.replace(AUTH_VALUE_PATTERN, REDACTED);
+    return extraRedacted.replace(AUTH_VALUE_PATTERN, REDACTED);
   }
   AUTH_VALUE_PATTERN.lastIndex = 0;
-  return value.replace(OPENAI_STYLE_SECRET_PATTERN, REDACTED);
+  return extraRedacted.replace(OPENAI_STYLE_SECRET_PATTERN, REDACTED);
 }

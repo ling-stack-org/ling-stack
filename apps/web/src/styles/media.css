@@ -1,0 +1,80 @@
+.provider-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 16px;
+  align-items: start;
+}
+
+.provider-list-panel,
+.provider-form-panel {
+  min-height: 640px;
+}
+
+.media-jobs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 16px;
+  align-items: start;
+}
+
+.media-job-list-panel,
+.media-job-form-panel {
+  min-height: 520px;
+}
+
+.media-job-list {
+  display: grid;
+  gap: 10px;
+}
+
+.media-job-row {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e1e6e2;
+  background: #fbfcfa;
+}
+
+.media-job-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.media-job-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.media-job-row-head strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.media-job-row p {
+  color: #4f5e59;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.media-job-error {
+  color: #9a341f;
+}
+
+.media-job-approval {
+  color: #8a5b00;
+}
+
+.media-job-artifacts {
+  padding-top: 2px;
+}
+
+.media-job-artifacts .artifact-row {
+  grid-template-columns: 74px minmax(0, 1fr) auto;
+}
+
+.media-job-artifacts .artifact-row.with-actions {
+  grid-template-columns: 74px minmax(0, 1fr) auto auto;
+}

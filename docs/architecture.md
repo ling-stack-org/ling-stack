@@ -18,6 +18,9 @@ flowchart TD
   API --> Core[Core Workspace Engine]
   Core --> Store[(SQLite Metadata)]
   Core --> Files[Session Logs and Artifacts]
+  Core --> Coordinator[Channel Coordinator]
+  Core --> State[State Machines and Recovery]
+  Coordinator --> Leases[Resource Leases]
   Core --> Policy[Policy and Approval Engine]
   Core --> Runner[Agent Runner]
   Runner --> Tools[Tools: MCP, Shell, Git, Files]
@@ -43,6 +46,8 @@ Owns the durable domain model:
 - Approval.
 - Artifact.
 - Policy.
+- State machines for task, run, approval, media job, and workflow recovery.
+- Channel runtime policy, state transition events, and resource lease types.
 
 ### `packages/providers`
 
@@ -69,6 +74,8 @@ Local API server:
 
 - HTTP for CRUD and commands.
 - `POST /runs` with SSE for session streaming.
+- `POST /tasks/:id/run` through channel runtime policy, resource leases, idempotency, and CAS task/run transitions.
+- Read-only diagnostics for `GET /state-transitions` and `GET /runtime/leases`.
 - Local auth token.
 - Event bus between runner and UI.
 
@@ -135,6 +142,48 @@ Default policy:
 - Provider API keys never written to logs.
 - Session logs redact known secret patterns.
 - Tool calls include command, cwd, exit code, timing, and output summary.
+
+## State and Recovery Model
+
+Status is durable domain state, not UI state. Tasks, runs, approvals, media jobs, and future multi-teammate workflows should move through explicit state machines with persisted transition events.
+
+The daemon must assume local UI refreshes, SSE disconnects, provider timeouts, runner crashes, and daemon restarts can happen at any point. A disconnected browser must reconnect and read durable state. It must not imply cancellation. Explicit cancellation must go through the cancel API.
+
+State updates should be compare-and-set operations so stale events cannot move an entity out of a newer state. For example, a cancelled run must not later become succeeded just because the runner reports completion after the cancel request.
+
+The detailed contract lives in [State Machines and Recovery](design/state-machine-recovery.md).
+
+Multi-channel concurrency does not mean one adapter or state machine per channel. External sources normalize into channel events, the daemon coordinator acquires resource leases, and core state machines decide legal transitions. The detailed contract lives in [Multi-Channel Concurrency](design/multi-channel-concurrency.md).
+
+## Future Platform Architecture
+
+The aggressive long-term direction is a platform kernel plus extension host:
+
+```text
+clients
+-> shared API client
+-> local daemon gateway
+-> platform kernel
+-> extension host
+-> providers, runners, channels, skills, tools, memory, automation
+```
+
+The kernel owns state machines, approvals, resource leases, audit logs, policy, secrets access, and recovery. Extensions can add providers, runners, channel sources, tools, skill packs, memory providers, UI feature modules, and GitHub automation, but they must not bypass kernel transitions or write durable state directly.
+
+The detailed contract lives in [Platform Architecture](design/platform-architecture.md).
+The first accepted architecture decision is [ADR 0001: Platform Kernel and Extension Host](adr/0001-platform-kernel-and-extension-host.md).
+
+GitHub automation should be implemented as a channel source adapter plus approval-gated automation workflows, not as a separate state path. The detailed future design lives in [GitHub Automation Design](design/github-automation.md).
+
+## Next Architecture Plans
+
+The next implementation slices are documented separately so the platform architecture does not become a catch-all backlog:
+
+- [Web Modularization](design/web-modularization.md): split the large Web app surface into feature modules without changing behavior.
+- [Contracts and API Client](design/contracts-api-client.md): extract shared daemon DTOs and one reusable client for Web, CLI, desktop, and future mobile/PWA.
+- [Internal Registry and Plugin SDK](design/internal-registry-plugin-sdk.md): introduce internal extension registries before external plugin loading.
+- [Desktop Shell](design/desktop-shell.md): package the Web UI and daemon behind a desktop shell without forking the product model.
+- [Secrets and Keychain](design/secrets-keychain.md): keep `env:` and fail-closed `keychain:` refs behind one resolver while keeping raw secret values out of renderer, logs, and artifacts.
 
 ## Desktop Strategy
 

@@ -2,6 +2,13 @@ import { readFile } from "node:fs/promises";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const cwd = "/tmp/ling-stack-workspace";
+const defaultRuntimePolicy = {
+  maxConcurrentRuns: 1,
+  executionMode: "serial",
+  writeLockScope: "boundPath",
+  allowReadOnlyParallel: true,
+  queueOnConflict: true,
+};
 
 interface MockState {
   providers: unknown[];
@@ -9,7 +16,11 @@ interface MockState {
   tasks: unknown[];
   runs: MockRun[];
   approvals: MockApproval[];
+  approvalPolicy: MockApprovalPolicy;
+  lastApprovalPolicyPatch?: Record<string, unknown>;
   mediaJobs: MockMediaJob[];
+  resourceLeases: unknown[];
+  stateTransitions: unknown[];
   artifactsByRun: Record<string, MockArtifact[]>;
   artifactsByMediaJob: Record<string, MockArtifact[]>;
 }
@@ -48,6 +59,14 @@ interface MockApproval {
   resolvedAt?: string;
   resolvedBy?: "local-user";
   decisionReason?: string;
+}
+
+interface MockApprovalPolicy {
+  workspaceId: string;
+  toolDecisions: Record<string, string>;
+  allowedWritePaths: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface MockArtifact {
@@ -90,6 +109,82 @@ test("workspace readiness surfaces missing provider, expired approval, and faile
   await expect(page.getByLabel("Task detail").getByText("Inspect run failure")).toBeVisible();
 });
 
+test("channel runtime policy is visible and used when creating channels", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.getByText("active · serial · boundPath lock")).toBeVisible();
+
+  const details = page.locator(".workspace-config-dock .config-disclosure");
+  await details.locator("summary").click();
+  await details.getByLabel("Name").fill("Release");
+  await details.getByLabel("Status").selectOption("paused");
+  await details.getByLabel("Execution mode").selectOption("parallel");
+  await details.getByLabel("Write lock").selectOption("workspace");
+  await details.getByLabel("Max runs").fill("2");
+  await details.getByLabel("Queue on conflict").uncheck();
+  await details.getByRole("button", { name: "Create channel" }).click();
+
+  await expect.poll(() => state.channels.some((channel) => isRecord(channel) && channel.name === "Release")).toBe(true);
+  const created = state.channels.find((channel) => isRecord(channel) && channel.name === "Release");
+  expect(created).toBeTruthy();
+  expect(isRecord(created) ? created.status : undefined).toBe("paused");
+  const runtimePolicy = isRecord(created) && isRecord(created.runtimePolicy) ? created.runtimePolicy : {};
+  expect(runtimePolicy.executionMode).toBe("parallel");
+  expect(runtimePolicy.writeLockScope).toBe("workspace");
+  expect(runtimePolicy.maxConcurrentRuns).toBe(2);
+  expect(runtimePolicy.queueOnConflict).toBe(false);
+});
+
+test("paused channels disable task run actions", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channels = state.channels.map((channel) => isRecord(channel) ? { ...channel, status: "paused" } : channel);
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const taskCard = page.locator(".client-task-card").filter({ hasText: "Inspect workspace" });
+  await expect(taskCard).toContainText("Channel is not active");
+  await expect(taskCard.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+});
+
+test("run detail renders state transitions from daemon timeline API", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.stateTransitions = [
+    {
+      id: "transition_task_claim",
+      workspaceId: "workspace_default",
+      entityType: "task",
+      entityId: "task_inspect",
+      fromStatus: "todo",
+      toStatus: "claimed",
+      event: "claim",
+      actor: "system",
+      createdAt: "2026-05-22T00:00:10.000Z",
+    },
+    {
+      id: "transition_run_failed",
+      workspaceId: "workspace_default",
+      entityType: "run",
+      entityId: "run_failed",
+      fromStatus: "running",
+      toStatus: "failed",
+      event: "runner_failed",
+      actor: "runner",
+      createdAt: "2026-05-22T00:01:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await page.getByRole("button", { name: /Inspect workspace/ }).click();
+
+  await expect(page.getByRole("heading", { name: "State machine" })).toBeVisible();
+  await expect(page.getByText("runner_failed: running -> failed")).toBeVisible();
+  await expect(page.getByText("claim: todo -> claimed")).toBeVisible();
+});
+
 test("language switcher toggles Chinese and English UI labels", async ({ page }) => {
   await page.addInitScript(() => {
     if (!localStorage.getItem("ling-stack.locale")) {
@@ -113,6 +208,65 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
+});
+
+test("AI teammates page creates a local teammate through the wizard", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    {
+      id: "provider_local",
+      kind: "openai-compatible",
+      displayName: "Local Relay",
+      providerId: "local-relay",
+      model: "gpt-5.5",
+      api: "openai-completions",
+      apiKeyConfigured: true,
+      headers: {},
+      authHeader: true,
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 128000,
+      maxTokens: 16384,
+      compat: {},
+      capabilities: ["chat", "tool_call", "reasoning"],
+      enabled: true,
+      lastCheck: { ok: true, message: "ok", checkedAt: "2026-05-22T00:00:00.000Z" },
+      createdAt: "2026-05-22T00:00:00.000Z",
+      updatedAt: "2026-05-22T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Add" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add teammate" })).toBeVisible();
+  await expect(page.getByLabel("Teammate setup steps")).toBeVisible();
+  await page.getByLabel("Teammate template chooser").getByRole("button", { name: /Engineer/ }).click();
+  await page.getByRole("button", { name: "Next" }).click();
+
+  await expect(page.getByLabel("Model choices").getByRole("button", { name: /Local Relay/ })).toBeVisible();
+  await page.getByRole("button", { name: "Next" }).click();
+
+  await page.getByLabel("Teammate name").fill("Ling Engineer");
+  await page.getByLabel("Description").fill("Owns scoped implementation in the Engineering channel.");
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByLabel("Channel choices").getByRole("button", { name: /Engineering/ })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Create teammate" }).click();
+
+  await expect(page.getByLabel("Local teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByText("Ling Engineer")).toBeVisible();
+  await page.getByLabel("Ling Stack navigation").getByText("Ling Engineer").hover();
+  await page.getByLabel("Ling Stack navigation").getByLabel("Pin Ling Engineer").click();
+  await page.getByLabel("Ling Stack navigation").getByText("Ling Engineer").hover();
+  await page.getByLabel("Ling Stack navigation").getByLabel("Hide Ling Engineer").click();
+  await expect(page.getByLabel("Ling Stack navigation").getByText("Ling Engineer")).toHaveCount(0);
+  await expect(page.getByLabel("Workflow").getByRole("heading", { name: "Autoplan Lite" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Strict approval" })).toBeVisible();
 });
 
 test("workspace path initializes from daemon default and persists edits", async ({ page }) => {
@@ -140,6 +294,35 @@ test("saved workspace path wins over daemon default", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByLabel("Workspace path").first()).toHaveValue("/tmp/saved-workspace");
+});
+
+test("settings approval policy loads, edits, and saves tool decisions and write paths", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  const settingsPanel = page.locator(".settings-panel");
+  await expect(page.getByRole("heading", { name: "Approval policy" })).toBeVisible();
+  await expect(settingsPanel).toContainText("workspace_default");
+
+  const bashDecision = settingsPanel.locator(".policy-tool-row").filter({ hasText: "bash" }).locator("select");
+  await expect(bashDecision).toHaveValue("ask");
+  await bashDecision.selectOption("deny");
+  await settingsPanel.getByLabel("Allowed write paths").fill(".\n/tmp/ling-stack-workspace\n  ");
+  await settingsPanel.getByRole("button", { name: "Save policy" }).click();
+
+  await expect.poll(() => {
+    const toolDecisions = state.lastApprovalPolicyPatch?.toolDecisions;
+    return isRecord(toolDecisions) ? toolDecisions.bash : undefined;
+  }).toBe("deny");
+  await expect.poll(() => state.lastApprovalPolicyPatch?.allowedWritePaths).toEqual([".", "/tmp/ling-stack-workspace"]);
+  await expect.poll(() => state.approvalPolicy.toolDecisions.bash).toBe("deny");
+  await expect(bashDecision).toHaveValue("deny");
+  await expect(settingsPanel.getByLabel("Allowed write paths")).toHaveValue(".\n/tmp/ling-stack-workspace");
 });
 
 test("workspace defaults do not hardcode personal machine paths", async () => {
@@ -620,8 +803,10 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
         id: "channel_engineering",
         workspaceId: "workspace_default",
         name: "Engineering",
+        status: "active",
         boundPath: cwd,
         allowedTools: ["read", "grep", "find", "ls"],
+        runtimePolicy: defaultRuntimePolicy,
         createdAt: "2026-05-22T00:00:00.000Z",
         updatedAt: "2026-05-22T00:00:00.000Z",
       },
@@ -657,7 +842,24 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
         decisionReason: options.approvalStatus === "expired" ? "Approval request expired before a decision was received." : undefined,
       },
     ],
+    approvalPolicy: {
+      workspaceId: "workspace_default",
+      toolDecisions: {
+        read: "allow",
+        grep: "allow",
+        find: "allow",
+        ls: "allow",
+        bash: "ask",
+        edit: "ask",
+        write: "ask",
+      },
+      allowedWritePaths: ["."],
+      createdAt: "2026-05-22T00:00:00.000Z",
+      updatedAt: "2026-05-22T00:00:00.000Z",
+    },
     mediaJobs: [],
+    resourceLeases: [],
+    stateTransitions: [],
     artifactsByRun: {},
     artifactsByMediaJob: {},
   };
@@ -731,6 +933,21 @@ function createProviderFromBody(body: Record<string, unknown>, id: string): Reco
     maxTokens: typeof body.maxTokens === "number" ? body.maxTokens : undefined,
     createdAt: "2026-05-25T00:10:00.000Z",
     updatedAt: "2026-05-25T00:10:00.000Z",
+  };
+}
+
+function createChannelFromBody(body: Record<string, unknown>, id: string): Record<string, unknown> {
+  return {
+    id,
+    workspaceId: "workspace_default",
+    name: typeof body.name === "string" ? body.name : "Engineering",
+    status: body.status === "paused" || body.status === "archived" ? body.status : "active",
+    boundPath: typeof body.boundPath === "string" ? body.boundPath : cwd,
+    defaultProviderPresetId: typeof body.defaultProviderPresetId === "string" ? body.defaultProviderPresetId : undefined,
+    allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools : ["read", "grep", "find", "ls"],
+    runtimePolicy: isRecord(body.runtimePolicy) ? { ...defaultRuntimePolicy, ...body.runtimePolicy } : defaultRuntimePolicy,
+    createdAt: "2026-05-25T00:15:00.000Z",
+    updatedAt: "2026-05-25T00:15:00.000Z",
   };
 }
 
@@ -827,6 +1044,47 @@ async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, channels: state.channels } });
     return;
   }
+  if (request.method() === "POST" && path === "/channels") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const channel = createChannelFromBody(body, `channel_created_${state.channels.length + 1}`);
+    state.channels.unshift(channel);
+    await route.fulfill({ status: 201, json: { channel } });
+    return;
+  }
+  const channelMatch = /^\/channels\/([^/]+)$/.exec(path);
+  if (channelMatch && request.method() === "PATCH") {
+    const channelId = decodeURIComponent(channelMatch[1]);
+    const channelIndex = state.channels.findIndex((item) => isRecord(item) && item.id === channelId);
+    if (channelIndex === -1) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found" } });
+      return;
+    }
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const existing = state.channels[channelIndex];
+    const channel = isRecord(existing)
+      ? { ...existing, ...createChannelFromBody(body, channelId), id: channelId, updatedAt: "2026-05-25T00:16:00.000Z" }
+      : createChannelFromBody(body, channelId);
+    state.channels[channelIndex] = channel;
+    await route.fulfill({ json: { channel } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/runtime/leases") {
+    const status = url.searchParams.get("status");
+    const leases = status ? state.resourceLeases.filter((lease) => isRecord(lease) && lease.status === status) : state.resourceLeases;
+    await route.fulfill({ json: { cwd, leases } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/state-transitions") {
+    const entityType = url.searchParams.get("entityType");
+    const entityId = url.searchParams.get("entityId");
+    const transitions = state.stateTransitions.filter((transition) =>
+      isRecord(transition) &&
+      (!entityType || transition.entityType === entityType) &&
+      (!entityId || transition.entityId === entityId)
+    );
+    await route.fulfill({ json: { cwd, transitions } });
+    return;
+  }
   if (request.method() === "GET" && path === "/tasks") {
     await route.fulfill({ json: { cwd, tasks: state.tasks } });
     return;
@@ -889,6 +1147,26 @@ async function handleDaemonRoute(
       (!runId || approval.runId === runId) && (!mediaJobId || approval.mediaJobId === mediaJobId)
     );
     await route.fulfill({ json: { cwd, approvals } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/approval-policy") {
+    await route.fulfill({ json: { cwd, policy: state.approvalPolicy } });
+    return;
+  }
+  if (request.method() === "PATCH" && path === "/approval-policy") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    state.lastApprovalPolicyPatch = body;
+    state.approvalPolicy = {
+      ...state.approvalPolicy,
+      toolDecisions: isRecord(body.toolDecisions) ? Object.fromEntries(
+        Object.entries(body.toolDecisions).map(([tool, decision]) => [tool, String(decision)])
+      ) : state.approvalPolicy.toolDecisions,
+      allowedWritePaths: Array.isArray(body.allowedWritePaths)
+        ? body.allowedWritePaths.filter((item): item is string => typeof item === "string")
+        : state.approvalPolicy.allowedWritePaths,
+      updatedAt: "2026-05-25T00:30:00.000Z",
+    };
+    await route.fulfill({ json: { cwd, policy: state.approvalPolicy } });
     return;
   }
   if (request.method() === "GET" && path === "/media-jobs") {

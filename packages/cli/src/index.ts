@@ -134,6 +134,10 @@ interface DoctorReport {
     readonly ok: boolean;
     readonly error?: DoctorDependencyError;
   };
+  readonly runtime: {
+    readonly activeLeases: number;
+    readonly error?: DoctorDependencyError;
+  };
   readonly next: readonly string[];
 }
 
@@ -455,13 +459,14 @@ async function handleInit(args: readonly string[], options: GlobalOptions): Prom
 
 async function handleDoctor(options: GlobalOptions): Promise<number> {
   const daemon = await readDaemonHealth(options);
-  const [providersResult, channelsResult, tasksResult, approvalPolicyResult] = await Promise.all([
+  const [providersResult, channelsResult, tasksResult, approvalPolicyResult, activeLeasesResult] = await Promise.all([
     requestDoctorJson(options, "GET", "/providers", { cwd: options.cwd }),
     requestDoctorJson(options, "GET", "/channels", { cwd: options.cwd }),
     requestDoctorJson(options, "GET", "/tasks", { cwd: options.cwd }),
     requestDoctorJson(options, "GET", "/approval-policy", { cwd: options.cwd }),
+    requestDoctorJson(options, "GET", "/runtime/leases", { cwd: options.cwd, status: "active" }),
   ]);
-  const report = buildDoctorReport(options, daemon, providersResult, channelsResult, tasksResult, approvalPolicyResult);
+  const report = buildDoctorReport(options, daemon, providersResult, channelsResult, tasksResult, approvalPolicyResult, activeLeasesResult);
 
   if (options.json) {
     printJson(report);
@@ -537,6 +542,7 @@ function buildDoctorReport(
   channelsResult: DoctorDependencyResult,
   tasksResult: DoctorDependencyResult,
   approvalPolicyResult: DoctorDependencyResult,
+  activeLeasesResult: DoctorDependencyResult,
 ): DoctorReport {
   const providers = providersResult.ok ? readArray(providersResult.body, "providers") : [];
   const runnableProviders = providers.filter((provider) => providerRunCompatibilityBlocker(provider) === undefined);
@@ -550,6 +556,7 @@ function buildDoctorReport(
   const channels = channelsResult.ok ? readArray(channelsResult.body, "channels") : [];
   const channelsWithDefaultProvider = channels.filter((channel) => Boolean(readString(channel, "defaultProviderPresetId")));
   const tasks = tasksResult.ok ? readArray(tasksResult.body, "tasks") : [];
+  const activeLeases = activeLeasesResult.ok ? readArray(activeLeasesResult.body, "leases") : [];
   const approvalPolicyOk = approvalPolicyResult.ok && isRecord(readField(approvalPolicyResult.body, "policy"));
   const next = buildDoctorNextSteps({
     providers,
@@ -567,6 +574,7 @@ function buildDoctorReport(
     providersResult.ok &&
     channelsResult.ok &&
     tasksResult.ok &&
+    activeLeasesResult.ok &&
     approvalPolicyOk &&
     providers.length > 0 &&
     runnableProviders.length > 0 &&
@@ -604,6 +612,10 @@ function buildDoctorReport(
     approvalPolicy: {
       ok: approvalPolicyOk,
       error: approvalPolicyResult.error,
+    },
+    runtime: {
+      activeLeases: activeLeases.length,
+      error: activeLeasesResult.error,
     },
     next,
   };
@@ -670,7 +682,7 @@ function providerRunCompatibilityBlocker(provider: unknown): string | undefined 
     return `${displayName}: provider does not support chat.`;
   }
   if (readString(provider, "apiKeyRef") && readBoolean(provider, "apiKeyConfigured") !== true) {
-    return `${displayName}: missing ${envNameFromRef(readString(provider, "apiKeyRef") ?? "")}.`;
+    return `${displayName}: ${providerSecretStatus(provider)}.`;
   }
   return undefined;
 }
@@ -697,6 +709,7 @@ function printDoctorReport(report: DoctorReport): void {
   ));
   console.log(formatDoctorLine("Tasks", `${report.tasks.total} total`, report.tasks.error));
   console.log(formatDoctorLine("Approval policy", report.approvalPolicy.ok ? "ok" : "not ready", report.approvalPolicy.error));
+  console.log(formatDoctorLine("Runtime leases", `${report.runtime.activeLeases} active`, report.runtime.error));
   console.log(`Ready: ${report.ok ? "yes" : "no"}`);
   if (report.next.length > 0) {
     console.log("Next:");
@@ -1088,10 +1101,12 @@ async function handleChannelCreate(args: readonly string[], options: GlobalOptio
   }
   const body = removeUndefined({
     name,
+    status: readChannelStatusFlag(parsed),
     boundPath: getFlag(parsed, "path") ?? options.cwd,
     defaultProviderPresetId: getFlag(parsed, "provider"),
     defaultTeammateId: getFlag(parsed, "teammate"),
     allowedTools: readChannelTools(parsed),
+    runtimePolicy: readChannelRuntimePolicyFlags(parsed),
   });
   const response = await requestJson(options, "POST", "/channels", { cwd: options.cwd }, body);
   if (options.json) {
@@ -1101,7 +1116,9 @@ async function handleChannelCreate(args: readonly string[], options: GlobalOptio
   const channel = readField(response, "channel");
   console.log(`Channel created: ${readString(channel, "id") ?? ""}`);
   console.log(`Name: ${readString(channel, "name") ?? ""}`);
+  console.log(`Status: ${readString(channel, "status") ?? "active"}`);
   console.log(`Path: ${readString(channel, "boundPath") ?? ""}`);
+  console.log(`Runtime policy: ${formatChannelPolicy(channel)}`);
   return 0;
 }
 
@@ -1122,10 +1139,12 @@ async function handleChannelUpdate(args: readonly string[], options: GlobalOptio
   const channelId = singlePositional(parsed.positionals, "channel update <id>");
   const body = removeUndefined({
     name: getFlag(parsed, "name"),
+    status: readChannelStatusFlag(parsed),
     boundPath: readNullableFlag(parsed, "path", parsed.booleans.has("clear-path")),
     defaultProviderPresetId: readNullableFlag(parsed, "provider", parsed.booleans.has("clear-provider")),
     defaultTeammateId: readNullableFlag(parsed, "teammate", parsed.booleans.has("clear-teammate")),
     allowedTools: readChannelTools(parsed),
+    runtimePolicy: readChannelRuntimePolicyFlags(parsed),
   });
   if (Object.keys(body).length === 0) {
     throw new CliError(2, "empty_update", "channel update requires at least one field to update.");
@@ -1138,6 +1157,8 @@ async function handleChannelUpdate(args: readonly string[], options: GlobalOptio
   const channel = readField(response, "channel");
   console.log(`Channel updated: ${readString(channel, "id") ?? channelId}`);
   console.log(`Name: ${readString(channel, "name") ?? ""}`);
+  console.log(`Status: ${readString(channel, "status") ?? "active"}`);
+  console.log(`Runtime policy: ${formatChannelPolicy(channel)}`);
   return 0;
 }
 
@@ -1584,7 +1605,7 @@ async function writeDefaultConfig(rootDir: string): Promise<void> {
     schemaVersion: 1,
     product: "ling-stack",
     providerTemplates: "sqlite",
-    secrets: "env",
+    secrets: "env/keychain refs",
     createdBy: "ling-stack init",
   };
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: "wx" }).catch((error: unknown) => {
@@ -2032,12 +2053,75 @@ function providerCommandParserSpec(options: { readonly includeClearFlags?: boole
 
 function channelCommandParserSpec(options: { readonly includeClearFlags?: boolean } = {}): CommandParserSpec {
   return {
-    stringFlags: new Set(["name", "path", "provider", "teammate"]),
+    stringFlags: new Set(["name", "path", "provider", "teammate", "status", "execution-mode", "write-lock-scope", "max-concurrent-runs"]),
     repeatableFlags: new Set(["tool"]),
     booleanFlags: new Set([
+      "read-only-parallel",
+      "no-read-only-parallel",
+      "queue-on-conflict",
+      "no-queue-on-conflict",
       ...(options.includeClearFlags ? ["clear-path", "clear-provider", "clear-teammate"] : []),
     ]),
   };
+}
+
+function readChannelStatusFlag(parsed: ParsedCommandArgs): string | undefined {
+  const status = getFlag(parsed, "status");
+  if (status === undefined) {
+    return undefined;
+  }
+  if (status !== "active" && status !== "paused" && status !== "archived") {
+    throw new CliError(2, "bad_channel_status", "--status must be one of: active, paused, archived");
+  }
+  return status;
+}
+
+function readChannelRuntimePolicyFlags(parsed: ParsedCommandArgs): Record<string, unknown> | undefined {
+  const runtimePolicy = removeUndefined({
+    maxConcurrentRuns: readOptionalIntegerFlag(parsed, "max-concurrent-runs"),
+    executionMode: readChannelExecutionModeFlag(parsed),
+    writeLockScope: readChannelWriteLockScopeFlag(parsed),
+    allowReadOnlyParallel: readBooleanPair(parsed, "read-only-parallel", "no-read-only-parallel"),
+    queueOnConflict: readBooleanPair(parsed, "queue-on-conflict", "no-queue-on-conflict"),
+  });
+  return Object.keys(runtimePolicy).length > 0 ? runtimePolicy : undefined;
+}
+
+function readChannelExecutionModeFlag(parsed: ParsedCommandArgs): string | undefined {
+  const value = getFlag(parsed, "execution-mode");
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "serial" && value !== "parallel") {
+    throw new CliError(2, "bad_execution_mode", "--execution-mode must be serial or parallel");
+  }
+  return value;
+}
+
+function readChannelWriteLockScopeFlag(parsed: ParsedCommandArgs): string | undefined {
+  const value = getFlag(parsed, "write-lock-scope");
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "channel" && value !== "boundPath" && value !== "workspace") {
+    throw new CliError(2, "bad_write_lock_scope", "--write-lock-scope must be channel, boundPath, or workspace");
+  }
+  return value;
+}
+
+function readBooleanPair(parsed: ParsedCommandArgs, positiveKey: string, negativeKey: string): boolean | undefined {
+  const positive = parsed.booleans.has(positiveKey);
+  const negative = parsed.booleans.has(negativeKey);
+  if (positive && negative) {
+    throw new CliError(2, "conflicting_flags", `--${positiveKey} and --${negativeKey} cannot be used together.`);
+  }
+  if (positive) {
+    return true;
+  }
+  if (negative) {
+    return false;
+  }
+  return undefined;
 }
 
 function taskCommandParserSpec(options: { readonly includeClearFlags?: boolean } = {}): CommandParserSpec {
@@ -2613,6 +2697,10 @@ function providerSecretStatus(provider: unknown): string {
   if (!readString(provider, "apiKeyRef")) {
     return "none";
   }
+  const apiKeyStatus = readField(provider, "apiKeyStatus");
+  if (isRecord(apiKeyStatus) && readBoolean(apiKeyStatus, "configured") !== true) {
+    return readString(apiKeyStatus, "errorCode") ?? "missing";
+  }
   return readBoolean(provider, "apiKeyConfigured") ? "configured" : "missing";
 }
 
@@ -2641,7 +2729,7 @@ function providerRunPreflightBlocker(provider: unknown): string | undefined {
     return `${displayName}: provider does not support chat.`;
   }
   if (readString(provider, "apiKeyRef") && readBoolean(provider, "apiKeyConfigured") !== true) {
-    return `${displayName}: missing ${envNameFromRef(readString(provider, "apiKeyRef") ?? "")}.`;
+    return `${displayName}: ${providerSecretStatus(provider)}.`;
   }
 
   const lastCheck = readField(provider, "lastCheck");
@@ -2674,7 +2762,13 @@ function canBatchCheckProviderResponse(provider: unknown): boolean {
 }
 
 function envNameFromRef(ref: string): string {
-  return ref.startsWith("env:") ? ref.slice("env:".length) : ref;
+  if (ref.startsWith("env:")) {
+    return ref.slice("env:".length);
+  }
+  if (ref.startsWith("keychain:")) {
+    return ref.slice("keychain:".length);
+  }
+  return ref;
 }
 
 function printProviderLastCheck(provider: unknown): void {
@@ -2702,10 +2796,12 @@ function printChannelsList(response: unknown): void {
     return;
   }
   printTable(
-    ["ID", "Name", "Path", "Provider", "Tools", "Updated"],
+    ["ID", "Name", "Status", "Policy", "Path", "Provider", "Tools", "Updated"],
     channels.map((channel) => [
       truncate(readString(channel, "id") ?? "", 32),
       truncate(readString(channel, "name") ?? "", 24),
+      truncate(readString(channel, "status") ?? "active", 10),
+      truncate(formatChannelPolicy(channel), 18),
       truncate(readString(channel, "boundPath") ?? "", 28),
       truncate(readString(channel, "defaultProviderPresetId") ?? "", 22),
       truncate(readArray(channel, "allowedTools").join(","), 24),
@@ -2722,6 +2818,7 @@ function printChannelDetail(response: unknown): void {
   }
   console.log(`ID: ${readString(channel, "id") ?? ""}`);
   console.log(`Name: ${readString(channel, "name") ?? ""}`);
+  console.log(`Status: ${readString(channel, "status") ?? "active"}`);
   console.log(`Path: ${readString(channel, "boundPath") ?? ""}`);
   const provider = readString(channel, "defaultProviderPresetId");
   if (provider) {
@@ -2732,8 +2829,21 @@ function printChannelDetail(response: unknown): void {
     console.log(`Default teammate: ${teammate}`);
   }
   console.log(`Allowed tools: ${readArray(channel, "allowedTools").join(", ")}`);
+  console.log(`Runtime policy: ${formatChannelPolicy(channel)}`);
   console.log(`Created: ${readString(channel, "createdAt") ?? ""}`);
   console.log(`Updated: ${readString(channel, "updatedAt") ?? ""}`);
+}
+
+function formatChannelPolicy(channel: unknown): string {
+  const policy = readField(channel, "runtimePolicy");
+  if (!isRecord(policy)) {
+    return "serial/boundPath";
+  }
+  return [
+    readString(policy, "executionMode") ?? "serial",
+    readString(policy, "writeLockScope") ?? "boundPath",
+    `max=${readNumber(policy, "maxConcurrentRuns") ?? 1}`,
+  ].join("/");
 }
 
 function printTasksList(response: unknown): void {
@@ -3251,7 +3361,7 @@ Usage:
   ling-stack [global options] provider update <id> [options]
   ling-stack [global options] provider remove <id>
   ling-stack [global options] channel list
-  ling-stack [global options] channel create --name <name> [--path <path>]
+  ling-stack [global options] channel create --name <name> [--path <path>] [--status active|paused|archived]
   ling-stack [global options] channel show <id>
   ling-stack [global options] channel update <id> [options]
   ling-stack [global options] channel remove <id>
@@ -3295,7 +3405,7 @@ function printInitHelp(): void {
 
 Behavior:
   Creates .ling-stack/, SQLite runtime state, sessions/, artifacts/, logs/, pi/, and config.json.
-  Provider templates are created disabled by default and use env: secret references only.
+  Provider templates are created disabled by default and use secret refs such as env:NAME or keychain:NAME.
 `);
 }
 
@@ -3315,7 +3425,8 @@ Kinds:
 Common options:
   --api <api>                  Default: openai-completions, anthropic-messages for anthropic
   --base-url <url>             Required for openai-compatible
-  --api-key-ref env:NAME       Secret reference; raw API keys are not accepted
+  --api-key-ref env:NAME|keychain:NAME
+                               Secret reference; raw API keys are not accepted
   --capability <name>          Repeatable or comma-separated. Default on add: chat,tool_call,reasoning
   --input <text|image>         Repeatable or comma-separated. Default on add: text
   --context-window <n>
@@ -3335,13 +3446,17 @@ Update-only clear flags:
 function printChannelHelp(): void {
   console.log(`Usage:
   ling-stack channel list [--limit <n>]
-  ling-stack channel create --name <name> [--path <path>] [--provider <providerPresetId>] [--tool read --tool grep]
+  ling-stack channel create --name <name> [--path <path>] [--provider <providerPresetId>] [--status active|paused|archived] [--execution-mode serial|parallel] [--write-lock-scope boundPath|channel|workspace] [--max-concurrent-runs <n>] [--tool read --tool grep]
   ling-stack channel show <id>
-  ling-stack channel update <id> [--name <name>] [--path <path>|--clear-path] [--provider <id>|--clear-provider] [--tool <name>]
+  ling-stack channel update <id> [--name <name>] [--path <path>|--clear-path] [--provider <id>|--clear-provider] [--status active|paused|archived] [--execution-mode serial|parallel] [--write-lock-scope boundPath|channel|workspace] [--tool <name>]
   ling-stack channel remove <id>
 
 Default allowed tools on create:
   read, grep, find, ls
+
+Runtime policy flags:
+  --read-only-parallel / --no-read-only-parallel
+  --queue-on-conflict / --no-queue-on-conflict
 `);
 }
 

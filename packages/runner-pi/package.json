@@ -5,13 +5,14 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json",
+    "typecheck": "corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
     "test": "echo \"tests not configured yet\""
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.75.3",
-    "@earendil-works/pi-coding-agent": "^0.75.3"
+    "@earendil-works/pi-coding-agent": "^0.75.3",
+    "@ling-stack/plugin-sdk": "workspace:*"
   }
 }

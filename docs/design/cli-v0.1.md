@@ -11,7 +11,7 @@ This design depends on:
 - [Approval policy](approval-policy.md)
 - [Web UI v0.1](web-ui-v0.1.md)
 
-The current `packages/cli` package can initialize a workspace, diagnose readiness, manage providers, channels, tasks, runs, approvals, approval policy, daemon foreground startup, and Web UI launch through daemon APIs.
+The current `packages/cli` package can initialize a workspace, diagnose readiness, manage providers, channels, channel runtime policy, tasks, runs, approvals, approval policy, daemon foreground startup, and Web UI launch through daemon APIs.
 
 ## Goal
 
@@ -79,6 +79,7 @@ Not implemented yet:
 - CLI should work before the desktop app exists.
 - CLI commands should be stable enough to document in README.
 - CLI should expose exact daemon errors instead of hiding them.
+- CLI should expose channel concurrency and active lease state so stuck runs are diagnosable without opening Web.
 
 ## Command Groups
 
@@ -222,6 +223,26 @@ packages/cli/src/api/approvals.ts
 ```
 
 The CLI API client should be shared in shape with the Web UI client where practical, but do not prematurely create a shared package until duplication becomes real.
+
+### `ling-stack doctor`
+
+Doctor checks daemon health, providers, channels, tasks, approval policy, and active runtime leases. Active leases do not always mean failure because a run may be in progress, but they are shown explicitly so a stale lock can be diagnosed.
+
+Output includes:
+
+```text
+Runtime leases: 0 active
+```
+
+JSON output includes:
+
+```json
+{
+  "runtime": {
+    "activeLeases": 0
+  }
+}
+```
 
 ## Command Details
 
@@ -548,7 +569,11 @@ Command:
 ling-stack channel create \
   --name engineering \
   --path /path/to/ling-stack \
-  --provider provider_local_relay
+  --provider provider_local_relay \
+  --status active \
+  --execution-mode serial \
+  --write-lock-scope boundPath \
+  --max-concurrent-runs 1
 ```
 
 Calls:
@@ -561,6 +586,17 @@ Default allowed tools:
 
 ```text
 read, grep, find, ls
+```
+
+Runtime policy flags:
+
+```text
+--status active|paused|archived
+--execution-mode serial|parallel
+--write-lock-scope boundPath|channel|workspace
+--max-concurrent-runs <n>
+--read-only-parallel / --no-read-only-parallel
+--queue-on-conflict / --no-queue-on-conflict
 ```
 
 ### `ling-stack channel list`
@@ -586,6 +622,8 @@ Calls:
 ```http
 PATCH /channels/:id
 ```
+
+The same runtime policy flags accepted by `channel create` are accepted by `channel update`.
 
 ### `ling-stack channel remove <id>`
 

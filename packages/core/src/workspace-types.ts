@@ -24,6 +24,30 @@ export const taskStatuses: readonly TaskStatus[] = [
   "cancelled",
 ];
 
+export type ChannelStatus = "active" | "paused" | "archived";
+
+export const channelStatuses: readonly ChannelStatus[] = ["active", "paused", "archived"];
+
+export type ChannelExecutionMode = "serial" | "parallel";
+
+export type ChannelWriteLockScope = "channel" | "boundPath" | "workspace";
+
+export interface ChannelRuntimePolicy {
+  readonly maxConcurrentRuns: number;
+  readonly executionMode: ChannelExecutionMode;
+  readonly writeLockScope: ChannelWriteLockScope;
+  readonly allowReadOnlyParallel: boolean;
+  readonly queueOnConflict: boolean;
+}
+
+export const defaultChannelRuntimePolicy: ChannelRuntimePolicy = {
+  maxConcurrentRuns: 1,
+  executionMode: "serial",
+  writeLockScope: "boundPath",
+  allowReadOnlyParallel: true,
+  queueOnConflict: true,
+};
+
 export interface Workspace {
   readonly id: string;
   readonly name: string;
@@ -36,28 +60,34 @@ export interface Channel {
   readonly id: string;
   readonly workspaceId: string;
   readonly name: string;
+  readonly status: ChannelStatus;
   readonly boundPath?: string;
   readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
   readonly allowedTools: readonly RunTool[];
+  readonly runtimePolicy: ChannelRuntimePolicy;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
 export interface CreateChannelInput {
   readonly name: string;
+  readonly status?: ChannelStatus;
   readonly boundPath?: string;
   readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
   readonly allowedTools?: readonly RunTool[];
+  readonly runtimePolicy?: Partial<ChannelRuntimePolicy>;
 }
 
 export interface ChannelUpdateInput {
   readonly name?: string;
+  readonly status?: ChannelStatus;
   readonly boundPath?: string | null;
   readonly defaultProviderPresetId?: string | null;
   readonly defaultTeammateId?: string | null;
   readonly allowedTools?: readonly RunTool[];
+  readonly runtimePolicy?: Partial<ChannelRuntimePolicy>;
 }
 
 export interface ListChannelsOptions {
@@ -106,4 +136,11 @@ export function createChannelId(): string {
 
 export function createTaskId(): string {
   return `task_${randomUUID()}`;
+}
+
+export function normalizeChannelRuntimePolicy(input: Partial<ChannelRuntimePolicy> | undefined): ChannelRuntimePolicy {
+  return {
+    ...defaultChannelRuntimePolicy,
+    ...(input ?? {}),
+  };
 }

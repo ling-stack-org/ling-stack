@@ -4,10 +4,31 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./builtin-extensions": {
+      "types": "./dist/builtin-extensions.d.ts",
+      "default": "./dist/builtin-extensions.js"
+    },
+    "./builtin-skill-packs": {
+      "types": "./dist/builtin-skill-packs.d.ts",
+      "default": "./dist/builtin-skill-packs.js"
+    },
+    "./skill-types": {
+      "types": "./dist/skill-types.d.ts",
+      "default": "./dist/skill-types.js"
+    }
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json",
+    "typecheck": "corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
-    "test": "tsc -p tsconfig.json && node --test test/*.test.mjs"
+    "test": "corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@ling-stack/plugin-sdk": "workspace:*"
   }
 }

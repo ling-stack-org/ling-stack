@@ -28,6 +28,7 @@ test("doctor reports a ready workspace", async () => {
     assert.ok(daemon.requests.includes("GET /channels"));
     assert.ok(daemon.requests.includes("GET /tasks"));
     assert.ok(daemon.requests.includes("GET /approval-policy"));
+    assert.ok(daemon.requests.includes("GET /runtime/leases"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -84,6 +85,9 @@ test("doctor json exposes readiness counters", async () => {
     });
     assert.deepEqual(body.approvalPolicy, {
       ok: true,
+    });
+    assert.deepEqual(body.runtime, {
+      activeLeases: 0,
     });
     assert.deepEqual(body.next, []);
   } finally {
@@ -172,6 +176,11 @@ async function startDoctorDaemon(overrides = {}) {
 
     if (request.method === "GET" && url.pathname === "/approval-policy") {
       writeJson(response, 200, { cwd: url.searchParams.get("cwd"), policy });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/runtime/leases") {
+      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), leases: [] });
       return;
     }
 
