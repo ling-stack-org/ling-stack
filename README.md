@@ -2,7 +2,7 @@
 
 A multilingual, local-first AI teammate workspace for humans, agents, tools, approvals, and model providers.
 
-Ling Stack connects channels, tasks, runtime sessions, provider routing, artifacts, and human approval gates in one auditable workspace. It initially prioritizes domestic AI vendors while keeping GPT, Claude, and OpenAI-compatible relay entry points first-class.
+Ling Stack connects channels, tasks, runtime sessions, provider routing, artifacts, and human approval gates in one auditable workspace. The current mainline is a local Model Workbench for GPT, Claude, domestic AI providers, OpenAI-compatible relays, and custom compatible endpoints that can be checked and used directly from workspace tasks.
 
 > Local-first workspace. AI teammates. Channels and tasks. Pi coding-agent runtime. Provider adapters. Approval gates. Auditable sessions. Domestic AI providers first, GPT and Claude included.
 
@@ -183,7 +183,7 @@ node packages/cli/dist/index.js provider check-all
 node packages/cli/dist/index.js doctor
 ```
 
-The Web UI exposes the same flow in Providers: choose a GPT, Claude, relay, domestic AI, or media template; save the preset; set the shown `env:NAME`; run Check; then use only preflight-ready providers in Workspace.
+The Web UI exposes the same flow in Model Workbench: choose GPT/Claude, domestic AI, OpenAI-compatible relay, or custom OpenAI-compatible access; save the preset; set the shown `env:NAME`; run Check; then use only preflight-ready chat providers in Workspace. Media providers remain visible but stay in Media Jobs and cannot run coding tasks.
 
 Seedream `image_generate` can run through the live transport gate. Configure a media preset through the CLI:
 
@@ -284,7 +284,7 @@ First-class provider targets:
 - DeepSeek / DPV4-compatible endpoints.
 - MiniMax.
 - GLM / Zhipu.
-- Jimeng / Seedream / Seedance for image and video generation.
+- Jimeng / Seedream / Seedance for media jobs, kept separate from coding task providers.
 - Generic OpenAI-compatible relay endpoints.
 
 Provider support is capability-based. Ling Stack should not pretend every provider is only a chat model.
@@ -314,10 +314,11 @@ Implemented:
 - Default read-only tool policy for product runs.
 - Pi pre-tool approval gate for `bash`, `edit`, and `write`.
 - Workspace approval policy storage, daemon API, Web settings UI, CLI policy commands, tool decisions, and write path scopes.
-- Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, provider settings, approval list, and persisted English / Chinese UI language switching.
+- Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, Model Workbench provider setup, approval list, and persisted English / Chinese UI language switching.
+- Model Workbench grouping for GPT/Claude, domestic AI, OpenAI-compatible relays, custom compatible access, and media providers, with coding-task readiness shown separately from media-only capabilities.
 - Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
 - Automatic artifact extraction from Pi tool outputs, generated text/log/Markdown/diff content, and generated file path metadata.
-- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, media adapter contract, provider-kind registry wiring, vendor request planning, disabled-by-default vendor transport seam, `media_cost` approval gate for live execution, Seedream `image_generate` live HTTP adapter, Seedream image URL byte artifacts, static execution adapter, local metadata artifacts, and Web Media Jobs panel.
+- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, media adapter contract, provider-kind registry wiring, vendor request planning, disabled-by-default vendor transport seam, `media_cost` approval gate for live execution, Seedream `image_generate` live HTTP adapter, Seedream image URL byte artifacts, static execution adapter, local metadata artifacts, and Web Media Jobs panel. Seedream has a documented live smoke path; additional media vendors and billing stay behind the mainline Model Workbench work.
 - CLI first-loop commands for init, channels, tasks, providers, runs, approvals, approval policy, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 
@@ -327,6 +328,7 @@ Not implemented yet:
 - Rich task detail views beyond the first edit form.
 - Real media byte outputs beyond Seedream `image_generate` HTTP(S) image URL downloads.
 - Live Jimeng/Seedance execution and Seedream operations beyond `image_generate`.
+- Billing, cost estimation, and broader media workflow automation.
 - OS keychain integration for secrets.
 - Live media provider generation checks.
 - Desktop packaging.

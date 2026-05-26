@@ -2,13 +2,27 @@
 
 ## One-Line Positioning
 
-Ling Stack is a multilingual, local-first AI teammate workspace with an initial provider focus on domestic AI vendors, plus first-class GPT, Claude, and OpenAI-compatible relay entry points.
+Ling Stack is a multilingual, local-first AI teammate workspace with a Model Workbench for domestic AI vendors, GPT, Claude, OpenAI-compatible relays, and custom compatible endpoints.
 
 ## Core Bet
 
 The product should not compete as a chat client. It should compete as a work surface:
 
 > Channels hold context. Tasks define executable work. AI teammates run scoped sessions. Humans approve risky actions. Everything leaves an audit trail.
+
+## Current Mainline
+
+The mainline now follows the AI teammate workspace shape: channels, tasks, coding sessions, provider readiness, approvals, and artifacts in one local loop. The next product emphasis is not another media adapter. It is making multi-model and domestic/custom model setup first-class enough that a user can configure a provider, check it, select it for a task, run the task, and repair failures without leaving the Web/CLI workflow.
+
+Model Workbench owns that loop:
+
+- group GPT/Claude, domestic AI, OpenAI-compatible relay, custom compatible access, and media providers clearly,
+- accept custom OpenAI-compatible endpoints with `displayName`, `baseUrl`, `model`, `apiKeyRef`, capabilities, reasoning, context, and max token fields,
+- keep secrets as `env:NAME` references until OS keychain support exists,
+- show whether a provider is usable for coding tasks: enabled, key-ready, check-ready, chat-capable, and not media-only,
+- keep media providers visible but outside the normal coding task provider picker.
+
+Seedream `image_generate` remains a recorded media baseline with approval and artifact paths. Jimeng, Seedance, billing, desktop packaging, and keychain storage are deliberately downstream of the Model Workbench mainline.
 
 ## Target Users
 
@@ -98,6 +112,8 @@ v0.1 should prove local usefulness:
 5. Capture session logs and artifacts.
 6. Review and approve risky actions.
 7. See everything in a local timeline UI.
+
+The provider configuration step should be demoable through Model Workbench, not only through daemon API examples. A custom domestic or OpenAI-compatible endpoint should be able to move from setup hint to provider check to task run and back to repair/rerun if the provider fails.
 
 ## Non-Goals For v0.1
 
