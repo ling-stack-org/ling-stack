@@ -1,4 +1,5 @@
 export type SecretRefKind = "env" | "keychain";
+export type SecretStatusKind = SecretRefKind | "local";
 
 export type SecretPurpose =
   | "provider_api_key"
@@ -29,7 +30,7 @@ export interface SecretRef {
 
 export interface SecretStatus {
   readonly ref: string;
-  readonly kind: SecretRefKind;
+  readonly kind: SecretStatusKind;
   readonly configured: boolean;
   readonly errorCode?: SecretStatusErrorCode;
   readonly message?: string;

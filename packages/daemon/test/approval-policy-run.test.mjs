@@ -429,6 +429,83 @@ test("provider check and run startup use the injected secret resolver without le
   }
 });
 
+test("provider local API keys are write-only, checked from sqlite, updated, cleared, and deleted", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-local-secret-"));
+  const openai = await startMockOpenAICompatibleServer();
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_local_secret",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const created = await createStaticChatProvider(daemon.url, cwd, {
+      kind: "openai-compatible",
+      displayName: "Local Secret Relay",
+      providerId: "local-secret-relay",
+      api: "openai-completions",
+      baseUrl: `${openai.url}/v1`,
+      authHeader: true,
+      apiKey: "local-secret-one",
+    });
+    const providerId = created.provider.id;
+    assert.equal(created.provider.apiKeyRef, `local:${providerId}`);
+    assert.equal(created.provider.apiKeyConfigured, true);
+    assert.equal(created.provider.apiKeyStatus.kind, "local");
+    assert.doesNotMatch(JSON.stringify(created), /local-secret-one/);
+
+    const firstCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(firstCheck.ok, true);
+    assert.equal(openai.requests[0].authorization, "Bearer local-secret-one");
+    assert.equal(openai.requests[0].body.model, "static-model");
+
+    const updated = await patchJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}?cwd=${encodeURIComponent(cwd)}`, {
+      baseUrl: `${openai.url}/custom`,
+      model: "updated-model",
+      apiKey: "local-secret-two",
+      enabled: true,
+    });
+    assert.equal(updated.provider.baseUrl, `${openai.url}/custom`);
+    assert.equal(updated.provider.model, "updated-model");
+    assert.equal(updated.provider.apiKeyRef, `local:${providerId}`);
+    assert.doesNotMatch(JSON.stringify(updated), /local-secret-two/);
+
+    const secondCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(secondCheck.ok, true);
+    assert.equal(openai.requests[1].path, "/custom/chat/completions");
+    assert.equal(openai.requests[1].authorization, "Bearer local-secret-two");
+    assert.equal(openai.requests[1].body.model, "updated-model");
+
+    const cleared = await patchJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}?cwd=${encodeURIComponent(cwd)}`, {
+      clearApiKey: true,
+    });
+    assert.equal(cleared.provider.apiKeyRef, undefined);
+    assert.equal(cleared.provider.apiKeyConfigured, false);
+
+    const missingCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(missingCheck.ok, false);
+    assert.equal(missingCheck.code, "secret_missing");
+    assert.match(missingCheck.message, /API key missing/);
+
+    const recreated = await patchJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}?cwd=${encodeURIComponent(cwd)}`, {
+      apiKey: "local-secret-three",
+    });
+    assert.equal(recreated.provider.apiKeyRef, `local:${providerId}`);
+    const deleted = await fetch(`${daemon.url}/providers/${encodeURIComponent(providerId)}?cwd=${encodeURIComponent(cwd)}`, { method: "DELETE" });
+    assert.equal(deleted.status, 200);
+    await deleted.arrayBuffer();
+    const store = createSqliteRunStore(cwd);
+    try {
+      assert.equal(store.hasProviderSecret(providerId), false);
+    } finally {
+      store.close();
+    }
+  } finally {
+    await daemon.close();
+    await openai.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("media provider check distinguishes disabled, live-gated, and invalid transport config", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-media-gate-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
@@ -1582,6 +1659,40 @@ async function startMockSeedreamServer() {
       created: 1779537600,
       data: [{ url: `http://${request.headers.host}/generated/image-1.png` }],
       debug: { echo: request.headers.authorization },
+    }));
+  });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () => new Promise((resolveClose, rejectClose) => {
+      server.close((error) => error ? rejectClose(error) : resolveClose());
+    }),
+  };
+}
+
+async function startMockOpenAICompatibleServer() {
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const bodyText = Buffer.concat(chunks).toString("utf8");
+    const body = bodyText ? JSON.parse(bodyText) : {};
+    requests.push({
+      method: request.method,
+      path: request.url,
+      authorization: request.headers.authorization,
+      body,
+    });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-local-secret-test",
+      object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
     }));
   });
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));

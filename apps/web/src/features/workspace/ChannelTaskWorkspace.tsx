@@ -144,6 +144,7 @@ export function ChannelTaskWorkspace({
   const selectedTaskRunStatus = selectedTask?.currentRunId
     ? displayLinkedRunStatus(selectedTask.currentRunId, selectedTaskRun, activeRunId, latestStatus)
     : "";
+  const selectedTaskRunSucceeded = selectedTaskRunStatus === "succeeded";
   const selectedTaskRepairHint = buildRunRepairHint(selectedTaskRun, 0, selectedTaskRunStatus);
   const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId) ?? "";
   const taskReadyProviders = providers.filter(providerPreflightReady);
@@ -424,12 +425,15 @@ export function ChannelTaskWorkspace({
 	              <MetaRow label={t("Current run")} value={selectedTask.currentRunId ?? "-"} compact />
             </div>
             {selectedTask.currentRunId ? (
-              <div className="task-run-link">
+              <div className={selectedTaskRunSucceeded ? "task-run-link succeeded" : "task-run-link"}>
                 <StatusBadge status={selectedTaskRunStatus} />
-                <code>{selectedTask.currentRunId}</code>
-                <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(selectedTask.currentRunId ?? "")}>
-	                  <History size={14} />
-	                  {t("Open run")}
+                <span className="task-run-summary">
+                  {selectedTaskRunSucceeded ? <strong>{t("Task complete")}</strong> : null}
+                  <code>{selectedTask.currentRunId}</code>
+                </span>
+                <button className={selectedTaskRunSucceeded ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(selectedTask.currentRunId ?? "")}>
+	                  {selectedTaskRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
+	                  {selectedTaskRunSucceeded ? t("View result") : t("Open run")}
                 </button>
               </div>
             ) : null}
@@ -504,6 +508,7 @@ export function ChannelTaskWorkspace({
               const linkedRunStatus = task.currentRunId
                 ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus)
                 : "";
+              const linkedRunSucceeded = linkedRunStatus === "succeeded";
               const repairHint = buildRunRepairHint(linkedRun, 0, linkedRunStatus);
               return (
                 <article key={task.id} className={task.id === selectedTaskId ? "task-row selected" : "task-row"}>
@@ -517,12 +522,15 @@ export function ChannelTaskWorkspace({
                     <time>{formatDateTime(task.updatedAt)}</time>
                   </div>
                   {task.currentRunId ? (
-                    <div className="task-run-link compact">
+                    <div className={linkedRunSucceeded ? "task-run-link compact succeeded" : "task-run-link compact"}>
                       <StatusBadge status={linkedRunStatus} />
-                      <code>{task.currentRunId}</code>
-                      <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
-	                        <History size={14} />
-	                        {t("Open run")}
+                      <span className="task-run-summary">
+                        {linkedRunSucceeded ? <strong>{t("Task complete")}</strong> : null}
+                        <code>{task.currentRunId}</code>
+                      </span>
+                      <button className={linkedRunSucceeded ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
+	                        {linkedRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
+	                        {linkedRunSucceeded ? t("View result") : t("Open run")}
                       </button>
                     </div>
                   ) : null}

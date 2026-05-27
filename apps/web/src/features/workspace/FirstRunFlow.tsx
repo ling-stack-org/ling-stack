@@ -119,14 +119,17 @@ export function FirstRunFlow({
 
   if (selectedTask && selectedTaskRunId) {
     const repairHint = buildRunRepairHint(selectedTaskRun, pendingApprovalCount, selectedTaskRunStatus);
+    const runSucceeded = selectedTaskRunStatus === "succeeded";
     const needsRepair = selectedTaskRunStatus === "failed" || selectedTaskRunStatus === "waiting_for_approval";
-	    const runStatusClass = selectedTaskRunStatus === "succeeded" ? "ready" : needsRepair ? "attention" : "active";
-	    const title = selectedTaskRunStatus === "succeeded"
-	      ? t("Run loop complete")
+	    const runStatusClass = runSucceeded ? "ready" : needsRepair ? "attention" : "active";
+	    const title = runSucceeded
+	      ? t("Task complete")
 	      : needsRepair
 	        ? t("Run needs attention")
 	        : t("Current run linked");
-    const detail = repairHint
+    const detail = runSucceeded
+      ? t("{taskTitle} finished successfully. Open the run to review the result, events, and artifacts.", { taskTitle: selectedTask.title })
+      : repairHint
       ? `${selectedTask.title} latest run is ${selectedTaskRunStatus}. ${repairHint.detail}`
       : `${selectedTask.title} latest run is ${selectedTaskRunStatus}.${selectedTaskRun?.errorMessage ? ` ${selectedTaskRun.errorMessage}` : ""}`;
     const primaryAction = repairHint?.target ?? "run";
@@ -154,11 +157,11 @@ export function FirstRunFlow({
 	            </button>
           ) : null}
           <button className={primaryAction === "run" ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(selectedTaskRunId)}>
-	            <History size={14} />
-	            {primaryAction === "run" ? (repairHint?.actionLabel ?? t("Open run")) : t("Open run")}
+	            {runSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
+	            {runSucceeded ? t("View result") : primaryAction === "run" ? (repairHint?.actionLabel ?? t("Open run")) : t("Open run")}
 	          </button>
-          {selectedTaskRunStatus === "succeeded" ? (
-            <button className="primary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !runReady}>
+          {runSucceeded ? (
+            <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !runReady}>
 	              <Play size={14} />
 	              {t("Run again")}
 	            </button>

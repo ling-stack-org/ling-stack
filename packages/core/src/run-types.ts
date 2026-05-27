@@ -237,6 +237,10 @@ export interface RunStore {
   updateProviderPreset(id: string, input: ProviderPresetUpdateInput, now: string): ProviderPreset | undefined;
   recordProviderCheckResult(id: string, result: ProviderCheckResult): ProviderPreset | undefined;
   deleteProviderPreset(id: string): boolean;
+  setProviderSecret(providerId: string, secretValue: string, now: string): void;
+  getProviderSecret(providerId: string): string | undefined;
+  hasProviderSecret(providerId: string): boolean;
+  deleteProviderSecret(providerId: string): boolean;
   createMediaJob(input: CreateMediaJobInput, now: string): MediaJob;
   getMediaJob(id: string): MediaJob | undefined;
   listMediaJobs(options?: ListMediaJobsOptions): MediaJob[];

@@ -125,6 +125,7 @@ import {
   providerPreflightReady,
   providerRunBlockerLabel,
   providerRunPreflightBlocker,
+  providerSecretReady,
   providerTemplateToForm,
   providerToForm,
 } from "../lib/providers.js";
@@ -231,6 +232,7 @@ export function AppShell(): JSX.Element {
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
   const [providerForm, setProviderForm] = useState<ProviderFormState>(defaultProviderForm);
   const [editingProviderId, setEditingProviderId] = useState("");
+  const [selectedProviderTemplateId, setSelectedProviderTemplateId] = useState("");
   const [providerCheck, setProviderCheck] = useState<ProviderCheckResult | undefined>();
   const [providerCheckTargetId, setProviderCheckTargetId] = useState("");
   const [checkingProviderIds, setCheckingProviderIds] = useState<readonly string[]>([]);
@@ -256,6 +258,7 @@ export function AppShell(): JSX.Element {
   const [isRunning, setIsRunning] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const abortRef = useRef<AbortController | undefined>(undefined);
+  const workspaceTimelineLoadRef = useRef("");
 
   function addLocalTeammate(input: LocalTeammateCreateInput): void {
     setLocalTeammates((currentTeammates) => {
@@ -355,6 +358,16 @@ export function AppShell(): JSX.Element {
     }
     return items;
   }, [run, runs]);
+  const selectedWorkspaceTask = useMemo(
+    () => tasks.find((task) => task.id === selectedTaskId) ?? tasks[0],
+    [selectedTaskId, tasks],
+  );
+  const workspaceTimelineRunId = useMemo(() => {
+    if (isRunning && activeRunId) {
+      return activeRunId;
+    }
+    return selectedWorkspaceTask?.currentRunId || activeRunId || runs[0]?.id || "";
+  }, [activeRunId, isRunning, runs, selectedWorkspaceTask]);
   const succeededRunCount = useMemo(() => [...runById.values()].filter((item) => item.status === "succeeded").length, [runById]);
   const providerRepairRun = providerRepairRunId ? runById.get(providerRepairRunId) : undefined;
   const taskRepairRun = taskRepairRunId ? runById.get(taskRepairRunId) : undefined;
@@ -399,6 +412,25 @@ export function AppShell(): JSX.Element {
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
+
+  useEffect(() => {
+    const cwd = form.cwd.trim();
+    if (activeView !== "workspace" || isRunning || !workspaceTimelineRunId || !cwd) {
+      return;
+    }
+
+    const loadKey = `${cwd}::${workspaceTimelineRunId}`;
+    if (workspaceTimelineLoadRef.current === loadKey) {
+      return;
+    }
+    if (run?.id === workspaceTimelineRunId && events.length > 0) {
+      workspaceTimelineLoadRef.current = loadKey;
+      return;
+    }
+
+    workspaceTimelineLoadRef.current = loadKey;
+    void loadRun(workspaceTimelineRunId, cwd);
+  }, [activeView, events.length, form.cwd, isRunning, run?.id, workspaceTimelineRunId]);
 
   useEffect(() => {
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
@@ -982,6 +1014,10 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  function resolveTaskRunProviderPresetId(channel: Channel | undefined): string {
+    return taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId || providers.find(providerPreflightReady)?.id || "";
+  }
+
   async function runPersistedTask(task: Task, options: { readonly skipPreflight?: boolean } = {}): Promise<boolean> {
     const channel = channels.find((item) => item.id === task.channelId);
     if (!channel) {
@@ -992,7 +1028,7 @@ export function AppShell(): JSX.Element {
       setErrorMessage(`Channel is ${channel.status}; resume it before starting a new run.`);
       return false;
     }
-    const providerPresetId = taskRunProviderId || channel.defaultProviderPresetId || form.providerPresetId;
+    const providerPresetId = resolveTaskRunProviderPresetId(channel);
     if (!providerPresetId) {
       setErrorMessage("请先选择 provider preset");
       return false;
@@ -1019,7 +1055,7 @@ export function AppShell(): JSX.Element {
 
   async function checkThenRunPersistedTask(task: Task): Promise<boolean> {
     const channel = channels.find((item) => item.id === task.channelId);
-    const providerPresetId = taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId;
+    const providerPresetId = resolveTaskRunProviderPresetId(channel);
     const provider = providerPresetId ? providers.find((item) => item.id === providerPresetId) : undefined;
     if (!provider) {
       setErrorMessage(providerPresetId ? "找不到 provider preset" : "请先选择 provider preset");
@@ -1183,10 +1219,10 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function saveProvider(): Promise<void> {
+  async function saveProvider(nextProviderForm = providerForm): Promise<ProviderPreset | undefined> {
     if (!form.cwd.trim()) {
       setErrorMessage("请输入 workspace path");
-      return;
+      return undefined;
     }
 
     try {
@@ -1195,14 +1231,49 @@ export function AppShell(): JSX.Element {
       setProviderCheckTargetId("");
       setProviderBatchResult(undefined);
       const response = editingProviderId
-        ? await updateProvider(form.cwd.trim(), editingProviderId, providerForm)
-        : await createProvider(form.cwd.trim(), providerForm);
+        ? await updateProvider(form.cwd.trim(), editingProviderId, nextProviderForm)
+        : await createProvider(form.cwd.trim(), nextProviderForm);
       setEditingProviderId(response.provider.id);
+      setProviderForm({
+        ...providerToForm(response.provider),
+        apiKey: nextProviderForm.clearApiKey ? "" : nextProviderForm.apiKey,
+      });
       await refreshProviders();
       applyProviderToRun(response.provider);
+      return response.provider;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+      return undefined;
     }
+  }
+
+  async function saveAndCheckProvider(): Promise<void> {
+    const savedProvider = await saveProvider({ ...providerForm, enabled: true });
+    if (!savedProvider) {
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      setProviderBatchResult(undefined);
+      setCheckingProviderIds([savedProvider.id]);
+      setProviderCheckTargetId(savedProvider.id);
+      const result = await checkProvider(form.cwd.trim(), savedProvider.id);
+      setProviderCheck(result);
+      await refreshProviders();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCheckingProviderIds([]);
+    }
+  }
+
+  async function clearProviderKey(): Promise<void> {
+    if (!editingProviderId) {
+      setProviderForm((current) => ({ ...current, apiKey: "", apiKeyRef: "", clearApiKey: false }));
+      return;
+    }
+    await saveProvider({ ...providerForm, apiKey: "", apiKeyRef: "", clearApiKey: true });
   }
 
   async function removeProvider(providerId: string): Promise<void> {
@@ -1231,6 +1302,13 @@ export function AppShell(): JSX.Element {
       setProviderBatchResult(undefined);
       setCheckingProviderIds([providerId]);
       setProviderCheckTargetId(providerId);
+      const provider = providers.find((item) => item.id === providerId);
+      if (provider && !provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat") && providerSecretReady(provider)) {
+        await updateProvider(form.cwd.trim(), providerId, { ...providerToForm(provider), enabled: true });
+        if (editingProviderId === providerId) {
+          setProviderForm((current) => ({ ...current, enabled: true }));
+        }
+      }
       const result = await checkProvider(form.cwd.trim(), providerId);
       setProviderCheck(result);
       await refreshProviders();
@@ -1280,6 +1358,7 @@ export function AppShell(): JSX.Element {
 
   function editProvider(provider: ProviderPreset): void {
     setEditingProviderId(provider.id);
+    setSelectedProviderTemplateId("");
     setProviderCheck(undefined);
     setProviderCheckTargetId("");
     setProviderBatchResult(undefined);
@@ -1520,6 +1599,7 @@ export function AppShell(): JSX.Element {
                 checkedProviderId={providerCheckTargetId}
                 batchResult={providerBatchResult}
                 selectedProviderId={form.providerPresetId}
+                selectedTemplateId={selectedProviderTemplateId}
                 repairRun={providerRepairRun}
                 isRunning={isRunning}
                 onCwdChange={updateWorkspaceCwd}
@@ -1527,6 +1607,7 @@ export function AppShell(): JSX.Element {
                 onTemplateSelect={(template) => {
                   setProviderRepairRunId("");
                   setEditingProviderId("");
+                  setSelectedProviderTemplateId(template.templateId);
                   setProviderCheck(undefined);
                   setProviderCheckTargetId("");
                   setProviderForm(providerTemplateToForm(template));
@@ -1534,11 +1615,14 @@ export function AppShell(): JSX.Element {
                 onNew={() => {
                   setProviderRepairRunId("");
                   setEditingProviderId("");
+                  setSelectedProviderTemplateId("");
                   setProviderCheck(undefined);
                   setProviderCheckTargetId("");
                   setProviderForm(defaultProviderForm);
                 }}
                 onSave={() => void saveProvider()}
+                onSaveAndCheck={() => void saveAndCheckProvider()}
+                onClearKey={() => void clearProviderKey()}
                 onRefresh={() => void refreshProviders()}
                 onEdit={editProvider}
                 onDelete={(providerId) => void removeProvider(providerId)}

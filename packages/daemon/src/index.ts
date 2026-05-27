@@ -61,6 +61,7 @@ import {
   type ResolvedSecret,
   type SecretPurpose,
   type SecretResolver,
+  type SecretStatus,
   type TaskStatus,
   type TaskUpdateInput,
 } from "@ling-stack/core";
@@ -1210,7 +1211,7 @@ async function handleProvidersCollection(
   if (request.method === "GET") {
     writeJson(response, 200, {
       cwd,
-      providers: store.listProviderPresets().map((preset) => toPublicProviderPreset(preset, secretResolver)),
+      providers: store.listProviderPresets().map((preset) => toPublicProviderPreset(store, preset, secretResolver)),
     });
     return;
   }
@@ -1218,8 +1219,11 @@ async function handleProvidersCollection(
   if (request.method === "POST") {
     try {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const preset = store.createProviderPreset(parseProviderPresetInput(body), new Date().toISOString());
-      writeJson(response, 201, { provider: toPublicProviderPreset(preset, secretResolver) });
+      const input = parseProviderPresetCreateRequest(body);
+      const now = new Date().toISOString();
+      const preset = store.createProviderPreset(input.presetInput, now);
+      const provider = input.apiKey ? saveLocalProviderSecret(store, preset, input.apiKey, now) : preset;
+      writeJson(response, 201, { provider: toPublicProviderPreset(store, provider, secretResolver) });
     } catch (error) {
       writeJson(response, 400, {
         error: "bad_request",
@@ -1255,7 +1259,7 @@ async function handleProviderItem(
   }
 
   if (request.method === "POST" && route.action === "check") {
-    const checkResult = await checkProviderPreset(preset, secretResolver);
+    const checkResult = await checkProviderPreset(store, preset, secretResolver);
     store.recordProviderCheckResult(route.providerId, checkResult);
     writeJson(response, 200, checkResult);
     return;
@@ -1267,21 +1271,29 @@ async function handleProviderItem(
   }
 
   if (request.method === "GET") {
-    writeJson(response, 200, { provider: toPublicProviderPreset(preset, secretResolver) });
+    writeJson(response, 200, { provider: toPublicProviderPreset(store, preset, secretResolver) });
     return;
   }
 
   if (request.method === "PATCH") {
     try {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const updateInput = parseProviderPresetUpdateInput(body);
+      const input = parseProviderPresetUpdateRequest(body);
+      const updateInput = providerUpdateWithSecretRef(route.providerId, input);
       validateProviderPresetUpdate(preset, updateInput);
-      const updated = store.updateProviderPreset(route.providerId, updateInput, new Date().toISOString());
+      const now = new Date().toISOString();
+      const updated = store.updateProviderPreset(route.providerId, updateInput, now);
       if (!updated) {
         writeJson(response, 404, { error: "provider_not_found", message: `Provider preset not found: ${route.providerId}` });
         return;
       }
-      writeJson(response, 200, { provider: toPublicProviderPreset(updated, secretResolver) });
+      if (input.apiKey) {
+        store.setProviderSecret(route.providerId, input.apiKey, now);
+      }
+      if (input.clearApiKey) {
+        store.deleteProviderSecret(route.providerId);
+      }
+      writeJson(response, 200, { provider: toPublicProviderPreset(store, updated, secretResolver) });
     } catch (error) {
       writeJson(response, 400, {
         error: "bad_request",
@@ -1292,6 +1304,7 @@ async function handleProviderItem(
   }
 
   if (request.method === "DELETE") {
+    store.deleteProviderSecret(route.providerId);
     store.deleteProviderPreset(route.providerId);
     writeJson(response, 200, { ok: true });
     return;
@@ -1419,7 +1432,7 @@ async function handleRunMediaJob(
       prompt: job.prompt,
       input: job.input,
     }, secretResolver);
-    const mediaSecret = provider.apiKeyRef ? secretResolver.resolve(provider.apiKeyRef, "provider_api_key") : undefined;
+    const mediaSecret = provider.apiKeyRef ? resolveProviderSecret(store, provider, secretResolver) : undefined;
     const mediaSecretValues = [mediaSecret?.value];
 
     const approvalGate = applyMediaCostApprovalGate(store, job, provider);
@@ -1436,7 +1449,7 @@ async function handleRunMediaJob(
     startedExecution = true;
 
     const requestedAt = new Date().toISOString();
-    const execution = await executeMediaAdapterJob(createMediaAdapterForProvider(provider, secretResolver), {
+    const execution = await executeMediaAdapterJob(createMediaAdapterForProvider(store, provider, secretResolver), {
       jobId: job.id,
       provider: {
         id: provider.id,
@@ -1485,7 +1498,7 @@ async function handleRunMediaJob(
   } catch (error) {
     const statusCode = error instanceof HttpError ? error.statusCode : startedExecution ? 500 : 400;
     const provider = store && job ? store.getProviderPreset(job.providerPresetId) : undefined;
-    const mediaSecret = provider?.apiKeyRef ? secretResolver.resolve(provider.apiKeyRef, "provider_api_key") : undefined;
+    const mediaSecret = store && provider?.apiKeyRef ? resolveProviderSecret(store, provider, secretResolver) : undefined;
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [mediaSecret?.value]);
     const failed = store && job && startedExecution
       ? store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, new Date().toISOString())
@@ -2060,8 +2073,8 @@ function resolveProviderForRun(store: RunStore, runRequest: RunRequest, secretRe
     if (!preset.capabilities.includes("chat")) {
       throw new HttpError(400, "unsupported_capability", "Provider preset must include chat capability for coding runs");
     }
-    assertProviderRunPreflight(preset, runRequest.skipProviderPreflight === true, secretResolver);
-    const secret: ResolvedSecret = preset.apiKeyRef ? secretResolver.resolve(preset.apiKeyRef, "provider_api_key") : { configured: false };
+    assertProviderRunPreflight(store, preset, runRequest.skipProviderPreflight === true, secretResolver);
+    const secret: ResolvedSecret = preset.apiKeyRef ? resolveProviderSecret(store, preset, secretResolver) : { configured: false };
     return removeUndefined({
       provider: preset.providerId,
       model: preset.model,
@@ -2086,12 +2099,12 @@ function resolveProviderForRun(store: RunStore, runRequest: RunRequest, secretRe
   return runRequest.provider;
 }
 
-function assertProviderRunPreflight(preset: ProviderPreset, skipProviderPreflight: boolean, secretResolver: SecretResolver): void {
+function assertProviderRunPreflight(store: RunStore, preset: ProviderPreset, skipProviderPreflight: boolean, secretResolver: SecretResolver): void {
   if (skipProviderPreflight) {
     return;
   }
 
-  const secretBlocker = providerSecretPreflightBlocker(preset, secretResolver);
+  const secretBlocker = providerSecretPreflightBlocker(store, preset, secretResolver);
   if (secretBlocker) {
     throw new HttpError(400, "provider_preflight_failed", `${preset.displayName}: ${secretBlocker}`);
   }
@@ -2108,15 +2121,15 @@ function assertProviderRunPreflight(preset: ProviderPreset, skipProviderPrefligh
   }
 }
 
-function providerSecretPreflightBlocker(preset: ProviderPreset, secretResolver: SecretResolver): string | undefined {
+function providerSecretPreflightBlocker(store: RunStore, preset: ProviderPreset, secretResolver: SecretResolver): string | undefined {
   const needsSecret = preset.api !== "media-job" && (preset.api === "anthropic-messages" || preset.authHeader !== false);
   if (needsSecret && !preset.apiKeyRef) {
-    return "missing apiKeyRef.";
+    return "API key missing.";
   }
   if (preset.apiKeyRef) {
-    const status = secretResolver.status(preset.apiKeyRef, "provider_api_key");
+    const status = providerSecretStatus(store, preset, secretResolver);
     if (!status.configured) {
-      return `${status.message ?? `missing ${preset.apiKeyRef}.`}`;
+      return `${status.message ?? "API key missing."}`;
     }
   }
   return undefined;
@@ -2827,12 +2840,12 @@ function materializeExtractedArtifact(
   });
 }
 
-function createMediaAdapterForProvider(provider: ProviderPreset, secretResolver: SecretResolver) {
+function createMediaAdapterForProvider(store: RunStore, provider: ProviderPreset, secretResolver: SecretResolver) {
   const gate = resolveMediaVendorTransportGateConfig(provider.compat);
   if (!gate.ok) {
     throw new HttpError(400, gate.errorCode ?? "invalid_request", gate.errorMessage ?? "Invalid media vendor transport configuration.");
   }
-  const secret: ResolvedSecret = provider.apiKeyRef ? secretResolver.resolve(provider.apiKeyRef, "provider_api_key") : { configured: false };
+  const secret: ResolvedSecret = provider.apiKeyRef ? resolveProviderSecret(store, provider, secretResolver) : { configured: false };
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: gate.config?.mode === "live"
       ? createLiveMediaVendorTransport({
@@ -3610,6 +3623,27 @@ function parseProviderPresetInput(value: unknown): ProviderPresetInput {
   });
 }
 
+interface ProviderPresetCreateRequest {
+  readonly presetInput: ProviderPresetInput;
+  readonly apiKey?: string;
+}
+
+interface ProviderPresetUpdateRequest {
+  readonly updateInput: ProviderPresetUpdateInput;
+  readonly apiKey?: string;
+  readonly clearApiKey: boolean;
+}
+
+function parseProviderPresetCreateRequest(value: unknown): ProviderPresetCreateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Provider preset request must be a JSON object");
+  }
+  return {
+    presetInput: parseProviderPresetInput(value),
+    apiKey: readOptionalApiKey(value),
+  };
+}
+
 function parseProviderPresetUpdateInput(value: unknown): ProviderPresetUpdateInput {
   if (!isRecord(value)) {
     throw new Error("Provider preset update must be a JSON object");
@@ -3635,6 +3669,93 @@ function parseProviderPresetUpdateInput(value: unknown): ProviderPresetUpdateInp
   };
 
   return input;
+}
+
+function parseProviderPresetUpdateRequest(value: unknown): ProviderPresetUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Provider preset update must be a JSON object");
+  }
+  const apiKey = readOptionalApiKey(value);
+  const clearApiKey = readOptionalBoolean(value, "clearApiKey") ?? false;
+  if (apiKey && clearApiKey) {
+    throw new Error("apiKey and clearApiKey cannot both be provided");
+  }
+  return {
+    updateInput: parseProviderPresetUpdateInput(value),
+    apiKey,
+    clearApiKey,
+  };
+}
+
+function providerUpdateWithSecretRef(providerId: string, input: ProviderPresetUpdateRequest): ProviderPresetUpdateInput {
+  if (input.apiKey) {
+    return { ...input.updateInput, apiKeyRef: localProviderSecretRef(providerId) };
+  }
+  if (input.clearApiKey) {
+    return { ...input.updateInput, apiKeyRef: null };
+  }
+  return input.updateInput;
+}
+
+function saveLocalProviderSecret(store: RunStore, preset: ProviderPreset, apiKey: string, now: string): ProviderPreset {
+  store.setProviderSecret(preset.id, apiKey, now);
+  return store.updateProviderPreset(preset.id, { apiKeyRef: localProviderSecretRef(preset.id) }, now) ?? preset;
+}
+
+function localProviderSecretRef(providerId: string): string {
+  return `local:${providerId}`;
+}
+
+function providerSecretStatus(store: RunStore, preset: Pick<ProviderPreset, "id" | "apiKeyRef">, secretResolver: SecretResolver): SecretStatus {
+  if (!preset.apiKeyRef) {
+    return {
+      ref: "",
+      kind: "local",
+      configured: false,
+      errorCode: "secret_missing",
+      message: "API key missing.",
+    };
+  }
+  if (isLocalProviderSecretRef(preset.apiKeyRef)) {
+    const providerId = readLocalProviderSecretProviderId(preset.apiKeyRef);
+    const validLocalRef = providerId === preset.id;
+    const configured = validLocalRef && store.hasProviderSecret(providerId);
+    return {
+      ref: preset.apiKeyRef,
+      kind: "local",
+      configured,
+      errorCode: configured ? undefined : validLocalRef ? "secret_missing" : "invalid_secret_ref",
+      message: configured ? undefined : validLocalRef ? "API key missing. Add an API key before checking this preset." : "Local API key ref does not match this provider.",
+    };
+  }
+  return secretResolver.status(preset.apiKeyRef, "provider_api_key");
+}
+
+function resolveProviderSecret(store: RunStore, preset: Pick<ProviderPreset, "id" | "apiKeyRef">, secretResolver: SecretResolver): ResolvedSecret {
+  if (!preset.apiKeyRef) {
+    return { configured: false };
+  }
+  if (isLocalProviderSecretRef(preset.apiKeyRef)) {
+    const status = providerSecretStatus(store, preset, secretResolver);
+    if (!status.configured) {
+      return { ref: preset.apiKeyRef, configured: false, status };
+    }
+    return {
+      ref: preset.apiKeyRef,
+      configured: true,
+      value: store.getProviderSecret(readLocalProviderSecretProviderId(preset.apiKeyRef)),
+      status,
+    };
+  }
+  return secretResolver.resolve(preset.apiKeyRef, "provider_api_key");
+}
+
+function isLocalProviderSecretRef(ref: string): boolean {
+  return ref.startsWith("local:");
+}
+
+function readLocalProviderSecretProviderId(ref: string): string {
+  return ref.slice("local:".length);
 }
 
 function validateProviderPresetInput(input: ProviderPresetInput): ProviderPresetInput {
@@ -3683,7 +3804,7 @@ function validateProviderPresetShape(input: {
   if (input.baseUrl) {
     validateUrl(input.baseUrl, "baseUrl");
   }
-  if (input.apiKeyRef && !isSupportedSecretRef(input.apiKeyRef)) {
+  if (input.apiKeyRef && !isSupportedProviderApiKeyRef(input.apiKeyRef)) {
     throw new Error("apiKeyRef must use env:NAME or keychain:NAME");
   }
   if (!input.capabilities || input.capabilities.length === 0) {
@@ -3703,8 +3824,8 @@ function validateProviderPresetShape(input: {
   }
 }
 
-function toPublicProviderPreset(preset: ProviderPreset, secretResolver: SecretResolver): PublicProviderPreset {
-  const apiKeyStatus = preset.apiKeyRef ? secretResolver.status(preset.apiKeyRef, "provider_api_key") : undefined;
+function toPublicProviderPreset(store: RunStore, preset: ProviderPreset, secretResolver: SecretResolver): PublicProviderPreset {
+  const apiKeyStatus = preset.apiKeyRef ? providerSecretStatus(store, preset, secretResolver) : undefined;
   return {
     ...preset,
     apiKeyConfigured: apiKeyStatus?.configured ?? false,
@@ -3712,7 +3833,7 @@ function toPublicProviderPreset(preset: ProviderPreset, secretResolver: SecretRe
   };
 }
 
-async function checkProviderPreset(preset: ProviderPreset, secretResolver: SecretResolver): Promise<ProviderCheckResult> {
+async function checkProviderPreset(store: RunStore, preset: ProviderPreset, secretResolver: SecretResolver): Promise<ProviderCheckResult> {
   const checkedAt = new Date().toISOString();
   if (preset.baseUrl) {
     try {
@@ -3723,15 +3844,15 @@ async function checkProviderPreset(preset: ProviderPreset, secretResolver: Secre
   }
   const needsSecret = preset.api === "anthropic-messages" || preset.authHeader !== false;
   if (needsSecret && !preset.apiKeyRef) {
-    return { ok: false, code: "secret_missing", message: "Secret is not configured: apiKeyRef is required for live checks.", checkedAt };
+    return { ok: false, code: "secret_missing", message: "API key missing. Add an API key before running a live check.", checkedAt };
   }
   if (preset.apiKeyRef) {
-    const secretStatus = secretResolver.status(preset.apiKeyRef, "provider_api_key");
+    const secretStatus = providerSecretStatus(store, preset, secretResolver);
     if (!secretStatus.configured) {
       return {
         ok: false,
         code: secretStatus.errorCode ?? "secret_missing",
-        message: secretStatus.message ?? `Secret is not configured: ${preset.apiKeyRef}`,
+        message: secretStatus.message ?? `API key missing: ${preset.apiKeyRef} is not configured.`,
         checkedAt,
       };
     }
@@ -3758,14 +3879,14 @@ async function checkProviderPreset(preset: ProviderPreset, secretResolver: Secre
         return { ok: false, code: "bad_request", message: "baseUrl is required for live media vendor transport.", checkedAt };
       }
       if (!preset.apiKeyRef) {
-        return { ok: false, code: "secret_missing", message: "Secret is not configured: apiKeyRef is required for live media vendor transport.", checkedAt };
+        return { ok: false, code: "secret_missing", message: "API key missing. Add an API key before enabling live media vendor transport.", checkedAt };
       }
-      const secretStatus = secretResolver.status(preset.apiKeyRef, "provider_api_key");
+      const secretStatus = providerSecretStatus(store, preset, secretResolver);
       if (!secretStatus.configured) {
         return {
           ok: false,
           code: secretStatus.errorCode ?? "secret_missing",
-          message: secretStatus.message ?? `Secret is not configured: ${preset.apiKeyRef}`,
+          message: secretStatus.message ?? `API key missing: ${preset.apiKeyRef} is not configured.`,
           checkedAt,
         };
       }
@@ -3801,14 +3922,14 @@ async function checkProviderPreset(preset: ProviderPreset, secretResolver: Secre
     };
   }
 
-  return await probeChatProvider(preset, checkedAt, secretResolver);
+  return await probeChatProvider(store, preset, checkedAt, secretResolver);
 }
 
-async function probeChatProvider(preset: ProviderPreset, checkedAt: string, secretResolver: SecretResolver): Promise<ProviderCheckResult> {
+async function probeChatProvider(store: RunStore, preset: ProviderPreset, checkedAt: string, secretResolver: SecretResolver): Promise<ProviderCheckResult> {
   try {
     const response = await fetch(buildProviderCheckUrl(preset), {
       method: "POST",
-      headers: buildProviderCheckHeaders(preset, secretResolver),
+      headers: buildProviderCheckHeaders(store, preset, secretResolver),
       body: JSON.stringify(buildProviderCheckBody(preset)),
       signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
     });
@@ -3854,8 +3975,8 @@ function normalizeProviderBaseUrl(preset: ProviderPreset): string {
   return "https://api.openai.com/v1";
 }
 
-function buildProviderCheckHeaders(preset: ProviderPreset, secretResolver: SecretResolver): Record<string, string> {
-  const secret: ResolvedSecret = preset.apiKeyRef ? secretResolver.resolve(preset.apiKeyRef, "provider_api_key") : { configured: false };
+function buildProviderCheckHeaders(store: RunStore, preset: ProviderPreset, secretResolver: SecretResolver): Record<string, string> {
+  const secret: ResolvedSecret = preset.apiKeyRef ? resolveProviderSecret(store, preset, secretResolver) : { configured: false };
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...preset.headers,
@@ -3906,7 +4027,7 @@ async function providerCheckHttpFailure(response: Response, checkedAt: string): 
     return {
       ok: false,
       code: "auth_failed",
-      message: `Provider authentication failed with HTTP ${response.status}. Check apiKeyRef and account access.`,
+      message: `Provider authentication failed with HTTP ${response.status}. Check the API key and account access.`,
       checkedAt,
     };
   }
@@ -4092,9 +4213,21 @@ function readOptionalObject(record: Record<string, unknown>, key: string): Recor
   return value;
 }
 
+function readOptionalApiKey(record: Record<string, unknown>): string | undefined {
+  const value = record.apiKey;
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error("apiKey must be a string");
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function readOptionalApiKeyRef(record: Record<string, unknown>): string | undefined {
   const value = readOptionalString(record, "apiKeyRef");
-  if (value && !isSupportedSecretRef(value)) {
+  if (value && !isSupportedProviderApiKeyRef(value)) {
     throw new Error("apiKeyRef must use env:NAME or keychain:NAME");
   }
   return value;
@@ -4102,10 +4235,22 @@ function readOptionalApiKeyRef(record: Record<string, unknown>): string | undefi
 
 function readNullableApiKeyRef(record: Record<string, unknown>): string | null | undefined {
   const value = readNullableString(record, "apiKeyRef");
-  if (typeof value === "string" && !isSupportedSecretRef(value)) {
+  if (typeof value === "string" && !isSupportedProviderApiKeyRef(value)) {
     throw new Error("apiKeyRef must use env:NAME or keychain:NAME");
   }
   return value;
+}
+
+function isSupportedProviderApiKeyRef(value: string): boolean {
+  return isSupportedSecretRef(value) || isValidLocalProviderSecretRef(value);
+}
+
+function isValidLocalProviderSecretRef(value: string): boolean {
+  if (!isLocalProviderSecretRef(value)) {
+    return false;
+  }
+  const providerId = readLocalProviderSecretProviderId(value);
+  return providerId.trim() === providerId && providerId.length > 0 && !/\s/.test(providerId);
 }
 
 function readOptionalStringArray<T extends string = string>(

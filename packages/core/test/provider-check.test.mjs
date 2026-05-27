@@ -77,3 +77,42 @@ test("sqlite store persists provider check results", async () => {
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("sqlite store persists provider secrets separately and deletes them with providers", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-provider-secret-"));
+  const now = "2026-05-27T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const provider = store.createProviderPreset(
+      {
+        kind: "openai-compatible",
+        displayName: "Local Secret Relay",
+        providerId: "local-secret-relay",
+        model: "dpv4",
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:8317/v1",
+        apiKeyRef: "local:provider_pending",
+        capabilities: ["chat", "tool_call"],
+        enabled: true,
+      },
+      now,
+    );
+
+    store.setProviderSecret(provider.id, "local-secret-value", now);
+    assert.equal(store.hasProviderSecret(provider.id), true);
+    assert.equal(store.getProviderSecret(provider.id), "local-secret-value");
+
+    store.setProviderSecret(provider.id, "local-secret-value-updated", "2026-05-27T00:01:00.000Z");
+    assert.equal(store.getProviderSecret(provider.id), "local-secret-value-updated");
+
+    assert.equal(store.deleteProviderSecret(provider.id), true);
+    assert.equal(store.hasProviderSecret(provider.id), false);
+
+    store.setProviderSecret(provider.id, "local-secret-value-final", "2026-05-27T00:02:00.000Z");
+    assert.equal(store.deleteProviderPreset(provider.id), true);
+    assert.equal(store.getProviderSecret(provider.id), undefined);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

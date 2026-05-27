@@ -37,7 +37,7 @@ function buildProviderRepairItem(provider: ProviderPreset): ProviderRepairItem |
   if (providerNeedsSecret(provider) && !provider.apiKeyConfigured) {
     return {
       provider,
-      title: `${provider.displayName}: configure secret`,
+      title: `${provider.displayName}: API key missing`,
       detail: secretRefSetupGuidance(provider.apiKeyRef),
       status: "attention",
       action: "edit",
@@ -60,7 +60,7 @@ function buildProviderRepairItem(provider: ProviderPreset): ProviderRepairItem |
     return {
       provider,
       title: `${provider.displayName}: needs check`,
-      detail: "Validate env, base URL, protocol, and model before using it in Workspace.",
+      detail: "Validate API key, base URL, protocol, and model before using it in Workspace.",
       status: "warning",
       action: "check",
       actionLabel: "Check",

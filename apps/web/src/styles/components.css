@@ -53,7 +53,8 @@
 
 .workspace-context-stack .timeline {
   min-height: auto;
-  max-height: none;
+  max-height: min(620px, calc(100vh - 230px));
+  overflow-y: auto;
 }
 
 .panel,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
   DEFAULT_WORKSPACE_ID,
@@ -193,6 +194,38 @@ test("sqlite lease expiry marks active stale leases as expired", async () => {
     assert.equal(expired.length, 1);
     assert.equal(expired[0].ownerId, "run_stale");
     assert.equal(expired[0].releasedAt, "2026-05-26T00:02:00.000Z");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite channel runtime migration self-heals missing lease tables", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-runtime-heal-"));
+  let store = createSqliteRunStore(cwd);
+  try {
+    const databasePath = store.paths.databasePath;
+    store.close();
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec("DROP TABLE resource_leases;");
+      assert.equal(Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'resource_leases'").get()), false);
+    } finally {
+      database.close();
+    }
+
+    store = createSqliteRunStore(cwd);
+    const lease = store.acquireResourceLease({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      resourceType: "path",
+      resourceKey: cwd,
+      ownerType: "run",
+      ownerId: "run_healed",
+      acquiredAt: "2026-05-26T00:20:00.000Z",
+      expiresAt: "2026-05-26T00:30:00.000Z",
+    });
+    assert.ok(lease);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

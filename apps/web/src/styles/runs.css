@@ -609,8 +609,25 @@
   background: #ffffff;
 }
 
+.task-run-link.succeeded {
+  border-color: #a9cfc0;
+  background: #f3fbf7;
+}
+
 .task-run-link.compact {
   padding: 7px 8px;
+}
+
+.task-run-summary {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.task-run-summary strong {
+  color: #226349;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .task-run-link code {

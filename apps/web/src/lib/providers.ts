@@ -17,7 +17,9 @@ export const defaultProviderForm: ProviderFormState = {
   model: "gpt-5.5",
   api: "openai-completions",
   baseUrl: "http://127.0.0.1:8317/v1",
-  apiKeyRef: "env:LOCAL_RELAY_API_KEY",
+  apiKey: "",
+  apiKeyRef: "",
+  clearApiKey: false,
   capabilitiesText: "chat,tool_call,reasoning",
   inputText: "text",
   enabled: true,
@@ -34,7 +36,9 @@ export const customOpenAICompatibleForm: ProviderFormState = {
   model: "your-model-id",
   api: "openai-completions",
   baseUrl: "https://api.example.com/v1",
-  apiKeyRef: "env:CUSTOM_MODEL_API_KEY",
+  apiKey: "",
+  apiKeyRef: "",
+  clearApiKey: false,
   capabilitiesText: "chat,tool_call,reasoning",
   inputText: "text",
   enabled: true,
@@ -52,7 +56,9 @@ export function providerToForm(provider: ProviderPreset): ProviderFormState {
     model: provider.model,
     api: provider.api,
     baseUrl: provider.baseUrl ?? "",
-    apiKeyRef: provider.apiKeyRef ?? "",
+    apiKey: "",
+    apiKeyRef: provider.apiKeyRef?.startsWith("local:") ? "" : provider.apiKeyRef ?? "",
+    clearApiKey: false,
     capabilitiesText: provider.capabilities.join(", "),
     inputText: provider.input.join(", "),
     enabled: provider.enabled,
@@ -64,6 +70,7 @@ export function providerToForm(provider: ProviderPreset): ProviderFormState {
 }
 
 export function providerTemplateToForm(template: ProviderTemplate): ProviderFormState {
+  const isRunnableChatTemplate = template.api !== "media-job" && template.capabilities.includes("chat");
   return {
     kind: template.kind,
     displayName: template.displayName,
@@ -71,10 +78,12 @@ export function providerTemplateToForm(template: ProviderTemplate): ProviderForm
     model: template.model,
     api: template.api,
     baseUrl: template.baseUrl ?? "",
-    apiKeyRef: template.apiKeyRef ?? "",
+    apiKey: "",
+    apiKeyRef: "",
+    clearApiKey: false,
     capabilitiesText: template.capabilities.join(", "),
     inputText: (template.input ?? ["text"]).join(", "),
-    enabled: template.enabled ?? false,
+    enabled: isRunnableChatTemplate ? true : template.enabled ?? false,
     authHeader: template.authHeader ?? true,
     reasoning: template.reasoning ?? false,
     contextWindow: template.contextWindow ? String(template.contextWindow) : "",
@@ -147,7 +156,7 @@ export function providerRunBlockerLabel(provider: ProviderPreset): string {
     return "no chat";
   }
   if (!providerSecretReady(provider)) {
-    return provider.apiKeyRef ? secretRefMissingLabel(provider.apiKeyRef) : "missing secret ref";
+    return "API key missing";
   }
   return "not runnable";
 }
@@ -188,16 +197,16 @@ export function taskProviderReadinessGuidance(provider: ProviderPreset | undefin
   }
   if (!canUseProviderForRun(provider)) {
     return providerNeedsSecret(provider) && !provider.apiKeyConfigured
-      ? secretRefSetupGuidance(provider.apiKeyRef)
+      ? "Add an API key in Model Workbench, then Save & Check."
       : "Open Model Workbench to enable a chat-capable preset before running.";
   }
   if (!provider.lastCheck) {
-    return "Use Check run to validate the secret ref, base URL, and model access before starting.";
+    return "Use Save & Check to validate the API key, base URL, and model access before starting.";
   }
   if (!provider.lastCheck.ok) {
     return providerCheckGuidance(provider.lastCheck, provider);
   }
-  return "Run is available until provider settings or secrets change.";
+  return "Run is available until provider settings or API key changes.";
 }
 
 export function providerLastCheckLabel(provider: ProviderPreset): string {
@@ -241,7 +250,10 @@ export function secretRefMissingLabel(ref: string): string {
 
 export function secretRefSetupGuidance(ref: string | undefined): string {
   if (!ref) {
-    return "Set a provider API key secret ref, then run Check.";
+    return "Paste an API key in Model Workbench, then Save & Check.";
+  }
+  if (ref.startsWith("local:")) {
+    return "Paste an API key in Model Workbench, then Save & Check.";
   }
   if (ref.startsWith("keychain:")) {
     return `Configure ${ref} in the desktop keychain boundary, then run Check.`;
@@ -278,7 +290,7 @@ export function providerCheckStatusLabel(result: ProviderCheckResult): string {
     return "ready";
   }
   if (result.code === "secret_missing") {
-    return "missing secret";
+    return "API key missing";
   }
   if (result.code === "secret_store_unavailable") {
     return "keychain unavailable";
@@ -303,11 +315,8 @@ export function providerCheckGuidance(result: ProviderCheckResult, provider: Pro
     return "Ready for run. You can select this preset from Workspace or a channel.";
   }
 
-  const secretRef = provider?.apiKeyRef ?? extractEnvRef(result.message);
-  const secretName = secretRef ? secretRefName(secretRef) : "the provider API key secret";
-
   if (result.code === "secret_missing" || result.code === "secret_store_unavailable") {
-    return secretRef ? secretRefSetupGuidance(secretRef) : `Set ${secretName}, then run Check again.`;
+    return "Paste an API key, then click Save & Check. Advanced users can set env:NAME or keychain:NAME.";
   }
   if (result.code === "auth_failed") {
     return "Verify the key, account access, balance, and model permission for this provider.";

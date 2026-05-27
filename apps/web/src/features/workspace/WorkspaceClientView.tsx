@@ -245,6 +245,7 @@ export function WorkspaceClientView({
                 tasks.map((task) => {
                   const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
                   const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
+                  const linkedRunSucceeded = linkedRunStatus === "succeeded";
                   const repairHint = buildRunRepairHint(linkedRun, pendingApprovalCount, linkedRunStatus);
                   const taskChannel = channels.find((channel) => channel.id === task.channelId);
                   const taskChannelPaused = taskChannel?.status !== undefined && taskChannel.status !== "active";
@@ -264,12 +265,15 @@ export function WorkspaceClientView({
                         <span className={`task-status ${task.status}`}>{task.status}</span>
                       </button>
                       {task.currentRunId ? (
-                        <div className="task-run-link compact">
+                        <div className={linkedRunSucceeded ? "task-run-link compact succeeded" : "task-run-link compact"}>
                           <StatusBadge status={linkedRunStatus} />
-                          <code>{task.currentRunId}</code>
-                          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
-                            <History size={14} />
-                            {t("Open run")}
+                          <span className="task-run-summary">
+                            {linkedRunSucceeded ? <strong>{t("Task complete")}</strong> : null}
+                            <code>{task.currentRunId}</code>
+                          </span>
+                          <button className={linkedRunSucceeded ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
+                            {linkedRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
+                            {linkedRunSucceeded ? t("View result") : t("Open run")}
                           </button>
                         </div>
                       ) : null}

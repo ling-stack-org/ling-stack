@@ -118,6 +118,8 @@ const APPROVAL_MEDIA_JOB_OWNER_MIGRATION_VERSION = 10;
 const APPROVAL_MEDIA_JOB_OWNER_MIGRATION_NAME = "allow_media_job_approval_owners";
 const CHANNEL_RUNTIME_MIGRATION_VERSION = 11;
 const CHANNEL_RUNTIME_MIGRATION_NAME = "add_channel_runtime_state_and_leases";
+const PROVIDER_SECRETS_MIGRATION_VERSION = 12;
+const PROVIDER_SECRETS_MIGRATION_NAME = "create_provider_secrets";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -1187,6 +1189,38 @@ export class SqliteRunStore implements RunStore {
     return Number(result.changes) > 0;
   }
 
+  setProviderSecret(providerId: string, secretValue: string, now: string): void {
+    this.database
+      .prepare(`
+        INSERT INTO provider_secrets (
+          provider_id,
+          secret_value,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(provider_id) DO UPDATE SET
+          secret_value = excluded.secret_value,
+          updated_at = excluded.updated_at
+      `)
+      .run(providerId, secretValue, now, now);
+  }
+
+  getProviderSecret(providerId: string): string | undefined {
+    const row = this.database
+      .prepare("SELECT secret_value FROM provider_secrets WHERE provider_id = ?")
+      .get(providerId);
+    return row ? readString(row, "secret_value") : undefined;
+  }
+
+  hasProviderSecret(providerId: string): boolean {
+    return Boolean(this.database.prepare("SELECT 1 AS found FROM provider_secrets WHERE provider_id = ?").get(providerId));
+  }
+
+  deleteProviderSecret(providerId: string): boolean {
+    const result = this.database.prepare("DELETE FROM provider_secrets WHERE provider_id = ?").run(providerId);
+    return Number(result.changes) > 0;
+  }
+
   createMediaJob(input: CreateMediaJobInput, now: string): MediaJob {
     const job: MediaJob = {
       id: createMediaJobId(),
@@ -1874,7 +1908,14 @@ export class SqliteRunStore implements RunStore {
       this.recordMigration(APPROVAL_MEDIA_JOB_OWNER_MIGRATION_VERSION, APPROVAL_MEDIA_JOB_OWNER_MIGRATION_NAME);
     }
 
-    if (!this.hasMigration(CHANNEL_RUNTIME_MIGRATION_VERSION)) {
+    const hasChannelRuntimeMigration = this.hasMigration(CHANNEL_RUNTIME_MIGRATION_VERSION);
+    if (
+      !hasChannelRuntimeMigration ||
+      !this.hasColumn("channels", "status") ||
+      !this.hasColumn("channels", "runtime_policy_json") ||
+      !this.hasTable("state_transition_events") ||
+      !this.hasTable("resource_leases")
+    ) {
       if (!this.hasColumn("channels", "status")) {
         this.database.exec("ALTER TABLE channels ADD COLUMN status TEXT NOT NULL DEFAULT 'active';");
       }
@@ -1930,7 +1971,26 @@ export class SqliteRunStore implements RunStore {
         ON resource_leases(status, expires_at);
       `);
 
-      this.recordMigration(CHANNEL_RUNTIME_MIGRATION_VERSION, CHANNEL_RUNTIME_MIGRATION_NAME);
+      if (!hasChannelRuntimeMigration) {
+        this.recordMigration(CHANNEL_RUNTIME_MIGRATION_VERSION, CHANNEL_RUNTIME_MIGRATION_NAME);
+      }
+    }
+
+    const hasProviderSecretsMigration = this.hasMigration(PROVIDER_SECRETS_MIGRATION_VERSION);
+    if (!hasProviderSecretsMigration || !this.hasTable("provider_secrets")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS provider_secrets (
+          provider_id TEXT PRIMARY KEY,
+          secret_value TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(provider_id) REFERENCES provider_presets(id) ON DELETE CASCADE
+        );
+      `);
+
+      if (!hasProviderSecretsMigration) {
+        this.recordMigration(PROVIDER_SECRETS_MIGRATION_VERSION, PROVIDER_SECRETS_MIGRATION_NAME);
+      }
     }
   }
 
@@ -1977,6 +2037,14 @@ export class SqliteRunStore implements RunStore {
       .prepare(`PRAGMA table_info(${tableName})`)
       .all()
       .some((row) => readString(row, "name") === columnName);
+  }
+
+  private hasTable(tableName: string): boolean {
+    return Boolean(
+      this.database
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(tableName),
+    );
   }
 
   private recordMigration(version: number, name: string): void {

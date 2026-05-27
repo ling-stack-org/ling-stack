@@ -298,6 +298,8 @@ function providerFormToPayload(form: ProviderFormState): ProviderMutationRequest
     api: form.api,
     baseUrl: form.baseUrl || undefined,
     apiKeyRef: form.apiKeyRef || undefined,
+    apiKey: form.apiKey.trim() || undefined,
+    clearApiKey: form.clearApiKey || undefined,
     capabilities: splitCsv(form.capabilitiesText),
     input: splitCsv(form.inputText),
     enabled: form.enabled,

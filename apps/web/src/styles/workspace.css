@@ -487,6 +487,8 @@ textarea:disabled {
 }
 
 .timeline {
+  display: grid;
+  gap: 12px;
   min-height: 640px;
 }
 
@@ -672,6 +674,130 @@ textarea:disabled {
 .inline-approval-list {
   display: grid;
   gap: 8px;
+}
+
+.timeline-activity-list {
+  display: grid;
+  min-height: 180px;
+  max-height: 340px;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.timeline .assistant-output {
+  max-height: 180px;
+  margin-bottom: 0;
+  overflow-y: auto;
+}
+
+.timeline-activity-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 9px;
+  border: 1px solid #e1e6e2;
+  background: #fbfcfa;
+}
+
+.timeline-activity-row.succeeded {
+  border-color: #a9cfc0;
+  background: #f3fbf7;
+}
+
+.timeline-activity-row.failed {
+  border-color: #e7b4a8;
+  background: #fff8f5;
+}
+
+.timeline-activity-row.waiting,
+.timeline-activity-row.running {
+  border-color: #d9bd71;
+  background: #fffaf0;
+}
+
+.timeline-activity-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #496059;
+}
+
+.timeline-activity-row.succeeded .timeline-activity-icon {
+  color: #116149;
+}
+
+.timeline-activity-row.failed .timeline-activity-icon {
+  color: #9a341f;
+}
+
+.timeline-activity-row.waiting .timeline-activity-icon,
+.timeline-activity-row.running .timeline-activity-icon {
+  color: #8a5b00;
+}
+
+.timeline-activity-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.timeline-activity-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.timeline-activity-head strong {
+  overflow: hidden;
+  color: #17211f;
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-activity-head time,
+.timeline-activity-copy small {
+  color: #6d7d77;
+  font-size: 11px;
+}
+
+.timeline-activity-copy small {
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.raw-event-panel {
+  border: 1px solid #e1e6e2;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.raw-event-panel > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px;
+  cursor: pointer;
+  color: #4f5e59;
+  font-size: 12px;
+  font-weight: 760;
+  list-style: none;
+}
+
+.raw-event-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.raw-event-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 0 10px 10px;
 }
 
 .event-list {

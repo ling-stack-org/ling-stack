@@ -15,6 +15,8 @@ interface MockState {
   channels: unknown[];
   tasks: unknown[];
   runs: MockRun[];
+  eventsByRun: Record<string, MockRunEvent[]>;
+  nextStreamEvents?: MockRunEvent[];
   approvals: MockApproval[];
   approvalPolicy: MockApprovalPolicy;
   lastApprovalPolicyPatch?: Record<string, unknown>;
@@ -41,6 +43,15 @@ interface MockRun {
   errorMessage?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+interface MockRunEvent {
+  id: string;
+  runId: string;
+  seq: number;
+  ts: string;
+  type: string;
+  data: unknown;
 }
 
 interface MockApproval {
@@ -111,7 +122,22 @@ test("workspace readiness surfaces missing provider, expired approval, and faile
 
 test("channel runtime policy is visible and used when creating channels", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
-  await mockDaemon(page, state);
+  const openAiTemplate = {
+    templateId: "openai-gpt",
+    description: "Official OpenAI endpoint.",
+    kind: "openai",
+    displayName: "OpenAI GPT",
+    providerId: "openai",
+    model: "gpt-5.4",
+    api: "openai-completions",
+    apiKeyRef: "env:OPENAI_API_KEY",
+    capabilities: ["chat", "tool_call", "reasoning"],
+    input: ["text"],
+    enabled: false,
+    authHeader: true,
+    reasoning: true,
+  };
+  await mockDaemon(page, state, { templates: [openAiTemplate] });
   await page.goto("/");
 
   await expect(page.getByText("active · serial · boundPath lock")).toBeVisible();
@@ -396,7 +422,25 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
     }),
     createMediaProvider(),
   ];
-  await mockDaemon(page, state);
+  await mockDaemon(page, state, {
+    templates: [
+      {
+        templateId: "openai-gpt",
+        description: "Official OpenAI endpoint.",
+        kind: "openai",
+        displayName: "OpenAI GPT",
+        providerId: "openai",
+        model: "gpt-5.4",
+        api: "openai-completions",
+        apiKeyRef: "env:OPENAI_API_KEY",
+        capabilities: ["chat", "tool_call", "reasoning"],
+        input: ["text"],
+        enabled: false,
+        authHeader: true,
+        reasoning: true,
+      },
+    ],
+  });
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
@@ -411,16 +455,44 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.locator(".provider-row").filter({ hasText: "Seedream Image" })).toContainText("Coding task: blocked");
 
   await page.getByRole("button", { name: /Custom OpenAI-compatible/ }).click();
+  await expect(page.locator(".provider-template-card.selected")).toContainText("Custom OpenAI-compatible");
+  await page.getByRole("button", { name: /OpenAI GPT/ }).click();
+  await expect(page.locator(".provider-template-card.selected")).toContainText("OpenAI GPT");
+  await expect(page.getByLabel("Enabled")).toBeChecked();
+  await page.getByRole("button", { name: /Custom OpenAI-compatible/ }).click();
+  await expect(page.locator(".provider-template-card.selected")).toContainText("Custom OpenAI-compatible");
   await expect(page.getByLabel("Display name")).toHaveValue("Custom OpenAI-compatible");
   await expect(page.getByLabel("Base URL")).toHaveValue("https://api.example.com/v1");
-  await expect(page.getByLabel("API key ref")).toHaveValue("env:CUSTOM_MODEL_API_KEY");
+  await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "password");
+  await page.getByLabel("API key", { exact: true }).fill("test-visible-key");
+  await page.getByRole("button", { name: "Show API key" }).click();
+  await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "text");
+  await page.getByText("Advanced env/keychain").click();
+  await page.getByLabel("API key ref").fill("env:CUSTOM_MODEL_API_KEY");
+  await expect(page.getByText("API key input wins over env/keychain on save.")).toBeVisible();
   await expect(page.getByLabel("Capabilities")).toHaveValue("chat, tool_call, reasoning");
 
-  await page.getByRole("button", { name: "Create preset" }).click();
+  await page.getByRole("button", { name: "Save & Check" }).click();
   const customProviderRow = page.locator(".provider-row").filter({ hasText: "Custom OpenAI-compatible" });
-  await expect(customProviderRow).toContainText("env:CUSTOM_MODEL_API_KEY");
+  await expect(customProviderRow).toContainText("Saved locally");
+  await expect(customProviderRow).toContainText("key ready");
+  await expect(customProviderRow).toContainText("check ready");
+  await expect(page.getByLabel("API key", { exact: true })).toHaveValue("test-visible-key");
+  await expect.poll(() =>
+    state.providers.some((provider) =>
+      isRecord(provider) &&
+      provider.displayName === "Custom OpenAI-compatible" &&
+      provider.apiKeyRef === "local:provider_created_6" &&
+      provider.apiKeyConfigured === true &&
+      !("apiKey" in provider)
+    )
+  ).toBe(true);
+
+  await customProviderRow.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
+  await page.getByRole("button", { name: "Clear key" }).click();
   await expect(customProviderRow).toContainText("key missing");
-  await expect.poll(() => state.providers.some((provider) => isRecord(provider) && provider.displayName === "Custom OpenAI-compatible")).toBe(true);
 });
 
 test("workspace task runs only expose preflight-ready coding providers", async ({ page }) => {
@@ -458,6 +530,190 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
   await expect(page.locator(".task-detail")).toContainText("run_2");
   await expect.poll(() => state.tasks.some((task) => isRecord(task) && task.currentRunId === "run_2")).toBe(true);
+});
+
+test("workspace task run uses the displayed ready provider fallback", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Local Relay",
+      lastCheck: {
+        ok: true,
+        code: "ready",
+        message: "Provider is reachable.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
+  ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) ? { ...channel, defaultProviderPresetId: undefined } : channel
+  );
+  state.tasks = state.tasks.map((task) =>
+    isRecord(task) ? { ...task, status: "todo", currentRunId: undefined } : task
+  );
+  state.runs = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
+  await expect(providerSelect).toHaveValue("provider_ready");
+
+  await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
+
+  await expect.poll(() => state.runs[0]?.providerPresetId).toBe("provider_ready");
+  await expect(page.locator(".task-detail")).toContainText("run_1");
+});
+
+test("succeeded workspace tasks show a clear result action", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Local Relay",
+      lastCheck: {
+        ok: true,
+        code: "ready",
+        message: "Provider is reachable.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
+  ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel
+  );
+  state.runs = state.runs.map((run) => ({
+    ...run,
+    status: "succeeded",
+    providerPresetId: "provider_ready",
+    providerName: "local-relay",
+    providerModel: "dpv4",
+    errorMessage: undefined,
+    updatedAt: "2026-05-25T00:20:30.000Z",
+  }));
+  state.tasks = state.tasks.map((task) =>
+    isRecord(task) ? { ...task, status: "done", currentRunId: "run_failed", updatedAt: "2026-05-25T00:20:30.000Z" } : task
+  );
+  state.eventsByRun.run_failed = createVerboseRunEvents("run_failed");
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.getByText("Task complete").first()).toBeVisible();
+  await expect(page.getByText("Inspect workspace finished successfully. Open the run to review the result, events, and artifacts.")).toBeVisible();
+
+  const taskDetail = page.getByLabel("Task detail");
+  await expect(taskDetail).toContainText("Task complete");
+  await expect(taskDetail.getByRole("button", { name: "View result" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Run activity" })).toBeVisible();
+  await expect(page.getByText("AI is analyzing the task").first()).toBeVisible();
+  await expect(page.getByText("Read package.json")).toBeVisible();
+});
+
+test("workspace run timeline summarizes activity and keeps raw events contained", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Local Relay",
+      lastCheck: {
+        ok: true,
+        code: "ready",
+        message: "Provider is reachable.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
+  ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel
+  );
+  state.tasks = state.tasks.map((task) =>
+    isRecord(task) ? { ...task, status: "todo", currentRunId: undefined } : task
+  );
+  state.runs = [];
+  state.nextStreamEvents = createVerboseRunEvents("run_1");
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "Run activity" })).toBeVisible();
+  await expect(page.getByText("AI is analyzing the task").first()).toBeVisible();
+  await expect(page.getByText("Read package.json")).toBeVisible();
+  await expect(page.getByText("Generated artifact: read content")).toBeVisible();
+  await expect(page.getByText("Tool failed: grep")).toBeVisible();
+  await expect(page.getByText("Approval requested: bash")).toBeVisible();
+  await expect(page.getByText("Run completed")).toBeVisible();
+  await expect(page.locator(".timeline-activity-list")).toHaveCSS("overflow-y", "auto");
+
+  const visibleThinkingRows = page.locator(".timeline-activity-list").getByText("assistant_thinking_delta");
+  await expect(visibleThinkingRows).toHaveCount(0);
+
+  const rawEvents = page.locator("details.raw-event-panel");
+  await expect(rawEvents).toHaveCount(1);
+  await expect(rawEvents).not.toHaveAttribute("open", /.+/);
+  await rawEvents.locator(":scope > summary").click();
+  await expect(rawEvents.locator(".raw-event-list")).toHaveCSS("overflow-y", "auto");
+  await expect(rawEvents.getByText("assistant_thinking_delta").first()).toBeVisible();
+});
+
+test("save and check enables a disabled provider before checking", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_disabled",
+      displayName: "Disabled Relay",
+      enabled: false,
+      apiKeyRef: undefined,
+      apiKeyConfigured: false,
+    }),
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  const disabledRow = page.locator(".provider-row").filter({ hasText: "Disabled Relay" });
+  await disabledRow.getByRole("button", { name: "Edit" }).click();
+  await page.getByLabel("API key", { exact: true }).fill("disabled-provider-key");
+  await page.getByRole("button", { name: "Save & Check" }).click();
+
+  await expect(disabledRow).toContainText("enabled");
+  await expect(disabledRow).toContainText("check ready");
+  await expect.poll(() => {
+    const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
+    return isRecord(provider) ? { enabled: provider.enabled, apiKeyRef: provider.apiKeyRef, checked: isRecord(provider.lastCheck) && provider.lastCheck.ok } : undefined;
+  }).toEqual({ enabled: true, apiKeyRef: "local:provider_disabled", checked: true });
+});
+
+test("row check enables a configured disabled chat provider before checking", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_disabled",
+      displayName: "Configured Disabled Relay",
+      enabled: false,
+      apiKeyRef: "local:provider_disabled",
+      apiKeyConfigured: true,
+      lastCheck: {
+        ok: false,
+        code: "provider_disabled",
+        message: "Provider is disabled.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  const disabledRow = page.locator(".provider-row").filter({ hasText: "Configured Disabled Relay" });
+  await disabledRow.getByRole("button", { name: "Check" }).click();
+
+  await expect(disabledRow).toContainText("enabled");
+  await expect(disabledRow).toContainText("check ready");
+  await expect.poll(() => {
+    const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
+    return isRecord(provider) ? { enabled: provider.enabled, checked: isRecord(provider.lastCheck) && provider.lastCheck.ok } : undefined;
+  }).toEqual({ enabled: true, checked: true });
 });
 
 test("failed provider runs route repair back to Model Workbench", async ({ page }) => {
@@ -825,6 +1081,7 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
       },
     ],
     runs: [run],
+    eventsByRun: {},
     approvals: [
       {
         id: "approval_1",
@@ -863,6 +1120,97 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     artifactsByRun: {},
     artifactsByMediaJob: {},
   };
+}
+
+function createVerboseRunEvents(runId: string): MockRunEvent[] {
+  const thinkingEvents = Array.from({ length: 12 }, (_, index) => ({
+    id: `evt_thinking_${index + 1}`,
+    runId,
+    seq: index + 2,
+    ts: "2026-05-25T00:20:01.000Z",
+    type: "assistant_thinking_delta",
+    data: { type: "assistant_thinking_delta", text: index === 0 ? "I will inspect" : " the workspace" },
+  }));
+  return [
+    {
+      id: "evt_run_start",
+      runId,
+      seq: 1,
+      ts: "2026-05-25T00:20:00.000Z",
+      type: "run_start",
+      data: { type: "run_start", taskId: "task_inspect", cwd, provider: "local-relay", model: "dpv4" },
+    },
+    ...thinkingEvents,
+    {
+      id: "evt_tool_start_read",
+      runId,
+      seq: 14,
+      ts: "2026-05-25T00:20:02.000Z",
+      type: "tool_start",
+      data: { type: "tool_start", toolCallId: "call_read", toolName: "read", args: { path: "package.json", limit: 200 } },
+    },
+    {
+      id: "evt_tool_end_read",
+      runId,
+      seq: 15,
+      ts: "2026-05-25T00:20:02.250Z",
+      type: "tool_end",
+      data: { type: "tool_end", toolCallId: "call_read", toolName: "read", result: { content: [{ type: "text", text: "{}" }] }, isError: false },
+    },
+    {
+      id: "evt_artifact_read",
+      runId,
+      seq: 16,
+      ts: "2026-05-25T00:20:02.300Z",
+      type: "artifact_created",
+      data: {
+        toolCallId: "call_read",
+        toolName: "read",
+        artifact: {
+          id: "artifact_read",
+          runId,
+          type: "markdown",
+          path: `${runId}/001-read-content.md`,
+          title: "read content",
+          contentType: "text/markdown; charset=utf-8",
+          sizeBytes: 128,
+          createdAt: "2026-05-25T00:20:02.300Z",
+        },
+      },
+    },
+    {
+      id: "evt_tool_start_grep",
+      runId,
+      seq: 17,
+      ts: "2026-05-25T00:20:03.000Z",
+      type: "tool_start",
+      data: { type: "tool_start", toolCallId: "call_grep", toolName: "grep", args: { path: "src", pattern: "TODO" } },
+    },
+    {
+      id: "evt_tool_end_grep",
+      runId,
+      seq: 18,
+      ts: "2026-05-25T00:20:03.250Z",
+      type: "tool_end",
+      data: { type: "tool_end", toolCallId: "call_grep", toolName: "grep", result: { error: "No such file or directory" }, isError: true },
+    },
+    {
+      id: "evt_approval_requested",
+      runId,
+      seq: 19,
+      ts: "2026-05-25T00:20:04.000Z",
+      type: "approval_requested",
+      data: { approvalId: "approval_activity", actionType: "bash", risk: "medium", title: "Approve shell command" },
+    },
+    {
+      id: "evt_run_end",
+      runId,
+      seq: 20,
+      ts: "2026-05-25T00:20:30.000Z",
+      type: "run_end",
+      data: { type: "run_end", taskId: "task_inspect", status: "succeeded" },
+    },
+  ];
 }
 
 function createChatProvider(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -910,28 +1258,39 @@ function createMediaProvider(overrides: Record<string, unknown> = {}): Record<st
   };
 }
 
-function createProviderFromBody(body: Record<string, unknown>, id: string): Record<string, unknown> {
-  const apiKeyRef = typeof body.apiKeyRef === "string" ? body.apiKeyRef : undefined;
+function createProviderFromBody(body: Record<string, unknown>, id: string, existing: Record<string, unknown> = {}): Record<string, unknown> {
+  const apiKeyRef = typeof body.apiKey === "string" && body.apiKey.trim()
+    ? `local:${id}`
+    : body.clearApiKey === true
+      ? undefined
+      : typeof body.apiKeyRef === "string"
+        ? body.apiKeyRef
+        : typeof existing.apiKeyRef === "string"
+          ? existing.apiKeyRef
+          : undefined;
+  const apiKeyConfigured = apiKeyRef?.startsWith("local:")
+    ? body.clearApiKey !== true
+    : apiKeyRef === "env:LOCAL_RELAY_API_KEY" || existing.apiKeyConfigured === true && body.clearApiKey !== true;
   return {
     id,
-    kind: typeof body.kind === "string" ? body.kind : "openai-compatible",
-    displayName: typeof body.displayName === "string" ? body.displayName : "Custom Provider",
-    providerId: typeof body.providerId === "string" ? body.providerId : "custom-provider",
-    model: typeof body.model === "string" ? body.model : "custom-model",
-    api: typeof body.api === "string" ? body.api : "openai-completions",
-    baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
+    kind: typeof body.kind === "string" ? body.kind : typeof existing.kind === "string" ? existing.kind : "openai-compatible",
+    displayName: typeof body.displayName === "string" ? body.displayName : typeof existing.displayName === "string" ? existing.displayName : "Custom Provider",
+    providerId: typeof body.providerId === "string" ? body.providerId : typeof existing.providerId === "string" ? existing.providerId : "custom-provider",
+    model: typeof body.model === "string" ? body.model : typeof existing.model === "string" ? existing.model : "custom-model",
+    api: typeof body.api === "string" ? body.api : typeof existing.api === "string" ? existing.api : "openai-completions",
+    baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : typeof existing.baseUrl === "string" ? existing.baseUrl : undefined,
     apiKeyRef,
-    apiKeyConfigured: apiKeyRef === "env:LOCAL_RELAY_API_KEY",
-    headers: {},
-    authHeader: body.authHeader === true,
-    reasoning: body.reasoning === true,
-    input: Array.isArray(body.input) ? body.input : ["text"],
-    compat: {},
-    capabilities: Array.isArray(body.capabilities) ? body.capabilities : ["chat"],
-    enabled: body.enabled === true,
-    contextWindow: typeof body.contextWindow === "number" ? body.contextWindow : undefined,
-    maxTokens: typeof body.maxTokens === "number" ? body.maxTokens : undefined,
-    createdAt: "2026-05-25T00:10:00.000Z",
+    apiKeyConfigured,
+    headers: isRecord(existing.headers) ? existing.headers : {},
+    authHeader: typeof body.authHeader === "boolean" ? body.authHeader : existing.authHeader === true,
+    reasoning: typeof body.reasoning === "boolean" ? body.reasoning : existing.reasoning === true,
+    input: Array.isArray(body.input) ? body.input : Array.isArray(existing.input) ? existing.input : ["text"],
+    compat: isRecord(existing.compat) ? existing.compat : {},
+    capabilities: Array.isArray(body.capabilities) ? body.capabilities : Array.isArray(existing.capabilities) ? existing.capabilities : ["chat"],
+    enabled: typeof body.enabled === "boolean" ? body.enabled : existing.enabled === true,
+    contextWindow: typeof body.contextWindow === "number" ? body.contextWindow : typeof existing.contextWindow === "number" ? existing.contextWindow : undefined,
+    maxTokens: typeof body.maxTokens === "number" ? body.maxTokens : typeof existing.maxTokens === "number" ? existing.maxTokens : undefined,
+    createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-05-25T00:10:00.000Z",
     updatedAt: "2026-05-25T00:10:00.000Z",
   };
 }
@@ -968,7 +1327,7 @@ function buildProviderCheckResult(provider: Record<string, unknown>): Record<str
 async function mockDaemon(
   page: Page,
   state: MockState,
-  options: { readonly defaultWorkspaceCwd?: string } = {},
+  options: { readonly defaultWorkspaceCwd?: string; readonly templates?: readonly unknown[] } = {},
 ): Promise<void> {
   await page.route("http://127.0.0.1:17891/**", async (route) => {
     await handleDaemonRoute(route, state, options);
@@ -995,7 +1354,7 @@ async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/provider-templates") {
-    await route.fulfill({ json: { templates: [] } });
+    await route.fulfill({ json: { templates: options.templates ?? [] } });
     return;
   }
   if (request.method() === "GET" && path === "/providers") {
@@ -1020,7 +1379,7 @@ async function handleDaemonRoute(
     const body = await request.postDataJSON() as Record<string, unknown>;
     const existing = state.providers[providerIndex];
     const provider = isRecord(existing)
-      ? { ...existing, ...createProviderFromBody(body, providerId), id: providerId, updatedAt: "2026-05-25T00:10:00.000Z" }
+      ? { ...existing, ...createProviderFromBody(body, providerId, existing), id: providerId, updatedAt: "2026-05-25T00:10:00.000Z" }
       : createProviderFromBody(body, providerId);
     state.providers[providerIndex] = provider;
     await route.fulfill({ json: { provider } });
@@ -1122,19 +1481,25 @@ async function handleDaemonRoute(
         ? { ...item, status: "done", currentRunId: runId, updatedAt: run.updatedAt }
         : item
     );
+    const streamEvents = state.nextStreamEvents && state.nextStreamEvents.length > 0
+      ? state.nextStreamEvents.map((event) => ({ ...event, runId }))
+      : [
+          {
+            id: `evt_${runId}_end`,
+            runId,
+            seq: 1,
+            ts: run.updatedAt,
+            type: "run_end",
+            data: { status: "succeeded" },
+          },
+        ];
+    state.eventsByRun[runId] = streamEvents;
     await route.fulfill({
       status: 200,
       contentType: "text/event-stream",
       body: [
         `event: ready\ndata: ${JSON.stringify({ runId })}`,
-        `event: message\ndata: ${JSON.stringify({
-          id: `evt_${runId}_end`,
-          runId,
-          seq: 1,
-          ts: run.updatedAt,
-          type: "run_end",
-          data: { status: "succeeded" },
-        })}`,
+        ...streamEvents.map((event) => `event: message\ndata: ${JSON.stringify(event)}`),
         "",
       ].join("\n\n"),
     });
@@ -1294,20 +1659,21 @@ async function handleDaemonRoute(
   const runEventsMatch = /^\/runs\/([^/]+)\/events$/.exec(path);
   if (request.method() === "GET" && runEventsMatch) {
     const runId = decodeURIComponent(runEventsMatch[1]);
+    const events = state.eventsByRun[runId] ?? [
+      {
+        id: "evt_run_error",
+        runId,
+        seq: 1,
+        ts: "2026-05-22T00:01:00.000Z",
+        type: "run_error",
+        data: { message: "Tool failed while reading workspace state." },
+      },
+    ];
     await route.fulfill({
       json: {
         runId,
-        nextSeq: 2,
-        events: [
-          {
-            id: "evt_run_error",
-            runId,
-            seq: 1,
-            ts: "2026-05-22T00:01:00.000Z",
-            type: "run_error",
-            data: { message: "Tool failed while reading workspace state." },
-          },
-        ],
+        nextSeq: events.length + 1,
+        events,
       },
     });
     return;

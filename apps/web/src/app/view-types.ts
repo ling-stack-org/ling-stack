@@ -60,5 +60,5 @@ export function viewDescription(view: ViewId): string {
   if (view === "settings") {
     return "配置 workspace 级 approval policy，控制工具自动允许、询问或拒绝，以及写入路径边界。";
   }
-  return "管理多模型和自定义国内模型接入，用 secret ref 引用密钥，Check 通过后用于工作区任务。";
+  return "管理多模型和自定义国内模型接入，可直接保存 API Key，Save & Check 通过后用于工作区任务。";
 }

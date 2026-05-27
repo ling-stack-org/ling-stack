@@ -275,6 +275,7 @@ export interface ResourceLeaseListResponse {
 }
 
 export type SecretRefKind = "env" | "keychain";
+export type SecretStatusKind = SecretRefKind | "local";
 
 export type SecretPurpose =
   | "provider_api_key"
@@ -291,7 +292,7 @@ export type SecretStatusErrorCode =
 
 export interface SecretStatus {
   readonly ref: string;
-  readonly kind: SecretRefKind;
+  readonly kind: SecretStatusKind;
   readonly configured: boolean;
   readonly errorCode?: SecretStatusErrorCode;
   readonly message?: string;
@@ -407,6 +408,8 @@ export interface ProviderMutationRequest {
   readonly api: ProviderApi;
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
+  readonly apiKey?: string;
+  readonly clearApiKey?: boolean;
   readonly headers?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;

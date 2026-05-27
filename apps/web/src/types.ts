@@ -37,7 +37,9 @@ export interface ProviderFormState {
   readonly model: string;
   readonly api: ProviderApi;
   readonly baseUrl: string;
+  readonly apiKey: string;
   readonly apiKeyRef: string;
+  readonly clearApiKey: boolean;
   readonly capabilitiesText: string;
   readonly inputText: string;
   readonly enabled: boolean;

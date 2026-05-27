@@ -2,6 +2,8 @@ import {
   CheckCircle2,
   CircleAlert,
   Clock3,
+  Eye,
+  EyeOff,
   History,
   Loader2,
   Pencil,
@@ -15,6 +17,7 @@ import {
   SquareTerminal,
   Trash2,
 } from "lucide-react";
+import { useState } from "react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import {
@@ -35,7 +38,6 @@ import {
   providerRunBlockerLabel,
   providerRunPreflightBlocker,
   providerTemplateKindLabel,
-  secretRefMissingLabel,
   secretRefName,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
@@ -50,6 +52,8 @@ import type {
 import { buildProviderRepairItems, type ProviderRepairItem } from "./provider-repair.js";
 import type { ProviderBatchResult } from "./types.js";
 
+const customOpenAICompatibleTemplateId = "custom-openai-compatible";
+
 export function ProviderSettings({
   cwd,
   providers,
@@ -63,6 +67,7 @@ export function ProviderSettings({
   checkedProviderId,
   batchResult,
   selectedProviderId,
+  selectedTemplateId,
   repairRun,
   isRunning,
   onCwdChange,
@@ -70,6 +75,8 @@ export function ProviderSettings({
   onTemplateSelect,
   onNew,
   onSave,
+  onSaveAndCheck,
+  onClearKey,
   onRefresh,
   onEdit,
   onDelete,
@@ -92,6 +99,7 @@ export function ProviderSettings({
   readonly checkedProviderId: string;
   readonly batchResult: ProviderBatchResult | undefined;
   readonly selectedProviderId: string;
+  readonly selectedTemplateId: string;
   readonly repairRun: RunSession | undefined;
   readonly isRunning: boolean;
   readonly onCwdChange: (cwd: string) => void;
@@ -99,6 +107,8 @@ export function ProviderSettings({
   readonly onTemplateSelect: (template: ProviderTemplate) => void;
   readonly onNew: () => void;
   readonly onSave: () => void;
+  readonly onSaveAndCheck: () => void;
+  readonly onClearKey: () => void;
   readonly onRefresh: () => void;
   readonly onEdit: (provider: ProviderPreset) => void;
   readonly onDelete: (providerId: string) => void;
@@ -118,6 +128,9 @@ export function ProviderSettings({
   const mediaTemplateCount = templates.length - chatTemplateCount;
   const templateGroups = groupProviderTemplates(templates);
   const repairItems = buildProviderRepairItems(providers);
+  const editingProvider = editingProviderId ? providers.find((provider) => provider.id === editingProviderId) : undefined;
+  const [showApiKey, setShowApiKey] = useState(false);
+  const hasApiKeyAndSecretRef = form.apiKey.trim().length > 0 && form.apiKeyRef.trim().length > 0;
   const nextActionProvider =
     providers.find(
       (provider) =>
@@ -217,8 +230,8 @@ export function ProviderSettings({
                     <span className={provider.enabled ? "provider-state enabled" : "provider-state disabled"}>
                       {provider.enabled ? t("enabled") : t("disabled")}
                     </span>
-                    <span className={provider.apiKeyConfigured ? "provider-state key-ok" : "provider-state key-missing"}>
-                      {provider.apiKeyRef ? (provider.apiKeyConfigured ? t("key ready") : t("key missing")) : t("no key ref")}
+                    <span className={providerNeedsSecret(provider) && !provider.apiKeyConfigured ? "provider-state key-missing" : "provider-state key-ok"}>
+                      {providerNeedsSecret(provider) ? (provider.apiKeyConfigured ? t("key ready") : t("key missing")) : t("no key required")}
                     </span>
                     <span className={providerPreflightReady(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
                       {providerPreflightReady(provider) ? t("preflight ready") : canUseProviderForRun(provider) ? t("needs check") : providerRunBlockerLabel(provider)}
@@ -239,7 +252,7 @@ export function ProviderSettings({
                   </div>
                   <div className="provider-meta-line mono">
                     <span>{provider.baseUrl ?? "default endpoint"}</span>
-                    {provider.apiKeyRef ? <span>{provider.apiKeyRef}</span> : null}
+                    {provider.apiKeyRef ? <span>{provider.apiKeyRef.startsWith("local:") ? t("Saved locally") : provider.apiKeyRef}</span> : null}
                   </div>
                   <div className="capability-list">
                     {provider.capabilities.map((capability) => (
@@ -295,15 +308,14 @@ export function ProviderSettings({
               <small>1</small>
             </div>
             <button
-              className="provider-template-card custom-provider-card"
+              className={selectedTemplateId === customOpenAICompatibleTemplateId ? "provider-template-card custom-provider-card selected" : "provider-template-card custom-provider-card"}
               type="button"
               onClick={() => onTemplateSelect(providerFormToTemplate(customOpenAICompatibleForm))}
             >
               <span className="provider-template-kind">{t("Custom")}</span>
               <strong>{t("Custom OpenAI-compatible")}</strong>
-              <span className="provider-template-model">baseUrl + model + secret ref</span>
+              <span className="provider-template-model">baseUrl + model + API key</span>
               <small>{t("Use this for domestic gateways, private relays, One API, New API, LiteLLM, or any OpenAI-compatible endpoint.")}</small>
-              <code>env:CUSTOM_MODEL_API_KEY</code>
             </button>
           </div>
           {templateGroups.length === 0 ? (
@@ -322,7 +334,7 @@ export function ProviderSettings({
                   {group.templates.map((template) => (
                     <button
                       key={template.templateId}
-                      className="provider-template-card"
+                      className={selectedTemplateId === template.templateId ? "provider-template-card selected" : "provider-template-card"}
                       type="button"
                       onClick={() => onTemplateSelect(template)}
                     >
@@ -390,11 +402,64 @@ export function ProviderSettings({
           </label>
         </div>
 
-        <label className="field wide">
-          <span>{t("API key ref")}</span>
-          <input value={form.apiKeyRef} placeholder="env:LOCAL_RELAY_API_KEY or keychain:provider_local" onChange={(event) => onFormChange({ ...form, apiKeyRef: event.target.value })} />
-        </label>
-        <ProviderEnvHint apiKeyRef={form.apiKeyRef} />
+        <div className="field-row provider-secret-row">
+          <div className="field provider-api-key-field">
+            <span>{t("API key")}</span>
+            <div className="provider-secret-input">
+              <input
+                aria-label={t("API key")}
+                type={showApiKey ? "text" : "password"}
+                autoComplete="new-password"
+                value={form.apiKey}
+                placeholder={editingProvider?.apiKeyConfigured ? t("Saved locally") : t("Paste API key")}
+                onChange={(event) => onFormChange({ ...form, apiKey: event.target.value, clearApiKey: false })}
+              />
+              <button
+                className="icon-button provider-secret-toggle"
+                type="button"
+                aria-label={showApiKey ? t("Hide API key") : t("Show API key")}
+                onClick={() => setShowApiKey((current) => !current)}
+              >
+                {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+          <div className="provider-secret-status" aria-label={t("Saved key status")}>
+            <span className={form.apiKey.trim() || editingProvider?.apiKeyConfigured ? "provider-state key-ok" : "provider-state key-missing"}>
+              {form.apiKey.trim()
+                ? t("Ready to save")
+                : editingProvider
+                  ? editingProvider.apiKeyConfigured ? t("Saved locally") : t("Missing key")
+                  : t("Not saved yet")}
+            </span>
+            {editingProvider?.apiKeyConfigured || form.apiKey || form.apiKeyRef ? (
+              <button className="secondary-button compact-button danger" type="button" onClick={onClearKey}>
+                <Trash2 size={14} />
+                {t("Clear key")}
+              </button>
+            ) : null}
+            {form.clearApiKey ? <small>{t("Key will be removed on next save.")}</small> : null}
+          </div>
+        </div>
+
+        <details className="provider-advanced-secret">
+          <summary>{t("Advanced env/keychain")}</summary>
+          <label className="field wide">
+            <span>{t("API key ref")}</span>
+            <input
+              value={form.apiKeyRef}
+              placeholder="env:DEEPSEEK_API_KEY or keychain:provider_deepseek"
+              onChange={(event) => onFormChange({ ...form, apiKeyRef: event.target.value, clearApiKey: false })}
+            />
+          </label>
+          <ProviderEnvHint apiKeyRef={form.apiKeyRef} />
+          {hasApiKeyAndSecretRef ? (
+            <div className="provider-env-hint warning">
+              <CircleAlert size={15} />
+              <span>{t("API key input wins over env/keychain on save. Clear the API key field if you want to use env:NAME or keychain:NAME.")}</span>
+            </div>
+          ) : null}
+        </details>
 
         <div className="field-row provider-number-row">
           <label className="field">
@@ -448,13 +513,13 @@ export function ProviderSettings({
             <Save size={16} />
             {editingProviderId ? t("Save changes") : t("Create preset")}
           </button>
-          <button className="secondary-button" type="button" disabled={!editingProviderId || isCheckingProviders} onClick={() => onCheck(editingProviderId)}>
+          <button className="secondary-button" type="button" disabled={isCheckingProviders} onClick={onSaveAndCheck}>
             {checkingProviderIds.includes(editingProviderId) ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
-            {t("Check preset")}
+            {t("Save & Check")}
           </button>
         </div>
         <div className="provider-form-hint">
-          {editingProviderId ? t("Run Check after saving to validate secret ref, base URL, and model access.") : t("Create the preset first, then run Check before using it in Workspace.")}
+          {editingProviderId ? t("Save & Check validates the saved API key, base URL, and model access.") : t("Save & Check creates the preset, stores the key locally, and validates it before use.")}
         </div>
       </section>
     </div>
@@ -480,7 +545,7 @@ function ProviderNextAction({
     return (
       <div className="provider-next-action">
         <CircleAlert size={16} />
-        <span>{t("Next: choose a template, save the preset, then run Check before using it.")}</span>
+        <span>{t("Next: choose a template, add an API key, then Save & Check before using it.")}</span>
       </div>
     );
   }
@@ -491,19 +556,18 @@ function ProviderNextAction({
       <div className="provider-next-action ok">
         <CheckCircle2 size={16} />
         <span>
-          {t("Ready: {providerName} passed preflight and can run tasks. Re-check after secret, base URL, or model changes.", { providerName: readyProvider.displayName })}
+          {t("Ready: {providerName} passed preflight and can run tasks. Re-check after API key, base URL, or model changes.", { providerName: readyProvider.displayName })}
         </span>
       </div>
     );
   }
 
   if (nextActionProvider && providerNeedsSecret(nextActionProvider) && !nextActionProvider.apiKeyConfigured) {
-    const envName = nextActionProvider.apiKeyRef ? secretRefMissingLabel(nextActionProvider.apiKeyRef) : "secret ref";
     return (
       <div className="provider-next-action">
         <CircleAlert size={16} />
         <span>
-          {t("Next: set {envName} for {providerName}, restart the daemon, then run Check.", { envName, providerName: nextActionProvider.displayName })}
+          {t("Next: add an API key for {providerName}, then Save & Check.", { providerName: nextActionProvider.displayName })}
         </span>
       </div>
     );
@@ -514,7 +578,7 @@ function ProviderNextAction({
       return (
         <div className="provider-next-action">
           <CircleAlert size={16} />
-          <span>{t("Next: run Check for {providerName} before using it in Workspace.", { providerName: nextActionProvider.displayName })}</span>
+          <span>{t("Next: Save & Check {providerName} before using it in Workspace.", { providerName: nextActionProvider.displayName })}</span>
         </div>
       );
     }
@@ -533,7 +597,7 @@ function ProviderNextAction({
   return (
     <div className="provider-next-action">
       <CircleAlert size={16} />
-      <span>{t("Next: enable a chat provider with a supported API protocol, then run Check.")}</span>
+      <span>{t("Next: enable a chat provider with a supported API protocol, then Save & Check.")}</span>
     </div>
   );
 }
@@ -678,7 +742,7 @@ function ProviderEnvHint({ apiKeyRef }: { readonly apiKeyRef: string }): JSX.Ele
     return (
       <div className="provider-env-hint">
         <SquareTerminal size={15} />
-        <span>Use a secret ref like <code>env:DEEPSEEK_API_KEY</code> or <code>keychain:provider_deepseek</code>.</span>
+        <span>Optional: use <code>env:DEEPSEEK_API_KEY</code> or <code>keychain:provider_deepseek</code> instead of a saved local key.</span>
       </div>
     );
   }
@@ -688,7 +752,7 @@ function ProviderEnvHint({ apiKeyRef }: { readonly apiKeyRef: string }): JSX.Ele
       <div className="provider-env-hint">
         <SquareTerminal size={15} />
         <span>
-          Keychain ref: <code>{secretRefName(trimmedRef)}</code>. The daemon reports status only; desktop owns secret storage.
+          Keychain ref: <code>{secretRefName(trimmedRef)}</code>. Leave the API key input empty if you want this ref to be used.
         </span>
       </div>
     );
@@ -698,7 +762,7 @@ function ProviderEnvHint({ apiKeyRef }: { readonly apiKeyRef: string }): JSX.Ele
     return (
       <div className="provider-env-hint">
         <SquareTerminal size={15} />
-        <span>Use <code>env:NAME</code> or <code>keychain:NAME</code>; raw secret values are not stored here.</span>
+        <span>Use <code>env:NAME</code> or <code>keychain:NAME</code>, or leave this empty and paste the API key above.</span>
       </div>
     );
   }
@@ -708,7 +772,7 @@ function ProviderEnvHint({ apiKeyRef }: { readonly apiKeyRef: string }): JSX.Ele
     <div className="provider-env-hint">
       <SquareTerminal size={15} />
       <span>
-        Shell: <code>export {envName}=...</code>. Restart or reload the daemon after setting env.
+        Shell: <code>export {envName}=...</code>. Restart or reload the daemon after setting env; a pasted API key above wins on save.
       </span>
     </div>
   );
