@@ -17,6 +17,8 @@ interface MockState {
   runs: MockRun[];
   eventsByRun: Record<string, MockRunEvent[]>;
   nextStreamEvents?: MockRunEvent[];
+  providerCheckDelayMs?: number;
+  runResponseDelayMs?: number;
   approvals: MockApproval[];
   approvalPolicy: MockApprovalPolicy;
   lastApprovalPolicyPatch?: Record<string, unknown>;
@@ -384,6 +386,19 @@ test("sidebar selection is exclusive for workspace, tasks, channels, teammates, 
   await expect(page.getByText("Direct message", { exact: true })).toBeVisible();
 });
 
+test("model workbench is a primary sidebar item without duplicate config icon", async ({ page }) => {
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await expect(navigation.locator(".primary-nav .nav-item").filter({ hasText: "Model Workbench" })).toHaveCount(1);
+  await expect(navigation.locator(".config-grid").getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
+
+  await navigation.locator(".primary-nav .nav-item").filter({ hasText: "Model Workbench" }).click();
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: ["Model Workbench"], selectedRows: [] });
+  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
+});
+
 test("model workbench creates custom OpenAI-compatible presets and surfaces readiness", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
@@ -565,6 +580,66 @@ test("workspace task run uses the displayed ready provider fallback", async ({ p
   await expect(page.locator(".task-detail")).toContainText("run_1");
 });
 
+test("workspace task actions only show a spinner on the clicked task action", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Local Relay",
+      lastCheck: {
+        ok: true,
+        code: "ready",
+        message: "Provider is reachable.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
+  ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel
+  );
+  state.tasks = [
+    ...state.tasks.map((task) =>
+      isRecord(task) ? { ...task, status: "todo", currentRunId: undefined } : task
+    ),
+    {
+      id: "task_second",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Second task",
+      prompt: "Run the second task only.",
+      status: "todo",
+      createdAt: "2026-05-25T00:05:00.000Z",
+      updatedAt: "2026-05-25T00:05:00.000Z",
+    },
+  ];
+  state.runs = [];
+  state.runResponseDelayMs = 2000;
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const firstTask = page.locator(".client-task-card").filter({ hasText: "Inspect workspace" });
+  const secondTask = page.locator(".client-task-card").filter({ hasText: "Second task" });
+  await secondTask.getByRole("button", { name: "Run", exact: true }).click();
+
+  await expect(secondTask.getByRole("button", { name: "Run", exact: true }).locator(".spin")).toHaveCount(1);
+  await expect(secondTask.getByRole("button", { name: "Check run", exact: true }).locator(".spin")).toHaveCount(0);
+  await expect(firstTask.locator(".task-actions .spin")).toHaveCount(0);
+  await expect(firstTask.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+
+  await expect.poll(() => state.runs[0]?.taskId).toBe("task_second");
+
+  state.tasks = state.tasks.map((task) =>
+    isRecord(task) ? { ...task, status: "todo", currentRunId: undefined } : task
+  );
+  state.runs = [];
+  state.providerCheckDelayMs = 2000;
+  await secondTask.getByRole("button", { name: "Check run", exact: true }).click();
+
+  await expect(secondTask.getByRole("button", { name: "Check run", exact: true }).locator(".spin")).toHaveCount(1);
+  await expect(secondTask.getByRole("button", { name: "Run", exact: true }).locator(".spin")).toHaveCount(0);
+  await expect(firstTask.locator(".task-actions .spin")).toHaveCount(0);
+});
+
 test("succeeded workspace tasks show a clear result action", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
@@ -644,6 +719,8 @@ test("workspace run timeline summarizes activity and keeps raw events contained"
   await expect(page.getByText("Approval requested: bash")).toBeVisible();
   await expect(page.getByText("Run completed")).toBeVisible();
   await expect(page.locator(".timeline-activity-list")).toHaveCSS("overflow-y", "auto");
+  await expect(page.locator(".timeline")).not.toHaveCSS("overflow-y", "auto");
+  await expect.poll(() => readScrollState(page, ".timeline-activity-list")).toMatchObject({ atBottom: true });
 
   const visibleThinkingRows = page.locator(".timeline-activity-list").getByText("assistant_thinking_delta");
   await expect(visibleThinkingRows).toHaveCount(0);
@@ -653,6 +730,7 @@ test("workspace run timeline summarizes activity and keeps raw events contained"
   await expect(rawEvents).not.toHaveAttribute("open", /.+/);
   await rawEvents.locator(":scope > summary").click();
   await expect(rawEvents.locator(".raw-event-list")).toHaveCSS("overflow-y", "auto");
+  await expect.poll(() => readScrollState(page, ".raw-event-list")).toMatchObject({ atBottom: true });
   await expect(rawEvents.getByText("assistant_thinking_delta").first()).toBeVisible();
 });
 
@@ -1034,6 +1112,17 @@ async function readSidebarSelection(page: Page): Promise<{ readonly activeNav: s
   });
 }
 
+async function readScrollState(page: Page, selector: string): Promise<{ readonly atBottom: boolean; readonly top: number; readonly max: number }> {
+  return await page.locator(selector).evaluate((element) => {
+    const max = element.scrollHeight - element.clientHeight;
+    return {
+      atBottom: Math.abs(element.scrollTop - max) <= 2,
+      top: element.scrollTop,
+      max,
+    };
+  });
+}
+
 function createBaseState(options: { approvalStatus: "pending" | "expired" }): MockState {
   const run: MockRun = {
     id: "run_failed",
@@ -1393,6 +1482,9 @@ async function handleDaemonRoute(
       await route.fulfill({ status: 404, json: { error: "provider_not_found" } });
       return;
     }
+    if (state.providerCheckDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.providerCheckDelayMs));
+    }
     const result = buildProviderCheckResult(provider);
     provider.lastCheck = result;
     provider.updatedAt = result.checkedAt;
@@ -1494,6 +1586,9 @@ async function handleDaemonRoute(
           },
         ];
     state.eventsByRun[runId] = streamEvents;
+    if (state.runResponseDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.runResponseDelayMs));
+    }
     await route.fulfill({
       status: 200,
       contentType: "text/event-stream",

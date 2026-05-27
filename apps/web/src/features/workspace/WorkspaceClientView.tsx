@@ -39,6 +39,7 @@ import type {
   RunSession,
   Task,
   TaskFormState,
+  TaskRunActionState,
 } from "../../types.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
@@ -65,6 +66,7 @@ export function WorkspaceClientView({
   activeRunId,
   latestStatus,
   isRunning,
+  activeTaskRunAction,
   errorMessage,
   onCwdChange,
   onChannelFormChange,
@@ -105,6 +107,7 @@ export function WorkspaceClientView({
   readonly activeRunId: string;
   readonly latestStatus: string;
   readonly isRunning: boolean;
+  readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onChannelFormChange: (form: ChannelFormState) => void;
@@ -136,6 +139,7 @@ export function WorkspaceClientView({
   const providerBlocker = providerRunPreflightBlocker(effectiveProvider);
   const latestRun = activeRunId ? runById.get(activeRunId) : runs[0];
   const activeLeaseCount = resourceLeases.filter((lease) => lease.status === "active").length;
+  const taskActionPending = activeTaskRunAction !== undefined;
   const selectedChannelRuntimePolicy = effectiveChannelRuntimePolicy(selectedChannel);
   const channelStatusText = selectedChannel
     ? `${selectedChannel.status} · ${selectedChannelRuntimePolicy.executionMode} · ${selectedChannelRuntimePolicy.writeLockScope} lock · ${selectedChannel.boundPath ?? cwd}`
@@ -250,6 +254,9 @@ export function WorkspaceClientView({
                   const taskChannel = channels.find((channel) => channel.id === task.channelId);
                   const taskChannelPaused = taskChannel?.status !== undefined && taskChannel.status !== "active";
                   const blockedByLease = activeLeaseCount > 0 && (!linkedRun || linkedRun.status !== "running");
+                  const checkRunLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
+                  const runLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "run";
+                  const taskActionsDisabled = isRunning || taskActionPending;
                   return (
                     <article
                       key={task.id}
@@ -294,12 +301,12 @@ export function WorkspaceClientView({
                         </div>
                       ) : null}
                       <div className="task-actions">
-                        <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={isRunning || !effectiveProvider || !canUseProviderForRun(effectiveProvider)}>
-                          {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                        <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={taskActionsDisabled || !effectiveProvider || !canUseProviderForRun(effectiveProvider)}>
+                          {checkRunLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
                           {t("Check run")}
                         </button>
-                        <button className="primary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || Boolean(providerBlocker) || taskChannelPaused}>
-                          {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                        <button className="primary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={taskActionsDisabled || Boolean(providerBlocker) || taskChannelPaused}>
+                          {runLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                           {t("Run")}
                         </button>
                       </div>

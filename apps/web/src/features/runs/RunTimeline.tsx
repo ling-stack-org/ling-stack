@@ -44,16 +44,18 @@ export function RunTimeline({
   const { t } = useI18n();
   const activities = useMemo(() => buildRunActivities(events), [events]);
   const activityListRef = useRef<HTMLDivElement>(null);
+  const rawEventListRef = useRef<HTMLDivElement>(null);
   const [rawEventsOpen, setRawEventsOpen] = useState(false);
 
   useEffect(() => {
-    if (isRunning) {
-      const list = activityListRef.current;
-      if (list) {
-        list.scrollTop = list.scrollHeight;
-      }
+    scrollToBottom(activityListRef.current);
+  }, [activities.length, events.length]);
+
+  useEffect(() => {
+    if (rawEventsOpen) {
+      scrollToBottom(rawEventListRef.current);
     }
-  }, [events.length, isRunning]);
+  }, [events.length, rawEventsOpen]);
 
   return (
     <section className="panel timeline" aria-labelledby="run-timeline-title">
@@ -123,7 +125,7 @@ export function RunTimeline({
             <span>{t("Raw events ({count})", { count: events.length })}</span>
           </summary>
           {rawEventsOpen ? (
-            <div className="raw-event-list event-list">
+            <div className="raw-event-list event-list" ref={rawEventListRef}>
               {events.map((event) => <EventRow key={event.id} event={event} />)}
             </div>
           ) : null}
@@ -131,6 +133,12 @@ export function RunTimeline({
       ) : null}
     </section>
   );
+}
+
+function scrollToBottom(element: HTMLDivElement | null): void {
+  if (element) {
+    element.scrollTop = element.scrollHeight;
+  }
 }
 
 function ActivityRow({ activity }: { readonly activity: RunActivityItem }): JSX.Element {

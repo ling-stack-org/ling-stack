@@ -63,6 +63,11 @@ export interface TaskFormState {
   readonly prompt: string;
 }
 
+export interface TaskRunActionState {
+  readonly taskId: string;
+  readonly action: "run" | "check";
+}
+
 export interface TaskEditFormState {
   readonly title: string;
   readonly prompt: string;

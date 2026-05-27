@@ -25,9 +25,8 @@ import {
   type ViewId,
 } from "../../app/view-types.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
-import { providerPreflightReady } from "../../lib/providers.js";
 import { AvatarInitial, type AvatarTone } from "../../shared/components/index.js";
-import type { ApprovalRequest, Channel, ProviderPreset } from "../../types.js";
+import type { ApprovalRequest, Channel } from "../../types.js";
 import {
   roleAvatarTone,
   teammateInitial,
@@ -40,7 +39,6 @@ export function SidebarNavigation({
   channels,
   conversations,
   approvals,
-  providers,
   teammateTemplates,
   localTeammates,
   pinnedTemplateIds,
@@ -58,7 +56,6 @@ export function SidebarNavigation({
   readonly channels: readonly Channel[];
   readonly conversations: readonly SidebarConversationItem[];
   readonly approvals: readonly ApprovalRequest[];
-  readonly providers: readonly ProviderPreset[];
   readonly teammateTemplates: readonly AiTeammateTemplate[];
   readonly localTeammates: readonly LocalTeammateDraft[];
   readonly pinnedTemplateIds: readonly string[];
@@ -74,7 +71,6 @@ export function SidebarNavigation({
 }): JSX.Element {
   const { t } = useI18n();
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
-  const readyProviderCount = providers.filter(providerPreflightReady).length;
   const pinnedTemplates = new Set(pinnedTemplateIds);
   const hiddenTemplates = new Set(hiddenTemplateIds);
   const visibleLocalTeammates = [...localTeammates]
@@ -100,6 +96,7 @@ export function SidebarNavigation({
         <NavItem icon={<Users />} label={t("AI Teammates")} active={activeSidebarTarget === "teammates"} onClick={() => onOpenView("teammates")} />
         <NavItem icon={<Inbox />} label={t("Inbox")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
         <NavItem icon={<SquareTerminal />} label={t("Tasks")} active={activeSidebarTarget === "tasks"} onClick={onOpenTasks} />
+        <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeSidebarTarget === "providers"} onClick={() => onOpenView("providers")} />
         <NavItem icon={<History />} label={t("Runs")} active={activeSidebarTarget === "runs"} onClick={() => onOpenView("runs")} />
       </nav>
 
@@ -186,16 +183,6 @@ export function SidebarNavigation({
       <div className="sidebar-config">
         <span>{t("Configuration")}</span>
         <div className="config-grid">
-          <button
-            type="button"
-            className={activeSidebarTarget === "providers" ? "config-button active" : "config-button"}
-            onClick={() => onOpenView("providers")}
-            title={t("Model Workbench")}
-            aria-label={t("Model Workbench")}
-          >
-            <PlugZap size={16} />
-            <small>{readyProviderCount}</small>
-          </button>
           <button
             type="button"
             className={activeSidebarTarget === "approvals" ? "config-button active" : "config-button"}

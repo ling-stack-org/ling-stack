@@ -39,6 +39,7 @@ import type {
   Task,
   TaskEditFormState,
   TaskFormState,
+  TaskRunActionState,
   TaskStatus,
 } from "../../types.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
@@ -59,6 +60,7 @@ export function ChannelTaskWorkspace({
   channelsLoading,
   tasksLoading,
   isRunning,
+  activeTaskRunAction,
   activeRunId,
   latestStatus,
   runById,
@@ -105,6 +107,7 @@ export function ChannelTaskWorkspace({
   readonly channelsLoading: boolean;
   readonly tasksLoading: boolean;
   readonly isRunning: boolean;
+  readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly activeRunId: string;
   readonly latestStatus: string;
   readonly runById: ReadonlyMap<string, RunSession>;
@@ -157,6 +160,9 @@ export function ChannelTaskWorkspace({
   const selectedTaskRepairRun = selectedTask && repairRun?.taskId === selectedTask.id && repairRun.channelId === selectedTask.channelId
     ? repairRun
     : undefined;
+  const taskActionPending = activeTaskRunAction !== undefined;
+  const selectedCheckLoading = selectedTask ? activeTaskRunAction?.taskId === selectedTask.id && activeTaskRunAction.action === "check" : false;
+  const selectedRunLoading = selectedTask ? activeTaskRunAction?.taskId === selectedTask.id && activeTaskRunAction.action === "run" : false;
 
   return (
     <div className="task-workspace">
@@ -452,6 +458,7 @@ export function ChannelTaskWorkspace({
                 task={selectedTask}
                 run={selectedTaskRepairRun}
                 isRunning={isRunning}
+                activeTaskRunAction={activeTaskRunAction}
                 canRun={canPreflightRunWithEffectiveProvider}
                 canCheckRun={canRunWithEffectiveProvider}
                 onRunUpdatedTask={onRunUpdatedTask}
@@ -484,12 +491,12 @@ export function ChannelTaskWorkspace({
                 <Save size={16} />
                 {t("Save task")}
               </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(selectedTask)} disabled={isRunning || !canRunWithEffectiveProvider}>
-                {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+              <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(selectedTask)} disabled={isRunning || taskActionPending || !canRunWithEffectiveProvider}>
+                {selectedCheckLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
                 {t("Check run")}
               </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !canPreflightRunWithEffectiveProvider}>
-                {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+              <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || taskActionPending || !canPreflightRunWithEffectiveProvider}>
+                {selectedRunLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                 {t("Run")}
               </button>
             </div>
@@ -510,6 +517,9 @@ export function ChannelTaskWorkspace({
                 : "";
               const linkedRunSucceeded = linkedRunStatus === "succeeded";
               const repairHint = buildRunRepairHint(linkedRun, 0, linkedRunStatus);
+              const checkRunLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
+              const runLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "run";
+              const taskActionsDisabled = isRunning || taskActionPending;
               return (
                 <article key={task.id} className={task.id === selectedTaskId ? "task-row selected" : "task-row"}>
                   <div className="task-row-head">
@@ -549,12 +559,12 @@ export function ChannelTaskWorkspace({
 	                      <Pencil size={14} />
 	                      {t("Edit")}
                     </button>
-                    <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={isRunning || !canRunWithEffectiveProvider}>
-                      {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                    <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={taskActionsDisabled || !canRunWithEffectiveProvider}>
+                      {checkRunLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
 	                      {t("Check run")}
                     </button>
-                    <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={isRunning || !canPreflightRunWithEffectiveProvider}>
-                      {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                    <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={taskActionsDisabled || !canPreflightRunWithEffectiveProvider}>
+                      {runLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
 	                      {t("Run")}
                     </button>
                     <button className="secondary-button compact-button" type="button" onClick={() => onReviewTask(task.id)} disabled={task.status === "review"}>
@@ -580,6 +590,7 @@ function TaskRepairHandoffPanel({
   task,
   run,
   isRunning,
+  activeTaskRunAction,
   canRun,
   canCheckRun,
   onRunUpdatedTask,
@@ -590,6 +601,7 @@ function TaskRepairHandoffPanel({
   readonly task: Task;
   readonly run: RunSession;
   readonly isRunning: boolean;
+  readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly canRun: boolean;
   readonly canCheckRun: boolean;
   readonly onRunUpdatedTask: (task: Task) => void;
@@ -599,6 +611,9 @@ function TaskRepairHandoffPanel({
 }): JSX.Element {
   const snapshotTitle = readTaskTitle(run.taskSnapshot) || run.taskId;
   const failedReason = run.errorMessage || "This run failed before completing.";
+  const taskActionPending = activeTaskRunAction !== undefined;
+  const runLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "run";
+  const checkRunLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
 
   return (
     <div className="task-repair-handoff" aria-label="Task repair handoff">
@@ -619,12 +634,12 @@ function TaskRepairHandoffPanel({
         <small>Rerun snapshot replays the old request. Save + run updated task uses the current task editor values.</small>
       </div>
       <div className="task-repair-handoff-actions">
-        <button className="primary-button compact-button" type="button" onClick={() => onRunUpdatedTask(task)} disabled={isRunning || !canRun}>
-          {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+        <button className="primary-button compact-button" type="button" onClick={() => onRunUpdatedTask(task)} disabled={isRunning || taskActionPending || !canRun}>
+          {runLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
           Save + run updated task
         </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunUpdatedTask(task)} disabled={isRunning || !canCheckRun}>
-          {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+        <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunUpdatedTask(task)} disabled={isRunning || taskActionPending || !canCheckRun}>
+          {checkRunLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
           Save + check run
         </button>
         <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(run.id)}>

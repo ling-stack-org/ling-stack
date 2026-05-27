@@ -71,6 +71,7 @@ import type {
   Task,
   TaskEditFormState,
   TaskFormState,
+  TaskRunActionState,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -256,6 +257,7 @@ export function AppShell(): JSX.Element {
   const [stateTransitions, setStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
   const [resourceLeases, setResourceLeases] = useState<readonly ResourceLease[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
   const [errorMessage, setErrorMessage] = useState("");
   const abortRef = useRef<AbortController | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
@@ -1018,53 +1020,67 @@ export function AppShell(): JSX.Element {
     return taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId || providers.find(providerPreflightReady)?.id || "";
   }
 
-  async function runPersistedTask(task: Task, options: { readonly skipPreflight?: boolean } = {}): Promise<boolean> {
-    const channel = channels.find((item) => item.id === task.channelId);
-    if (!channel) {
-      setErrorMessage("找不到 task 所属 channel");
-      return false;
-    }
-    if (channel.status !== "active") {
-      setErrorMessage(`Channel is ${channel.status}; resume it before starting a new run.`);
-      return false;
-    }
-    const providerPresetId = resolveTaskRunProviderPresetId(channel);
-    if (!providerPresetId) {
-      setErrorMessage("请先选择 provider preset");
-      return false;
-    }
-    const provider = providers.find((item) => item.id === providerPresetId);
-    if (!provider || !canUseProviderForRun(provider)) {
-      setErrorMessage(provider ? `Provider preset is not runnable: ${providerRunBlockerLabel(provider)}` : "找不到 provider preset");
-      return false;
-    }
-    if (!options.skipPreflight) {
-      const blocker = providerRunPreflightBlocker(provider);
-      if (blocker) {
-        setErrorMessage(blocker);
+  async function runPersistedTask(
+    task: Task,
+    options: { readonly skipPreflight?: boolean; readonly action?: TaskRunActionState["action"] } = {},
+  ): Promise<boolean> {
+    const action = options.action ?? "run";
+    setActiveTaskRunAction({ taskId: task.id, action });
+    try {
+      const channel = channels.find((item) => item.id === task.channelId);
+      if (!channel) {
+        setErrorMessage("找不到 task 所属 channel");
         return false;
       }
-    }
+      if (channel.status !== "active") {
+        setErrorMessage(`Channel is ${channel.status}; resume it before starting a new run.`);
+        return false;
+      }
+      const providerPresetId = resolveTaskRunProviderPresetId(channel);
+      if (!providerPresetId) {
+        setErrorMessage("请先选择 provider preset");
+        return false;
+      }
+      const provider = providers.find((item) => item.id === providerPresetId);
+      if (!provider || !canUseProviderForRun(provider)) {
+        setErrorMessage(provider ? `Provider preset is not runnable: ${providerRunBlockerLabel(provider)}` : "找不到 provider preset");
+        return false;
+      }
+      if (!options.skipPreflight) {
+        const blocker = providerRunPreflightBlocker(provider);
+        if (blocker) {
+          setErrorMessage(blocker);
+          return false;
+        }
+      }
 
-    const runCwd = form.cwd.trim();
-    await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId), runCwd, async () => {
-      await refreshTasks(task.channelId);
-    });
-    return true;
+      const runCwd = form.cwd.trim();
+      await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId), runCwd, async () => {
+        await refreshTasks(task.channelId);
+      });
+      return true;
+    } finally {
+      setActiveTaskRunAction((current) =>
+        current?.taskId === task.id && current.action === action ? undefined : current,
+      );
+    }
   }
 
   async function checkThenRunPersistedTask(task: Task): Promise<boolean> {
+    setActiveTaskRunAction({ taskId: task.id, action: "check" });
     const channel = channels.find((item) => item.id === task.channelId);
     const providerPresetId = resolveTaskRunProviderPresetId(channel);
     const provider = providerPresetId ? providers.find((item) => item.id === providerPresetId) : undefined;
     if (!provider) {
       setErrorMessage(providerPresetId ? "找不到 provider preset" : "请先选择 provider preset");
+      setActiveTaskRunAction(undefined);
       return false;
     }
-    if (await checkProviderForRun(provider)) {
-      return await runPersistedTask(task, { skipPreflight: true });
+    if (!(await checkProviderForRun(provider))) {
+      setActiveTaskRunAction(undefined);
+      return false;
     }
-    return false;
+    return await runPersistedTask(task, { skipPreflight: true, action: "check" });
   }
 
   async function runUpdatedTaskFromRepair(task: Task): Promise<void> {
@@ -1460,7 +1476,6 @@ export function AppShell(): JSX.Element {
         channels={channels}
         conversations={sidebarConversations}
         approvals={approvals}
-        providers={providers}
         teammateTemplates={builtinTeammateTemplates}
         localTeammates={localTeammates}
         pinnedTemplateIds={pinnedTemplateIds}
@@ -1501,6 +1516,7 @@ export function AppShell(): JSX.Element {
             activeRunId={activeRunId}
             latestStatus={latestStatus}
             isRunning={isRunning}
+            activeTaskRunAction={activeTaskRunAction}
             errorMessage={errorMessage}
             onCwdChange={updateWorkspaceCwd}
             onChannelFormChange={setChannelForm}
@@ -1729,6 +1745,7 @@ export function AppShell(): JSX.Element {
               channelsLoading={channelsLoading}
               tasksLoading={tasksLoading}
               isRunning={isRunning}
+              activeTaskRunAction={activeTaskRunAction}
               activeRunId={activeRunId}
               latestStatus={latestStatus}
               currentRun={run}

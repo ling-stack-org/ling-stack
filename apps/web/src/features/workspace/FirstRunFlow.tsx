@@ -13,7 +13,7 @@ import {
 import { useI18n, type Translate } from "../../i18n.js";
 import { canUseProviderForRun, providerPreflightReady, providerRunPreflightBlocker } from "../../lib/providers.js";
 import { buildRunRepairHint, displayLinkedRunStatus, readTaskTitle } from "../../lib/run-evidence.js";
-import type { Channel, ProviderPreset, RunSession, Task } from "../../types.js";
+import type { Channel, ProviderPreset, RunSession, Task, TaskRunActionState } from "../../types.js";
 
 interface FirstRunStep {
   readonly id: string;
@@ -25,6 +25,8 @@ interface FirstRunStep {
   readonly secondaryActionLabel?: string;
   readonly onSecondaryAction?: () => void;
   readonly disabled?: boolean;
+  readonly checkLoading?: boolean;
+  readonly runLoading?: boolean;
 }
 
 export function FirstRunFlow({
@@ -39,6 +41,7 @@ export function FirstRunFlow({
   channelsLoading,
   tasksLoading,
   isRunning,
+  activeTaskRunAction,
   activeRunId,
   latestStatus,
   currentRun,
@@ -64,6 +67,7 @@ export function FirstRunFlow({
   readonly channelsLoading: boolean;
   readonly tasksLoading: boolean;
   readonly isRunning: boolean;
+  readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly activeRunId: string;
   readonly latestStatus: string;
   readonly currentRun: RunSession | undefined;
@@ -94,6 +98,9 @@ export function FirstRunFlow({
   const selectedTaskRunId = selectedTask?.currentRunId ?? "";
   const selectedTaskRun = selectedTaskRunId ? runById.get(selectedTaskRunId) : undefined;
   const selectedTaskRunStatus = selectedTaskRunId ? displayLinkedRunStatus(selectedTaskRunId, selectedTaskRun, activeRunId, latestStatus) : "";
+  const taskActionPending = activeTaskRunAction !== undefined;
+  const selectedTaskCheckLoading = selectedTask ? activeTaskRunAction?.taskId === selectedTask.id && activeTaskRunAction.action === "check" : false;
+  const selectedTaskRunLoading = selectedTask ? activeTaskRunAction?.taskId === selectedTask.id && activeTaskRunAction.action === "run" : false;
 
   if (activeRunId && isRunning) {
     return (
@@ -161,8 +168,8 @@ export function FirstRunFlow({
 	            {runSucceeded ? t("View result") : primaryAction === "run" ? (repairHint?.actionLabel ?? t("Open run")) : t("Open run")}
 	          </button>
           {runSucceeded ? (
-            <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || !runReady}>
-	              <Play size={14} />
+            <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || taskActionPending || !runReady}>
+	              {selectedTaskRunLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
 	              {t("Run again")}
 	            </button>
           ) : null}
@@ -184,12 +191,12 @@ export function FirstRunFlow({
 	          </small>
         </div>
         <div className="first-run-actions">
-          <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(selectedTask)} disabled={isRunning}>
-	            {isRunning ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+          <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(selectedTask)} disabled={isRunning || taskActionPending}>
+	            {selectedTaskCheckLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
 	            {t("Check run")}
 	          </button>
-          <button className="primary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning}>
-	            {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+          <button className="primary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || taskActionPending}>
+	            {selectedTaskRunLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
 	            {t("Run")}
 	          </button>
         </div>
@@ -202,7 +209,7 @@ export function FirstRunFlow({
 	    buildFirstRunChannelStep(Boolean(selectedChannel), Boolean(readyProvider), channelsLoading, onCreateDefaultChannel, t),
 	    buildFirstRunChannelProviderStep(selectedChannel, readyProvider, channelHasReadyDefault, onSetChannelProvider, t),
 	    buildFirstRunTaskStep(Boolean(selectedChannel), tasks.length, tasksLoading, onCreateTask, t),
-	    buildFirstRunRunStep(selectedTask, effectiveProvider, runReady, isRunning, onCheckThenRunTask, onRunTask, t),
+	    buildFirstRunRunStep(selectedTask, effectiveProvider, runReady, isRunning || taskActionPending, activeTaskRunAction, onCheckThenRunTask, onRunTask, t),
 	  ];
 
   return (
@@ -225,13 +232,13 @@ export function FirstRunFlow({
             <span className="first-run-step-actions">
               {step.actionLabel && step.onAction ? (
                 <button className="secondary-button compact-button" type="button" onClick={step.onAction} disabled={step.disabled}>
-	                  {step.status === "pending" ? <Loader2 className="spin" size={14} /> : firstRunActionIcon(step)}
+	                  {step.checkLoading || step.status === "pending" ? <Loader2 className="spin" size={14} /> : firstRunActionIcon(step)}
                   {step.actionLabel}
                 </button>
               ) : null}
               {step.secondaryActionLabel && step.onSecondaryAction ? (
                 <button className="primary-button compact-button" type="button" onClick={step.onSecondaryAction} disabled={step.disabled}>
-                  {isRunning ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                  {step.runLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                   {step.secondaryActionLabel}
                 </button>
               ) : null}
@@ -385,7 +392,8 @@ function buildFirstRunRunStep(
   task: Task | undefined,
   provider: ProviderPreset | undefined,
   runReady: boolean,
-  isRunning: boolean,
+  taskBusy: boolean,
+  activeTaskRunAction: TaskRunActionState | undefined,
   onCheckThenRunTask: (task: Task) => void,
   onRunTask: (task: Task) => void,
   t: Translate,
@@ -406,6 +414,8 @@ function buildFirstRunRunStep(
       status: "attention",
     };
   }
+  const checkLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
+  const runLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "run";
   if (!runReady) {
     return {
       id: "run",
@@ -414,7 +424,8 @@ function buildFirstRunRunStep(
       status: "attention",
       actionLabel: t("Check run"),
       onAction: () => onCheckThenRunTask(task),
-      disabled: isRunning || !canUseProviderForRun(provider),
+      disabled: taskBusy || !canUseProviderForRun(provider),
+      checkLoading,
     };
   }
   return {
@@ -426,7 +437,9 @@ function buildFirstRunRunStep(
     onAction: () => onCheckThenRunTask(task),
     secondaryActionLabel: t("Run"),
     onSecondaryAction: () => onRunTask(task),
-    disabled: isRunning,
+    disabled: taskBusy,
+    checkLoading,
+    runLoading,
   };
 }
 
