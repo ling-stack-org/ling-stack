@@ -75,11 +75,12 @@ Web-only and does not add backend contracts, durable channel events, persisted t
 resolution state, notification persistence, ingestion, automatic multi-agent loops, or a
 workflow builder.
 
-Planned v1.10 behavior: the channel Activity tab will keep the v1.6-v1.9 controls but
-move secondary surfaces behind progressive disclosure. Saved views become a compact view
-selector, category and attention filters move behind a filter panel, empty attention
-state stops occupying a full card, and details drawer metadata/triage sections become
-folded by default. v1.10 remains Web-only and does not add backend contracts.
+Implemented v1.10 behavior: the channel Activity tab keeps the v1.6-v1.9 controls but
+moves secondary surfaces behind progressive disclosure. Saved views are a compact view
+selector, category and attention filters live behind a filter panel, empty attention
+state no longer occupies a full card, composer AI teammate mentions collapse to the
+default teammate plus picker, and details drawer metadata/triage sections are folded by
+default. v1.10 remains Web-only and does not add backend contracts.
 
 ## Goal
 

@@ -872,6 +872,12 @@ textarea {
   gap: 6px;
 }
 
+.mention-row.compact {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
 .mention-chip,
 .pending-assets span {
   display: inline-flex;
@@ -888,6 +894,41 @@ textarea {
 
 .mention-chip {
   cursor: pointer;
+}
+
+.mention-chip.muted {
+  border-color: rgba(33, 38, 42, 0.1);
+  background: rgba(255, 255, 255, 0.58);
+  color: #69706e;
+  cursor: default;
+}
+
+.mention-picker {
+  display: inline-grid;
+  grid-template-columns: auto minmax(120px, 190px);
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 26px;
+  padding: 0 7px;
+  border: 1px solid rgba(33, 38, 42, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #56635f;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.mention-picker select {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0 16px 0 0;
+  border: 0;
+  background: transparent;
+  color: #56635f;
+  font-size: 11px;
+  font-weight: 760;
 }
 
 .link-preview-input {

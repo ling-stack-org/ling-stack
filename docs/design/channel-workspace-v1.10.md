@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned Web-only slice after v1.9 Activity Triage Actions.
+Implemented Web-only slice after v1.9 Activity Triage Actions.
 
 v1.10 does not add new channel capability. It reduces Activity visual density by moving
 secondary controls behind progressive disclosure, so the default channel view reads as a
@@ -76,8 +76,8 @@ surface the default teammate and keep the `@` picker as the path to more partici
 
 ### 4. Documentation
 
-- Update `docs/design/channel-workspace.md` with Phase 18 tracker items.
-- Update `docs/design/web-ui-v0.1.md` after implementation.
+- Updated `docs/design/channel-workspace.md` with Phase 18 tracker completion.
+- Updated `docs/design/web-ui-v0.1.md` with implemented v1.10 behavior.
 - `docs/daemon-api.md` does not change.
 
 ## Test Plan

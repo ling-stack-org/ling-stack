@@ -1538,7 +1538,7 @@ Current MVP implementation status:
 - v1.8 now adds lightweight Activity source drilldown drawers without backend changes,
 - v1.9 now adds lightweight Activity triage actions in the drilldown drawer without
   backend changes,
-- v1.10 is planned as an Activity layout cleanup slice that moves secondary controls
+- v1.10 now implements an Activity layout cleanup slice that moves secondary controls
   behind progressive disclosure without backend changes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
@@ -1731,14 +1731,14 @@ Current MVP implementation status:
 
 ### Phase 18: Activity Layout Cleanup
 
-- [ ] Define v1.10 Activity Layout Cleanup plan in
+- [x] Define v1.10 Activity Layout Cleanup plan in
   `docs/design/channel-workspace-v1.10.md`.
-- [ ] Replace the Activity saved-view chip row with a compact view selector.
-- [ ] Move category and attention filters behind an expandable filter panel.
-- [ ] Reduce empty Attention Queue chrome and preserve populated queue expansion.
-- [ ] Fold source metadata, related objects, and triage actions inside the details drawer.
-- [ ] Collapse composer AI teammate suggestions to default teammate plus mention entry.
-- [ ] Add e2e coverage for compact toolbar, filter panel, queue, drawer folds,
+- [x] Replace the Activity saved-view chip row with a compact view selector.
+- [x] Move category and attention filters behind an expandable filter panel.
+- [x] Reduce empty Attention Queue chrome and preserve populated queue expansion.
+- [x] Fold source metadata, related objects, and triage actions inside the details drawer.
+- [x] Collapse composer AI teammate suggestions to default teammate plus mention entry.
+- [x] Add e2e coverage for compact toolbar, filter panel, queue, drawer folds,
   composer, and i18n labels.
 
 ## Validation Plan

@@ -348,6 +348,7 @@ export function WorkspaceClientView({
   const [activityAttentionFilter, setActivityAttentionFilter] = useState<ActivityAttentionFilter>("all");
   const [activitySavedViews, setActivitySavedViews] = useState<readonly ChannelActivitySavedView[]>([]);
   const [activeActivityViewId, setActiveActivityViewId] = useState(allChannelActivitySavedViewId);
+  const [activityFiltersExpanded, setActivityFiltersExpanded] = useState(false);
   const [attentionQueueExpanded, setAttentionQueueExpanded] = useState(false);
   const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
   const [inspectorMode, setInspectorMode] = useState<"brief" | "decisions" | "handoffs" | "runtime">("brief");
@@ -514,6 +515,7 @@ export function WorkspaceClientView({
   useEffect(() => {
     setActivitySavedViews(readCustomChannelActivitySavedViews(cwd, selectedChannelId));
     applyActivityView(builtinChannelActivitySavedViews[0]);
+    setActivityFiltersExpanded(false);
     setAttentionQueueExpanded(false);
     setActivityDrilldownItemId("");
   }, [cwd, selectedChannelId]);
@@ -560,6 +562,7 @@ export function WorkspaceClientView({
     setActivityCategoryFilter("all");
     setActivityAttentionFilter("all");
     setActiveActivityViewId(allChannelActivitySavedViewId);
+    setActivityFiltersExpanded(false);
     setAttentionQueueExpanded(false);
     setActivityDrilldownItemId("");
   }, [selectedChannelId]);
@@ -631,6 +634,7 @@ export function WorkspaceClientView({
   }
 
   function openActivityTriageResult(result: ChannelActivityTriageResult): void {
+    setActivityDrilldownItemId("");
     if (result.kind === "task") {
       openTaskFromActivity(result.task.id);
       return;
@@ -995,18 +999,39 @@ export function WorkspaceClientView({
           </button>
         </div>
       </div>
-      <div className="mention-row" aria-label={t("AI mentions")}>
-        {teammateOptions.slice(0, 8).map((option) => (
+      <div className="mention-row compact" aria-label={t("AI mentions")}>
+        {defaultTeammate ? (
           <button
-            key={option.id}
             type="button"
-            className={option.id === selectedChannel?.defaultTeammateId ? "mention-chip default" : "mention-chip"}
-            onClick={() => addMention(option)}
-            title={option.id === selectedChannel?.defaultTeammateId ? t("Default teammate") : undefined}
+            className="mention-chip default"
+            onClick={() => addMention(defaultTeammate)}
+            title={t("Default teammate")}
           >
-            @{option.label}
+            @{defaultTeammate.label}
           </button>
-        ))}
+        ) : (
+          <span className="mention-chip muted">{t("No default teammate")}</span>
+        )}
+        <label className="mention-picker">
+          <span>@</span>
+          <select
+            aria-label={t("Mention teammate")}
+            value=""
+            onChange={(event) => {
+              const option = teammateOptions.find((candidate) => candidate.id === event.target.value);
+              if (option) {
+                addMention(option);
+              }
+            }}
+          >
+            <option value="">{t("Add mention")}</option>
+            {teammateOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       {composerMode === "task" ? (
         <input
@@ -1274,6 +1299,7 @@ export function WorkspaceClientView({
                 attentionFilter={activityAttentionFilter}
                 savedViews={allActivitySavedViews}
                 activeSavedViewId={activeActivityViewId}
+                filtersExpanded={activityFiltersExpanded}
                 savedViewCounts={savedViewCounts}
                 selectedSavedView={selectedActivitySavedView}
                 categoryCounts={activityCategoryCounts}
@@ -1284,6 +1310,7 @@ export function WorkspaceClientView({
                 onSaveView={saveActivityView}
                 onRenameView={renameActivityView}
                 onDeleteView={deleteActivityView}
+                onFiltersExpandedChange={setActivityFiltersExpanded}
                 onSearchChange={(value) => {
                   setActiveActivityViewId("");
                   setActivitySearch(value);
@@ -2454,6 +2481,7 @@ function ActivityFilterToolbar({
   attentionFilter,
   savedViews,
   activeSavedViewId,
+  filtersExpanded,
   savedViewCounts,
   selectedSavedView,
   categoryCounts,
@@ -2464,6 +2492,7 @@ function ActivityFilterToolbar({
   onSaveView,
   onRenameView,
   onDeleteView,
+  onFiltersExpandedChange,
   onSearchChange,
   onCategoryFilterChange,
   onAttentionFilterChange,
@@ -2474,6 +2503,7 @@ function ActivityFilterToolbar({
   readonly attentionFilter: ActivityAttentionFilter;
   readonly savedViews: readonly ChannelActivitySavedView[];
   readonly activeSavedViewId: string;
+  readonly filtersExpanded: boolean;
   readonly savedViewCounts: Readonly<Record<string, number>>;
   readonly selectedSavedView: ChannelActivitySavedView | undefined;
   readonly categoryCounts: Readonly<Record<ActivityCategoryFilter, number>>;
@@ -2484,6 +2514,7 @@ function ActivityFilterToolbar({
   readonly onSaveView: () => void;
   readonly onRenameView: () => void;
   readonly onDeleteView: () => void;
+  readonly onFiltersExpandedChange: (expanded: boolean) => void;
   readonly onSearchChange: (value: string) => void;
   readonly onCategoryFilterChange: (filter: ActivityCategoryFilter) => void;
   readonly onAttentionFilterChange: (filter: ActivityAttentionFilter) => void;
@@ -2491,35 +2522,42 @@ function ActivityFilterToolbar({
 }): JSX.Element {
   const { t } = useI18n();
   const selectedCustomView = selectedSavedView && !selectedSavedView.builtin;
+  const filterSummaryParts = [
+    categoryFilter !== "all" ? t(activityCategoryFilterLabel(categoryFilter)) : "",
+    attentionFilter !== "all" ? t(activityAttentionFilterLabel(attentionFilter)) : "",
+  ].filter(Boolean);
+  const filterSummary = filterSummaryParts.length > 0 ? filterSummaryParts.join(" · ") : t("All activity");
   return (
     <div className="activity-filter-toolbar" aria-label={t("Activity filters")}>
-      <div className="activity-saved-view-row" aria-label={t("Saved views")}>
-        <div className="activity-filter-group activity-saved-views">
-          {savedViews.map((view) => (
-            <button
-              key={view.id}
-              type="button"
-              className={activeSavedViewId === view.id ? "activity-filter-chip active saved-view" : "activity-filter-chip saved-view"}
-              aria-pressed={activeSavedViewId === view.id}
-              onClick={() => onSavedViewSelect(view)}
-            >
-              <span>{view.builtin ? t(view.name) : view.name}</span>
-              <small>{savedViewCounts[view.id] ?? 0}</small>
-            </button>
-          ))}
-        </div>
-        <div className="activity-saved-view-actions">
-          <button className="secondary-button compact-button" type="button" onClick={onSaveView} disabled={customViewLimitReached}>
+      <div className="activity-view-control" aria-label={t("Saved views")}>
+        <label className="activity-view-select">
+          <span>{t("View")}</span>
+          <select
+            aria-label={t("Saved views")}
+            value={activeSavedViewId}
+            onChange={(event) => {
+              const view = savedViews.find((candidate) => candidate.id === event.target.value);
+              if (view) {
+                onSavedViewSelect(view);
+              }
+            }}
+          >
+            {savedViews.map((view) => (
+              <option key={view.id} value={view.id}>
+                {savedViewLabel(view, t)} ({savedViewCounts[view.id] ?? 0})
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="activity-saved-view-actions compact" aria-label={t("Saved view actions")}>
+          <button className="icon-button compact-icon-button" type="button" onClick={onSaveView} disabled={customViewLimitReached} aria-label={t("Save view")} title={t("Save view")}>
             <Plus size={13} />
-            {t("Save view")}
           </button>
-          <button className="secondary-button compact-button" type="button" onClick={onRenameView} disabled={!selectedCustomView}>
+          <button className="icon-button compact-icon-button" type="button" onClick={onRenameView} disabled={!selectedCustomView} aria-label={t("Rename")} title={t("Rename")}>
             <FileText size={13} />
-            {t("Rename")}
           </button>
-          <button className="secondary-button compact-button" type="button" onClick={onDeleteView} disabled={!selectedCustomView}>
+          <button className="icon-button compact-icon-button" type="button" onClick={onDeleteView} disabled={!selectedCustomView} aria-label={t("Delete view")} title={t("Delete view")}>
             <Trash2 size={13} />
-            {t("Delete view")}
           </button>
         </div>
       </div>
@@ -2532,38 +2570,53 @@ function ActivityFilterToolbar({
           onChange={(event) => onSearchChange(event.target.value)}
         />
       </label>
-      <div className="activity-filter-group activity-category-filters" aria-label={t("Activity categories")}>
-        {activityCategoryFilters.map((filter) => (
-          <button
-            key={filter}
-            type="button"
-            className={categoryFilter === filter ? "activity-filter-chip active" : "activity-filter-chip"}
-            aria-pressed={categoryFilter === filter}
-            onClick={() => onCategoryFilterChange(filter)}
-          >
-            <span>{t(activityCategoryFilterLabel(filter))}</span>
-            <small>{categoryCounts[filter]}</small>
-          </button>
-        ))}
-      </div>
-      <div className="activity-filter-group activity-attention-filters" aria-label={t("Activity attention filters")}>
-        {activityAttentionFilters.map((filter) => (
-          <button
-            key={filter}
-            type="button"
-            className={attentionFilter === filter ? "activity-filter-chip active attention" : "activity-filter-chip attention"}
-            aria-pressed={attentionFilter === filter}
-            onClick={() => onAttentionFilterChange(attentionFilter === filter ? "all" : filter)}
-          >
-            <span>{t(activityAttentionFilterLabel(filter))}</span>
-            <small>{attentionCounts[filter]}</small>
-          </button>
-        ))}
-      </div>
+      <button
+        className={filtersExpanded ? "activity-filter-toggle active" : "activity-filter-toggle"}
+        type="button"
+        aria-expanded={filtersExpanded}
+        aria-label={t("Filter activity")}
+        onClick={() => onFiltersExpandedChange(!filtersExpanded)}
+      >
+        <SlidersHorizontal size={14} />
+        <span>{t("Filters")}</span>
+        <small>{filterSummary}</small>
+      </button>
       <button className="secondary-button compact-button activity-clear-filter" type="button" onClick={onClear} disabled={clearDisabled}>
         <X size={13} />
         {t("Clear")}
       </button>
+      {filtersExpanded ? (
+        <div className="activity-filter-panel" aria-label={t("Filter panel")}>
+          <div className="activity-filter-group activity-category-filters" aria-label={t("Activity categories")}>
+            {activityCategoryFilters.map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                className={categoryFilter === filter ? "activity-filter-chip active" : "activity-filter-chip"}
+                aria-pressed={categoryFilter === filter}
+                onClick={() => onCategoryFilterChange(filter)}
+              >
+                <span>{t(activityCategoryFilterLabel(filter))}</span>
+                <small>{categoryCounts[filter]}</small>
+              </button>
+            ))}
+          </div>
+          <div className="activity-filter-group activity-attention-filters" aria-label={t("Activity attention filters")}>
+            {activityAttentionFilters.map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                className={attentionFilter === filter ? "activity-filter-chip active attention" : "activity-filter-chip attention"}
+                aria-pressed={attentionFilter === filter}
+                onClick={() => onAttentionFilterChange(attentionFilter === filter ? "all" : filter)}
+              >
+                <span>{t(activityAttentionFilterLabel(filter))}</span>
+                <small>{attentionCounts[filter]}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2586,8 +2639,19 @@ function AttentionQueue({
   const failedCount = items.filter((item) => item.attention === "failed").length;
   const pendingCount = items.filter((item) => item.attention === "pending").length;
   const visibleItems = items.slice(0, 5);
+  if (items.length === 0) {
+    return (
+      <section className="attention-queue empty" aria-label={t("Attention queue")}>
+        <div className="attention-queue-pill">
+          <CheckCircle2 size={13} />
+          <strong>{t("Attention")}</strong>
+          <span>{t("No attention items")}</span>
+        </div>
+      </section>
+    );
+  }
   return (
-    <section className="attention-queue" aria-label={t("Attention queue")}>
+    <section className="attention-queue compact" aria-label={t("Attention queue")}>
       <button
         className="attention-queue-summary"
         type="button"
@@ -2595,7 +2659,7 @@ function AttentionQueue({
         onClick={() => onExpandedChange(!expanded)}
       >
         <CircleAlert size={14} />
-        <strong>{t("Attention queue")}</strong>
+        <strong>{t("Attention")} · {items.length}</strong>
         <span>{items.length > 0 ? t("{count} items need attention", { count: items.length }) : t("No attention items")}</span>
         <span className="attention-queue-counts" aria-label={t("Attention counts")}>
           <small className="blocked">{t("Blocked")} {blockedCount}</small>
@@ -2605,37 +2669,30 @@ function AttentionQueue({
         <span className="attention-queue-toggle">{expanded ? t("Collapse") : t("Expand")}</span>
       </button>
       {expanded ? (
-        visibleItems.length === 0 ? (
-          <div className="attention-queue-empty">
-            <CheckCircle2 size={14} />
-            <span>{t("No attention items")}</span>
-          </div>
-        ) : (
-          <div className="attention-queue-list" aria-label={t("Top attention items")}>
-            {visibleItems.map((item) => (
-              <div
-                key={item.id}
-                className={`attention-queue-item ${item.attention}`}
-              >
-                <button className="attention-queue-item-open" type="button" onClick={() => onOpenItem(item)}>
-                  <span className="attention-queue-item-main">
-                    <strong>{item.title}</strong>
-                    <small>{item.description}</small>
-                  </span>
-                  <span className="attention-queue-item-meta">
-                    <small>{t(activityAttentionDisplayLabel(item.attention))}</small>
-                    <small>{t(attentionQueueTargetLabel(item.target))}</small>
-                    <time>{formatDateTime(item.createdAt)}</time>
-                  </span>
-                </button>
-                <button className="secondary-button compact-button attention-queue-details" type="button" onClick={() => onOpenItemDetails(item)}>
-                  <Info size={13} />
-                  {t("Details")}
-                </button>
-              </div>
-            ))}
-          </div>
-        )
+        <div className="attention-queue-list" aria-label={t("Top attention items")}>
+          {visibleItems.map((item) => (
+            <div
+              key={item.id}
+              className={`attention-queue-item ${item.attention}`}
+            >
+              <button className="attention-queue-item-open" type="button" onClick={() => onOpenItem(item)}>
+                <span className="attention-queue-item-main">
+                  <strong>{item.title}</strong>
+                  <small>{item.description}</small>
+                </span>
+                <span className="attention-queue-item-meta">
+                  <small>{t(activityAttentionDisplayLabel(item.attention))}</small>
+                  <small>{t(attentionQueueTargetLabel(item.target))}</small>
+                  <time>{formatDateTime(item.createdAt)}</time>
+                </span>
+              </button>
+              <button className="secondary-button compact-button attention-queue-details" type="button" onClick={() => onOpenItemDetails(item)}>
+                <Info size={13} />
+                {t("Details")}
+              </button>
+            </div>
+          ))}
+        </div>
       ) : null}
     </section>
   );
@@ -2660,34 +2717,16 @@ function ActivityDrilldownDrawer({
 }): JSX.Element {
   const { t } = useI18n();
   const triageActions = useMemo(() => buildChannelActivityTriageActions(drilldown), [drilldown]);
-  const [selectedTriageActionId, setSelectedTriageActionId] = useState<ChannelActivityTriageActionKind | "">(
-    triageActions[0]?.id ?? "",
-  );
-  const [triageDraft, setTriageDraft] = useState<ChannelActivityTriageDraft | undefined>(() =>
-    triageActions[0]
-      ? buildChannelActivityTriageDraft({
-          drilldown,
-          actionKind: triageActions[0].id,
-          defaultTeammateId,
-          activeDecisionIds,
-        })
-      : undefined);
+  const [selectedTriageActionId, setSelectedTriageActionId] = useState<ChannelActivityTriageActionKind | "">("");
+  const [triageDraft, setTriageDraft] = useState<ChannelActivityTriageDraft | undefined>();
   const [triagePending, setTriagePending] = useState(false);
   const [triageError, setTriageError] = useState("");
   const [triageResult, setTriageResult] = useState<ChannelActivityTriageResult | undefined>();
   const selectedTriageAction = triageActions.find((action) => action.id === selectedTriageActionId);
 
   useEffect(() => {
-    const firstAction = triageActions[0];
-    setSelectedTriageActionId(firstAction?.id ?? "");
-    setTriageDraft(firstAction
-      ? buildChannelActivityTriageDraft({
-          drilldown,
-          actionKind: firstAction.id,
-          defaultTeammateId,
-          activeDecisionIds,
-        })
-      : undefined);
+    setSelectedTriageActionId("");
+    setTriageDraft(undefined);
     setTriagePending(false);
     setTriageError("");
     setTriageResult(undefined);
@@ -2741,40 +2780,9 @@ function ActivityDrilldownDrawer({
         <h3>{drilldown.source.title}</h3>
         <p>{drilldown.source.subtitle}</p>
       </div>
-      <div className="activity-drilldown-badges" aria-label={t("Activity detail metadata")}>
-        <span>{t("Category")}: {t(activityCategoryFilterLabel(drilldown.category))}</span>
-        <span>{t("Attention")}: {t(activityAttentionLabel(drilldown.attention))}</span>
-        <span>{t("Time")}: {formatDateTime(drilldown.createdAt)}</span>
-        {drilldown.source.status ? <span>{t("Status")}: {drilldown.source.status}</span> : null}
-      </div>
       <section className="activity-drilldown-section">
         <h4>{t("Source summary")}</h4>
         <p>{drilldown.source.summary}</p>
-      </section>
-      <section className="activity-drilldown-section">
-        <h4>{t("Source metadata")}</h4>
-        <div className="activity-drilldown-field-grid">
-          <MetaRow label={t("Source ID")} value={drilldown.source.sourceId} />
-          <MetaRow label={t("Event type")} value={t(activityKindLabel(drilldown.kind))} />
-          {drilldown.source.metadata.map((field) => (
-            <MetaRow key={`${field.label}:${field.value}`} label={t(field.label)} value={field.value} />
-          ))}
-        </div>
-      </section>
-      <section className="activity-drilldown-section">
-        <h4>{t("Related objects")}</h4>
-        {drilldown.source.relatedObjects.length === 0 ? (
-          <p className="muted-text">{t("No related objects")}</p>
-        ) : (
-          <div className="activity-drilldown-related">
-            {drilldown.source.relatedObjects.map((field) => (
-              <span key={`${field.label}:${field.value}`}>
-                <small>{t(field.label)}</small>
-                {field.value}
-              </span>
-            ))}
-          </div>
-        )}
       </section>
       <section className="activity-drilldown-section">
         <h4>{t("Actions")}</h4>
@@ -2796,8 +2804,46 @@ function ActivityDrilldownDrawer({
           </div>
         )}
       </section>
-      <section className="activity-drilldown-section activity-triage-section" aria-label={t("Triage actions")}>
-        <h4>{t("Triage actions")}</h4>
+      <details className="activity-drilldown-disclosure">
+        <summary>
+          <span>{t("Source metadata")}</span>
+        </summary>
+        <div className="activity-drilldown-badges" aria-label={t("Activity detail metadata")}>
+          <span>{t("Category")}: {t(activityCategoryFilterLabel(drilldown.category))}</span>
+          <span>{t("Attention")}: {t(activityAttentionLabel(drilldown.attention))}</span>
+          <span>{t("Time")}: {formatDateTime(drilldown.createdAt)}</span>
+          {drilldown.source.status ? <span>{t("Status")}: {drilldown.source.status}</span> : null}
+        </div>
+        <div className="activity-drilldown-field-grid">
+          <MetaRow label={t("Source ID")} value={drilldown.source.sourceId} />
+          <MetaRow label={t("Event type")} value={t(activityKindLabel(drilldown.kind))} />
+          {drilldown.source.metadata.map((field) => (
+            <MetaRow key={`${field.label}:${field.value}`} label={t(field.label)} value={field.value} />
+          ))}
+        </div>
+      </details>
+      <details className="activity-drilldown-disclosure">
+        <summary>
+          <span>{t("Related objects")}</span>
+        </summary>
+        {drilldown.source.relatedObjects.length === 0 ? (
+          <p className="muted-text">{t("No related objects")}</p>
+        ) : (
+          <div className="activity-drilldown-related">
+            {drilldown.source.relatedObjects.map((field) => (
+              <span key={`${field.label}:${field.value}`}>
+                <small>{t(field.label)}</small>
+                {field.value}
+              </span>
+            ))}
+          </div>
+        )}
+      </details>
+      <details className="activity-drilldown-disclosure activity-triage-section" aria-label={t("Triage actions")}>
+        <summary>
+          <span>{t("Triage actions")}</span>
+          {triageActions.length > 0 ? <small>{triageActions.length}</small> : null}
+        </summary>
         {triageActions.length === 0 ? (
           <p className="muted-text">{t("No triage actions available")}</p>
         ) : (
@@ -2817,7 +2863,9 @@ function ActivityDrilldownDrawer({
             </div>
             {selectedTriageAction ? (
               <p className="activity-triage-description">{t(selectedTriageAction.description)}</p>
-            ) : null}
+            ) : (
+              <p className="activity-triage-description">{t("Choose a triage action to continue.")}</p>
+            )}
             {triageDraft ? (
               <ActivityTriageDraftForm
                 draft={triageDraft}
@@ -2846,18 +2894,20 @@ function ActivityDrilldownDrawer({
                 </button>
               </div>
             ) : null}
-            <button
-              className="primary-button compact-button activity-triage-submit"
-              type="button"
-              onClick={() => void submitTriageAction()}
-              disabled={triagePending || !channelActivityTriageDraftIsValid(triageDraft)}
-            >
-              {triagePending ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
-              {triagePending ? t("Creating...") : t("Run triage action")}
-            </button>
+            {triageDraft ? (
+              <button
+                className="primary-button compact-button activity-triage-submit"
+                type="button"
+                onClick={() => void submitTriageAction()}
+                disabled={triagePending || !channelActivityTriageDraftIsValid(triageDraft)}
+              >
+                {triagePending ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+                {triagePending ? t("Creating...") : t("Run triage action")}
+              </button>
+            ) : null}
           </>
         )}
-      </section>
+      </details>
     </aside>
   );
 }
@@ -3089,7 +3139,10 @@ function activityCategoryFilterLabel(filter: ActivityCategoryFilter): string {
   return "All";
 }
 
-function activityAttentionFilterLabel(filter: Exclude<ActivityAttentionFilter, "all">): string {
+function activityAttentionFilterLabel(filter: ActivityAttentionFilter): string {
+  if (filter === "all") {
+    return "All";
+  }
   if (filter === "needs_attention") {
     return "Needs attention";
   }
@@ -3100,6 +3153,10 @@ function activityAttentionFilterLabel(filter: Exclude<ActivityAttentionFilter, "
     return "Failed";
   }
   return "Pending";
+}
+
+function savedViewLabel(view: ChannelActivitySavedView, t: (key: string) => string): string {
+  return view.builtin ? t(view.name) : view.name;
 }
 
 function taskMatchesFilter(filter: TaskFilter, task: Task, linkedRunStatus: string): boolean {
