@@ -1523,7 +1523,7 @@ Current MVP implementation status:
   feedback, and English/Chinese channel copy cleanup,
 - v1.4 now aggregates run artifacts, summary paths, and event log paths in the
   channel `Files` tab without adding artifact ingestion or backend routes,
-- v1.5 is planned to derive task, run, approval, state-transition, workflow, and
+- v1.5 now derives task, run, approval, state-transition, workflow, and
   workflow-step activity cards in the channel `Activity` timeline without adding
   durable channel events,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
@@ -1622,8 +1622,8 @@ Current MVP implementation status:
 - [x] Add `Activity`, `Tasks`, and `Files` tabs.
 - [x] Add `Channel protocol` tab for Brief, Decisions, Handoffs, and Runtime.
 - [x] Move current task list into the `Tasks` tab.
-- [ ] Define v1.5 Activity Events plan in `docs/design/channel-workspace-v1.5.md`.
-- [ ] Build derived activity items from tasks/runs/approvals/state transitions.
+- [x] Define v1.5 Activity Events plan in `docs/design/channel-workspace-v1.5.md`.
+- [x] Build derived activity items from tasks/runs/approvals/state transitions.
 - [x] Add no-events and no-files empty states.
 - [x] Keep the discussion/task composer in Activity so Tasks can focus on queue + detail.
 - [x] Move task detail into the `Tasks` tab.

@@ -46,7 +46,7 @@ links, and run artifacts. It shows selected-channel run artifacts, summary paths
 event log paths through existing artifact APIs without reading artifact bodies or adding
 backend contracts.
 
-Planned v1.5 behavior: the channel `Activity` tab becomes a derived timeline that mixes
+Implemented v1.5 behavior: the channel `Activity` tab is now a derived timeline that mixes
 messages, protocol records, tasks, runs, approvals, state transitions, workflows, and
 workflow steps. v1.5 remains Web-only and does not add durable channel event storage,
 notification persistence, ingestion, automatic multi-agent loops, or a workflow builder.

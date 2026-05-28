@@ -26,6 +26,7 @@ import {
 import type { AiTeammateTemplate } from "@ling-stack/core";
 import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
+import { buildChannelActivityItems } from "../../lib/channel-activity.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { effectiveChannelRuntimePolicy } from "../../lib/channels.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
@@ -58,6 +59,7 @@ import type {
   ResourceLease,
   RunArtifact,
   RunSession,
+  StateTransitionEvent,
   Task,
   TaskFormState,
   TaskRunActionState,
@@ -141,6 +143,9 @@ export function WorkspaceClientView({
   channelContextSummaries,
   channelWorkflows,
   channelWorkflowSteps,
+  channelStateTransitions,
+  channelActivityTransitionsLoading,
+  channelActivityTransitionError,
   selectedTaskId,
   providers,
   teammateTemplates,
@@ -190,6 +195,7 @@ export function WorkspaceClientView({
   onUpdateWorkflowStepStatus,
   onCreateTaskWithContextFromMessage,
   onCreateTaskFromContextSummary,
+  onRefreshChannelActivity,
   onRefreshChannelProtocol,
   onRefreshChannelFiles,
   attachmentContentUrl,
@@ -220,6 +226,9 @@ export function WorkspaceClientView({
   readonly channelContextSummaries: readonly ChannelContextSummary[];
   readonly channelWorkflows: readonly ChannelWorkflow[];
   readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
+  readonly channelStateTransitions: readonly StateTransitionEvent[];
+  readonly channelActivityTransitionsLoading: boolean;
+  readonly channelActivityTransitionError: string;
   readonly selectedTaskId: string;
   readonly providers: readonly ProviderPreset[];
   readonly teammateTemplates: readonly AiTeammateTemplate[];
@@ -275,6 +284,7 @@ export function WorkspaceClientView({
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
   readonly onCreateTaskWithContextFromMessage: (message: ChannelMessage) => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
+  readonly onRefreshChannelActivity: () => void;
   readonly onRefreshChannelProtocol: () => void;
   readonly onRefreshChannelFiles: () => void;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
@@ -352,8 +362,34 @@ export function WorkspaceClientView({
     [activeRunId, latestStatus, runById, tasks],
   );
   const activityItems = useMemo(
-    () => buildChannelActivityItems(channelMessages, channelDecisions, channelHandoffs, channelContextSummaries, channelWorkflows, channelWorkflowSteps),
-    [channelContextSummaries, channelDecisions, channelHandoffs, channelMessages, channelWorkflowSteps, channelWorkflows],
+    () => buildChannelActivityItems({
+      channelId: selectedChannelId,
+      messages: channelMessages,
+      tasks,
+      runs,
+      approvals,
+      stateTransitions: channelStateTransitions,
+      decisions: channelDecisions,
+      handoffs: channelHandoffs,
+      summaries: channelContextSummaries,
+      workflows: channelWorkflows,
+      workflowSteps: channelWorkflowSteps,
+      extraRun: latestRun,
+    }),
+    [
+      approvals,
+      channelContextSummaries,
+      channelDecisions,
+      channelHandoffs,
+      channelMessages,
+      channelStateTransitions,
+      channelWorkflowSteps,
+      channelWorkflows,
+      latestRun,
+      runs,
+      selectedChannelId,
+      tasks,
+    ],
   );
   const channelRunsForFiles = useMemo(
     () => deriveChannelRuns(selectedChannelId, tasks, runs, latestRun),
@@ -396,6 +432,16 @@ export function WorkspaceClientView({
   function selectTask(taskId: string): void {
     setCreateTaskOpen(false);
     onSelectTask(taskId);
+  }
+
+  function openTaskFromActivity(taskId: string): void {
+    selectTask(taskId);
+    setActiveTab("tasks");
+  }
+
+  function openProtocolFromActivity(mode: "brief" | "decisions" | "handoffs" | "runtime" = "runtime"): void {
+    setInspectorMode(mode);
+    setActiveTab("protocol");
   }
 
   function createTask(): void {
@@ -470,7 +516,7 @@ export function WorkspaceClientView({
       ? channelProtocolLoading
       : activeTab === "files"
         ? channelFilesLoading || channelRunArtifactsLoading
-        : channelsLoading;
+        : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || channelsLoading;
 
   function refreshActiveTab(): void {
     if (activeTab === "tasks") {
@@ -485,7 +531,7 @@ export function WorkspaceClientView({
       onRefreshChannelFiles();
       return;
     }
-    onRefreshChannels();
+    onRefreshChannelActivity();
   }
 
   const teammateOptions = useMemo(
@@ -1019,6 +1065,10 @@ export function WorkspaceClientView({
                               <CircleAlert size={14} />
                               {t("Reject")}
                             </button>
+                            <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("decisions")}>
+                              <Workflow size={14} />
+                              {t("Open protocol")}
+                            </button>
                           </div>
                         }
                       />
@@ -1047,6 +1097,10 @@ export function WorkspaceClientView({
                             <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>
                               {t("Complete")}
                             </button>
+                            <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("handoffs")}>
+                              <Workflow size={14} />
+                              {t("Open protocol")}
+                            </button>
                           </div>
                         }
                       />
@@ -1063,7 +1117,15 @@ export function WorkspaceClientView({
                         tag={workflow.status}
                         time={formatDateTime(workflow.updatedAt)}
                         body={`${workflow.title}: ${workflow.objective}`}
-                        action={<small>{t("{count} steps", { count: steps.length })}</small>}
+                        action={
+                          <div className="activity-action-row">
+                            <small>{t("{count} steps", { count: steps.length })}</small>
+                            <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
+                              <Workflow size={14} />
+                              {t("Open protocol")}
+                            </button>
+                          </div>
+                        }
                       />
                     );
                   }
@@ -1079,13 +1141,128 @@ export function WorkspaceClientView({
                         body={`${step.title}: ${step.prompt}`}
                         action={
                           step.blocker ? (
-                            <div className="provider-run-notice compact">
-                              <CircleAlert size={14} />
-                              <span>{step.blocker}</span>
+                            <div className="activity-action-row">
+                              <div className="provider-run-notice compact">
+                                <CircleAlert size={14} />
+                                <span>{step.blocker}</span>
+                              </div>
+                              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
+                                <Workflow size={14} />
+                                {t("Open protocol")}
+                              </button>
                             </div>
                           ) : step.taskId ? (
-                            <code>{step.taskId}{step.runId ? ` / ${step.runId}` : ""}</code>
-                          ) : undefined
+                            <div className="activity-action-row">
+                              <code>{step.taskId}{step.runId ? ` / ${step.runId}` : ""}</code>
+                              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
+                                <Workflow size={14} />
+                                {t("Open protocol")}
+                              </button>
+                            </div>
+                          ) : (
+                            <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
+                              <Workflow size={14} />
+                              {t("Open protocol")}
+                            </button>
+                          )
+                        }
+                      />
+                    );
+                  }
+                  if (item.kind === "task") {
+                    const task = item.record;
+                    return (
+                      <MessageBubble
+                        key={item.id}
+                        avatar={<AvatarInitial label="T" tone="orange" />}
+                        author={t("Task event")}
+                        tag={task.status}
+                        time={formatDateTime(task.updatedAt)}
+                        body={t("Task {title} is {status}.", { title: task.title, status: task.status })}
+                        action={
+                          <button className="secondary-button compact-button" type="button" onClick={() => openTaskFromActivity(task.id)}>
+                            <SquareTerminal size={14} />
+                            {t("Open task")}
+                          </button>
+                        }
+                      />
+                    );
+                  }
+                  if (item.kind === "run") {
+                    const run = item.record;
+                    const taskTitle = item.task?.title ?? readRunTitle(run);
+                    return (
+                      <MessageBubble
+                        key={item.id}
+                        avatar={<AvatarInitial label="R" tone="violet" />}
+                        author={t("Run event")}
+                        tag={run.status}
+                        time={formatDateTime(run.endedAt ?? run.startedAt ?? run.updatedAt)}
+                        body={t("Run {runId} for {title} is {status}.", { runId: run.id, title: taskTitle, status: run.status })}
+                        action={
+                          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(run.id)}>
+                            <History size={14} />
+                            {t("Open run")}
+                          </button>
+                        }
+                      />
+                    );
+                  }
+                  if (item.kind === "approval") {
+                    const approval = item.record;
+                    const approvalStatus = effectiveApprovalStatus(approval);
+                    return (
+                      <MessageBubble
+                        key={item.id}
+                        avatar={<AvatarInitial label="A" tone="teal" />}
+                        author={t("Approval event")}
+                        tag={approvalStatus}
+                        time={formatDateTime(approval.resolvedAt ?? approval.createdAt)}
+                        body={t("{title} is {status}.", { title: approval.title, status: approvalStatus })}
+                        action={
+                          <button className="secondary-button compact-button" type="button" onClick={() => onOpenApprovals(approval.runId)}>
+                            <CheckCircle2 size={14} />
+                            {t("Open approval")}
+                          </button>
+                        }
+                      />
+                    );
+                  }
+                  if (item.kind === "state-transition") {
+                    const transition = item.record;
+                    return (
+                      <MessageBubble
+                        key={item.id}
+                        avatar={<AvatarInitial label="S" tone="violet" />}
+                        author={t("State change")}
+                        tag={transition.entityType}
+                        time={formatDateTime(transition.createdAt)}
+                        body={t("{entityType} {entityId}: {fromStatus} -> {toStatus} via {event}.", {
+                          entityType: transition.entityType,
+                          entityId: transition.entityId,
+                          fromStatus: transition.fromStatus,
+                          toStatus: transition.toStatus,
+                          event: transition.event,
+                        })}
+                        action={
+                          <button
+                            className="secondary-button compact-button"
+                            type="button"
+                            onClick={() => {
+                              if (transition.entityType === "task") {
+                                openTaskFromActivity(transition.entityId);
+                              } else if (transition.entityType === "run") {
+                                onOpenRun(transition.entityId);
+                              } else if (transition.entityType === "approval") {
+                                onOpenApprovals();
+                              } else {
+                                openProtocolFromActivity("runtime");
+                              }
+                            }}
+                          >
+                            {transition.entityType === "task" ? <SquareTerminal size={14} /> : transition.entityType === "run" ? <History size={14} /> : <Workflow size={14} />}
+                            {t("Open event")}
+                          </button>
                         }
                       />
                     );
@@ -1100,29 +1277,32 @@ export function WorkspaceClientView({
                       time={formatDateTime(summary.updatedAt)}
                       body={summary.summary}
                       action={
-                        <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>
-                          <Plus size={14} />
-                          {t("Create task")}
-                        </button>
+                        <div className="activity-action-row">
+                          <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>
+                            <Plus size={14} />
+                            {t("Create task")}
+                          </button>
+                          <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("brief")}>
+                            <Workflow size={14} />
+                            {t("Open protocol")}
+                          </button>
+                        </div>
                       }
                     />
                   );
                 })
               )}
-              {latestRun ? (
-                <MessageBubble
-                  avatar={<AvatarInitial label="H" tone="violet" />}
-                  author="Hopper"
-                  tag="AI"
-                  time={formatDateTime(latestRun.updatedAt)}
-                  body={t("Latest run {runId} is {status}.", { runId: latestRun.id, status: latestRun.status })}
-                  action={
-                    <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(latestRun.id)}>
-                      <History size={14} />
-                      {t("Open run")}
-                    </button>
-                  }
-                />
+              {channelActivityTransitionsLoading ? (
+                <div className="activity-feed-status" role="status">
+                  <Loader2 className="spin" size={14} />
+                  <span>{t("Loading activity events...")}</span>
+                </div>
+              ) : null}
+              {channelActivityTransitionError ? (
+                <div className="activity-feed-status warning" role="status">
+                  <CircleAlert size={14} />
+                  <span>{t("Some activity changes could not be loaded")}</span>
+                </div>
               ) : null}
               </div>
               {taskCreationNotice ? (
@@ -2137,30 +2317,14 @@ function messageAuthorLabel(message: ChannelMessage, teammates: readonly Channel
   return message.authorId ?? "Tian";
 }
 
-type ChannelActivityItem =
-  | { readonly id: string; readonly kind: "message"; readonly createdAt: string; readonly record: ChannelMessage }
-  | { readonly id: string; readonly kind: "decision"; readonly createdAt: string; readonly record: ChannelDecision }
-  | { readonly id: string; readonly kind: "handoff"; readonly createdAt: string; readonly record: ChannelHandoff }
-  | { readonly id: string; readonly kind: "summary"; readonly createdAt: string; readonly record: ChannelContextSummary }
-  | { readonly id: string; readonly kind: "workflow"; readonly createdAt: string; readonly record: ChannelWorkflow }
-  | { readonly id: string; readonly kind: "workflow-step"; readonly createdAt: string; readonly record: ChannelWorkflowStep };
-
-function buildChannelActivityItems(
-  messages: readonly ChannelMessage[],
-  decisions: readonly ChannelDecision[],
-  handoffs: readonly ChannelHandoff[],
-  summaries: readonly ChannelContextSummary[],
-  workflows: readonly ChannelWorkflow[],
-  workflowSteps: readonly ChannelWorkflowStep[],
-): readonly ChannelActivityItem[] {
-  return [
-    ...messages.map((record) => ({ id: record.id, kind: "message" as const, createdAt: record.createdAt, record })),
-    ...decisions.map((record) => ({ id: record.id, kind: "decision" as const, createdAt: record.createdAt, record })),
-    ...handoffs.map((record) => ({ id: record.id, kind: "handoff" as const, createdAt: record.createdAt, record })),
-    ...summaries.map((record) => ({ id: record.id, kind: "summary" as const, createdAt: record.updatedAt, record })),
-    ...workflows.map((record) => ({ id: record.id, kind: "workflow" as const, createdAt: record.updatedAt, record })),
-    ...workflowSteps.map((record) => ({ id: record.id, kind: "workflow-step" as const, createdAt: record.updatedAt, record })),
-  ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+function readRunTitle(run: RunSession): string {
+  if (typeof run.taskSnapshot === "object" && run.taskSnapshot !== null && "title" in run.taskSnapshot) {
+    const title = (run.taskSnapshot as { readonly title?: unknown }).title;
+    if (typeof title === "string" && title.trim()) {
+      return title;
+    }
+  }
+  return run.taskId;
 }
 
 function splitLines(value: string): string[] {

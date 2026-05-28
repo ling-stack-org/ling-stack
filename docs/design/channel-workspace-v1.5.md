@@ -1,8 +1,8 @@
-# Channel Workspace v1.5 Activity Events Plan
+# Channel Workspace v1.5 Activity Events
 
 ## Status
 
-Planned implementation slice after v1.4 Files and Run Artifacts.
+Implemented implementation slice after v1.4 Files and Run Artifacts.
 
 v1.5 turns channel `Activity` into a channel timeline. The tab already shows durable
 messages and manual protocol records. This slice derives lightweight events from

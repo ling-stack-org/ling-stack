@@ -103,6 +103,7 @@ import type {
   RunEventEnvelope,
   RunFormState,
   RunSession,
+  StateEntityType,
   StateTransitionEvent,
   Task,
   TaskEditFormState,
@@ -144,7 +145,7 @@ import {
   defaultChannelEditForm,
   defaultChannelForm,
 } from "../lib/channels.js";
-import { deriveChannelRuns } from "../lib/channel-artifacts.js";
+import { deriveChannelRuns, deriveChannelTasks } from "../lib/channel-artifacts.js";
 import { readDataString } from "../lib/data.js";
 import { titleFromPrompt } from "../lib/formatting.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd, writeSavedWorkspaceCwd } from "../lib/local-storage.js";
@@ -301,6 +302,9 @@ export function AppShell(): JSX.Element {
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [artifacts, setArtifacts] = useState<readonly RunArtifact[]>([]);
   const [stateTransitions, setStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
+  const [channelStateTransitions, setChannelStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
+  const [channelActivityTransitionsLoading, setChannelActivityTransitionsLoading] = useState(false);
+  const [channelActivityTransitionError, setChannelActivityTransitionError] = useState("");
   const [resourceLeases, setResourceLeases] = useState<readonly ResourceLease[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
@@ -417,6 +421,12 @@ export function AppShell(): JSX.Element {
     () => channelRunsForArtifacts.map((item) => `${item.id}:${item.updatedAt}`).join("|"),
     [channelRunsForArtifacts],
   );
+  const channelTransitionEntityKey = useMemo(
+    () => buildChannelTransitionEntities(selectedChannelId, tasks, channelRunsForArtifacts, channelWorkflows, channelWorkflowSteps)
+      .map((item) => `${item.entityType}:${item.entityId}:${item.updatedAt}`)
+      .join("|"),
+    [channelRunsForArtifacts, channelWorkflowSteps, channelWorkflows, selectedChannelId, tasks],
+  );
   const selectedEntity = useMemo<SelectedEntity>(() => {
     if (activeView === "providers") {
       return { type: "provider", id: editingProviderId || form.providerPresetId || providers[0]?.id || "" };
@@ -500,6 +510,8 @@ export function AppShell(): JSX.Element {
       setChannelLinkPreviews([]);
       setChannelArtifactsByRun({});
       setChannelArtifactErrorsByRun({});
+      setChannelStateTransitions([]);
+      setChannelActivityTransitionError("");
       setChannelBrief(undefined);
       setChannelDecisions([]);
       setChannelHandoffs([]);
@@ -516,6 +528,13 @@ export function AppShell(): JSX.Element {
     }
     void refreshChannelRunArtifacts();
   }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
+
+  useEffect(() => {
+    if (activeView !== "workspace") {
+      return;
+    }
+    void refreshChannelActivityTransitions();
+  }, [activeView, channelTransitionEntityKey, form.cwd, selectedChannelId]);
 
   useEffect(() => {
     const cwd = form.cwd.trim();
@@ -1018,6 +1037,76 @@ export function AppShell(): JSX.Element {
     setChannelArtifactsByRun(nextArtifacts);
     setChannelArtifactErrorsByRun(nextErrors);
     setChannelRunArtifactsLoading(false);
+  }
+
+  async function refreshChannelActivityTransitions(
+    cwd = form.cwd.trim(),
+    channelId = selectedChannelId,
+    channelRuns = channelRunsForArtifacts,
+  ): Promise<void> {
+    if (!cwd || !channelId) {
+      setChannelStateTransitions([]);
+      setChannelActivityTransitionError("");
+      setChannelActivityTransitionsLoading(false);
+      return;
+    }
+
+    const entities = buildChannelTransitionEntities(channelId, tasks, channelRuns, channelWorkflows, channelWorkflowSteps);
+    if (entities.length === 0) {
+      setChannelStateTransitions([]);
+      setChannelActivityTransitionError("");
+      setChannelActivityTransitionsLoading(false);
+      return;
+    }
+
+    setChannelActivityTransitionsLoading(true);
+    const results = await Promise.all(
+      entities.map(async (entity) => {
+        try {
+          const response = await listStateTransitions(cwd, {
+            entityType: entity.entityType,
+            entityId: entity.entityId,
+            limit: 20,
+          });
+          return { transitions: response.transitions } as const;
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : String(error) } as const;
+        }
+      }),
+    );
+
+    const nextTransitions = new Map<string, StateTransitionEvent>();
+    const errors = new Set<string>();
+    for (const result of results) {
+      if ("error" in result) {
+        errors.add(result.error ?? "unknown_error");
+      } else {
+        for (const transition of result.transitions) {
+          nextTransitions.set(transition.id, transition);
+        }
+      }
+    }
+
+    setChannelStateTransitions([...nextTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    setChannelActivityTransitionError(errors.size > 0 ? [...errors][0] : "");
+    setChannelActivityTransitionsLoading(false);
+  }
+
+  async function refreshChannelActivity(): Promise<void> {
+    const channelId = selectedChannelId;
+    if (!channelId) {
+      return;
+    }
+
+    await Promise.all([
+      refreshChannels(),
+      refreshTasks(channelId),
+      refreshChannelMessages(channelId),
+      refreshChannelProtocol(channelId),
+      refreshRuns(),
+      refreshApprovals(),
+    ]);
+    void refreshChannelActivityTransitions();
   }
 
   async function refreshChannelProtocol(channelId = selectedChannelId): Promise<void> {
@@ -2116,6 +2205,9 @@ export function AppShell(): JSX.Element {
             channelContextSummaries={channelContextSummaries}
             channelWorkflows={channelWorkflows}
             channelWorkflowSteps={channelWorkflowSteps}
+            channelStateTransitions={channelStateTransitions}
+            channelActivityTransitionsLoading={channelActivityTransitionsLoading}
+            channelActivityTransitionError={channelActivityTransitionError}
             selectedTaskId={selectedTaskId}
             providers={providers}
             teammateTemplates={builtinTeammateTemplates}
@@ -2171,6 +2263,7 @@ export function AppShell(): JSX.Element {
             onUpdateWorkflowStepStatus={(step, status) => void updateWorkflowStepStatus(step, status)}
             onCreateTaskWithContextFromMessage={(message) => void createTaskWithContextFromMessage(message)}
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
+            onRefreshChannelActivity={() => void refreshChannelActivity()}
             onRefreshChannelProtocol={() => void refreshChannelProtocol()}
             onRefreshChannelFiles={() => void Promise.all([refreshChannelFiles(), refreshChannelRunArtifacts()])}
             attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
@@ -2395,6 +2488,48 @@ export function AppShell(): JSX.Element {
       </aside>
     </main>
   );
+}
+
+interface ChannelTransitionEntity {
+  readonly entityType: StateEntityType;
+  readonly entityId: string;
+  readonly updatedAt: string;
+}
+
+function buildChannelTransitionEntities(
+  channelId: string,
+  tasks: readonly Task[],
+  runs: readonly RunSession[],
+  workflows: readonly ChannelWorkflow[],
+  workflowSteps: readonly ChannelWorkflowStep[],
+): readonly ChannelTransitionEntity[] {
+  if (!channelId) {
+    return [];
+  }
+
+  const channelTasks = deriveChannelTasks(channelId, tasks);
+  const channelTaskIds = new Set(channelTasks.map((task) => task.id));
+  const items: ChannelTransitionEntity[] = [
+    ...channelTasks.map((task) => ({ entityType: "task" as const, entityId: task.id, updatedAt: task.updatedAt })),
+    ...runs
+      .filter((run) => run.channelId === channelId || channelTaskIds.has(run.taskId))
+      .map((run) => ({ entityType: "run" as const, entityId: run.id, updatedAt: run.updatedAt })),
+    ...workflows
+      .filter((workflow) => workflow.channelId === channelId)
+      .map((workflow) => ({ entityType: "workflow" as const, entityId: workflow.id, updatedAt: workflow.updatedAt })),
+    ...workflowSteps
+      .filter((step) => step.channelId === channelId)
+      .map((step) => ({ entityType: "workflow_step" as const, entityId: step.id, updatedAt: step.updatedAt })),
+  ];
+
+  const deduped = new Map<string, ChannelTransitionEntity>();
+  for (const item of items) {
+    deduped.set(`${item.entityType}:${item.entityId}`, item);
+  }
+
+  return [...deduped.values()]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 20);
 }
 
 function TopBar({
