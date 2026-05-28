@@ -50,6 +50,9 @@ import type {
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
+  ChannelWorkflow,
+  ChannelWorkflowStep,
+  ChannelWorkflowStepStartMode,
   ProviderPreset,
   ResourceLease,
   RunSession,
@@ -62,8 +65,36 @@ import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
 type TaskFilter = "all" | "queued" | "running" | "review" | "done";
+type ChannelTab = "activity" | "tasks" | "files" | "protocol";
 
 const taskFilters: readonly TaskFilter[] = ["all", "queued", "running", "review", "done"];
+const channelTabs: readonly ChannelTab[] = ["activity", "tasks", "files", "protocol"];
+
+function channelTabLabel(tab: ChannelTab): string {
+  if (tab === "activity") {
+    return "Activity";
+  }
+  if (tab === "tasks") {
+    return "Tasks";
+  }
+  if (tab === "files") {
+    return "Files";
+  }
+  return "Channel protocol";
+}
+
+function channelTabIcon(tab: ChannelTab, size: number): JSX.Element {
+  if (tab === "activity") {
+    return <MessageSquare size={size} />;
+  }
+  if (tab === "tasks") {
+    return <SquareTerminal size={size} />;
+  }
+  if (tab === "files") {
+    return <FileText size={size} />;
+  }
+  return <Workflow size={size} />;
+}
 
 export function WorkspaceClientView({
   cwd,
@@ -81,6 +112,8 @@ export function WorkspaceClientView({
   channelDecisions,
   channelHandoffs,
   channelContextSummaries,
+  channelWorkflows,
+  channelWorkflowSteps,
   selectedTaskId,
   providers,
   teammateTemplates,
@@ -101,6 +134,7 @@ export function WorkspaceClientView({
   latestStatus,
   isRunning,
   activeTaskRunAction,
+  runningWorkflowStepId,
   errorMessage,
   onCwdChange,
   onChannelFormChange,
@@ -123,8 +157,12 @@ export function WorkspaceClientView({
   onCreateHandoffFromMessage,
   onCreateHandoffFromTask,
   onUpdateHandoffStatus,
+  onStartWorkflowFromHandoff,
+  onStartWorkflowStep,
+  onUpdateWorkflowStepStatus,
   onCreateTaskWithContextFromMessage,
   onCreateTaskFromContextSummary,
+  onRefreshChannelProtocol,
   attachmentContentUrl,
   onRefreshTasks,
   onSelectTask,
@@ -149,6 +187,8 @@ export function WorkspaceClientView({
   readonly channelDecisions: readonly ChannelDecision[];
   readonly channelHandoffs: readonly ChannelHandoff[];
   readonly channelContextSummaries: readonly ChannelContextSummary[];
+  readonly channelWorkflows: readonly ChannelWorkflow[];
+  readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
   readonly selectedTaskId: string;
   readonly providers: readonly ProviderPreset[];
   readonly teammateTemplates: readonly AiTeammateTemplate[];
@@ -169,6 +209,7 @@ export function WorkspaceClientView({
   readonly latestStatus: string;
   readonly isRunning: boolean;
   readonly activeTaskRunAction: TaskRunActionState | undefined;
+  readonly runningWorkflowStepId: string;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onChannelFormChange: (form: ChannelFormState) => void;
@@ -197,8 +238,12 @@ export function WorkspaceClientView({
   readonly onCreateHandoffFromMessage: (message: ChannelMessage) => void;
   readonly onCreateHandoffFromTask: (task: Task) => void;
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
+  readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
+  readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
+  readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
   readonly onCreateTaskWithContextFromMessage: (message: ChannelMessage) => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
+  readonly onRefreshChannelProtocol: () => void;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
   readonly onRefreshTasks: () => void;
   readonly onSelectTask: (taskId: string) => void;
@@ -213,7 +258,7 @@ export function WorkspaceClientView({
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
-  const [activeTab, setActiveTab] = useState<"activity" | "tasks" | "files">("activity");
+  const [activeTab, setActiveTab] = useState<ChannelTab>("activity");
   const [inspectorMode, setInspectorMode] = useState<"brief" | "decisions" | "handoffs" | "runtime">("brief");
   const [briefDraft, setBriefDraft] = useState({
     objective: "",
@@ -269,8 +314,8 @@ export function WorkspaceClientView({
     [activeRunId, latestStatus, runById, tasks],
   );
   const activityItems = useMemo(
-    () => buildChannelActivityItems(channelMessages, channelDecisions, channelHandoffs, channelContextSummaries),
-    [channelContextSummaries, channelDecisions, channelHandoffs, channelMessages],
+    () => buildChannelActivityItems(channelMessages, channelDecisions, channelHandoffs, channelContextSummaries, channelWorkflows, channelWorkflowSteps),
+    [channelContextSummaries, channelDecisions, channelHandoffs, channelMessages, channelWorkflowSteps, channelWorkflows],
   );
 
   useEffect(() => {
@@ -293,6 +338,53 @@ export function WorkspaceClientView({
     setCreateTaskOpen(false);
   }
 
+  const taskDetailContent = createTaskOpen ? (
+    <NewTaskPanel
+      taskForm={taskForm}
+      selectedChannel={selectedChannel}
+      effectiveProviderId={effectiveProviderId}
+      taskReadyProviders={taskReadyProviders}
+      setupChatProviders={setupChatProviders}
+      mediaProviders={mediaProviders}
+      providersLoading={providersLoading}
+      onProviderSelect={onProviderSelect}
+      onTaskFormChange={onTaskFormChange}
+      onCreateTask={createTask}
+      onCancel={() => setCreateTaskOpen(false)}
+    />
+  ) : selectedTask ? (
+    <TaskDetailPanel
+      task={selectedTask}
+      channels={channels}
+      runById={runById}
+      activeRunId={activeRunId}
+      latestStatus={latestStatus}
+      pendingApprovalCount={pendingApprovalCount}
+      effectiveProvider={effectiveProvider}
+      providerBlocker={providerBlocker}
+      isRunning={isRunning}
+      activeTaskRunAction={activeTaskRunAction}
+      taskActionPending={taskActionPending}
+      activeLeaseCount={activeLeaseCount}
+      decisions={channelDecisions}
+      contextSummaries={channelContextSummaries}
+      workflows={channelWorkflows}
+      workflowSteps={channelWorkflowSteps}
+      onCreateHandoffFromTask={onCreateHandoffFromTask}
+      onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
+      onCheckThenRunTask={onCheckThenRunTask}
+      onRunTask={onRunTask}
+      onOpenRun={onOpenRun}
+      onOpenApprovals={onOpenApprovals}
+      onOpenProviders={onOpenProviders}
+    />
+  ) : (
+    <div className="client-empty-state">
+      <SquareTerminal />
+      <span>{t("Select a task or create a new one")}</span>
+    </div>
+  );
+
   function saveBrief(): void {
     onSaveBrief({
       objective: briefDraft.objective,
@@ -305,6 +397,24 @@ export function WorkspaceClientView({
       linkPreviewIds: channelBrief?.linkPreviewIds ?? [],
       updatedBy: "local-user",
     });
+  }
+
+  const activeTabLoading = activeTab === "tasks"
+    ? tasksLoading
+    : activeTab === "protocol"
+      ? channelProtocolLoading
+      : channelsLoading;
+
+  function refreshActiveTab(): void {
+    if (activeTab === "tasks") {
+      onRefreshTasks();
+      return;
+    }
+    if (activeTab === "protocol") {
+      onRefreshChannelProtocol();
+      return;
+    }
+    onRefreshChannels();
   }
 
   const teammateOptions = useMemo(
@@ -335,9 +445,6 @@ export function WorkspaceClientView({
     try {
       const uploaded = await onUploadAttachments(selectedFiles);
       setPendingAttachments((current) => [...current, ...uploaded]);
-      if (uploaded.length > 0) {
-        setActiveTab("files");
-      }
     } finally {
       setComposerBusy(false);
     }
@@ -354,7 +461,6 @@ export function WorkspaceClientView({
       if (preview) {
         setPendingLinkPreviews((current) => current.some((item) => item.id === preview.id) ? current : [...current, preview]);
         setLinkDraft("");
-        setActiveTab("files");
       }
     } finally {
       setComposerBusy(false);
@@ -454,7 +560,15 @@ export function WorkspaceClientView({
             <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
           </select>
         </label>
-        <button className="primary-button task-toolbar-create" type="button" onClick={() => setCreateTaskOpen(true)} disabled={!selectedChannelId}>
+        <button
+          className="primary-button task-toolbar-create"
+          type="button"
+          onClick={() => {
+            setActiveTab("tasks");
+            setCreateTaskOpen(true);
+          }}
+          disabled={!selectedChannelId}
+        >
           <Plus size={15} />
           {t("New task")}
         </button>
@@ -468,28 +582,28 @@ export function WorkspaceClientView({
       ) : null}
 
       <div className="task-workbench-main">
-        <section className="panel task-list-panel" aria-label={t("Channel activity")}>
+        <section className={activeTab === "protocol" ? "panel task-list-panel protocol-tab-panel" : "panel task-list-panel"} aria-label={t("Channel activity")}>
           <div className="panel-title split">
             <span>
-              {activeTab === "activity" ? <MessageSquare size={16} /> : activeTab === "files" ? <FileText size={16} /> : <SquareTerminal size={16} />}
-              <h2>{activeTab === "activity" ? t("Activity") : activeTab === "files" ? t("Files") : t("Tasks")}</h2>
+              {channelTabIcon(activeTab, 16)}
+              <h2>{t(channelTabLabel(activeTab))}</h2>
             </span>
             <button
               className="icon-button"
               type="button"
-              onClick={activeTab === "tasks" ? onRefreshTasks : onRefreshChannels}
-              disabled={!selectedChannelId || (activeTab === "tasks" ? tasksLoading : channelsLoading)}
+              onClick={refreshActiveTab}
+              disabled={!selectedChannelId || activeTabLoading}
               aria-label={t("Refresh")}
             >
-              {(activeTab === "tasks" ? tasksLoading : channelsLoading) ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+              {activeTabLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
             </button>
           </div>
 
           <div className="channel-tabs" role="tablist" aria-label={t("Channel tabs")}>
-            {(["activity", "tasks", "files"] as const).map((tab) => (
+            {channelTabs.map((tab) => (
               <button key={tab} type="button" className={activeTab === tab ? "channel-tab active" : "channel-tab"} onClick={() => setActiveTab(tab)}>
-                {tab === "activity" ? <MessageSquare size={14} /> : tab === "tasks" ? <SquareTerminal size={14} /> : <FileText size={14} />}
-                {tab === "activity" ? t("Activity") : tab === "tasks" ? t("Tasks") : t("Files")}
+                {channelTabIcon(tab, 14)}
+                {t(channelTabLabel(tab))}
               </button>
             ))}
           </div>
@@ -574,6 +688,7 @@ export function WorkspaceClientView({
                   }
                   if (item.kind === "handoff") {
                     const handoff = item.record;
+                    const handoffWorkflow = channelWorkflows.find((workflow) => workflow.sourceHandoffId === handoff.id);
                     return (
                       <MessageBubble
                         key={item.id}
@@ -584,6 +699,10 @@ export function WorkspaceClientView({
                         body={`${handoff.fromParticipantLabel} -> ${handoff.toParticipantLabel}: ${handoff.reason}`}
                         action={
                           <div className="activity-action-row">
+                            <button className="secondary-button compact-button" type="button" onClick={() => onStartWorkflowFromHandoff(handoff)} disabled={Boolean(handoffWorkflow)}>
+                              <Play size={14} />
+                              {handoffWorkflow ? t("Workflow started") : t("Start workflow")}
+                            </button>
                             <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "accepted")}>
                               {t("Accept")}
                             </button>
@@ -591,6 +710,44 @@ export function WorkspaceClientView({
                               {t("Complete")}
                             </button>
                           </div>
+                        }
+                      />
+                    );
+                  }
+                  if (item.kind === "workflow") {
+                    const workflow = item.record;
+                    const steps = channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
+                    return (
+                      <MessageBubble
+                        key={item.id}
+                        avatar={<AvatarInitial label="W" tone="violet" />}
+                        author={t("Workflow")}
+                        tag={workflow.status}
+                        time={formatDateTime(workflow.updatedAt)}
+                        body={`${workflow.title}: ${workflow.objective}`}
+                        action={<small>{t("{count} steps", { count: steps.length })}</small>}
+                      />
+                    );
+                  }
+                  if (item.kind === "workflow-step") {
+                    const step = item.record;
+                    return (
+                      <MessageBubble
+                        key={item.id}
+                        avatar={<AvatarInitial label="S" tone="teal" />}
+                        author={t("Workflow step")}
+                        tag={step.status}
+                        time={formatDateTime(step.updatedAt)}
+                        body={`${step.title}: ${step.prompt}`}
+                        action={
+                          step.blocker ? (
+                            <div className="provider-run-notice compact">
+                              <CircleAlert size={14} />
+                              <span>{step.blocker}</span>
+                            </div>
+                          ) : step.taskId ? (
+                            <code>{step.taskId}{step.runId ? ` / ${step.runId}` : ""}</code>
+                          ) : undefined
                         }
                       />
                     );
@@ -643,52 +800,88 @@ export function WorkspaceClientView({
           ) : null}
 
           {activeTab === "tasks" ? (
-            <>
-              <div className="task-filter-tabs" aria-label={t("Task filters")}>
-                {taskFilters.map((filter) => (
-                  <button key={filter} className={taskFilter === filter ? "active" : ""} type="button" onClick={() => setTaskFilter(filter)}>
-                    {t(taskFilterLabel(filter))}
-                    <small>{filterCounts[filter]}</small>
-                  </button>
-                ))}
-              </div>
-              <div className="workbench-task-list">
-                {filteredTasks.length === 0 ? (
-                  <div className="client-empty-state">
-                    {tasksLoading ? <Loader2 className="spin" /> : <SquareTerminal />}
-                    <span>{tasksLoading ? t("Loading tasks...") : t("No tasks match this filter")}</span>
-                  </div>
-                ) : (
-                  filteredTasks.map((task) => {
-                    const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
-                    const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
-                    return (
-                      <button
-                        key={task.id}
-                        type="button"
-                        className={task.id === selectedTask?.id && !createTaskOpen ? "client-task-card selected" : "client-task-card"}
-                        onClick={() => selectTask(task.id)}
-                      >
-                        <span className="client-task-main">
-                          <span>
-                            <strong>{task.title}</strong>
-                            <small>{task.prompt}</small>
+            <div className="tasks-tab-layout">
+              <div className="tasks-tab-list">
+                <div className="task-filter-tabs" aria-label={t("Task filters")}>
+                  {taskFilters.map((filter) => (
+                    <button key={filter} className={taskFilter === filter ? "active" : ""} type="button" onClick={() => setTaskFilter(filter)}>
+                      {t(taskFilterLabel(filter))}
+                      <small>{filterCounts[filter]}</small>
+                    </button>
+                  ))}
+                </div>
+                <div className="workbench-task-list">
+                  {filteredTasks.length === 0 ? (
+                    <div className="client-empty-state">
+                      {tasksLoading ? <Loader2 className="spin" /> : <SquareTerminal />}
+                      <span>{tasksLoading ? t("Loading tasks...") : t("No tasks match this filter")}</span>
+                    </div>
+                  ) : (
+                    filteredTasks.map((task) => {
+                      const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
+                      const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
+                      return (
+                        <button
+                          key={task.id}
+                          type="button"
+                          className={task.id === selectedTask?.id && !createTaskOpen ? "client-task-card selected" : "client-task-card"}
+                          onClick={() => selectTask(task.id)}
+                        >
+                          <span className="client-task-main">
+                            <span>
+                              <strong>{task.title}</strong>
+                              <small>{task.prompt}</small>
+                            </span>
+                            <span className={`task-status ${task.status}`}>{task.status}</span>
                           </span>
-                          <span className={`task-status ${task.status}`}>{task.status}</span>
-                        </span>
-                        <span className="task-card-meta">
-                          {task.currentRunId ? <StatusBadge status={linkedRunStatus} /> : <span className="status-badge queued">{t("Not run")}</span>}
-                          <small>{task.currentRunId ?? formatDateTime(task.updatedAt)}</small>
-                        </span>
-                      </button>
-                    );
-                  })
-                )}
+                          <span className="task-card-meta">
+                            {task.currentRunId ? <StatusBadge status={linkedRunStatus} /> : <span className="status-badge queued">{t("Not run")}</span>}
+                            <small>{task.currentRunId ?? formatDateTime(task.updatedAt)}</small>
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
-            </>
+              <section className="task-detail-panel inline-task-detail-panel" aria-label={createTaskOpen ? t("New task") : t("Task detail")}>
+                {taskDetailContent}
+              </section>
+            </div>
           ) : null}
 
-          <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
+          {activeTab === "protocol" ? (
+            <div className="channel-protocol-tab-content">
+              <ChannelInspector
+                mode={inspectorMode}
+                onModeChange={setInspectorMode}
+                brief={channelBrief}
+                briefDraft={briefDraft}
+                onBriefDraftChange={setBriefDraft}
+                onSaveBrief={saveBrief}
+                decisions={channelDecisions}
+                handoffs={channelHandoffs}
+                contextSummaries={channelContextSummaries}
+                workflows={channelWorkflows}
+                workflowSteps={channelWorkflowSteps}
+                attachments={channelAttachments}
+                linkPreviews={channelLinkPreviews}
+                runningWorkflowStepId={runningWorkflowStepId}
+                loading={channelProtocolLoading}
+                selectedTask={selectedTask}
+                onSupersedeDecision={onSupersedeDecision}
+                onRejectDecision={onRejectDecision}
+                onUpdateHandoffStatus={onUpdateHandoffStatus}
+                onStartWorkflowFromHandoff={onStartWorkflowFromHandoff}
+                onStartWorkflowStep={onStartWorkflowStep}
+                onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
+                onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
+              />
+            </div>
+          ) : null}
+
+          {activeTab === "activity" ? (
+            <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
             <div className="composer-head">
               <span>
                 <MessageSquare size={16} />
@@ -793,71 +986,10 @@ export function WorkspaceClientView({
                 </button>
               )}
             </div>
-          </section>
+            </section>
+          ) : null}
         </section>
 
-        <section className="panel task-detail-panel" aria-label={createTaskOpen ? t("New task") : t("Task detail")}>
-          <ChannelInspector
-            mode={inspectorMode}
-            onModeChange={setInspectorMode}
-            briefDraft={briefDraft}
-            onBriefDraftChange={setBriefDraft}
-            onSaveBrief={saveBrief}
-            decisions={channelDecisions}
-            handoffs={channelHandoffs}
-            contextSummaries={channelContextSummaries}
-            loading={channelProtocolLoading}
-            selectedTask={selectedTask}
-            onSupersedeDecision={onSupersedeDecision}
-            onRejectDecision={onRejectDecision}
-            onUpdateHandoffStatus={onUpdateHandoffStatus}
-            onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
-          />
-          {createTaskOpen ? (
-            <NewTaskPanel
-              taskForm={taskForm}
-              selectedChannel={selectedChannel}
-              effectiveProviderId={effectiveProviderId}
-              taskReadyProviders={taskReadyProviders}
-              setupChatProviders={setupChatProviders}
-              mediaProviders={mediaProviders}
-              providersLoading={providersLoading}
-              onProviderSelect={onProviderSelect}
-              onTaskFormChange={onTaskFormChange}
-              onCreateTask={createTask}
-              onCancel={() => setCreateTaskOpen(false)}
-            />
-          ) : selectedTask ? (
-            <TaskDetailPanel
-              task={selectedTask}
-              channels={channels}
-              runById={runById}
-              activeRunId={activeRunId}
-              latestStatus={latestStatus}
-              pendingApprovalCount={pendingApprovalCount}
-              effectiveProvider={effectiveProvider}
-              providerBlocker={providerBlocker}
-              isRunning={isRunning}
-              activeTaskRunAction={activeTaskRunAction}
-              taskActionPending={taskActionPending}
-              activeLeaseCount={activeLeaseCount}
-              decisions={channelDecisions}
-              contextSummaries={channelContextSummaries}
-              onCreateHandoffFromTask={onCreateHandoffFromTask}
-              onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
-              onCheckThenRunTask={onCheckThenRunTask}
-              onRunTask={onRunTask}
-              onOpenRun={onOpenRun}
-              onOpenApprovals={onOpenApprovals}
-              onOpenProviders={onOpenProviders}
-            />
-          ) : (
-            <div className="client-empty-state">
-              <SquareTerminal />
-              <span>{t("Select a task or create a new one")}</span>
-            </div>
-          )}
-        </section>
       </div>
       <details className="config-disclosure channel-options">
         <summary>
@@ -910,21 +1042,31 @@ type ChannelInspectorMode = "brief" | "decisions" | "handoffs" | "runtime";
 function ChannelInspector({
   mode,
   onModeChange,
+  brief,
   briefDraft,
   onBriefDraftChange,
   onSaveBrief,
   decisions,
   handoffs,
   contextSummaries,
+  workflows,
+  workflowSteps,
+  attachments,
+  linkPreviews,
+  runningWorkflowStepId,
   loading,
   selectedTask,
   onSupersedeDecision,
   onRejectDecision,
   onUpdateHandoffStatus,
+  onStartWorkflowFromHandoff,
+  onStartWorkflowStep,
+  onUpdateWorkflowStepStatus,
   onCreateTaskFromContextSummary,
 }: {
   readonly mode: ChannelInspectorMode;
   readonly onModeChange: (mode: ChannelInspectorMode) => void;
+  readonly brief: ChannelBrief | undefined;
   readonly briefDraft: {
     readonly objective: string;
     readonly scope: string;
@@ -943,16 +1085,25 @@ function ChannelInspector({
   readonly decisions: readonly ChannelDecision[];
   readonly handoffs: readonly ChannelHandoff[];
   readonly contextSummaries: readonly ChannelContextSummary[];
+  readonly workflows: readonly ChannelWorkflow[];
+  readonly workflowSteps: readonly ChannelWorkflowStep[];
+  readonly attachments: readonly ChannelAttachment[];
+  readonly linkPreviews: readonly ChannelLinkPreview[];
+  readonly runningWorkflowStepId: string;
   readonly loading: boolean;
   readonly selectedTask: Task | undefined;
   readonly onSupersedeDecision: (decision: ChannelDecision) => void;
   readonly onRejectDecision: (decision: ChannelDecision) => void;
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
+  readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
+  readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
+  readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const activeDecisions = decisions.filter((decision) => decision.status === "active");
   const taskSummaries = selectedTask ? contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === selectedTask.id) : [];
+  const activeWorkflows = workflows.filter((workflow) => workflow.status !== "succeeded" && workflow.status !== "cancelled" && workflow.status !== "failed");
   return (
     <section className="channel-inspector" aria-label={t("Channel inspector")}>
       <div className="channel-inspector-tabs" role="tablist" aria-label={t("Channel inspector modes")}>
@@ -1025,6 +1176,14 @@ function ChannelInspector({
                 <small>{handoff.status} · {handoff.reason}</small>
               </span>
               <div className="activity-action-row">
+                <button
+                  className="secondary-button compact-button"
+                  type="button"
+                  onClick={() => onStartWorkflowFromHandoff(handoff)}
+                  disabled={workflows.some((workflow) => workflow.sourceHandoffId === handoff.id)}
+                >
+                  {workflows.some((workflow) => workflow.sourceHandoffId === handoff.id) ? t("Workflow started") : t("Start workflow")}
+                </button>
                 <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "accepted")}>{t("Accept")}</button>
                 <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>{t("Complete")}</button>
               </div>
@@ -1034,6 +1193,30 @@ function ChannelInspector({
       ) : null}
       {mode === "runtime" ? (
         <div className="runtime-protocol">
+          <div className="task-strip-head">
+            <span><Workflow size={15} /><strong>{t("Workflow queue")}</strong></span>
+            <small>{activeWorkflows.length}</small>
+          </div>
+          <ProtocolList
+            emptyLabel={t("No active workflows")}
+            items={activeWorkflows}
+            renderItem={(workflow) => (
+              <WorkflowQueueCard
+                key={workflow.id}
+                workflow={workflow}
+                steps={workflowSteps.filter((step) => step.workflowId === workflow.id)}
+                brief={brief}
+                decisions={activeDecisions}
+                handoff={handoffs.find((handoff) => handoff.id === workflow.sourceHandoffId)}
+                contextSummaries={contextSummaries}
+                attachments={attachments}
+                linkPreviews={linkPreviews}
+                runningWorkflowStepId={runningWorkflowStepId}
+                onStartWorkflowStep={onStartWorkflowStep}
+                onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
+              />
+            )}
+          />
           <div className="task-strip-head">
             <span><FileCheck2 size={15} /><strong>{t("Active decisions")}</strong></span>
             <small>{activeDecisions.length}</small>
@@ -1087,6 +1270,138 @@ function ProtocolList<T>({
     );
   }
   return <div className="protocol-list">{items.map(renderItem)}</div>;
+}
+
+function WorkflowQueueCard({
+  workflow,
+  steps,
+  brief,
+  decisions,
+  handoff,
+  contextSummaries,
+  attachments,
+  linkPreviews,
+  runningWorkflowStepId,
+  onStartWorkflowStep,
+  onUpdateWorkflowStepStatus,
+}: {
+  readonly workflow: ChannelWorkflow;
+  readonly steps: readonly ChannelWorkflowStep[];
+  readonly brief: ChannelBrief | undefined;
+  readonly decisions: readonly ChannelDecision[];
+  readonly handoff: ChannelHandoff | undefined;
+  readonly contextSummaries: readonly ChannelContextSummary[];
+  readonly attachments: readonly ChannelAttachment[];
+  readonly linkPreviews: readonly ChannelLinkPreview[];
+  readonly runningWorkflowStepId: string;
+  readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
+  readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const orderedSteps = [...steps].sort((left, right) => left.position - right.position);
+  const workflowContextSummaries = contextSummaries.filter((summary) => orderedSteps.some((step) => step.contextSummaryId === summary.id));
+  return (
+    <div className="protocol-row workflow-queue-card">
+      <div className="workflow-queue-head">
+        <span>
+          <strong>{workflow.title}</strong>
+          <small>{workflow.status} · {workflow.objective}</small>
+        </span>
+        <StatusBadge status={workflow.status} />
+      </div>
+      <div className="context-packet">
+        {brief?.objective ? <span>{t("Brief")}: {brief.objective}</span> : null}
+        {handoff ? <span>{t("Source handoff")}: {handoff.fromParticipantLabel} {"->"} {handoff.toParticipantLabel}</span> : null}
+        <span>{t("Active decisions")}: {decisions.length}</span>
+        <span>{t("Context summaries")}: {workflowContextSummaries.length}</span>
+        <span>{t("Attachments")}: {attachments.length}</span>
+        <span>{t("Links")}: {linkPreviews.length}</span>
+      </div>
+      <div className="workflow-step-list">
+        {orderedSteps.length === 0 ? (
+          <div className="client-empty-state compact">
+            <Workflow />
+            <span>{t("No workflow steps")}</span>
+          </div>
+        ) : (
+          orderedSteps.map((step) => (
+            <WorkflowStepCard
+              key={step.id}
+              step={step}
+              running={runningWorkflowStepId === step.id}
+              contextSummary={contextSummaries.find((summary) => summary.id === step.contextSummaryId)}
+              onStartWorkflowStep={onStartWorkflowStep}
+              onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WorkflowStepCard({
+  step,
+  running,
+  contextSummary,
+  onStartWorkflowStep,
+  onUpdateWorkflowStepStatus,
+}: {
+  readonly step: ChannelWorkflowStep;
+  readonly running: boolean;
+  readonly contextSummary: ChannelContextSummary | undefined;
+  readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
+  readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const terminal = isWorkflowStepTerminal(step.status);
+  const canStart = step.status === "queued" || step.status === "blocked";
+  const canSkip = step.status === "queued";
+  return (
+    <article className="workflow-step-card compact">
+      <div className="workflow-step-head">
+        <span>
+          <strong>{step.position}. {step.title}</strong>
+          <small>{step.toParticipantLabel} · {step.prompt}</small>
+        </span>
+        <StatusBadge status={step.status} />
+      </div>
+      {contextSummary ? (
+        <div className="context-packet muted">
+          <span>{t("Context summary")}: {contextSummary.summary}</span>
+        </div>
+      ) : null}
+      {step.blocker ? (
+        <div className="provider-run-notice compact">
+          <CircleAlert size={14} />
+          <span>{step.blocker}</span>
+        </div>
+      ) : null}
+      {step.taskId || step.runId || step.resultSummary ? (
+        <div className="context-packet muted">
+          {step.taskId ? <code>{step.taskId}</code> : null}
+          {step.runId ? <code>{step.runId}</code> : null}
+          {step.resultSummary ? <span>{step.resultSummary}</span> : null}
+        </div>
+      ) : null}
+      <div className="activity-action-row">
+        <button className="secondary-button compact-button" type="button" onClick={() => onStartWorkflowStep(step, "create_task")} disabled={!canStart || running}>
+          {running ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+          {t("Start step")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onStartWorkflowStep(step, "create_and_run_task")} disabled={!canStart || running}>
+          {running ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+          {t("Start + run")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onUpdateWorkflowStepStatus(step, "skipped")} disabled={!canSkip || running}>
+          {t("Skip")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onUpdateWorkflowStepStatus(step, "cancelled")} disabled={terminal || running}>
+          {t("Cancel")}
+        </button>
+      </div>
+    </article>
+  );
 }
 
 function NewTaskPanel({
@@ -1177,6 +1492,8 @@ function TaskDetailPanel({
   activeLeaseCount,
   decisions,
   contextSummaries,
+  workflows,
+  workflowSteps,
   onCreateHandoffFromTask,
   onCreateTaskFromContextSummary,
   onCheckThenRunTask,
@@ -1199,6 +1516,8 @@ function TaskDetailPanel({
   readonly activeLeaseCount: number;
   readonly decisions: readonly ChannelDecision[];
   readonly contextSummaries: readonly ChannelContextSummary[];
+  readonly workflows: readonly ChannelWorkflow[];
+  readonly workflowSteps: readonly ChannelWorkflowStep[];
   readonly onCreateHandoffFromTask: (task: Task) => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
@@ -1220,6 +1539,8 @@ function TaskDetailPanel({
   const taskActionsDisabled = isRunning || taskActionPending;
   const taskSummaries = contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === task.id);
   const activeDecisions = decisions.filter((decision) => decision.status === "active");
+  const sourceWorkflowStep = workflowSteps.find((step) => step.taskId === task.id);
+  const sourceWorkflow = sourceWorkflowStep ? workflows.find((workflow) => workflow.id === sourceWorkflowStep.workflowId) : undefined;
 
   return (
     <article className="client-task-card task-detail selected" aria-label={t("Task detail")}>
@@ -1294,6 +1615,14 @@ function TaskDetailPanel({
               {t("Context summary")}
             </button>
           ))}
+        </div>
+      ) : null}
+      {sourceWorkflowStep ? (
+        <div className="task-run-link compact">
+          <StatusBadge status={sourceWorkflowStep.status} />
+          <span>
+            {t("Source workflow")}: {sourceWorkflow?.title ?? sourceWorkflowStep.workflowId} / {sourceWorkflowStep.title}
+          </span>
         </div>
       ) : null}
       <div className="task-actions">
@@ -1375,6 +1704,10 @@ function taskMatchesFilter(filter: TaskFilter, task: Task, linkedRunStatus: stri
     return task.status === "done" || linkedRunStatus === "succeeded";
   }
   return true;
+}
+
+function isWorkflowStepTerminal(status: ChannelWorkflowStep["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "skipped" || status === "cancelled";
 }
 
 function ChannelFiles({
@@ -1477,19 +1810,25 @@ type ChannelActivityItem =
   | { readonly id: string; readonly kind: "message"; readonly createdAt: string; readonly record: ChannelMessage }
   | { readonly id: string; readonly kind: "decision"; readonly createdAt: string; readonly record: ChannelDecision }
   | { readonly id: string; readonly kind: "handoff"; readonly createdAt: string; readonly record: ChannelHandoff }
-  | { readonly id: string; readonly kind: "summary"; readonly createdAt: string; readonly record: ChannelContextSummary };
+  | { readonly id: string; readonly kind: "summary"; readonly createdAt: string; readonly record: ChannelContextSummary }
+  | { readonly id: string; readonly kind: "workflow"; readonly createdAt: string; readonly record: ChannelWorkflow }
+  | { readonly id: string; readonly kind: "workflow-step"; readonly createdAt: string; readonly record: ChannelWorkflowStep };
 
 function buildChannelActivityItems(
   messages: readonly ChannelMessage[],
   decisions: readonly ChannelDecision[],
   handoffs: readonly ChannelHandoff[],
   summaries: readonly ChannelContextSummary[],
+  workflows: readonly ChannelWorkflow[],
+  workflowSteps: readonly ChannelWorkflowStep[],
 ): readonly ChannelActivityItem[] {
   return [
     ...messages.map((record) => ({ id: record.id, kind: "message" as const, createdAt: record.createdAt, record })),
     ...decisions.map((record) => ({ id: record.id, kind: "decision" as const, createdAt: record.createdAt, record })),
     ...handoffs.map((record) => ({ id: record.id, kind: "handoff" as const, createdAt: record.createdAt, record })),
     ...summaries.map((record) => ({ id: record.id, kind: "summary" as const, createdAt: record.updatedAt, record })),
+    ...workflows.map((record) => ({ id: record.id, kind: "workflow" as const, createdAt: record.updatedAt, record })),
+    ...workflowSteps.map((record) => ({ id: record.id, kind: "workflow-step" as const, createdAt: record.updatedAt, record })),
   ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 

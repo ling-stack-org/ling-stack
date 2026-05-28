@@ -218,6 +218,87 @@ test("channel collaboration protocol endpoints persist state and reject cross-ch
   }
 });
 
+test("channel handoff workflows start steps, create tasks, and expose blockers", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflows-api-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const first = await createChannel(daemon.url, cwd);
+    const second = await createChannel(daemon.url, cwd);
+    const task = (await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: first.id,
+      title: "Implement workflow",
+      prompt: "Build v1.2.",
+    })).task;
+    const handoff = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/handoffs?cwd=${encodeURIComponent(cwd)}`, {
+      sourceTaskId: task.id,
+      fromParticipantId: "tian",
+      fromParticipantLabel: "Tian",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      reason: "Need implementation",
+      requiredInput: "v1.2 plan",
+      expectedOutput: "Patch",
+      createdBy: "local-user",
+    });
+
+    const createdWorkflow = await postJson(`${daemon.url}/handoffs/${encodeURIComponent(handoff.handoff.id)}/workflow?cwd=${encodeURIComponent(cwd)}`, {
+      createdBy: "local-user",
+    });
+    assert.equal(createdWorkflow.workflow.status, "draft");
+    assert.equal(createdWorkflow.workflowStep.status, "queued");
+
+    const started = await postJson(`${daemon.url}/workflow-steps/${encodeURIComponent(createdWorkflow.workflowStep.id)}/start?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "create_task",
+      taskTitle: "Workflow generated task",
+    });
+    assert.equal(started.workflow.status, "succeeded");
+    assert.equal(started.workflowStep.status, "succeeded");
+    assert.equal(started.task.title, "Workflow generated task");
+    assert.equal(started.task.assigneeTeammateId, "engineer");
+
+    const workflowEvents = await getJson(`${daemon.url}/state-transitions?cwd=${encodeURIComponent(cwd)}&entityType=workflow&entityId=${encodeURIComponent(createdWorkflow.workflow.id)}`);
+    assert.ok(workflowEvents.transitions.some((event) => event.toStatus === "succeeded"));
+    const stepEvents = await getJson(`${daemon.url}/state-transitions?cwd=${encodeURIComponent(cwd)}&entityType=workflow_step&entityId=${encodeURIComponent(createdWorkflow.workflowStep.id)}`);
+    assert.ok(stepEvents.transitions.some((event) => event.toStatus === "succeeded"));
+
+    const secondHandoff = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/handoffs?cwd=${encodeURIComponent(cwd)}`, {
+      sourceTaskId: task.id,
+      fromParticipantId: "tian",
+      fromParticipantLabel: "Tian",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      reason: "Need run",
+      requiredInput: "v1.2 plan",
+      expectedOutput: "Run",
+      createdBy: "local-user",
+    });
+    const blockedWorkflow = await postJson(`${daemon.url}/handoffs/${encodeURIComponent(secondHandoff.handoff.id)}/workflow?cwd=${encodeURIComponent(cwd)}`, {
+      createdBy: "local-user",
+    });
+    const blocked = await postJson(`${daemon.url}/workflow-steps/${encodeURIComponent(blockedWorkflow.workflowStep.id)}/start?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "create_and_run_task",
+    });
+    assert.equal(blocked.workflowStep.status, "blocked");
+    assert.match(blocked.blocker, /provider preset/i);
+
+    const crossWorkflow = await fetch(`${daemon.url}/channels/${encodeURIComponent(second.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sourceHandoffId: handoff.handoff.id,
+        title: "Cross channel",
+        objective: "Should fail.",
+        createdBy: "local-user",
+      }),
+    });
+    assert.equal(crossWorkflow.status, 400);
+    assert.match((await crossWorkflow.json()).message, /channel/i);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel link preview blocks localhost targets instead of fetching them", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-links-"));
   const daemon = await startDaemonForTest();

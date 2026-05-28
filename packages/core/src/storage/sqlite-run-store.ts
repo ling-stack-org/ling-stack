@@ -42,6 +42,8 @@ import {
   createChannelId,
   createChannelLinkPreviewId,
   createChannelMessageId,
+  createChannelWorkflowId,
+  createChannelWorkflowStepId,
   createTaskId,
   normalizeChannelRuntimePolicy,
   type Channel,
@@ -64,6 +66,10 @@ import {
   type ChannelRuntimePolicy,
   type ChannelStatus,
   type ChannelUpdateInput,
+  type ChannelWorkflow,
+  type ChannelWorkflowStep,
+  type ChannelWorkflowStepStatus,
+  type ChannelWorkflowStatus,
   type CreateChannelAttachmentInput,
   type CreateChannelContextSummaryInput,
   type CreateChannelDecisionInput,
@@ -71,6 +77,8 @@ import {
   type CreateChannelInput,
   type CreateChannelLinkPreviewInput,
   type CreateChannelMessageInput,
+  type CreateChannelWorkflowInput,
+  type CreateChannelWorkflowStepInput,
   type CreateTaskInput,
   type ListChannelAttachmentsOptions,
   type ListChannelContextSummariesOptions,
@@ -79,6 +87,8 @@ import {
   type ListChannelsOptions,
   type ListChannelLinkPreviewsOptions,
   type ListChannelMessagesOptions,
+  type ListChannelWorkflowsOptions,
+  type ListChannelWorkflowStepsOptions,
   type ListTasksOptions,
   type Task,
   type TaskStatus,
@@ -88,6 +98,8 @@ import {
   type UpdateChannelDecisionInput,
   type UpdateChannelHandoffInput,
   type UpdateChannelLinkPreviewInput,
+  type UpdateChannelWorkflowInput,
+  type UpdateChannelWorkflowStepInput,
 } from "../workspace-types.js";
 import {
   createArtifactId,
@@ -119,11 +131,15 @@ import {
 import {
   transitionRun,
   transitionTask,
+  transitionWorkflow,
+  transitionWorkflowStep,
   type RunTransitionEvent,
   type StateEntityType,
   type StateTransitionActor,
   type TaskTransitionEvent,
   type TransitionResult,
+  type WorkflowStepTransitionEvent,
+  type WorkflowTransitionEvent,
 } from "../state-machines.js";
 import {
   createMediaJobId,
@@ -164,6 +180,8 @@ const CHANNEL_WORKSPACE_MIGRATION_VERSION = 13;
 const CHANNEL_WORKSPACE_MIGRATION_NAME = "create_channel_workspace_assets";
 const CHANNEL_PROTOCOL_MIGRATION_VERSION = 14;
 const CHANNEL_PROTOCOL_MIGRATION_NAME = "create_channel_collaboration_protocol";
+const CHANNEL_WORKFLOW_MIGRATION_VERSION = 15;
+const CHANNEL_WORKFLOW_MIGRATION_NAME = "create_channel_handoff_workflows";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -1833,6 +1851,413 @@ export class SqliteRunStore implements RunStore {
     return this.getChannelContextSummary(id);
   }
 
+  createChannelWorkflow(input: CreateChannelWorkflowInput, now: string): ChannelWorkflow {
+    this.assertChannelExists(input.channelId);
+    if (input.sourceHandoffId) {
+      this.assertHandoffInChannel(input.channelId, input.sourceHandoffId);
+    }
+
+    const workflow: ChannelWorkflow = {
+      id: createChannelWorkflowId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      sourceHandoffId: input.sourceHandoffId,
+      title: input.title,
+      objective: input.objective,
+      status: input.status ?? "draft",
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO channel_workflows (
+          id,
+          workspace_id,
+          channel_id,
+          source_handoff_id,
+          title,
+          objective,
+          status,
+          created_by,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        workflow.id,
+        workflow.workspaceId,
+        workflow.channelId,
+        workflow.sourceHandoffId ?? null,
+        workflow.title,
+        workflow.objective,
+        workflow.status,
+        workflow.createdBy,
+        workflow.createdAt,
+        workflow.updatedAt,
+      );
+
+    const created = this.getChannelWorkflow(workflow.id);
+    if (!created) {
+      throw new Error(`Failed to create channel workflow: ${workflow.id}`);
+    }
+    return created;
+  }
+
+  getChannelWorkflow(id: string): ChannelWorkflow | undefined {
+    const row = this.database.prepare(channelWorkflowSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelWorkflow(row) : undefined;
+  }
+
+  listChannelWorkflows(options: ListChannelWorkflowsOptions): ChannelWorkflow[] {
+    const clauses = ["workspace_id = ?", "channel_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${channelWorkflowSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, rowid DESC LIMIT ?`)
+      .all(...params)
+      .map(mapChannelWorkflow);
+  }
+
+  updateChannelWorkflow(id: string, input: UpdateChannelWorkflowInput, now: string): ChannelWorkflow | undefined {
+    const existing = this.getChannelWorkflow(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: ChannelWorkflow = {
+      ...existing,
+      title: input.title ?? existing.title,
+      objective: input.objective ?? existing.objective,
+      status: input.status ?? existing.status,
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        UPDATE channel_workflows
+        SET title = ?, objective = ?, status = ?, updated_at = ?
+        WHERE id = ?
+      `)
+      .run(next.title, next.objective, next.status, next.updatedAt, id);
+    return this.getChannelWorkflow(id);
+  }
+
+  transitionChannelWorkflowStatus(input: {
+    readonly workflowId: string;
+    readonly expectedStatus?: ChannelWorkflowStatus;
+    readonly event: WorkflowTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+  }): TransitionResult<ChannelWorkflowStatus> {
+    const workflow = this.getChannelWorkflow(input.workflowId);
+    if (!workflow) {
+      return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
+    }
+    if (input.idempotencyKey) {
+      const existing = this.findStateTransitionByIdempotency("workflow", input.workflowId, input.idempotencyKey);
+      if (existing) {
+        return { ok: true, from: workflow.status, to: workflow.status, duplicate: true };
+      }
+    }
+    const result = transitionWorkflow({
+      entityId: input.workflowId,
+      currentStatus: workflow.status,
+      expectedStatus: input.expectedStatus,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!result.ok) {
+      return result;
+    }
+    const update = this.database
+      .prepare("UPDATE channel_workflows SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
+      .run(result.to, input.now, input.workflowId, result.from);
+    if (Number(update.changes) === 0) {
+      const current = this.getChannelWorkflow(input.workflowId);
+      return { ok: false, code: "stale_transition", currentStatus: current?.status ?? workflow.status };
+    }
+    this.recordStateTransitionEvent({
+      workspaceId: workflow.workspaceId,
+      entityType: "workflow",
+      entityId: input.workflowId,
+      fromStatus: result.from,
+      toStatus: result.to,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: input.now,
+    });
+    return result;
+  }
+
+  createChannelWorkflowStep(input: CreateChannelWorkflowStepInput, now: string): ChannelWorkflowStep {
+    const workflow = this.getChannelWorkflow(input.workflowId);
+    if (!workflow) {
+      throw new Error(`Channel workflow not found: ${input.workflowId}`);
+    }
+    if (input.sourceHandoffId) {
+      this.assertHandoffInChannel(workflow.channelId, input.sourceHandoffId);
+    }
+    if (input.contextSummaryId) {
+      this.assertContextSummaryInChannel(workflow.channelId, input.contextSummaryId);
+    }
+    const position = input.position ?? this.nextWorkflowStepPosition(input.workflowId);
+    const step: ChannelWorkflowStep = {
+      id: createChannelWorkflowStepId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: workflow.channelId,
+      workflowId: workflow.id,
+      sourceHandoffId: input.sourceHandoffId,
+      contextSummaryId: input.contextSummaryId,
+      position,
+      title: input.title,
+      prompt: input.prompt,
+      toParticipantId: input.toParticipantId,
+      toParticipantLabel: input.toParticipantLabel,
+      status: input.status ?? "queued",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO channel_workflow_steps (
+          id,
+          workspace_id,
+          channel_id,
+          workflow_id,
+          source_handoff_id,
+          context_summary_id,
+          task_id,
+          run_id,
+          position,
+          title,
+          prompt,
+          to_participant_id,
+          to_participant_label,
+          status,
+          blocker,
+          result_summary,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        step.id,
+        step.workspaceId,
+        step.channelId,
+        step.workflowId,
+        step.sourceHandoffId ?? null,
+        step.contextSummaryId ?? null,
+        null,
+        null,
+        step.position,
+        step.title,
+        step.prompt,
+        step.toParticipantId,
+        step.toParticipantLabel,
+        step.status,
+        null,
+        null,
+        step.createdAt,
+        step.updatedAt,
+      );
+
+    const created = this.getChannelWorkflowStep(step.id);
+    if (!created) {
+      throw new Error(`Failed to create channel workflow step: ${step.id}`);
+    }
+    return created;
+  }
+
+  getChannelWorkflowStep(id: string): ChannelWorkflowStep | undefined {
+    const row = this.database.prepare(channelWorkflowStepSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelWorkflowStep(row) : undefined;
+  }
+
+  listChannelWorkflowSteps(options: ListChannelWorkflowStepsOptions): ChannelWorkflowStep[] {
+    const clauses = ["workspace_id = ?", "workflow_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.workflowId];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${channelWorkflowStepSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY position ASC, created_at ASC LIMIT ?`)
+      .all(...params)
+      .map(mapChannelWorkflowStep);
+  }
+
+  updateChannelWorkflowStep(
+    id: string,
+    input: UpdateChannelWorkflowStepInput,
+    now: string,
+  ): ChannelWorkflowStep | undefined {
+    const existing = this.getChannelWorkflowStep(id);
+    if (!existing) {
+      return undefined;
+    }
+    const sourceHandoffId = nullableUpdate(input.sourceHandoffId, existing.sourceHandoffId);
+    const contextSummaryId = nullableUpdate(input.contextSummaryId, existing.contextSummaryId);
+    const taskId = nullableUpdate(input.taskId, existing.taskId);
+    const runId = nullableUpdate(input.runId, existing.runId);
+    if (sourceHandoffId) {
+      this.assertHandoffInChannel(existing.channelId, sourceHandoffId);
+    }
+    if (contextSummaryId) {
+      this.assertContextSummaryInChannel(existing.channelId, contextSummaryId);
+    }
+    if (taskId) {
+      this.assertTaskInChannel(existing.channelId, taskId);
+    }
+    if (runId) {
+      this.assertRunInChannel(existing.channelId, runId);
+    }
+    const next: ChannelWorkflowStep = {
+      ...existing,
+      sourceHandoffId,
+      contextSummaryId,
+      taskId,
+      runId,
+      position: input.position ?? existing.position,
+      title: input.title ?? existing.title,
+      prompt: input.prompt ?? existing.prompt,
+      toParticipantId: input.toParticipantId ?? existing.toParticipantId,
+      toParticipantLabel: input.toParticipantLabel ?? existing.toParticipantLabel,
+      status: input.status ?? existing.status,
+      blocker: nullableUpdate(input.blocker, existing.blocker),
+      resultSummary: nullableUpdate(input.resultSummary, existing.resultSummary),
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        UPDATE channel_workflow_steps
+        SET
+          source_handoff_id = ?,
+          context_summary_id = ?,
+          task_id = ?,
+          run_id = ?,
+          position = ?,
+          title = ?,
+          prompt = ?,
+          to_participant_id = ?,
+          to_participant_label = ?,
+          status = ?,
+          blocker = ?,
+          result_summary = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.sourceHandoffId ?? null,
+        next.contextSummaryId ?? null,
+        next.taskId ?? null,
+        next.runId ?? null,
+        next.position,
+        next.title,
+        next.prompt,
+        next.toParticipantId,
+        next.toParticipantLabel,
+        next.status,
+        next.blocker ?? null,
+        next.resultSummary ?? null,
+        next.updatedAt,
+        id,
+      );
+    return this.getChannelWorkflowStep(id);
+  }
+
+  transitionChannelWorkflowStepStatus(input: {
+    readonly workflowStepId: string;
+    readonly expectedStatus?: ChannelWorkflowStepStatus;
+    readonly event: WorkflowStepTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+    readonly taskId?: string | null;
+    readonly runId?: string | null;
+    readonly blocker?: string | null;
+    readonly resultSummary?: string | null;
+  }): TransitionResult<ChannelWorkflowStepStatus> {
+    const step = this.getChannelWorkflowStep(input.workflowStepId);
+    if (!step) {
+      return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
+    }
+    if (input.idempotencyKey) {
+      const existing = this.findStateTransitionByIdempotency("workflow_step", input.workflowStepId, input.idempotencyKey);
+      if (existing) {
+        return { ok: true, from: step.status, to: step.status, duplicate: true };
+      }
+    }
+    const result = transitionWorkflowStep({
+      entityId: input.workflowStepId,
+      currentStatus: step.status,
+      expectedStatus: input.expectedStatus,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!result.ok) {
+      return result;
+    }
+    const update = this.database
+      .prepare(`
+        UPDATE channel_workflow_steps
+        SET
+          status = ?,
+          task_id = ?,
+          run_id = ?,
+          blocker = ?,
+          result_summary = ?,
+          updated_at = ?
+        WHERE id = ? AND status = ?
+      `)
+      .run(
+        result.to,
+        input.taskId === undefined ? step.taskId ?? null : input.taskId,
+        input.runId === undefined ? step.runId ?? null : input.runId,
+        input.blocker === undefined ? step.blocker ?? null : input.blocker,
+        input.resultSummary === undefined ? step.resultSummary ?? null : input.resultSummary,
+        input.now,
+        input.workflowStepId,
+        result.from,
+      );
+    if (Number(update.changes) === 0) {
+      const current = this.getChannelWorkflowStep(input.workflowStepId);
+      return { ok: false, code: "stale_transition", currentStatus: current?.status ?? step.status };
+    }
+    this.recordStateTransitionEvent({
+      workspaceId: step.workspaceId,
+      entityType: "workflow_step",
+      entityId: input.workflowStepId,
+      fromStatus: result.from,
+      toStatus: result.to,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: input.now,
+    });
+    if (result.to === "succeeded" || result.to === "failed" || result.to === "skipped" || result.to === "cancelled") {
+      this.releaseResourceLeasesForOwner("workflow_step", input.workflowStepId, input.now);
+    }
+    return result;
+  }
+
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {
     const preset: ProviderPreset = {
       id: createProviderPresetId(),
@@ -3032,6 +3457,81 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(CHANNEL_PROTOCOL_MIGRATION_VERSION, CHANNEL_PROTOCOL_MIGRATION_NAME);
       }
     }
+
+    const hasChannelWorkflowMigration = this.hasMigration(CHANNEL_WORKFLOW_MIGRATION_VERSION);
+    if (
+      !hasChannelWorkflowMigration ||
+      !this.hasTable("channel_workflows") ||
+      !this.hasTable("channel_workflow_steps")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_workflows (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          source_handoff_id TEXT,
+          title TEXT NOT NULL,
+          objective TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_handoff_id) REFERENCES channel_handoffs(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_workflows_channel_status_updated
+        ON channel_workflows(channel_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_workflows_handoff
+        ON channel_workflows(source_handoff_id);
+
+        CREATE TABLE IF NOT EXISTS channel_workflow_steps (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          workflow_id TEXT NOT NULL,
+          source_handoff_id TEXT,
+          context_summary_id TEXT,
+          task_id TEXT,
+          run_id TEXT,
+          position INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          to_participant_id TEXT NOT NULL,
+          to_participant_label TEXT NOT NULL,
+          status TEXT NOT NULL,
+          blocker TEXT,
+          result_summary TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(workflow_id) REFERENCES channel_workflows(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_handoff_id) REFERENCES channel_handoffs(id) ON DELETE SET NULL,
+          FOREIGN KEY(context_summary_id) REFERENCES channel_context_summaries(id) ON DELETE SET NULL,
+          FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+          FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_workflow_steps_workflow_position
+        ON channel_workflow_steps(workflow_id, position);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_workflow_steps_channel_status
+        ON channel_workflow_steps(channel_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_workflow_steps_task
+        ON channel_workflow_steps(task_id);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_workflow_steps_run
+        ON channel_workflow_steps(run_id);
+      `);
+
+      if (!hasChannelWorkflowMigration) {
+        this.recordMigration(CHANNEL_WORKFLOW_MIGRATION_VERSION, CHANNEL_WORKFLOW_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -3171,6 +3671,26 @@ export class SqliteRunStore implements RunStore {
     }
   }
 
+  private assertHandoffInChannel(channelId: string, handoffId: string): void {
+    const handoff = this.getChannelHandoff(handoffId);
+    if (!handoff) {
+      throw new Error(`Channel handoff not found: ${handoffId}`);
+    }
+    if (handoff.channelId !== channelId) {
+      throw new Error(`Handoff does not belong to channel: ${handoffId}`);
+    }
+  }
+
+  private assertContextSummaryInChannel(channelId: string, contextSummaryId: string): void {
+    const contextSummary = this.getChannelContextSummary(contextSummaryId);
+    if (!contextSummary) {
+      throw new Error(`Channel context summary not found: ${contextSummaryId}`);
+    }
+    if (contextSummary.channelId !== channelId) {
+      throw new Error(`Context summary does not belong to channel: ${contextSummaryId}`);
+    }
+  }
+
   private assertSourceRefsInChannel(
     channelId: string,
     input: { readonly sourceMessageId?: string; readonly sourceTaskId?: string; readonly sourceRunId?: string },
@@ -3208,6 +3728,13 @@ export class SqliteRunStore implements RunStore {
     if (!threadMessage) {
       throw new Error(`Channel thread not found: ${targetId}`);
     }
+  }
+
+  private nextWorkflowStepPosition(workflowId: string): number {
+    const row = this.database
+      .prepare("SELECT COALESCE(MAX(position), 0) + 1 AS next_position FROM channel_workflow_steps WHERE workflow_id = ?")
+      .get(workflowId);
+    return readNumber(row, "next_position");
   }
 
   private updateRunStatus(
@@ -3452,6 +3979,44 @@ function mapChannelContextSummary(row: Record<string, SQLOutputValue>): ChannelC
     openQuestions: parseJsonStringArray(readString(row, "open_questions_json")),
     authorType: readString(row, "author_type") as ChannelContextSummaryAuthorType,
     authorId: readNullableString(row, "author_id"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelWorkflow(row: Record<string, SQLOutputValue>): ChannelWorkflow {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    sourceHandoffId: readNullableString(row, "source_handoff_id"),
+    title: readString(row, "title"),
+    objective: readString(row, "objective"),
+    status: readString(row, "status") as ChannelWorkflowStatus,
+    createdBy: readString(row, "created_by"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelWorkflowStep(row: Record<string, SQLOutputValue>): ChannelWorkflowStep {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    workflowId: readString(row, "workflow_id"),
+    sourceHandoffId: readNullableString(row, "source_handoff_id"),
+    contextSummaryId: readNullableString(row, "context_summary_id"),
+    taskId: readNullableString(row, "task_id"),
+    runId: readNullableString(row, "run_id"),
+    position: readNumber(row, "position"),
+    title: readString(row, "title"),
+    prompt: readString(row, "prompt"),
+    toParticipantId: readString(row, "to_participant_id"),
+    toParticipantLabel: readString(row, "to_participant_label"),
+    status: readString(row, "status") as ChannelWorkflowStepStatus,
+    blocker: readNullableString(row, "blocker"),
+    resultSummary: readNullableString(row, "result_summary"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
@@ -3837,6 +4402,50 @@ function channelContextSummarySelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM channel_context_summaries
+    ${whereClause}
+  `;
+}
+
+function channelWorkflowSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      source_handoff_id,
+      title,
+      objective,
+      status,
+      created_by,
+      created_at,
+      updated_at
+    FROM channel_workflows
+    ${whereClause}
+  `;
+}
+
+function channelWorkflowStepSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      workflow_id,
+      source_handoff_id,
+      context_summary_id,
+      task_id,
+      run_id,
+      position,
+      title,
+      prompt,
+      to_participant_id,
+      to_participant_label,
+      status,
+      blocker,
+      result_summary,
+      created_at,
+      updated_at
+    FROM channel_workflow_steps
     ${whereClause}
   `;
 }

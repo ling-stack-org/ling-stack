@@ -11,6 +11,7 @@ Related docs:
 
 - [Web UI v0.1 Design](web-ui-v0.1.md)
 - [Channel Workspace v1.1 Design and Implementation Plan](channel-workspace-v1.1.md)
+- [Channel Workspace v1.2 Handoff Workflows](channel-workspace-v1.2.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
@@ -198,6 +199,7 @@ Tabs are:
 Activity
 Tasks
 Files
+Channel protocol
 ```
 
 `Activity` is the default tab.
@@ -205,7 +207,6 @@ Files
 Future tabs can include:
 
 - `Plan`,
-- `Brief`,
 - `Approvals`,
 - `Automations`.
 
@@ -257,6 +258,10 @@ todo / running / review / done / blocked / failed / cancelled
 ```
 
 MVP can remain a single list with filters if columns are too heavy.
+
+The selected task detail belongs in the `Tasks` tab, adjacent to the task queue. It
+should not occupy the default `Activity` chat view because that makes discussion feel
+like a secondary surface.
 
 Task cards show:
 
@@ -1502,11 +1507,16 @@ Current MVP implementation status:
 - Discuss mode can request a no-tools, text-only AI reply and persists blocker replies,
 - channel attachments are stored under `.ling-stack/attachments` with a 25MB/file allow-list policy,
 - link previews are fetched by the daemon with SSRF protections and metadata-only storage,
-- Web now exposes `Activity`, `Tasks`, and `Files` tabs plus discussion-to-task conversion,
+- Web now exposes `Activity`, `Tasks`, `Files`, and `Channel protocol` tabs plus discussion-to-task conversion,
 - v1.1 now persists Channel Brief, Decision Log, Handoff, and Context Summary records,
   with Activity and inspector views synthesizing those protocol items,
-- AI attachment/link content ingestion, automatic multi-agent execution, workflow engine,
-  Channel Brief AI generation, and notification persistence remain future slices.
+- v1.2 now lets handoffs create explicit, user-started workflow/step records with
+  task/run start, blocker visibility, Runtime inspector queue tracking, and a dedicated
+  `Channel protocol` tab instead of a task-detail dock,
+- task detail now lives in the `Tasks` tab instead of a persistent split pane beside
+  channel Activity,
+- AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
+  builder, Channel Brief AI generation, and notification persistence remain future slices.
 
 ### Phase 1: Channel Contract and Design Shell
 
@@ -1549,8 +1559,13 @@ Current MVP implementation status:
 - [x] Add handoff activity item shape.
 - [x] Add handoff panel showing from/to participant, reason, expected output, and status.
 - [x] Add manual handoff action from task/thread.
+- [x] Add `Start workflow` action from a handoff.
+- [x] Persist handoff-driven `ChannelWorkflow` and `ChannelWorkflowStep` records.
+- [x] Route workflow step start through task/run coordinator and `workflow_step` leases.
 - [ ] Add conflict record UI for contradictory AI recommendations.
 - [x] Add e2e coverage for handoff creation and completion without task status mutation.
+- [x] Add e2e coverage for workflow queue, step task creation, blocked step display,
+  and start-and-run workflow behavior.
 
 ### Phase 5: Attachment MVP
 
@@ -1594,11 +1609,12 @@ Current MVP implementation status:
 ### Phase 9: Channel Tabs
 
 - [x] Add `Activity`, `Tasks`, and `Files` tabs.
+- [x] Add `Channel protocol` tab for Brief, Decisions, Handoffs, and Runtime.
 - [x] Move current task list into the `Tasks` tab.
 - [ ] Build derived activity items from tasks/runs/approvals/state transitions.
 - [x] Add no-events and no-files empty states.
-- [ ] Keep task composer visible on Activity and Tasks.
-- [x] Keep composer visible across channel tabs.
+- [x] Keep the discussion/task composer in Activity so Tasks can focus on queue + detail.
+- [x] Move task detail into the `Tasks` tab.
 - [x] Add e2e coverage for tab switching through Activity/Files.
 
 ### Phase 10: Files and Artifacts

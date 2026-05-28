@@ -17,12 +17,21 @@ The AI teammates page now uses the same client direction: a Helio-inspired, macO
 
 The richer channel surface is tracked in [Channel Workspace Design](channel-workspace.md). That document is the source of truth for channel tabs, default AI teammate assignment, member/notification/settings inspector behavior, file/artifact access, and the phased implementation checklist.
 
-Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, and `Files` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions; durable channel messages; no-tools AI discussion replies; user attachments; metadata-only web link previews; and discussion-to-task conversion with `assigneeTeammateId` derived from the first AI mention or channel default teammate.
+Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, `Files`, and `Channel protocol` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions; durable channel messages; no-tools AI discussion replies; user attachments; metadata-only web link previews; and discussion-to-task conversion with `assigneeTeammateId` derived from the first AI mention or channel default teammate.
 
 Implemented v1.1 behavior: the channel inspector adds `Brief`, `Decisions`, `Handoffs`, and
 `Runtime` modes. Activity now synthesizes channel messages with decision, handoff, and
 context summary records. These protocol records are manual and auditable; they do not
 start runs, call AI providers, ingest attachments/links, or mutate task/run state.
+
+Implemented v1.2 behavior: handoff cards can create durable workflow/step records, the
+channel protocol surface lives behind the `Channel protocol` tab beside Activity, Tasks,
+and Files instead of occupying the task detail panel, Runtime shows a Workflow queue with
+context packet metadata, blockers, linked task/run ids, and step controls, Activity
+includes workflow/step items, and Task detail shows the source workflow/step for tasks
+created from a workflow step. Task detail now lives inside the `Tasks` tab instead of
+occupying the default channel chat view. `Start step` creates a task for review, while
+`Start + run` enters the existing task/run stream and approval/runtime boundaries.
 
 ## Goal
 
@@ -77,7 +86,8 @@ The default Web entry should now behave like a lightweight desktop client:
 - keep workspace, channels, AI teammates, and direct messages in the left sidebar,
 - keep provider setup, approval inbox/policy, media jobs, and settings in the configuration rail or dedicated pages,
 - give AI teammates a dedicated management page instead of leaving them as decorative sidebar presence,
-- keep the center focused on channel activity, task cards, and the task composer,
+- keep the center focused on channel activity and the discussion/task composer by default,
+- keep task detail inside the `Tasks` tab so chat is not squeezed by a persistent detail pane,
 - keep readiness, first-run guidance, approvals, and live events in the right context panel,
 - avoid showing channel/provider/policy forms as the first thing a ready user sees.
 
@@ -117,7 +127,7 @@ Use a three-region app shell with macOS-style glass surfaces:
 ├──────────────┬──────────────────────────────┬────────────┤
 │ Sidebar      │ Channel workspace            │ Context    │
 │ Workspace    │ # engineering activity       │ readiness  │
-│ Inbox/Tasks  │ task cards + composer        │ first-run   │
+│ Inbox/Tasks  │ chat / task tabs             │ first-run   │
 │ Channels     │                              │ approvals  │
 │ AI teammates │                              │ event feed  │
 │ DMs          │                              │            │
@@ -166,7 +176,7 @@ Purpose:
 Current homepage shape:
 
 - left sidebar owns workspace navigation, channel selection, AI teammate presence, direct messages, and compact configuration icons,
-- center channel window shows the selected channel header, daemon/provider chips, activity messages, task cards, and a task composer,
+- center channel window shows the selected channel header, daemon/provider chips, Activity chat/composer, and task queue/detail inside the Tasks tab,
 - right context panel shows readiness, first-run state, pending approvals, and event stream,
 - runtime state panel shows active runs, pending approvals, active resource leases, and recent state transitions,
 - channel creation and other configuration controls are collapsed or moved out of the primary center flow.

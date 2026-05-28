@@ -20,6 +20,8 @@ interface MockState {
   channelDecisions: unknown[];
   channelHandoffs: unknown[];
   channelContextSummaries: unknown[];
+  channelWorkflows: unknown[];
+  channelWorkflowSteps: unknown[];
   tasks: unknown[];
   runs: MockRun[];
   eventsByRun: Record<string, MockRunEvent[]>;
@@ -121,11 +123,13 @@ test("workspace opens as a task workbench with task context in the inspector", a
 
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Workspace task toolbar")).toBeVisible();
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await expect(page.getByLabel("Task inspector")).toContainText("Task context");
+  await expect(page.getByLabel("Task inspector")).toContainText("run_failed");
+  await openChannelTasksTab(page);
   const taskDetail = page.locator("article.task-detail");
   await expect(taskDetail).toContainText("Task detail");
   await expect(taskDetail).toContainText("run_failed");
-  await expect(page.getByLabel("Task inspector")).toContainText("Task context");
-  await expect(page.getByLabel("Task inspector")).toContainText("run_failed");
 });
 
 test("channel runtime policy and default teammate are visible and used when creating channels", async ({ page }) => {
@@ -181,6 +185,7 @@ test("paused channels disable task run actions", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   const taskCard = page.locator("article.task-detail");
   await expect(taskCard).toContainText("Channel is not active");
   await expect(taskCard.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
@@ -230,6 +235,7 @@ test("channel files tab supports PDF and Office uploads without AI ingestion", a
 
   const initialMessageCount = state.channelMessages.length;
   const initialTaskCount = state.tasks.length;
+  await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
   await page.locator("input[type=file]").setInputFiles([
     {
       name: "requirements.pdf",
@@ -253,6 +259,8 @@ test("channel files tab supports PDF and Office uploads without AI ingestion", a
     },
   ]);
 
+  await expect.poll(() => state.channelAttachments.length).toBe(4);
+  await page.getByRole("button", { name: "Files" }).click();
   await expect(page.getByRole("button", { name: "Files" })).toHaveClass(/active/);
   for (const fileName of ["requirements.pdf", "notes.docx", "budget.xlsx", "deck.pptx"]) {
     const card = page.locator(".file-card").filter({ hasText: fileName });
@@ -281,6 +289,8 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
   await briefLoaded;
 
   await expect(page.getByText("Loading protocol...")).toHaveCount(0);
+  await expect(page.getByLabel("Objective")).toHaveCount(0);
+  await page.getByRole("button", { name: "Channel protocol" }).click();
   await page.getByLabel("Objective").fill("Ship channel v1.1 protocol");
   await page.getByLabel("Scope").fill("Brief, decisions, handoffs, context summaries");
   await page.getByLabel("Acceptance criteria").fill("Brief saves\nActivity shows protocol items");
@@ -290,6 +300,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
     return isRecord(brief) ? brief.objective : undefined;
   }).toBe("Ship channel v1.1 protocol");
 
+  await page.getByRole("button", { name: "Activity" }).click();
   await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Keep v1.1 handoffs manual and visible.");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Record decision" }).first().click();
@@ -314,7 +325,116 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
   await expect(page.getByText("Context summary", { exact: true }).first()).toBeVisible();
 
   await page.reload();
+  await page.getByRole("button", { name: "Channel protocol" }).click();
   await expect(page.getByLabel("Objective")).toHaveValue("Ship channel v1.1 protocol");
+});
+
+test("channel v1.2 handoff workflows can start steps and surface runtime context", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [createChatProvider()];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Hand this implementation to Engineer.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Create handoff" }).first().click();
+  await expect.poll(() => state.channelHandoffs.length).toBe(1);
+
+  await page.getByRole("button", { name: "Start workflow" }).first().click();
+  await expect.poll(() => state.channelWorkflows.length).toBe(1);
+  await expect.poll(() => state.channelWorkflowSteps.length).toBe(1);
+  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Runtime" }).click();
+  await expect(page.getByText("Workflow queue")).toBeVisible();
+  await expect(page.getByText("Active decisions: 0")).toBeVisible();
+
+  const taskCount = state.tasks.length;
+  await page.getByRole("button", { name: "Start step" }).click();
+  await expect.poll(() => state.tasks.length).toBe(taskCount + 1);
+  await expect.poll(() => {
+    const step = state.channelWorkflowSteps[0];
+    return isRecord(step) ? step.status : undefined;
+  }).toBe("succeeded");
+  await openChannelTasksTab(page);
+  await expect(page.locator("article.task-detail")).toContainText("Source workflow");
+
+  const blockedStep = {
+    id: "workflow_step_blocked",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    workflowId: isRecord(state.channelWorkflows[0]) ? state.channelWorkflows[0].id : "workflow_1",
+    position: 2,
+    title: "Blocked follow-up",
+    prompt: "Needs provider recovery.",
+    toParticipantId: "engineer",
+    toParticipantLabel: "Engineer",
+    status: "blocked",
+    blocker: "Provider preflight failed.",
+    createdAt: "2026-05-25T00:35:00.000Z",
+    updatedAt: "2026-05-25T00:35:00.000Z",
+  };
+  state.channelWorkflowSteps.push(blockedStep);
+  const workflow = state.channelWorkflows[0];
+  if (isRecord(workflow)) {
+    workflow.status = "running";
+  }
+  await page.reload();
+  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Runtime" }).click();
+  await expect(page.locator(".workflow-step-card").filter({ hasText: "Blocked follow-up" })).toContainText("Provider preflight failed.");
+});
+
+test("channel v1.2 workflow start and run uses the existing run surface", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [createChatProvider()];
+  state.channelWorkflows = [
+    {
+      id: "workflow_seed",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Seed workflow",
+      objective: "Create and run a task from a workflow step.",
+      status: "ready",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:34:00.000Z",
+      updatedAt: "2026-05-25T00:34:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_seed",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_seed",
+      position: 1,
+      title: "Run seeded step",
+      prompt: "Run this workflow step.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "queued",
+      createdAt: "2026-05-25T00:34:00.000Z",
+      updatedAt: "2026-05-25T00:34:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Runtime" }).click();
+  await page.getByRole("button", { name: "Start + run" }).click();
+  await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
+  await expect.poll(() => {
+    const step = state.channelWorkflowSteps.find((item) => isRecord(item) && item.id === "workflow_step_seed");
+    return isRecord(step) ? step.runId : undefined;
+  }).toBe("run_2");
+  await page.getByRole("button", { name: "Activity" }).click();
+  await expect(page.getByText("Latest run run_2 is succeeded.")).toBeVisible();
 });
 
 test("run detail renders state transitions from daemon timeline API", async ({ page }) => {
@@ -1355,6 +1475,8 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     channelDecisions: [],
     channelHandoffs: [],
     channelContextSummaries: [],
+    channelWorkflows: [],
+    channelWorkflowSteps: [],
     tasks: [
       {
         id: "task_inspect",
@@ -1975,6 +2097,195 @@ async function handleDaemonRoute(
       return handoff;
     });
     await route.fulfill({ json: { handoff: updated } });
+    return;
+  }
+  const handoffWorkflowMatch = /^\/handoffs\/([^/]+)\/workflow$/.exec(path);
+  if (handoffWorkflowMatch && request.method() === "POST") {
+    const handoffId = decodeURIComponent(handoffWorkflowMatch[1]);
+    const handoff = state.channelHandoffs.find((item) => isRecord(item) && item.id === handoffId);
+    if (!isRecord(handoff)) {
+      await route.fulfill({ status: 404, json: { error: "handoff_not_found" } });
+      return;
+    }
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const workflow = {
+      id: `workflow_${state.channelWorkflows.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId: handoff.channelId,
+      sourceHandoffId: handoff.id,
+      title: typeof body.title === "string" ? body.title : `${String(handoff.reason ?? "Handoff")} workflow`,
+      objective: typeof body.objective === "string" ? body.objective : String(handoff.expectedOutput ?? handoff.reason ?? ""),
+      status: "draft",
+      createdBy: typeof body.createdBy === "string" ? body.createdBy : "local-user",
+      createdAt: "2026-05-25T00:32:00.000Z",
+      updatedAt: "2026-05-25T00:32:00.000Z",
+    };
+    const workflowStep = {
+      id: `workflow_step_${state.channelWorkflowSteps.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId: handoff.channelId,
+      workflowId: workflow.id,
+      sourceHandoffId: handoff.id,
+      contextSummaryId: typeof body.contextSummaryId === "string" ? body.contextSummaryId : undefined,
+      position: 1,
+      title: typeof handoff.reason === "string" ? handoff.reason : "Complete handoff",
+      prompt: typeof handoff.requiredInput === "string" ? handoff.requiredInput : String(handoff.reason ?? ""),
+      toParticipantId: typeof handoff.toParticipantId === "string" ? handoff.toParticipantId : "engineer",
+      toParticipantLabel: typeof handoff.toParticipantLabel === "string" ? handoff.toParticipantLabel : "Engineer",
+      status: "queued",
+      createdAt: "2026-05-25T00:32:00.000Z",
+      updatedAt: "2026-05-25T00:32:00.000Z",
+    };
+    state.channelWorkflows.unshift(workflow);
+    state.channelWorkflowSteps.unshift(workflowStep);
+    await route.fulfill({ status: 201, json: { workflow, workflowStep } });
+    return;
+  }
+  const channelWorkflowsMatch = /^\/channels\/([^/]+)\/workflows$/.exec(path);
+  if (channelWorkflowsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelWorkflowsMatch[1]);
+    const status = url.searchParams.get("status");
+    const workflows = state.channelWorkflows.filter((workflow) =>
+      isRecord(workflow) &&
+      workflow.channelId === channelId &&
+      (!status || workflow.status === status)
+    );
+    await route.fulfill({ json: { cwd, channelId, workflows } });
+    return;
+  }
+  const workflowMatch = /^\/workflows\/([^/]+)$/.exec(path);
+  if (workflowMatch && request.method() === "GET") {
+    const workflowId = decodeURIComponent(workflowMatch[1]);
+    const workflow = state.channelWorkflows.find((item) => isRecord(item) && item.id === workflowId);
+    await route.fulfill({ status: workflow ? 200 : 404, json: workflow ? { workflow } : { error: "workflow_not_found" } });
+    return;
+  }
+  if (workflowMatch && request.method() === "PATCH") {
+    const workflowId = decodeURIComponent(workflowMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated;
+    state.channelWorkflows = state.channelWorkflows.map((workflow) => {
+      if (isRecord(workflow) && workflow.id === workflowId) {
+        updated = { ...workflow, ...body, updatedAt: "2026-05-25T00:33:00.000Z" };
+        return updated;
+      }
+      return workflow;
+    });
+    await route.fulfill({ status: updated ? 200 : 404, json: updated ? { workflow: updated } : { error: "workflow_not_found" } });
+    return;
+  }
+  const workflowStepsMatch = /^\/workflows\/([^/]+)\/steps$/.exec(path);
+  if (workflowStepsMatch && request.method() === "GET") {
+    const workflowId = decodeURIComponent(workflowStepsMatch[1]);
+    const status = url.searchParams.get("status");
+    const workflowSteps = state.channelWorkflowSteps.filter((step) =>
+      isRecord(step) &&
+      step.workflowId === workflowId &&
+      (!status || step.status === status)
+    );
+    await route.fulfill({ json: { cwd, workflowId, workflowSteps } });
+    return;
+  }
+  const workflowStepStartMatch = /^\/workflow-steps\/([^/]+)\/start$/.exec(path);
+  if (workflowStepStartMatch && request.method() === "POST") {
+    const stepId = decodeURIComponent(workflowStepStartMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const stepIndex = state.channelWorkflowSteps.findIndex((step) => isRecord(step) && step.id === stepId);
+    if (stepIndex === -1 || !isRecord(state.channelWorkflowSteps[stepIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_step_not_found" } });
+      return;
+    }
+    const step = state.channelWorkflowSteps[stepIndex] as Record<string, unknown>;
+    const workflowIndex = state.channelWorkflows.findIndex((workflow) => isRecord(workflow) && workflow.id === step.workflowId);
+    const workflow = workflowIndex >= 0 && isRecord(state.channelWorkflows[workflowIndex])
+      ? state.channelWorkflows[workflowIndex] as Record<string, unknown>
+      : undefined;
+    const task = {
+      id: `task_${state.tasks.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId: typeof step.channelId === "string" ? step.channelId : "channel_engineering",
+      title: typeof body.taskTitle === "string" ? body.taskTitle : String(step.title ?? "Workflow task"),
+      prompt: typeof body.taskPrompt === "string" ? body.taskPrompt : String(step.prompt ?? ""),
+      status: body.mode === "create_and_run_task" ? "done" : "todo",
+      assigneeTeammateId: typeof body.assigneeTeammateId === "string" ? body.assigneeTeammateId : step.toParticipantId,
+      createdAt: "2026-05-25T00:36:00.000Z",
+      updatedAt: "2026-05-25T00:36:00.000Z",
+    };
+    state.tasks.unshift(task);
+    const runId = body.mode === "create_and_run_task" ? `run_${state.runs.length + 1}` : undefined;
+    const updatedStep = {
+      ...step,
+      status: "succeeded",
+      taskId: task.id,
+      runId,
+      resultSummary: runId ? "Run succeeded." : "Task created from workflow step.",
+      updatedAt: "2026-05-25T00:36:30.000Z",
+    };
+    state.channelWorkflowSteps[stepIndex] = updatedStep;
+    if (workflow) {
+      const updatedWorkflow = { ...workflow, status: "succeeded", updatedAt: "2026-05-25T00:36:30.000Z" };
+      state.channelWorkflows[workflowIndex] = updatedWorkflow;
+      if (runId) {
+        const run: MockRun = {
+          id: runId,
+          status: "succeeded",
+          cwd,
+          taskId: task.id,
+          channelId: typeof task.channelId === "string" ? task.channelId : "channel_engineering",
+          providerPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : "provider_local",
+          providerName: "local-relay",
+          providerModel: "dpv4",
+          taskSnapshot: { id: task.id, title: task.title, prompt: task.prompt },
+          providerSnapshot: { providerPresetId: body.providerPresetId ?? "provider_local" },
+          requestSnapshot: body,
+          eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+          createdAt: "2026-05-25T00:36:00.000Z",
+          updatedAt: "2026-05-25T00:36:30.000Z",
+        };
+        state.runs.unshift(run);
+        state.eventsByRun[runId] = [
+          {
+            id: `evt_${runId}_end`,
+            runId,
+            seq: 1,
+            ts: run.updatedAt,
+            type: "run_end",
+            data: { status: "succeeded" },
+          },
+        ];
+        await route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: [
+            `event: ready\ndata: ${JSON.stringify({ runId })}`,
+            `event: message\ndata: ${JSON.stringify(state.eventsByRun[runId][0])}`,
+            "",
+          ].join("\n\n"),
+        });
+        return;
+      }
+      await route.fulfill({ json: { workflow: updatedWorkflow, workflowStep: updatedStep, task } });
+      return;
+    }
+    await route.fulfill({ json: { workflowStep: updatedStep, task } });
+    return;
+  }
+  const workflowStepMatch = /^\/workflow-steps\/([^/]+)$/.exec(path);
+  if (workflowStepMatch && request.method() === "PATCH") {
+    const stepId = decodeURIComponent(workflowStepMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated;
+    state.channelWorkflowSteps = state.channelWorkflowSteps.map((step) => {
+      if (isRecord(step) && step.id === stepId) {
+        updated = { ...step, ...body, updatedAt: "2026-05-25T00:37:00.000Z" };
+        return updated;
+      }
+      return step;
+    });
+    const workflow = isRecord(updated)
+      ? state.channelWorkflows.find((item) => isRecord(item) && item.id === updated.workflowId)
+      : undefined;
+    await route.fulfill({ status: updated ? 200 : 404, json: updated ? { workflowStep: updated, workflow } : { error: "workflow_step_not_found" } });
     return;
   }
   const channelSummariesMatch = /^\/channels\/([^/]+)\/context-summaries$/.exec(path);

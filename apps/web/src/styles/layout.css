@@ -617,7 +617,8 @@ textarea {
 }
 
 .channel-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
   gap: 6px;
   padding: 2px;
@@ -631,14 +632,22 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  min-width: 0;
   min-height: 30px;
-  padding: 0 10px;
+  padding: 0 6px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
   color: #56635f;
   font-size: 12px;
   font-weight: 760;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-tab svg {
+  flex: 0 0 auto;
 }
 
 .channel-tab.active {
