@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned implementation slice after v1.6 Activity Filters and Search.
+Implemented Web-only slice after v1.6 Activity Filters and Search.
 
 v1.7 makes the derived channel `Activity` timeline easier to revisit by adding
 local saved views and a compact attention queue. This remains a Web-only slice:
@@ -36,7 +36,7 @@ All | Needs attention | Blocked | Failed | Pending approvals | Failed work | Run
 Save view | Rename | Delete
 Search activity
 All | Messages | Work | Approvals | Protocol | Runtime
-Needs attention | Failed | Pending | Clear
+Needs attention | Blocked | Failed | Pending | Clear
 ```
 
 Built-in views are always present and cannot be renamed or deleted. Custom views are
@@ -64,32 +64,33 @@ Each queue row opens the relevant surface:
 - approval items open Inbox,
 - protocol/workflow items open `Channel protocol`.
 
-## Implementation Plan
+## Implementation Notes
 
 ### 1. Local Saved Views
 
-- Add Web-only types for saved view filters and persisted custom views.
-- Add local storage helpers keyed by `cwd + channelId`.
-- Keep built-in views in code and merge them with custom views for rendering.
-- Reset the current filter to the built-in `All` view when the selected channel changes.
+- Added Web-only types for saved view filters, persisted custom views, and attention
+  queue rows.
+- Added local storage helpers keyed by `cwd + channelId`.
+- Built-in views are kept in code and merged with custom views for rendering.
+- The current filter resets to the built-in `All` view when the selected channel changes.
 
 ### 2. Activity Toolbar
 
-- Extend `ActivityFilterToolbar` with saved view chips and custom view actions.
-- `Save view` stores the current search/category/attention filters with a generated
-  default name.
+- Extended `ActivityFilterToolbar` with saved view chips and custom view actions.
+- `Save view` stores the current search/category/attention filters after asking for a
+  local view name.
 - `Rename` updates the selected custom view name.
 - `Delete` removes the selected custom view.
-- Disable rename/delete for built-in views.
+- Rename/delete are disabled for built-in views.
 
 ### 3. Attention Queue
 
-- Derive queue items from filtered-independent `activityItems`, not from the currently
-  selected saved view.
-- Count blocked, failed, and pending items.
-- Render a compact collapsed summary and an expanded top-5 list.
-- Reuse existing Activity navigation handlers so queue actions do not introduce new
-  routing surfaces.
+- Queue items are derived from filter-independent `activityItems`, not from the
+  currently selected saved view.
+- Blocked, failed, and pending items are counted separately.
+- The queue renders a compact collapsed summary and an expanded top-5 list.
+- Existing Activity navigation handlers are reused, so queue actions do not introduce
+  new routing surfaces.
 
 ### 4. Documentation
 

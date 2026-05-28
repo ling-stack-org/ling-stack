@@ -1530,8 +1530,8 @@ Current MVP implementation status:
   durable channel events,
 - v1.6 now adds local search, category filters, attention filters, chip counts, and
   no-match states to the derived Activity timeline without backend changes,
-- v1.7 is planned to add local saved Activity views and a compact attention queue
-  without backend changes,
+- v1.7 now adds local saved Activity views and a compact attention queue for blocked,
+  failed, and pending items without backend changes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1686,13 +1686,13 @@ Current MVP implementation status:
 
 ### Phase 15: Activity Saved Views and Attention Queue
 
-- [ ] Define v1.7 Activity Saved Views and Attention Queue plan in
+- [x] Define v1.7 Activity Saved Views and Attention Queue plan in
   `docs/design/channel-workspace-v1.7.md`.
-- [ ] Add local saved view types and localStorage helpers scoped by `cwd + channelId`.
-- [ ] Add built-in Activity views and custom saved view chips.
-- [ ] Add Save view, Rename, and Delete actions for custom views.
-- [ ] Add compact Attention Queue with top blocked, failed, and pending items.
-- [ ] Add e2e coverage for saved views, reload persistence, channel isolation, queue
+- [x] Add local saved view types and localStorage helpers scoped by `cwd + channelId`.
+- [x] Add built-in Activity views and custom saved view chips.
+- [x] Add Save view, Rename, and Delete actions for custom views.
+- [x] Add compact Attention Queue with top blocked, failed, and pending items.
+- [x] Add e2e coverage for saved views, reload persistence, channel isolation, queue
   navigation, and empty attention state.
 
 ## Validation Plan
