@@ -61,6 +61,12 @@ a compact attention queue for blocked, failed, and pending items. v1.7 remains W
 and does not add backend contracts, durable channel events, notification persistence,
 ingestion, automatic multi-agent loops, or a workflow builder.
 
+Implemented v1.8 behavior: Activity cards and Attention Queue items now have a lightweight
+source drilldown drawer that explains the selected event, related objects, and existing
+navigation actions without restoring a persistent task-detail split pane. v1.8 remains
+Web-only and does not add backend contracts, durable channel events, notification
+persistence, ingestion, automatic multi-agent loops, or a workflow builder.
+
 ## Goal
 
 Users should be able to run and inspect Ling Stack without `curl`.

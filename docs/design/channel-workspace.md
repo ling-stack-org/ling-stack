@@ -17,6 +17,7 @@ Related docs:
 - [Channel Workspace v1.5 Activity Events](channel-workspace-v1.5.md)
 - [Channel Workspace v1.6 Activity Filters and Search](channel-workspace-v1.6.md)
 - [Channel Workspace v1.7 Activity Saved Views and Attention Queue](channel-workspace-v1.7.md)
+- [Channel Workspace v1.8 Activity Source Drilldown](channel-workspace-v1.8.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
@@ -1532,6 +1533,7 @@ Current MVP implementation status:
   no-match states to the derived Activity timeline without backend changes,
 - v1.7 now adds local saved Activity views and a compact attention queue for blocked,
   failed, and pending items without backend changes,
+- v1.8 now adds lightweight Activity source drilldown drawers without backend changes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1694,6 +1696,18 @@ Current MVP implementation status:
 - [x] Add compact Attention Queue with top blocked, failed, and pending items.
 - [x] Add e2e coverage for saved views, reload persistence, channel isolation, queue
   navigation, and empty attention state.
+
+### Phase 16: Activity Source Drilldown
+
+- [x] Define v1.8 Activity Source Drilldown plan in
+  `docs/design/channel-workspace-v1.8.md`.
+- [x] Add Web-only drilldown detail model derived from existing Activity items.
+- [x] Add `Details` entry points to Activity cards and Attention Queue items.
+- [x] Add transient details drawer with source metadata, related objects, and actions.
+- [x] Preserve Activity search, saved views, queue state, and composer state while the
+  drawer opens and closes.
+- [x] Add e2e coverage for drawer source details, navigation actions, queue details,
+  state preservation, and i18n labels.
 
 ## Validation Plan
 

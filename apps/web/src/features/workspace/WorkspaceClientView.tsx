@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -11,6 +11,7 @@ import {
   Hash,
   History,
   Image as ImageIcon,
+  Info,
   Link2,
   Loader2,
   MessageSquare,
@@ -29,6 +30,11 @@ import type { AiTeammateTemplate } from "@ling-stack/core";
 import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildChannelActivityItems, type ChannelActivityAttention } from "../../lib/channel-activity.js";
+import {
+  buildChannelActivityDrilldownItem,
+  type ChannelActivityDrilldownItem,
+  type ChannelActivityDrilldownTarget,
+} from "../../lib/channel-activity-drilldown.js";
 import {
   allChannelActivitySavedViewId,
   applyActivityViewFilter,
@@ -57,7 +63,7 @@ import {
   providerPreflightReady,
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
-import { ArtifactRow, AvatarInitial, RunRepairHintBanner, StatusBadge } from "../../shared/components/index.js";
+import { ArtifactRow, AvatarInitial, MetaRow, RunRepairHintBanner, StatusBadge } from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -331,6 +337,7 @@ export function WorkspaceClientView({
   const [activitySavedViews, setActivitySavedViews] = useState<readonly ChannelActivitySavedView[]>([]);
   const [activeActivityViewId, setActiveActivityViewId] = useState(allChannelActivitySavedViewId);
   const [attentionQueueExpanded, setAttentionQueueExpanded] = useState(false);
+  const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
   const [inspectorMode, setInspectorMode] = useState<"brief" | "decisions" | "handoffs" | "runtime">("brief");
   const [briefDraft, setBriefDraft] = useState({
     objective: "",
@@ -475,6 +482,18 @@ export function WorkspaceClientView({
   );
   const activityFiltersActive = activitySearch.trim().length > 0 || activityCategoryFilter !== "all" || activityAttentionFilter !== "all";
   const attentionQueueItems = useMemo(() => buildAttentionQueueItems(activityItems), [activityItems]);
+  const activityDrilldown = useMemo(() => {
+    const item = activityItems.find((candidate) => candidate.id === activityDrilldownItemId);
+    return item
+      ? buildChannelActivityDrilldownItem({
+        item,
+        workflows: channelWorkflows,
+        workflowSteps: channelWorkflowSteps,
+        contextSummaries: channelContextSummaries,
+        tasks,
+      })
+      : undefined;
+  }, [activityDrilldownItemId, activityItems, channelContextSummaries, channelWorkflowSteps, channelWorkflows, tasks]);
   const channelRunsForFiles = useMemo(
     () => deriveChannelRuns(selectedChannelId, tasks, runs, latestRun),
     [latestRun, runs, selectedChannelId, tasks],
@@ -484,7 +503,21 @@ export function WorkspaceClientView({
     setActivitySavedViews(readCustomChannelActivitySavedViews(cwd, selectedChannelId));
     applyActivityView(builtinChannelActivitySavedViews[0]);
     setAttentionQueueExpanded(false);
+    setActivityDrilldownItemId("");
   }, [cwd, selectedChannelId]);
+
+  useEffect(() => {
+    if (!activityDrilldownItemId) {
+      return undefined;
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setActivityDrilldownItemId("");
+      }
+    }
+    globalThis.addEventListener("keydown", handleKeyDown);
+    return () => globalThis.removeEventListener("keydown", handleKeyDown);
+  }, [activityDrilldownItemId]);
 
   useEffect(() => {
     setBriefDraft({
@@ -516,6 +549,7 @@ export function WorkspaceClientView({
     setActivityAttentionFilter("all");
     setActiveActivityViewId(allChannelActivitySavedViewId);
     setAttentionQueueExpanded(false);
+    setActivityDrilldownItemId("");
   }, [selectedChannelId]);
 
   useEffect(() => {
@@ -543,7 +577,32 @@ export function WorkspaceClientView({
     openAttentionQueueTarget(item.target);
   }
 
+  function openAttentionQueueItemDetails(item: ChannelAttentionQueueItem): void {
+    setActivityDrilldownItemId(item.activityItemId);
+  }
+
+  function openActivityDetails(activityItemId: string): void {
+    setActivityDrilldownItemId(activityItemId);
+  }
+
   function openAttentionQueueTarget(target: ChannelAttentionQueueTarget): void {
+    if (target.kind === "task") {
+      openTaskFromActivity(target.taskId);
+      return;
+    }
+    if (target.kind === "run") {
+      onOpenRun(target.runId);
+      return;
+    }
+    if (target.kind === "approval") {
+      onOpenApprovals(target.runId);
+      return;
+    }
+    openProtocolFromActivity(target.mode);
+  }
+
+  function openActivityDrilldownTarget(target: ChannelActivityDrilldownTarget): void {
+    setActivityDrilldownItemId("");
     if (target.kind === "task") {
       openTaskFromActivity(target.taskId);
       return;
@@ -617,6 +676,24 @@ export function WorkspaceClientView({
   function createTask(): void {
     onCreateTask();
     setCreateTaskOpen(false);
+  }
+
+  function activityDetailsButton(activityItemId: string): JSX.Element {
+    return (
+      <button className="secondary-button compact-button" type="button" onClick={() => openActivityDetails(activityItemId)}>
+        <Info size={14} />
+        {t("Details")}
+      </button>
+    );
+  }
+
+  function activityActionRow(activityItemId: string, children?: ReactNode): JSX.Element {
+    return (
+      <div className="activity-action-row">
+        {children}
+        {activityDetailsButton(activityItemId)}
+      </div>
+    );
   }
 
   const taskDetailContent = createTaskOpen ? (
@@ -1200,6 +1277,7 @@ export function WorkspaceClientView({
                 expanded={attentionQueueExpanded}
                 onExpandedChange={setAttentionQueueExpanded}
                 onOpenItem={openAttentionQueueItem}
+                onOpenItemDetails={openAttentionQueueItemDetails}
               />
               <div className="message-feed" aria-label={t("Channel message feed")}>
               {channelMessagesLoading || channelProtocolLoading ? (
@@ -1233,7 +1311,7 @@ export function WorkspaceClientView({
                         body={message.body}
                         action={
                           message.kind === "message" ? (
-                            <div className="activity-action-row">
+                            activityActionRow(item.id, <>
                               <button className="secondary-button compact-button" type="button" onClick={() => void createTaskFromMessage(message)}>
                                 <Plus size={14} />
                                 {t("Create task")}
@@ -1250,10 +1328,10 @@ export function WorkspaceClientView({
                                 <FileText size={14} />
                                 {t("Create task with context")}
                               </button>
-                            </div>
+                            </>)
                           ) : message.linkedTaskId ? (
-                            <code>{message.linkedTaskId}</code>
-                          ) : undefined
+                            activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
+                          ) : activityActionRow(item.id)
                         }
                       />
                     );
@@ -1269,7 +1347,7 @@ export function WorkspaceClientView({
                         time={formatDateTime(decision.createdAt)}
                         body={`${decision.title}: ${decision.decision}`}
                         action={
-                          <div className="activity-action-row">
+                          activityActionRow(item.id, <>
                             <button className="secondary-button compact-button" type="button" onClick={() => onSupersedeDecision(decision)}>
                               <FileCheck2 size={14} />
                               {t("Supersede")}
@@ -1282,7 +1360,7 @@ export function WorkspaceClientView({
                               <Workflow size={14} />
                               {t("Open protocol")}
                             </button>
-                          </div>
+                          </>)
                         }
                       />
                     );
@@ -1299,7 +1377,7 @@ export function WorkspaceClientView({
                         time={formatDateTime(handoff.createdAt)}
                         body={`${handoff.fromParticipantLabel} -> ${handoff.toParticipantLabel}: ${handoff.reason}`}
                         action={
-                          <div className="activity-action-row">
+                          activityActionRow(item.id, <>
                             <button className="secondary-button compact-button" type="button" onClick={() => onStartWorkflowFromHandoff(handoff)} disabled={Boolean(handoffWorkflow)}>
                               <Play size={14} />
                               {handoffWorkflow ? t("Workflow started") : t("Start workflow")}
@@ -1314,7 +1392,7 @@ export function WorkspaceClientView({
                               <Workflow size={14} />
                               {t("Open protocol")}
                             </button>
-                          </div>
+                          </>)
                         }
                       />
                     );
@@ -1331,13 +1409,13 @@ export function WorkspaceClientView({
                         time={formatDateTime(workflow.updatedAt)}
                         body={`${workflow.title}: ${workflow.objective}`}
                         action={
-                          <div className="activity-action-row">
+                          activityActionRow(item.id, <>
                             <small>{t("{count} steps", { count: steps.length })}</small>
                             <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
                               <Workflow size={14} />
                               {t("Open protocol")}
                             </button>
-                          </div>
+                          </>)
                         }
                       />
                     );
@@ -1354,7 +1432,7 @@ export function WorkspaceClientView({
                         body={`${step.title}: ${step.prompt}`}
                         action={
                           step.blocker ? (
-                            <div className="activity-action-row">
+                            activityActionRow(item.id, <>
                               <div className="provider-run-notice compact">
                                 <CircleAlert size={14} />
                                 <span>{step.blocker}</span>
@@ -1363,20 +1441,22 @@ export function WorkspaceClientView({
                                 <Workflow size={14} />
                                 {t("Open protocol")}
                               </button>
-                            </div>
+                            </>)
                           ) : step.taskId ? (
-                            <div className="activity-action-row">
+                            activityActionRow(item.id, <>
                               <code>{step.taskId}{step.runId ? ` / ${step.runId}` : ""}</code>
                               <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
                                 <Workflow size={14} />
                                 {t("Open protocol")}
                               </button>
-                            </div>
+                            </>)
                           ) : (
-                            <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
-                              <Workflow size={14} />
-                              {t("Open protocol")}
-                            </button>
+                            activityActionRow(item.id, (
+                              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
+                                <Workflow size={14} />
+                                {t("Open protocol")}
+                              </button>
+                            ))
                           )
                         }
                       />
@@ -1393,10 +1473,12 @@ export function WorkspaceClientView({
                         time={formatDateTime(task.updatedAt)}
                         body={t("Task {title} is {status}.", { title: task.title, status: task.status })}
                         action={
-                          <button className="secondary-button compact-button" type="button" onClick={() => openTaskFromActivity(task.id)}>
-                            <SquareTerminal size={14} />
-                            {t("Open task")}
-                          </button>
+                          activityActionRow(item.id, (
+                            <button className="secondary-button compact-button" type="button" onClick={() => openTaskFromActivity(task.id)}>
+                              <SquareTerminal size={14} />
+                              {t("Open task")}
+                            </button>
+                          ))
                         }
                       />
                     );
@@ -1413,10 +1495,12 @@ export function WorkspaceClientView({
                         time={formatDateTime(run.endedAt ?? run.startedAt ?? run.updatedAt)}
                         body={t("Run {runId} for {title} is {status}.", { runId: run.id, title: taskTitle, status: run.status })}
                         action={
-                          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(run.id)}>
-                            <History size={14} />
-                            {t("Open run")}
-                          </button>
+                          activityActionRow(item.id, (
+                            <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(run.id)}>
+                              <History size={14} />
+                              {t("Open run")}
+                            </button>
+                          ))
                         }
                       />
                     );
@@ -1433,10 +1517,12 @@ export function WorkspaceClientView({
                         time={formatDateTime(approval.resolvedAt ?? approval.createdAt)}
                         body={t("{title} is {status}.", { title: approval.title, status: approvalStatus })}
                         action={
-                          <button className="secondary-button compact-button" type="button" onClick={() => onOpenApprovals(approval.runId)}>
-                            <CheckCircle2 size={14} />
-                            {t("Open approval")}
-                          </button>
+                          activityActionRow(item.id, (
+                            <button className="secondary-button compact-button" type="button" onClick={() => onOpenApprovals(approval.runId)}>
+                              <CheckCircle2 size={14} />
+                              {t("Open approval")}
+                            </button>
+                          ))
                         }
                       />
                     );
@@ -1458,24 +1544,26 @@ export function WorkspaceClientView({
                           event: transition.event,
                         })}
                         action={
-                          <button
-                            className="secondary-button compact-button"
-                            type="button"
-                            onClick={() => {
-                              if (transition.entityType === "task") {
-                                openTaskFromActivity(transition.entityId);
-                              } else if (transition.entityType === "run") {
-                                onOpenRun(transition.entityId);
-                              } else if (transition.entityType === "approval") {
-                                onOpenApprovals();
-                              } else {
-                                openProtocolFromActivity("runtime");
-                              }
-                            }}
-                          >
-                            {transition.entityType === "task" ? <SquareTerminal size={14} /> : transition.entityType === "run" ? <History size={14} /> : <Workflow size={14} />}
-                            {t("Open event")}
-                          </button>
+                          activityActionRow(item.id, (
+                            <button
+                              className="secondary-button compact-button"
+                              type="button"
+                              onClick={() => {
+                                if (transition.entityType === "task") {
+                                  openTaskFromActivity(transition.entityId);
+                                } else if (transition.entityType === "run") {
+                                  onOpenRun(transition.entityId);
+                                } else if (transition.entityType === "approval") {
+                                  onOpenApprovals();
+                                } else {
+                                  openProtocolFromActivity("runtime");
+                                }
+                              }}
+                            >
+                              {transition.entityType === "task" ? <SquareTerminal size={14} /> : transition.entityType === "run" ? <History size={14} /> : <Workflow size={14} />}
+                              {t("Open event")}
+                            </button>
+                          ))
                         }
                       />
                     );
@@ -1490,7 +1578,7 @@ export function WorkspaceClientView({
                       time={formatDateTime(summary.updatedAt)}
                       body={summary.summary}
                       action={
-                        <div className="activity-action-row">
+                        activityActionRow(item.id, <>
                           <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>
                             <Plus size={14} />
                             {t("Create task")}
@@ -1499,7 +1587,7 @@ export function WorkspaceClientView({
                             <Workflow size={14} />
                             {t("Open protocol")}
                           </button>
-                        </div>
+                        </>)
                       }
                     />
                   );
@@ -1536,6 +1624,13 @@ export function WorkspaceClientView({
                 </div>
               ) : null}
               {channelComposer}
+              {activityDrilldown ? (
+                <ActivityDrilldownDrawer
+                  drilldown={activityDrilldown}
+                  onClose={() => setActivityDrilldownItemId("")}
+                  onOpenTarget={openActivityDrilldownTarget}
+                />
+              ) : null}
             </div>
           ) : null}
 
@@ -2446,11 +2541,13 @@ function AttentionQueue({
   expanded,
   onExpandedChange,
   onOpenItem,
+  onOpenItemDetails,
 }: {
   readonly items: readonly ChannelAttentionQueueItem[];
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly onOpenItem: (item: ChannelAttentionQueueItem) => void;
+  readonly onOpenItemDetails: (item: ChannelAttentionQueueItem) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const blockedCount = items.filter((item) => item.attention === "blocked").length;
@@ -2484,27 +2581,116 @@ function AttentionQueue({
         ) : (
           <div className="attention-queue-list" aria-label={t("Top attention items")}>
             {visibleItems.map((item) => (
-              <button
+              <div
                 key={item.id}
                 className={`attention-queue-item ${item.attention}`}
-                type="button"
-                onClick={() => onOpenItem(item)}
               >
-                <span className="attention-queue-item-main">
-                  <strong>{item.title}</strong>
-                  <small>{item.description}</small>
-                </span>
-                <span className="attention-queue-item-meta">
-                  <small>{t(activityAttentionDisplayLabel(item.attention))}</small>
-                  <small>{t(attentionQueueTargetLabel(item.target))}</small>
-                  <time>{formatDateTime(item.createdAt)}</time>
-                </span>
-              </button>
+                <button className="attention-queue-item-open" type="button" onClick={() => onOpenItem(item)}>
+                  <span className="attention-queue-item-main">
+                    <strong>{item.title}</strong>
+                    <small>{item.description}</small>
+                  </span>
+                  <span className="attention-queue-item-meta">
+                    <small>{t(activityAttentionDisplayLabel(item.attention))}</small>
+                    <small>{t(attentionQueueTargetLabel(item.target))}</small>
+                    <time>{formatDateTime(item.createdAt)}</time>
+                  </span>
+                </button>
+                <button className="secondary-button compact-button attention-queue-details" type="button" onClick={() => onOpenItemDetails(item)}>
+                  <Info size={13} />
+                  {t("Details")}
+                </button>
+              </div>
             ))}
           </div>
         )
       ) : null}
     </section>
+  );
+}
+
+function ActivityDrilldownDrawer({
+  drilldown,
+  onClose,
+  onOpenTarget,
+}: {
+  readonly drilldown: ChannelActivityDrilldownItem;
+  readonly onClose: () => void;
+  readonly onOpenTarget: (target: ChannelActivityDrilldownTarget) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <aside className="activity-drilldown-drawer" aria-label={t("Activity details")}>
+      <div className="activity-drilldown-header">
+        <span>
+          <Info size={16} />
+          <strong>{t("Activity details")}</strong>
+        </span>
+        <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close details")}>
+          <X size={15} />
+        </button>
+      </div>
+      <div className="activity-drilldown-title">
+        <small>{t(activityKindLabel(drilldown.kind))}</small>
+        <h3>{drilldown.source.title}</h3>
+        <p>{drilldown.source.subtitle}</p>
+      </div>
+      <div className="activity-drilldown-badges" aria-label={t("Activity detail metadata")}>
+        <span>{t("Category")}: {t(activityCategoryFilterLabel(drilldown.category))}</span>
+        <span>{t("Attention")}: {t(activityAttentionLabel(drilldown.attention))}</span>
+        <span>{t("Time")}: {formatDateTime(drilldown.createdAt)}</span>
+        {drilldown.source.status ? <span>{t("Status")}: {drilldown.source.status}</span> : null}
+      </div>
+      <section className="activity-drilldown-section">
+        <h4>{t("Source summary")}</h4>
+        <p>{drilldown.source.summary}</p>
+      </section>
+      <section className="activity-drilldown-section">
+        <h4>{t("Source metadata")}</h4>
+        <div className="activity-drilldown-field-grid">
+          <MetaRow label={t("Source ID")} value={drilldown.source.sourceId} />
+          <MetaRow label={t("Event type")} value={t(activityKindLabel(drilldown.kind))} />
+          {drilldown.source.metadata.map((field) => (
+            <MetaRow key={`${field.label}:${field.value}`} label={t(field.label)} value={field.value} />
+          ))}
+        </div>
+      </section>
+      <section className="activity-drilldown-section">
+        <h4>{t("Related objects")}</h4>
+        {drilldown.source.relatedObjects.length === 0 ? (
+          <p className="muted-text">{t("No related objects")}</p>
+        ) : (
+          <div className="activity-drilldown-related">
+            {drilldown.source.relatedObjects.map((field) => (
+              <span key={`${field.label}:${field.value}`}>
+                <small>{t(field.label)}</small>
+                {field.value}
+              </span>
+            ))}
+          </div>
+        )}
+      </section>
+      <section className="activity-drilldown-section">
+        <h4>{t("Actions")}</h4>
+        {drilldown.targets.length === 0 ? (
+          <p className="muted-text">{t("No direct target")}</p>
+        ) : (
+          <div className="activity-drilldown-actions">
+            {drilldown.targets.map((target, index) => (
+              <button
+                key={`${target.kind}:${index}`}
+                className="secondary-button compact-button"
+                type="button"
+                onClick={() => onOpenTarget(target)}
+              >
+                {drilldownTargetIcon(target)}
+                {t(drilldownTargetLabel(target))}
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+    </aside>
   );
 }
 
@@ -2545,6 +2731,70 @@ function attentionQueueTargetLabel(target: ChannelAttentionQueueTarget): string 
     return "Approval";
   }
   return "Channel protocol";
+}
+
+function activityKindLabel(kind: ChannelActivityDrilldownItem["kind"]): string {
+  if (kind === "message") {
+    return "Message";
+  }
+  if (kind === "decision") {
+    return "Decision log";
+  }
+  if (kind === "handoff") {
+    return "Handoff";
+  }
+  if (kind === "summary") {
+    return "Context summary";
+  }
+  if (kind === "workflow") {
+    return "Workflow";
+  }
+  if (kind === "workflow-step") {
+    return "Workflow step";
+  }
+  if (kind === "task") {
+    return "Task event";
+  }
+  if (kind === "run") {
+    return "Run event";
+  }
+  if (kind === "approval") {
+    return "Approval event";
+  }
+  return "State change";
+}
+
+function activityAttentionLabel(attention: ChannelActivityAttention): string {
+  if (attention === "none") {
+    return "None";
+  }
+  return activityAttentionDisplayLabel(attention);
+}
+
+function drilldownTargetLabel(target: ChannelActivityDrilldownTarget): string {
+  if (target.kind === "task") {
+    return "Open task";
+  }
+  if (target.kind === "run") {
+    return "Open run";
+  }
+  if (target.kind === "approval") {
+    return "Open approval";
+  }
+  return "Open protocol";
+}
+
+function drilldownTargetIcon(target: ChannelActivityDrilldownTarget): JSX.Element {
+  if (target.kind === "task") {
+    return <SquareTerminal size={14} />;
+  }
+  if (target.kind === "run") {
+    return <History size={14} />;
+  }
+  if (target.kind === "approval") {
+    return <CheckCircle2 size={14} />;
+  }
+  return <Workflow size={14} />;
 }
 
 function activityCategoryFilterLabel(filter: ActivityCategoryFilter): string {
