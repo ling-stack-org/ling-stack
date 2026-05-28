@@ -542,7 +542,7 @@ textarea {
 
 .conversation-panel {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-auto-rows: auto;
   gap: 12px;
   padding: 12px;
   overflow: hidden;
@@ -552,7 +552,8 @@ textarea {
   display: grid;
   align-content: start;
   gap: 12px;
-  min-height: 0;
+  min-height: 280px;
+  max-height: min(52vh, 560px);
   overflow: auto;
   padding: 4px 4px 0;
 }
@@ -615,10 +616,43 @@ textarea {
   justify-content: flex-start;
 }
 
+.channel-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.channel-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #56635f;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.channel-tab.active {
+  border-color: rgba(22, 140, 120, 0.22);
+  background: rgba(242, 252, 249, 0.86);
+  color: #0f6b5a;
+}
+
 .task-strip {
   display: grid;
   gap: 9px;
-  min-height: 0;
+  min-height: 280px;
+  max-height: min(52vh, 560px);
+  overflow: auto;
   padding: 10px;
   border: 1px solid rgba(33, 38, 42, 0.08);
   border-radius: 8px;
@@ -788,6 +822,173 @@ textarea {
 
 .composer-panel textarea {
   min-height: 74px;
+}
+
+.channel-composer {
+  align-self: end;
+}
+
+.segmented-control {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid rgba(33, 38, 42, 0.1);
+  border-radius: 7px;
+  background: rgba(248, 247, 243, 0.74);
+}
+
+.segmented-control button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #56635f;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.segmented-control button.active {
+  background: #ffffff;
+  color: #0f6b5a;
+  box-shadow: 0 1px 4px rgba(33, 38, 42, 0.08);
+}
+
+.mention-row,
+.composer-assets,
+.pending-assets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mention-chip,
+.pending-assets span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(22, 140, 120, 0.18);
+  border-radius: 999px;
+  background: rgba(242, 252, 249, 0.78);
+  color: #0f6b5a;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.mention-chip {
+  cursor: pointer;
+}
+
+.link-preview-input {
+  display: inline-grid;
+  grid-template-columns: auto minmax(160px, 260px);
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid rgba(33, 38, 42, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #56635f;
+}
+
+.link-preview-input input {
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+}
+
+.ask-ai-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #56635f;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.ask-ai-toggle input {
+  width: 14px;
+  height: 14px;
+}
+
+.channel-files {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 280px;
+  max-height: min(52vh, 560px);
+  overflow: auto;
+}
+
+.file-section {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(248, 247, 243, 0.54);
+}
+
+.file-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.file-card,
+.link-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 54px;
+  padding: 9px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.64);
+  color: inherit;
+  text-decoration: none;
+}
+
+.link-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.file-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: rgba(22, 140, 120, 0.1);
+  color: #0f6b5a;
+}
+
+.file-card strong,
+.link-card strong,
+.file-card small,
+.link-card small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-card strong,
+.link-card strong {
+  color: #1f2528;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.file-card small,
+.link-card small {
+  color: #69706e;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .client-provider-notice {

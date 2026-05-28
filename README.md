@@ -17,6 +17,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Seedream live smoke](docs/seedream-live-smoke.md)
 - [Provider presets](docs/design/provider-presets.md)
 - [Approval policy](docs/design/approval-policy.md)
+- [Channel workspace](docs/design/channel-workspace.md)
 - [AI teammates and skills](docs/design/ai-teammates-and-skills.md)
 - [Platform architecture](docs/design/platform-architecture.md)
 - [GitHub automation](docs/design/github-automation.md)

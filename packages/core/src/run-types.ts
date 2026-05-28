@@ -25,13 +25,23 @@ import type {
 } from "./media-types.js";
 import type {
   Channel,
+  ChannelAttachment,
+  ChannelLinkPreview,
+  ChannelMessage,
   ChannelUpdateInput,
+  CreateChannelAttachmentInput,
   CreateChannelInput,
+  CreateChannelLinkPreviewInput,
+  CreateChannelMessageInput,
   CreateTaskInput,
+  ListChannelAttachmentsOptions,
   ListChannelsOptions,
+  ListChannelLinkPreviewsOptions,
+  ListChannelMessagesOptions,
   ListTasksOptions,
   Task,
   TaskUpdateInput,
+  UpdateChannelLinkPreviewInput,
 } from "./workspace-types.js";
 import type {
   CreateResourceLeaseInput,
@@ -231,6 +241,17 @@ export interface RunStore {
   listTasks(options?: ListTasksOptions): Task[];
   updateTask(id: string, input: TaskUpdateInput, now: string): Task | undefined;
   deleteTask(id: string): boolean;
+  createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage;
+  getChannelMessage(id: string): ChannelMessage | undefined;
+  listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[];
+  createChannelAttachment(input: CreateChannelAttachmentInput): ChannelAttachment;
+  getChannelAttachment(id: string): ChannelAttachment | undefined;
+  listChannelAttachments(options: ListChannelAttachmentsOptions): ChannelAttachment[];
+  deleteChannelAttachment(id: string): boolean;
+  createChannelLinkPreview(input: CreateChannelLinkPreviewInput, now: string): ChannelLinkPreview;
+  getChannelLinkPreview(id: string): ChannelLinkPreview | undefined;
+  listChannelLinkPreviews(options: ListChannelLinkPreviewsOptions): ChannelLinkPreview[];
+  updateChannelLinkPreview(id: string, input: UpdateChannelLinkPreviewInput, now: string): ChannelLinkPreview | undefined;
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset;
   getProviderPreset(id: string): ProviderPreset | undefined;
   listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];

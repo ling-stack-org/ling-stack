@@ -18,12 +18,16 @@ import {
   buildTaskRunRequest,
   cancelRun,
   checkProvider,
+  channelAttachmentContentUrl,
   createChannel,
+  createChannelLinkPreview,
+  createChannelMessage,
   createMediaJob,
   createProvider,
   createTask,
   daemonBaseUrl,
   denyApproval,
+  deleteChannelAttachment,
   deleteChannel,
   deleteTask,
   deleteProvider,
@@ -34,7 +38,10 @@ import {
   listMediaJobArtifacts,
   listRunArtifacts,
   listResourceLeases,
+  listChannelAttachments,
   listChannels,
+  listChannelLinkPreviews,
+  listChannelMessages,
   listApprovals,
   listMediaJobs,
   listProviders,
@@ -43,6 +50,7 @@ import {
   listStateTransitions,
   listTasks,
   runMediaJob,
+  uploadChannelAttachment,
   updateChannel,
   updateApprovalPolicy,
   updateTask,
@@ -55,8 +63,11 @@ import type {
   ApprovalRequest,
   ApprovalPolicy,
   ApprovalPolicyFormState,
+  ChannelAttachment,
   Channel,
   ChannelFormState,
+  ChannelLinkPreview,
+  ChannelMessage,
   MediaJob,
   MediaJobFormState,
   ProviderCheckResult,
@@ -207,6 +218,11 @@ export function AppShell(): JSX.Element {
     title: t(defaultTaskForm.title),
     prompt: t(defaultTaskForm.prompt),
   }));
+  const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
+  const [channelAttachments, setChannelAttachments] = useState<readonly ChannelAttachment[]>([]);
+  const [channelLinkPreviews, setChannelLinkPreviews] = useState<readonly ChannelLinkPreview[]>([]);
+  const [channelMessagesLoading, setChannelMessagesLoading] = useState(false);
+  const [channelFilesLoading, setChannelFilesLoading] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
@@ -415,8 +431,13 @@ export function AppShell(): JSX.Element {
   useEffect(() => {
     if (selectedChannelId) {
       void refreshTasks(selectedChannelId);
+      void refreshChannelMessages(selectedChannelId);
+      void refreshChannelFiles(selectedChannelId);
     } else {
       setTasks([]);
+      setChannelMessages([]);
+      setChannelAttachments([]);
+      setChannelLinkPreviews([]);
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
@@ -835,6 +856,47 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function refreshChannelMessages(channelId = selectedChannelId): Promise<void> {
+    if (!form.cwd.trim() || !channelId) {
+      setChannelMessages([]);
+      return;
+    }
+
+    setChannelMessagesLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await listChannelMessages(form.cwd.trim(), channelId);
+      setChannelMessages(response.messages);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChannelMessagesLoading(false);
+    }
+  }
+
+  async function refreshChannelFiles(channelId = selectedChannelId): Promise<void> {
+    if (!form.cwd.trim() || !channelId) {
+      setChannelAttachments([]);
+      setChannelLinkPreviews([]);
+      return;
+    }
+
+    setChannelFilesLoading(true);
+    try {
+      setErrorMessage("");
+      const [attachmentsResponse, linksResponse] = await Promise.all([
+        listChannelAttachments(form.cwd.trim(), channelId),
+        listChannelLinkPreviews(form.cwd.trim(), channelId),
+      ]);
+      setChannelAttachments(attachmentsResponse.attachments);
+      setChannelLinkPreviews(linksResponse.linkPreviews);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChannelFilesLoading(false);
+    }
+  }
+
   async function saveChannel(): Promise<void> {
     if (!form.cwd.trim()) {
       setErrorMessage("请输入 workspace path");
@@ -875,6 +937,7 @@ export function AppShell(): JSX.Element {
         status: channelForm.status,
         boundPath: channelForm.boundPath.trim() || form.cwd.trim(),
         defaultProviderPresetId: readyProvider?.id ?? channelForm.defaultProviderPresetId,
+        defaultTeammateId: channelForm.defaultTeammateId || "engineer",
         allowedTools: channelForm.allowedTools.length > 0 ? channelForm.allowedTools : defaultTools,
         runtimePolicy: channelForm.runtimePolicy,
       });
@@ -889,6 +952,7 @@ export function AppShell(): JSX.Element {
         name: "",
         boundPath: current.boundPath || form.cwd.trim(),
         defaultProviderPresetId: readyProvider?.id ?? current.defaultProviderPresetId,
+        defaultTeammateId: current.defaultTeammateId || "engineer",
       }));
       await refreshChannels();
     } catch (error) {
@@ -953,10 +1017,127 @@ export function AppShell(): JSX.Element {
       const response = await createTask(form.cwd.trim(), selectedChannelId, {
         title: taskForm.title.trim() || titleFromPrompt(taskForm.prompt),
         prompt: taskForm.prompt,
+        assigneeTeammateId: taskForm.assigneeTeammateId || channels.find((channel) => channel.id === selectedChannelId)?.defaultTeammateId,
       });
       setSelectedTaskId(response.task.id);
       setTaskForm(defaultTaskForm);
       await refreshTasks(selectedChannelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function sendChannelMessage(input: {
+    readonly body: string;
+    readonly mentions: readonly { readonly id: string; readonly label: string; readonly kind: "ai-teammate" | "local-user" | "channel" }[];
+    readonly attachmentIds: readonly string[];
+    readonly linkPreviewIds: readonly string[];
+    readonly requestAiReply: boolean;
+  }): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    const firstAiMention = input.mentions.find((mention) => mention.kind === "ai-teammate");
+    try {
+      setErrorMessage("");
+      const response = await createChannelMessage(form.cwd.trim(), selectedChannelId, {
+        body: input.body,
+        mentions: input.mentions,
+        attachmentIds: input.attachmentIds,
+        linkPreviewIds: input.linkPreviewIds,
+        requestAiReply: input.requestAiReply,
+        providerPresetId: taskRunProviderId || selectedChannel?.defaultProviderPresetId || form.providerPresetId || undefined,
+        teammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,
+      });
+      setChannelMessages((current) => [
+        ...current,
+        response.message,
+        ...(response.aiReply ? [response.aiReply] : []),
+      ]);
+      await refreshChannelFiles(selectedChannelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function uploadChannelFiles(files: readonly File[]): Promise<readonly ChannelAttachment[]> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return [];
+    }
+    if (files.length === 0) {
+      return [];
+    }
+
+    setChannelFilesLoading(true);
+    try {
+      setErrorMessage("");
+      const responses = await Promise.all(files.map((file) => uploadChannelAttachment(form.cwd.trim(), selectedChannelId, file)));
+      const uploaded = responses.map((response) => response.attachment);
+      setChannelAttachments((current) => [...uploaded, ...current]);
+      return uploaded;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      return [];
+    } finally {
+      setChannelFilesLoading(false);
+    }
+  }
+
+  async function addChannelLinkPreview(url: string): Promise<ChannelLinkPreview | undefined> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return undefined;
+    }
+    try {
+      setErrorMessage("");
+      const response = await createChannelLinkPreview(form.cwd.trim(), selectedChannelId, { url });
+      setChannelLinkPreviews((current) => [
+        response.linkPreview,
+        ...current.filter((preview) => preview.id !== response.linkPreview.id),
+      ]);
+      return response.linkPreview;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
+  }
+
+  async function removeChannelAttachment(attachmentId: string): Promise<void> {
+    try {
+      setErrorMessage("");
+      await deleteChannelAttachment(form.cwd.trim(), attachmentId);
+      setChannelAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function createTaskFromChannelMessage(message: ChannelMessage): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    const firstAiMention = message.mentions.find((mention) => mention.kind === "ai-teammate");
+    try {
+      setErrorMessage("");
+      const response = await createTask(form.cwd.trim(), selectedChannelId, {
+        title: titleFromPrompt(message.body),
+        prompt: message.body,
+        assigneeTeammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,
+      });
+      setSelectedTaskId(response.task.id);
+      await createChannelMessage(form.cwd.trim(), selectedChannelId, {
+        body: `Created task: ${response.task.title}`,
+        kind: "task_link",
+        intent: "task",
+        authorType: "system",
+        linkedTaskId: response.task.id,
+      });
+      await Promise.all([refreshTasks(selectedChannelId), refreshChannelMessages(selectedChannelId)]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -1483,12 +1664,19 @@ export function AppShell(): JSX.Element {
             channelForm={channelForm}
             tasks={tasks}
             taskForm={taskForm}
+            channelMessages={channelMessages}
+            channelAttachments={channelAttachments}
+            channelLinkPreviews={channelLinkPreviews}
             selectedTaskId={selectedTaskId}
             providers={providers}
+            teammateTemplates={builtinTeammateTemplates}
+            localTeammates={localTeammates}
             taskRunProviderId={taskRunProviderId}
             fallbackProviderId={form.providerPresetId}
             channelsLoading={channelsLoading}
             tasksLoading={tasksLoading}
+            channelMessagesLoading={channelMessagesLoading}
+            channelFilesLoading={channelFilesLoading}
             providersLoading={providersLoading}
             approvals={approvals}
             resourceLeases={resourceLeases}
@@ -1514,6 +1702,12 @@ export function AppShell(): JSX.Element {
             onCreateDefaultChannel={() => void saveDefaultChannel()}
             onCreateChannel={() => void saveChannel()}
             onCreateTask={() => void saveTask()}
+            onSendMessage={(input) => void sendChannelMessage(input)}
+            onUploadAttachments={(files) => uploadChannelFiles(files)}
+            onCreateLinkPreview={(url) => addChannelLinkPreview(url)}
+            onDeleteAttachment={(attachmentId) => void removeChannelAttachment(attachmentId)}
+            onCreateTaskFromMessage={(message) => void createTaskFromChannelMessage(message)}
+            attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
             onRefreshTasks={() => void refreshTasks()}
             onSelectTask={setSelectedTaskId}
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}

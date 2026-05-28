@@ -183,6 +183,7 @@ export interface CreateChannelRequest {
   readonly status: ChannelStatus;
   readonly boundPath?: string;
   readonly defaultProviderPresetId?: string;
+  readonly defaultTeammateId?: string;
   readonly allowedTools: readonly ToolName[];
   readonly runtimePolicy: ChannelRuntimePolicy;
 }
@@ -192,6 +193,7 @@ export interface UpdateChannelRequest {
   readonly status?: ChannelStatus;
   readonly boundPath?: string | null;
   readonly defaultProviderPresetId?: string | null;
+  readonly defaultTeammateId?: string | null;
   readonly allowedTools?: readonly ToolName[];
   readonly runtimePolicy?: ChannelRuntimePolicy;
 }
@@ -222,6 +224,7 @@ export interface CreateTaskRequest {
   readonly channelId: string;
   readonly title: string;
   readonly prompt: string;
+  readonly assigneeTeammateId?: string;
 }
 
 export interface UpdateTaskRequest {
@@ -229,6 +232,134 @@ export interface UpdateTaskRequest {
   readonly title?: string;
   readonly prompt?: string;
   readonly status?: TaskStatus;
+  readonly assigneeTeammateId?: string | null;
+}
+
+export type ChannelMessageKind = "message" | "ai_reply" | "system" | "task_link";
+
+export type ChannelMessageIntent = "discuss" | "task";
+
+export type ChannelMessageAuthorType = "local-user" | "ai-teammate" | "system";
+
+export interface ChannelMention {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: "ai-teammate" | "local-user" | "channel";
+}
+
+export interface ChannelMessage {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly threadId?: string;
+  readonly kind: ChannelMessageKind;
+  readonly intent: ChannelMessageIntent;
+  readonly authorType: ChannelMessageAuthorType;
+  readonly authorId?: string;
+  readonly body: string;
+  readonly mentions: readonly ChannelMention[];
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly linkedTaskId?: string;
+  readonly linkedRunId?: string;
+  readonly status: "ready" | "blocked" | "failed";
+  readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelMessageRequest {
+  readonly threadId?: string;
+  readonly kind?: ChannelMessageKind;
+  readonly intent?: ChannelMessageIntent;
+  readonly authorType?: ChannelMessageAuthorType;
+  readonly authorId?: string;
+  readonly body: string;
+  readonly mentions?: readonly ChannelMention[];
+  readonly attachmentIds?: readonly string[];
+  readonly linkPreviewIds?: readonly string[];
+  readonly linkedTaskId?: string;
+  readonly linkedRunId?: string;
+  readonly requestAiReply?: boolean;
+  readonly providerPresetId?: string;
+  readonly teammateId?: string;
+}
+
+export interface ChannelMessageListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly messages: readonly ChannelMessage[];
+}
+
+export interface ChannelMessageMutationResponse {
+  readonly message: ChannelMessage;
+  readonly aiReply?: ChannelMessage;
+}
+
+export type ChannelAttachmentKind = "image" | "pdf" | "office" | "text";
+
+export interface ChannelAttachment {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly messageId?: string;
+  readonly kind: ChannelAttachmentKind;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  readonly path: string;
+  readonly createdAt: string;
+}
+
+export interface CreateChannelAttachmentRequest {
+  readonly fileName: string;
+  readonly contentType?: string;
+  readonly contentBase64: string;
+  readonly messageId?: string;
+}
+
+export interface ChannelAttachmentListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly attachments: readonly ChannelAttachment[];
+}
+
+export interface ChannelAttachmentMutationResponse {
+  readonly attachment: ChannelAttachment;
+}
+
+export type ChannelLinkPreviewStatus = "ready" | "blocked" | "failed";
+
+export interface ChannelLinkPreview {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly messageId?: string;
+  readonly url: string;
+  readonly normalizedUrl: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly imageUrl?: string;
+  readonly siteName?: string;
+  readonly status: ChannelLinkPreviewStatus;
+  readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelLinkPreviewRequest {
+  readonly url: string;
+  readonly messageId?: string;
+}
+
+export interface ChannelLinkPreviewListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly linkPreviews: readonly ChannelLinkPreview[];
+}
+
+export interface ChannelLinkPreviewMutationResponse {
+  readonly linkPreview: ChannelLinkPreview;
 }
 
 export type ResourceType = "channel" | "bound_path" | "workspace" | "provider" | "task" | "workflow_step";

@@ -182,6 +182,66 @@ DELETE /tasks/:id?cwd=/path/to/project
 
 When a persisted task is run through `/runs`, the daemon updates the linked task status to `running`, then `done`, `failed`, or `cancelled`.
 
+## Channel Messages, Attachments, and Links
+
+Channel discussion is durable in the workspace SQLite database. Uploaded files are stored under:
+
+```text
+.ling-stack/attachments
+```
+
+### Messages
+
+```http
+GET /channels/:id/messages?cwd=/path/to/project&limit=100
+POST /channels/:id/messages?cwd=/path/to/project
+```
+
+`POST` accepts a local/user/system message plus structured mentions, attachment ids, link preview ids, and optional `requestAiReply`. Referenced attachments and link previews must belong to the same channel. When AI reply is requested, the daemon uses the selected provider preset or the channel default provider in text-only, no-tools mode. If no provider is ready, the user message is still persisted and the AI reply is stored with `status: "blocked"`.
+
+```json
+{
+  "body": "请 @Engineer 完善需求",
+  "mentions": [{ "id": "engineer", "label": "Engineer", "kind": "ai-teammate" }],
+  "attachmentIds": ["att_..."],
+  "linkPreviewIds": ["link_..."],
+  "requestAiReply": true,
+  "providerPresetId": "provider_...",
+  "teammateId": "engineer"
+}
+```
+
+### Attachments
+
+```http
+GET /channels/:id/attachments?cwd=/path/to/project&limit=100
+POST /channels/:id/attachments?cwd=/path/to/project
+GET /attachments/:id/content?cwd=/path/to/project
+DELETE /attachments/:id?cwd=/path/to/project
+```
+
+`POST` uses JSON with base64 content:
+
+```json
+{
+  "fileName": "brief.pdf",
+  "contentType": "application/pdf",
+  "contentBase64": "JVBERi0x..."
+}
+```
+
+`contentType` is accepted as an upload hint, but the daemon serves downloads with a content type derived from the validated extension. MVP limits: 25MB per file, at most 10 attachment ids per message, allowed extensions are `png`, `jpg`, `jpeg`, `webp`, `gif`, `pdf`, `docx`, `xlsx`, `pptx`, `txt`, `md`, `csv`, `json`, and `log`. Attachments are metadata and downloadable inputs only; AI ingestion is not automatic.
+
+### Link Previews
+
+```http
+GET /channels/:id/link-previews?cwd=/path/to/project&limit=100
+POST /channels/:id/link-previews?cwd=/path/to/project
+POST /link-previews/:id/refresh?cwd=/path/to/project
+```
+
+The daemon fetches public HTML metadata only: title, description, image URL, and site name. It does not send cookies, credentials, page bodies, or extracted content to AI. Preview fetches block localhost, private, link-local, and metadata-network addresses, enforce redirect/timeout/body-size limits, and store failed or blocked previews as visible records.
+
 ### Run Persisted Task
 
 ```http
