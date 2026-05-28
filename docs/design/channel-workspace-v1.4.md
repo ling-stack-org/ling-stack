@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned implementation slice after v1.3 chat experience polish.
+Implemented implementation slice after v1.3 chat experience polish.
 
 v1.4 turns the channel `Files` tab into the channel working output center. The tab
 already shows user-uploaded attachments and shared links. This slice adds run artifacts,
@@ -111,3 +111,12 @@ git diff --check
 - Summary and event log paths are visible without reading their contents.
 - Existing Activity chat and Tasks detail layout do not regress.
 - No backend contract or storage changes are introduced.
+
+## Implementation Notes
+
+- Web derives selected-channel runs from `run.channelId` and channel task ownership.
+- Web loads artifacts with existing `/runs/:runId/artifacts` and renders content links
+  through existing artifact content URLs.
+- Channel attachments, shared links, and run artifacts remain separate sections.
+- The implementation does not fetch artifact bodies, parse files, or send artifact
+  content to AI context.

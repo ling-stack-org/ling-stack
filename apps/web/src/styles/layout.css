@@ -948,6 +948,54 @@ textarea {
   gap: 8px;
 }
 
+.run-artifact-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.run-artifact-group {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.run-artifact-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.run-artifact-head strong,
+.run-artifact-head small {
+  display: block;
+}
+
+.run-artifact-head strong {
+  color: #1d2925;
+  font-size: 13px;
+}
+
+.run-artifact-head small {
+  margin-top: 3px;
+  color: #64736e;
+  font-size: 11px;
+}
+
+.session-file-list.compact span,
+.session-file-list.compact code {
+  padding: 7px 8px;
+  font-size: 11px;
+}
+
+.artifact-empty-state.error {
+  border-color: rgba(164, 56, 32, 0.22);
+  background: rgba(255, 248, 245, 0.86);
+}
+
 .file-card,
 .link-card {
   display: grid;

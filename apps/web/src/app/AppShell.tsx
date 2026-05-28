@@ -144,6 +144,7 @@ import {
   defaultChannelEditForm,
   defaultChannelForm,
 } from "../lib/channels.js";
+import { deriveChannelRuns } from "../lib/channel-artifacts.js";
 import { readDataString } from "../lib/data.js";
 import { titleFromPrompt } from "../lib/formatting.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd, writeSavedWorkspaceCwd } from "../lib/local-storage.js";
@@ -260,6 +261,8 @@ export function AppShell(): JSX.Element {
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
   const [channelAttachments, setChannelAttachments] = useState<readonly ChannelAttachment[]>([]);
   const [channelLinkPreviews, setChannelLinkPreviews] = useState<readonly ChannelLinkPreview[]>([]);
+  const [channelArtifactsByRun, setChannelArtifactsByRun] = useState<Record<string, readonly RunArtifact[]>>({});
+  const [channelArtifactErrorsByRun, setChannelArtifactErrorsByRun] = useState<Record<string, string>>({});
   const [channelBrief, setChannelBrief] = useState<ChannelBrief | undefined>();
   const [channelDecisions, setChannelDecisions] = useState<readonly ChannelDecision[]>([]);
   const [channelHandoffs, setChannelHandoffs] = useState<readonly ChannelHandoff[]>([]);
@@ -268,6 +271,7 @@ export function AppShell(): JSX.Element {
   const [channelWorkflowSteps, setChannelWorkflowSteps] = useState<readonly ChannelWorkflowStep[]>([]);
   const [channelMessagesLoading, setChannelMessagesLoading] = useState(false);
   const [channelFilesLoading, setChannelFilesLoading] = useState(false);
+  const [channelRunArtifactsLoading, setChannelRunArtifactsLoading] = useState(false);
   const [channelProtocolLoading, setChannelProtocolLoading] = useState(false);
   const [runningWorkflowStepId, setRunningWorkflowStepId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
@@ -405,6 +409,14 @@ export function AppShell(): JSX.Element {
     () => tasks.find((task) => task.id === selectedTaskId) ?? tasks[0],
     [selectedTaskId, tasks],
   );
+  const channelRunsForArtifacts = useMemo(
+    () => deriveChannelRuns(selectedChannelId, tasks, runs, run),
+    [run, runs, selectedChannelId, tasks],
+  );
+  const channelRunArtifactsKey = useMemo(
+    () => channelRunsForArtifacts.map((item) => `${item.id}:${item.updatedAt}`).join("|"),
+    [channelRunsForArtifacts],
+  );
   const selectedEntity = useMemo<SelectedEntity>(() => {
     if (activeView === "providers") {
       return { type: "provider", id: editingProviderId || form.providerPresetId || providers[0]?.id || "" };
@@ -486,6 +498,8 @@ export function AppShell(): JSX.Element {
       setChannelMessages([]);
       setChannelAttachments([]);
       setChannelLinkPreviews([]);
+      setChannelArtifactsByRun({});
+      setChannelArtifactErrorsByRun({});
       setChannelBrief(undefined);
       setChannelDecisions([]);
       setChannelHandoffs([]);
@@ -495,6 +509,13 @@ export function AppShell(): JSX.Element {
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
+
+  useEffect(() => {
+    if (activeView !== "workspace") {
+      return;
+    }
+    void refreshChannelRunArtifacts();
+  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
 
   useEffect(() => {
     const cwd = form.cwd.trim();
@@ -959,6 +980,44 @@ export function AppShell(): JSX.Element {
     } finally {
       setChannelFilesLoading(false);
     }
+  }
+
+  async function refreshChannelRunArtifacts(
+    cwd = form.cwd.trim(),
+    channelRuns = channelRunsForArtifacts,
+  ): Promise<void> {
+    if (!cwd || !selectedChannelId || channelRuns.length === 0) {
+      setChannelArtifactsByRun({});
+      setChannelArtifactErrorsByRun({});
+      setChannelRunArtifactsLoading(false);
+      return;
+    }
+
+    setChannelRunArtifactsLoading(true);
+    const results = await Promise.all(
+      channelRuns.map(async (sourceRun) => {
+        try {
+          const response = await listRunArtifacts(sourceRun.id, cwd);
+          return { runId: sourceRun.id, artifacts: response.artifacts } as const;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return { runId: sourceRun.id, error: message } as const;
+        }
+      }),
+    );
+
+    const nextArtifacts: Record<string, readonly RunArtifact[]> = {};
+    const nextErrors: Record<string, string> = {};
+    for (const result of results) {
+      if ("artifacts" in result) {
+        nextArtifacts[result.runId] = result.artifacts ?? [];
+      } else {
+        nextErrors[result.runId] = result.error;
+      }
+    }
+    setChannelArtifactsByRun(nextArtifacts);
+    setChannelArtifactErrorsByRun(nextErrors);
+    setChannelRunArtifactsLoading(false);
   }
 
   async function refreshChannelProtocol(channelId = selectedChannelId): Promise<void> {
@@ -2049,6 +2108,8 @@ export function AppShell(): JSX.Element {
             channelMessages={channelMessages}
             channelAttachments={channelAttachments}
             channelLinkPreviews={channelLinkPreviews}
+            channelArtifactsByRun={channelArtifactsByRun}
+            channelArtifactErrorsByRun={channelArtifactErrorsByRun}
             channelBrief={channelBrief}
             channelDecisions={channelDecisions}
             channelHandoffs={channelHandoffs}
@@ -2065,6 +2126,7 @@ export function AppShell(): JSX.Element {
             tasksLoading={tasksLoading}
             channelMessagesLoading={channelMessagesLoading}
             channelFilesLoading={channelFilesLoading}
+            channelRunArtifactsLoading={channelRunArtifactsLoading}
             channelProtocolLoading={channelProtocolLoading}
             providersLoading={providersLoading}
             approvals={approvals}
@@ -2110,6 +2172,7 @@ export function AppShell(): JSX.Element {
             onCreateTaskWithContextFromMessage={(message) => void createTaskWithContextFromMessage(message)}
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
             onRefreshChannelProtocol={() => void refreshChannelProtocol()}
+            onRefreshChannelFiles={() => void Promise.all([refreshChannelFiles(), refreshChannelRunArtifacts()])}
             attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
             onRefreshTasks={() => void refreshTasks()}
             onSelectTask={setSelectedTaskId}

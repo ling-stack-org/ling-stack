@@ -26,9 +26,10 @@ import {
 import type { AiTeammateTemplate } from "@ling-stack/core";
 import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
+import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { effectiveChannelRuntimePolicy } from "../../lib/channels.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
-import { buildRunRepairHint, displayLinkedRunStatus } from "../../lib/run-evidence.js";
+import { buildRunRepairHint, displayLinkedRunStatus, readRunWorkspaceCwd } from "../../lib/run-evidence.js";
 import { defaultTools, riskyTools } from "../../lib/tools.js";
 import {
   canUseProviderForRun,
@@ -36,7 +37,7 @@ import {
   providerPreflightReady,
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
-import { AvatarInitial, RunRepairHintBanner, StatusBadge } from "../../shared/components/index.js";
+import { ArtifactRow, AvatarInitial, RunRepairHintBanner, StatusBadge } from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -55,6 +56,7 @@ import type {
   ChannelWorkflowStepStartMode,
   ProviderPreset,
   ResourceLease,
+  RunArtifact,
   RunSession,
   Task,
   TaskFormState,
@@ -131,6 +133,8 @@ export function WorkspaceClientView({
   channelMessages,
   channelAttachments,
   channelLinkPreviews,
+  channelArtifactsByRun,
+  channelArtifactErrorsByRun,
   channelBrief,
   channelDecisions,
   channelHandoffs,
@@ -147,6 +151,7 @@ export function WorkspaceClientView({
   tasksLoading,
   channelMessagesLoading,
   channelFilesLoading,
+  channelRunArtifactsLoading,
   channelProtocolLoading,
   providersLoading,
   approvals,
@@ -186,6 +191,7 @@ export function WorkspaceClientView({
   onCreateTaskWithContextFromMessage,
   onCreateTaskFromContextSummary,
   onRefreshChannelProtocol,
+  onRefreshChannelFiles,
   attachmentContentUrl,
   onRefreshTasks,
   onSelectTask,
@@ -206,6 +212,8 @@ export function WorkspaceClientView({
   readonly channelMessages: readonly ChannelMessage[];
   readonly channelAttachments: readonly ChannelAttachment[];
   readonly channelLinkPreviews: readonly ChannelLinkPreview[];
+  readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly channelArtifactErrorsByRun: Readonly<Record<string, string>>;
   readonly channelBrief: ChannelBrief | undefined;
   readonly channelDecisions: readonly ChannelDecision[];
   readonly channelHandoffs: readonly ChannelHandoff[];
@@ -222,6 +230,7 @@ export function WorkspaceClientView({
   readonly tasksLoading: boolean;
   readonly channelMessagesLoading: boolean;
   readonly channelFilesLoading: boolean;
+  readonly channelRunArtifactsLoading: boolean;
   readonly channelProtocolLoading: boolean;
   readonly providersLoading: boolean;
   readonly approvals: readonly ApprovalRequest[];
@@ -267,6 +276,7 @@ export function WorkspaceClientView({
   readonly onCreateTaskWithContextFromMessage: (message: ChannelMessage) => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onRefreshChannelProtocol: () => void;
+  readonly onRefreshChannelFiles: () => void;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
   readonly onRefreshTasks: () => void;
   readonly onSelectTask: (taskId: string) => void;
@@ -345,6 +355,10 @@ export function WorkspaceClientView({
     () => buildChannelActivityItems(channelMessages, channelDecisions, channelHandoffs, channelContextSummaries, channelWorkflows, channelWorkflowSteps),
     [channelContextSummaries, channelDecisions, channelHandoffs, channelMessages, channelWorkflowSteps, channelWorkflows],
   );
+  const channelRunsForFiles = useMemo(
+    () => deriveChannelRuns(selectedChannelId, tasks, runs, latestRun),
+    [latestRun, runs, selectedChannelId, tasks],
+  );
 
   useEffect(() => {
     setBriefDraft({
@@ -372,6 +386,12 @@ export function WorkspaceClientView({
     setAiReplyState("idle");
     setTaskCreationNotice(undefined);
   }, [selectedChannelId]);
+
+  useEffect(() => {
+    if (activeTab === "files") {
+      onRefreshChannelFiles();
+    }
+  }, [activeTab]);
 
   function selectTask(taskId: string): void {
     setCreateTaskOpen(false);
@@ -448,7 +468,9 @@ export function WorkspaceClientView({
     ? tasksLoading
     : activeTab === "protocol"
       ? channelProtocolLoading
-      : channelsLoading;
+      : activeTab === "files"
+        ? channelFilesLoading || channelRunArtifactsLoading
+        : channelsLoading;
 
   function refreshActiveTab(): void {
     if (activeTab === "tasks") {
@@ -457,6 +479,10 @@ export function WorkspaceClientView({
     }
     if (activeTab === "protocol") {
       onRefreshChannelProtocol();
+      return;
+    }
+    if (activeTab === "files") {
+      onRefreshChannelFiles();
       return;
     }
     onRefreshChannels();
@@ -1124,7 +1150,12 @@ export function WorkspaceClientView({
             <ChannelFiles
               attachments={channelAttachments}
               linkPreviews={channelLinkPreviews}
+              runs={channelRunsForFiles}
+              tasks={tasks}
+              artifactsByRun={channelArtifactsByRun}
+              artifactErrorsByRun={channelArtifactErrorsByRun}
               loading={channelFilesLoading}
+              runArtifactsLoading={channelRunArtifactsLoading}
               attachmentContentUrl={attachmentContentUrl}
               onDeleteAttachment={onDeleteAttachment}
             />
@@ -1936,17 +1967,30 @@ function isWorkflowStepTerminal(status: ChannelWorkflowStep["status"]): boolean 
 function ChannelFiles({
   attachments,
   linkPreviews,
+  runs,
+  tasks,
+  artifactsByRun,
+  artifactErrorsByRun,
   loading,
+  runArtifactsLoading,
   attachmentContentUrl,
   onDeleteAttachment,
 }: {
   readonly attachments: readonly ChannelAttachment[];
   readonly linkPreviews: readonly ChannelLinkPreview[];
+  readonly runs: readonly RunSession[];
+  readonly tasks: readonly Task[];
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly artifactErrorsByRun: Readonly<Record<string, string>>;
   readonly loading: boolean;
+  readonly runArtifactsLoading: boolean;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
   readonly onDeleteAttachment: (attachmentId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const totalRunArtifactCount = runs.reduce((count, run) => count + (artifactsByRun[run.id]?.length ?? 0), 0);
+
   if (loading) {
     return (
       <div className="client-empty-state channel-files">
@@ -2012,6 +2056,70 @@ function ChannelFiles({
                 <span className={`task-status ${preview.status === "ready" ? "done" : "blocked"}`}>{preview.status}</span>
               </a>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="file-section run-artifact-section">
+        <div className="task-strip-head">
+          <span>
+            <FileCheck2 size={16} />
+            <strong>{t("Run artifacts")}</strong>
+          </span>
+          <small>{t("{count} artifacts", { count: totalRunArtifactCount })}</small>
+        </div>
+        {runArtifactsLoading ? (
+          <div className="client-empty-state">
+            <Loader2 className="spin" />
+            <span>{t("Loading run artifacts...")}</span>
+          </div>
+        ) : runs.length === 0 ? (
+          <div className="client-empty-state">
+            <FileCheck2 />
+            <span>{t("No run artifacts in this channel")}</span>
+          </div>
+        ) : (
+          <div className="run-artifact-groups">
+            {runs.map((run) => {
+              const runArtifacts = artifactsByRun[run.id] ?? [];
+              const task = taskById.get(run.taskId);
+              const artifactError = artifactErrorsByRun[run.id];
+              const artifactCwd = readRunWorkspaceCwd(run, run.cwd);
+              return (
+                <article key={run.id} className="run-artifact-group">
+                  <div className="run-artifact-head">
+                    <span>
+                      <strong>{task?.title ?? run.taskId}</strong>
+                      <small>{run.id} · {run.status} · {formatDateTime(run.updatedAt)}</small>
+                    </span>
+                    <StatusBadge status={run.status} />
+                  </div>
+                  <div className="session-file-list compact">
+                    <span>{t("Event log")}</span>
+                    <code>{run.eventLogPath}</code>
+                    <span>{t("Summary")}</span>
+                    <code>{run.summaryPath ?? "-"}</code>
+                  </div>
+                  {artifactError ? (
+                    <div className="artifact-empty-state error">
+                      <span>{t("Could not load artifacts")}</span>
+                      <small>{artifactError}</small>
+                    </div>
+                  ) : runArtifacts.length === 0 ? (
+                    <div className="artifact-empty-state">
+                      <span>{t("No artifacts recorded for this run")}</span>
+                      <small>{t("Artifacts will appear here once the daemon records files under .ling-stack/artifacts.")}</small>
+                    </div>
+                  ) : (
+                    <div className="artifact-list">
+                      {runArtifacts.map((artifact) => (
+                        <ArtifactRow artifact={artifact} cwd={artifactCwd} key={artifact.id} />
+                      ))}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </div>
         )}
       </div>

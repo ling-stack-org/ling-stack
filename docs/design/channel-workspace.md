@@ -1520,7 +1520,7 @@ Current MVP implementation status:
 - v1.3 now implements the chat experience polish slice: sticky Activity composer,
   independent message scrolling, clearer send/AI/asset states, task-conversion
   feedback, and English/Chinese channel copy cleanup,
-- v1.4 is planned to aggregate run artifacts, summary paths, and event log paths in the
+- v1.4 now aggregates run artifacts, summary paths, and event log paths in the
   channel `Files` tab without adding artifact ingestion or backend routes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
@@ -1626,14 +1626,14 @@ Current MVP implementation status:
 
 ### Phase 10: Files and Artifacts
 
-- [ ] Define v1.4 files and run artifacts plan in `docs/design/channel-workspace-v1.4.md`.
-- [ ] Derive channel files from runs with matching `channelId`.
-- [ ] Fetch and show run artifacts in Files tab.
-- [ ] Show summary and event log paths when present.
+- [x] Define v1.4 files and run artifacts plan in `docs/design/channel-workspace-v1.4.md`.
+- [x] Derive channel files from runs with matching `channelId`.
+- [x] Fetch and show run artifacts in Files tab.
+- [x] Show summary and event log paths when present.
 - [x] Show channel attachments separately from run artifacts.
 - [x] Show shared links separately from channel attachments and run artifacts.
 - [x] Add Open/Download action for channel attachments.
-- [ ] Add e2e coverage for artifact visibility from channel.
+- [x] Add e2e coverage for artifact visibility from channel.
 
 ### Phase 11: Member and Notification Persistence
 
@@ -1709,8 +1709,8 @@ Focused e2e scenarios:
   custom teammate IDs without changing built-in template IDs.
 - MVP decision: the first AI mention wins task `assigneeTeammateId`; if no AI mention is
   present, task creation falls back to channel `defaultTeammateId`.
-- MVP decision: Files includes user-uploaded attachments and shared links now; run
-  artifact aggregation by channel remains a future slice.
+- MVP decision: Files includes user-uploaded attachments, shared links, and run artifact
+  aggregation by channel. Artifact contents are not read or sent to AI context.
 - MVP decision: allowed attachment formats are `png`, `jpg`, `jpeg`, `webp`, `gif`,
   `pdf`, `docx`, `xlsx`, `pptx`, `txt`, `md`, `csv`, `json`, and `log`.
 - MVP decision: local channel attachments are limited to 25MB per file and 10
