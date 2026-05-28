@@ -19,6 +19,11 @@ The richer channel surface is tracked in [Channel Workspace Design](channel-work
 
 Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, and `Files` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions; durable channel messages; no-tools AI discussion replies; user attachments; metadata-only web link previews; and discussion-to-task conversion with `assigneeTeammateId` derived from the first AI mention or channel default teammate.
 
+Implemented v1.1 behavior: the channel inspector adds `Brief`, `Decisions`, `Handoffs`, and
+`Runtime` modes. Activity now synthesizes channel messages with decision, handoff, and
+context summary records. These protocol records are manual and auditable; they do not
+start runs, call AI providers, ingest attachments/links, or mutate task/run state.
+
 ## Goal
 
 Users should be able to run and inspect Ling Stack without `curl`.

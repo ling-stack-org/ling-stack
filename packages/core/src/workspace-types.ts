@@ -263,6 +263,207 @@ export interface ListChannelLinkPreviewsOptions {
   readonly limit?: number;
 }
 
+export interface ChannelBrief {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly objective: string;
+  readonly scope: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly openQuestions: readonly string[];
+  readonly risks: readonly string[];
+  readonly decisionIds: readonly string[];
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly updatedBy: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface UpdateChannelBriefInput {
+  readonly objective: string;
+  readonly scope: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly openQuestions?: readonly string[];
+  readonly risks?: readonly string[];
+  readonly decisionIds?: readonly string[];
+  readonly attachmentIds?: readonly string[];
+  readonly linkPreviewIds?: readonly string[];
+  readonly updatedBy: string;
+}
+
+export type ChannelDecisionStatus = "active" | "superseded" | "rejected";
+
+export const channelDecisionStatuses: readonly ChannelDecisionStatus[] = ["active", "superseded", "rejected"];
+
+export interface ChannelDecision {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly title: string;
+  readonly decision: string;
+  readonly rationale: string;
+  readonly alternatives: readonly string[];
+  readonly status: ChannelDecisionStatus;
+  readonly supersedesDecisionId?: string;
+  readonly createdBy: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelDecisionInput {
+  readonly channelId: string;
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly title: string;
+  readonly decision: string;
+  readonly rationale?: string;
+  readonly alternatives?: readonly string[];
+  readonly status?: ChannelDecisionStatus;
+  readonly supersedesDecisionId?: string;
+  readonly createdBy: string;
+}
+
+export interface UpdateChannelDecisionInput {
+  readonly title?: string;
+  readonly decision?: string;
+  readonly rationale?: string;
+  readonly alternatives?: readonly string[];
+  readonly status?: ChannelDecisionStatus;
+}
+
+export interface ListChannelDecisionsOptions {
+  readonly channelId: string;
+  readonly status?: ChannelDecisionStatus;
+  readonly limit?: number;
+}
+
+export type ChannelHandoffStatus = "proposed" | "accepted" | "declined" | "completed" | "cancelled";
+
+export const channelHandoffStatuses: readonly ChannelHandoffStatus[] = [
+  "proposed",
+  "accepted",
+  "declined",
+  "completed",
+  "cancelled",
+];
+
+export interface ChannelHandoff {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly fromParticipantId: string;
+  readonly fromParticipantLabel: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly reason: string;
+  readonly requiredInput: string;
+  readonly expectedOutput: string;
+  readonly status: ChannelHandoffStatus;
+  readonly createdBy: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelHandoffInput {
+  readonly channelId: string;
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly fromParticipantId: string;
+  readonly fromParticipantLabel: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly reason: string;
+  readonly requiredInput: string;
+  readonly expectedOutput: string;
+  readonly status?: ChannelHandoffStatus;
+  readonly createdBy: string;
+}
+
+export interface UpdateChannelHandoffInput {
+  readonly fromParticipantId?: string;
+  readonly fromParticipantLabel?: string;
+  readonly toParticipantId?: string;
+  readonly toParticipantLabel?: string;
+  readonly reason?: string;
+  readonly requiredInput?: string;
+  readonly expectedOutput?: string;
+  readonly status?: ChannelHandoffStatus;
+}
+
+export interface ListChannelHandoffsOptions {
+  readonly channelId: string;
+  readonly status?: ChannelHandoffStatus;
+  readonly limit?: number;
+}
+
+export type ChannelContextSummaryTargetType = "thread" | "task";
+export type ChannelContextSummaryAuthorType = "local-user" | "ai-teammate" | "system";
+
+export const channelContextSummaryTargetTypes: readonly ChannelContextSummaryTargetType[] = ["thread", "task"];
+export const channelContextSummaryAuthorTypes: readonly ChannelContextSummaryAuthorType[] = [
+  "local-user",
+  "ai-teammate",
+  "system",
+];
+
+export interface ChannelContextSummary {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly targetType: ChannelContextSummaryTargetType;
+  readonly targetId: string;
+  readonly sourceMessageIds: readonly string[];
+  readonly decisionIds: readonly string[];
+  readonly summary: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly openQuestions: readonly string[];
+  readonly authorType: ChannelContextSummaryAuthorType;
+  readonly authorId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelContextSummaryInput {
+  readonly channelId: string;
+  readonly targetType: ChannelContextSummaryTargetType;
+  readonly targetId: string;
+  readonly sourceMessageIds?: readonly string[];
+  readonly decisionIds?: readonly string[];
+  readonly summary: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly openQuestions?: readonly string[];
+  readonly authorType: ChannelContextSummaryAuthorType;
+  readonly authorId?: string;
+}
+
+export interface UpdateChannelContextSummaryInput {
+  readonly targetType?: ChannelContextSummaryTargetType;
+  readonly targetId?: string;
+  readonly sourceMessageIds?: readonly string[];
+  readonly decisionIds?: readonly string[];
+  readonly summary?: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly openQuestions?: readonly string[];
+  readonly authorType?: ChannelContextSummaryAuthorType;
+  readonly authorId?: string | null;
+}
+
+export interface ListChannelContextSummariesOptions {
+  readonly channelId: string;
+  readonly targetType?: ChannelContextSummaryTargetType;
+  readonly targetId?: string;
+  readonly limit?: number;
+}
+
 export function createChannelId(): string {
   return `channel_${randomUUID()}`;
 }
@@ -281,6 +482,22 @@ export function createChannelAttachmentId(): string {
 
 export function createChannelLinkPreviewId(): string {
   return `link_${randomUUID()}`;
+}
+
+export function createChannelBriefId(): string {
+  return `brief_${randomUUID()}`;
+}
+
+export function createChannelDecisionId(): string {
+  return `decision_${randomUUID()}`;
+}
+
+export function createChannelHandoffId(): string {
+  return `handoff_${randomUUID()}`;
+}
+
+export function createChannelContextSummaryId(): string {
+  return `summary_${randomUUID()}`;
 }
 
 export function normalizeChannelRuntimePolicy(input: Partial<ChannelRuntimePolicy> | undefined): ChannelRuntimePolicy {

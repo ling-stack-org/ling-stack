@@ -242,6 +242,49 @@ POST /link-previews/:id/refresh?cwd=/path/to/project
 
 The daemon fetches public HTML metadata only: title, description, image URL, and site name. It does not send cookies, credentials, page bodies, or extracted content to AI. Preview fetches block localhost, private, link-local, and metadata-network addresses, enforce redirect/timeout/body-size limits, and store failed or blocked previews as visible records.
 
+## Channel Collaboration Protocol
+
+v1.1 adds durable protocol records for channel coordination. These endpoints only record
+state; they do not start runs, call an AI provider, mutate task/run status, or bypass
+approval/runtime locks.
+
+```http
+GET /channels/:id/brief?cwd=/path/to/project
+PATCH /channels/:id/brief?cwd=/path/to/project
+
+GET /channels/:id/decisions?cwd=/path/to/project&status=active&limit=100
+POST /channels/:id/decisions?cwd=/path/to/project
+PATCH /decisions/:id?cwd=/path/to/project
+
+GET /channels/:id/handoffs?cwd=/path/to/project&status=proposed&limit=100
+POST /channels/:id/handoffs?cwd=/path/to/project
+PATCH /handoffs/:id?cwd=/path/to/project
+
+GET /channels/:id/context-summaries?cwd=/path/to/project&targetType=task&targetId=task_...&limit=100
+POST /channels/:id/context-summaries?cwd=/path/to/project
+PATCH /context-summaries/:id?cwd=/path/to/project
+```
+
+Brief `GET` returns an empty Brief-shaped record when no Brief has been saved yet.
+Brief `PATCH` is a full replacement for objective, scope, criteria, questions, risks,
+and linked source ids.
+
+Decision `POST` creates an `active` decision by default. If `supersedesDecisionId` is
+provided, the daemon marks the old decision `superseded` and creates a new active
+decision. Decision `PATCH` can update text fields or set `status` to `active`,
+`superseded`, or `rejected`.
+
+Handoff `POST` records a manual from/to participant transfer with reason, required input,
+expected output, and status. Handoff `PATCH` only updates the handoff record; completing a
+handoff does not mark a task done.
+
+Context summaries target either `task` or `thread`. `task` targets must reference a task in
+the same channel. `thread` targets must reference a channel message id or an existing
+message thread id in the same channel.
+
+All source ids are channel-scoped. Unknown or cross-channel source references return a
+displayable `400` error. Missing channels return `404 channel_not_found`.
+
 ### Run Persisted Task
 
 ```http

@@ -362,6 +362,208 @@ export interface ChannelLinkPreviewMutationResponse {
   readonly linkPreview: ChannelLinkPreview;
 }
 
+export interface ChannelBrief {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly objective: string;
+  readonly scope: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly openQuestions: readonly string[];
+  readonly risks: readonly string[];
+  readonly decisionIds: readonly string[];
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly updatedBy: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface UpdateChannelBriefRequest {
+  readonly objective: string;
+  readonly scope: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly openQuestions?: readonly string[];
+  readonly risks?: readonly string[];
+  readonly decisionIds?: readonly string[];
+  readonly attachmentIds?: readonly string[];
+  readonly linkPreviewIds?: readonly string[];
+  readonly updatedBy: string;
+}
+
+export interface ChannelBriefResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly brief: ChannelBrief;
+}
+
+export interface ChannelBriefMutationResponse {
+  readonly brief: ChannelBrief;
+}
+
+export type ChannelDecisionStatus = "active" | "superseded" | "rejected";
+
+export interface ChannelDecision {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly title: string;
+  readonly decision: string;
+  readonly rationale: string;
+  readonly alternatives: readonly string[];
+  readonly status: ChannelDecisionStatus;
+  readonly supersedesDecisionId?: string;
+  readonly createdBy: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelDecisionRequest {
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly title: string;
+  readonly decision: string;
+  readonly rationale?: string;
+  readonly alternatives?: readonly string[];
+  readonly status?: ChannelDecisionStatus;
+  readonly supersedesDecisionId?: string;
+  readonly createdBy: string;
+}
+
+export interface UpdateChannelDecisionRequest {
+  readonly title?: string;
+  readonly decision?: string;
+  readonly rationale?: string;
+  readonly alternatives?: readonly string[];
+  readonly status?: ChannelDecisionStatus;
+}
+
+export interface ChannelDecisionListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly decisions: readonly ChannelDecision[];
+}
+
+export interface ChannelDecisionMutationResponse {
+  readonly decision: ChannelDecision;
+}
+
+export type ChannelHandoffStatus = "proposed" | "accepted" | "declined" | "completed" | "cancelled";
+
+export interface ChannelHandoff {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly fromParticipantId: string;
+  readonly fromParticipantLabel: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly reason: string;
+  readonly requiredInput: string;
+  readonly expectedOutput: string;
+  readonly status: ChannelHandoffStatus;
+  readonly createdBy: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelHandoffRequest {
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly fromParticipantId: string;
+  readonly fromParticipantLabel: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly reason: string;
+  readonly requiredInput: string;
+  readonly expectedOutput: string;
+  readonly status?: ChannelHandoffStatus;
+  readonly createdBy: string;
+}
+
+export interface UpdateChannelHandoffRequest {
+  readonly fromParticipantId?: string;
+  readonly fromParticipantLabel?: string;
+  readonly toParticipantId?: string;
+  readonly toParticipantLabel?: string;
+  readonly reason?: string;
+  readonly requiredInput?: string;
+  readonly expectedOutput?: string;
+  readonly status?: ChannelHandoffStatus;
+}
+
+export interface ChannelHandoffListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly handoffs: readonly ChannelHandoff[];
+}
+
+export interface ChannelHandoffMutationResponse {
+  readonly handoff: ChannelHandoff;
+}
+
+export type ChannelContextSummaryTargetType = "thread" | "task";
+export type ChannelContextSummaryAuthorType = "local-user" | "ai-teammate" | "system";
+
+export interface ChannelContextSummary {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly targetType: ChannelContextSummaryTargetType;
+  readonly targetId: string;
+  readonly sourceMessageIds: readonly string[];
+  readonly decisionIds: readonly string[];
+  readonly summary: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly openQuestions: readonly string[];
+  readonly authorType: ChannelContextSummaryAuthorType;
+  readonly authorId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelContextSummaryRequest {
+  readonly targetType: ChannelContextSummaryTargetType;
+  readonly targetId: string;
+  readonly sourceMessageIds?: readonly string[];
+  readonly decisionIds?: readonly string[];
+  readonly summary: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly openQuestions?: readonly string[];
+  readonly authorType: ChannelContextSummaryAuthorType;
+  readonly authorId?: string;
+}
+
+export interface UpdateChannelContextSummaryRequest {
+  readonly targetType?: ChannelContextSummaryTargetType;
+  readonly targetId?: string;
+  readonly sourceMessageIds?: readonly string[];
+  readonly decisionIds?: readonly string[];
+  readonly summary?: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly openQuestions?: readonly string[];
+  readonly authorType?: ChannelContextSummaryAuthorType;
+  readonly authorId?: string | null;
+}
+
+export interface ChannelContextSummaryListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly contextSummaries: readonly ChannelContextSummary[];
+}
+
+export interface ChannelContextSummaryMutationResponse {
+  readonly contextSummary: ChannelContextSummary;
+}
+
 export type ResourceType = "channel" | "bound_path" | "workspace" | "provider" | "task" | "workflow_step";
 
 export type ResourceLeaseStatus = "active" | "released" | "expired";

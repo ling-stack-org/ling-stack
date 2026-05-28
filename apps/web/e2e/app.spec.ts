@@ -16,6 +16,10 @@ interface MockState {
   channelMessages: unknown[];
   channelAttachments: unknown[];
   channelLinkPreviews: unknown[];
+  channelBriefs: Record<string, unknown>;
+  channelDecisions: unknown[];
+  channelHandoffs: unknown[];
+  channelContextSummaries: unknown[];
   tasks: unknown[];
   runs: MockRun[];
   eventsByRun: Record<string, MockRunEvent[]>;
@@ -264,6 +268,53 @@ test("channel files tab supports PDF and Office uploads without AI ingestion", a
   expect(state.channelAttachments.every((attachment) => isRecord(attachment) && (attachment.kind === "pdf" || attachment.kind === "office"))).toBe(true);
   expect(state.channelMessages.length).toBe(initialMessageCount);
   expect(state.tasks.length).toBe(initialTaskCount);
+});
+
+test("channel v1.1 protocol supports brief, decisions, handoffs, and context task creation", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  const briefLoaded = page.waitForResponse((response) => response.url().includes("/channels/channel_engineering/brief") && response.request().method() === "GET");
+  await page.goto("/");
+  await briefLoaded;
+
+  await expect(page.getByText("Loading protocol...")).toHaveCount(0);
+  await page.getByLabel("Objective").fill("Ship channel v1.1 protocol");
+  await page.getByLabel("Scope").fill("Brief, decisions, handoffs, context summaries");
+  await page.getByLabel("Acceptance criteria").fill("Brief saves\nActivity shows protocol items");
+  await page.getByRole("button", { name: "Save brief" }).click();
+  await expect.poll(() => {
+    const brief = state.channelBriefs.channel_engineering;
+    return isRecord(brief) ? brief.objective : undefined;
+  }).toBe("Ship channel v1.1 protocol");
+
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Keep v1.1 handoffs manual and visible.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Record decision" }).first().click();
+  await expect.poll(() => state.channelDecisions.length).toBe(1);
+  await expect(page.getByText("Decision log")).toBeVisible();
+
+  await page.getByRole("button", { name: "Supersede" }).first().click();
+  await expect.poll(() => state.channelDecisions.filter((decision) => isRecord(decision) && decision.status === "active").length).toBe(1);
+  await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.status === "superseded")).toBe(true);
+
+  await page.getByRole("button", { name: "Create handoff" }).first().click();
+  await expect.poll(() => state.channelHandoffs.length).toBe(1);
+  await expect(page.getByText("Handoff", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Complete" }).first().click();
+  await expect.poll(() => isRecord(state.channelHandoffs[0]) ? state.channelHandoffs[0].status : undefined).toBe("completed");
+  await expect.poll(() => isRecord(state.tasks.find((task) => isRecord(task) && task.id === "task_inspect")) ? state.tasks.find((task) => isRecord(task) && task.id === "task_inspect")?.status : undefined).toBe("failed");
+
+  const taskCount = state.tasks.length;
+  await page.getByRole("button", { name: "Create task with context" }).first().click();
+  await expect.poll(() => state.channelContextSummaries.length).toBe(1);
+  await expect.poll(() => state.tasks.length).toBe(taskCount + 1);
+  await expect(page.getByText("Context summary", { exact: true }).first()).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByLabel("Objective")).toHaveValue("Ship channel v1.1 protocol");
 });
 
 test("run detail renders state transitions from daemon timeline API", async ({ page }) => {
@@ -1300,6 +1351,10 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     channelMessages: [],
     channelAttachments: [],
     channelLinkPreviews: [],
+    channelBriefs: {},
+    channelDecisions: [],
+    channelHandoffs: [],
+    channelContextSummaries: [],
     tasks: [
       {
         id: "task_inspect",
@@ -1352,6 +1407,25 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     stateTransitions: [],
     artifactsByRun: {},
     artifactsByMediaJob: {},
+  };
+}
+
+function createEmptyMockBrief(channelId: string): Record<string, unknown> {
+  return {
+    id: `brief_${channelId}`,
+    workspaceId: "workspace_default",
+    channelId,
+    objective: "",
+    scope: "",
+    acceptanceCriteria: [],
+    openQuestions: [],
+    risks: [],
+    decisionIds: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    updatedBy: "system",
+    createdAt: "2026-05-22T00:00:00.000Z",
+    updatedAt: "2026-05-22T00:00:00.000Z",
   };
 }
 
@@ -1769,6 +1843,188 @@ async function handleDaemonRoute(
     };
     state.channelLinkPreviews.unshift(preview);
     await route.fulfill({ status: 201, json: { linkPreview: preview } });
+    return;
+  }
+  const channelBriefMatch = /^\/channels\/([^/]+)\/brief$/.exec(path);
+  if (channelBriefMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelBriefMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        brief: state.channelBriefs[channelId] ?? createEmptyMockBrief(channelId),
+      },
+    });
+    return;
+  }
+  if (channelBriefMatch && request.method() === "PATCH") {
+    const channelId = decodeURIComponent(channelBriefMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const existing = state.channelBriefs[channelId];
+    const brief = {
+      ...(isRecord(existing) ? existing : createEmptyMockBrief(channelId)),
+      objective: typeof body.objective === "string" ? body.objective : "",
+      scope: typeof body.scope === "string" ? body.scope : "",
+      acceptanceCriteria: Array.isArray(body.acceptanceCriteria) ? body.acceptanceCriteria : [],
+      openQuestions: Array.isArray(body.openQuestions) ? body.openQuestions : [],
+      risks: Array.isArray(body.risks) ? body.risks : [],
+      decisionIds: Array.isArray(body.decisionIds) ? body.decisionIds : [],
+      attachmentIds: Array.isArray(body.attachmentIds) ? body.attachmentIds : [],
+      linkPreviewIds: Array.isArray(body.linkPreviewIds) ? body.linkPreviewIds : [],
+      updatedBy: typeof body.updatedBy === "string" ? body.updatedBy : "local-user",
+      updatedAt: "2026-05-25T00:21:00.000Z",
+    };
+    state.channelBriefs[channelId] = brief;
+    await route.fulfill({ json: { brief } });
+    return;
+  }
+  const channelDecisionsMatch = /^\/channels\/([^/]+)\/decisions$/.exec(path);
+  if (channelDecisionsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelDecisionsMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        decisions: state.channelDecisions.filter((decision) => isRecord(decision) && decision.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelDecisionsMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelDecisionsMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    if (typeof body.supersedesDecisionId === "string") {
+      state.channelDecisions = state.channelDecisions.map((decision) =>
+        isRecord(decision) && decision.id === body.supersedesDecisionId ? { ...decision, status: "superseded" } : decision
+      );
+    }
+    const decision = {
+      id: `decision_${state.channelDecisions.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      sourceMessageId: typeof body.sourceMessageId === "string" ? body.sourceMessageId : undefined,
+      sourceTaskId: typeof body.sourceTaskId === "string" ? body.sourceTaskId : undefined,
+      sourceRunId: typeof body.sourceRunId === "string" ? body.sourceRunId : undefined,
+      title: typeof body.title === "string" ? body.title : "Decision",
+      decision: typeof body.decision === "string" ? body.decision : "",
+      rationale: typeof body.rationale === "string" ? body.rationale : "",
+      alternatives: Array.isArray(body.alternatives) ? body.alternatives : [],
+      status: "active",
+      supersedesDecisionId: typeof body.supersedesDecisionId === "string" ? body.supersedesDecisionId : undefined,
+      createdBy: typeof body.createdBy === "string" ? body.createdBy : "local-user",
+      createdAt: "2026-05-25T00:22:00.000Z",
+      updatedAt: "2026-05-25T00:22:00.000Z",
+    };
+    state.channelDecisions.unshift(decision);
+    await route.fulfill({ status: 201, json: { decision } });
+    return;
+  }
+  const decisionMatch = /^\/decisions\/([^/]+)$/.exec(path);
+  if (decisionMatch && request.method() === "PATCH") {
+    const decisionId = decodeURIComponent(decisionMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated;
+    state.channelDecisions = state.channelDecisions.map((decision) => {
+      if (isRecord(decision) && decision.id === decisionId) {
+        updated = { ...decision, ...body, updatedAt: "2026-05-25T00:23:00.000Z" };
+        return updated;
+      }
+      return decision;
+    });
+    await route.fulfill({ json: { decision: updated } });
+    return;
+  }
+  const channelHandoffsMatch = /^\/channels\/([^/]+)\/handoffs$/.exec(path);
+  if (channelHandoffsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelHandoffsMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        handoffs: state.channelHandoffs.filter((handoff) => isRecord(handoff) && handoff.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelHandoffsMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelHandoffsMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const handoff = {
+      id: `handoff_${state.channelHandoffs.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      ...body,
+      status: typeof body.status === "string" ? body.status : "proposed",
+      createdAt: "2026-05-25T00:24:00.000Z",
+      updatedAt: "2026-05-25T00:24:00.000Z",
+    };
+    state.channelHandoffs.unshift(handoff);
+    await route.fulfill({ status: 201, json: { handoff } });
+    return;
+  }
+  const handoffMatch = /^\/handoffs\/([^/]+)$/.exec(path);
+  if (handoffMatch && request.method() === "PATCH") {
+    const handoffId = decodeURIComponent(handoffMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated;
+    state.channelHandoffs = state.channelHandoffs.map((handoff) => {
+      if (isRecord(handoff) && handoff.id === handoffId) {
+        updated = { ...handoff, ...body, updatedAt: "2026-05-25T00:25:00.000Z" };
+        return updated;
+      }
+      return handoff;
+    });
+    await route.fulfill({ json: { handoff: updated } });
+    return;
+  }
+  const channelSummariesMatch = /^\/channels\/([^/]+)\/context-summaries$/.exec(path);
+  if (channelSummariesMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelSummariesMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        contextSummaries: state.channelContextSummaries.filter((summary) => isRecord(summary) && summary.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelSummariesMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelSummariesMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const contextSummary = {
+      id: `summary_${state.channelContextSummaries.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      targetType: typeof body.targetType === "string" ? body.targetType : "thread",
+      targetId: typeof body.targetId === "string" ? body.targetId : "msg_1",
+      sourceMessageIds: Array.isArray(body.sourceMessageIds) ? body.sourceMessageIds : [],
+      decisionIds: Array.isArray(body.decisionIds) ? body.decisionIds : [],
+      summary: typeof body.summary === "string" ? body.summary : "",
+      acceptanceCriteria: Array.isArray(body.acceptanceCriteria) ? body.acceptanceCriteria : [],
+      openQuestions: Array.isArray(body.openQuestions) ? body.openQuestions : [],
+      authorType: typeof body.authorType === "string" ? body.authorType : "local-user",
+      authorId: typeof body.authorId === "string" ? body.authorId : undefined,
+      createdAt: "2026-05-25T00:26:00.000Z",
+      updatedAt: "2026-05-25T00:26:00.000Z",
+    };
+    state.channelContextSummaries.unshift(contextSummary);
+    await route.fulfill({ status: 201, json: { contextSummary } });
+    return;
+  }
+  const summaryMatch = /^\/context-summaries\/([^/]+)$/.exec(path);
+  if (summaryMatch && request.method() === "PATCH") {
+    const summaryId = decodeURIComponent(summaryMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated;
+    state.channelContextSummaries = state.channelContextSummaries.map((summary) => {
+      if (isRecord(summary) && summary.id === summaryId) {
+        updated = { ...summary, ...body, updatedAt: "2026-05-25T00:27:00.000Z" };
+        return updated;
+      }
+      return summary;
+    });
+    await route.fulfill({ json: { contextSummary: updated } });
     return;
   }
   const attachmentContentMatch = /^\/attachments\/([^/]+)\/content$/.exec(path);

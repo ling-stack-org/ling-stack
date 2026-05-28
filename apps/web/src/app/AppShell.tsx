@@ -20,6 +20,9 @@ import {
   checkProvider,
   channelAttachmentContentUrl,
   createChannel,
+  createChannelContextSummary,
+  createChannelDecision,
+  createChannelHandoff,
   createChannelLinkPreview,
   createChannelMessage,
   createMediaJob,
@@ -33,6 +36,7 @@ import {
   deleteProvider,
   getDaemonHealth,
   getApprovalPolicy,
+  getChannelBrief,
   getRun,
   getRunEvents,
   listMediaJobArtifacts,
@@ -40,6 +44,9 @@ import {
   listResourceLeases,
   listChannelAttachments,
   listChannels,
+  listChannelContextSummaries,
+  listChannelDecisions,
+  listChannelHandoffs,
   listChannelLinkPreviews,
   listChannelMessages,
   listApprovals,
@@ -53,6 +60,10 @@ import {
   uploadChannelAttachment,
   updateChannel,
   updateApprovalPolicy,
+  updateChannelBrief,
+  updateChannelContextSummary,
+  updateChannelDecision,
+  updateChannelHandoff,
   updateTask,
   updateTaskStatus,
   updateProvider,
@@ -64,8 +75,13 @@ import type {
   ApprovalPolicy,
   ApprovalPolicyFormState,
   ChannelAttachment,
+  ChannelBrief,
   Channel,
+  ChannelContextSummary,
+  ChannelDecision,
   ChannelFormState,
+  ChannelHandoff,
+  ChannelHandoffStatus,
   ChannelLinkPreview,
   ChannelMessage,
   MediaJob,
@@ -84,6 +100,7 @@ import type {
   TaskEditFormState,
   TaskFormState,
   TaskRunActionState,
+  UpdateChannelBriefRequest,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -180,6 +197,20 @@ const defaultMediaJobForm: MediaJobFormState = {
   inputText: "{}",
 };
 
+function buildContextTaskPrompt(summary: ChannelContextSummary, decisions: readonly ChannelDecision[]): string {
+  const activeDecisions = decisions.filter((decision) => summary.decisionIds.includes(decision.id) && decision.status === "active");
+  const decisionText = activeDecisions.length > 0
+    ? `\n\nActive decisions:\n${activeDecisions.map((decision) => `- ${decision.title}: ${decision.decision}`).join("\n")}`
+    : "";
+  const criteriaText = summary.acceptanceCriteria.length > 0
+    ? `\n\nAcceptance criteria:\n${summary.acceptanceCriteria.map((item) => `- ${item}`).join("\n")}`
+    : "";
+  const questionText = summary.openQuestions.length > 0
+    ? `\n\nOpen questions:\n${summary.openQuestions.map((item) => `- ${item}`).join("\n")}`
+    : "";
+  return `Context summary:\n${summary.summary}${decisionText}${criteriaText}${questionText}`;
+}
+
 export function AppShell(): JSX.Element {
   const { t } = useI18n();
   const initialWorkspaceCwd = readInitialWorkspaceCwd();
@@ -221,8 +252,13 @@ export function AppShell(): JSX.Element {
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
   const [channelAttachments, setChannelAttachments] = useState<readonly ChannelAttachment[]>([]);
   const [channelLinkPreviews, setChannelLinkPreviews] = useState<readonly ChannelLinkPreview[]>([]);
+  const [channelBrief, setChannelBrief] = useState<ChannelBrief | undefined>();
+  const [channelDecisions, setChannelDecisions] = useState<readonly ChannelDecision[]>([]);
+  const [channelHandoffs, setChannelHandoffs] = useState<readonly ChannelHandoff[]>([]);
+  const [channelContextSummaries, setChannelContextSummaries] = useState<readonly ChannelContextSummary[]>([]);
   const [channelMessagesLoading, setChannelMessagesLoading] = useState(false);
   const [channelFilesLoading, setChannelFilesLoading] = useState(false);
+  const [channelProtocolLoading, setChannelProtocolLoading] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
@@ -433,11 +469,16 @@ export function AppShell(): JSX.Element {
       void refreshTasks(selectedChannelId);
       void refreshChannelMessages(selectedChannelId);
       void refreshChannelFiles(selectedChannelId);
+      void refreshChannelProtocol(selectedChannelId);
     } else {
       setTasks([]);
       setChannelMessages([]);
       setChannelAttachments([]);
       setChannelLinkPreviews([]);
+      setChannelBrief(undefined);
+      setChannelDecisions([]);
+      setChannelHandoffs([]);
+      setChannelContextSummaries([]);
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
@@ -897,6 +938,35 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function refreshChannelProtocol(channelId = selectedChannelId): Promise<void> {
+    if (!form.cwd.trim() || !channelId) {
+      setChannelBrief(undefined);
+      setChannelDecisions([]);
+      setChannelHandoffs([]);
+      setChannelContextSummaries([]);
+      return;
+    }
+
+    setChannelProtocolLoading(true);
+    try {
+      setErrorMessage("");
+      const [briefResponse, decisionsResponse, handoffsResponse, summariesResponse] = await Promise.all([
+        getChannelBrief(form.cwd.trim(), channelId),
+        listChannelDecisions(form.cwd.trim(), channelId),
+        listChannelHandoffs(form.cwd.trim(), channelId),
+        listChannelContextSummaries(form.cwd.trim(), channelId),
+      ]);
+      setChannelBrief(briefResponse.brief);
+      setChannelDecisions(decisionsResponse.decisions);
+      setChannelHandoffs(handoffsResponse.handoffs);
+      setChannelContextSummaries(summariesResponse.contextSummaries);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChannelProtocolLoading(false);
+    }
+  }
+
   async function saveChannel(): Promise<void> {
     if (!form.cwd.trim()) {
       setErrorMessage("请输入 workspace path");
@@ -1138,6 +1208,187 @@ export function AppShell(): JSX.Element {
         linkedTaskId: response.task.id,
       });
       await Promise.all([refreshTasks(selectedChannelId), refreshChannelMessages(selectedChannelId)]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function saveChannelBrief(input: UpdateChannelBriefRequest): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    try {
+      setErrorMessage("");
+      const response = await updateChannelBrief(form.cwd.trim(), selectedChannelId, input);
+      setChannelBrief(response.brief);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function recordDecisionFromMessage(message: ChannelMessage): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    try {
+      setErrorMessage("");
+      const response = await createChannelDecision(form.cwd.trim(), selectedChannelId, {
+        sourceMessageId: message.id,
+        title: titleFromPrompt(message.body),
+        decision: message.body,
+        rationale: "Recorded from channel discussion.",
+        alternatives: [],
+        createdBy: "local-user",
+      });
+      setChannelDecisions((current) => [response.decision, ...current]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function supersedeChannelDecision(decision: ChannelDecision): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    try {
+      setErrorMessage("");
+      await createChannelDecision(form.cwd.trim(), selectedChannelId, {
+        title: `${decision.title} update`,
+        decision: decision.decision,
+        rationale: "Supersedes the previous active decision.",
+        alternatives: decision.alternatives,
+        supersedesDecisionId: decision.id,
+        createdBy: "local-user",
+      });
+      await refreshChannelProtocol(selectedChannelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function rejectChannelDecision(decision: ChannelDecision): Promise<void> {
+    try {
+      setErrorMessage("");
+      const response = await updateChannelDecision(form.cwd.trim(), decision.id, { status: "rejected" });
+      setChannelDecisions((current) => current.map((item) => item.id === response.decision.id ? response.decision : item));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function createHandoffFromMessage(message: ChannelMessage): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    const teammateId = selectedChannel?.defaultTeammateId ?? "engineer";
+    try {
+      setErrorMessage("");
+      const response = await createChannelHandoff(form.cwd.trim(), selectedChannelId, {
+        sourceMessageId: message.id,
+        fromParticipantId: "local-user",
+        fromParticipantLabel: "Tian",
+        toParticipantId: teammateId,
+        toParticipantLabel: teammateId,
+        reason: titleFromPrompt(message.body),
+        requiredInput: message.body,
+        expectedOutput: "Reply with the next concrete step.",
+        createdBy: "local-user",
+      });
+      setChannelHandoffs((current) => [response.handoff, ...current]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function createHandoffFromTask(task: Task): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    const teammateId = task.assigneeTeammateId ?? selectedChannel?.defaultTeammateId ?? "engineer";
+    try {
+      setErrorMessage("");
+      const response = await createChannelHandoff(form.cwd.trim(), selectedChannelId, {
+        sourceTaskId: task.id,
+        fromParticipantId: "local-user",
+        fromParticipantLabel: "Tian",
+        toParticipantId: teammateId,
+        toParticipantLabel: teammateId,
+        reason: task.title,
+        requiredInput: task.prompt,
+        expectedOutput: "Complete or report blocker for this task.",
+        createdBy: "local-user",
+      });
+      setChannelHandoffs((current) => [response.handoff, ...current]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function updateHandoffStatusValue(handoff: ChannelHandoff, status: ChannelHandoffStatus): Promise<void> {
+    try {
+      setErrorMessage("");
+      const response = await updateChannelHandoff(form.cwd.trim(), handoff.id, { status });
+      setChannelHandoffs((current) => current.map((item) => item.id === response.handoff.id ? response.handoff : item));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function createTaskWithContextFromMessage(message: ChannelMessage): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    const activeDecisionIds = channelDecisions.filter((decision) => decision.status === "active").map((decision) => decision.id);
+    try {
+      setErrorMessage("");
+      const summaryResponse = await createChannelContextSummary(form.cwd.trim(), selectedChannelId, {
+        targetType: "thread",
+        targetId: message.threadId ?? message.id,
+        sourceMessageIds: [message.id],
+        decisionIds: activeDecisionIds,
+        summary: message.body,
+        acceptanceCriteria: [],
+        openQuestions: [],
+        authorType: "local-user",
+        authorId: "local-user",
+      });
+      setChannelContextSummaries((current) => [summaryResponse.contextSummary, ...current]);
+      const taskResponse = await createTask(form.cwd.trim(), selectedChannelId, {
+        title: titleFromPrompt(message.body),
+        prompt: buildContextTaskPrompt(summaryResponse.contextSummary, channelDecisions),
+        assigneeTeammateId: selectedChannel?.defaultTeammateId,
+      });
+      setSelectedTaskId(taskResponse.task.id);
+      await refreshTasks(selectedChannelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function createTaskFromContextSummary(summary: ChannelContextSummary): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    try {
+      setErrorMessage("");
+      const response = await createTask(form.cwd.trim(), selectedChannelId, {
+        title: titleFromPrompt(summary.summary),
+        prompt: buildContextTaskPrompt(summary, channelDecisions),
+        assigneeTeammateId: selectedChannel?.defaultTeammateId,
+      });
+      setSelectedTaskId(response.task.id);
+      await refreshTasks(selectedChannelId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -1667,6 +1918,10 @@ export function AppShell(): JSX.Element {
             channelMessages={channelMessages}
             channelAttachments={channelAttachments}
             channelLinkPreviews={channelLinkPreviews}
+            channelBrief={channelBrief}
+            channelDecisions={channelDecisions}
+            channelHandoffs={channelHandoffs}
+            channelContextSummaries={channelContextSummaries}
             selectedTaskId={selectedTaskId}
             providers={providers}
             teammateTemplates={builtinTeammateTemplates}
@@ -1677,6 +1932,7 @@ export function AppShell(): JSX.Element {
             tasksLoading={tasksLoading}
             channelMessagesLoading={channelMessagesLoading}
             channelFilesLoading={channelFilesLoading}
+            channelProtocolLoading={channelProtocolLoading}
             providersLoading={providersLoading}
             approvals={approvals}
             resourceLeases={resourceLeases}
@@ -1707,6 +1963,15 @@ export function AppShell(): JSX.Element {
             onCreateLinkPreview={(url) => addChannelLinkPreview(url)}
             onDeleteAttachment={(attachmentId) => void removeChannelAttachment(attachmentId)}
             onCreateTaskFromMessage={(message) => void createTaskFromChannelMessage(message)}
+            onSaveBrief={(input) => void saveChannelBrief(input)}
+            onRecordDecisionFromMessage={(message) => void recordDecisionFromMessage(message)}
+            onSupersedeDecision={(decision) => void supersedeChannelDecision(decision)}
+            onRejectDecision={(decision) => void rejectChannelDecision(decision)}
+            onCreateHandoffFromMessage={(message) => void createHandoffFromMessage(message)}
+            onCreateHandoffFromTask={(task) => void createHandoffFromTask(task)}
+            onUpdateHandoffStatus={(handoff, status) => void updateHandoffStatusValue(handoff, status)}
+            onCreateTaskWithContextFromMessage={(message) => void createTaskWithContextFromMessage(message)}
+            onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
             attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
             onRefreshTasks={() => void refreshTasks()}
             onSelectTask={setSelectedTaskId}

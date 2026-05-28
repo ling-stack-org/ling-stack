@@ -36,6 +36,15 @@ import {
   type ArtifactType,
   type ChannelAttachment,
   type ChannelAttachmentKind,
+  type ChannelBrief,
+  channelContextSummaryAuthorTypes,
+  channelContextSummaryTargetTypes,
+  type ChannelContextSummaryAuthorType,
+  type ChannelContextSummaryTargetType,
+  channelDecisionStatuses,
+  type ChannelDecisionStatus,
+  channelHandoffStatuses,
+  type ChannelHandoffStatus,
   type ChannelLinkPreview,
   type ChannelMention,
   type ChannelMessage,
@@ -179,6 +188,89 @@ interface ChannelAttachmentRequest {
 interface ChannelLinkPreviewRequest {
   readonly url: string;
   readonly messageId?: string;
+}
+
+interface ChannelBriefRequest {
+  readonly objective: string;
+  readonly scope: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly openQuestions: readonly string[];
+  readonly risks: readonly string[];
+  readonly decisionIds: readonly string[];
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly updatedBy: string;
+}
+
+interface ChannelDecisionRequest {
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly title: string;
+  readonly decision: string;
+  readonly rationale?: string;
+  readonly alternatives: readonly string[];
+  readonly status?: ChannelDecisionStatus;
+  readonly supersedesDecisionId?: string;
+  readonly createdBy: string;
+}
+
+interface ChannelDecisionUpdateRequest {
+  readonly title?: string;
+  readonly decision?: string;
+  readonly rationale?: string;
+  readonly alternatives?: readonly string[];
+  readonly status?: ChannelDecisionStatus;
+}
+
+interface ChannelHandoffRequest {
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly fromParticipantId: string;
+  readonly fromParticipantLabel: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly reason: string;
+  readonly requiredInput: string;
+  readonly expectedOutput: string;
+  readonly status?: ChannelHandoffStatus;
+  readonly createdBy: string;
+}
+
+interface ChannelHandoffUpdateRequest {
+  readonly fromParticipantId?: string;
+  readonly fromParticipantLabel?: string;
+  readonly toParticipantId?: string;
+  readonly toParticipantLabel?: string;
+  readonly reason?: string;
+  readonly requiredInput?: string;
+  readonly expectedOutput?: string;
+  readonly status?: ChannelHandoffStatus;
+}
+
+interface ChannelContextSummaryRequest {
+  readonly targetType: ChannelContextSummaryTargetType;
+  readonly targetId: string;
+  readonly sourceMessageIds: readonly string[];
+  readonly decisionIds: readonly string[];
+  readonly summary: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly openQuestions: readonly string[];
+  readonly authorType: ChannelContextSummaryAuthorType;
+  readonly authorId?: string;
+}
+
+interface ChannelContextSummaryUpdateRequest {
+  readonly targetType?: ChannelContextSummaryTargetType;
+  readonly targetId?: string;
+  readonly sourceMessageIds?: readonly string[];
+  readonly decisionIds?: readonly string[];
+  readonly summary?: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly openQuestions?: readonly string[];
+  readonly authorType?: ChannelContextSummaryAuthorType;
+  readonly authorId?: string | null;
 }
 
 interface PreparedRunConcurrency {
@@ -418,8 +510,30 @@ async function routeRequest(
     return;
   }
 
+  const decisionRoute = parseChannelDecisionRoute(url.pathname);
+  if (decisionRoute) {
+    await handleChannelDecisionItem(request, response, config, storeRegistry, decisionRoute.decisionId);
+    return;
+  }
+
+  const handoffRoute = parseChannelHandoffRoute(url.pathname);
+  if (handoffRoute) {
+    await handleChannelHandoffItem(request, response, config, storeRegistry, handoffRoute.handoffId);
+    return;
+  }
+
+  const contextSummaryRoute = parseChannelContextSummaryRoute(url.pathname);
+  if (contextSummaryRoute) {
+    await handleChannelContextSummaryItem(request, response, config, storeRegistry, contextSummaryRoute.contextSummaryId);
+    return;
+  }
+
   const channelRoute = parseChannelRoute(url.pathname);
   if (channelRoute) {
+    if (channelRoute.action === "brief") {
+      await handleChannelBrief(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
     if (channelRoute.action === "messages") {
       await handleChannelMessagesCollection(request, response, config, runner, storeRegistry, secretResolver, channelRoute.channelId);
       return;
@@ -430,6 +544,18 @@ async function routeRequest(
     }
     if (channelRoute.action === "link-previews") {
       await handleChannelLinkPreviewsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "decisions") {
+      await handleChannelDecisionsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "handoffs") {
+      await handleChannelHandoffsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "context-summaries") {
+      await handleChannelContextSummariesCollection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
     await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId);
@@ -1373,6 +1499,324 @@ async function handleChannelLinkPreviewItem(
       error: "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+async function handleChannelBrief(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        brief: store.getChannelBrief(channelId) ?? createEmptyChannelBrief(channel),
+      });
+      return;
+    }
+
+    if (request.method === "PATCH") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelBriefRequest(body);
+      const referenceError = validateChannelBriefReferences(store, channelId, input);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
+        return;
+      }
+      const brief = store.updateChannelBrief(channelId, input, new Date().toISOString());
+      writeJson(response, 200, { brief });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel brief` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelDecisionsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      const status = readOptionalChannelDecisionStatusQuery(url, "status");
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        decisions: store.listChannelDecisions({ channelId, status, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelDecisionRequest(body);
+      const referenceError = validateProtocolSourceReferences(store, channelId, input) ??
+        (input.supersedesDecisionId ? validateChannelDecisionOwner(store, channelId, input.supersedesDecisionId) : undefined);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
+        return;
+      }
+      const decision = store.createChannelDecision({ ...input, channelId }, new Date().toISOString());
+      writeJson(response, 201, { decision });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel decisions` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelDecisionItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  decisionId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const existing = store.getChannelDecision(decisionId);
+    if (!existing) {
+      writeJson(response, 404, { error: "decision_not_found", message: `Channel decision not found: ${decisionId}` });
+      return;
+    }
+    if (request.method !== "PATCH") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel decision` });
+      return;
+    }
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseChannelDecisionUpdateRequest(body);
+    const decision = store.updateChannelDecision(decisionId, input, new Date().toISOString());
+    writeJson(response, 200, { decision: decision ?? existing });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelHandoffsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      const status = readOptionalChannelHandoffStatusQuery(url, "status");
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        handoffs: store.listChannelHandoffs({ channelId, status, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelHandoffRequest(body);
+      const referenceError = validateProtocolSourceReferences(store, channelId, input);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
+        return;
+      }
+      const handoff = store.createChannelHandoff({ ...input, channelId }, new Date().toISOString());
+      writeJson(response, 201, { handoff });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel handoffs` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelHandoffItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  handoffId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const existing = store.getChannelHandoff(handoffId);
+    if (!existing) {
+      writeJson(response, 404, { error: "handoff_not_found", message: `Channel handoff not found: ${handoffId}` });
+      return;
+    }
+    if (request.method !== "PATCH") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel handoff` });
+      return;
+    }
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseChannelHandoffUpdateRequest(body);
+    const handoff = store.updateChannelHandoff(handoffId, input, new Date().toISOString());
+    writeJson(response, 200, { handoff: handoff ?? existing });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelContextSummariesCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      const targetType = readOptionalChannelContextSummaryTargetTypeQuery(url, "targetType");
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        contextSummaries: store.listChannelContextSummaries({
+          channelId,
+          targetType,
+          targetId: url.searchParams.get("targetId") ?? undefined,
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelContextSummaryRequest(body);
+      const referenceError = validateChannelContextSummaryReferences(store, channelId, input);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
+        return;
+      }
+      const contextSummary = store.createChannelContextSummary({ ...input, channelId }, new Date().toISOString());
+      writeJson(response, 201, { contextSummary });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel context summaries` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelContextSummaryItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  contextSummaryId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const existing = store.getChannelContextSummary(contextSummaryId);
+    if (!existing) {
+      writeJson(response, 404, { error: "context_summary_not_found", message: `Channel context summary not found: ${contextSummaryId}` });
+      return;
+    }
+    if (request.method !== "PATCH") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel context summary` });
+      return;
+    }
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseChannelContextSummaryUpdateRequest(body);
+    const referenceError = validateChannelContextSummaryReferences(store, existing.channelId, {
+      targetType: input.targetType ?? existing.targetType,
+      targetId: input.targetId ?? existing.targetId,
+      sourceMessageIds: input.sourceMessageIds ?? existing.sourceMessageIds,
+      decisionIds: input.decisionIds ?? existing.decisionIds,
+    });
+    if (referenceError) {
+      writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
+      return;
+    }
+    const contextSummary = store.updateChannelContextSummary(contextSummaryId, input, new Date().toISOString());
+    writeJson(response, 200, { contextSummary: contextSummary ?? existing });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -2492,6 +2936,143 @@ function validateChannelMessageOwner(
     };
   }
   return undefined;
+}
+
+function validateChannelBriefReferences(
+  store: RunStore,
+  channelId: string,
+  input: Pick<ChannelBriefRequest, "decisionIds" | "attachmentIds" | "linkPreviewIds">,
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  for (const decisionId of input.decisionIds) {
+    const error = validateChannelDecisionOwner(store, channelId, decisionId);
+    if (error) {
+      return error;
+    }
+  }
+  const assetError = validateChannelMessageReferences(store, channelId, input.attachmentIds, input.linkPreviewIds);
+  return assetError?.statusCode === 404 ? { ...assetError, statusCode: 400 } : assetError;
+}
+
+function validateProtocolSourceReferences(
+  store: RunStore,
+  channelId: string,
+  input: { readonly sourceMessageId?: string; readonly sourceTaskId?: string; readonly sourceRunId?: string },
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  if (input.sourceMessageId) {
+    const messageError = validateChannelMessageOwner(store, channelId, input.sourceMessageId);
+    if (messageError) {
+      return messageError.statusCode === 404 ? { ...messageError, statusCode: 400 } : messageError;
+    }
+  }
+  if (input.sourceTaskId) {
+    const task = store.getTask(input.sourceTaskId);
+    if (!task) {
+      return { statusCode: 400, code: "task_not_found", message: `Task not found: ${input.sourceTaskId}` };
+    }
+    if (task.channelId !== channelId) {
+      return {
+        statusCode: 400,
+        code: "task_channel_mismatch",
+        message: `Task does not belong to channel: ${input.sourceTaskId}`,
+      };
+    }
+  }
+  if (input.sourceRunId) {
+    const run = store.getRun(input.sourceRunId);
+    if (!run) {
+      return { statusCode: 400, code: "run_not_found", message: `Run session not found: ${input.sourceRunId}` };
+    }
+    if (run.channelId !== channelId) {
+      return {
+        statusCode: 400,
+        code: "run_channel_mismatch",
+        message: `Run does not belong to channel: ${input.sourceRunId}`,
+      };
+    }
+  }
+  return undefined;
+}
+
+function validateChannelDecisionOwner(
+  store: RunStore,
+  channelId: string,
+  decisionId: string,
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  const decision = store.getChannelDecision(decisionId);
+  if (!decision) {
+    return { statusCode: 400, code: "decision_not_found", message: `Channel decision not found: ${decisionId}` };
+  }
+  if (decision.channelId !== channelId) {
+    return {
+      statusCode: 400,
+      code: "decision_channel_mismatch",
+      message: `Decision does not belong to channel: ${decisionId}`,
+    };
+  }
+  return undefined;
+}
+
+function validateChannelContextSummaryReferences(
+  store: RunStore,
+  channelId: string,
+  input: Pick<ChannelContextSummaryRequest, "targetType" | "targetId" | "sourceMessageIds" | "decisionIds">,
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  if (input.targetType === "task") {
+    const target = store.getTask(input.targetId);
+    if (!target) {
+      return { statusCode: 400, code: "summary_target_not_found", message: `Task not found: ${input.targetId}` };
+    }
+    if (target.channelId !== channelId) {
+      return {
+        statusCode: 400,
+        code: "summary_target_channel_mismatch",
+        message: `Summary target does not belong to channel: ${input.targetId}`,
+      };
+    }
+  } else if (!isThreadTargetInChannel(store, channelId, input.targetId)) {
+    return { statusCode: 400, code: "summary_target_not_found", message: `Channel thread not found: ${input.targetId}` };
+  }
+
+  for (const messageId of input.sourceMessageIds) {
+    const messageError = validateChannelMessageOwner(store, channelId, messageId);
+    if (messageError) {
+      return messageError.statusCode === 404 ? { ...messageError, statusCode: 400 } : messageError;
+    }
+  }
+  for (const decisionId of input.decisionIds) {
+    const decisionError = validateChannelDecisionOwner(store, channelId, decisionId);
+    if (decisionError) {
+      return decisionError;
+    }
+  }
+  return undefined;
+}
+
+function isThreadTargetInChannel(store: RunStore, channelId: string, targetId: string): boolean {
+  const directMessage = store.getChannelMessage(targetId);
+  if (directMessage) {
+    return directMessage.channelId === channelId;
+  }
+  return store.listChannelMessages({ channelId, threadId: targetId, limit: 1 }).length > 0;
+}
+
+function createEmptyChannelBrief(channel: Channel): ChannelBrief {
+  return {
+    id: `brief_${channel.id}`,
+    workspaceId: channel.workspaceId,
+    channelId: channel.id,
+    objective: "",
+    scope: "",
+    acceptanceCriteria: [],
+    openQuestions: [],
+    risks: [],
+    decisionIds: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    updatedBy: "system",
+    createdAt: channel.createdAt,
+    updatedAt: channel.updatedAt,
+  };
 }
 
 function persistChannelAttachment(store: RunStore, channelId: string, input: ChannelAttachmentRequest): ChannelAttachment {
@@ -4352,7 +4933,10 @@ function parseArtifactRoute(pathname: string): { kind: "artifact"; artifactId: s
 
 function parseChannelRoute(
   pathname: string,
-): { readonly channelId: string; readonly action?: "messages" | "attachments" | "link-previews" } | undefined {
+): {
+  readonly channelId: string;
+  readonly action?: "brief" | "messages" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries";
+} | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "channels") {
     return { channelId: segments[1] };
@@ -4360,7 +4944,15 @@ function parseChannelRoute(
   if (
     segments.length === 3 &&
     segments[0] === "channels" &&
-    (segments[2] === "messages" || segments[2] === "attachments" || segments[2] === "link-previews")
+    (
+      segments[2] === "brief" ||
+      segments[2] === "messages" ||
+      segments[2] === "attachments" ||
+      segments[2] === "link-previews" ||
+      segments[2] === "decisions" ||
+      segments[2] === "handoffs" ||
+      segments[2] === "context-summaries"
+    )
   ) {
     return { channelId: segments[1], action: segments[2] };
   }
@@ -4386,6 +4978,30 @@ function parseChannelLinkPreviewRoute(
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 3 && segments[0] === "link-previews" && segments[2] === "refresh") {
     return { linkPreviewId: segments[1], action: "refresh" };
+  }
+  return undefined;
+}
+
+function parseChannelDecisionRoute(pathname: string): { readonly decisionId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "decisions") {
+    return { decisionId: segments[1] };
+  }
+  return undefined;
+}
+
+function parseChannelHandoffRoute(pathname: string): { readonly handoffId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "handoffs") {
+    return { handoffId: segments[1] };
+  }
+  return undefined;
+}
+
+function parseChannelContextSummaryRoute(pathname: string): { readonly contextSummaryId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "context-summaries") {
+    return { contextSummaryId: segments[1] };
   }
   return undefined;
 }
@@ -4593,6 +5209,124 @@ function parseChannelLinkPreviewRequest(value: unknown): ChannelLinkPreviewReque
   return {
     url: readString(value, "url"),
     messageId: readOptionalString(value, "messageId"),
+  };
+}
+
+function parseChannelBriefRequest(value: unknown): ChannelBriefRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel brief request must be a JSON object");
+  }
+  return {
+    objective: readStringAllowEmpty(value, "objective"),
+    scope: readStringAllowEmpty(value, "scope"),
+    acceptanceCriteria: readOptionalStringArray(value, "acceptanceCriteria") ?? [],
+    openQuestions: readOptionalStringArray(value, "openQuestions") ?? [],
+    risks: readOptionalStringArray(value, "risks") ?? [],
+    decisionIds: readOptionalStringArray(value, "decisionIds") ?? [],
+    attachmentIds: readOptionalStringArray(value, "attachmentIds") ?? [],
+    linkPreviewIds: readOptionalStringArray(value, "linkPreviewIds") ?? [],
+    updatedBy: readString(value, "updatedBy"),
+  };
+}
+
+function parseChannelDecisionRequest(value: unknown): ChannelDecisionRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel decision request must be a JSON object");
+  }
+  return {
+    sourceMessageId: readOptionalString(value, "sourceMessageId"),
+    sourceTaskId: readOptionalString(value, "sourceTaskId"),
+    sourceRunId: readOptionalString(value, "sourceRunId"),
+    title: readString(value, "title"),
+    decision: readString(value, "decision"),
+    rationale: readOptionalString(value, "rationale"),
+    alternatives: readOptionalStringArray(value, "alternatives") ?? [],
+    status: readOptionalChannelDecisionStatus(value, "status"),
+    supersedesDecisionId: readOptionalString(value, "supersedesDecisionId"),
+    createdBy: readString(value, "createdBy"),
+  };
+}
+
+function parseChannelDecisionUpdateRequest(value: unknown): ChannelDecisionUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel decision update must be a JSON object");
+  }
+  return {
+    title: readOptionalString(value, "title"),
+    decision: readOptionalString(value, "decision"),
+    rationale: readOptionalString(value, "rationale"),
+    alternatives: readOptionalStringArray(value, "alternatives"),
+    status: readOptionalChannelDecisionStatus(value, "status"),
+  };
+}
+
+function parseChannelHandoffRequest(value: unknown): ChannelHandoffRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel handoff request must be a JSON object");
+  }
+  return {
+    sourceMessageId: readOptionalString(value, "sourceMessageId"),
+    sourceTaskId: readOptionalString(value, "sourceTaskId"),
+    sourceRunId: readOptionalString(value, "sourceRunId"),
+    fromParticipantId: readString(value, "fromParticipantId"),
+    fromParticipantLabel: readString(value, "fromParticipantLabel"),
+    toParticipantId: readString(value, "toParticipantId"),
+    toParticipantLabel: readString(value, "toParticipantLabel"),
+    reason: readStringAllowEmpty(value, "reason"),
+    requiredInput: readStringAllowEmpty(value, "requiredInput"),
+    expectedOutput: readStringAllowEmpty(value, "expectedOutput"),
+    status: readOptionalChannelHandoffStatus(value, "status"),
+    createdBy: readString(value, "createdBy"),
+  };
+}
+
+function parseChannelHandoffUpdateRequest(value: unknown): ChannelHandoffUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel handoff update must be a JSON object");
+  }
+  return {
+    fromParticipantId: readOptionalString(value, "fromParticipantId"),
+    fromParticipantLabel: readOptionalString(value, "fromParticipantLabel"),
+    toParticipantId: readOptionalString(value, "toParticipantId"),
+    toParticipantLabel: readOptionalString(value, "toParticipantLabel"),
+    reason: readOptionalString(value, "reason"),
+    requiredInput: readOptionalString(value, "requiredInput"),
+    expectedOutput: readOptionalString(value, "expectedOutput"),
+    status: readOptionalChannelHandoffStatus(value, "status"),
+  };
+}
+
+function parseChannelContextSummaryRequest(value: unknown): ChannelContextSummaryRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel context summary request must be a JSON object");
+  }
+  return {
+    targetType: readChannelContextSummaryTargetType(value, "targetType"),
+    targetId: readString(value, "targetId"),
+    sourceMessageIds: readOptionalStringArray(value, "sourceMessageIds") ?? [],
+    decisionIds: readOptionalStringArray(value, "decisionIds") ?? [],
+    summary: readString(value, "summary"),
+    acceptanceCriteria: readOptionalStringArray(value, "acceptanceCriteria") ?? [],
+    openQuestions: readOptionalStringArray(value, "openQuestions") ?? [],
+    authorType: readChannelContextSummaryAuthorType(value, "authorType"),
+    authorId: readOptionalString(value, "authorId"),
+  };
+}
+
+function parseChannelContextSummaryUpdateRequest(value: unknown): ChannelContextSummaryUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel context summary update must be a JSON object");
+  }
+  return {
+    targetType: readOptionalChannelContextSummaryTargetType(value, "targetType"),
+    targetId: readOptionalString(value, "targetId"),
+    sourceMessageIds: readOptionalStringArray(value, "sourceMessageIds"),
+    decisionIds: readOptionalStringArray(value, "decisionIds"),
+    summary: readOptionalString(value, "summary"),
+    acceptanceCriteria: readOptionalStringArray(value, "acceptanceCriteria"),
+    openQuestions: readOptionalStringArray(value, "openQuestions"),
+    authorType: readOptionalChannelContextSummaryAuthorType(value, "authorType"),
+    authorId: readNullableString(value, "authorId"),
   };
 }
 
@@ -5155,6 +5889,14 @@ function readString(record: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function readStringAllowEmpty(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string") {
+    throw new Error(`${key} must be a string`);
+  }
+  return value;
+}
+
 function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   if (value === undefined) {
@@ -5396,6 +6138,72 @@ function readOptionalChannelMessageAuthorType(record: Record<string, unknown>, k
   return value;
 }
 
+function readOptionalChannelDecisionStatus(record: Record<string, unknown>, key: string): ChannelDecisionStatus | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelDecisionStatuses.includes(value as ChannelDecisionStatus)) {
+    throw new Error(`${key} must be one of: ${channelDecisionStatuses.join(", ")}`);
+  }
+  return value as ChannelDecisionStatus;
+}
+
+function readOptionalChannelHandoffStatus(record: Record<string, unknown>, key: string): ChannelHandoffStatus | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelHandoffStatuses.includes(value as ChannelHandoffStatus)) {
+    throw new Error(`${key} must be one of: ${channelHandoffStatuses.join(", ")}`);
+  }
+  return value as ChannelHandoffStatus;
+}
+
+function readChannelContextSummaryTargetType(record: Record<string, unknown>, key: string): ChannelContextSummaryTargetType {
+  const value = readString(record, key);
+  if (!channelContextSummaryTargetTypes.includes(value as ChannelContextSummaryTargetType)) {
+    throw new Error(`${key} must be one of: ${channelContextSummaryTargetTypes.join(", ")}`);
+  }
+  return value as ChannelContextSummaryTargetType;
+}
+
+function readOptionalChannelContextSummaryTargetType(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelContextSummaryTargetType | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelContextSummaryTargetTypes.includes(value as ChannelContextSummaryTargetType)) {
+    throw new Error(`${key} must be one of: ${channelContextSummaryTargetTypes.join(", ")}`);
+  }
+  return value as ChannelContextSummaryTargetType;
+}
+
+function readChannelContextSummaryAuthorType(record: Record<string, unknown>, key: string): ChannelContextSummaryAuthorType {
+  const value = readString(record, key);
+  if (!channelContextSummaryAuthorTypes.includes(value as ChannelContextSummaryAuthorType)) {
+    throw new Error(`${key} must be one of: ${channelContextSummaryAuthorTypes.join(", ")}`);
+  }
+  return value as ChannelContextSummaryAuthorType;
+}
+
+function readOptionalChannelContextSummaryAuthorType(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelContextSummaryAuthorType | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelContextSummaryAuthorTypes.includes(value as ChannelContextSummaryAuthorType)) {
+    throw new Error(`${key} must be one of: ${channelContextSummaryAuthorTypes.join(", ")}`);
+  }
+  return value as ChannelContextSummaryAuthorType;
+}
+
 function readOptionalChannelMentions(record: Record<string, unknown>, key: string): ChannelMention[] | undefined {
   const value = record[key];
   if (value === undefined) {
@@ -5573,6 +6381,42 @@ function readOptionalApprovalStatusQuery(url: URL): ApprovalStatus | undefined {
     throw new Error(`status must be one of: ${approvalStatuses.join(", ")}`);
   }
   return value as ApprovalStatus;
+}
+
+function readOptionalChannelDecisionStatusQuery(url: URL, key: string): ChannelDecisionStatus | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelDecisionStatuses.includes(value as ChannelDecisionStatus)) {
+    throw new Error(`${key} must be one of: ${channelDecisionStatuses.join(", ")}`);
+  }
+  return value as ChannelDecisionStatus;
+}
+
+function readOptionalChannelHandoffStatusQuery(url: URL, key: string): ChannelHandoffStatus | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelHandoffStatuses.includes(value as ChannelHandoffStatus)) {
+    throw new Error(`${key} must be one of: ${channelHandoffStatuses.join(", ")}`);
+  }
+  return value as ChannelHandoffStatus;
+}
+
+function readOptionalChannelContextSummaryTargetTypeQuery(
+  url: URL,
+  key: string,
+): ChannelContextSummaryTargetType | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelContextSummaryTargetTypes.includes(value as ChannelContextSummaryTargetType)) {
+    throw new Error(`${key} must be one of: ${channelContextSummaryTargetTypes.join(", ")}`);
+  }
+  return value as ChannelContextSummaryTargetType;
 }
 
 function readOptionalMediaJobStatusQuery(url: URL): MediaJobStatus | undefined {
