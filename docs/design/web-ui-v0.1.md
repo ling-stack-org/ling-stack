@@ -51,6 +51,11 @@ messages, protocol records, tasks, runs, approvals, state transitions, workflows
 workflow steps. v1.5 remains Web-only and does not add durable channel event storage,
 notification persistence, ingestion, automatic multi-agent loops, or a workflow builder.
 
+Planned v1.6 behavior: the channel `Activity` timeline gains local search, category
+filters, attention filters, counts, and no-match empty states. v1.6 remains Web-only and
+does not add backend contracts, durable channel events, notification persistence,
+ingestion, automatic multi-agent loops, or a workflow builder.
+
 ## Goal
 
 Users should be able to run and inspect Ling Stack without `curl`.

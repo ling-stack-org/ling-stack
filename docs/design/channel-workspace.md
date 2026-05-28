@@ -15,6 +15,7 @@ Related docs:
 - [Channel Workspace v1.3 Chat Experience](channel-workspace-v1.3.md)
 - [Channel Workspace v1.4 Files and Run Artifacts](channel-workspace-v1.4.md)
 - [Channel Workspace v1.5 Activity Events](channel-workspace-v1.5.md)
+- [Channel Workspace v1.6 Activity Filters and Search](channel-workspace-v1.6.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
@@ -1526,6 +1527,8 @@ Current MVP implementation status:
 - v1.5 now derives task, run, approval, state-transition, workflow, and
   workflow-step activity cards in the channel `Activity` timeline without adding
   durable channel events,
+- v1.6 is planned to add local search, category filters, attention filters, and
+  no-match states to the derived Activity timeline without backend changes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1667,6 +1670,16 @@ Current MVP implementation status:
 - [x] Audit touched channel strings for English/Chinese i18n coverage.
 - [x] Add e2e coverage for composer visibility, tab boundaries, task conversion
   feedback, asset preview states, and language switching.
+
+### Phase 14: Activity Filters and Search
+
+- [ ] Define v1.6 Activity Filters and Search plan in
+  `docs/design/channel-workspace-v1.6.md`.
+- [ ] Add activity item category, attention, and search metadata.
+- [ ] Add Activity search input, category chips, attention chips, and Clear.
+- [ ] Add no-match empty state without hiding the composer.
+- [ ] Reset Activity filters on channel switch.
+- [ ] Add e2e coverage for search, filters, counts, channel reset, and no-match state.
 
 ## Validation Plan
 
