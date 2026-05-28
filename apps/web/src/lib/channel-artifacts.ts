@@ -1,5 +1,15 @@
 import type { RunSession, Task } from "../types.js";
 
+export function deriveChannelTasks(channelId: string, tasks: readonly Task[]): readonly Task[] {
+  if (!channelId) {
+    return [];
+  }
+
+  return tasks
+    .filter((task) => task.channelId === channelId)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
 export function deriveChannelRuns(
   channelId: string,
   tasks: readonly Task[],
@@ -10,7 +20,7 @@ export function deriveChannelRuns(
     return [];
   }
 
-  const taskIds = new Set(tasks.filter((task) => task.channelId === channelId).map((task) => task.id));
+  const taskIds = new Set(deriveChannelTasks(channelId, tasks).map((task) => task.id));
   const runById = new Map<string, RunSession>();
   for (const run of runs) {
     runById.set(run.id, run);

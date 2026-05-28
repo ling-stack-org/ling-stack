@@ -296,7 +296,8 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   await expect(composerInput).toHaveValue("Retryable channel message");
 
   await page.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByText("Retryable channel message")).toBeVisible();
+  await expect(page.getByLabel("Channel message feed").getByText("Retryable channel message")).toBeVisible();
+  await expect(composerInput).toHaveValue("");
   await expect(page.getByText("Message failed")).toHaveCount(0);
 });
 
@@ -637,7 +638,169 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
     return isRecord(step) ? step.runId : undefined;
   }).toBe("run_2");
   await page.getByRole("button", { name: "Activity" }).click();
-  await expect(page.getByText("Latest run run_2 is succeeded.")).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_2" })).toContainText("succeeded");
+});
+
+test("channel activity derives task run approval transition and workflow events", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = [
+    {
+      id: "msg_timeline",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Timeline source message",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:02:00.000Z",
+      updatedAt: "2026-05-25T00:02:00.000Z",
+    },
+  ];
+  state.channels.push({
+    id: "channel_design",
+    workspaceId: "workspace_default",
+    name: "Design",
+    status: "active",
+    boundPath: cwd,
+    defaultTeammateId: "designer",
+    allowedTools: ["read"],
+    runtimePolicy: defaultRuntimePolicy,
+    createdAt: "2026-05-22T00:00:00.000Z",
+    updatedAt: "2026-05-22T00:00:00.000Z",
+  });
+  state.tasks.push({
+    id: "task_design_timeline",
+    workspaceId: "workspace_default",
+    channelId: "channel_design",
+    title: "Other channel task leak",
+    prompt: "Should not appear in Engineering.",
+    status: "done",
+    currentRunId: "run_design_timeline",
+    createdAt: "2026-05-25T00:02:00.000Z",
+    updatedAt: "2026-05-25T00:03:00.000Z",
+  });
+  state.runs.push({
+    id: "run_design_timeline",
+    status: "succeeded",
+    cwd,
+    taskId: "task_design_timeline",
+    channelId: "channel_design",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_design_timeline", title: "Other channel task leak" },
+    providerSnapshot: { provider: "local-relay" },
+    requestSnapshot: { cwd },
+    eventLogPath: ".ling-stack/sessions/run_design_timeline.jsonl",
+    createdAt: "2026-05-25T00:02:00.000Z",
+    updatedAt: "2026-05-25T00:03:00.000Z",
+  });
+  state.approvals.push({
+    id: "approval_design_timeline",
+    runId: "run_design_timeline",
+    taskId: "task_design_timeline",
+    actionType: "bash",
+    risk: "medium",
+    title: "Other channel approval leak",
+    description: "echo design",
+    payload: {},
+    status: "pending",
+    createdAt: "2026-05-25T00:03:00.000Z",
+    expiresAt: "2099-01-01T00:01:00.000Z",
+  });
+  state.channelWorkflows = [
+    {
+      id: "workflow_activity",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Timeline workflow",
+      objective: "Show workflow in Activity.",
+      status: "running",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:05:00.000Z",
+      updatedAt: "2026-05-25T00:06:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_activity",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_activity",
+      position: 1,
+      title: "Blocked timeline step",
+      prompt: "Wait for runtime recovery.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "blocked",
+      blocker: "Runtime policy is waiting.",
+      createdAt: "2026-05-25T00:06:00.000Z",
+      updatedAt: "2026-05-25T00:07:00.000Z",
+    },
+  ];
+  state.stateTransitions = [
+    {
+      id: "transition_task_timeline",
+      workspaceId: "workspace_default",
+      entityType: "task",
+      entityId: "task_inspect",
+      fromStatus: "todo",
+      toStatus: "failed",
+      event: "task_failed",
+      actor: "runner",
+      createdAt: "2026-05-25T00:03:00.000Z",
+    },
+    {
+      id: "transition_design_timeline",
+      workspaceId: "workspace_default",
+      entityType: "task",
+      entityId: "task_design_timeline",
+      fromStatus: "todo",
+      toStatus: "done",
+      event: "other_channel_done",
+      actor: "runner",
+      createdAt: "2026-05-25T00:04:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.getByText("Timeline source message")).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toContainText("failed");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" })).toContainText("failed");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" })).toContainText("pending");
+  await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toContainText("Runtime policy is waiting.");
+  await expect(page.getByText("Other channel task leak")).toHaveCount(0);
+  await expect(page.getByText("Other channel approval leak")).toHaveCount(0);
+  await expect(page.getByText("other_channel_done")).toHaveCount(0);
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+
+  await page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" }).getByRole("button", { name: "Open task" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
+  await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
+
+  await page.getByRole("button", { name: "Activity" }).click();
+  await page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" }).getByRole("button", { name: "Open run" }).click();
+  await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
+  await expect(page.getByText("run_failed").first()).toBeVisible();
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" }).getByRole("button", { name: "Open approval" }).click();
+  await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" }).getByRole("button", { name: "Open protocol" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
 });
 
 test("run detail renders state transitions from daemon timeline API", async ({ page }) => {

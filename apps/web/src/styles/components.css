@@ -876,6 +876,25 @@ code,
   white-space: nowrap;
 }
 
+.activity-feed-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-panel);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.activity-feed-status.warning {
+  border-color: var(--warning-border);
+  color: var(--warning);
+}
+
 .composer-status-list {
   display: grid;
   gap: 6px;
