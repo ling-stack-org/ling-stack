@@ -56,6 +56,11 @@ category filters, attention filters, counts, and no-match empty states. v1.6 rem
 Web-only and does not add backend contracts, durable channel events, notification
 persistence, ingestion, automatic multi-agent loops, or a workflow builder.
 
+Planned v1.7 behavior: the channel `Activity` timeline gains local saved views and a
+compact attention queue for blocked, failed, and pending items. v1.7 remains Web-only and
+does not add backend contracts, durable channel events, notification persistence,
+ingestion, automatic multi-agent loops, or a workflow builder.
+
 ## Goal
 
 Users should be able to run and inspect Ling Stack without `curl`.
