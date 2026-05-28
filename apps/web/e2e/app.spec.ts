@@ -232,6 +232,7 @@ test("channel files tab supports PDF and Office uploads without AI ingestion", a
 
   const initialMessageCount = state.channelMessages.length;
   const initialTaskCount = state.tasks.length;
+  await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
   await page.locator("input[type=file]").setInputFiles([
     {
       name: "requirements.pdf",
@@ -255,6 +256,7 @@ test("channel files tab supports PDF and Office uploads without AI ingestion", a
     },
   ]);
 
+  await expect.poll(() => state.channelAttachments.length).toBe(4);
   await expect(page.getByRole("button", { name: "Files" })).toHaveClass(/active/);
   for (const fileName of ["requirements.pdf", "notes.docx", "budget.xlsx", "deck.pptx"]) {
     const card = page.locator(".file-card").filter({ hasText: fileName });
@@ -284,7 +286,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
 
   await expect(page.getByText("Loading protocol...")).toHaveCount(0);
   await expect(page.getByLabel("Objective")).toHaveCount(0);
-  await page.getByRole("button", { name: /Open protocol panel/ }).click();
+  await page.getByRole("button", { name: "Channel protocol" }).click();
   await page.getByLabel("Objective").fill("Ship channel v1.1 protocol");
   await page.getByLabel("Scope").fill("Brief, decisions, handoffs, context summaries");
   await page.getByLabel("Acceptance criteria").fill("Brief saves\nActivity shows protocol items");
@@ -294,6 +296,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
     return isRecord(brief) ? brief.objective : undefined;
   }).toBe("Ship channel v1.1 protocol");
 
+  await page.getByRole("button", { name: "Activity" }).click();
   await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Keep v1.1 handoffs manual and visible.");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Record decision" }).first().click();
@@ -318,7 +321,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
   await expect(page.getByText("Context summary", { exact: true }).first()).toBeVisible();
 
   await page.reload();
-  await page.getByRole("button", { name: /Open protocol panel/ }).click();
+  await page.getByRole("button", { name: "Channel protocol" }).click();
   await expect(page.getByLabel("Objective")).toHaveValue("Ship channel v1.1 protocol");
 });
 
@@ -339,7 +342,7 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
   await page.getByRole("button", { name: "Start workflow" }).first().click();
   await expect.poll(() => state.channelWorkflows.length).toBe(1);
   await expect.poll(() => state.channelWorkflowSteps.length).toBe(1);
-  await page.getByRole("button", { name: /Open protocol panel/ }).click();
+  await page.getByRole("button", { name: "Channel protocol" }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await expect(page.getByText("Workflow queue")).toBeVisible();
   await expect(page.getByText("Active decisions: 0")).toBeVisible();
@@ -369,10 +372,14 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
     updatedAt: "2026-05-25T00:35:00.000Z",
   };
   state.channelWorkflowSteps.push(blockedStep);
+  const workflow = state.channelWorkflows[0];
+  if (isRecord(workflow)) {
+    workflow.status = "running";
+  }
   await page.reload();
-  await page.getByRole("button", { name: /Open protocol panel/ }).click();
+  await page.getByRole("button", { name: "Channel protocol" }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
-  await expect(page.getByText("Provider preflight failed.")).toBeVisible();
+  await expect(page.locator(".workflow-step-card").filter({ hasText: "Blocked follow-up" })).toContainText("Provider preflight failed.");
 });
 
 test("channel v1.2 workflow start and run uses the existing run surface", async ({ page }) => {
@@ -413,7 +420,7 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("button", { name: /Open protocol panel/ }).click();
+  await page.getByRole("button", { name: "Channel protocol" }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await page.getByRole("button", { name: "Start + run" }).click();
   await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
@@ -421,6 +428,7 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
     const step = state.channelWorkflowSteps.find((item) => isRecord(item) && item.id === "workflow_step_seed");
     return isRecord(step) ? step.runId : undefined;
   }).toBe("run_2");
+  await page.getByRole("button", { name: "Activity" }).click();
   await expect(page.getByText("Latest run run_2 is succeeded.")).toBeVisible();
 });
 

@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
-  ChevronDown,
-  ChevronUp,
   CheckCircle2,
   CircleAlert,
   Clock3,
@@ -67,8 +65,36 @@ import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
 type TaskFilter = "all" | "queued" | "running" | "review" | "done";
+type ChannelTab = "activity" | "tasks" | "files" | "protocol";
 
 const taskFilters: readonly TaskFilter[] = ["all", "queued", "running", "review", "done"];
+const channelTabs: readonly ChannelTab[] = ["activity", "tasks", "files", "protocol"];
+
+function channelTabLabel(tab: ChannelTab): string {
+  if (tab === "activity") {
+    return "Activity";
+  }
+  if (tab === "tasks") {
+    return "Tasks";
+  }
+  if (tab === "files") {
+    return "Files";
+  }
+  return "Channel protocol";
+}
+
+function channelTabIcon(tab: ChannelTab, size: number): JSX.Element {
+  if (tab === "activity") {
+    return <MessageSquare size={size} />;
+  }
+  if (tab === "tasks") {
+    return <SquareTerminal size={size} />;
+  }
+  if (tab === "files") {
+    return <FileText size={size} />;
+  }
+  return <Workflow size={size} />;
+}
 
 export function WorkspaceClientView({
   cwd,
@@ -136,6 +162,7 @@ export function WorkspaceClientView({
   onUpdateWorkflowStepStatus,
   onCreateTaskWithContextFromMessage,
   onCreateTaskFromContextSummary,
+  onRefreshChannelProtocol,
   attachmentContentUrl,
   onRefreshTasks,
   onSelectTask,
@@ -216,6 +243,7 @@ export function WorkspaceClientView({
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
   readonly onCreateTaskWithContextFromMessage: (message: ChannelMessage) => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
+  readonly onRefreshChannelProtocol: () => void;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
   readonly onRefreshTasks: () => void;
   readonly onSelectTask: (taskId: string) => void;
@@ -230,9 +258,8 @@ export function WorkspaceClientView({
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
-  const [activeTab, setActiveTab] = useState<"activity" | "tasks" | "files">("activity");
+  const [activeTab, setActiveTab] = useState<ChannelTab>("activity");
   const [inspectorMode, setInspectorMode] = useState<"brief" | "decisions" | "handoffs" | "runtime">("brief");
-  const [protocolOpen, setProtocolOpen] = useState(false);
   const [briefDraft, setBriefDraft] = useState({
     objective: "",
     scope: "",
@@ -323,6 +350,24 @@ export function WorkspaceClientView({
       linkPreviewIds: channelBrief?.linkPreviewIds ?? [],
       updatedBy: "local-user",
     });
+  }
+
+  const activeTabLoading = activeTab === "tasks"
+    ? tasksLoading
+    : activeTab === "protocol"
+      ? channelProtocolLoading
+      : channelsLoading;
+
+  function refreshActiveTab(): void {
+    if (activeTab === "tasks") {
+      onRefreshTasks();
+      return;
+    }
+    if (activeTab === "protocol") {
+      onRefreshChannelProtocol();
+      return;
+    }
+    onRefreshChannels();
   }
 
   const teammateOptions = useMemo(
@@ -486,28 +531,28 @@ export function WorkspaceClientView({
       ) : null}
 
       <div className="task-workbench-main">
-        <section className="panel task-list-panel" aria-label={t("Channel activity")}>
+        <section className={activeTab === "protocol" ? "panel task-list-panel protocol-tab-panel" : "panel task-list-panel"} aria-label={t("Channel activity")}>
           <div className="panel-title split">
             <span>
-              {activeTab === "activity" ? <MessageSquare size={16} /> : activeTab === "files" ? <FileText size={16} /> : <SquareTerminal size={16} />}
-              <h2>{activeTab === "activity" ? t("Activity") : activeTab === "files" ? t("Files") : t("Tasks")}</h2>
+              {channelTabIcon(activeTab, 16)}
+              <h2>{t(channelTabLabel(activeTab))}</h2>
             </span>
             <button
               className="icon-button"
               type="button"
-              onClick={activeTab === "tasks" ? onRefreshTasks : onRefreshChannels}
-              disabled={!selectedChannelId || (activeTab === "tasks" ? tasksLoading : channelsLoading)}
+              onClick={refreshActiveTab}
+              disabled={!selectedChannelId || activeTabLoading}
               aria-label={t("Refresh")}
             >
-              {(activeTab === "tasks" ? tasksLoading : channelsLoading) ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+              {activeTabLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
             </button>
           </div>
 
           <div className="channel-tabs" role="tablist" aria-label={t("Channel tabs")}>
-            {(["activity", "tasks", "files"] as const).map((tab) => (
+            {channelTabs.map((tab) => (
               <button key={tab} type="button" className={activeTab === tab ? "channel-tab active" : "channel-tab"} onClick={() => setActiveTab(tab)}>
-                {tab === "activity" ? <MessageSquare size={14} /> : tab === "tasks" ? <SquareTerminal size={14} /> : <FileText size={14} />}
-                {tab === "activity" ? t("Activity") : tab === "tasks" ? t("Tasks") : t("Files")}
+                {channelTabIcon(tab, 14)}
+                {t(channelTabLabel(tab))}
               </button>
             ))}
           </div>
@@ -749,7 +794,38 @@ export function WorkspaceClientView({
             </>
           ) : null}
 
-          <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
+          {activeTab === "protocol" ? (
+            <div className="channel-protocol-tab-content">
+              <ChannelInspector
+                mode={inspectorMode}
+                onModeChange={setInspectorMode}
+                brief={channelBrief}
+                briefDraft={briefDraft}
+                onBriefDraftChange={setBriefDraft}
+                onSaveBrief={saveBrief}
+                decisions={channelDecisions}
+                handoffs={channelHandoffs}
+                contextSummaries={channelContextSummaries}
+                workflows={channelWorkflows}
+                workflowSteps={channelWorkflowSteps}
+                attachments={channelAttachments}
+                linkPreviews={channelLinkPreviews}
+                runningWorkflowStepId={runningWorkflowStepId}
+                loading={channelProtocolLoading}
+                selectedTask={selectedTask}
+                onSupersedeDecision={onSupersedeDecision}
+                onRejectDecision={onRejectDecision}
+                onUpdateHandoffStatus={onUpdateHandoffStatus}
+                onStartWorkflowFromHandoff={onStartWorkflowFromHandoff}
+                onStartWorkflowStep={onStartWorkflowStep}
+                onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
+                onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
+              />
+            </div>
+          ) : null}
+
+          {activeTab !== "protocol" ? (
+            <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
             <div className="composer-head">
               <span>
                 <MessageSquare size={16} />
@@ -854,48 +930,11 @@ export function WorkspaceClientView({
                 </button>
               )}
             </div>
-          </section>
+            </section>
+          ) : null}
         </section>
 
         <section className="panel task-detail-panel" aria-label={createTaskOpen ? t("New task") : t("Task detail")}>
-          <ChannelProtocolDock
-            open={protocolOpen}
-            mode={inspectorMode}
-            loading={channelProtocolLoading}
-            decisions={channelDecisions}
-            handoffs={channelHandoffs}
-            contextSummaries={channelContextSummaries}
-            workflows={channelWorkflows}
-            workflowSteps={channelWorkflowSteps}
-            onToggle={() => setProtocolOpen((current) => !current)}
-          />
-          {protocolOpen ? (
-            <ChannelInspector
-              mode={inspectorMode}
-              onModeChange={setInspectorMode}
-              brief={channelBrief}
-              briefDraft={briefDraft}
-              onBriefDraftChange={setBriefDraft}
-              onSaveBrief={saveBrief}
-              decisions={channelDecisions}
-              handoffs={channelHandoffs}
-              contextSummaries={channelContextSummaries}
-              workflows={channelWorkflows}
-              workflowSteps={channelWorkflowSteps}
-              attachments={channelAttachments}
-              linkPreviews={channelLinkPreviews}
-              runningWorkflowStepId={runningWorkflowStepId}
-              loading={channelProtocolLoading}
-              selectedTask={selectedTask}
-              onSupersedeDecision={onSupersedeDecision}
-              onRejectDecision={onRejectDecision}
-              onUpdateHandoffStatus={onUpdateHandoffStatus}
-              onStartWorkflowFromHandoff={onStartWorkflowFromHandoff}
-              onStartWorkflowStep={onStartWorkflowStep}
-              onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
-              onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
-            />
-          ) : null}
           {createTaskOpen ? (
             <NewTaskPanel
               taskForm={taskForm}
@@ -991,52 +1030,6 @@ export function WorkspaceClientView({
 }
 
 type ChannelInspectorMode = "brief" | "decisions" | "handoffs" | "runtime";
-
-function ChannelProtocolDock({
-  open,
-  mode,
-  loading,
-  decisions,
-  handoffs,
-  contextSummaries,
-  workflows,
-  workflowSteps,
-  onToggle,
-}: {
-  readonly open: boolean;
-  readonly mode: ChannelInspectorMode;
-  readonly loading: boolean;
-  readonly decisions: readonly ChannelDecision[];
-  readonly handoffs: readonly ChannelHandoff[];
-  readonly contextSummaries: readonly ChannelContextSummary[];
-  readonly workflows: readonly ChannelWorkflow[];
-  readonly workflowSteps: readonly ChannelWorkflowStep[];
-  readonly onToggle: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const blockedStepCount = workflowSteps.filter((step) => step.status === "blocked").length;
-  const activeWorkflowCount = workflows.filter((workflow) => workflow.status !== "succeeded" && workflow.status !== "cancelled" && workflow.status !== "failed").length;
-  return (
-    <section className={open ? "channel-protocol-dock open" : "channel-protocol-dock"} aria-label={t("Channel protocol")}>
-      <button className="protocol-dock-main" type="button" onClick={onToggle} aria-expanded={open}>
-        {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        <span>
-          <strong>{t("Channel protocol")}</strong>
-          <small>{open ? t("Hide protocol panel") : t("Open protocol panel")}</small>
-        </span>
-      </button>
-      <div className="protocol-dock-chips" aria-label={t("Protocol summary")}>
-        <span className={mode === "brief" && open ? "active" : ""}>{t("Brief")}</span>
-        <span className={mode === "decisions" && open ? "active" : ""}>{t("Decisions")}: {decisions.length}</span>
-        <span className={mode === "handoffs" && open ? "active" : ""}>{t("Handoffs")}: {handoffs.length}</span>
-        <span className={mode === "runtime" && open ? "active" : ""}>{t("Workflows")}: {activeWorkflowCount}</span>
-        <span>{t("Summaries")}: {contextSummaries.length}</span>
-        {blockedStepCount > 0 ? <span className="attention">{t("Blocked steps")}: {blockedStepCount}</span> : null}
-        {loading ? <span className="attention">{t("Loading")}</span> : null}
-      </div>
-    </section>
-  );
-}
 
 function ChannelInspector({
   mode,

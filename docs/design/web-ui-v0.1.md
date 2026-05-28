@@ -17,7 +17,7 @@ The AI teammates page now uses the same client direction: a Helio-inspired, macO
 
 The richer channel surface is tracked in [Channel Workspace Design](channel-workspace.md). That document is the source of truth for channel tabs, default AI teammate assignment, member/notification/settings inspector behavior, file/artifact access, and the phased implementation checklist.
 
-Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, and `Files` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions; durable channel messages; no-tools AI discussion replies; user attachments; metadata-only web link previews; and discussion-to-task conversion with `assigneeTeammateId` derived from the first AI mention or channel default teammate.
+Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, `Files`, and `Channel protocol` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions; durable channel messages; no-tools AI discussion replies; user attachments; metadata-only web link previews; and discussion-to-task conversion with `assigneeTeammateId` derived from the first AI mention or channel default teammate.
 
 Implemented v1.1 behavior: the channel inspector adds `Brief`, `Decisions`, `Handoffs`, and
 `Runtime` modes. Activity now synthesizes channel messages with decision, handoff, and
@@ -25,12 +25,12 @@ context summary records. These protocol records are manual and auditable; they d
 start runs, call AI providers, ingest attachments/links, or mutate task/run state.
 
 Implemented v1.2 behavior: handoff cards can create durable workflow/step records, the
-channel protocol panel is collapsed by default behind a compact summary row, Runtime
-shows a Workflow queue with context packet metadata, blockers, linked task/run ids, and
-step controls, Activity includes workflow/step items, and Task detail shows the source
-workflow/step for tasks created from a workflow step. `Start step` creates a task for
-review, while `Start + run` enters the existing task/run stream and approval/runtime
-boundaries.
+channel protocol surface lives behind the `Channel protocol` tab beside Activity, Tasks,
+and Files instead of occupying the task detail panel, Runtime shows a Workflow queue with
+context packet metadata, blockers, linked task/run ids, and step controls, Activity
+includes workflow/step items, and Task detail shows the source workflow/step for tasks
+created from a workflow step. `Start step` creates a task for review, while `Start + run`
+enters the existing task/run stream and approval/runtime boundaries.
 
 ## Goal
 

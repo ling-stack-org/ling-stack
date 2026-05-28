@@ -199,6 +199,7 @@ Tabs are:
 Activity
 Tasks
 Files
+Channel protocol
 ```
 
 `Activity` is the default tab.
@@ -206,7 +207,6 @@ Files
 Future tabs can include:
 
 - `Plan`,
-- `Brief`,
 - `Approvals`,
 - `Automations`.
 
@@ -1503,12 +1503,12 @@ Current MVP implementation status:
 - Discuss mode can request a no-tools, text-only AI reply and persists blocker replies,
 - channel attachments are stored under `.ling-stack/attachments` with a 25MB/file allow-list policy,
 - link previews are fetched by the daemon with SSRF protections and metadata-only storage,
-- Web now exposes `Activity`, `Tasks`, and `Files` tabs plus discussion-to-task conversion,
+- Web now exposes `Activity`, `Tasks`, `Files`, and `Channel protocol` tabs plus discussion-to-task conversion,
 - v1.1 now persists Channel Brief, Decision Log, Handoff, and Context Summary records,
   with Activity and inspector views synthesizing those protocol items,
 - v1.2 now lets handoffs create explicit, user-started workflow/step records with
-  task/run start, blocker visibility, Runtime inspector queue tracking, and a compact
-  default-collapsed protocol panel,
+  task/run start, blocker visibility, Runtime inspector queue tracking, and a dedicated
+  `Channel protocol` tab instead of a task-detail dock,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1603,6 +1603,7 @@ Current MVP implementation status:
 ### Phase 9: Channel Tabs
 
 - [x] Add `Activity`, `Tasks`, and `Files` tabs.
+- [x] Add `Channel protocol` tab for Brief, Decisions, Handoffs, and Runtime.
 - [x] Move current task list into the `Tasks` tab.
 - [ ] Build derived activity items from tasks/runs/approvals/state transitions.
 - [x] Add no-events and no-files empty states.

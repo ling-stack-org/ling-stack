@@ -2103,6 +2103,7 @@ export function AppShell(): JSX.Element {
             onUpdateWorkflowStepStatus={(step, status) => void updateWorkflowStepStatus(step, status)}
             onCreateTaskWithContextFromMessage={(message) => void createTaskWithContextFromMessage(message)}
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
+            onRefreshChannelProtocol={() => void refreshChannelProtocol()}
             attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
             onRefreshTasks={() => void refreshTasks()}
             onSelectTask={setSelectedTaskId}
