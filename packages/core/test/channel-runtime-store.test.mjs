@@ -57,6 +57,72 @@ test("sqlite channels persist default and edited runtime policy", async () => {
   }
 });
 
+test("sqlite channel workspace assets persist messages, attachments, and link previews", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workspace-"));
+  const now = "2026-05-28T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel(
+      {
+        name: "Engineering",
+        boundPath: cwd,
+        defaultTeammateId: "engineer",
+      },
+      now,
+    );
+    const message = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        authorType: "local-user",
+        authorId: "tian",
+        body: "请 @Engineer 看一下需求",
+        mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
+      },
+      now,
+    );
+    const attachment = store.createChannelAttachment({
+      channelId: channel.id,
+      messageId: message.id,
+      kind: "pdf",
+      fileName: "brief.pdf",
+      contentType: "application/pdf",
+      sizeBytes: 128,
+      path: `${channel.id}/brief.pdf`,
+      createdAt: now,
+    });
+    const preview = store.createChannelLinkPreview(
+      {
+        channelId: channel.id,
+        messageId: message.id,
+        url: "https://example.com/#ignored",
+        normalizedUrl: "https://example.com/",
+        title: "Example",
+        status: "ready",
+      },
+      now,
+    );
+
+    assert.equal(store.getChannel(channel.id).defaultTeammateId, "engineer");
+    assert.deepEqual(store.listChannelMessages({ channelId: channel.id }).map((item) => item.id), [message.id]);
+    assert.equal(store.getChannelMessage(message.id).mentions[0].id, "engineer");
+    assert.deepEqual(store.listChannelAttachments({ channelId: channel.id }).map((item) => item.id), [attachment.id]);
+    assert.equal(store.getChannelAttachment(attachment.id).fileName, "brief.pdf");
+    assert.deepEqual(store.listChannelLinkPreviews({ channelId: channel.id }).map((item) => item.id), [preview.id]);
+
+    const updatedPreview = store.updateChannelLinkPreview(
+      preview.id,
+      { status: "failed", errorMessage: "blocked", title: null },
+      "2026-05-28T00:01:00.000Z",
+    );
+    assert.equal(updatedPreview.status, "failed");
+    assert.equal(updatedPreview.title, undefined);
+    assert.equal(updatedPreview.errorMessage, "blocked");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task CAS claim and idempotency allow only one real transition", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-task-cas-"));
   const now = "2026-05-26T00:00:00.000Z";
@@ -228,6 +294,67 @@ test("sqlite channel runtime migration self-heals missing lease tables", async (
     assert.ok(lease);
   } finally {
     store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite channel workspace migration self-heals old channel and task columns", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workspace-heal-"));
+  const now = "2026-05-28T00:10:00.000Z";
+  const initialStore = createSqliteRunStore(cwd);
+  try {
+    const databasePath = initialStore.paths.databasePath;
+    initialStore.close();
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec(`
+        ALTER TABLE channels DROP COLUMN default_teammate_id;
+        ALTER TABLE tasks DROP COLUMN assignee_teammate_id;
+        DROP TABLE channel_messages;
+        DROP TABLE channel_attachments;
+        DROP TABLE channel_link_previews;
+      `);
+      assert.equal(Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'channel_messages'").get()), false);
+    } finally {
+      database.close();
+    }
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const channel = store.createChannel(
+        {
+          name: "Engineering",
+          boundPath: cwd,
+          defaultTeammateId: "engineer",
+        },
+        now,
+      );
+      const task = store.createTask(
+        {
+          channelId: channel.id,
+          title: "Clarify channel requirements",
+          prompt: "Turn the discussion into an executable task.",
+          assigneeTeammateId: "engineer",
+        },
+        now,
+      );
+      const message = store.createChannelMessage(
+        {
+          channelId: channel.id,
+          authorType: "local-user",
+          body: "Migration should keep channel chat writable.",
+        },
+        now,
+      );
+
+      assert.equal(store.getChannel(channel.id).defaultTeammateId, "engineer");
+      assert.equal(store.getTask(task.id).assigneeTeammateId, "engineer");
+      assert.equal(store.getChannelMessage(message.id).body, "Migration should keep channel chat writable.");
+    } finally {
+      store.close();
+    }
+  } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });

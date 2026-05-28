@@ -13,6 +13,9 @@ const defaultRuntimePolicy = {
 interface MockState {
   providers: unknown[];
   channels: unknown[];
+  channelMessages: unknown[];
+  channelAttachments: unknown[];
+  channelLinkPreviews: unknown[];
   tasks: unknown[];
   runs: MockRun[];
   eventsByRun: Record<string, MockRunEvent[]>;
@@ -121,7 +124,7 @@ test("workspace opens as a task workbench with task context in the inspector", a
   await expect(page.getByLabel("Task inspector")).toContainText("run_failed");
 });
 
-test("channel runtime policy is visible and used when creating channels", async ({ page }) => {
+test("channel runtime policy and default teammate are visible and used when creating channels", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   const openAiTemplate = {
     templateId: "openai-gpt",
@@ -142,11 +145,13 @@ test("channel runtime policy is visible and used when creating channels", async 
   await page.goto("/");
 
   await expect(page.getByText("active · serial · boundPath lock")).toBeVisible();
+  await expect(page.locator(".channel-header-actions")).toContainText("Engineer");
 
   const details = page.locator(".channel-options");
   await details.locator("summary").click();
   await details.getByLabel("Name").fill("Release");
   await details.getByLabel("Status").selectOption("paused");
+  await details.getByLabel("Default AI teammate").selectOption("designer");
   await details.getByLabel("Execution mode").selectOption("parallel");
   await details.getByLabel("Write lock").selectOption("workspace");
   await details.getByLabel("Max runs").fill("2");
@@ -157,11 +162,13 @@ test("channel runtime policy is visible and used when creating channels", async 
   const created = state.channels.find((channel) => isRecord(channel) && channel.name === "Release");
   expect(created).toBeTruthy();
   expect(isRecord(created) ? created.status : undefined).toBe("paused");
+  expect(isRecord(created) ? created.defaultTeammateId : undefined).toBe("designer");
   const runtimePolicy = isRecord(created) && isRecord(created.runtimePolicy) ? created.runtimePolicy : {};
   expect(runtimePolicy.executionMode).toBe("parallel");
   expect(runtimePolicy.writeLockScope).toBe("workspace");
   expect(runtimePolicy.maxConcurrentRuns).toBe(2);
   expect(runtimePolicy.queueOnConflict).toBe(false);
+  await expect(page.locator(".channel-header-actions")).toContainText("Designer");
 });
 
 test("paused channels disable task run actions", async ({ page }) => {
@@ -173,6 +180,90 @@ test("paused channels disable task run actions", async ({ page }) => {
   const taskCard = page.locator("article.task-detail");
   await expect(taskCard).toContainText("Channel is not active");
   await expect(taskCard.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+});
+
+test("channel activity supports mentions, messages, files, links, and task creation", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.getByRole("button", { name: "Activity" })).toBeVisible();
+  await page.locator(".mention-chip").filter({ hasText: "@Engineer" }).click();
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("@Engineer please refine the channel requirements https://example.com");
+  await page.getByPlaceholder("Paste URL").fill("https://example.com");
+  await page.getByRole("button", { name: "Preview link" }).click();
+  await page.locator("input[type=file]").setInputFiles({
+    name: "brief.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("channel brief"),
+  });
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByText("@Engineer please refine the channel requirements")).toBeVisible();
+  await expect(page.getByText("收到，我会按频道上下文推进。")).toBeVisible();
+  await page.getByRole("button", { name: "Files" }).click();
+  await expect(page.getByText("brief.txt")).toBeVisible();
+  await expect(page.getByText("Example Domain")).toBeVisible();
+
+  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Create task" }).first().click();
+  await expect.poll(() => {
+    const created = state.tasks.find((task) => isRecord(task) && task.id === "task_2");
+    return isRecord(created) ? created.assigneeTeammateId : undefined;
+  }).toBe("engineer");
+});
+
+test("channel files tab supports PDF and Office uploads without AI ingestion", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const initialMessageCount = state.channelMessages.length;
+  const initialTaskCount = state.tasks.length;
+  await page.locator("input[type=file]").setInputFiles([
+    {
+      name: "requirements.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.7"),
+    },
+    {
+      name: "notes.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      buffer: Buffer.from("docx"),
+    },
+    {
+      name: "budget.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: Buffer.from("xlsx"),
+    },
+    {
+      name: "deck.pptx",
+      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      buffer: Buffer.from("pptx"),
+    },
+  ]);
+
+  await expect(page.getByRole("button", { name: "Files" })).toHaveClass(/active/);
+  for (const fileName of ["requirements.pdf", "notes.docx", "budget.xlsx", "deck.pptx"]) {
+    const card = page.locator(".file-card").filter({ hasText: fileName });
+    await expect(card).toBeVisible();
+    await expect(card.getByRole("link", { name: "Open" })).toHaveAttribute("href", /\/attachments\/att_.*\/content/);
+  }
+  expect(state.channelAttachments.filter((attachment) => isRecord(attachment)).map((attachment) => attachment.fileName).sort()).toEqual([
+    "budget.xlsx",
+    "deck.pptx",
+    "notes.docx",
+    "requirements.pdf",
+  ]);
+  expect(state.channelAttachments.every((attachment) => isRecord(attachment) && (attachment.kind === "pdf" || attachment.kind === "office"))).toBe(true);
+  expect(state.channelMessages.length).toBe(initialMessageCount);
+  expect(state.tasks.length).toBe(initialTaskCount);
 });
 
 test("run detail renders state transitions from daemon timeline API", async ({ page }) => {
@@ -570,6 +661,7 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
   await expect(providerSelect.locator("option").filter({ hasText: "Ready Local Relay" })).toHaveCount(1);
   await expect(providerSelect.locator("option").filter({ hasText: "Missing Key Gateway" })).toHaveCount(1);
@@ -608,6 +700,7 @@ test("workspace task run uses the displayed ready provider fallback", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
   await expect(providerSelect).toHaveValue("provider_ready");
 
@@ -654,6 +747,7 @@ test("workspace task actions only show a spinner on the clicked task action", as
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   const firstTask = page.locator(".workbench-task-list .client-task-card").filter({ hasText: "Inspect workspace" });
   const secondTask = page.locator(".workbench-task-list .client-task-card").filter({ hasText: "Second task" });
   await secondTask.click();
@@ -712,6 +806,7 @@ test("succeeded workspace tasks show a clear result action", async ({ page }) =>
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   await expect(page.getByText("Task complete").first()).toBeVisible();
 
   const taskDetail = page.locator("article.task-detail");
@@ -747,6 +842,7 @@ test("workspace run timeline summarizes activity and keeps raw events contained"
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
 
   await expect(page.getByRole("heading", { name: "Run activity" })).toBeVisible();
@@ -1152,6 +1248,10 @@ async function readSidebarSelection(page: Page): Promise<{ readonly activeNav: s
   });
 }
 
+async function openChannelTasksTab(page: Page): Promise<void> {
+  await page.locator(".channel-tabs").getByRole("button", { name: "Tasks" }).click();
+}
+
 async function readScrollState(page: Page, selector: string): Promise<{ readonly atBottom: boolean; readonly top: number; readonly max: number }> {
   return await page.locator(selector).evaluate((element) => {
     const max = element.scrollHeight - element.clientHeight;
@@ -1190,12 +1290,16 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
         name: "Engineering",
         status: "active",
         boundPath: cwd,
+        defaultTeammateId: "engineer",
         allowedTools: ["read", "grep", "find", "ls"],
         runtimePolicy: defaultRuntimePolicy,
         createdAt: "2026-05-22T00:00:00.000Z",
         updatedAt: "2026-05-22T00:00:00.000Z",
       },
     ],
+    channelMessages: [],
+    channelAttachments: [],
+    channelLinkPreviews: [],
     tasks: [
       {
         id: "task_inspect",
@@ -1432,6 +1536,7 @@ function createChannelFromBody(body: Record<string, unknown>, id: string): Recor
     status: body.status === "paused" || body.status === "archived" ? body.status : "active",
     boundPath: typeof body.boundPath === "string" ? body.boundPath : cwd,
     defaultProviderPresetId: typeof body.defaultProviderPresetId === "string" ? body.defaultProviderPresetId : undefined,
+    defaultTeammateId: typeof body.defaultTeammateId === "string" ? body.defaultTeammateId : undefined,
     allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools : ["read", "grep", "find", "ls"],
     runtimePolicy: isRecord(body.runtimePolicy) ? { ...defaultRuntimePolicy, ...body.runtimePolicy } : defaultRuntimePolicy,
     createdAt: "2026-05-25T00:15:00.000Z",
@@ -1542,6 +1647,142 @@ async function handleDaemonRoute(
     await route.fulfill({ status: 201, json: { channel } });
     return;
   }
+  const channelMessagesMatch = /^\/channels\/([^/]+)\/messages$/.exec(path);
+  if (channelMessagesMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelMessagesMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        messages: state.channelMessages.filter((message) => isRecord(message) && message.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelMessagesMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelMessagesMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const message = {
+      id: `msg_${state.channelMessages.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      kind: typeof body.kind === "string" ? body.kind : "message",
+      intent: typeof body.intent === "string" ? body.intent : "discuss",
+      authorType: typeof body.authorType === "string" ? body.authorType : "local-user",
+      authorId: typeof body.authorId === "string" ? body.authorId : "tian",
+      body: typeof body.body === "string" ? body.body : "",
+      mentions: Array.isArray(body.mentions) ? body.mentions : [],
+      attachmentIds: Array.isArray(body.attachmentIds) ? body.attachmentIds : [],
+      linkPreviewIds: Array.isArray(body.linkPreviewIds) ? body.linkPreviewIds : [],
+      linkedTaskId: typeof body.linkedTaskId === "string" ? body.linkedTaskId : undefined,
+      linkedRunId: typeof body.linkedRunId === "string" ? body.linkedRunId : undefined,
+      status: "ready",
+      createdAt: "2026-05-25T00:18:00.000Z",
+      updatedAt: "2026-05-25T00:18:00.000Z",
+    };
+    state.channelMessages.push(message);
+    const aiReply = body.requestAiReply === true
+      ? {
+          id: `msg_${state.channelMessages.length + 1}`,
+          workspaceId: "workspace_default",
+          channelId,
+          threadId: message.id,
+          kind: "ai_reply",
+          intent: "discuss",
+          authorType: "ai-teammate",
+          authorId: "engineer",
+          body: "收到，我会按频道上下文推进。",
+          mentions: [],
+          attachmentIds: [],
+          linkPreviewIds: [],
+          status: "ready",
+          createdAt: "2026-05-25T00:18:01.000Z",
+          updatedAt: "2026-05-25T00:18:01.000Z",
+        }
+      : undefined;
+    if (aiReply) {
+      state.channelMessages.push(aiReply);
+    }
+    await route.fulfill({ status: 201, json: aiReply ? { message, aiReply } : { message } });
+    return;
+  }
+  const channelAttachmentsMatch = /^\/channels\/([^/]+)\/attachments$/.exec(path);
+  if (channelAttachmentsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelAttachmentsMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        attachments: state.channelAttachments.filter((attachment) => isRecord(attachment) && attachment.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelAttachmentsMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelAttachmentsMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const fileName = typeof body.fileName === "string" ? body.fileName : "upload.txt";
+    const inferred = inferMockChannelAttachment(fileName);
+    const attachment = {
+      id: `att_${state.channelAttachments.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      kind: inferred.kind,
+      fileName,
+      contentType: inferred.contentType,
+      sizeBytes: typeof body.contentBase64 === "string" ? body.contentBase64.length : 0,
+      path: `${channelId}/${fileName}`,
+      createdAt: "2026-05-25T00:18:02.000Z",
+    };
+    state.channelAttachments.unshift(attachment);
+    await route.fulfill({ status: 201, json: { attachment } });
+    return;
+  }
+  const channelLinkPreviewMatch = /^\/channels\/([^/]+)\/link-previews$/.exec(path);
+  if (channelLinkPreviewMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelLinkPreviewMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        linkPreviews: state.channelLinkPreviews.filter((preview) => isRecord(preview) && preview.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelLinkPreviewMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelLinkPreviewMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const rawUrl = typeof body.url === "string" ? body.url : "https://example.com";
+    const preview = {
+      id: `link_${state.channelLinkPreviews.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      url: rawUrl,
+      normalizedUrl: rawUrl,
+      title: rawUrl.includes("example.com") ? "Example Domain" : rawUrl,
+      description: "Mock link preview",
+      siteName: "example.com",
+      status: "ready",
+      createdAt: "2026-05-25T00:18:03.000Z",
+      updatedAt: "2026-05-25T00:18:03.000Z",
+    };
+    state.channelLinkPreviews.unshift(preview);
+    await route.fulfill({ status: 201, json: { linkPreview: preview } });
+    return;
+  }
+  const attachmentContentMatch = /^\/attachments\/([^/]+)\/content$/.exec(path);
+  if (attachmentContentMatch && request.method() === "GET") {
+    await route.fulfill({ body: "mock attachment content", contentType: "text/plain" });
+    return;
+  }
+  const attachmentMatch = /^\/attachments\/([^/]+)$/.exec(path);
+  if (attachmentMatch && request.method() === "DELETE") {
+    const attachmentId = decodeURIComponent(attachmentMatch[1]);
+    state.channelAttachments = state.channelAttachments.filter((attachment) => !isRecord(attachment) || attachment.id !== attachmentId);
+    await route.fulfill({ json: { ok: true } });
+    return;
+  }
   const channelMatch = /^\/channels\/([^/]+)$/.exec(path);
   if (channelMatch && request.method() === "PATCH") {
     const channelId = decodeURIComponent(channelMatch[1]);
@@ -1583,16 +1824,17 @@ async function handleDaemonRoute(
   if (request.method() === "POST" && path === "/tasks") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const task = {
-      id: `task_created_${state.tasks.length + 1}`,
+      id: `task_${state.tasks.length + 1}`,
       workspaceId: "workspace_default",
       channelId: typeof body.channelId === "string" ? body.channelId : "channel_engineering",
-      title: typeof body.title === "string" ? body.title : "Generated task",
-      prompt: typeof body.prompt === "string" ? body.prompt : "Generated prompt",
+      title: typeof body.title === "string" ? body.title : "New task",
+      prompt: typeof body.prompt === "string" ? body.prompt : "",
       status: "todo",
-      createdAt: "2026-05-25T00:18:00.000Z",
-      updatedAt: "2026-05-25T00:18:00.000Z",
+      assigneeTeammateId: typeof body.assigneeTeammateId === "string" ? body.assigneeTeammateId : undefined,
+      createdAt: "2026-05-25T00:19:00.000Z",
+      updatedAt: "2026-05-25T00:19:00.000Z",
     };
-    state.tasks = [task, ...state.tasks];
+    state.tasks.unshift(task);
     await route.fulfill({ status: 201, json: { task } });
     return;
   }
@@ -1853,6 +2095,35 @@ async function handleDaemonRoute(
   }
 
   await route.fulfill({ status: 404, json: { error: "not_found", path } });
+}
+
+function inferMockChannelAttachment(fileName: string): { readonly kind: string; readonly contentType: string } {
+  const extension = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension)) {
+    return { kind: "image", contentType: extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : `image/${extension.slice(1)}` };
+  }
+  if (extension === ".pdf") {
+    return { kind: "pdf", contentType: "application/pdf" };
+  }
+  if (extension === ".docx") {
+    return { kind: "office", contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+  }
+  if (extension === ".xlsx") {
+    return { kind: "office", contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+  }
+  if (extension === ".pptx") {
+    return { kind: "office", contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+  }
+  if (extension === ".json") {
+    return { kind: "text", contentType: "application/json; charset=utf-8" };
+  }
+  if (extension === ".csv") {
+    return { kind: "text", contentType: "text/csv; charset=utf-8" };
+  }
+  if (extension === ".md") {
+    return { kind: "text", contentType: "text/markdown; charset=utf-8" };
+  }
+  return { kind: "text", contentType: "text/plain; charset=utf-8" };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

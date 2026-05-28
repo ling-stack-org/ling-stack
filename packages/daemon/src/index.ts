@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, isAbsolute, relative, resolve as resolvePath } from "node:path";
+import { lookup } from "node:dns/promises";
+import { mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { isIP } from "node:net";
+import { basename, extname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import {
   approvalToolDecisions,
   approvalStatuses,
@@ -32,6 +34,14 @@ import {
   type ApprovalStatus,
   type ApprovalToolDecision,
   type ArtifactType,
+  type ChannelAttachment,
+  type ChannelAttachmentKind,
+  type ChannelLinkPreview,
+  type ChannelMention,
+  type ChannelMessage,
+  type ChannelMessageAuthorType,
+  type ChannelMessageIntent,
+  type ChannelMessageKind,
   type CreateApprovalRequestInput,
   type ChannelUpdateInput,
   type Channel,
@@ -128,6 +138,11 @@ const APPROVAL_PREVIEW_LIMIT = 1_200;
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
 const MAX_EXTRACTED_ARTIFACT_BYTES = 256 * 1024;
 const MAX_EXTRACTED_ARTIFACTS_PER_TOOL = 6;
+const CHANNEL_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+const CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES = 40 * 1024 * 1024;
+const CHANNEL_LINK_PREVIEW_TIMEOUT_MS = 5_000;
+const CHANNEL_LINK_PREVIEW_MAX_BYTES = 192 * 1024;
+const CHANNEL_LINK_PREVIEW_MAX_REDIRECTS = 3;
 
 export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider"> {
   readonly workspaceCwd?: string;
@@ -135,6 +150,35 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly provider?: PiRunnerProviderConfig;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
+}
+
+interface ChannelMessageRequest {
+  readonly threadId?: string;
+  readonly kind?: ChannelMessageKind;
+  readonly intent?: ChannelMessageIntent;
+  readonly authorType: ChannelMessageAuthorType;
+  readonly authorId?: string;
+  readonly body: string;
+  readonly mentions: readonly ChannelMention[];
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly linkedTaskId?: string;
+  readonly linkedRunId?: string;
+  readonly requestAiReply: boolean;
+  readonly providerPresetId?: string;
+  readonly teammateId?: string;
+}
+
+interface ChannelAttachmentRequest {
+  readonly fileName: string;
+  readonly contentType?: string;
+  readonly contentBase64: string;
+  readonly messageId?: string;
+}
+
+interface ChannelLinkPreviewRequest {
+  readonly url: string;
+  readonly messageId?: string;
 }
 
 interface PreparedRunConcurrency {
@@ -362,8 +406,32 @@ async function routeRequest(
     return;
   }
 
+  const attachmentRoute = parseChannelAttachmentRoute(url.pathname);
+  if (attachmentRoute) {
+    await handleChannelAttachmentItem(request, response, config, storeRegistry, attachmentRoute);
+    return;
+  }
+
+  const linkPreviewRoute = parseChannelLinkPreviewRoute(url.pathname);
+  if (linkPreviewRoute) {
+    await handleChannelLinkPreviewItem(request, response, config, storeRegistry, linkPreviewRoute);
+    return;
+  }
+
   const channelRoute = parseChannelRoute(url.pathname);
   if (channelRoute) {
+    if (channelRoute.action === "messages") {
+      await handleChannelMessagesCollection(request, response, config, runner, storeRegistry, secretResolver, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "attachments") {
+      await handleChannelAttachmentsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "link-previews") {
+      await handleChannelLinkPreviewsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
     await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId);
     return;
   }
@@ -1015,6 +1083,291 @@ async function handleChannelItem(
     }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channels` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelMessagesCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        messages: store.listChannelMessages({
+          channelId,
+          threadId: url.searchParams.get("threadId") ?? undefined,
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelMessageRequest(body);
+      const referenceError = validateChannelMessageReferences(store, channelId, input.attachmentIds, input.linkPreviewIds);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, {
+          error: referenceError.code,
+          message: referenceError.message,
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      const message = store.createChannelMessage(
+        {
+          channelId,
+          threadId: input.threadId,
+          kind: input.kind ?? "message",
+          intent: input.intent ?? "discuss",
+          authorType: input.authorType,
+          authorId: input.authorId,
+          body: input.body,
+          mentions: input.mentions,
+          attachmentIds: input.attachmentIds,
+          linkPreviewIds: input.linkPreviewIds,
+          linkedTaskId: input.linkedTaskId,
+          linkedRunId: input.linkedRunId,
+        },
+        now,
+      );
+
+      let aiReply: ChannelMessage | undefined;
+      if (input.requestAiReply) {
+        aiReply = await createAiChannelReply({
+          runner,
+          store,
+          channel,
+          sourceMessage: message,
+          providerPresetId: input.providerPresetId,
+          teammateId: input.teammateId,
+          secretResolver,
+        });
+      }
+
+      writeJson(response, 201, aiReply ? { message, aiReply } : { message });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel messages` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelAttachmentsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        attachments: store.listChannelAttachments({ channelId, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, Math.max(config.maxBodyBytes, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES));
+      const input = parseChannelAttachmentRequest(body);
+      const messageError = input.messageId ? validateChannelMessageOwner(store, channelId, input.messageId) : undefined;
+      if (messageError) {
+        writeJson(response, messageError.statusCode, { error: messageError.code, message: messageError.message });
+        return;
+      }
+      const attachment = persistChannelAttachment(store, channelId, input);
+      writeJson(response, 201, { attachment });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel attachments` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelAttachmentItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  route: { readonly attachmentId: string; readonly action?: "content" },
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const attachment = store.getChannelAttachment(route.attachmentId);
+    if (!attachment) {
+      writeJson(response, 404, { error: "attachment_not_found", message: `Attachment not found: ${route.attachmentId}` });
+      return;
+    }
+
+    if (request.method === "GET" && route.action === "content") {
+      handleGetChannelAttachmentContent(response, store, attachment);
+      return;
+    }
+
+    if (request.method === "GET" && !route.action) {
+      writeJson(response, 200, { attachment });
+      return;
+    }
+
+    if (request.method === "DELETE" && !route.action) {
+      deleteChannelAttachmentContent(store, attachment);
+      store.deleteChannelAttachment(route.attachmentId);
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel attachment` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelLinkPreviewsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        linkPreviews: store.listChannelLinkPreviews({ channelId, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelLinkPreviewRequest(body);
+      const messageError = input.messageId ? validateChannelMessageOwner(store, channelId, input.messageId) : undefined;
+      if (messageError) {
+        writeJson(response, messageError.statusCode, { error: messageError.code, message: messageError.message });
+        return;
+      }
+      const linkPreview = await createOrFetchChannelLinkPreview(store, channelId, input);
+      writeJson(response, 201, { linkPreview });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel link previews` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelLinkPreviewItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  route: { readonly linkPreviewId: string; readonly action: "refresh" },
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const existing = store.getChannelLinkPreview(route.linkPreviewId);
+    if (!existing) {
+      writeJson(response, 404, { error: "link_preview_not_found", message: `Link preview not found: ${route.linkPreviewId}` });
+      return;
+    }
+    if (request.method !== "POST") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for link preview refresh` });
+      return;
+    }
+    const metadata = await fetchLinkPreviewMetadata(existing.normalizedUrl);
+    const updated = store.updateChannelLinkPreview(
+      existing.id,
+      metadata,
+      new Date().toISOString(),
+    );
+    writeJson(response, 200, { linkPreview: updated ?? existing });
   } catch (error) {
     writeJson(response, 400, {
       error: "bad_request",
@@ -1912,6 +2265,609 @@ function handleGetArtifactContent(
       error: "artifact_content_not_found",
       message: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+async function createAiChannelReply(input: {
+  readonly runner: RunnerAdapter;
+  readonly store: RunStore;
+  readonly channel: Channel;
+  readonly sourceMessage: ChannelMessage;
+  readonly providerPresetId?: string;
+  readonly teammateId?: string;
+  readonly secretResolver: SecretResolver;
+}): Promise<ChannelMessage> {
+  const teammateId =
+    input.teammateId ??
+    input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
+    input.channel.defaultTeammateId ??
+    "ai-teammate";
+  const providerPresetId = input.providerPresetId ?? input.channel.defaultProviderPresetId;
+  const now = new Date().toISOString();
+
+  if (!providerPresetId) {
+    return input.store.createChannelMessage(
+      {
+        channelId: input.channel.id,
+        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: teammateId,
+        body: "AI teammate is not configured for this channel.",
+        status: "blocked",
+        errorMessage: "No provider preset is selected for this channel discussion.",
+      },
+      now,
+    );
+  }
+
+  const textDeltas: string[] = [];
+  try {
+    const provider = resolveProviderForRun(
+      input.store,
+      {
+        cwd: input.store.paths.cwd,
+        workspaceCwd: input.store.paths.cwd,
+        task: {
+          id: input.sourceMessage.id,
+          title: `Channel discussion in ${input.channel.name}`,
+          prompt: formatChannelDiscussionPrompt(input.channel, input.sourceMessage),
+          channelId: input.channel.id,
+        },
+        providerPresetId,
+        tools: [],
+        thinkingLevel: "medium",
+        systemPrompt: [
+          "You are an AI teammate inside a Ling Stack channel.",
+          "Reply concisely and only to the current channel discussion.",
+          "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
+          "Do not perform tool use or side effects.",
+        ].join("\n"),
+      },
+      input.secretResolver,
+    );
+
+    const result = await input.runner.runTask({
+      cwd: input.store.paths.cwd,
+      task: {
+        id: input.sourceMessage.id,
+        title: `Channel discussion in ${input.channel.name}`,
+        prompt: formatChannelDiscussionPrompt(input.channel, input.sourceMessage),
+        channelId: input.channel.id,
+      },
+      provider,
+      tools: [],
+      thinkingLevel: "medium",
+      systemPrompt: [
+        "You are an AI teammate inside a Ling Stack channel.",
+        "Reply concisely and only to the current channel discussion.",
+        "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
+        "Do not perform tool use or side effects.",
+      ].join("\n"),
+      onEvent: (event) => {
+        if (event.type === "assistant_text_delta") {
+          textDeltas.push(event.text);
+        }
+      },
+    });
+    const replyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
+    return input.store.createChannelMessage(
+      {
+        channelId: input.channel.id,
+        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: teammateId,
+        body: replyText,
+      },
+      new Date().toISOString(),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return input.store.createChannelMessage(
+      {
+        channelId: input.channel.id,
+        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: teammateId,
+        body: `AI teammate is blocked: ${message}`,
+        status: "blocked",
+        errorMessage: message,
+      },
+      new Date().toISOString(),
+    );
+  }
+}
+
+function formatChannelDiscussionPrompt(channel: Channel, message: ChannelMessage): string {
+  const mentions = message.mentions.length > 0
+    ? message.mentions.map((mention) => `@${mention.label}`).join(", ")
+    : "none";
+  return [
+    `Channel: ${channel.name}`,
+    `Mentions: ${mentions}`,
+    `User message:`,
+    message.body,
+    "",
+    "Reply as the channel AI teammate. Keep the response actionable and brief.",
+  ].join("\n");
+}
+
+function extractAssistantText(messages: readonly unknown[]): string | undefined {
+  for (const message of [...messages].reverse()) {
+    const text = extractTextFromUnknown(message);
+    if (text) {
+      return text;
+    }
+  }
+  return undefined;
+}
+
+function extractTextFromUnknown(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value.trim() || undefined;
+  }
+  if (Array.isArray(value)) {
+    return value.map(extractTextFromUnknown).filter(Boolean).join("").trim() || undefined;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  for (const key of ["text", "content", "message"]) {
+    const text = extractTextFromUnknown(value[key]);
+    if (text) {
+      return text;
+    }
+  }
+  return undefined;
+}
+
+function validateChannelMessageReferences(
+  store: RunStore,
+  channelId: string,
+  attachmentIds: readonly string[],
+  linkPreviewIds: readonly string[],
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  for (const attachmentId of attachmentIds) {
+    const attachment = store.getChannelAttachment(attachmentId);
+    if (!attachment) {
+      return {
+        statusCode: 404,
+        code: "attachment_not_found",
+        message: `Channel attachment not found: ${attachmentId}`,
+      };
+    }
+    if (attachment.channelId !== channelId) {
+      return {
+        statusCode: 400,
+        code: "attachment_channel_mismatch",
+        message: `Attachment does not belong to channel: ${attachmentId}`,
+      };
+    }
+  }
+
+  for (const linkPreviewId of linkPreviewIds) {
+    const linkPreview = store.getChannelLinkPreview(linkPreviewId);
+    if (!linkPreview) {
+      return {
+        statusCode: 404,
+        code: "link_preview_not_found",
+        message: `Channel link preview not found: ${linkPreviewId}`,
+      };
+    }
+    if (linkPreview.channelId !== channelId) {
+      return {
+        statusCode: 400,
+        code: "link_preview_channel_mismatch",
+        message: `Link preview does not belong to channel: ${linkPreviewId}`,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function validateChannelMessageOwner(
+  store: RunStore,
+  channelId: string,
+  messageId: string,
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  const message = store.getChannelMessage(messageId);
+  if (!message) {
+    return {
+      statusCode: 404,
+      code: "message_not_found",
+      message: `Channel message not found: ${messageId}`,
+    };
+  }
+  if (message.channelId !== channelId) {
+    return {
+      statusCode: 400,
+      code: "message_channel_mismatch",
+      message: `Message does not belong to channel: ${messageId}`,
+    };
+  }
+  return undefined;
+}
+
+function persistChannelAttachment(store: RunStore, channelId: string, input: ChannelAttachmentRequest): ChannelAttachment {
+  const safeFileName = sanitizeAttachmentFileName(input.fileName);
+  const inferred = inferChannelAttachmentKind(safeFileName, input.contentType);
+  const content = Buffer.from(input.contentBase64, "base64");
+  if (content.byteLength === 0) {
+    throw new Error("Attachment content is empty");
+  }
+  if (content.byteLength > CHANNEL_ATTACHMENT_MAX_BYTES) {
+    throw new Error(`Attachment exceeds ${CHANNEL_ATTACHMENT_MAX_BYTES} bytes`);
+  }
+
+  const now = new Date().toISOString();
+  const storageName = `${formatTimestampSlug(now)}-${safeFileName}`;
+  const relativePath = normalizeArtifactPath(join(channelId, storageName));
+  const absoluteDir = resolvePath(store.paths.attachmentsDir, channelId);
+  const absolutePath = resolvePath(store.paths.attachmentsDir, relativePath);
+  if (!isPathInsideRoot(store.paths.attachmentsDir, absolutePath)) {
+    throw new Error("Attachment content path is outside .ling-stack/attachments");
+  }
+  mkdirSync(absoluteDir, { recursive: true });
+  writeFileSync(absolutePath, content);
+
+  return store.createChannelAttachment({
+    channelId,
+    messageId: input.messageId,
+    kind: inferred.kind,
+    fileName: safeFileName,
+    contentType: inferred.contentType,
+    sizeBytes: content.byteLength,
+    path: relativePath,
+    createdAt: now,
+  });
+}
+
+function sanitizeAttachmentFileName(fileName: string): string {
+  const trimmed = fileName.trim();
+  if (trimmed !== basename(trimmed) || trimmed.includes("\\") || trimmed.includes("/")) {
+    throw new Error("fileName must not contain path separators");
+  }
+  const safe = trimmed.replace(/[^A-Za-z0-9._ -]+/g, "_").replace(/^\.+/, "").trim();
+  if (!safe) {
+    throw new Error("fileName must contain a safe filename");
+  }
+  inferChannelAttachmentKind(safe);
+  return safe.slice(0, 160);
+}
+
+function inferChannelAttachmentKind(fileName: string, _contentType?: string): { readonly kind: ChannelAttachmentKind; readonly contentType: string } {
+  const extension = extname(fileName).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension)) {
+    return { kind: "image", contentType: imageContentTypeForExtension(extension) };
+  }
+  if (extension === ".pdf") {
+    return { kind: "pdf", contentType: "application/pdf" };
+  }
+  if ([".docx", ".xlsx", ".pptx"].includes(extension)) {
+    return { kind: "office", contentType: officeContentTypeForExtension(extension) };
+  }
+  if ([".txt", ".md", ".csv", ".json", ".log"].includes(extension)) {
+    return { kind: "text", contentType: textContentTypeForExtension(extension) };
+  }
+  throw new Error("Unsupported attachment type. Allowed: png, jpg, jpeg, webp, gif, pdf, docx, xlsx, pptx, txt, md, csv, json, log");
+}
+
+function imageContentTypeForExtension(extension: string): string {
+  if (extension === ".jpg" || extension === ".jpeg") {
+    return "image/jpeg";
+  }
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+  if (extension === ".gif") {
+    return "image/gif";
+  }
+  return "image/png";
+}
+
+function officeContentTypeForExtension(extension: string): string {
+  if (extension === ".docx") {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (extension === ".xlsx") {
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  }
+  return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+}
+
+function textContentTypeForExtension(extension: string): string {
+  if (extension === ".md") {
+    return "text/markdown; charset=utf-8";
+  }
+  if (extension === ".csv") {
+    return "text/csv; charset=utf-8";
+  }
+  if (extension === ".json") {
+    return "application/json; charset=utf-8";
+  }
+  return "text/plain; charset=utf-8";
+}
+
+function handleGetChannelAttachmentContent(response: ServerResponse, store: RunStore, attachment: ChannelAttachment): void {
+  let contentPath: string;
+  try {
+    contentPath = resolveChannelAttachmentContentPath(store, attachment);
+  } catch (error) {
+    writeJson(response, 403, {
+      error: "attachment_outside_root",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  try {
+    const stats = statSync(contentPath);
+    if (!stats.isFile()) {
+      writeJson(response, 404, {
+        error: "attachment_content_not_found",
+        message: `Attachment content is not a file: ${attachment.id}`,
+      });
+      return;
+    }
+    const content = readFileSync(contentPath);
+    setCorsHeaders(response);
+    response.writeHead(200, {
+      "Content-Type": attachment.contentType,
+      "Content-Length": String(content.byteLength),
+      "Content-Disposition": `inline; filename="${attachment.fileName.replace(/"/g, "")}"`,
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(content);
+  } catch (error) {
+    writeJson(response, 404, {
+      error: "attachment_content_not_found",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function deleteChannelAttachmentContent(store: RunStore, attachment: ChannelAttachment): void {
+  try {
+    unlinkSync(resolveChannelAttachmentContentPath(store, attachment));
+  } catch {
+    // Missing files should not block metadata cleanup.
+  }
+}
+
+function resolveChannelAttachmentContentPath(store: RunStore, attachment: ChannelAttachment): string {
+  const absolutePath = isAbsolute(attachment.path)
+    ? attachment.path
+    : resolvePath(store.paths.attachmentsDir, attachment.path);
+  if (!isPathInsideRoot(store.paths.attachmentsDir, absolutePath)) {
+    throw new Error(`Attachment content path is outside .ling-stack/attachments: ${attachment.path}`);
+  }
+  return absolutePath;
+}
+
+async function createOrFetchChannelLinkPreview(
+  store: RunStore,
+  channelId: string,
+  input: ChannelLinkPreviewRequest,
+): Promise<ChannelLinkPreview> {
+  const normalizedUrl = normalizePreviewUrl(input.url);
+  const existing = store
+    .listChannelLinkPreviews({ channelId, limit: 500 })
+    .find((preview) => preview.normalizedUrl === normalizedUrl);
+  if (existing) {
+    return existing;
+  }
+
+  const metadata = await fetchLinkPreviewMetadata(normalizedUrl);
+  return store.createChannelLinkPreview(
+    {
+      channelId,
+      messageId: input.messageId,
+      url: input.url,
+      normalizedUrl,
+      title: metadata.title ?? undefined,
+      description: metadata.description ?? undefined,
+      imageUrl: metadata.imageUrl ?? undefined,
+      siteName: metadata.siteName ?? undefined,
+      status: metadata.status,
+      errorMessage: metadata.errorMessage ?? undefined,
+    },
+    new Date().toISOString(),
+  );
+}
+
+async function fetchLinkPreviewMetadata(url: string): Promise<{
+  readonly title?: string | null;
+  readonly description?: string | null;
+  readonly imageUrl?: string | null;
+  readonly siteName?: string | null;
+  readonly status: ChannelLinkPreview["status"];
+  readonly errorMessage?: string | null;
+}> {
+  try {
+    const final = await fetchPreviewHtml(url);
+    return {
+      ...parseLinkPreviewHtml(final.url, final.html),
+      status: "ready",
+      errorMessage: null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      status: isBlockedPreviewError(error) ? "blocked" : "failed",
+      errorMessage: message,
+      title: null,
+      description: null,
+      imageUrl: null,
+      siteName: null,
+    };
+  }
+}
+
+async function fetchPreviewHtml(initialUrl: string): Promise<{ readonly url: string; readonly html: string }> {
+  let currentUrl = normalizePreviewUrl(initialUrl);
+  for (let redirectCount = 0; redirectCount <= CHANNEL_LINK_PREVIEW_MAX_REDIRECTS; redirectCount += 1) {
+    await assertPreviewUrlAllowed(currentUrl);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CHANNEL_LINK_PREVIEW_TIMEOUT_MS);
+    try {
+      const response = await fetch(currentUrl, {
+        redirect: "manual",
+        signal: controller.signal,
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          "User-Agent": "LingStackLinkPreview/0.1",
+        },
+      });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) {
+          throw new Error("Redirect response is missing Location");
+        }
+        currentUrl = normalizePreviewUrl(new URL(location, currentUrl).toString());
+        continue;
+      }
+      if (!response.ok) {
+        throw new Error(`Preview fetch failed with HTTP ${response.status}`);
+      }
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType && !contentType.toLowerCase().includes("text/html")) {
+        throw new Error(`Preview content type is not HTML: ${contentType}`);
+      }
+      const reader = response.body?.getReader();
+      if (!reader) {
+        return { url: currentUrl, html: await response.text() };
+      }
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      while (true) {
+        const result = await reader.read();
+        if (result.done) {
+          break;
+        }
+        total += result.value.byteLength;
+        if (total > CHANNEL_LINK_PREVIEW_MAX_BYTES) {
+          throw new Error(`Preview HTML exceeds ${CHANNEL_LINK_PREVIEW_MAX_BYTES} bytes`);
+        }
+        chunks.push(result.value);
+      }
+      return { url: currentUrl, html: Buffer.concat(chunks).toString("utf8") };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw new Error("Preview exceeded redirect limit");
+}
+
+function parseLinkPreviewHtml(url: string, html: string): {
+  readonly title?: string | null;
+  readonly description?: string | null;
+  readonly imageUrl?: string | null;
+  readonly siteName?: string | null;
+} {
+  const title = readMeta(html, "og:title") ?? readTitle(html);
+  const description = readMeta(html, "og:description") ?? readMeta(html, "description");
+  const image = readMeta(html, "og:image");
+  const siteName = readMeta(html, "og:site_name") ?? new URL(url).hostname;
+  return {
+    title,
+    description,
+    imageUrl: image ? new URL(image, url).toString() : null,
+    siteName,
+  };
+}
+
+function readMeta(html: string, name: string): string | undefined {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`<meta\\s+[^>]*(?:property|name)=["']${escaped}["'][^>]*content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta\\s+[^>]*content=["']([^"']+)["'][^>]*(?:property|name)=["']${escaped}["'][^>]*>`, "i"),
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(html);
+    if (match?.[1]) {
+      return decodeHtmlEntities(match[1]).slice(0, 300);
+    }
+  }
+  return undefined;
+}
+
+function readTitle(html: string): string | undefined {
+  const match = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
+  return match?.[1] ? decodeHtmlEntities(match[1]).slice(0, 300) : undefined;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
+function normalizePreviewUrl(rawUrl: string): string {
+  const parsed = new URL(rawUrl.trim());
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Only http and https links can be previewed");
+  }
+  parsed.username = "";
+  parsed.password = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+async function assertPreviewUrlAllowed(url: string): Promise<void> {
+  const parsed = new URL(url);
+  if (parsed.hostname === "localhost" || parsed.hostname.endsWith(".localhost")) {
+    throw new PreviewBlockedError("Link preview blocks localhost hosts");
+  }
+  const addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
+  if (addresses.length === 0) {
+    throw new Error(`Unable to resolve host: ${parsed.hostname}`);
+  }
+  for (const address of addresses) {
+    if (isBlockedPreviewAddress(address.address)) {
+      throw new PreviewBlockedError(`Link preview blocks private or local address: ${address.address}`);
+    }
+  }
+}
+
+function isBlockedPreviewAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) {
+    const parts = address.split(".").map(Number);
+    const [a, b] = parts;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  }
+  if (family === 6) {
+    const lower = address.toLowerCase();
+    return lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80:");
+  }
+  return true;
+}
+
+function isBlockedPreviewError(error: unknown): boolean {
+  return error instanceof PreviewBlockedError;
+}
+
+class PreviewBlockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PreviewBlockedError";
   }
 }
 
@@ -3394,10 +4350,42 @@ function parseArtifactRoute(pathname: string): { kind: "artifact"; artifactId: s
   return undefined;
 }
 
-function parseChannelRoute(pathname: string): { readonly channelId: string } | undefined {
+function parseChannelRoute(
+  pathname: string,
+): { readonly channelId: string; readonly action?: "messages" | "attachments" | "link-previews" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "channels") {
     return { channelId: segments[1] };
+  }
+  if (
+    segments.length === 3 &&
+    segments[0] === "channels" &&
+    (segments[2] === "messages" || segments[2] === "attachments" || segments[2] === "link-previews")
+  ) {
+    return { channelId: segments[1], action: segments[2] };
+  }
+  return undefined;
+}
+
+function parseChannelAttachmentRoute(
+  pathname: string,
+): { readonly attachmentId: string; readonly action?: "content" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "attachments") {
+    return { attachmentId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "attachments" && segments[2] === "content") {
+    return { attachmentId: segments[1], action: "content" };
+  }
+  return undefined;
+}
+
+function parseChannelLinkPreviewRoute(
+  pathname: string,
+): { readonly linkPreviewId: string; readonly action: "refresh" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "link-previews" && segments[2] === "refresh") {
+    return { linkPreviewId: segments[1], action: "refresh" };
   }
   return undefined;
 }
@@ -3548,6 +4536,64 @@ function validateTaskInput(input: TaskUpdateInput): void {
   if (input.prompt !== undefined && input.prompt.trim().length === 0) {
     throw new Error("prompt must be a non-empty string");
   }
+}
+
+function parseChannelMessageRequest(value: unknown): ChannelMessageRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel message request must be a JSON object");
+  }
+  const input: ChannelMessageRequest = {
+    threadId: readOptionalString(value, "threadId"),
+    kind: readOptionalChannelMessageKind(value, "kind"),
+    intent: readOptionalChannelMessageIntent(value, "intent") ?? "discuss",
+    authorType: readOptionalChannelMessageAuthorType(value, "authorType") ?? "local-user",
+    authorId: readOptionalString(value, "authorId"),
+    body: readString(value, "body"),
+    mentions: readOptionalChannelMentions(value, "mentions") ?? [],
+    attachmentIds: readOptionalStringArray(value, "attachmentIds") ?? [],
+    linkPreviewIds: readOptionalStringArray(value, "linkPreviewIds") ?? [],
+    linkedTaskId: readOptionalString(value, "linkedTaskId"),
+    linkedRunId: readOptionalString(value, "linkedRunId"),
+    requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
+    providerPresetId: readOptionalString(value, "providerPresetId"),
+    teammateId: readOptionalString(value, "teammateId"),
+  };
+  if (!input.body.trim() && input.attachmentIds.length === 0 && input.linkPreviewIds.length === 0) {
+    throw new Error("body, attachmentIds, or linkPreviewIds is required");
+  }
+  if (input.attachmentIds.length > 10) {
+    throw new Error("A channel message can reference at most 10 attachments");
+  }
+  return input;
+}
+
+function parseChannelAttachmentRequest(value: unknown): ChannelAttachmentRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel attachment request must be a JSON object");
+  }
+  const input: ChannelAttachmentRequest = {
+    fileName: readString(value, "fileName"),
+    contentType: readOptionalString(value, "contentType"),
+    contentBase64: readString(value, "contentBase64"),
+    messageId: readOptionalString(value, "messageId"),
+  };
+  if (!input.fileName.trim()) {
+    throw new Error("fileName must be a non-empty string");
+  }
+  if (!input.contentBase64.trim()) {
+    throw new Error("contentBase64 must be a non-empty string");
+  }
+  return input;
+}
+
+function parseChannelLinkPreviewRequest(value: unknown): ChannelLinkPreviewRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel link preview request must be a JSON object");
+  }
+  return {
+    url: readString(value, "url"),
+    messageId: readOptionalString(value, "messageId"),
+  };
 }
 
 function parseCreateMediaJobInput(value: unknown): CreateMediaJobInput {
@@ -4315,6 +5361,61 @@ function readOptionalTaskStatus(record: Record<string, unknown>, key: string): T
     throw new Error(`${key} must be one of: ${taskStatuses.join(", ")}`);
   }
   return value as TaskStatus;
+}
+
+function readOptionalChannelMessageKind(record: Record<string, unknown>, key: string): ChannelMessageKind | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "message" && value !== "ai_reply" && value !== "system" && value !== "task_link") {
+    throw new Error(`${key} must be one of: message, ai_reply, system, task_link`);
+  }
+  return value;
+}
+
+function readOptionalChannelMessageIntent(record: Record<string, unknown>, key: string): ChannelMessageIntent | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "discuss" && value !== "task") {
+    throw new Error(`${key} must be one of: discuss, task`);
+  }
+  return value;
+}
+
+function readOptionalChannelMessageAuthorType(record: Record<string, unknown>, key: string): ChannelMessageAuthorType | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "local-user" && value !== "ai-teammate" && value !== "system") {
+    throw new Error(`${key} must be one of: local-user, ai-teammate, system`);
+  }
+  return value;
+}
+
+function readOptionalChannelMentions(record: Record<string, unknown>, key: string): ChannelMention[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be an array`);
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key}[${index}] must be an object`);
+    }
+    const id = readString(item, "id");
+    const label = readString(item, "label");
+    const kind = readString(item, "kind");
+    if (kind !== "ai-teammate" && kind !== "local-user" && kind !== "channel") {
+      throw new Error(`${key}[${index}].kind must be one of: ai-teammate, local-user, channel`);
+    }
+    return { id, label, kind };
+  });
 }
 
 function readOptionalChannelStatus(record: Record<string, unknown>, key: string): Channel["status"] | undefined {

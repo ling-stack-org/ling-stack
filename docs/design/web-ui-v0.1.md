@@ -9,10 +9,15 @@ This design depends on:
 - [Session persistence](session-persistence.md)
 - [Provider presets](provider-presets.md)
 - [Approval policy](approval-policy.md)
+- [Channel workspace](channel-workspace.md)
 
 The current `apps/web` package now provides the local app shell, Model Workbench provider setup with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, a client-style channel workspace, compact task creation/running, channel runtime policy controls, active lease/conflict signals, state-machine timelines, contextual readiness and first-run panels, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
 
 The AI teammates page now uses the same client direction: a Helio-inspired, macOS-like wizard for choosing a default role, binding a model, filling profile details, and scoping channels/memory/files. It is still a local draft flow until the daemon teammate API exists.
+
+The richer channel surface is tracked in [Channel Workspace Design](channel-workspace.md). That document is the source of truth for channel tabs, default AI teammate assignment, member/notification/settings inspector behavior, file/artifact access, and the phased implementation checklist.
+
+Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, and `Files` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions; durable channel messages; no-tools AI discussion replies; user attachments; metadata-only web link previews; and discussion-to-task conversion with `assigneeTeammateId` derived from the first AI mention or channel default teammate.
 
 ## Goal
 

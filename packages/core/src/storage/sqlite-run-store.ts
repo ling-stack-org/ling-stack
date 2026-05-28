@@ -34,20 +34,38 @@ import {
 } from "../approval-policy.js";
 import {
   DEFAULT_WORKSPACE_ID,
+  createChannelAttachmentId,
   createChannelId,
+  createChannelLinkPreviewId,
+  createChannelMessageId,
   createTaskId,
   normalizeChannelRuntimePolicy,
   type Channel,
+  type ChannelAttachment,
+  type ChannelAttachmentKind,
+  type ChannelLinkPreview,
+  type ChannelLinkPreviewStatus,
+  type ChannelMessage,
+  type ChannelMessageAuthorType,
+  type ChannelMessageIntent,
+  type ChannelMessageKind,
   type ChannelRuntimePolicy,
   type ChannelStatus,
   type ChannelUpdateInput,
+  type CreateChannelAttachmentInput,
   type CreateChannelInput,
+  type CreateChannelLinkPreviewInput,
+  type CreateChannelMessageInput,
   type CreateTaskInput,
+  type ListChannelAttachmentsOptions,
   type ListChannelsOptions,
+  type ListChannelLinkPreviewsOptions,
+  type ListChannelMessagesOptions,
   type ListTasksOptions,
   type Task,
   type TaskStatus,
   type TaskUpdateInput,
+  type UpdateChannelLinkPreviewInput,
 } from "../workspace-types.js";
 import {
   createArtifactId,
@@ -120,6 +138,8 @@ const CHANNEL_RUNTIME_MIGRATION_VERSION = 11;
 const CHANNEL_RUNTIME_MIGRATION_NAME = "add_channel_runtime_state_and_leases";
 const PROVIDER_SECRETS_MIGRATION_VERSION = 12;
 const PROVIDER_SECRETS_MIGRATION_NAME = "create_provider_secrets";
+const CHANNEL_WORKSPACE_MIGRATION_VERSION = 13;
+const CHANNEL_WORKSPACE_MIGRATION_NAME = "create_channel_workspace_assets";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -1005,6 +1025,288 @@ export class SqliteRunStore implements RunStore {
   deleteTask(id: string): boolean {
     const result = this.database.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     return Number(result.changes) > 0;
+  }
+
+  createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage {
+    if (!this.getChannel(input.channelId)) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+    const message: ChannelMessage = {
+      id: createChannelMessageId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      threadId: input.threadId,
+      kind: input.kind ?? "message",
+      intent: input.intent ?? "discuss",
+      authorType: input.authorType,
+      authorId: input.authorId,
+      body: input.body,
+      mentions: input.mentions ?? [],
+      attachmentIds: input.attachmentIds ?? [],
+      linkPreviewIds: input.linkPreviewIds ?? [],
+      linkedTaskId: input.linkedTaskId,
+      linkedRunId: input.linkedRunId,
+      status: input.status ?? "ready",
+      errorMessage: input.errorMessage,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO channel_messages (
+          id,
+          workspace_id,
+          channel_id,
+          thread_id,
+          kind,
+          intent,
+          author_type,
+          author_id,
+          body,
+          mentions_json,
+          attachment_ids_json,
+          link_preview_ids_json,
+          linked_task_id,
+          linked_run_id,
+          status,
+          error_message,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        message.id,
+        message.workspaceId,
+        message.channelId,
+        message.threadId ?? null,
+        message.kind,
+        message.intent,
+        message.authorType,
+        message.authorId ?? null,
+        message.body,
+        stringifyJson(message.mentions),
+        stringifyJson(message.attachmentIds),
+        stringifyJson(message.linkPreviewIds),
+        message.linkedTaskId ?? null,
+        message.linkedRunId ?? null,
+        message.status,
+        message.errorMessage ?? null,
+        message.createdAt,
+        message.updatedAt,
+      );
+
+    const created = this.getChannelMessage(message.id);
+    if (!created) {
+      throw new Error(`Failed to create channel message: ${message.id}`);
+    }
+    return created;
+  }
+
+  getChannelMessage(id: string): ChannelMessage | undefined {
+    const row = this.database.prepare(channelMessageSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelMessage(row) : undefined;
+  }
+
+  listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[] {
+    const clauses = ["workspace_id = ?", "channel_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
+    if (options.threadId) {
+      clauses.push("thread_id = ?");
+      params.push(options.threadId);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${channelMessageSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at ASC, rowid ASC LIMIT ?`)
+      .all(...params)
+      .map(mapChannelMessage);
+  }
+
+  createChannelAttachment(input: CreateChannelAttachmentInput): ChannelAttachment {
+    if (!this.getChannel(input.channelId)) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+    const attachment: ChannelAttachment = {
+      id: createChannelAttachmentId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      messageId: input.messageId,
+      kind: input.kind,
+      fileName: input.fileName,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      path: input.path,
+      createdAt: input.createdAt ?? new Date().toISOString(),
+    };
+    this.database
+      .prepare(`
+        INSERT INTO channel_attachments (
+          id,
+          workspace_id,
+          channel_id,
+          message_id,
+          kind,
+          file_name,
+          content_type,
+          size_bytes,
+          path,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        attachment.id,
+        attachment.workspaceId,
+        attachment.channelId,
+        attachment.messageId ?? null,
+        attachment.kind,
+        attachment.fileName,
+        attachment.contentType,
+        attachment.sizeBytes,
+        attachment.path,
+        attachment.createdAt,
+      );
+
+    const created = this.getChannelAttachment(attachment.id);
+    if (!created) {
+      throw new Error(`Failed to create channel attachment: ${attachment.id}`);
+    }
+    return created;
+  }
+
+  getChannelAttachment(id: string): ChannelAttachment | undefined {
+    const row = this.database.prepare(channelAttachmentSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelAttachment(row) : undefined;
+  }
+
+  listChannelAttachments(options: ListChannelAttachmentsOptions): ChannelAttachment[] {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    return this.database
+      .prepare(`${channelAttachmentSelectSql("WHERE workspace_id = ? AND channel_id = ?")} ORDER BY created_at DESC, id DESC LIMIT ?`)
+      .all(DEFAULT_WORKSPACE_ID, options.channelId, limit)
+      .map(mapChannelAttachment);
+  }
+
+  deleteChannelAttachment(id: string): boolean {
+    const result = this.database.prepare("DELETE FROM channel_attachments WHERE id = ?").run(id);
+    return Number(result.changes) > 0;
+  }
+
+  createChannelLinkPreview(input: CreateChannelLinkPreviewInput, now: string): ChannelLinkPreview {
+    if (!this.getChannel(input.channelId)) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+    const preview: ChannelLinkPreview = {
+      id: createChannelLinkPreviewId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      messageId: input.messageId,
+      url: input.url,
+      normalizedUrl: input.normalizedUrl,
+      title: input.title,
+      description: input.description,
+      imageUrl: input.imageUrl,
+      siteName: input.siteName,
+      status: input.status,
+      errorMessage: input.errorMessage,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO channel_link_previews (
+          id,
+          workspace_id,
+          channel_id,
+          message_id,
+          url,
+          normalized_url,
+          title,
+          description,
+          image_url,
+          site_name,
+          status,
+          error_message,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        preview.id,
+        preview.workspaceId,
+        preview.channelId,
+        preview.messageId ?? null,
+        preview.url,
+        preview.normalizedUrl,
+        preview.title ?? null,
+        preview.description ?? null,
+        preview.imageUrl ?? null,
+        preview.siteName ?? null,
+        preview.status,
+        preview.errorMessage ?? null,
+        preview.createdAt,
+        preview.updatedAt,
+      );
+
+    const created = this.getChannelLinkPreview(preview.id);
+    if (!created) {
+      throw new Error(`Failed to create channel link preview: ${preview.id}`);
+    }
+    return created;
+  }
+
+  getChannelLinkPreview(id: string): ChannelLinkPreview | undefined {
+    const row = this.database.prepare(channelLinkPreviewSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelLinkPreview(row) : undefined;
+  }
+
+  listChannelLinkPreviews(options: ListChannelLinkPreviewsOptions): ChannelLinkPreview[] {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    return this.database
+      .prepare(`${channelLinkPreviewSelectSql("WHERE workspace_id = ? AND channel_id = ?")} ORDER BY created_at DESC, id DESC LIMIT ?`)
+      .all(DEFAULT_WORKSPACE_ID, options.channelId, limit)
+      .map(mapChannelLinkPreview);
+  }
+
+  updateChannelLinkPreview(id: string, input: UpdateChannelLinkPreviewInput, now: string): ChannelLinkPreview | undefined {
+    const existing = this.getChannelLinkPreview(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: ChannelLinkPreview = {
+      ...existing,
+      title: nullableUpdate(input.title, existing.title),
+      description: nullableUpdate(input.description, existing.description),
+      imageUrl: nullableUpdate(input.imageUrl, existing.imageUrl),
+      siteName: nullableUpdate(input.siteName, existing.siteName),
+      status: input.status ?? existing.status,
+      errorMessage: nullableUpdate(input.errorMessage, existing.errorMessage),
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        UPDATE channel_link_previews
+        SET
+          title = ?,
+          description = ?,
+          image_url = ?,
+          site_name = ?,
+          status = ?,
+          error_message = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.title ?? null,
+        next.description ?? null,
+        next.imageUrl ?? null,
+        next.siteName ?? null,
+        next.status,
+        next.errorMessage ?? null,
+        next.updatedAt,
+        id,
+      );
+    return this.getChannelLinkPreview(id);
   }
 
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {
@@ -1992,6 +2294,103 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(PROVIDER_SECRETS_MIGRATION_VERSION, PROVIDER_SECRETS_MIGRATION_NAME);
       }
     }
+
+    const hasChannelWorkspaceMigration = this.hasMigration(CHANNEL_WORKSPACE_MIGRATION_VERSION);
+    if (
+      !hasChannelWorkspaceMigration ||
+      !this.hasColumn("channels", "default_teammate_id") ||
+      !this.hasColumn("tasks", "assignee_teammate_id") ||
+      !this.hasTable("channel_messages") ||
+      !this.hasTable("channel_attachments") ||
+      !this.hasTable("channel_link_previews")
+    ) {
+      if (!this.hasColumn("channels", "default_teammate_id")) {
+        this.database.exec("ALTER TABLE channels ADD COLUMN default_teammate_id TEXT;");
+      }
+      if (!this.hasColumn("tasks", "assignee_teammate_id")) {
+        this.database.exec("ALTER TABLE tasks ADD COLUMN assignee_teammate_id TEXT;");
+      }
+
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_messages (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          thread_id TEXT,
+          kind TEXT NOT NULL,
+          intent TEXT NOT NULL,
+          author_type TEXT NOT NULL,
+          author_id TEXT,
+          body TEXT NOT NULL,
+          mentions_json TEXT NOT NULL,
+          attachment_ids_json TEXT NOT NULL,
+          link_preview_ids_json TEXT NOT NULL,
+          linked_task_id TEXT,
+          linked_run_id TEXT,
+          status TEXT NOT NULL,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_messages_channel_created
+        ON channel_messages(channel_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_messages_thread
+        ON channel_messages(thread_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS channel_attachments (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          message_id TEXT,
+          kind TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          path TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(message_id) REFERENCES channel_messages(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_attachments_channel_created
+        ON channel_attachments(channel_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS channel_link_previews (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          message_id TEXT,
+          url TEXT NOT NULL,
+          normalized_url TEXT NOT NULL,
+          title TEXT,
+          description TEXT,
+          image_url TEXT,
+          site_name TEXT,
+          status TEXT NOT NULL,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(message_id) REFERENCES channel_messages(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_link_previews_channel_created
+        ON channel_link_previews(channel_id, created_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_link_previews_channel_url
+        ON channel_link_previews(channel_id, normalized_url);
+      `);
+
+      if (!hasChannelWorkspaceMigration) {
+        this.recordMigration(CHANNEL_WORKSPACE_MIGRATION_VERSION, CHANNEL_WORKSPACE_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -2170,6 +2569,63 @@ function mapTask(row: Record<string, SQLOutputValue>): Task {
     status: readString(row, "status") as TaskStatus,
     assigneeTeammateId: readNullableString(row, "assignee_teammate_id"),
     currentRunId: readNullableString(row, "current_run_id"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelMessage(row: Record<string, SQLOutputValue>): ChannelMessage {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    threadId: readNullableString(row, "thread_id"),
+    kind: readString(row, "kind") as ChannelMessageKind,
+    intent: readString(row, "intent") as ChannelMessageIntent,
+    authorType: readString(row, "author_type") as ChannelMessageAuthorType,
+    authorId: readNullableString(row, "author_id"),
+    body: readString(row, "body"),
+    mentions: parseChannelMentions(readString(row, "mentions_json")),
+    attachmentIds: parseJsonStringArray(readString(row, "attachment_ids_json")),
+    linkPreviewIds: parseJsonStringArray(readString(row, "link_preview_ids_json")),
+    linkedTaskId: readNullableString(row, "linked_task_id"),
+    linkedRunId: readNullableString(row, "linked_run_id"),
+    status: readString(row, "status") as ChannelMessage["status"],
+    errorMessage: readNullableString(row, "error_message"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelAttachment(row: Record<string, SQLOutputValue>): ChannelAttachment {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    messageId: readNullableString(row, "message_id"),
+    kind: readString(row, "kind") as ChannelAttachmentKind,
+    fileName: readString(row, "file_name"),
+    contentType: readString(row, "content_type"),
+    sizeBytes: readNumber(row, "size_bytes"),
+    path: readString(row, "path"),
+    createdAt: readString(row, "created_at"),
+  });
+}
+
+function mapChannelLinkPreview(row: Record<string, SQLOutputValue>): ChannelLinkPreview {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    messageId: readNullableString(row, "message_id"),
+    url: readString(row, "url"),
+    normalizedUrl: readString(row, "normalized_url"),
+    title: readNullableString(row, "title"),
+    description: readNullableString(row, "description"),
+    imageUrl: readNullableString(row, "image_url"),
+    siteName: readNullableString(row, "site_name"),
+    status: readString(row, "status") as ChannelLinkPreviewStatus,
+    errorMessage: readNullableString(row, "error_message"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
@@ -2401,6 +2857,72 @@ function taskSelectSql(whereClause: string): string {
   `;
 }
 
+function channelMessageSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      thread_id,
+      kind,
+      intent,
+      author_type,
+      author_id,
+      body,
+      mentions_json,
+      attachment_ids_json,
+      link_preview_ids_json,
+      linked_task_id,
+      linked_run_id,
+      status,
+      error_message,
+      created_at,
+      updated_at
+    FROM channel_messages
+    ${whereClause}
+  `;
+}
+
+function channelAttachmentSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      message_id,
+      kind,
+      file_name,
+      content_type,
+      size_bytes,
+      path,
+      created_at
+    FROM channel_attachments
+    ${whereClause}
+  `;
+}
+
+function channelLinkPreviewSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      message_id,
+      url,
+      normalized_url,
+      title,
+      description,
+      image_url,
+      site_name,
+      status,
+      error_message,
+      created_at,
+      updated_at
+    FROM channel_link_previews
+    ${whereClause}
+  `;
+}
+
 function providerPresetSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -2537,6 +3059,30 @@ function parseJsonStringArray(value: string): string[] {
     throw new Error("Expected JSON string array from SQLite");
   }
   return parsed as string[];
+}
+
+function parseChannelMentions(value: string): ChannelMessage["mentions"] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Expected channel mentions array from SQLite");
+  }
+  return parsed.map((item) => {
+    if (!isJsonRecord(item) || typeof item.id !== "string" || typeof item.label !== "string") {
+      throw new Error("Expected channel mention from SQLite");
+    }
+    if (item.kind !== "ai-teammate" && item.kind !== "local-user" && item.kind !== "channel") {
+      throw new Error("Expected channel mention kind from SQLite");
+    }
+    return {
+      id: item.id,
+      label: item.label,
+      kind: item.kind,
+    };
+  });
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseProviderCheckResult(value: string | undefined): ProviderCheckResult | undefined {

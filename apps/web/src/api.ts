@@ -4,10 +4,19 @@ import type {
   ApprovalMutationResponse,
   ApprovalPolicyFormState,
   ApprovalPolicyResponse,
+  ChannelAttachment,
+  ChannelAttachmentListResponse,
+  ChannelAttachmentMutationResponse,
+  ChannelLinkPreviewListResponse,
+  ChannelLinkPreviewMutationResponse,
   Channel,
   ChannelFormState,
   ChannelListResponse,
+  ChannelMessageListResponse,
+  ChannelMessageMutationResponse,
   ChannelMutationResponse,
+  CreateChannelLinkPreviewRequest,
+  CreateChannelMessageRequest,
   CreateChannelRequest,
   CreateMediaJobRequest,
   DaemonHealthResponse,
@@ -82,6 +91,60 @@ export async function deleteChannel(cwd: string, channelId: string): Promise<voi
   await daemonClient.deleteChannel(cwd, channelId);
 }
 
+export async function listChannelMessages(cwd: string, channelId: string): Promise<ChannelMessageListResponse> {
+  return daemonClient.listChannelMessages(cwd, channelId);
+}
+
+export async function createChannelMessage(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelMessageRequest,
+): Promise<ChannelMessageMutationResponse> {
+  return daemonClient.createChannelMessage(cwd, channelId, input);
+}
+
+export async function listChannelAttachments(cwd: string, channelId: string): Promise<ChannelAttachmentListResponse> {
+  return daemonClient.listChannelAttachments(cwd, channelId);
+}
+
+export async function uploadChannelAttachment(
+  cwd: string,
+  channelId: string,
+  file: File,
+  messageId?: string,
+): Promise<ChannelAttachmentMutationResponse> {
+  return daemonClient.createChannelAttachment(cwd, channelId, {
+    fileName: file.name,
+    contentType: file.type || undefined,
+    contentBase64: await fileToBase64(file),
+    messageId,
+  });
+}
+
+export async function deleteChannelAttachment(cwd: string, attachmentId: string): Promise<void> {
+  await daemonClient.deleteChannelAttachment(cwd, attachmentId);
+}
+
+export function channelAttachmentContentUrl(attachment: ChannelAttachment, cwd?: string): string {
+  return daemonClient.attachmentContentUrl(attachment.id, cwd);
+}
+
+export async function listChannelLinkPreviews(cwd: string, channelId: string): Promise<ChannelLinkPreviewListResponse> {
+  return daemonClient.listChannelLinkPreviews(cwd, channelId);
+}
+
+export async function createChannelLinkPreview(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelLinkPreviewRequest,
+): Promise<ChannelLinkPreviewMutationResponse> {
+  return daemonClient.createChannelLinkPreview(cwd, channelId, input);
+}
+
+export async function refreshChannelLinkPreview(cwd: string, linkPreviewId: string): Promise<ChannelLinkPreviewMutationResponse> {
+  return daemonClient.refreshChannelLinkPreview(cwd, linkPreviewId);
+}
+
 export async function listTasks(cwd: string, channelId?: string): Promise<TaskListResponse> {
   return daemonClient.listTasks(cwd, { channelId });
 }
@@ -91,6 +154,7 @@ export async function createTask(cwd: string, channelId: string, form: TaskFormS
     channelId,
     title: form.title,
     prompt: form.prompt,
+    assigneeTeammateId: form.assigneeTeammateId,
   });
 }
 
@@ -316,6 +380,7 @@ function channelFormToPayload(form: ChannelFormState): CreateChannelRequest {
     status: form.status,
     boundPath: form.boundPath.trim() || undefined,
     defaultProviderPresetId: form.defaultProviderPresetId || undefined,
+    defaultTeammateId: form.defaultTeammateId || undefined,
     allowedTools: form.allowedTools.filter(isRunnerTool),
     runtimePolicy: form.runtimePolicy,
   };
@@ -327,6 +392,7 @@ function channelFormToUpdatePayload(form: ChannelFormState): UpdateChannelReques
     status: form.status,
     boundPath: form.boundPath.trim() || null,
     defaultProviderPresetId: form.defaultProviderPresetId || null,
+    defaultTeammateId: form.defaultTeammateId || null,
     allowedTools: form.allowedTools.filter(isRunnerTool),
     runtimePolicy: form.runtimePolicy,
   };
@@ -373,6 +439,23 @@ function splitLines(value: string): string[] {
     .split(/\r?\n/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("FileReader did not return a data URL"));
+        return;
+      }
+      resolve(reader.result);
+    });
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("Failed to read file")));
+    reader.readAsDataURL(file);
+  });
+  const commaIndex = dataUrl.indexOf(",");
+  return commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl;
 }
 
 function isRunnerTool(tool: ToolName): tool is "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write" {

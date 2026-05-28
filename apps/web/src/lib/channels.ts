@@ -6,6 +6,7 @@ export const defaultChannelForm: ChannelFormState = {
   status: "active",
   boundPath: "",
   defaultProviderPresetId: "",
+  defaultTeammateId: "",
   allowedTools: defaultTools,
   runtimePolicy: {
     maxConcurrentRuns: 1,
@@ -21,6 +22,7 @@ export const defaultChannelEditForm: ChannelFormState = {
   status: "active",
   boundPath: "",
   defaultProviderPresetId: "",
+  defaultTeammateId: "",
   allowedTools: defaultTools,
   runtimePolicy: defaultChannelForm.runtimePolicy,
 };
@@ -38,6 +40,7 @@ export function channelToForm(channel: Channel, fallbackCwd: string): ChannelFor
     status: channel.status,
     boundPath: channel.boundPath ?? fallbackCwd,
     defaultProviderPresetId: channel.defaultProviderPresetId ?? "",
+    defaultTeammateId: channel.defaultTeammateId ?? "",
     allowedTools: channel.allowedTools.length > 0 ? channel.allowedTools : defaultTools,
     runtimePolicy: effectiveChannelRuntimePolicy(channel),
   };

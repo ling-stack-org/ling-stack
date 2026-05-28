@@ -2,8 +2,17 @@ import type {
   ApprovalListResponse,
   ApprovalMutationResponse,
   ApprovalPolicyResponse,
+  ChannelAttachmentListResponse,
+  ChannelAttachmentMutationResponse,
+  ChannelLinkPreviewListResponse,
+  ChannelLinkPreviewMutationResponse,
   ChannelListResponse,
+  ChannelMessageListResponse,
+  ChannelMessageMutationResponse,
   ChannelMutationResponse,
+  CreateChannelAttachmentRequest,
+  CreateChannelLinkPreviewRequest,
+  CreateChannelMessageRequest,
   CreateChannelRequest,
   CreateMediaJobRequest,
   CreateTaskRequest,
@@ -114,6 +123,54 @@ export class LingDaemonClient {
 
   async deleteChannel(cwd: string, channelId: string): Promise<void> {
     await this.request("DELETE", `/channels/${encodeURIComponent(channelId)}`, { cwd });
+  }
+
+  async listChannelMessages(cwd: string, channelId: string, limit = 100): Promise<ChannelMessageListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd, limit });
+  }
+
+  async createChannelMessage(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelMessageRequest,
+  ): Promise<ChannelMessageMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd }, input);
+  }
+
+  async listChannelAttachments(cwd: string, channelId: string, limit = 100): Promise<ChannelAttachmentListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/attachments`, { cwd, limit });
+  }
+
+  async createChannelAttachment(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelAttachmentRequest,
+  ): Promise<ChannelAttachmentMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/attachments`, { cwd }, input);
+  }
+
+  async deleteChannelAttachment(cwd: string, attachmentId: string): Promise<void> {
+    await this.request("DELETE", `/attachments/${encodeURIComponent(attachmentId)}`, { cwd });
+  }
+
+  attachmentContentUrl(attachmentId: string, cwd?: string): string {
+    return this.url(`/attachments/${encodeURIComponent(attachmentId)}/content`, { cwd });
+  }
+
+  async listChannelLinkPreviews(cwd: string, channelId: string, limit = 100): Promise<ChannelLinkPreviewListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/link-previews`, { cwd, limit });
+  }
+
+  async createChannelLinkPreview(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelLinkPreviewRequest,
+  ): Promise<ChannelLinkPreviewMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/link-previews`, { cwd }, input);
+  }
+
+  async refreshChannelLinkPreview(cwd: string, linkPreviewId: string): Promise<ChannelLinkPreviewMutationResponse> {
+    return this.post(`/link-previews/${encodeURIComponent(linkPreviewId)}/refresh`, { cwd });
   }
 
   async listTasks(cwd: string, options: ListTasksRequest = {}): Promise<TaskListResponse> {
