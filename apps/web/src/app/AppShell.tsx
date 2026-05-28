@@ -146,6 +146,7 @@ import {
   defaultChannelForm,
 } from "../lib/channels.js";
 import { deriveChannelRuns, deriveChannelTasks } from "../lib/channel-artifacts.js";
+import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "../lib/channel-activity-triage.js";
 import { readDataString } from "../lib/data.js";
 import { titleFromPrompt } from "../lib/formatting.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd, writeSavedWorkspaceCwd } from "../lib/local-storage.js";
@@ -219,6 +220,13 @@ function buildContextTaskPrompt(summary: ChannelContextSummary, decisions: reado
     ? `\n\nOpen questions:\n${summary.openQuestions.map((item) => `- ${item}`).join("\n")}`
     : "";
   return `Context summary:\n${summary.summary}${decisionText}${criteriaText}${questionText}`;
+}
+
+function splitTextLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 export function AppShell(): JSX.Element {
@@ -1673,6 +1681,82 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function runActivityTriageAction(draft: ChannelActivityTriageDraft): Promise<ChannelActivityTriageResult> {
+    if (!selectedChannelId) {
+      const error = new Error("请先选择 channel");
+      setErrorMessage(error.message);
+      throw error;
+    }
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    const sourceRefs = draft.sourceRefs;
+    try {
+      setErrorMessage("");
+      if (draft.actionKind === "follow_up_task") {
+        const response = await createTask(form.cwd.trim(), selectedChannelId, {
+          title: draft.title.trim(),
+          prompt: draft.prompt,
+          assigneeTeammateId: draft.assigneeTeammateId || selectedChannel?.defaultTeammateId,
+        });
+        setSelectedTaskId(response.task.id);
+        setTasks((current) => [response.task, ...current.filter((task) => task.id !== response.task.id)]);
+        return { kind: "task", task: response.task };
+      }
+
+      if (draft.actionKind === "handoff") {
+        const response = await createChannelHandoff(form.cwd.trim(), selectedChannelId, {
+          ...(sourceRefs.sourceMessageId ? { sourceMessageId: sourceRefs.sourceMessageId } : {}),
+          ...(sourceRefs.sourceTaskId ? { sourceTaskId: sourceRefs.sourceTaskId } : {}),
+          ...(sourceRefs.sourceRunId ? { sourceRunId: sourceRefs.sourceRunId } : {}),
+          fromParticipantId: "local-user",
+          fromParticipantLabel: "Tian",
+          toParticipantId: draft.toParticipantId.trim(),
+          toParticipantLabel: draft.toParticipantLabel.trim(),
+          reason: draft.reason.trim(),
+          requiredInput: draft.requiredInput,
+          expectedOutput: draft.expectedOutput,
+          createdBy: "local-user",
+        });
+        setChannelHandoffs((current) => [response.handoff, ...current.filter((handoff) => handoff.id !== response.handoff.id)]);
+        return { kind: "handoff", handoff: response.handoff };
+      }
+
+      if (draft.actionKind === "decision") {
+        const response = await createChannelDecision(form.cwd.trim(), selectedChannelId, {
+          ...(sourceRefs.sourceMessageId ? { sourceMessageId: sourceRefs.sourceMessageId } : {}),
+          ...(sourceRefs.sourceTaskId ? { sourceTaskId: sourceRefs.sourceTaskId } : {}),
+          ...(sourceRefs.sourceRunId ? { sourceRunId: sourceRefs.sourceRunId } : {}),
+          title: draft.title.trim(),
+          decision: draft.decision,
+          rationale: draft.rationale,
+          alternatives: [],
+          createdBy: "local-user",
+        });
+        setChannelDecisions((current) => [response.decision, ...current.filter((decision) => decision.id !== response.decision.id)]);
+        return { kind: "decision", decision: response.decision };
+      }
+
+      const response = await createChannelContextSummary(form.cwd.trim(), selectedChannelId, {
+        targetType: sourceRefs.contextTargetType,
+        targetId: sourceRefs.contextTargetId,
+        sourceMessageIds: sourceRefs.sourceMessageIds,
+        decisionIds: draft.decisionIds,
+        summary: draft.summary,
+        acceptanceCriteria: splitTextLines(draft.acceptanceCriteria),
+        openQuestions: splitTextLines(draft.openQuestions),
+        authorType: "local-user",
+        authorId: "local-user",
+      });
+      setChannelContextSummaries((current) => [
+        response.contextSummary,
+        ...current.filter((summary) => summary.id !== response.contextSummary.id),
+      ]);
+      return { kind: "context_summary", contextSummary: response.contextSummary };
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
   async function removeTask(taskId: string): Promise<void> {
     try {
       setErrorMessage("");
@@ -2263,6 +2347,7 @@ export function AppShell(): JSX.Element {
             onUpdateWorkflowStepStatus={(step, status) => void updateWorkflowStepStatus(step, status)}
             onCreateTaskWithContextFromMessage={(message) => void createTaskWithContextFromMessage(message)}
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
+            onRunActivityTriageAction={runActivityTriageAction}
             onRefreshChannelActivity={() => void refreshChannelActivity()}
             onRefreshChannelProtocol={() => void refreshChannelProtocol()}
             onRefreshChannelFiles={() => void Promise.all([refreshChannelFiles(), refreshChannelRunArtifacts()])}

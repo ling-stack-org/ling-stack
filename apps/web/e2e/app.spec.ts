@@ -30,6 +30,7 @@ interface MockState {
   runResponseDelayMs?: number;
   channelMessageDelayMs?: number;
   failNextChannelMessage?: boolean;
+  failNextTaskCreate?: boolean;
   linkPreviewDelayMs?: number;
   approvals: MockApproval[];
   approvalPolicy: MockApprovalPolicy;
@@ -1023,6 +1024,148 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
 });
 
+test("channel activity triage actions create follow-up records and preserve local state", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = [
+    {
+      id: "msg_triage",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Timeline source message for triage",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:02:00.000Z",
+      updatedAt: "2026-05-25T00:02:00.000Z",
+    },
+  ];
+  state.channelWorkflows = [
+    {
+      id: "workflow_triage",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Triage workflow",
+      objective: "Show blocked workflow step triage.",
+      status: "blocked",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:05:00.000Z",
+      updatedAt: "2026-05-25T00:06:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_triage",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_triage",
+      position: 1,
+      title: "Blocked triage step",
+      prompt: "Wait for runtime recovery.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "blocked",
+      blocker: "Runtime policy is waiting.",
+      createdAt: "2026-05-25T00:06:00.000Z",
+      updatedAt: "2026-05-25T00:07:00.000Z",
+    },
+  ];
+  state.stateTransitions = [
+    {
+      id: "transition_triage_task",
+      workspaceId: "workspace_default",
+      entityType: "task",
+      entityId: "task_inspect",
+      fromStatus: "todo",
+      toStatus: "failed",
+      event: "task_failed",
+      actor: "runner",
+      createdAt: "2026-05-25T00:03:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const activityDetails = page.getByLabel("Activity details");
+  const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" });
+  const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked triage step" });
+  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
+  const messageBubble = page.locator(".message-bubble").filter({ hasText: "Timeline source message for triage" });
+
+  await runEventBubble.getByRole("button", { name: "Details" }).click();
+  await expect(activityDetails).toContainText("Triage actions");
+  await activityDetails.getByRole("button", { name: "Create follow-up task" }).click();
+  await activityDetails.getByLabel("Triage title").fill("Investigate failed run triage");
+  state.failNextTaskCreate = true;
+  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
+  await expect(activityDetails.getByRole("alert")).toContainText("Triage action failed");
+  await expect(activityDetails.getByLabel("Triage title")).toHaveValue("Investigate failed run triage");
+  await expect(activityDetails.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(activityDetails.getByRole("button", { name: "Dismiss" })).toBeVisible();
+  await activityDetails.getByRole("button", { name: "Retry" }).click();
+  await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
+  await expect.poll(() => state.tasks.some((task) => isRecord(task) && task.title === "Investigate failed run triage")).toBe(true);
+  await activityDetails.getByRole("button", { name: "Open in Tasks" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
+  await expect(page.locator("article.task-detail")).toContainText("Investigate failed run triage");
+
+  await page.getByRole("button", { name: "Activity" }).click();
+  await workflowStepBubble.getByRole("button", { name: "Details" }).click();
+  await activityDetails.getByRole("button", { name: "Create handoff" }).click();
+  await activityDetails.getByLabel("Reason").fill("Escalate blocked triage step");
+  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
+  await expect.poll(() => state.channelHandoffs.some((handoff) => isRecord(handoff) && handoff.reason === "Escalate blocked triage step")).toBe(true);
+  await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
+  await activityDetails.getByRole("button", { name: "Open in Channel protocol" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
+  await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Escalate blocked triage step");
+
+  await page.getByRole("button", { name: "Activity" }).click();
+  await approvalEventBubble.getByRole("button", { name: "Details" }).click();
+  await activityDetails.getByRole("button", { name: "Record decision" }).click();
+  await activityDetails.getByLabel("Triage title").fill("Decision: approval stays pending");
+  await activityDetails.getByLabel("Decision text").fill("Keep the approval pending until the user reviews the shell command.");
+  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
+  await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.title === "Decision: approval stays pending")).toBe(true);
+  await activityDetails.getByRole("button", { name: "Open in Channel protocol" }).click();
+  await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Decision: approval stays pending");
+
+  await page.getByRole("button", { name: "Activity" }).click();
+  const activityFilters = page.getByLabel("Activity filters");
+  const searchInput = activityFilters.getByPlaceholder("Search activity");
+  const composer = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const attentionQueue = page.getByLabel("Attention queue");
+  await searchInput.fill("Timeline source");
+  await composer.fill("Composer draft survives triage");
+  if (await attentionQueue.locator(".attention-queue-item").count() === 0) {
+    await attentionQueue.locator(".attention-queue-summary").click();
+  }
+  await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
+  await messageBubble.getByRole("button", { name: "Details" }).click();
+  await activityDetails.getByRole("button", { name: "Create context summary" }).click();
+  await activityDetails.getByLabel("Summary").fill("Summary from Timeline source message for triage.");
+  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
+  await expect.poll(() => state.channelContextSummaries.some((summary) => isRecord(summary) && summary.summary === "Summary from Timeline source message for triage.")).toBe(true);
+  await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
+  await activityDetails.getByLabel("Close details").click();
+  await expect(searchInput).toHaveValue("Timeline source");
+  await expect(composer).toHaveValue("Composer draft survives triage");
+  await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
+  const summaryBubble = page.locator(".message-bubble").filter({ hasText: "Context summary" }).filter({ hasText: "Summary from Timeline source" });
+  await expect(summaryBubble).toBeVisible();
+  const taskCount = state.tasks.length;
+  await summaryBubble.getByRole("button", { name: "Create task" }).click();
+  await expect.poll(() => state.tasks.length).toBe(taskCount + 1);
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+});
+
 test("channel activity attention queue keeps an empty state compact", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -1114,6 +1257,8 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   const chineseDetails = page.getByRole("complementary", { name: "动态详情" });
   await expect(chineseDetails).toContainText("来源摘要");
   await expect(chineseDetails).toContainText("关联对象");
+  await expect(chineseDetails).toContainText("分诊动作");
+  await expect(chineseDetails).toContainText("创建跟进任务");
   await chineseDetails.getByLabel("关闭详情").click();
   await expect(page.getByPlaceholder("给频道发消息，或 @ 一个 AI 队友")).toBeVisible();
   await expect(page.locator(".channel-composer").getByRole("button", { name: "发送" })).toBeVisible();
@@ -1135,6 +1280,8 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   const englishDetails = page.getByRole("complementary", { name: "Activity details" });
   await expect(englishDetails).toContainText("Source summary");
   await expect(englishDetails).toContainText("Related objects");
+  await expect(englishDetails).toContainText("Triage actions");
+  await expect(englishDetails).toContainText("Create follow-up task");
   await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
 });
 
@@ -3044,6 +3191,11 @@ async function handleDaemonRoute(
     return;
   }
   if (request.method() === "POST" && path === "/tasks") {
+    if (state.failNextTaskCreate) {
+      state.failNextTaskCreate = false;
+      await route.fulfill({ status: 500, json: { error: "task_create_failed" } });
+      return;
+    }
     const body = await request.postDataJSON() as Record<string, unknown>;
     const task = {
       id: `task_${state.tasks.length + 1}`,
