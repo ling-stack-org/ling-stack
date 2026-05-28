@@ -1507,7 +1507,8 @@ Current MVP implementation status:
 - v1.1 now persists Channel Brief, Decision Log, Handoff, and Context Summary records,
   with Activity and inspector views synthesizing those protocol items,
 - v1.2 now lets handoffs create explicit, user-started workflow/step records with
-  task/run start, blocker visibility, and Runtime inspector queue tracking,
+  task/run start, blocker visibility, Runtime inspector queue tracking, and a compact
+  default-collapsed protocol panel,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 

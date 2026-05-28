@@ -25,11 +25,12 @@ context summary records. These protocol records are manual and auditable; they d
 start runs, call AI providers, ingest attachments/links, or mutate task/run state.
 
 Implemented v1.2 behavior: handoff cards can create durable workflow/step records, the
-Runtime inspector shows a Workflow queue with context packet metadata, blockers, linked
-task/run ids, and step controls, Activity includes workflow/step items, and Task detail
-shows the source workflow/step for tasks created from a workflow step. `Start step`
-creates a task for review, while `Start + run` enters the existing task/run stream and
-approval/runtime boundaries.
+channel protocol panel is collapsed by default behind a compact summary row, Runtime
+shows a Workflow queue with context packet metadata, blockers, linked task/run ids, and
+step controls, Activity includes workflow/step items, and Task detail shows the source
+workflow/step for tasks created from a workflow step. `Start step` creates a task for
+review, while `Start + run` enters the existing task/run stream and approval/runtime
+boundaries.
 
 ## Goal
 

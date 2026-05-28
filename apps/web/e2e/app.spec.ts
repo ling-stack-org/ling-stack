@@ -283,6 +283,8 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
   await briefLoaded;
 
   await expect(page.getByText("Loading protocol...")).toHaveCount(0);
+  await expect(page.getByLabel("Objective")).toHaveCount(0);
+  await page.getByRole("button", { name: /Open protocol panel/ }).click();
   await page.getByLabel("Objective").fill("Ship channel v1.1 protocol");
   await page.getByLabel("Scope").fill("Brief, decisions, handoffs, context summaries");
   await page.getByLabel("Acceptance criteria").fill("Brief saves\nActivity shows protocol items");
@@ -316,6 +318,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
   await expect(page.getByText("Context summary", { exact: true }).first()).toBeVisible();
 
   await page.reload();
+  await page.getByRole("button", { name: /Open protocol panel/ }).click();
   await expect(page.getByLabel("Objective")).toHaveValue("Ship channel v1.1 protocol");
 });
 
@@ -336,6 +339,7 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
   await page.getByRole("button", { name: "Start workflow" }).first().click();
   await expect.poll(() => state.channelWorkflows.length).toBe(1);
   await expect.poll(() => state.channelWorkflowSteps.length).toBe(1);
+  await page.getByRole("button", { name: /Open protocol panel/ }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await expect(page.getByText("Workflow queue")).toBeVisible();
   await expect(page.getByText("Active decisions: 0")).toBeVisible();
@@ -366,6 +370,7 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
   };
   state.channelWorkflowSteps.push(blockedStep);
   await page.reload();
+  await page.getByRole("button", { name: /Open protocol panel/ }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await expect(page.getByText("Provider preflight failed.")).toBeVisible();
 });
@@ -408,6 +413,7 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await page.getByRole("button", { name: /Open protocol panel/ }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await page.getByRole("button", { name: "Start + run" }).click();
   await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
