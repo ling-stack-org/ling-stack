@@ -26,21 +26,35 @@ import type {
 import type {
   Channel,
   ChannelAttachment,
+  ChannelBrief,
+  ChannelContextSummary,
+  ChannelDecision,
+  ChannelHandoff,
   ChannelLinkPreview,
   ChannelMessage,
   ChannelUpdateInput,
   CreateChannelAttachmentInput,
+  CreateChannelContextSummaryInput,
+  CreateChannelDecisionInput,
+  CreateChannelHandoffInput,
   CreateChannelInput,
   CreateChannelLinkPreviewInput,
   CreateChannelMessageInput,
   CreateTaskInput,
   ListChannelAttachmentsOptions,
+  ListChannelContextSummariesOptions,
+  ListChannelDecisionsOptions,
+  ListChannelHandoffsOptions,
   ListChannelsOptions,
   ListChannelLinkPreviewsOptions,
   ListChannelMessagesOptions,
   ListTasksOptions,
   Task,
   TaskUpdateInput,
+  UpdateChannelBriefInput,
+  UpdateChannelContextSummaryInput,
+  UpdateChannelDecisionInput,
+  UpdateChannelHandoffInput,
   UpdateChannelLinkPreviewInput,
 } from "./workspace-types.js";
 import type {
@@ -252,6 +266,24 @@ export interface RunStore {
   getChannelLinkPreview(id: string): ChannelLinkPreview | undefined;
   listChannelLinkPreviews(options: ListChannelLinkPreviewsOptions): ChannelLinkPreview[];
   updateChannelLinkPreview(id: string, input: UpdateChannelLinkPreviewInput, now: string): ChannelLinkPreview | undefined;
+  getChannelBrief(channelId: string): ChannelBrief | undefined;
+  updateChannelBrief(channelId: string, input: UpdateChannelBriefInput, now: string): ChannelBrief;
+  createChannelDecision(input: CreateChannelDecisionInput, now: string): ChannelDecision;
+  getChannelDecision(id: string): ChannelDecision | undefined;
+  listChannelDecisions(options: ListChannelDecisionsOptions): ChannelDecision[];
+  updateChannelDecision(id: string, input: UpdateChannelDecisionInput, now: string): ChannelDecision | undefined;
+  createChannelHandoff(input: CreateChannelHandoffInput, now: string): ChannelHandoff;
+  getChannelHandoff(id: string): ChannelHandoff | undefined;
+  listChannelHandoffs(options: ListChannelHandoffsOptions): ChannelHandoff[];
+  updateChannelHandoff(id: string, input: UpdateChannelHandoffInput, now: string): ChannelHandoff | undefined;
+  createChannelContextSummary(input: CreateChannelContextSummaryInput, now: string): ChannelContextSummary;
+  getChannelContextSummary(id: string): ChannelContextSummary | undefined;
+  listChannelContextSummaries(options: ListChannelContextSummariesOptions): ChannelContextSummary[];
+  updateChannelContextSummary(
+    id: string,
+    input: UpdateChannelContextSummaryInput,
+    now: string,
+  ): ChannelContextSummary | undefined;
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset;
   getProviderPreset(id: string): ProviderPreset | undefined;
   listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];

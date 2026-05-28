@@ -7,6 +7,15 @@ import type {
   ChannelAttachment,
   ChannelAttachmentListResponse,
   ChannelAttachmentMutationResponse,
+  ChannelBriefMutationResponse,
+  ChannelBriefResponse,
+  ChannelContextSummaryListResponse,
+  ChannelContextSummaryMutationResponse,
+  ChannelContextSummaryTargetType,
+  ChannelDecisionListResponse,
+  ChannelDecisionMutationResponse,
+  ChannelHandoffListResponse,
+  ChannelHandoffMutationResponse,
   ChannelLinkPreviewListResponse,
   ChannelLinkPreviewMutationResponse,
   Channel,
@@ -15,6 +24,9 @@ import type {
   ChannelMessageListResponse,
   ChannelMessageMutationResponse,
   ChannelMutationResponse,
+  CreateChannelContextSummaryRequest,
+  CreateChannelDecisionRequest,
+  CreateChannelHandoffRequest,
   CreateChannelLinkPreviewRequest,
   CreateChannelMessageRequest,
   CreateChannelRequest,
@@ -47,6 +59,10 @@ import type {
   TaskListResponse,
   TaskMutationResponse,
   ToolName,
+  UpdateChannelBriefRequest,
+  UpdateChannelContextSummaryRequest,
+  UpdateChannelDecisionRequest,
+  UpdateChannelHandoffRequest,
   UpdateChannelRequest,
   UpdateTaskRequest,
 } from "./types.js";
@@ -143,6 +159,82 @@ export async function createChannelLinkPreview(
 
 export async function refreshChannelLinkPreview(cwd: string, linkPreviewId: string): Promise<ChannelLinkPreviewMutationResponse> {
   return daemonClient.refreshChannelLinkPreview(cwd, linkPreviewId);
+}
+
+export async function getChannelBrief(cwd: string, channelId: string): Promise<ChannelBriefResponse> {
+  return daemonClient.getChannelBrief(cwd, channelId);
+}
+
+export async function updateChannelBrief(
+  cwd: string,
+  channelId: string,
+  input: UpdateChannelBriefRequest,
+): Promise<ChannelBriefMutationResponse> {
+  return daemonClient.updateChannelBrief(cwd, channelId, input);
+}
+
+export async function listChannelDecisions(cwd: string, channelId: string): Promise<ChannelDecisionListResponse> {
+  return daemonClient.listChannelDecisions(cwd, channelId);
+}
+
+export async function createChannelDecision(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelDecisionRequest,
+): Promise<ChannelDecisionMutationResponse> {
+  return daemonClient.createChannelDecision(cwd, channelId, input);
+}
+
+export async function updateChannelDecision(
+  cwd: string,
+  decisionId: string,
+  input: UpdateChannelDecisionRequest,
+): Promise<ChannelDecisionMutationResponse> {
+  return daemonClient.updateChannelDecision(cwd, decisionId, input);
+}
+
+export async function listChannelHandoffs(cwd: string, channelId: string): Promise<ChannelHandoffListResponse> {
+  return daemonClient.listChannelHandoffs(cwd, channelId);
+}
+
+export async function createChannelHandoff(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelHandoffRequest,
+): Promise<ChannelHandoffMutationResponse> {
+  return daemonClient.createChannelHandoff(cwd, channelId, input);
+}
+
+export async function updateChannelHandoff(
+  cwd: string,
+  handoffId: string,
+  input: UpdateChannelHandoffRequest,
+): Promise<ChannelHandoffMutationResponse> {
+  return daemonClient.updateChannelHandoff(cwd, handoffId, input);
+}
+
+export async function listChannelContextSummaries(
+  cwd: string,
+  channelId: string,
+  options: { readonly targetType?: ChannelContextSummaryTargetType; readonly targetId?: string } = {},
+): Promise<ChannelContextSummaryListResponse> {
+  return daemonClient.listChannelContextSummaries(cwd, channelId, options);
+}
+
+export async function createChannelContextSummary(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelContextSummaryRequest,
+): Promise<ChannelContextSummaryMutationResponse> {
+  return daemonClient.createChannelContextSummary(cwd, channelId, input);
+}
+
+export async function updateChannelContextSummary(
+  cwd: string,
+  contextSummaryId: string,
+  input: UpdateChannelContextSummaryRequest,
+): Promise<ChannelContextSummaryMutationResponse> {
+  return daemonClient.updateChannelContextSummary(cwd, contextSummaryId, input);
 }
 
 export async function listTasks(cwd: string, channelId?: string): Promise<TaskListResponse> {

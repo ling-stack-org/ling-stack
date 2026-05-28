@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -6,6 +6,7 @@ import {
   Clock3,
   Command,
   Database,
+  FileCheck2,
   FileText,
   Hash,
   History,
@@ -40,7 +41,12 @@ import type {
   ApprovalRequest,
   Channel,
   ChannelAttachment,
+  ChannelBrief,
+  ChannelContextSummary,
+  ChannelDecision,
   ChannelFormState,
+  ChannelHandoff,
+  ChannelHandoffStatus,
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
@@ -50,6 +56,7 @@ import type {
   Task,
   TaskFormState,
   TaskRunActionState,
+  UpdateChannelBriefRequest,
 } from "../../types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
@@ -70,6 +77,10 @@ export function WorkspaceClientView({
   channelMessages,
   channelAttachments,
   channelLinkPreviews,
+  channelBrief,
+  channelDecisions,
+  channelHandoffs,
+  channelContextSummaries,
   selectedTaskId,
   providers,
   teammateTemplates,
@@ -80,6 +91,7 @@ export function WorkspaceClientView({
   tasksLoading,
   channelMessagesLoading,
   channelFilesLoading,
+  channelProtocolLoading,
   providersLoading,
   approvals,
   resourceLeases,
@@ -104,6 +116,15 @@ export function WorkspaceClientView({
   onCreateLinkPreview,
   onDeleteAttachment,
   onCreateTaskFromMessage,
+  onSaveBrief,
+  onRecordDecisionFromMessage,
+  onSupersedeDecision,
+  onRejectDecision,
+  onCreateHandoffFromMessage,
+  onCreateHandoffFromTask,
+  onUpdateHandoffStatus,
+  onCreateTaskWithContextFromMessage,
+  onCreateTaskFromContextSummary,
   attachmentContentUrl,
   onRefreshTasks,
   onSelectTask,
@@ -124,6 +145,10 @@ export function WorkspaceClientView({
   readonly channelMessages: readonly ChannelMessage[];
   readonly channelAttachments: readonly ChannelAttachment[];
   readonly channelLinkPreviews: readonly ChannelLinkPreview[];
+  readonly channelBrief: ChannelBrief | undefined;
+  readonly channelDecisions: readonly ChannelDecision[];
+  readonly channelHandoffs: readonly ChannelHandoff[];
+  readonly channelContextSummaries: readonly ChannelContextSummary[];
   readonly selectedTaskId: string;
   readonly providers: readonly ProviderPreset[];
   readonly teammateTemplates: readonly AiTeammateTemplate[];
@@ -134,6 +159,7 @@ export function WorkspaceClientView({
   readonly tasksLoading: boolean;
   readonly channelMessagesLoading: boolean;
   readonly channelFilesLoading: boolean;
+  readonly channelProtocolLoading: boolean;
   readonly providersLoading: boolean;
   readonly approvals: readonly ApprovalRequest[];
   readonly resourceLeases: readonly ResourceLease[];
@@ -164,6 +190,15 @@ export function WorkspaceClientView({
   readonly onCreateLinkPreview: (url: string) => Promise<ChannelLinkPreview | undefined>;
   readonly onDeleteAttachment: (attachmentId: string) => void;
   readonly onCreateTaskFromMessage: (message: ChannelMessage) => void;
+  readonly onSaveBrief: (input: UpdateChannelBriefRequest) => void;
+  readonly onRecordDecisionFromMessage: (message: ChannelMessage) => void;
+  readonly onSupersedeDecision: (decision: ChannelDecision) => void;
+  readonly onRejectDecision: (decision: ChannelDecision) => void;
+  readonly onCreateHandoffFromMessage: (message: ChannelMessage) => void;
+  readonly onCreateHandoffFromTask: (task: Task) => void;
+  readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
+  readonly onCreateTaskWithContextFromMessage: (message: ChannelMessage) => void;
+  readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
   readonly onRefreshTasks: () => void;
   readonly onSelectTask: (taskId: string) => void;
@@ -179,6 +214,14 @@ export function WorkspaceClientView({
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
   const [activeTab, setActiveTab] = useState<"activity" | "tasks" | "files">("activity");
+  const [inspectorMode, setInspectorMode] = useState<"brief" | "decisions" | "handoffs" | "runtime">("brief");
+  const [briefDraft, setBriefDraft] = useState({
+    objective: "",
+    scope: "",
+    acceptanceCriteria: "",
+    openQuestions: "",
+    risks: "",
+  });
   const [composerMode, setComposerMode] = useState<"discuss" | "task">("discuss");
   const [messageDraft, setMessageDraft] = useState("");
   const [askAi, setAskAi] = useState(true);
@@ -225,6 +268,20 @@ export function WorkspaceClientView({
       ) as Record<TaskFilter, number>,
     [activeRunId, latestStatus, runById, tasks],
   );
+  const activityItems = useMemo(
+    () => buildChannelActivityItems(channelMessages, channelDecisions, channelHandoffs, channelContextSummaries),
+    [channelContextSummaries, channelDecisions, channelHandoffs, channelMessages],
+  );
+
+  useEffect(() => {
+    setBriefDraft({
+      objective: channelBrief?.objective ?? "",
+      scope: channelBrief?.scope ?? "",
+      acceptanceCriteria: (channelBrief?.acceptanceCriteria ?? []).join("\n"),
+      openQuestions: (channelBrief?.openQuestions ?? []).join("\n"),
+      risks: (channelBrief?.risks ?? []).join("\n"),
+    });
+  }, [channelBrief]);
 
   function selectTask(taskId: string): void {
     setCreateTaskOpen(false);
@@ -234,6 +291,20 @@ export function WorkspaceClientView({
   function createTask(): void {
     onCreateTask();
     setCreateTaskOpen(false);
+  }
+
+  function saveBrief(): void {
+    onSaveBrief({
+      objective: briefDraft.objective,
+      scope: briefDraft.scope,
+      acceptanceCriteria: splitLines(briefDraft.acceptanceCriteria),
+      openQuestions: splitLines(briefDraft.openQuestions),
+      risks: splitLines(briefDraft.risks),
+      decisionIds: channelDecisions.filter((decision) => decision.status === "active").map((decision) => decision.id),
+      attachmentIds: channelBrief?.attachmentIds ?? [],
+      linkPreviewIds: channelBrief?.linkPreviewIds ?? [],
+      updatedBy: "local-user",
+    });
   }
 
   const teammateOptions = useMemo(
@@ -425,12 +496,12 @@ export function WorkspaceClientView({
 
           {activeTab === "activity" ? (
             <div className="message-feed">
-              {channelMessagesLoading ? (
+              {channelMessagesLoading || channelProtocolLoading ? (
                 <div className="client-empty-state">
                   <Loader2 className="spin" />
                   <span>{t("Loading messages...")}</span>
                 </div>
-              ) : channelMessages.length === 0 ? (
+              ) : activityItems.length === 0 ? (
                 <MessageBubble
                   avatar={<AvatarInitial label="L" tone="orange" />}
                   author="Ling Stack"
@@ -438,26 +509,110 @@ export function WorkspaceClientView({
                   body={selectedChannel ? t("Default workspace is ready. This channel is bound to {path}.", { path: selectedChannel.boundPath ?? cwd }) : t("Create a default channel to start the workspace loop.")}
                 />
               ) : (
-                channelMessages.map((message) => (
-                  <MessageBubble
-                    key={message.id}
-                    avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
-                    author={messageAuthorLabel(message, teammateOptions)}
-                    tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
-                    time={formatDateTime(message.createdAt)}
-                    body={message.body}
-                    action={
-                      message.kind === "message" ? (
-                        <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromMessage(message)}>
+                activityItems.map((item) => {
+                  if (item.kind === "message") {
+                    const message = item.record;
+                    return (
+                      <MessageBubble
+                        key={item.id}
+                        avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
+                        author={messageAuthorLabel(message, teammateOptions)}
+                        tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
+                        time={formatDateTime(message.createdAt)}
+                        body={message.body}
+                        action={
+                          message.kind === "message" ? (
+                            <div className="activity-action-row">
+                              <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromMessage(message)}>
+                                <Plus size={14} />
+                                {t("Create task")}
+                              </button>
+                              <button className="secondary-button compact-button" type="button" onClick={() => onRecordDecisionFromMessage(message)}>
+                                <FileCheck2 size={14} />
+                                {t("Record decision")}
+                              </button>
+                              <button className="secondary-button compact-button" type="button" onClick={() => onCreateHandoffFromMessage(message)}>
+                                <Workflow size={14} />
+                                {t("Create handoff")}
+                              </button>
+                              <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskWithContextFromMessage(message)}>
+                                <FileText size={14} />
+                                {t("Create task with context")}
+                              </button>
+                            </div>
+                          ) : message.linkedTaskId ? (
+                            <code>{message.linkedTaskId}</code>
+                          ) : undefined
+                        }
+                      />
+                    );
+                  }
+                  if (item.kind === "decision") {
+                    const decision = item.record;
+                    return (
+                      <MessageBubble
+                        key={item.id}
+                        avatar={<AvatarInitial label="D" tone="violet" />}
+                        author={t("Decision log")}
+                        tag={decision.status}
+                        time={formatDateTime(decision.createdAt)}
+                        body={`${decision.title}: ${decision.decision}`}
+                        action={
+                          <div className="activity-action-row">
+                            <button className="secondary-button compact-button" type="button" onClick={() => onSupersedeDecision(decision)}>
+                              <FileCheck2 size={14} />
+                              {t("Supersede")}
+                            </button>
+                            <button className="secondary-button compact-button" type="button" onClick={() => onRejectDecision(decision)}>
+                              <CircleAlert size={14} />
+                              {t("Reject")}
+                            </button>
+                          </div>
+                        }
+                      />
+                    );
+                  }
+                  if (item.kind === "handoff") {
+                    const handoff = item.record;
+                    return (
+                      <MessageBubble
+                        key={item.id}
+                        avatar={<AvatarInitial label="H" tone="teal" />}
+                        author={t("Handoff")}
+                        tag={handoff.status}
+                        time={formatDateTime(handoff.createdAt)}
+                        body={`${handoff.fromParticipantLabel} -> ${handoff.toParticipantLabel}: ${handoff.reason}`}
+                        action={
+                          <div className="activity-action-row">
+                            <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "accepted")}>
+                              {t("Accept")}
+                            </button>
+                            <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>
+                              {t("Complete")}
+                            </button>
+                          </div>
+                        }
+                      />
+                    );
+                  }
+                  const summary = item.record;
+                  return (
+                    <MessageBubble
+                      key={item.id}
+                      avatar={<AvatarInitial label="C" tone="orange" />}
+                      author={t("Context summary")}
+                      tag={summary.targetType}
+                      time={formatDateTime(summary.updatedAt)}
+                      body={summary.summary}
+                      action={
+                        <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>
                           <Plus size={14} />
                           {t("Create task")}
                         </button>
-                      ) : message.linkedTaskId ? (
-                        <code>{message.linkedTaskId}</code>
-                      ) : undefined
-                    }
-                  />
-                ))
+                      }
+                    />
+                  );
+                })
               )}
               {latestRun ? (
                 <MessageBubble
@@ -642,6 +797,22 @@ export function WorkspaceClientView({
         </section>
 
         <section className="panel task-detail-panel" aria-label={createTaskOpen ? t("New task") : t("Task detail")}>
+          <ChannelInspector
+            mode={inspectorMode}
+            onModeChange={setInspectorMode}
+            briefDraft={briefDraft}
+            onBriefDraftChange={setBriefDraft}
+            onSaveBrief={saveBrief}
+            decisions={channelDecisions}
+            handoffs={channelHandoffs}
+            contextSummaries={channelContextSummaries}
+            loading={channelProtocolLoading}
+            selectedTask={selectedTask}
+            onSupersedeDecision={onSupersedeDecision}
+            onRejectDecision={onRejectDecision}
+            onUpdateHandoffStatus={onUpdateHandoffStatus}
+            onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
+          />
           {createTaskOpen ? (
             <NewTaskPanel
               taskForm={taskForm}
@@ -670,6 +841,10 @@ export function WorkspaceClientView({
               activeTaskRunAction={activeTaskRunAction}
               taskActionPending={taskActionPending}
               activeLeaseCount={activeLeaseCount}
+              decisions={channelDecisions}
+              contextSummaries={channelContextSummaries}
+              onCreateHandoffFromTask={onCreateHandoffFromTask}
+              onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
               onCheckThenRunTask={onCheckThenRunTask}
               onRunTask={onRunTask}
               onOpenRun={onOpenRun}
@@ -728,6 +903,190 @@ export function WorkspaceClientView({
       </details>
     </div>
   );
+}
+
+type ChannelInspectorMode = "brief" | "decisions" | "handoffs" | "runtime";
+
+function ChannelInspector({
+  mode,
+  onModeChange,
+  briefDraft,
+  onBriefDraftChange,
+  onSaveBrief,
+  decisions,
+  handoffs,
+  contextSummaries,
+  loading,
+  selectedTask,
+  onSupersedeDecision,
+  onRejectDecision,
+  onUpdateHandoffStatus,
+  onCreateTaskFromContextSummary,
+}: {
+  readonly mode: ChannelInspectorMode;
+  readonly onModeChange: (mode: ChannelInspectorMode) => void;
+  readonly briefDraft: {
+    readonly objective: string;
+    readonly scope: string;
+    readonly acceptanceCriteria: string;
+    readonly openQuestions: string;
+    readonly risks: string;
+  };
+  readonly onBriefDraftChange: (draft: {
+    readonly objective: string;
+    readonly scope: string;
+    readonly acceptanceCriteria: string;
+    readonly openQuestions: string;
+    readonly risks: string;
+  }) => void;
+  readonly onSaveBrief: () => void;
+  readonly decisions: readonly ChannelDecision[];
+  readonly handoffs: readonly ChannelHandoff[];
+  readonly contextSummaries: readonly ChannelContextSummary[];
+  readonly loading: boolean;
+  readonly selectedTask: Task | undefined;
+  readonly onSupersedeDecision: (decision: ChannelDecision) => void;
+  readonly onRejectDecision: (decision: ChannelDecision) => void;
+  readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
+  readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const activeDecisions = decisions.filter((decision) => decision.status === "active");
+  const taskSummaries = selectedTask ? contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === selectedTask.id) : [];
+  return (
+    <section className="channel-inspector" aria-label={t("Channel inspector")}>
+      <div className="channel-inspector-tabs" role="tablist" aria-label={t("Channel inspector modes")}>
+        {(["brief", "decisions", "handoffs", "runtime"] as const).map((item) => (
+          <button key={item} type="button" className={mode === item ? "active" : ""} onClick={() => onModeChange(item)}>
+            {item === "brief" ? t("Brief") : item === "decisions" ? t("Decisions") : item === "handoffs" ? t("Handoffs") : t("Runtime")}
+          </button>
+        ))}
+      </div>
+      {loading ? (
+        <div className="client-empty-state compact">
+          <Loader2 className="spin" />
+          <span>{t("Loading protocol...")}</span>
+        </div>
+      ) : null}
+      {mode === "brief" ? (
+        <div className="brief-editor">
+          <label className="field wide">
+            <span>{t("Objective")}</span>
+            <textarea rows={2} value={briefDraft.objective} onChange={(event) => onBriefDraftChange({ ...briefDraft, objective: event.target.value })} />
+          </label>
+          <label className="field wide">
+            <span>{t("Scope")}</span>
+            <textarea rows={2} value={briefDraft.scope} onChange={(event) => onBriefDraftChange({ ...briefDraft, scope: event.target.value })} />
+          </label>
+          <label className="field wide">
+            <span>{t("Acceptance criteria")}</span>
+            <textarea rows={3} value={briefDraft.acceptanceCriteria} onChange={(event) => onBriefDraftChange({ ...briefDraft, acceptanceCriteria: event.target.value })} />
+          </label>
+          <label className="field wide">
+            <span>{t("Open questions")}</span>
+            <textarea rows={2} value={briefDraft.openQuestions} onChange={(event) => onBriefDraftChange({ ...briefDraft, openQuestions: event.target.value })} />
+          </label>
+          <label className="field wide">
+            <span>{t("Risks")}</span>
+            <textarea rows={2} value={briefDraft.risks} onChange={(event) => onBriefDraftChange({ ...briefDraft, risks: event.target.value })} />
+          </label>
+          <button className="primary-button compact-button" type="button" onClick={onSaveBrief}>
+            <FileCheck2 size={14} />
+            {t("Save brief")}
+          </button>
+        </div>
+      ) : null}
+      {mode === "decisions" ? (
+        <ProtocolList
+          emptyLabel={t("No decisions recorded")}
+          items={decisions}
+          renderItem={(decision) => (
+            <div className="protocol-row" key={decision.id}>
+              <span>
+                <strong>{decision.title}</strong>
+                <small>{decision.status} · {decision.decision}</small>
+              </span>
+              <div className="activity-action-row">
+                <button className="secondary-button compact-button" type="button" onClick={() => onSupersedeDecision(decision)}>{t("Supersede")}</button>
+                <button className="secondary-button compact-button" type="button" onClick={() => onRejectDecision(decision)}>{t("Reject")}</button>
+              </div>
+            </div>
+          )}
+        />
+      ) : null}
+      {mode === "handoffs" ? (
+        <ProtocolList
+          emptyLabel={t("No handoffs")}
+          items={handoffs}
+          renderItem={(handoff) => (
+            <div className="protocol-row" key={handoff.id}>
+              <span>
+                <strong>{handoff.fromParticipantLabel} {"->"} {handoff.toParticipantLabel}</strong>
+                <small>{handoff.status} · {handoff.reason}</small>
+              </span>
+              <div className="activity-action-row">
+                <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "accepted")}>{t("Accept")}</button>
+                <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>{t("Complete")}</button>
+              </div>
+            </div>
+          )}
+        />
+      ) : null}
+      {mode === "runtime" ? (
+        <div className="runtime-protocol">
+          <div className="task-strip-head">
+            <span><FileCheck2 size={15} /><strong>{t("Active decisions")}</strong></span>
+            <small>{activeDecisions.length}</small>
+          </div>
+          <ProtocolList
+            emptyLabel={t("No active decisions")}
+            items={activeDecisions}
+            renderItem={(decision) => (
+              <div className="protocol-row compact" key={decision.id}>
+                <strong>{decision.title}</strong>
+                <small>{decision.decision}</small>
+              </div>
+            )}
+          />
+          <div className="task-strip-head">
+            <span><FileText size={15} /><strong>{t("Task context")}</strong></span>
+            <small>{taskSummaries.length}</small>
+          </div>
+          <ProtocolList
+            emptyLabel={t("No context summary for this task")}
+            items={taskSummaries}
+            renderItem={(summary) => (
+              <div className="protocol-row compact" key={summary.id}>
+                <strong>{summary.targetId}</strong>
+                <small>{summary.summary}</small>
+                <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>{t("Create task")}</button>
+              </div>
+            )}
+          />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ProtocolList<T>({
+  emptyLabel,
+  items,
+  renderItem,
+}: {
+  readonly emptyLabel: string;
+  readonly items: readonly T[];
+  readonly renderItem: (item: T) => JSX.Element;
+}): JSX.Element {
+  if (items.length === 0) {
+    return (
+      <div className="client-empty-state compact">
+        <FileText />
+        <span>{emptyLabel}</span>
+      </div>
+    );
+  }
+  return <div className="protocol-list">{items.map(renderItem)}</div>;
 }
 
 function NewTaskPanel({
@@ -816,6 +1175,10 @@ function TaskDetailPanel({
   activeTaskRunAction,
   taskActionPending,
   activeLeaseCount,
+  decisions,
+  contextSummaries,
+  onCreateHandoffFromTask,
+  onCreateTaskFromContextSummary,
   onCheckThenRunTask,
   onRunTask,
   onOpenRun,
@@ -834,6 +1197,10 @@ function TaskDetailPanel({
   readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly taskActionPending: boolean;
   readonly activeLeaseCount: number;
+  readonly decisions: readonly ChannelDecision[];
+  readonly contextSummaries: readonly ChannelContextSummary[];
+  readonly onCreateHandoffFromTask: (task: Task) => void;
+  readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
   readonly onOpenRun: (runId: string) => void;
@@ -851,6 +1218,8 @@ function TaskDetailPanel({
   const checkRunLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
   const runLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "run";
   const taskActionsDisabled = isRunning || taskActionPending;
+  const taskSummaries = contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === task.id);
+  const activeDecisions = decisions.filter((decision) => decision.status === "active");
 
   return (
     <article className="client-task-card task-detail selected" aria-label={t("Task detail")}>
@@ -911,7 +1280,27 @@ function TaskDetailPanel({
           <span>{taskChannelPaused ? t("Channel is not active") : t("Active resource lock")}</span>
         </div>
       ) : null}
+      {activeDecisions.length > 0 || taskSummaries.length > 0 ? (
+        <div className="task-context-strip">
+          {activeDecisions.slice(0, 3).map((decision) => (
+            <span key={decision.id} className="glass-chip ok">
+              <FileCheck2 size={13} />
+              {decision.title}
+            </span>
+          ))}
+          {taskSummaries.map((summary) => (
+            <button key={summary.id} className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>
+              <FileText size={13} />
+              {t("Context summary")}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="task-actions">
+        <button className="secondary-button compact-button" type="button" onClick={() => onCreateHandoffFromTask(task)}>
+          <Workflow size={14} />
+          {t("Create handoff")}
+        </button>
         <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={taskActionsDisabled || !effectiveProvider || !canUseProviderForRun(effectiveProvider)}>
           {checkRunLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
           {t("Check run")}
@@ -1082,6 +1471,33 @@ function messageAuthorLabel(message: ChannelMessage, teammates: readonly Channel
     return teammates.find((teammate) => teammate.id === message.authorId)?.label ?? message.authorId ?? "AI teammate";
   }
   return message.authorId ?? "Tian";
+}
+
+type ChannelActivityItem =
+  | { readonly id: string; readonly kind: "message"; readonly createdAt: string; readonly record: ChannelMessage }
+  | { readonly id: string; readonly kind: "decision"; readonly createdAt: string; readonly record: ChannelDecision }
+  | { readonly id: string; readonly kind: "handoff"; readonly createdAt: string; readonly record: ChannelHandoff }
+  | { readonly id: string; readonly kind: "summary"; readonly createdAt: string; readonly record: ChannelContextSummary };
+
+function buildChannelActivityItems(
+  messages: readonly ChannelMessage[],
+  decisions: readonly ChannelDecision[],
+  handoffs: readonly ChannelHandoff[],
+  summaries: readonly ChannelContextSummary[],
+): readonly ChannelActivityItem[] {
+  return [
+    ...messages.map((record) => ({ id: record.id, kind: "message" as const, createdAt: record.createdAt, record })),
+    ...decisions.map((record) => ({ id: record.id, kind: "decision" as const, createdAt: record.createdAt, record })),
+    ...handoffs.map((record) => ({ id: record.id, kind: "handoff" as const, createdAt: record.createdAt, record })),
+    ...summaries.map((record) => ({ id: record.id, kind: "summary" as const, createdAt: record.updatedAt, record })),
+  ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function splitLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function extractUrls(value: string): string[] {

@@ -35,6 +35,10 @@ import {
 import {
   DEFAULT_WORKSPACE_ID,
   createChannelAttachmentId,
+  createChannelBriefId,
+  createChannelContextSummaryId,
+  createChannelDecisionId,
+  createChannelHandoffId,
   createChannelId,
   createChannelLinkPreviewId,
   createChannelMessageId,
@@ -43,6 +47,14 @@ import {
   type Channel,
   type ChannelAttachment,
   type ChannelAttachmentKind,
+  type ChannelBrief,
+  type ChannelContextSummary,
+  type ChannelContextSummaryAuthorType,
+  type ChannelContextSummaryTargetType,
+  type ChannelDecision,
+  type ChannelDecisionStatus,
+  type ChannelHandoff,
+  type ChannelHandoffStatus,
   type ChannelLinkPreview,
   type ChannelLinkPreviewStatus,
   type ChannelMessage,
@@ -53,11 +65,17 @@ import {
   type ChannelStatus,
   type ChannelUpdateInput,
   type CreateChannelAttachmentInput,
+  type CreateChannelContextSummaryInput,
+  type CreateChannelDecisionInput,
+  type CreateChannelHandoffInput,
   type CreateChannelInput,
   type CreateChannelLinkPreviewInput,
   type CreateChannelMessageInput,
   type CreateTaskInput,
   type ListChannelAttachmentsOptions,
+  type ListChannelContextSummariesOptions,
+  type ListChannelDecisionsOptions,
+  type ListChannelHandoffsOptions,
   type ListChannelsOptions,
   type ListChannelLinkPreviewsOptions,
   type ListChannelMessagesOptions,
@@ -65,6 +83,10 @@ import {
   type Task,
   type TaskStatus,
   type TaskUpdateInput,
+  type UpdateChannelBriefInput,
+  type UpdateChannelContextSummaryInput,
+  type UpdateChannelDecisionInput,
+  type UpdateChannelHandoffInput,
   type UpdateChannelLinkPreviewInput,
 } from "../workspace-types.js";
 import {
@@ -140,6 +162,8 @@ const PROVIDER_SECRETS_MIGRATION_VERSION = 12;
 const PROVIDER_SECRETS_MIGRATION_NAME = "create_provider_secrets";
 const CHANNEL_WORKSPACE_MIGRATION_VERSION = 13;
 const CHANNEL_WORKSPACE_MIGRATION_NAME = "create_channel_workspace_assets";
+const CHANNEL_PROTOCOL_MIGRATION_VERSION = 14;
+const CHANNEL_PROTOCOL_MIGRATION_NAME = "create_channel_collaboration_protocol";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -1305,8 +1329,508 @@ export class SqliteRunStore implements RunStore {
         next.errorMessage ?? null,
         next.updatedAt,
         id,
-      );
+    );
     return this.getChannelLinkPreview(id);
+  }
+
+  getChannelBrief(channelId: string): ChannelBrief | undefined {
+    const row = this.database.prepare(channelBriefSelectSql("WHERE channel_id = ?")).get(channelId);
+    return row ? mapChannelBrief(row) : undefined;
+  }
+
+  updateChannelBrief(channelId: string, input: UpdateChannelBriefInput, now: string): ChannelBrief {
+    this.assertChannelExists(channelId);
+    for (const decisionId of input.decisionIds ?? []) {
+      this.assertDecisionInChannel(channelId, decisionId);
+    }
+    for (const attachmentId of input.attachmentIds ?? []) {
+      this.assertAttachmentInChannel(channelId, attachmentId);
+    }
+    for (const linkPreviewId of input.linkPreviewIds ?? []) {
+      this.assertLinkPreviewInChannel(channelId, linkPreviewId);
+    }
+
+    const existing = this.getChannelBrief(channelId);
+    const brief: ChannelBrief = {
+      id: existing?.id ?? createChannelBriefId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId,
+      objective: input.objective,
+      scope: input.scope,
+      acceptanceCriteria: input.acceptanceCriteria ?? [],
+      openQuestions: input.openQuestions ?? [],
+      risks: input.risks ?? [],
+      decisionIds: input.decisionIds ?? [],
+      attachmentIds: input.attachmentIds ?? [],
+      linkPreviewIds: input.linkPreviewIds ?? [],
+      updatedBy: input.updatedBy,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO channel_briefs (
+          id,
+          workspace_id,
+          channel_id,
+          objective,
+          scope,
+          acceptance_criteria_json,
+          open_questions_json,
+          risks_json,
+          decision_ids_json,
+          attachment_ids_json,
+          link_preview_ids_json,
+          updated_by,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(channel_id) DO UPDATE SET
+          objective = excluded.objective,
+          scope = excluded.scope,
+          acceptance_criteria_json = excluded.acceptance_criteria_json,
+          open_questions_json = excluded.open_questions_json,
+          risks_json = excluded.risks_json,
+          decision_ids_json = excluded.decision_ids_json,
+          attachment_ids_json = excluded.attachment_ids_json,
+          link_preview_ids_json = excluded.link_preview_ids_json,
+          updated_by = excluded.updated_by,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        brief.id,
+        brief.workspaceId,
+        brief.channelId,
+        brief.objective,
+        brief.scope,
+        stringifyJson(brief.acceptanceCriteria),
+        stringifyJson(brief.openQuestions),
+        stringifyJson(brief.risks),
+        stringifyJson(brief.decisionIds),
+        stringifyJson(brief.attachmentIds),
+        stringifyJson(brief.linkPreviewIds),
+        brief.updatedBy,
+        brief.createdAt,
+        brief.updatedAt,
+      );
+
+    const updated = this.getChannelBrief(channelId);
+    if (!updated) {
+      throw new Error(`Failed to update channel brief: ${channelId}`);
+    }
+    return updated;
+  }
+
+  createChannelDecision(input: CreateChannelDecisionInput, now: string): ChannelDecision {
+    this.assertChannelExists(input.channelId);
+    this.assertSourceRefsInChannel(input.channelId, input);
+    if (input.supersedesDecisionId) {
+      this.assertDecisionInChannel(input.channelId, input.supersedesDecisionId);
+      this.updateChannelDecision(input.supersedesDecisionId, { status: "superseded" }, now);
+    }
+
+    const decision: ChannelDecision = {
+      id: createChannelDecisionId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      sourceMessageId: input.sourceMessageId,
+      sourceTaskId: input.sourceTaskId,
+      sourceRunId: input.sourceRunId,
+      title: input.title,
+      decision: input.decision,
+      rationale: input.rationale ?? "",
+      alternatives: input.alternatives ?? [],
+      status: input.supersedesDecisionId ? "active" : input.status ?? "active",
+      supersedesDecisionId: input.supersedesDecisionId,
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO channel_decisions (
+          id,
+          workspace_id,
+          channel_id,
+          source_message_id,
+          source_task_id,
+          source_run_id,
+          title,
+          decision,
+          rationale,
+          alternatives_json,
+          status,
+          supersedes_decision_id,
+          created_by,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        decision.id,
+        decision.workspaceId,
+        decision.channelId,
+        decision.sourceMessageId ?? null,
+        decision.sourceTaskId ?? null,
+        decision.sourceRunId ?? null,
+        decision.title,
+        decision.decision,
+        decision.rationale,
+        stringifyJson(decision.alternatives),
+        decision.status,
+        decision.supersedesDecisionId ?? null,
+        decision.createdBy,
+        decision.createdAt,
+        decision.updatedAt,
+      );
+
+    const created = this.getChannelDecision(decision.id);
+    if (!created) {
+      throw new Error(`Failed to create channel decision: ${decision.id}`);
+    }
+    return created;
+  }
+
+  getChannelDecision(id: string): ChannelDecision | undefined {
+    const row = this.database.prepare(channelDecisionSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelDecision(row) : undefined;
+  }
+
+  listChannelDecisions(options: ListChannelDecisionsOptions): ChannelDecision[] {
+    const clauses = ["workspace_id = ?", "channel_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${channelDecisionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+      .all(...params)
+      .map(mapChannelDecision);
+  }
+
+  updateChannelDecision(id: string, input: UpdateChannelDecisionInput, now: string): ChannelDecision | undefined {
+    const existing = this.getChannelDecision(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: ChannelDecision = {
+      ...existing,
+      title: input.title ?? existing.title,
+      decision: input.decision ?? existing.decision,
+      rationale: input.rationale ?? existing.rationale,
+      alternatives: input.alternatives ?? existing.alternatives,
+      status: input.status ?? existing.status,
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        UPDATE channel_decisions
+        SET title = ?, decision = ?, rationale = ?, alternatives_json = ?, status = ?, updated_at = ?
+        WHERE id = ?
+      `)
+      .run(next.title, next.decision, next.rationale, stringifyJson(next.alternatives), next.status, next.updatedAt, id);
+    return this.getChannelDecision(id);
+  }
+
+  createChannelHandoff(input: CreateChannelHandoffInput, now: string): ChannelHandoff {
+    this.assertChannelExists(input.channelId);
+    this.assertSourceRefsInChannel(input.channelId, input);
+    const handoff: ChannelHandoff = {
+      id: createChannelHandoffId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      sourceMessageId: input.sourceMessageId,
+      sourceTaskId: input.sourceTaskId,
+      sourceRunId: input.sourceRunId,
+      fromParticipantId: input.fromParticipantId,
+      fromParticipantLabel: input.fromParticipantLabel,
+      toParticipantId: input.toParticipantId,
+      toParticipantLabel: input.toParticipantLabel,
+      reason: input.reason,
+      requiredInput: input.requiredInput,
+      expectedOutput: input.expectedOutput,
+      status: input.status ?? "proposed",
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO channel_handoffs (
+          id,
+          workspace_id,
+          channel_id,
+          source_message_id,
+          source_task_id,
+          source_run_id,
+          from_participant_id,
+          from_participant_label,
+          to_participant_id,
+          to_participant_label,
+          reason,
+          required_input,
+          expected_output,
+          status,
+          created_by,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        handoff.id,
+        handoff.workspaceId,
+        handoff.channelId,
+        handoff.sourceMessageId ?? null,
+        handoff.sourceTaskId ?? null,
+        handoff.sourceRunId ?? null,
+        handoff.fromParticipantId,
+        handoff.fromParticipantLabel,
+        handoff.toParticipantId,
+        handoff.toParticipantLabel,
+        handoff.reason,
+        handoff.requiredInput,
+        handoff.expectedOutput,
+        handoff.status,
+        handoff.createdBy,
+        handoff.createdAt,
+        handoff.updatedAt,
+      );
+
+    const created = this.getChannelHandoff(handoff.id);
+    if (!created) {
+      throw new Error(`Failed to create channel handoff: ${handoff.id}`);
+    }
+    return created;
+  }
+
+  getChannelHandoff(id: string): ChannelHandoff | undefined {
+    const row = this.database.prepare(channelHandoffSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelHandoff(row) : undefined;
+  }
+
+  listChannelHandoffs(options: ListChannelHandoffsOptions): ChannelHandoff[] {
+    const clauses = ["workspace_id = ?", "channel_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${channelHandoffSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+      .all(...params)
+      .map(mapChannelHandoff);
+  }
+
+  updateChannelHandoff(id: string, input: UpdateChannelHandoffInput, now: string): ChannelHandoff | undefined {
+    const existing = this.getChannelHandoff(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: ChannelHandoff = {
+      ...existing,
+      fromParticipantId: input.fromParticipantId ?? existing.fromParticipantId,
+      fromParticipantLabel: input.fromParticipantLabel ?? existing.fromParticipantLabel,
+      toParticipantId: input.toParticipantId ?? existing.toParticipantId,
+      toParticipantLabel: input.toParticipantLabel ?? existing.toParticipantLabel,
+      reason: input.reason ?? existing.reason,
+      requiredInput: input.requiredInput ?? existing.requiredInput,
+      expectedOutput: input.expectedOutput ?? existing.expectedOutput,
+      status: input.status ?? existing.status,
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        UPDATE channel_handoffs
+        SET
+          from_participant_id = ?,
+          from_participant_label = ?,
+          to_participant_id = ?,
+          to_participant_label = ?,
+          reason = ?,
+          required_input = ?,
+          expected_output = ?,
+          status = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.fromParticipantId,
+        next.fromParticipantLabel,
+        next.toParticipantId,
+        next.toParticipantLabel,
+        next.reason,
+        next.requiredInput,
+        next.expectedOutput,
+        next.status,
+        next.updatedAt,
+        id,
+      );
+    return this.getChannelHandoff(id);
+  }
+
+  createChannelContextSummary(input: CreateChannelContextSummaryInput, now: string): ChannelContextSummary {
+    this.assertChannelExists(input.channelId);
+    this.assertSummaryTargetInChannel(input.channelId, input.targetType, input.targetId);
+    for (const messageId of input.sourceMessageIds ?? []) {
+      this.assertMessageInChannel(input.channelId, messageId);
+    }
+    for (const decisionId of input.decisionIds ?? []) {
+      this.assertDecisionInChannel(input.channelId, decisionId);
+    }
+
+    const summary: ChannelContextSummary = {
+      id: createChannelContextSummaryId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      sourceMessageIds: input.sourceMessageIds ?? [],
+      decisionIds: input.decisionIds ?? [],
+      summary: input.summary,
+      acceptanceCriteria: input.acceptanceCriteria ?? [],
+      openQuestions: input.openQuestions ?? [],
+      authorType: input.authorType,
+      authorId: input.authorId,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO channel_context_summaries (
+          id,
+          workspace_id,
+          channel_id,
+          target_type,
+          target_id,
+          source_message_ids_json,
+          decision_ids_json,
+          summary,
+          acceptance_criteria_json,
+          open_questions_json,
+          author_type,
+          author_id,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        summary.id,
+        summary.workspaceId,
+        summary.channelId,
+        summary.targetType,
+        summary.targetId,
+        stringifyJson(summary.sourceMessageIds),
+        stringifyJson(summary.decisionIds),
+        summary.summary,
+        stringifyJson(summary.acceptanceCriteria),
+        stringifyJson(summary.openQuestions),
+        summary.authorType,
+        summary.authorId ?? null,
+        summary.createdAt,
+        summary.updatedAt,
+      );
+
+    const created = this.getChannelContextSummary(summary.id);
+    if (!created) {
+      throw new Error(`Failed to create channel context summary: ${summary.id}`);
+    }
+    return created;
+  }
+
+  getChannelContextSummary(id: string): ChannelContextSummary | undefined {
+    const row = this.database.prepare(channelContextSummarySelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelContextSummary(row) : undefined;
+  }
+
+  listChannelContextSummaries(options: ListChannelContextSummariesOptions): ChannelContextSummary[] {
+    const clauses = ["workspace_id = ?", "channel_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
+    if (options.targetType) {
+      clauses.push("target_type = ?");
+      params.push(options.targetType);
+    }
+    if (options.targetId) {
+      clauses.push("target_id = ?");
+      params.push(options.targetId);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${channelContextSummarySelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, rowid DESC LIMIT ?`)
+      .all(...params)
+      .map(mapChannelContextSummary);
+  }
+
+  updateChannelContextSummary(
+    id: string,
+    input: UpdateChannelContextSummaryInput,
+    now: string,
+  ): ChannelContextSummary | undefined {
+    const existing = this.getChannelContextSummary(id);
+    if (!existing) {
+      return undefined;
+    }
+    const targetType = input.targetType ?? existing.targetType;
+    const targetId = input.targetId ?? existing.targetId;
+    this.assertSummaryTargetInChannel(existing.channelId, targetType, targetId);
+    for (const messageId of input.sourceMessageIds ?? existing.sourceMessageIds) {
+      this.assertMessageInChannel(existing.channelId, messageId);
+    }
+    for (const decisionId of input.decisionIds ?? existing.decisionIds) {
+      this.assertDecisionInChannel(existing.channelId, decisionId);
+    }
+    const next: ChannelContextSummary = {
+      ...existing,
+      targetType,
+      targetId,
+      sourceMessageIds: input.sourceMessageIds ?? existing.sourceMessageIds,
+      decisionIds: input.decisionIds ?? existing.decisionIds,
+      summary: input.summary ?? existing.summary,
+      acceptanceCriteria: input.acceptanceCriteria ?? existing.acceptanceCriteria,
+      openQuestions: input.openQuestions ?? existing.openQuestions,
+      authorType: input.authorType ?? existing.authorType,
+      authorId: nullableUpdate(input.authorId, existing.authorId),
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        UPDATE channel_context_summaries
+        SET
+          target_type = ?,
+          target_id = ?,
+          source_message_ids_json = ?,
+          decision_ids_json = ?,
+          summary = ?,
+          acceptance_criteria_json = ?,
+          open_questions_json = ?,
+          author_type = ?,
+          author_id = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.targetType,
+        next.targetId,
+        stringifyJson(next.sourceMessageIds),
+        stringifyJson(next.decisionIds),
+        next.summary,
+        stringifyJson(next.acceptanceCriteria),
+        stringifyJson(next.openQuestions),
+        next.authorType,
+        next.authorId ?? null,
+        next.updatedAt,
+        id,
+      );
+    return this.getChannelContextSummary(id);
   }
 
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {
@@ -2391,6 +2915,123 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(CHANNEL_WORKSPACE_MIGRATION_VERSION, CHANNEL_WORKSPACE_MIGRATION_NAME);
       }
     }
+
+    const hasChannelProtocolMigration = this.hasMigration(CHANNEL_PROTOCOL_MIGRATION_VERSION);
+    if (
+      !hasChannelProtocolMigration ||
+      !this.hasTable("channel_briefs") ||
+      !this.hasTable("channel_decisions") ||
+      !this.hasTable("channel_handoffs") ||
+      !this.hasTable("channel_context_summaries")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_briefs (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL UNIQUE,
+          objective TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          acceptance_criteria_json TEXT NOT NULL,
+          open_questions_json TEXT NOT NULL,
+          risks_json TEXT NOT NULL,
+          decision_ids_json TEXT NOT NULL,
+          attachment_ids_json TEXT NOT NULL,
+          link_preview_ids_json TEXT NOT NULL,
+          updated_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_briefs_channel
+        ON channel_briefs(channel_id);
+
+        CREATE TABLE IF NOT EXISTS channel_decisions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          source_message_id TEXT,
+          source_task_id TEXT,
+          source_run_id TEXT,
+          title TEXT NOT NULL,
+          decision TEXT NOT NULL,
+          rationale TEXT NOT NULL,
+          alternatives_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          supersedes_decision_id TEXT,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_message_id) REFERENCES channel_messages(id) ON DELETE SET NULL,
+          FOREIGN KEY(source_task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+          FOREIGN KEY(source_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL,
+          FOREIGN KEY(supersedes_decision_id) REFERENCES channel_decisions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_decisions_channel_created
+        ON channel_decisions(channel_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_decisions_channel_status_created
+        ON channel_decisions(channel_id, status, created_at);
+
+        CREATE TABLE IF NOT EXISTS channel_handoffs (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          source_message_id TEXT,
+          source_task_id TEXT,
+          source_run_id TEXT,
+          from_participant_id TEXT NOT NULL,
+          from_participant_label TEXT NOT NULL,
+          to_participant_id TEXT NOT NULL,
+          to_participant_label TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          required_input TEXT NOT NULL,
+          expected_output TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_message_id) REFERENCES channel_messages(id) ON DELETE SET NULL,
+          FOREIGN KEY(source_task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+          FOREIGN KEY(source_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_handoffs_channel_status_created
+        ON channel_handoffs(channel_id, status, created_at);
+
+        CREATE TABLE IF NOT EXISTS channel_context_summaries (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          target_type TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          source_message_ids_json TEXT NOT NULL,
+          decision_ids_json TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          acceptance_criteria_json TEXT NOT NULL,
+          open_questions_json TEXT NOT NULL,
+          author_type TEXT NOT NULL,
+          author_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_context_summaries_target_updated
+        ON channel_context_summaries(channel_id, target_type, target_id, updated_at);
+      `);
+
+      if (!hasChannelProtocolMigration) {
+        this.recordMigration(CHANNEL_PROTOCOL_MIGRATION_VERSION, CHANNEL_PROTOCOL_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -2462,6 +3103,111 @@ export class SqliteRunStore implements RunStore {
       .prepare("SELECT 1 AS found FROM run_events WHERE run_id = ? AND type IN ('run_end', 'run_error', 'run_cancelled', 'result') LIMIT 1")
       .get(runId);
     return Boolean(row);
+  }
+
+  private assertChannelExists(channelId: string): void {
+    if (!this.getChannel(channelId)) {
+      throw new Error(`Channel not found: ${channelId}`);
+    }
+  }
+
+  private assertMessageInChannel(channelId: string, messageId: string): void {
+    const message = this.getChannelMessage(messageId);
+    if (!message) {
+      throw new Error(`Channel message not found: ${messageId}`);
+    }
+    if (message.channelId !== channelId) {
+      throw new Error(`Message does not belong to channel: ${messageId}`);
+    }
+  }
+
+  private assertAttachmentInChannel(channelId: string, attachmentId: string): void {
+    const attachment = this.getChannelAttachment(attachmentId);
+    if (!attachment) {
+      throw new Error(`Channel attachment not found: ${attachmentId}`);
+    }
+    if (attachment.channelId !== channelId) {
+      throw new Error(`Attachment does not belong to channel: ${attachmentId}`);
+    }
+  }
+
+  private assertLinkPreviewInChannel(channelId: string, linkPreviewId: string): void {
+    const linkPreview = this.getChannelLinkPreview(linkPreviewId);
+    if (!linkPreview) {
+      throw new Error(`Channel link preview not found: ${linkPreviewId}`);
+    }
+    if (linkPreview.channelId !== channelId) {
+      throw new Error(`Link preview does not belong to channel: ${linkPreviewId}`);
+    }
+  }
+
+  private assertTaskInChannel(channelId: string, taskId: string): void {
+    const task = this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+    if (task.channelId !== channelId) {
+      throw new Error(`Task does not belong to channel: ${taskId}`);
+    }
+  }
+
+  private assertRunInChannel(channelId: string, runId: string): void {
+    const run = this.getRun(runId);
+    if (!run) {
+      throw new Error(`Run session not found: ${runId}`);
+    }
+    if (run.channelId !== channelId) {
+      throw new Error(`Run does not belong to channel: ${runId}`);
+    }
+  }
+
+  private assertDecisionInChannel(channelId: string, decisionId: string): void {
+    const decision = this.getChannelDecision(decisionId);
+    if (!decision) {
+      throw new Error(`Channel decision not found: ${decisionId}`);
+    }
+    if (decision.channelId !== channelId) {
+      throw new Error(`Decision does not belong to channel: ${decisionId}`);
+    }
+  }
+
+  private assertSourceRefsInChannel(
+    channelId: string,
+    input: { readonly sourceMessageId?: string; readonly sourceTaskId?: string; readonly sourceRunId?: string },
+  ): void {
+    if (input.sourceMessageId) {
+      this.assertMessageInChannel(channelId, input.sourceMessageId);
+    }
+    if (input.sourceTaskId) {
+      this.assertTaskInChannel(channelId, input.sourceTaskId);
+    }
+    if (input.sourceRunId) {
+      this.assertRunInChannel(channelId, input.sourceRunId);
+    }
+  }
+
+  private assertSummaryTargetInChannel(
+    channelId: string,
+    targetType: ChannelContextSummaryTargetType,
+    targetId: string,
+  ): void {
+    if (targetType === "task") {
+      this.assertTaskInChannel(channelId, targetId);
+      return;
+    }
+    const directMessage = this.getChannelMessage(targetId);
+    if (directMessage) {
+      if (directMessage.channelId !== channelId) {
+        throw new Error(`Summary target does not belong to channel: ${targetId}`);
+      }
+      return;
+    }
+    const threadMessage = this.database
+      .prepare("SELECT id FROM channel_messages WHERE channel_id = ? AND thread_id = ? LIMIT 1")
+      .get(channelId, targetId);
+    if (!threadMessage) {
+      throw new Error(`Channel thread not found: ${targetId}`);
+    }
   }
 
   private updateRunStatus(
@@ -2626,6 +3372,86 @@ function mapChannelLinkPreview(row: Record<string, SQLOutputValue>): ChannelLink
     siteName: readNullableString(row, "site_name"),
     status: readString(row, "status") as ChannelLinkPreviewStatus,
     errorMessage: readNullableString(row, "error_message"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelBrief(row: Record<string, SQLOutputValue>): ChannelBrief {
+  return {
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    objective: readString(row, "objective"),
+    scope: readString(row, "scope"),
+    acceptanceCriteria: parseJsonStringArray(readString(row, "acceptance_criteria_json")),
+    openQuestions: parseJsonStringArray(readString(row, "open_questions_json")),
+    risks: parseJsonStringArray(readString(row, "risks_json")),
+    decisionIds: parseJsonStringArray(readString(row, "decision_ids_json")),
+    attachmentIds: parseJsonStringArray(readString(row, "attachment_ids_json")),
+    linkPreviewIds: parseJsonStringArray(readString(row, "link_preview_ids_json")),
+    updatedBy: readString(row, "updated_by"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  };
+}
+
+function mapChannelDecision(row: Record<string, SQLOutputValue>): ChannelDecision {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    sourceMessageId: readNullableString(row, "source_message_id"),
+    sourceTaskId: readNullableString(row, "source_task_id"),
+    sourceRunId: readNullableString(row, "source_run_id"),
+    title: readString(row, "title"),
+    decision: readString(row, "decision"),
+    rationale: readString(row, "rationale"),
+    alternatives: parseJsonStringArray(readString(row, "alternatives_json")),
+    status: readString(row, "status") as ChannelDecisionStatus,
+    supersedesDecisionId: readNullableString(row, "supersedes_decision_id"),
+    createdBy: readString(row, "created_by"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelHandoff(row: Record<string, SQLOutputValue>): ChannelHandoff {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    sourceMessageId: readNullableString(row, "source_message_id"),
+    sourceTaskId: readNullableString(row, "source_task_id"),
+    sourceRunId: readNullableString(row, "source_run_id"),
+    fromParticipantId: readString(row, "from_participant_id"),
+    fromParticipantLabel: readString(row, "from_participant_label"),
+    toParticipantId: readString(row, "to_participant_id"),
+    toParticipantLabel: readString(row, "to_participant_label"),
+    reason: readString(row, "reason"),
+    requiredInput: readString(row, "required_input"),
+    expectedOutput: readString(row, "expected_output"),
+    status: readString(row, "status") as ChannelHandoffStatus,
+    createdBy: readString(row, "created_by"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelContextSummary(row: Record<string, SQLOutputValue>): ChannelContextSummary {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    targetType: readString(row, "target_type") as ChannelContextSummaryTargetType,
+    targetId: readString(row, "target_id"),
+    sourceMessageIds: parseJsonStringArray(readString(row, "source_message_ids_json")),
+    decisionIds: parseJsonStringArray(readString(row, "decision_ids_json")),
+    summary: readString(row, "summary"),
+    acceptanceCriteria: parseJsonStringArray(readString(row, "acceptance_criteria_json")),
+    openQuestions: parseJsonStringArray(readString(row, "open_questions_json")),
+    authorType: readString(row, "author_type") as ChannelContextSummaryAuthorType,
+    authorId: readNullableString(row, "author_id"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
@@ -2919,6 +3745,98 @@ function channelLinkPreviewSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM channel_link_previews
+    ${whereClause}
+  `;
+}
+
+function channelBriefSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      objective,
+      scope,
+      acceptance_criteria_json,
+      open_questions_json,
+      risks_json,
+      decision_ids_json,
+      attachment_ids_json,
+      link_preview_ids_json,
+      updated_by,
+      created_at,
+      updated_at
+    FROM channel_briefs
+    ${whereClause}
+  `;
+}
+
+function channelDecisionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      source_message_id,
+      source_task_id,
+      source_run_id,
+      title,
+      decision,
+      rationale,
+      alternatives_json,
+      status,
+      supersedes_decision_id,
+      created_by,
+      created_at,
+      updated_at
+    FROM channel_decisions
+    ${whereClause}
+  `;
+}
+
+function channelHandoffSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      source_message_id,
+      source_task_id,
+      source_run_id,
+      from_participant_id,
+      from_participant_label,
+      to_participant_id,
+      to_participant_label,
+      reason,
+      required_input,
+      expected_output,
+      status,
+      created_by,
+      created_at,
+      updated_at
+    FROM channel_handoffs
+    ${whereClause}
+  `;
+}
+
+function channelContextSummarySelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      target_type,
+      target_id,
+      source_message_ids_json,
+      decision_ids_json,
+      summary,
+      acceptance_criteria_json,
+      open_questions_json,
+      author_type,
+      author_id,
+      created_at,
+      updated_at
+    FROM channel_context_summaries
     ${whereClause}
   `;
 }

@@ -128,6 +128,96 @@ test("channel asset references must stay within the same channel", async () => {
   }
 });
 
+test("channel collaboration protocol endpoints persist state and reject cross-channel sources", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-protocol-api-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const first = await createChannel(daemon.url, cwd);
+    const second = await createChannel(daemon.url, cwd);
+    const message = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Use manual handoffs for v1.1.",
+    });
+    const otherMessage = await postJson(`${daemon.url}/channels/${encodeURIComponent(second.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Other channel.",
+    });
+    const task = (await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: first.id,
+      title: "Implement protocol",
+      prompt: "Build channel protocol state.",
+    })).task;
+
+    const emptyBrief = await getJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/brief?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(emptyBrief.brief.objective, "");
+
+    const decision = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/decisions?cwd=${encodeURIComponent(cwd)}`, {
+      sourceMessageId: message.message.id,
+      title: "Manual handoffs",
+      decision: "Handoffs do not change task state.",
+      createdBy: "local-user",
+    });
+    const superseded = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/decisions?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Manual handoffs update",
+      decision: "Supersede by creating a new active decision.",
+      supersedesDecisionId: decision.decision.id,
+      createdBy: "local-user",
+    });
+    assert.equal(superseded.decision.status, "active");
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/decisions?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(decisions.decisions.find((item) => item.id === decision.decision.id).status, "superseded");
+
+    const brief = await patchJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/brief?cwd=${encodeURIComponent(cwd)}`, {
+      objective: "Ship channel v1.1",
+      scope: "Collaboration protocol",
+      acceptanceCriteria: ["Brief persists"],
+      decisionIds: [superseded.decision.id],
+      updatedBy: "local-user",
+    });
+    assert.deepEqual(brief.brief.acceptanceCriteria, ["Brief persists"]);
+
+    const handoff = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/handoffs?cwd=${encodeURIComponent(cwd)}`, {
+      sourceTaskId: task.id,
+      fromParticipantId: "tian",
+      fromParticipantLabel: "Tian",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      reason: "Need implementation",
+      requiredInput: "Plan",
+      expectedOutput: "Patch",
+      createdBy: "local-user",
+    });
+    await patchJson(`${daemon.url}/handoffs/${encodeURIComponent(handoff.handoff.id)}?cwd=${encodeURIComponent(cwd)}`, { status: "completed" });
+    const listedTask = (await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`)).tasks.find((item) => item.id === task.id);
+    assert.equal(listedTask.status, "todo");
+
+    const summary = await postJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/context-summaries?cwd=${encodeURIComponent(cwd)}`, {
+      targetType: "task",
+      targetId: task.id,
+      sourceMessageIds: [message.message.id],
+      decisionIds: [superseded.decision.id],
+      summary: "Build the protocol layer.",
+      authorType: "local-user",
+    });
+    assert.equal(summary.contextSummary.targetId, task.id);
+
+    const crossSummary = await fetch(`${daemon.url}/channels/${encodeURIComponent(first.id)}/context-summaries?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetType: "thread",
+        targetId: otherMessage.message.id,
+        sourceMessageIds: [otherMessage.message.id],
+        summary: "Should fail.",
+        authorType: "local-user",
+      }),
+    });
+    assert.equal(crossSummary.status, 400);
+    assert.match((await crossSummary.json()).message, /channel/i);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel link preview blocks localhost targets instead of fetching them", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-links-"));
   const daemon = await startDaemonForTest();
@@ -182,6 +272,18 @@ async function getJson(url) {
 async function postJson(url, body) {
   const response = await fetch(url, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
+  }
+  return await response.json();
+}
+
+async function patchJson(url, body) {
+  const response = await fetch(url, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

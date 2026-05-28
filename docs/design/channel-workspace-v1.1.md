@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft implementation plan for the next channel slice after the channel workspace MVP.
+Implemented v1.1 slice after the channel workspace MVP.
 
 This document is scoped to v1.1. The broader channel source of truth remains
 [Channel Workspace Design](channel-workspace.md).
@@ -13,7 +13,7 @@ The MVP made channels usable as a durable AI teammate workspace: messages, menti
 attachments, link previews, Files/Tasks/Activity, default teammate, AI discussion, and
 discussion-to-task conversion are now in place.
 
-v1.1 should make multi-agent collaboration visible and trackable without starting a full
+v1.1 makes multi-agent collaboration visible and trackable without starting a full
 workflow engine. The slice adds four durable collaboration surfaces:
 
 - Channel Brief: the current objective, scope, acceptance criteria, open questions, and

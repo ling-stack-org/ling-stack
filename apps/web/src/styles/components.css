@@ -781,6 +781,74 @@ code,
   margin: 0;
 }
 
+.channel-inspector {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.channel-inspector-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.channel-inspector-tabs button {
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.channel-inspector-tabs button.active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.brief-editor,
+.runtime-protocol,
+.protocol-list {
+  display: grid;
+  gap: 8px;
+}
+
+.protocol-row {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel-strong);
+}
+
+.protocol-row.compact {
+  gap: 4px;
+}
+
+.protocol-row strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.protocol-row small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.task-context-strip,
+.activity-action-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .task-detail-head,
 .task-detail-meta,
 .task-actions,

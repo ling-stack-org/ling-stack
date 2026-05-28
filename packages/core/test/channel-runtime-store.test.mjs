@@ -123,6 +123,105 @@ test("sqlite channel workspace assets persist messages, attachments, and link pr
   }
 });
 
+test("sqlite channel collaboration protocol persists brief, decisions, handoffs, and summaries", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-protocol-"));
+  const now = "2026-05-28T01:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
+    const otherChannel = store.createChannel({ name: "Design", boundPath: cwd }, now);
+    const message = store.createChannelMessage({ channelId: channel.id, authorType: "local-user", body: "Use manual handoffs." }, now);
+    const otherMessage = store.createChannelMessage({ channelId: otherChannel.id, authorType: "local-user", body: "Wrong channel." }, now);
+    const task = store.createTask({ channelId: channel.id, title: "Implement protocol", prompt: "Build v1.1." }, now);
+
+    const firstDecision = store.createChannelDecision(
+      {
+        channelId: channel.id,
+        sourceMessageId: message.id,
+        title: "Manual handoffs",
+        decision: "Handoffs are records only.",
+        createdBy: "local-user",
+      },
+      now,
+    );
+    const secondDecision = store.createChannelDecision(
+      {
+        channelId: channel.id,
+        title: "Manual handoffs update",
+        decision: "Supersede without running agents.",
+        supersedesDecisionId: firstDecision.id,
+        createdBy: "local-user",
+      },
+      "2026-05-28T01:01:00.000Z",
+    );
+    assert.equal(store.getChannelDecision(firstDecision.id).status, "superseded");
+    assert.equal(secondDecision.status, "active");
+
+    const brief = store.updateChannelBrief(
+      channel.id,
+      {
+        objective: "Ship channel v1.1",
+        scope: "Track collaboration protocol.",
+        acceptanceCriteria: ["Brief round trip"],
+        decisionIds: [secondDecision.id],
+        updatedBy: "local-user",
+      },
+      "2026-05-28T01:02:00.000Z",
+    );
+    assert.equal(store.getChannelBrief(channel.id).id, brief.id);
+    assert.deepEqual(store.getChannelBrief(channel.id).decisionIds, [secondDecision.id]);
+
+    const handoff = store.createChannelHandoff(
+      {
+        channelId: channel.id,
+        sourceTaskId: task.id,
+        fromParticipantId: "tian",
+        fromParticipantLabel: "Tian",
+        toParticipantId: "engineer",
+        toParticipantLabel: "Engineer",
+        reason: "Need implementation",
+        requiredInput: "Plan",
+        expectedOutput: "Patch",
+        createdBy: "local-user",
+      },
+      "2026-05-28T01:03:00.000Z",
+    );
+    assert.equal(store.updateChannelHandoff(handoff.id, { status: "completed" }, "2026-05-28T01:04:00.000Z").status, "completed");
+    assert.equal(store.getTask(task.id).status, "todo");
+
+    const summary = store.createChannelContextSummary(
+      {
+        channelId: channel.id,
+        targetType: "task",
+        targetId: task.id,
+        sourceMessageIds: [message.id],
+        decisionIds: [secondDecision.id],
+        summary: "Implement the protocol state without agent automation.",
+        authorType: "local-user",
+      },
+      "2026-05-28T01:05:00.000Z",
+    );
+    assert.deepEqual(store.listChannelContextSummaries({ channelId: channel.id, targetType: "task", targetId: task.id }).map((item) => item.id), [summary.id]);
+    assert.throws(
+      () => store.createChannelContextSummary(
+        {
+          channelId: channel.id,
+          targetType: "thread",
+          targetId: otherMessage.id,
+          sourceMessageIds: [otherMessage.id],
+          summary: "Cross channel should fail.",
+          authorType: "local-user",
+        },
+        now,
+      ),
+      /does not belong to channel|not found/,
+    );
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task CAS claim and idempotency allow only one real transition", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-task-cas-"));
   const now = "2026-05-26T00:00:00.000Z";
@@ -351,6 +450,48 @@ test("sqlite channel workspace migration self-heals old channel and task columns
       assert.equal(store.getChannel(channel.id).defaultTeammateId, "engineer");
       assert.equal(store.getTask(task.id).assigneeTeammateId, "engineer");
       assert.equal(store.getChannelMessage(message.id).body, "Migration should keep channel chat writable.");
+    } finally {
+      store.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite channel protocol migration self-heals missing protocol tables", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-protocol-heal-"));
+  const now = "2026-05-28T02:00:00.000Z";
+  const initialStore = createSqliteRunStore(cwd);
+  try {
+    const databasePath = initialStore.paths.databasePath;
+    initialStore.close();
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec(`
+        DROP TABLE channel_briefs;
+        DROP TABLE channel_decisions;
+        DROP TABLE channel_handoffs;
+        DROP TABLE channel_context_summaries;
+      `);
+      assert.equal(Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'channel_briefs'").get()), false);
+    } finally {
+      database.close();
+    }
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
+      const brief = store.updateChannelBrief(
+        channel.id,
+        {
+          objective: "Self heal protocol tables",
+          scope: "Ensure old DBs can write v1.1 state.",
+          updatedBy: "local-user",
+        },
+        now,
+      );
+      assert.equal(brief.objective, "Self heal protocol tables");
     } finally {
       store.close();
     }
