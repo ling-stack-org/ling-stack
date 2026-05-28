@@ -123,11 +123,13 @@ test("workspace opens as a task workbench with task context in the inspector", a
 
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Workspace task toolbar")).toBeVisible();
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await expect(page.getByLabel("Task inspector")).toContainText("Task context");
+  await expect(page.getByLabel("Task inspector")).toContainText("run_failed");
+  await openChannelTasksTab(page);
   const taskDetail = page.locator("article.task-detail");
   await expect(taskDetail).toContainText("Task detail");
   await expect(taskDetail).toContainText("run_failed");
-  await expect(page.getByLabel("Task inspector")).toContainText("Task context");
-  await expect(page.getByLabel("Task inspector")).toContainText("run_failed");
 });
 
 test("channel runtime policy and default teammate are visible and used when creating channels", async ({ page }) => {
@@ -183,6 +185,7 @@ test("paused channels disable task run actions", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   const taskCard = page.locator("article.task-detail");
   await expect(taskCard).toContainText("Channel is not active");
   await expect(taskCard.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
@@ -257,6 +260,7 @@ test("channel files tab supports PDF and Office uploads without AI ingestion", a
   ]);
 
   await expect.poll(() => state.channelAttachments.length).toBe(4);
+  await page.getByRole("button", { name: "Files" }).click();
   await expect(page.getByRole("button", { name: "Files" })).toHaveClass(/active/);
   for (const fileName of ["requirements.pdf", "notes.docx", "budget.xlsx", "deck.pptx"]) {
     const card = page.locator(".file-card").filter({ hasText: fileName });
@@ -354,6 +358,7 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
     const step = state.channelWorkflowSteps[0];
     return isRecord(step) ? step.status : undefined;
   }).toBe("succeeded");
+  await openChannelTasksTab(page);
   await expect(page.locator("article.task-detail")).toContainText("Source workflow");
 
   const blockedStep = {

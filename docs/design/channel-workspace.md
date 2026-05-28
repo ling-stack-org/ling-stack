@@ -259,6 +259,10 @@ todo / running / review / done / blocked / failed / cancelled
 
 MVP can remain a single list with filters if columns are too heavy.
 
+The selected task detail belongs in the `Tasks` tab, adjacent to the task queue. It
+should not occupy the default `Activity` chat view because that makes discussion feel
+like a secondary surface.
+
 Task cards show:
 
 - title,
@@ -1509,6 +1513,8 @@ Current MVP implementation status:
 - v1.2 now lets handoffs create explicit, user-started workflow/step records with
   task/run start, blocker visibility, Runtime inspector queue tracking, and a dedicated
   `Channel protocol` tab instead of a task-detail dock,
+- task detail now lives in the `Tasks` tab instead of a persistent split pane beside
+  channel Activity,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1607,8 +1613,8 @@ Current MVP implementation status:
 - [x] Move current task list into the `Tasks` tab.
 - [ ] Build derived activity items from tasks/runs/approvals/state transitions.
 - [x] Add no-events and no-files empty states.
-- [ ] Keep task composer visible on Activity and Tasks.
-- [x] Keep composer visible across channel tabs.
+- [x] Keep the discussion/task composer in Activity so Tasks can focus on queue + detail.
+- [x] Move task detail into the `Tasks` tab.
 - [x] Add e2e coverage for tab switching through Activity/Files.
 
 ### Phase 10: Files and Artifacts

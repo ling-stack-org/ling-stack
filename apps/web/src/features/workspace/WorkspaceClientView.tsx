@@ -338,6 +338,53 @@ export function WorkspaceClientView({
     setCreateTaskOpen(false);
   }
 
+  const taskDetailContent = createTaskOpen ? (
+    <NewTaskPanel
+      taskForm={taskForm}
+      selectedChannel={selectedChannel}
+      effectiveProviderId={effectiveProviderId}
+      taskReadyProviders={taskReadyProviders}
+      setupChatProviders={setupChatProviders}
+      mediaProviders={mediaProviders}
+      providersLoading={providersLoading}
+      onProviderSelect={onProviderSelect}
+      onTaskFormChange={onTaskFormChange}
+      onCreateTask={createTask}
+      onCancel={() => setCreateTaskOpen(false)}
+    />
+  ) : selectedTask ? (
+    <TaskDetailPanel
+      task={selectedTask}
+      channels={channels}
+      runById={runById}
+      activeRunId={activeRunId}
+      latestStatus={latestStatus}
+      pendingApprovalCount={pendingApprovalCount}
+      effectiveProvider={effectiveProvider}
+      providerBlocker={providerBlocker}
+      isRunning={isRunning}
+      activeTaskRunAction={activeTaskRunAction}
+      taskActionPending={taskActionPending}
+      activeLeaseCount={activeLeaseCount}
+      decisions={channelDecisions}
+      contextSummaries={channelContextSummaries}
+      workflows={channelWorkflows}
+      workflowSteps={channelWorkflowSteps}
+      onCreateHandoffFromTask={onCreateHandoffFromTask}
+      onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
+      onCheckThenRunTask={onCheckThenRunTask}
+      onRunTask={onRunTask}
+      onOpenRun={onOpenRun}
+      onOpenApprovals={onOpenApprovals}
+      onOpenProviders={onOpenProviders}
+    />
+  ) : (
+    <div className="client-empty-state">
+      <SquareTerminal />
+      <span>{t("Select a task or create a new one")}</span>
+    </div>
+  );
+
   function saveBrief(): void {
     onSaveBrief({
       objective: briefDraft.objective,
@@ -398,9 +445,6 @@ export function WorkspaceClientView({
     try {
       const uploaded = await onUploadAttachments(selectedFiles);
       setPendingAttachments((current) => [...current, ...uploaded]);
-      if (uploaded.length > 0) {
-        setActiveTab("files");
-      }
     } finally {
       setComposerBusy(false);
     }
@@ -417,7 +461,6 @@ export function WorkspaceClientView({
       if (preview) {
         setPendingLinkPreviews((current) => current.some((item) => item.id === preview.id) ? current : [...current, preview]);
         setLinkDraft("");
-        setActiveTab("files");
       }
     } finally {
       setComposerBusy(false);
@@ -517,7 +560,15 @@ export function WorkspaceClientView({
             <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
           </select>
         </label>
-        <button className="primary-button task-toolbar-create" type="button" onClick={() => setCreateTaskOpen(true)} disabled={!selectedChannelId}>
+        <button
+          className="primary-button task-toolbar-create"
+          type="button"
+          onClick={() => {
+            setActiveTab("tasks");
+            setCreateTaskOpen(true);
+          }}
+          disabled={!selectedChannelId}
+        >
           <Plus size={15} />
           {t("New task")}
         </button>
@@ -749,49 +800,54 @@ export function WorkspaceClientView({
           ) : null}
 
           {activeTab === "tasks" ? (
-            <>
-              <div className="task-filter-tabs" aria-label={t("Task filters")}>
-                {taskFilters.map((filter) => (
-                  <button key={filter} className={taskFilter === filter ? "active" : ""} type="button" onClick={() => setTaskFilter(filter)}>
-                    {t(taskFilterLabel(filter))}
-                    <small>{filterCounts[filter]}</small>
-                  </button>
-                ))}
-              </div>
-              <div className="workbench-task-list">
-                {filteredTasks.length === 0 ? (
-                  <div className="client-empty-state">
-                    {tasksLoading ? <Loader2 className="spin" /> : <SquareTerminal />}
-                    <span>{tasksLoading ? t("Loading tasks...") : t("No tasks match this filter")}</span>
-                  </div>
-                ) : (
-                  filteredTasks.map((task) => {
-                    const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
-                    const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
-                    return (
-                      <button
-                        key={task.id}
-                        type="button"
-                        className={task.id === selectedTask?.id && !createTaskOpen ? "client-task-card selected" : "client-task-card"}
-                        onClick={() => selectTask(task.id)}
-                      >
-                        <span className="client-task-main">
-                          <span>
-                            <strong>{task.title}</strong>
-                            <small>{task.prompt}</small>
+            <div className="tasks-tab-layout">
+              <div className="tasks-tab-list">
+                <div className="task-filter-tabs" aria-label={t("Task filters")}>
+                  {taskFilters.map((filter) => (
+                    <button key={filter} className={taskFilter === filter ? "active" : ""} type="button" onClick={() => setTaskFilter(filter)}>
+                      {t(taskFilterLabel(filter))}
+                      <small>{filterCounts[filter]}</small>
+                    </button>
+                  ))}
+                </div>
+                <div className="workbench-task-list">
+                  {filteredTasks.length === 0 ? (
+                    <div className="client-empty-state">
+                      {tasksLoading ? <Loader2 className="spin" /> : <SquareTerminal />}
+                      <span>{tasksLoading ? t("Loading tasks...") : t("No tasks match this filter")}</span>
+                    </div>
+                  ) : (
+                    filteredTasks.map((task) => {
+                      const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
+                      const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
+                      return (
+                        <button
+                          key={task.id}
+                          type="button"
+                          className={task.id === selectedTask?.id && !createTaskOpen ? "client-task-card selected" : "client-task-card"}
+                          onClick={() => selectTask(task.id)}
+                        >
+                          <span className="client-task-main">
+                            <span>
+                              <strong>{task.title}</strong>
+                              <small>{task.prompt}</small>
+                            </span>
+                            <span className={`task-status ${task.status}`}>{task.status}</span>
                           </span>
-                          <span className={`task-status ${task.status}`}>{task.status}</span>
-                        </span>
-                        <span className="task-card-meta">
-                          {task.currentRunId ? <StatusBadge status={linkedRunStatus} /> : <span className="status-badge queued">{t("Not run")}</span>}
-                          <small>{task.currentRunId ?? formatDateTime(task.updatedAt)}</small>
-                        </span>
-                      </button>
-                    );
-                  })
-                )}
+                          <span className="task-card-meta">
+                            {task.currentRunId ? <StatusBadge status={linkedRunStatus} /> : <span className="status-badge queued">{t("Not run")}</span>}
+                            <small>{task.currentRunId ?? formatDateTime(task.updatedAt)}</small>
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
-            </>
+              <section className="task-detail-panel inline-task-detail-panel" aria-label={createTaskOpen ? t("New task") : t("Task detail")}>
+                {taskDetailContent}
+              </section>
+            </div>
           ) : null}
 
           {activeTab === "protocol" ? (
@@ -824,7 +880,7 @@ export function WorkspaceClientView({
             </div>
           ) : null}
 
-          {activeTab !== "protocol" ? (
+          {activeTab === "activity" ? (
             <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
             <div className="composer-head">
               <span>
@@ -934,54 +990,6 @@ export function WorkspaceClientView({
           ) : null}
         </section>
 
-        <section className="panel task-detail-panel" aria-label={createTaskOpen ? t("New task") : t("Task detail")}>
-          {createTaskOpen ? (
-            <NewTaskPanel
-              taskForm={taskForm}
-              selectedChannel={selectedChannel}
-              effectiveProviderId={effectiveProviderId}
-              taskReadyProviders={taskReadyProviders}
-              setupChatProviders={setupChatProviders}
-              mediaProviders={mediaProviders}
-              providersLoading={providersLoading}
-              onProviderSelect={onProviderSelect}
-              onTaskFormChange={onTaskFormChange}
-              onCreateTask={createTask}
-              onCancel={() => setCreateTaskOpen(false)}
-            />
-          ) : selectedTask ? (
-            <TaskDetailPanel
-              task={selectedTask}
-              channels={channels}
-              runById={runById}
-              activeRunId={activeRunId}
-              latestStatus={latestStatus}
-              pendingApprovalCount={pendingApprovalCount}
-              effectiveProvider={effectiveProvider}
-              providerBlocker={providerBlocker}
-              isRunning={isRunning}
-              activeTaskRunAction={activeTaskRunAction}
-              taskActionPending={taskActionPending}
-              activeLeaseCount={activeLeaseCount}
-              decisions={channelDecisions}
-              contextSummaries={channelContextSummaries}
-              workflows={channelWorkflows}
-              workflowSteps={channelWorkflowSteps}
-              onCreateHandoffFromTask={onCreateHandoffFromTask}
-              onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
-              onCheckThenRunTask={onCheckThenRunTask}
-              onRunTask={onRunTask}
-              onOpenRun={onOpenRun}
-              onOpenApprovals={onOpenApprovals}
-              onOpenProviders={onOpenProviders}
-            />
-          ) : (
-            <div className="client-empty-state">
-              <SquareTerminal />
-              <span>{t("Select a task or create a new one")}</span>
-            </div>
-          )}
-        </section>
       </div>
       <details className="config-disclosure channel-options">
         <summary>
