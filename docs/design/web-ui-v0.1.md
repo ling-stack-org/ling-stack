@@ -41,6 +41,16 @@ channel strings. v1.3 remains a Web experience polish slice and does not add aut
 multi-agent loops, file/webpage body ingestion, notification persistence, or a custom
 workflow builder.
 
+Implemented v1.4 behavior: the channel `Files` tab now separates user uploads, shared
+links, and run artifacts. It shows selected-channel run artifacts, summary paths, and
+event log paths through existing artifact APIs without reading artifact bodies or adding
+backend contracts.
+
+Planned v1.5 behavior: the channel `Activity` tab becomes a derived timeline that mixes
+messages, protocol records, tasks, runs, approvals, state transitions, workflows, and
+workflow steps. v1.5 remains Web-only and does not add durable channel event storage,
+notification persistence, ingestion, automatic multi-agent loops, or a workflow builder.
+
 ## Goal
 
 Users should be able to run and inspect Ling Stack without `curl`.

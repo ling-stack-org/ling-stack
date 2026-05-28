@@ -14,6 +14,7 @@ Related docs:
 - [Channel Workspace v1.2 Handoff Workflows](channel-workspace-v1.2.md)
 - [Channel Workspace v1.3 Chat Experience](channel-workspace-v1.3.md)
 - [Channel Workspace v1.4 Files and Run Artifacts](channel-workspace-v1.4.md)
+- [Channel Workspace v1.5 Activity Events](channel-workspace-v1.5.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
@@ -1522,6 +1523,9 @@ Current MVP implementation status:
   feedback, and English/Chinese channel copy cleanup,
 - v1.4 now aggregates run artifacts, summary paths, and event log paths in the
   channel `Files` tab without adding artifact ingestion or backend routes,
+- v1.5 is planned to derive task, run, approval, state-transition, workflow, and
+  workflow-step activity cards in the channel `Activity` timeline without adding
+  durable channel events,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1618,6 +1622,7 @@ Current MVP implementation status:
 - [x] Add `Activity`, `Tasks`, and `Files` tabs.
 - [x] Add `Channel protocol` tab for Brief, Decisions, Handoffs, and Runtime.
 - [x] Move current task list into the `Tasks` tab.
+- [ ] Define v1.5 Activity Events plan in `docs/design/channel-workspace-v1.5.md`.
 - [ ] Build derived activity items from tasks/runs/approvals/state transitions.
 - [x] Add no-events and no-files empty states.
 - [x] Keep the discussion/task composer in Activity so Tasks can focus on queue + detail.
