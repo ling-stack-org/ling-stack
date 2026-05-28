@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned Web-only slice after v1.7 Activity Saved Views and Attention Queue.
+Implemented Web-only slice after v1.7 Activity Saved Views and Attention Queue.
 
 v1.8 turns the derived channel `Activity` timeline into a traceable event entrypoint:
 messages, task/run events, approvals, state transitions, protocol records, workflows,

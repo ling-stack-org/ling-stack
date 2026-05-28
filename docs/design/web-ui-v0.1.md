@@ -61,7 +61,7 @@ a compact attention queue for blocked, failed, and pending items. v1.7 remains W
 and does not add backend contracts, durable channel events, notification persistence,
 ingestion, automatic multi-agent loops, or a workflow builder.
 
-Planned v1.8 behavior: Activity cards and Attention Queue items gain a lightweight
+Implemented v1.8 behavior: Activity cards and Attention Queue items now have a lightweight
 source drilldown drawer that explains the selected event, related objects, and existing
 navigation actions without restoring a persistent task-detail split pane. v1.8 remains
 Web-only and does not add backend contracts, durable channel events, notification

@@ -1533,8 +1533,7 @@ Current MVP implementation status:
   no-match states to the derived Activity timeline without backend changes,
 - v1.7 now adds local saved Activity views and a compact attention queue for blocked,
   failed, and pending items without backend changes,
-- v1.8 is planned to add lightweight Activity source drilldown drawers without backend
-  changes,
+- v1.8 now adds lightweight Activity source drilldown drawers without backend changes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1702,12 +1701,12 @@ Current MVP implementation status:
 
 - [x] Define v1.8 Activity Source Drilldown plan in
   `docs/design/channel-workspace-v1.8.md`.
-- [ ] Add Web-only drilldown detail model derived from existing Activity items.
-- [ ] Add `Details` entry points to Activity cards and Attention Queue items.
-- [ ] Add transient details drawer with source metadata, related objects, and actions.
-- [ ] Preserve Activity search, saved views, queue state, and composer state while the
+- [x] Add Web-only drilldown detail model derived from existing Activity items.
+- [x] Add `Details` entry points to Activity cards and Attention Queue items.
+- [x] Add transient details drawer with source metadata, related objects, and actions.
+- [x] Preserve Activity search, saved views, queue state, and composer state while the
   drawer opens and closes.
-- [ ] Add e2e coverage for drawer source details, navigation actions, queue details,
+- [x] Add e2e coverage for drawer source details, navigation actions, queue details,
   state preservation, and i18n labels.
 
 ## Validation Plan
