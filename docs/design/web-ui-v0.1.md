@@ -33,6 +33,14 @@ created from a workflow step. Task detail now lives inside the `Tasks` tab inste
 occupying the default channel chat view. `Start step` creates a task for review, while
 `Start + run` enters the existing task/run stream and approval/runtime boundaries.
 
+Implemented v1.3 behavior: the channel Activity tab now behaves like a focused chat
+workspace with an independently scrollable message feed, sticky in-tab composer,
+explicit send/AI reply/attachment/link-preview states, task-conversion feedback that can
+open the created task in `Tasks`, and complete English/Chinese coverage for touched
+channel strings. v1.3 remains a Web experience polish slice and does not add automatic
+multi-agent loops, file/webpage body ingestion, notification persistence, or a custom
+workflow builder.
+
 ## Goal
 
 Users should be able to run and inspect Ling Stack without `curl`.

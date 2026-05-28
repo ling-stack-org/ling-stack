@@ -12,6 +12,7 @@ Related docs:
 - [Web UI v0.1 Design](web-ui-v0.1.md)
 - [Channel Workspace v1.1 Design and Implementation Plan](channel-workspace-v1.1.md)
 - [Channel Workspace v1.2 Handoff Workflows](channel-workspace-v1.2.md)
+- [Channel Workspace v1.3 Chat Experience](channel-workspace-v1.3.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
@@ -1515,6 +1516,9 @@ Current MVP implementation status:
   `Channel protocol` tab instead of a task-detail dock,
 - task detail now lives in the `Tasks` tab instead of a persistent split pane beside
   channel Activity,
+- v1.3 now implements the chat experience polish slice: sticky Activity composer,
+  independent message scrolling, clearer send/AI/asset states, task-conversion
+  feedback, and English/Chinese channel copy cleanup,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1641,6 +1645,20 @@ Current MVP implementation status:
 - [ ] Backfill events from tasks/runs where useful.
 - [ ] Add event idempotency rules for external channel sources.
 
+### Phase 13: Chat Experience Polish
+
+- [x] Define v1.3 chat experience plan in `docs/design/channel-workspace-v1.3.md`.
+- [x] Make the Activity message feed independently scrollable.
+- [x] Keep the Activity composer sticky at the bottom of the channel conversation.
+- [x] Add clear sending, failed-send retry, and AI reply pending/blocker states.
+- [x] Keep pending attachments and URL previews inside the composer without switching
+  tabs.
+- [x] Show confirmation after creating a task from a message, with an action that opens
+  the task in the `Tasks` tab.
+- [x] Audit touched channel strings for English/Chinese i18n coverage.
+- [x] Add e2e coverage for composer visibility, tab boundaries, task conversion
+  feedback, asset preview states, and language switching.
+
 ## Validation Plan
 
 Run these before landing channel UI changes:
@@ -1673,6 +1691,10 @@ Focused e2e scenarios:
 - link AI ingestion only appears after the user explicitly asks for inspection,
 - paused channel disables run actions but keeps activity/tasks visible,
 - Files tab shows artifacts for a run linked to the channel,
+- Activity composer remains visible after the message list grows,
+- message feed scrolls independently from the channel header and tabs,
+- creating a task from a message confirms the task and can open it in `Tasks`,
+- channel English/Chinese language switching keeps tabs and composer controls readable,
 - notification mode changes do not mutate daemon state in MVP,
 - right inspector does not overlap or hide the task composer on desktop and mobile.
 

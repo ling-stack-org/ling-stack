@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -27,7 +27,7 @@ import type { AiTeammateTemplate } from "@ling-stack/core";
 import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { effectiveChannelRuntimePolicy } from "../../lib/channels.js";
-import { formatDateTime } from "../../lib/formatting.js";
+import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
 import { buildRunRepairHint, displayLinkedRunStatus } from "../../lib/run-evidence.js";
 import { defaultTools, riskyTools } from "../../lib/tools.js";
 import {
@@ -66,6 +66,29 @@ import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceCo
 
 type TaskFilter = "all" | "queued" | "running" | "review" | "done";
 type ChannelTab = "activity" | "tasks" | "files" | "protocol";
+type ComposerSendState = "idle" | "sending" | "failed";
+type AiReplyState = "idle" | "replying" | "failed";
+type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
+
+interface PendingAttachmentItem {
+  readonly localId: string;
+  readonly fileName: string;
+  readonly state: PendingAssetState;
+  readonly attachment?: ChannelAttachment;
+  readonly error?: string;
+}
+
+interface PendingLinkPreviewItem {
+  readonly localId: string;
+  readonly url: string;
+  readonly state: PendingAssetState;
+  readonly preview?: ChannelLinkPreview;
+  readonly error?: string;
+}
+
+interface TaskCreationNotice {
+  readonly title: string;
+}
 
 const taskFilters: readonly TaskFilter[] = ["all", "queued", "running", "review", "done"];
 const channelTabs: readonly ChannelTab[] = ["activity", "tasks", "files", "protocol"];
@@ -226,11 +249,11 @@ export function WorkspaceClientView({
     readonly attachmentIds: readonly string[];
     readonly linkPreviewIds: readonly string[];
     readonly requestAiReply: boolean;
-  }) => void;
+  }) => Promise<void>;
   readonly onUploadAttachments: (files: readonly File[]) => Promise<readonly ChannelAttachment[]>;
   readonly onCreateLinkPreview: (url: string) => Promise<ChannelLinkPreview | undefined>;
   readonly onDeleteAttachment: (attachmentId: string) => void;
-  readonly onCreateTaskFromMessage: (message: ChannelMessage) => void;
+  readonly onCreateTaskFromMessage: (message: ChannelMessage) => Promise<void>;
   readonly onSaveBrief: (input: UpdateChannelBriefRequest) => void;
   readonly onRecordDecisionFromMessage: (message: ChannelMessage) => void;
   readonly onSupersedeDecision: (decision: ChannelDecision) => void;
@@ -270,11 +293,16 @@ export function WorkspaceClientView({
   const [composerMode, setComposerMode] = useState<"discuss" | "task">("discuss");
   const [messageDraft, setMessageDraft] = useState("");
   const [askAi, setAskAi] = useState(true);
-  const [pendingAttachments, setPendingAttachments] = useState<readonly ChannelAttachment[]>([]);
-  const [pendingLinkPreviews, setPendingLinkPreviews] = useState<readonly ChannelLinkPreview[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem[]>([]);
+  const [pendingLinkPreviews, setPendingLinkPreviews] = useState<readonly PendingLinkPreviewItem[]>([]);
   const [linkDraft, setLinkDraft] = useState("");
   const [messageMentions, setMessageMentions] = useState<readonly ChannelMention[]>([]);
   const [composerBusy, setComposerBusy] = useState(false);
+  const [sendState, setSendState] = useState<ComposerSendState>("idle");
+  const [sendError, setSendError] = useState("");
+  const [aiReplyState, setAiReplyState] = useState<AiReplyState>("idle");
+  const [taskCreationNotice, setTaskCreationNotice] = useState<TaskCreationNotice | undefined>();
+  const previousChannelIdRef = useRef(selectedChannelId);
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
   const readyProvider = providers.find(providerPreflightReady);
   const taskReadyProviders = providers.filter(providerPreflightReady);
@@ -327,6 +355,23 @@ export function WorkspaceClientView({
       risks: (channelBrief?.risks ?? []).join("\n"),
     });
   }, [channelBrief]);
+
+  useEffect(() => {
+    const previousChannelId = previousChannelIdRef.current;
+    previousChannelIdRef.current = selectedChannelId;
+    if (!previousChannelId || previousChannelId === selectedChannelId) {
+      return;
+    }
+    setMessageDraft("");
+    setMessageMentions([]);
+    setPendingAttachments([]);
+    setPendingLinkPreviews([]);
+    setLinkDraft("");
+    setSendState("idle");
+    setSendError("");
+    setAiReplyState("idle");
+    setTaskCreationNotice(undefined);
+  }, [selectedChannelId]);
 
   function selectTask(taskId: string): void {
     setCreateTaskOpen(false);
@@ -441,10 +486,33 @@ export function WorkspaceClientView({
     if (selectedFiles.length === 0) {
       return;
     }
+    const uploadItems = selectedFiles.map((file) => ({
+      localId: createLocalId("attachment"),
+      fileName: file.name,
+      state: "uploading" as const,
+    }));
+    setPendingAttachments((current) => [...current, ...uploadItems]);
     setComposerBusy(true);
     try {
       const uploaded = await onUploadAttachments(selectedFiles);
-      setPendingAttachments((current) => [...current, ...uploaded]);
+      const uploadedByLocalId = new Map(uploadItems.map((item, index) => [item.localId, uploaded[index]]));
+      setPendingAttachments((current) => current.map((item) => {
+        const attachment = uploadedByLocalId.get(item.localId);
+        if (attachment) {
+          return { ...item, state: "ready", attachment };
+        }
+        if (uploadedByLocalId.has(item.localId)) {
+          return { ...item, state: "failed", error: t("Upload failed") };
+        }
+        return item;
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setPendingAttachments((current) => current.map((item) =>
+        uploadItems.some((upload) => upload.localId === item.localId)
+          ? { ...item, state: "failed", error: message }
+          : item,
+      ));
     } finally {
       setComposerBusy(false);
     }
@@ -455,13 +523,34 @@ export function WorkspaceClientView({
     if (!url) {
       return;
     }
+    const localId = createLocalId("link");
+    setPendingLinkPreviews((current) => [
+      ...current.filter((item) => item.url !== url && item.preview?.normalizedUrl !== url && item.preview?.url !== url),
+      { localId, url, state: "uploading" },
+    ]);
     setComposerBusy(true);
     try {
       const preview = await onCreateLinkPreview(url);
       if (preview) {
-        setPendingLinkPreviews((current) => current.some((item) => item.id === preview.id) ? current : [...current, preview]);
+        setPendingLinkPreviews((current) => current.map((item) => item.localId === localId
+          ? {
+              ...item,
+              state: preview.status === "ready" ? "ready" : preview.status === "blocked" ? "blocked" : "failed",
+              preview,
+              error: preview.errorMessage,
+            }
+          : item));
         setLinkDraft("");
+      } else {
+        setPendingLinkPreviews((current) => current.map((item) => item.localId === localId
+          ? { ...item, state: "failed", error: t("Preview failed") }
+          : item));
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setPendingLinkPreviews((current) => current.map((item) => item.localId === localId
+        ? { ...item, state: "failed", error: message }
+        : item));
     } finally {
       setComposerBusy(false);
     }
@@ -471,33 +560,247 @@ export function WorkspaceClientView({
     const body = messageDraft.trim();
     const pastedUrls = extractUrls(body);
     const newPreviews: ChannelLinkPreview[] = [];
+    const attachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
+    const pendingPreviewRecords = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview] : []);
+    const shouldRequestAi = askAi || messageMentions.some((mention) => mention.kind === "ai-teammate");
     setComposerBusy(true);
+    setSendState("sending");
+    setSendError("");
+    setAiReplyState(shouldRequestAi ? "replying" : "idle");
     try {
       for (const url of pastedUrls) {
-        if (!pendingLinkPreviews.some((preview) => preview.normalizedUrl === url || preview.url === url)) {
-          const preview = await onCreateLinkPreview(url);
-          if (preview) {
-            newPreviews.push(preview);
+        if (!pendingPreviewRecords.some((preview) => preview.normalizedUrl === url || preview.url === url)) {
+          try {
+            const preview = await onCreateLinkPreview(url);
+            if (preview) {
+              newPreviews.push(preview);
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setPendingLinkPreviews((current) => [
+              ...current,
+              { localId: createLocalId("link"), url, state: "failed", error: message },
+            ]);
           }
         }
       }
-      const linkPreviews = [...pendingLinkPreviews, ...newPreviews];
+      const linkPreviews = [...pendingPreviewRecords, ...newPreviews];
       await onSendMessage({
         body,
         mentions: messageMentions,
-        attachmentIds: pendingAttachments.map((attachment) => attachment.id),
+        attachmentIds,
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
-        requestAiReply: askAi || messageMentions.some((mention) => mention.kind === "ai-teammate"),
+        requestAiReply: shouldRequestAi,
       });
       setMessageDraft("");
       setMessageMentions([]);
       setPendingAttachments([]);
       setPendingLinkPreviews([]);
+      setSendState("idle");
+      setSendError("");
+      setAiReplyState("idle");
       setActiveTab("activity");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSendState("failed");
+      setSendError(message);
+      setAiReplyState(shouldRequestAi ? "failed" : "idle");
     } finally {
       setComposerBusy(false);
     }
   }
+
+  async function createTaskFromMessage(message: ChannelMessage): Promise<void> {
+    const title = titleFromPrompt(message.body);
+    try {
+      await onCreateTaskFromMessage(message);
+      setTaskCreationNotice({ title });
+    } catch {
+      setTaskCreationNotice(undefined);
+    }
+  }
+
+  function removePendingAttachment(localId: string): void {
+    setPendingAttachments((current) => current.filter((item) => item.localId !== localId));
+  }
+
+  function removePendingLinkPreview(localId: string): void {
+    setPendingLinkPreviews((current) => current.filter((item) => item.localId !== localId));
+  }
+
+  const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
+  const readyLinkPreviewIds = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview.id] : []);
+  const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0;
+  const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
+  const channelComposer = (
+    <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
+      <div className="composer-head">
+        <span>
+          <MessageSquare size={16} />
+          {composerMode === "discuss" ? t("Discuss") : t("New task")}
+        </span>
+        <div className="segmented-control" aria-label={t("Composer mode")}>
+          <button type="button" className={composerMode === "discuss" ? "active" : ""} onClick={() => setComposerMode("discuss")}>
+            {t("Discuss")}
+          </button>
+          <button type="button" className={composerMode === "task" ? "active" : ""} onClick={() => setComposerMode("task")}>
+            {t("Task")}
+          </button>
+        </div>
+      </div>
+      <div className="mention-row" aria-label={t("AI mentions")}>
+        {teammateOptions.slice(0, 8).map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={option.id === selectedChannel?.defaultTeammateId ? "mention-chip default" : "mention-chip"}
+            onClick={() => addMention(option)}
+            title={option.id === selectedChannel?.defaultTeammateId ? t("Default teammate") : undefined}
+          >
+            @{option.label}
+          </button>
+        ))}
+      </div>
+      {composerMode === "task" ? (
+        <input
+          className="composer-title"
+          value={taskForm.title}
+          onChange={(event) => onTaskFormChange({ ...taskForm, title: event.target.value })}
+          placeholder={t("Title")}
+        />
+      ) : null}
+      <textarea
+        value={composerMode === "discuss" ? messageDraft : taskForm.prompt}
+        rows={3}
+        onChange={(event) => {
+          if (composerMode === "discuss") {
+            setMessageDraft(event.target.value);
+            setSendState("idle");
+            setSendError("");
+          } else {
+            onTaskFormChange({ ...taskForm, prompt: event.target.value });
+          }
+        }}
+        placeholder={composerMode === "discuss" ? t("Message this channel or @ an AI teammate") : t("Prompt")}
+      />
+      {composerMode === "discuss" ? (
+        <>
+          <div className="composer-assets">
+            <label className="secondary-button compact-button">
+              <FileText size={14} />
+              {t("Attach files")}
+              <input
+                type="file"
+                multiple
+                hidden
+                accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
+                onChange={(event) => {
+                  if (event.target.files) {
+                    void attachFiles(event.target.files);
+                  }
+                  event.target.value = "";
+                }}
+              />
+            </label>
+            <label className="link-preview-input">
+              <Link2 size={14} />
+              <input value={linkDraft} onChange={(event) => setLinkDraft(event.target.value)} placeholder={t("Paste URL")} />
+            </label>
+            <button className="secondary-button compact-button" type="button" onClick={() => void addLinkPreview()} disabled={!linkDraft.trim() || composerBusy}>
+              <Plus size={14} />
+              {t("Preview link")}
+            </button>
+            <label className="ask-ai-toggle">
+              <input type="checkbox" checked={askAi} onChange={(event) => setAskAi(event.target.checked)} />
+              <span>{t("Ask AI")}</span>
+            </label>
+          </div>
+          {(pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0) ? (
+            <div className="pending-assets" aria-label={t("Pending message assets")}>
+              {messageMentions.map((mention) => <span key={mention.id}>@{mention.label}</span>)}
+              {pendingAttachments.map((item) => (
+                <span key={item.localId} className={`pending-asset ${item.state}`}>
+                  {item.state === "uploading" ? <Loader2 className="spin" size={12} /> : null}
+                  {item.fileName}
+                  <small>{t(pendingAssetLabel(item.state))}</small>
+                  <button type="button" onClick={() => removePendingAttachment(item.localId)} aria-label={t("Remove pending attachment")}>
+                    <Trash2 size={12} />
+                  </button>
+                </span>
+              ))}
+              {pendingLinkPreviews.map((item) => (
+                <span key={item.localId} className={`pending-asset ${item.state}`}>
+                  {item.state === "uploading" ? <Loader2 className="spin" size={12} /> : <Link2 size={12} />}
+                  {item.preview?.title ?? item.url}
+                  <small>{item.error ?? t(pendingPreviewLabel(item.state))}</small>
+                  <button type="button" onClick={() => removePendingLinkPreview(item.localId)} aria-label={t("Remove pending link preview")}>
+                    <Trash2 size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {(sendState !== "idle" || aiReplyState !== "idle") ? (
+            <div className="composer-status-list" aria-live="polite">
+              {sendState === "sending" ? (
+                <div className="composer-status-row loading">
+                  <Loader2 className="spin" size={14} />
+                  <span>{t("Sending message...")}</span>
+                </div>
+              ) : null}
+              {aiReplyState === "replying" ? (
+                <div className="composer-status-row loading">
+                  <Loader2 className="spin" size={14} />
+                  <span>{t("AI teammate is replying...")}</span>
+                </div>
+              ) : null}
+              {sendState === "failed" ? (
+                <div className="composer-status-row failed">
+                  <CircleAlert size={14} />
+                  <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
+                  <button className="secondary-button compact-button" type="button" onClick={() => void sendMessage()}>
+                    <RefreshCw size={13} />
+                    {t("Retry")}
+                  </button>
+                  <button className="secondary-button compact-button" type="button" onClick={() => {
+                    setSendState("idle");
+                    setSendError("");
+                    setAiReplyState("idle");
+                  }}>
+                    {t("Dismiss")}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+      {mediaProviders.length > 0 ? (
+        <div className="provider-run-notice neutral client-provider-notice">
+          <Database size={16} />
+          <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
+        </div>
+      ) : null}
+      <div className="composer-footer">
+        <div className="tool-token-list" aria-label={t("Tool calls")}>
+          {(selectedChannel?.allowedTools ?? defaultTools).map((tool) => (
+            <span key={tool} className={riskyTools.includes(tool) ? "tool-token risky" : "tool-token"}>{tool}</span>
+          ))}
+        </div>
+        {composerMode === "discuss" ? (
+          <button className="primary-button" type="button" onClick={() => void sendMessage()} disabled={!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent}>
+            {sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
+            {sendState === "sending" ? t("Sending...") : t("Send")}
+          </button>
+        ) : (
+          <button className="primary-button" type="button" onClick={createTask} disabled={!selectedChannelId || !taskForm.prompt.trim()}>
+            <Send size={15} />
+            {t("Create task")}
+          </button>
+        )}
+      </div>
+    </section>
+  );
 
   return (
     <div className="client-window task-workbench-window" aria-label={t("Workspace")}>
@@ -582,7 +885,15 @@ export function WorkspaceClientView({
       ) : null}
 
       <div className="task-workbench-main">
-        <section className={activeTab === "protocol" ? "panel task-list-panel protocol-tab-panel" : "panel task-list-panel"} aria-label={t("Channel activity")}>
+        <section
+          className={[
+            "panel",
+            "task-list-panel",
+            activeTab === "activity" ? "activity-tab-panel" : "",
+            activeTab === "protocol" ? "protocol-tab-panel" : "",
+          ].filter(Boolean).join(" ")}
+          aria-label={t("Channel activity")}
+        >
           <div className="panel-title split">
             <span>
               {channelTabIcon(activeTab, 16)}
@@ -609,7 +920,8 @@ export function WorkspaceClientView({
           </div>
 
           {activeTab === "activity" ? (
-            <div className="message-feed">
+            <div className="activity-shell">
+              <div className="message-feed" aria-label={t("Channel message feed")}>
               {channelMessagesLoading || channelProtocolLoading ? (
                 <div className="client-empty-state">
                   <Loader2 className="spin" />
@@ -637,7 +949,7 @@ export function WorkspaceClientView({
                         action={
                           message.kind === "message" ? (
                             <div className="activity-action-row">
-                              <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromMessage(message)}>
+                              <button className="secondary-button compact-button" type="button" onClick={() => void createTaskFromMessage(message)}>
                                 <Plus size={14} />
                                 {t("Create task")}
                               </button>
@@ -786,6 +1098,25 @@ export function WorkspaceClientView({
                   }
                 />
               ) : null}
+              </div>
+              {taskCreationNotice ? (
+                <div className="activity-confirmation" role="status">
+                  <CheckCircle2 size={15} />
+                  <span>{t("Task created")}: {taskCreationNotice.title}</span>
+                  <button
+                    className="secondary-button compact-button"
+                    type="button"
+                    onClick={() => {
+                      setActiveTab("tasks");
+                      setCreateTaskOpen(false);
+                      setTaskCreationNotice(undefined);
+                    }}
+                  >
+                    {t("Open in Tasks")}
+                  </button>
+                </div>
+              ) : null}
+              {channelComposer}
             </div>
           ) : null}
 
@@ -880,114 +1211,6 @@ export function WorkspaceClientView({
             </div>
           ) : null}
 
-          {activeTab === "activity" ? (
-            <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
-            <div className="composer-head">
-              <span>
-                <MessageSquare size={16} />
-                {composerMode === "discuss" ? t("Discuss") : t("New task")}
-              </span>
-              <div className="segmented-control" aria-label={t("Composer mode")}>
-                <button type="button" className={composerMode === "discuss" ? "active" : ""} onClick={() => setComposerMode("discuss")}>
-                  {t("Discuss")}
-                </button>
-                <button type="button" className={composerMode === "task" ? "active" : ""} onClick={() => setComposerMode("task")}>
-                  {t("Task")}
-                </button>
-              </div>
-            </div>
-            <div className="mention-row" aria-label={t("AI mentions")}>
-              {teammateOptions.slice(0, 8).map((option) => (
-                <button key={option.id} type="button" className="mention-chip" onClick={() => addMention(option)}>
-                  @{option.label}
-                </button>
-              ))}
-            </div>
-            {composerMode === "task" ? (
-              <input
-                className="composer-title"
-                value={taskForm.title}
-                onChange={(event) => onTaskFormChange({ ...taskForm, title: event.target.value })}
-                placeholder={t("Title")}
-              />
-            ) : null}
-            <textarea
-              value={composerMode === "discuss" ? messageDraft : taskForm.prompt}
-              rows={3}
-              onChange={(event) => {
-                if (composerMode === "discuss") {
-                  setMessageDraft(event.target.value);
-                } else {
-                  onTaskFormChange({ ...taskForm, prompt: event.target.value });
-                }
-              }}
-              placeholder={composerMode === "discuss" ? t("Message this channel or @ an AI teammate") : t("Prompt")}
-            />
-            {composerMode === "discuss" ? (
-              <div className="composer-assets">
-                <label className="secondary-button compact-button">
-                  <FileText size={14} />
-                  {t("Attach files")}
-                  <input
-                    type="file"
-                    multiple
-                    hidden
-                    accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
-                    onChange={(event) => {
-                      if (event.target.files) {
-                        void attachFiles(event.target.files);
-                      }
-                      event.target.value = "";
-                    }}
-                  />
-                </label>
-                <label className="link-preview-input">
-                  <Link2 size={14} />
-                  <input value={linkDraft} onChange={(event) => setLinkDraft(event.target.value)} placeholder={t("Paste URL")} />
-                </label>
-                <button className="secondary-button compact-button" type="button" onClick={() => void addLinkPreview()} disabled={!linkDraft.trim() || composerBusy}>
-                  <Plus size={14} />
-                  {t("Preview link")}
-                </button>
-                <label className="ask-ai-toggle">
-                  <input type="checkbox" checked={askAi} onChange={(event) => setAskAi(event.target.checked)} />
-                  <span>{t("Ask AI")}</span>
-                </label>
-              </div>
-            ) : null}
-            {composerMode === "discuss" && (pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0) ? (
-              <div className="pending-assets">
-                {messageMentions.map((mention) => <span key={mention.id}>@{mention.label}</span>)}
-                {pendingAttachments.map((attachment) => <span key={attachment.id}>{attachment.fileName}</span>)}
-                {pendingLinkPreviews.map((preview) => <span key={preview.id}>{preview.title ?? preview.normalizedUrl}</span>)}
-              </div>
-            ) : null}
-            {mediaProviders.length > 0 ? (
-              <div className="provider-run-notice neutral client-provider-notice">
-                <Database size={16} />
-                <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
-              </div>
-            ) : null}
-            <div className="composer-footer">
-              <div className="tool-token-list" aria-label={t("Tool calls")}>
-                {(selectedChannel?.allowedTools ?? defaultTools).map((tool) => (
-                  <span key={tool} className={riskyTools.includes(tool) ? "tool-token risky" : "tool-token"}>{tool}</span>
-                ))}
-              </div>
-              {composerMode === "discuss" ? (
-                <button className="primary-button" type="button" onClick={() => void sendMessage()} disabled={!selectedChannelId || composerBusy || (!messageDraft.trim() && pendingAttachments.length === 0 && pendingLinkPreviews.length === 0)}>
-                  {composerBusy ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
-                  {t("Send")}
-                </button>
-              ) : (
-                <button className="primary-button" type="button" onClick={createTask} disabled={!selectedChannelId || !taskForm.prompt.trim()}>
-                  <Send size={15} />
-                  {t("Create task")}
-                </button>
-              )}
-            </div>
-            </section>
-          ) : null}
         </section>
 
       </div>
@@ -1842,6 +2065,31 @@ function splitLines(value: string): string[] {
 function extractUrls(value: string): string[] {
   const matches = value.match(/https?:\/\/[^\s)]+/g) ?? [];
   return [...new Set(matches.map((item) => item.replace(/[.,;!?]+$/, "")))];
+}
+
+function pendingAssetLabel(state: PendingAssetState): string {
+  if (state === "uploading") {
+    return "Uploading";
+  }
+  if (state === "blocked") {
+    return "Blocked";
+  }
+  if (state === "failed") {
+    return "Failed";
+  }
+  return "Ready";
+}
+
+function pendingPreviewLabel(state: PendingAssetState): string {
+  if (state === "uploading") {
+    return "Fetching link preview...";
+  }
+  return pendingAssetLabel(state);
+}
+
+function createLocalId(prefix: string): string {
+  const randomId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${randomId}`;
 }
 
 function formatBytes(value: number): string {

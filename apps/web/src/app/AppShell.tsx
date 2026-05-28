@@ -690,6 +690,7 @@ export function AppShell(): JSX.Element {
       await refreshRuntimeState(cwd, runResult);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -1026,6 +1027,7 @@ export function AppShell(): JSX.Element {
       await refreshChannels();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -1063,6 +1065,7 @@ export function AppShell(): JSX.Element {
       await refreshChannels();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -1089,6 +1092,7 @@ export function AppShell(): JSX.Element {
       await refreshChannels();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -1165,6 +1169,7 @@ export function AppShell(): JSX.Element {
       await refreshChannelFiles(selectedChannelId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -1186,7 +1191,7 @@ export function AppShell(): JSX.Element {
       return uploaded;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
-      return [];
+      throw error;
     } finally {
       setChannelFilesLoading(false);
     }
@@ -1207,7 +1212,7 @@ export function AppShell(): JSX.Element {
       return response.linkPreview;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
-      return undefined;
+      throw error;
     }
   }
 
@@ -1246,6 +1251,7 @@ export function AppShell(): JSX.Element {
       await Promise.all([refreshTasks(selectedChannelId), refreshChannelMessages(selectedChannelId)]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
     }
   }
 
@@ -2086,11 +2092,11 @@ export function AppShell(): JSX.Element {
             onCreateDefaultChannel={() => void saveDefaultChannel()}
             onCreateChannel={() => void saveChannel()}
             onCreateTask={() => void saveTask()}
-            onSendMessage={(input) => void sendChannelMessage(input)}
+            onSendMessage={sendChannelMessage}
             onUploadAttachments={(files) => uploadChannelFiles(files)}
             onCreateLinkPreview={(url) => addChannelLinkPreview(url)}
             onDeleteAttachment={(attachmentId) => void removeChannelAttachment(attachmentId)}
-            onCreateTaskFromMessage={(message) => void createTaskFromChannelMessage(message)}
+            onCreateTaskFromMessage={createTaskFromChannelMessage}
             onSaveBrief={(input) => void saveChannelBrief(input)}
             onRecordDecisionFromMessage={(message) => void recordDecisionFromMessage(message)}
             onSupersedeDecision={(decision) => void supersedeChannelDecision(decision)}
