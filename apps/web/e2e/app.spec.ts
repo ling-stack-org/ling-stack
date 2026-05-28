@@ -54,6 +54,7 @@ interface MockRun {
   providerSnapshot: unknown;
   requestSnapshot: unknown;
   eventLogPath: string;
+  summaryPath?: string;
   errorMessage?: string;
   createdAt: string;
   updatedAt: string;
@@ -368,6 +369,116 @@ test("channel files tab supports PDF and Office uploads without AI ingestion", a
   expect(state.channelAttachments.every((attachment) => isRecord(attachment) && (attachment.kind === "pdf" || attachment.kind === "office"))).toBe(true);
   expect(state.channelMessages.length).toBe(initialMessageCount);
   expect(state.tasks.length).toBe(initialTaskCount);
+});
+
+test("channel files tab aggregates run artifacts and keeps other channel artifacts isolated", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channels.push({
+    id: "channel_design",
+    workspaceId: "workspace_default",
+    name: "Design",
+    status: "active",
+    boundPath: cwd,
+    defaultTeammateId: "designer",
+    allowedTools: ["read", "grep"],
+    runtimePolicy: defaultRuntimePolicy,
+    createdAt: "2026-05-22T00:00:00.000Z",
+    updatedAt: "2026-05-22T00:00:00.000Z",
+  });
+  state.tasks.push({
+    id: "task_design",
+    workspaceId: "workspace_default",
+    channelId: "channel_design",
+    title: "Design artifact task",
+    prompt: "Produce design artifacts.",
+    status: "done",
+    currentRunId: "run_design",
+    createdAt: "2026-05-25T00:10:00.000Z",
+    updatedAt: "2026-05-25T00:20:00.000Z",
+  });
+  state.runs = [
+    {
+      ...state.runs[0],
+      status: "succeeded",
+      summaryPath: ".ling-stack/summaries/run_failed.json",
+      errorMessage: undefined,
+      updatedAt: "2026-05-25T00:20:30.000Z",
+    },
+    {
+      id: "run_design",
+      status: "succeeded",
+      cwd,
+      taskId: "task_design",
+      channelId: "channel_design",
+      providerPresetId: "provider_local",
+      providerName: "local-relay",
+      providerModel: "gpt-5.5",
+      taskSnapshot: { id: "task_design", title: "Design artifact task" },
+      providerSnapshot: { provider: "local-relay", model: "gpt-5.5" },
+      requestSnapshot: { cwd, providerPresetId: "provider_local" },
+      eventLogPath: ".ling-stack/sessions/run_design.jsonl",
+      summaryPath: ".ling-stack/summaries/run_design.json",
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:20:00.000Z",
+    },
+  ];
+  state.artifactsByRun.run_failed = [
+    {
+      id: "artifact_channel_report",
+      runId: "run_failed",
+      type: "markdown",
+      path: "run_failed/001-channel-report.md",
+      title: "Channel report",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 512,
+      createdAt: "2026-05-25T00:20:31.000Z",
+    },
+    {
+      id: "artifact_channel_image",
+      runId: "run_failed",
+      type: "image",
+      path: "run_failed/002-channel-image.png",
+      title: "Channel image",
+      contentType: "image/png",
+      sizeBytes: 2048,
+      createdAt: "2026-05-25T00:20:32.000Z",
+    },
+  ];
+  state.artifactsByRun.run_design = [
+    {
+      id: "artifact_design_report",
+      runId: "run_design",
+      type: "markdown",
+      path: "run_design/001-design-report.md",
+      title: "Other channel report",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 128,
+      createdAt: "2026-05-25T00:20:33.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Files" }).click();
+  await expect(page.getByText("Loading run artifacts...")).toHaveCount(0);
+  await expect(page.getByText("Run artifacts")).toBeVisible();
+  await expect(page.locator(".run-artifact-group")).toHaveCount(1);
+  const runGroup = page.locator(".run-artifact-group").filter({ hasText: "run_failed" });
+  await expect(runGroup).toContainText("Inspect workspace");
+  await expect(runGroup).toContainText(".ling-stack/sessions/run_failed.jsonl");
+  await expect(runGroup).toContainText(".ling-stack/summaries/run_failed.json");
+  await expect(runGroup.locator(".artifact-row").first()).toContainText("Channel report");
+  await expect(runGroup.locator(".artifact-row").first()).toHaveAttribute(
+    "href",
+    /\/artifacts\/artifact_channel_report\/content\?cwd=%2Ftmp%2Fling-stack-workspace/,
+  );
+  const imageRow = runGroup.locator(".artifact-row").filter({ hasText: "Channel image" });
+  await expect(imageRow.getByRole("link", { name: "Open" })).toHaveAttribute("href", /\/artifacts\/artifact_channel_image\/content/);
+  await expect(imageRow.getByRole("link", { name: "Download" })).toHaveAttribute("href", /\/artifacts\/artifact_channel_image\/content/);
+  await expect(page.getByText("Other channel report")).toHaveCount(0);
 });
 
 test("channel v1.1 protocol supports brief, decisions, handoffs, and context task creation", async ({ page }) => {
@@ -2494,7 +2605,11 @@ async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/tasks") {
-    await route.fulfill({ json: { cwd, tasks: state.tasks } });
+    const channelId = url.searchParams.get("channelId");
+    const tasks = channelId
+      ? state.tasks.filter((task) => isRecord(task) && task.channelId === channelId)
+      : state.tasks;
+    await route.fulfill({ json: { cwd, tasks } });
     return;
   }
   if (request.method() === "POST" && path === "/tasks") {
