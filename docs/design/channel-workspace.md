@@ -10,6 +10,7 @@ the Web UI, daemon contract, or AI teammate persistence changes the channel beha
 Related docs:
 
 - [Web UI v0.1 Design](web-ui-v0.1.md)
+- [Channel Workspace v1.1 Design and Implementation Plan](channel-workspace-v1.1.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
@@ -1503,6 +1504,8 @@ Current MVP implementation status:
 - link previews are fetched by the daemon with SSRF protections and metadata-only storage,
 - Web now exposes `Activity`, `Tasks`, and `Files` tabs plus discussion-to-task conversion,
 - AI attachment/link content ingestion, handoff records, decision logs, Channel Brief, and notification persistence remain future slices.
+- the next planned slice is captured in
+  [Channel Workspace v1.1 Design and Implementation Plan](channel-workspace-v1.1.md).
 
 ### Phase 1: Channel Contract and Design Shell
 
@@ -1515,7 +1518,7 @@ Current MVP implementation status:
 - [x] Add `@` mention parsing utilities for AI teammate targets.
 - [x] Add attachment UI affordance in the composer.
 - [x] Add URL detection and preview-card UI affordance in the composer.
-- [ ] Add e2e coverage for setting channel default teammate.
+- [x] Add e2e coverage for setting channel default teammate.
 - [x] Update daemon/API docs if Web behavior changes request examples.
 
 ### Phase 2: AI Discussion MVP
@@ -1530,6 +1533,8 @@ Current MVP implementation status:
 
 ### Phase 3: Multi-Agent Protocol MVP
 
+- [x] Define v1.1 Brief, Decision Log, Handoff, and Context Summary plan in
+  `docs/design/channel-workspace-v1.1.md`.
 - [ ] Add channel roster derived from built-in teammates, local drafts, and selected channel defaults.
 - [ ] Add participant status chips for idle/running/waiting/blocked states.
 - [ ] Add Channel Brief panel with objective, scope, acceptance criteria, risks, and open questions.
@@ -1555,7 +1560,7 @@ Current MVP implementation status:
 - [x] Support PDF and Office upload/open/download without AI ingestion.
 - [x] Add file size, extension, and executable-block checks.
 - [x] Add Files tab rows for user-uploaded attachments.
-- [ ] Add e2e coverage for PDF and Office attachment upload.
+- [x] Add e2e coverage for PDF and Office attachment upload.
 
 ### Phase 6: Attachment AI Ingestion
 
