@@ -16,6 +16,7 @@ Related docs:
 - [Channel Workspace v1.4 Files and Run Artifacts](channel-workspace-v1.4.md)
 - [Channel Workspace v1.5 Activity Events](channel-workspace-v1.5.md)
 - [Channel Workspace v1.6 Activity Filters and Search](channel-workspace-v1.6.md)
+- [Channel Workspace v1.7 Activity Saved Views and Attention Queue](channel-workspace-v1.7.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
@@ -1529,6 +1530,8 @@ Current MVP implementation status:
   durable channel events,
 - v1.6 now adds local search, category filters, attention filters, chip counts, and
   no-match states to the derived Activity timeline without backend changes,
+- v1.7 now adds local saved Activity views and a compact attention queue for blocked,
+  failed, and pending items without backend changes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1680,6 +1683,17 @@ Current MVP implementation status:
 - [x] Add no-match empty state without hiding the composer.
 - [x] Reset Activity filters on channel switch.
 - [x] Add e2e coverage for search, filters, counts, channel reset, and no-match state.
+
+### Phase 15: Activity Saved Views and Attention Queue
+
+- [x] Define v1.7 Activity Saved Views and Attention Queue plan in
+  `docs/design/channel-workspace-v1.7.md`.
+- [x] Add local saved view types and localStorage helpers scoped by `cwd + channelId`.
+- [x] Add built-in Activity views and custom saved view chips.
+- [x] Add Save view, Rename, and Delete actions for custom views.
+- [x] Add compact Attention Queue with top blocked, failed, and pending items.
+- [x] Add e2e coverage for saved views, reload persistence, channel isolation, queue
+  navigation, and empty attention state.
 
 ## Validation Plan
 

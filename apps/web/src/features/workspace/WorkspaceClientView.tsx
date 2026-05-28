@@ -28,7 +28,24 @@ import {
 import type { AiTeammateTemplate } from "@ling-stack/core";
 import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
-import { buildChannelActivityItems, type ChannelActivityAttention, type ChannelActivityCategory } from "../../lib/channel-activity.js";
+import { buildChannelActivityItems, type ChannelActivityAttention } from "../../lib/channel-activity.js";
+import {
+  allChannelActivitySavedViewId,
+  applyActivityViewFilter,
+  buildAttentionQueueItems,
+  builtinChannelActivitySavedViews,
+  createCustomChannelActivitySavedView,
+  maxCustomChannelActivitySavedViews,
+  readCustomChannelActivitySavedViews,
+  sanitizeSavedViewName,
+  writeCustomChannelActivitySavedViews,
+  type ChannelActivitySavedView,
+  type ChannelActivityViewAttentionFilter,
+  type ChannelActivityViewCategoryFilter,
+  type ChannelActivityViewFilter,
+  type ChannelAttentionQueueItem,
+  type ChannelAttentionQueueTarget,
+} from "../../lib/channel-activity-views.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { effectiveChannelRuntimePolicy } from "../../lib/channels.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
@@ -72,8 +89,8 @@ import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceCo
 
 type TaskFilter = "all" | "queued" | "running" | "review" | "done";
 type ChannelTab = "activity" | "tasks" | "files" | "protocol";
-type ActivityCategoryFilter = "all" | ChannelActivityCategory;
-type ActivityAttentionFilter = "all" | "needs_attention" | "failed" | "pending";
+type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
+type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
 type AiReplyState = "idle" | "replying" | "failed";
 type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
@@ -101,7 +118,7 @@ interface TaskCreationNotice {
 const taskFilters: readonly TaskFilter[] = ["all", "queued", "running", "review", "done"];
 const channelTabs: readonly ChannelTab[] = ["activity", "tasks", "files", "protocol"];
 const activityCategoryFilters: readonly ActivityCategoryFilter[] = ["all", "message", "work", "approval", "protocol", "runtime"];
-const activityAttentionFilters: readonly Exclude<ActivityAttentionFilter, "all">[] = ["needs_attention", "failed", "pending"];
+const activityAttentionFilters: readonly Exclude<ActivityAttentionFilter, "all">[] = ["needs_attention", "blocked", "failed", "pending"];
 
 function channelTabLabel(tab: ChannelTab): string {
   if (tab === "activity") {
@@ -311,6 +328,9 @@ export function WorkspaceClientView({
   const [activitySearch, setActivitySearch] = useState("");
   const [activityCategoryFilter, setActivityCategoryFilter] = useState<ActivityCategoryFilter>("all");
   const [activityAttentionFilter, setActivityAttentionFilter] = useState<ActivityAttentionFilter>("all");
+  const [activitySavedViews, setActivitySavedViews] = useState<readonly ChannelActivitySavedView[]>([]);
+  const [activeActivityViewId, setActiveActivityViewId] = useState(allChannelActivitySavedViewId);
+  const [attentionQueueExpanded, setAttentionQueueExpanded] = useState(false);
   const [inspectorMode, setInspectorMode] = useState<"brief" | "decisions" | "handoffs" | "runtime">("brief");
   const [briefDraft, setBriefDraft] = useState({
     objective: "",
@@ -407,15 +427,30 @@ export function WorkspaceClientView({
     }
     return activityItems.filter((item) => item.searchText.includes(query));
   }, [activityItems, activitySearch]);
-  const filteredActivityItems = useMemo(
-    () =>
-      searchedActivityItems.filter((item) => {
-        const categoryMatches = activityCategoryFilter === "all" || item.category === activityCategoryFilter;
-        const attentionMatches = activityMatchesAttentionFilter(activityAttentionFilter, item.attention);
-        return categoryMatches && attentionMatches;
-      }),
-    [activityAttentionFilter, activityCategoryFilter, searchedActivityItems],
+  const currentActivityViewFilter = useMemo(
+    () => ({
+      categoryFilter: activityCategoryFilter,
+      attentionFilter: activityAttentionFilter,
+      search: activitySearch,
+    }) satisfies ChannelActivityViewFilter,
+    [activityAttentionFilter, activityCategoryFilter, activitySearch],
   );
+  const filteredActivityItems = useMemo(
+    () => applyActivityViewFilter(activityItems, currentActivityViewFilter),
+    [activityItems, currentActivityViewFilter],
+  );
+  const allActivitySavedViews = useMemo(
+    () => [...builtinChannelActivitySavedViews, ...activitySavedViews],
+    [activitySavedViews],
+  );
+  const savedViewCounts = useMemo(
+    () =>
+      Object.fromEntries(
+        allActivitySavedViews.map((view) => [view.id, applyActivityViewFilter(activityItems, view.filter).length]),
+      ) as Record<string, number>,
+    [activityItems, allActivitySavedViews],
+  );
+  const selectedActivitySavedView = allActivitySavedViews.find((view) => view.id === activeActivityViewId);
   const activityCategoryCounts = useMemo(
     () =>
       Object.fromEntries(
@@ -432,16 +467,24 @@ export function WorkspaceClientView({
     () =>
       ({
         needs_attention: searchedActivityItems.filter((item) => item.attention !== "none").length,
+        blocked: searchedActivityItems.filter((item) => item.attention === "blocked").length,
         failed: searchedActivityItems.filter((item) => item.attention === "failed").length,
         pending: searchedActivityItems.filter((item) => item.attention === "pending").length,
       }) satisfies Record<Exclude<ActivityAttentionFilter, "all">, number>,
     [searchedActivityItems],
   );
   const activityFiltersActive = activitySearch.trim().length > 0 || activityCategoryFilter !== "all" || activityAttentionFilter !== "all";
+  const attentionQueueItems = useMemo(() => buildAttentionQueueItems(activityItems), [activityItems]);
   const channelRunsForFiles = useMemo(
     () => deriveChannelRuns(selectedChannelId, tasks, runs, latestRun),
     [latestRun, runs, selectedChannelId, tasks],
   );
+
+  useEffect(() => {
+    setActivitySavedViews(readCustomChannelActivitySavedViews(cwd, selectedChannelId));
+    applyActivityView(builtinChannelActivitySavedViews[0]);
+    setAttentionQueueExpanded(false);
+  }, [cwd, selectedChannelId]);
 
   useEffect(() => {
     setBriefDraft({
@@ -471,6 +514,8 @@ export function WorkspaceClientView({
     setActivitySearch("");
     setActivityCategoryFilter("all");
     setActivityAttentionFilter("all");
+    setActiveActivityViewId(allChannelActivitySavedViewId);
+    setAttentionQueueExpanded(false);
   }, [selectedChannelId]);
 
   useEffect(() => {
@@ -492,6 +537,81 @@ export function WorkspaceClientView({
   function openProtocolFromActivity(mode: "brief" | "decisions" | "handoffs" | "runtime" = "runtime"): void {
     setInspectorMode(mode);
     setActiveTab("protocol");
+  }
+
+  function openAttentionQueueItem(item: ChannelAttentionQueueItem): void {
+    openAttentionQueueTarget(item.target);
+  }
+
+  function openAttentionQueueTarget(target: ChannelAttentionQueueTarget): void {
+    if (target.kind === "task") {
+      openTaskFromActivity(target.taskId);
+      return;
+    }
+    if (target.kind === "run") {
+      onOpenRun(target.runId);
+      return;
+    }
+    if (target.kind === "approval") {
+      onOpenApprovals(target.runId);
+      return;
+    }
+    openProtocolFromActivity(target.mode);
+  }
+
+  function applyActivityView(view: ChannelActivitySavedView): void {
+    setActiveActivityViewId(view.id);
+    setActivitySearch(view.filter.search);
+    setActivityCategoryFilter(view.filter.categoryFilter);
+    setActivityAttentionFilter(view.filter.attentionFilter);
+  }
+
+  function persistActivitySavedViews(nextViews: readonly ChannelActivitySavedView[]): void {
+    const cappedViews = nextViews.slice(0, maxCustomChannelActivitySavedViews);
+    setActivitySavedViews(cappedViews);
+    writeCustomChannelActivitySavedViews(cwd, selectedChannelId, cappedViews);
+  }
+
+  function saveActivityView(): void {
+    if (activitySavedViews.length >= maxCustomChannelActivitySavedViews) {
+      globalThis.alert?.(t("Custom saved views are limited to 8."));
+      return;
+    }
+    const name = globalThis.prompt?.(t("Saved view name"), t("Custom view"));
+    if (name === undefined || name === null) {
+      return;
+    }
+    const view = createCustomChannelActivitySavedView(name, currentActivityViewFilter);
+    persistActivitySavedViews([...activitySavedViews, view]);
+    applyActivityView(view);
+  }
+
+  function renameActivityView(): void {
+    if (!selectedActivitySavedView || selectedActivitySavedView.builtin) {
+      return;
+    }
+    const name = globalThis.prompt?.(t("Rename saved view"), selectedActivitySavedView.name);
+    if (name === undefined || name === null) {
+      return;
+    }
+    const nextViews = activitySavedViews.map((view) =>
+      view.id === selectedActivitySavedView.id
+        ? { ...view, name: sanitizeSavedViewName(name), updatedAt: new Date().toISOString() }
+        : view,
+    );
+    persistActivitySavedViews(nextViews);
+  }
+
+  function deleteActivityView(): void {
+    if (!selectedActivitySavedView || selectedActivitySavedView.builtin) {
+      return;
+    }
+    if (!globalThis.confirm?.(t("Delete saved view?"))) {
+      return;
+    }
+    const nextViews = activitySavedViews.filter((view) => view.id !== selectedActivitySavedView.id);
+    persistActivitySavedViews(nextViews);
+    applyActivityView(builtinChannelActivitySavedViews[0]);
   }
 
   function createTask(): void {
@@ -1047,17 +1167,39 @@ export function WorkspaceClientView({
                 search={activitySearch}
                 categoryFilter={activityCategoryFilter}
                 attentionFilter={activityAttentionFilter}
+                savedViews={allActivitySavedViews}
+                activeSavedViewId={activeActivityViewId}
+                savedViewCounts={savedViewCounts}
+                selectedSavedView={selectedActivitySavedView}
                 categoryCounts={activityCategoryCounts}
                 attentionCounts={activityAttentionCounts}
                 clearDisabled={!activityFiltersActive}
-                onSearchChange={setActivitySearch}
-                onCategoryFilterChange={setActivityCategoryFilter}
-                onAttentionFilterChange={setActivityAttentionFilter}
-                onClear={() => {
-                  setActivitySearch("");
-                  setActivityCategoryFilter("all");
-                  setActivityAttentionFilter("all");
+                customViewLimitReached={activitySavedViews.length >= maxCustomChannelActivitySavedViews}
+                onSavedViewSelect={applyActivityView}
+                onSaveView={saveActivityView}
+                onRenameView={renameActivityView}
+                onDeleteView={deleteActivityView}
+                onSearchChange={(value) => {
+                  setActiveActivityViewId("");
+                  setActivitySearch(value);
                 }}
+                onCategoryFilterChange={(filter) => {
+                  setActiveActivityViewId("");
+                  setActivityCategoryFilter(filter);
+                }}
+                onAttentionFilterChange={(filter) => {
+                  setActiveActivityViewId("");
+                  setActivityAttentionFilter(filter);
+                }}
+                onClear={() => {
+                  applyActivityView(builtinChannelActivitySavedViews[0]);
+                }}
+              />
+              <AttentionQueue
+                items={attentionQueueItems}
+                expanded={attentionQueueExpanded}
+                onExpandedChange={setAttentionQueueExpanded}
+                onOpenItem={openAttentionQueueItem}
               />
               <div className="message-feed" aria-label={t("Channel message feed")}>
               {channelMessagesLoading || channelProtocolLoading ? (
@@ -2183,9 +2325,18 @@ function ActivityFilterToolbar({
   search,
   categoryFilter,
   attentionFilter,
+  savedViews,
+  activeSavedViewId,
+  savedViewCounts,
+  selectedSavedView,
   categoryCounts,
   attentionCounts,
   clearDisabled,
+  customViewLimitReached,
+  onSavedViewSelect,
+  onSaveView,
+  onRenameView,
+  onDeleteView,
   onSearchChange,
   onCategoryFilterChange,
   onAttentionFilterChange,
@@ -2194,17 +2345,57 @@ function ActivityFilterToolbar({
   readonly search: string;
   readonly categoryFilter: ActivityCategoryFilter;
   readonly attentionFilter: ActivityAttentionFilter;
+  readonly savedViews: readonly ChannelActivitySavedView[];
+  readonly activeSavedViewId: string;
+  readonly savedViewCounts: Readonly<Record<string, number>>;
+  readonly selectedSavedView: ChannelActivitySavedView | undefined;
   readonly categoryCounts: Readonly<Record<ActivityCategoryFilter, number>>;
   readonly attentionCounts: Readonly<Record<Exclude<ActivityAttentionFilter, "all">, number>>;
   readonly clearDisabled: boolean;
+  readonly customViewLimitReached: boolean;
+  readonly onSavedViewSelect: (view: ChannelActivitySavedView) => void;
+  readonly onSaveView: () => void;
+  readonly onRenameView: () => void;
+  readonly onDeleteView: () => void;
   readonly onSearchChange: (value: string) => void;
   readonly onCategoryFilterChange: (filter: ActivityCategoryFilter) => void;
   readonly onAttentionFilterChange: (filter: ActivityAttentionFilter) => void;
   readonly onClear: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const selectedCustomView = selectedSavedView && !selectedSavedView.builtin;
   return (
     <div className="activity-filter-toolbar" aria-label={t("Activity filters")}>
+      <div className="activity-saved-view-row" aria-label={t("Saved views")}>
+        <div className="activity-filter-group activity-saved-views">
+          {savedViews.map((view) => (
+            <button
+              key={view.id}
+              type="button"
+              className={activeSavedViewId === view.id ? "activity-filter-chip active saved-view" : "activity-filter-chip saved-view"}
+              aria-pressed={activeSavedViewId === view.id}
+              onClick={() => onSavedViewSelect(view)}
+            >
+              <span>{view.builtin ? t(view.name) : view.name}</span>
+              <small>{savedViewCounts[view.id] ?? 0}</small>
+            </button>
+          ))}
+        </div>
+        <div className="activity-saved-view-actions">
+          <button className="secondary-button compact-button" type="button" onClick={onSaveView} disabled={customViewLimitReached}>
+            <Plus size={13} />
+            {t("Save view")}
+          </button>
+          <button className="secondary-button compact-button" type="button" onClick={onRenameView} disabled={!selectedCustomView}>
+            <FileText size={13} />
+            {t("Rename")}
+          </button>
+          <button className="secondary-button compact-button" type="button" onClick={onDeleteView} disabled={!selectedCustomView}>
+            <Trash2 size={13} />
+            {t("Delete view")}
+          </button>
+        </div>
+      </div>
       <label className="activity-search-field">
         <Search size={14} />
         <input
@@ -2250,6 +2441,73 @@ function ActivityFilterToolbar({
   );
 }
 
+function AttentionQueue({
+  items,
+  expanded,
+  onExpandedChange,
+  onOpenItem,
+}: {
+  readonly items: readonly ChannelAttentionQueueItem[];
+  readonly expanded: boolean;
+  readonly onExpandedChange: (expanded: boolean) => void;
+  readonly onOpenItem: (item: ChannelAttentionQueueItem) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const blockedCount = items.filter((item) => item.attention === "blocked").length;
+  const failedCount = items.filter((item) => item.attention === "failed").length;
+  const pendingCount = items.filter((item) => item.attention === "pending").length;
+  const visibleItems = items.slice(0, 5);
+  return (
+    <section className="attention-queue" aria-label={t("Attention queue")}>
+      <button
+        className="attention-queue-summary"
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => onExpandedChange(!expanded)}
+      >
+        <CircleAlert size={14} />
+        <strong>{t("Attention queue")}</strong>
+        <span>{items.length > 0 ? t("{count} items need attention", { count: items.length }) : t("No attention items")}</span>
+        <span className="attention-queue-counts" aria-label={t("Attention counts")}>
+          <small className="blocked">{t("Blocked")} {blockedCount}</small>
+          <small className="failed">{t("Failed")} {failedCount}</small>
+          <small className="pending">{t("Pending")} {pendingCount}</small>
+        </span>
+        <span className="attention-queue-toggle">{expanded ? t("Collapse") : t("Expand")}</span>
+      </button>
+      {expanded ? (
+        visibleItems.length === 0 ? (
+          <div className="attention-queue-empty">
+            <CheckCircle2 size={14} />
+            <span>{t("No attention items")}</span>
+          </div>
+        ) : (
+          <div className="attention-queue-list" aria-label={t("Top attention items")}>
+            {visibleItems.map((item) => (
+              <button
+                key={item.id}
+                className={`attention-queue-item ${item.attention}`}
+                type="button"
+                onClick={() => onOpenItem(item)}
+              >
+                <span className="attention-queue-item-main">
+                  <strong>{item.title}</strong>
+                  <small>{item.description}</small>
+                </span>
+                <span className="attention-queue-item-meta">
+                  <small>{t(activityAttentionDisplayLabel(item.attention))}</small>
+                  <small>{t(attentionQueueTargetLabel(item.target))}</small>
+                  <time>{formatDateTime(item.createdAt)}</time>
+                </span>
+              </button>
+            ))}
+          </div>
+        )
+      ) : null}
+    </section>
+  );
+}
+
 function taskFilterLabel(filter: TaskFilter): string {
   if (filter === "queued") {
     return "Queued";
@@ -2264,6 +2522,29 @@ function taskFilterLabel(filter: TaskFilter): string {
     return "Done";
   }
   return "All";
+}
+
+function activityAttentionDisplayLabel(attention: Exclude<ChannelActivityAttention, "none">): string {
+  if (attention === "blocked") {
+    return "Blocked";
+  }
+  if (attention === "failed") {
+    return "Failed";
+  }
+  return "Pending";
+}
+
+function attentionQueueTargetLabel(target: ChannelAttentionQueueTarget): string {
+  if (target.kind === "task") {
+    return "Task";
+  }
+  if (target.kind === "run") {
+    return "Run";
+  }
+  if (target.kind === "approval") {
+    return "Approval";
+  }
+  return "Channel protocol";
 }
 
 function activityCategoryFilterLabel(filter: ActivityCategoryFilter): string {
@@ -2289,20 +2570,13 @@ function activityAttentionFilterLabel(filter: Exclude<ActivityAttentionFilter, "
   if (filter === "needs_attention") {
     return "Needs attention";
   }
+  if (filter === "blocked") {
+    return "Blocked";
+  }
   if (filter === "failed") {
     return "Failed";
   }
   return "Pending";
-}
-
-function activityMatchesAttentionFilter(filter: ActivityAttentionFilter, attention: ChannelActivityAttention): boolean {
-  if (filter === "all") {
-    return true;
-  }
-  if (filter === "needs_attention") {
-    return attention !== "none";
-  }
-  return attention === filter;
 }
 
 function taskMatchesFilter(filter: TaskFilter, task: Task, linkedRunStatus: string): boolean {
