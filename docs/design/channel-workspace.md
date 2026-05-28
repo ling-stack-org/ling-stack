@@ -1535,8 +1535,8 @@ Current MVP implementation status:
 - v1.7 now adds local saved Activity views and a compact attention queue for blocked,
   failed, and pending items without backend changes,
 - v1.8 now adds lightweight Activity source drilldown drawers without backend changes,
-- v1.9 is planned to add lightweight Activity triage actions in the drilldown drawer
-  without backend changes,
+- v1.9 now adds lightweight Activity triage actions in the drilldown drawer without
+  backend changes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1716,14 +1716,14 @@ Current MVP implementation status:
 
 - [x] Define v1.9 Activity Triage Actions plan in
   `docs/design/channel-workspace-v1.9.md`.
-- [ ] Add Web-only triage action, draft, and result model derived from drilldown items.
-- [ ] Add `Triage actions` entry point and inline forms inside the details drawer.
-- [ ] Support follow-up task, handoff, decision, and context-summary creation through
+- [x] Add Web-only triage action, draft, and result model derived from drilldown items.
+- [x] Add `Triage actions` entry point and inline forms inside the details drawer.
+- [x] Support follow-up task, handoff, decision, and context-summary creation through
   existing APIs.
-- [ ] Show success confirmation with navigation to `Tasks` or `Channel protocol`.
-- [ ] Preserve Activity search, saved views, queue state, composer state, and drawer
+- [x] Show success confirmation with navigation to `Tasks` or `Channel protocol`.
+- [x] Preserve Activity search, saved views, queue state, composer state, and drawer
   state during triage interactions.
-- [ ] Add e2e coverage for successful actions, failed retry state, state preservation,
+- [x] Add e2e coverage for successful actions, failed retry state, state preservation,
   and i18n labels.
 
 ## Validation Plan

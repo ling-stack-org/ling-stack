@@ -67,11 +67,13 @@ navigation actions without restoring a persistent task-detail split pane. v1.8 r
 Web-only and does not add backend contracts, durable channel events, notification
 persistence, ingestion, automatic multi-agent loops, or a workflow builder.
 
-Planned v1.9 behavior: the Activity details drawer gains lightweight triage actions for
-creating follow-up tasks, handoffs, decisions, and context summaries from the selected
-event. v1.9 remains Web-only and does not add backend contracts, durable channel events,
-persisted triage resolution state, notification persistence, ingestion, automatic
-multi-agent loops, or a workflow builder.
+Implemented v1.9 behavior: the Activity details drawer now has lightweight triage actions
+for creating follow-up tasks, handoffs, decisions, and context summaries from the
+selected event. It preserves local Activity state, keeps drafts on mutation failure, and
+uses existing task/protocol records for confirmations and navigation. v1.9 remains
+Web-only and does not add backend contracts, durable channel events, persisted triage
+resolution state, notification persistence, ingestion, automatic multi-agent loops, or a
+workflow builder.
 
 ## Goal
 

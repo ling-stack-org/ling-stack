@@ -1,8 +1,8 @@
-# Channel Workspace v1.9 Activity Triage Actions Plan
+# Channel Workspace v1.9 Activity Triage Actions
 
 ## Status
 
-Planned Web-only slice after v1.8 Activity Source Drilldown.
+Implemented Web-only slice after v1.8 Activity Source Drilldown.
 
 v1.9 turns the drilldown drawer from a read-only explanation surface into a light
 triage entrypoint. Users can create the next work item from an Activity event without
@@ -55,33 +55,35 @@ If an action fails, the drawer keeps the draft and offers retry and dismiss cont
 Closing the drawer or switching tabs does not clear unrelated composer drafts or Activity
 filter state.
 
-## Implementation Plan
+## Implementation Summary
 
 ### 1. Derived Triage Model
 
-- Add Web-only triage types for action definitions, drafts, and results.
-- Derive action availability from `ChannelActivityDrilldownItem`.
-- Keep the existing wire shapes and `ChannelActivityItem` model unchanged.
+- Added Web-only triage types for action definitions, drafts, and results in
+  `apps/web/src/lib/channel-activity-triage.ts`.
+- Action availability is derived from `ChannelActivityDrilldownItem`.
+- Existing daemon wire shapes and the `ChannelActivityItem` model remain unchanged.
 
 ### 2. Drawer UI
 
-- Add a compact action picker and inline form to `ActivityDrilldownDrawer`.
-- Prefill titles/prompts/reasons/decision text from the source packet and related
+- Added a compact action picker and inline form to `ActivityDrilldownDrawer`.
+- Titles/prompts/reasons/decision text are prefilled from the source packet and related
   object metadata.
-- Show pending, failed, retry, dismiss, and success confirmation states locally.
-- Do not render `article.task-detail` inside Activity.
+- Pending, failed, retry, dismiss, and success confirmation states are local to the
+  drawer.
+- `article.task-detail` still does not render inside Activity.
 
 ### 3. Existing API Reuse
 
-- Create follow-up tasks through the existing channel task creation flow.
-- Create handoffs through the existing channel handoff creation flow.
-- Record decisions through the existing channel decision creation flow.
-- Create context summaries through the existing channel context summary flow.
+- Follow-up tasks use the existing channel task creation flow.
+- Handoffs use the existing channel handoff creation flow.
+- Decisions use the existing channel decision creation flow.
+- Context summaries use the existing channel context summary flow.
 
 ### 4. Documentation
 
-- Update `docs/design/channel-workspace.md` with Phase 17 tracker items.
-- Update `docs/design/web-ui-v0.1.md` after implementation.
+- Updated `docs/design/channel-workspace.md` with Phase 17 tracker completion.
+- Updated `docs/design/web-ui-v0.1.md` with implemented v1.9 behavior.
 - `docs/daemon-api.md` does not change.
 
 ## Test Plan

@@ -36,6 +36,16 @@ import {
   type ChannelActivityDrilldownTarget,
 } from "../../lib/channel-activity-drilldown.js";
 import {
+  buildChannelActivityTriageActions,
+  buildChannelActivityTriageDraft,
+  channelActivityTriageDraftIsValid,
+  channelActivityTriageResultLabel,
+  type ChannelActivityTriageAction,
+  type ChannelActivityTriageActionKind,
+  type ChannelActivityTriageDraft,
+  type ChannelActivityTriageResult,
+} from "../../lib/channel-activity-triage.js";
+import {
   allChannelActivitySavedViewId,
   applyActivityViewFilter,
   buildAttentionQueueItems,
@@ -224,6 +234,7 @@ export function WorkspaceClientView({
   onUpdateWorkflowStepStatus,
   onCreateTaskWithContextFromMessage,
   onCreateTaskFromContextSummary,
+  onRunActivityTriageAction,
   onRefreshChannelActivity,
   onRefreshChannelProtocol,
   onRefreshChannelFiles,
@@ -313,6 +324,7 @@ export function WorkspaceClientView({
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
   readonly onCreateTaskWithContextFromMessage: (message: ChannelMessage) => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
+  readonly onRunActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
   readonly onRefreshChannelActivity: () => void;
   readonly onRefreshChannelProtocol: () => void;
   readonly onRefreshChannelFiles: () => void;
@@ -616,6 +628,22 @@ export function WorkspaceClientView({
       return;
     }
     openProtocolFromActivity(target.mode);
+  }
+
+  function openActivityTriageResult(result: ChannelActivityTriageResult): void {
+    if (result.kind === "task") {
+      openTaskFromActivity(result.task.id);
+      return;
+    }
+    if (result.kind === "handoff") {
+      openProtocolFromActivity("handoffs");
+      return;
+    }
+    if (result.kind === "decision") {
+      openProtocolFromActivity("decisions");
+      return;
+    }
+    openProtocolFromActivity("brief");
   }
 
   function applyActivityView(view: ChannelActivitySavedView): void {
@@ -1627,8 +1655,12 @@ export function WorkspaceClientView({
               {activityDrilldown ? (
                 <ActivityDrilldownDrawer
                   drilldown={activityDrilldown}
+                  defaultTeammateId={selectedChannel?.defaultTeammateId}
+                  activeDecisionIds={channelDecisions.filter((decision) => decision.status === "active").map((decision) => decision.id)}
                   onClose={() => setActivityDrilldownItemId("")}
                   onOpenTarget={openActivityDrilldownTarget}
+                  onRunTriageAction={onRunActivityTriageAction}
+                  onOpenTriageResult={openActivityTriageResult}
                 />
               ) : null}
             </div>
@@ -2611,14 +2643,88 @@ function AttentionQueue({
 
 function ActivityDrilldownDrawer({
   drilldown,
+  defaultTeammateId,
+  activeDecisionIds,
   onClose,
   onOpenTarget,
+  onRunTriageAction,
+  onOpenTriageResult,
 }: {
   readonly drilldown: ChannelActivityDrilldownItem;
+  readonly defaultTeammateId?: string;
+  readonly activeDecisionIds: readonly string[];
   readonly onClose: () => void;
   readonly onOpenTarget: (target: ChannelActivityDrilldownTarget) => void;
+  readonly onRunTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
+  readonly onOpenTriageResult: (result: ChannelActivityTriageResult) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const triageActions = useMemo(() => buildChannelActivityTriageActions(drilldown), [drilldown]);
+  const [selectedTriageActionId, setSelectedTriageActionId] = useState<ChannelActivityTriageActionKind | "">(
+    triageActions[0]?.id ?? "",
+  );
+  const [triageDraft, setTriageDraft] = useState<ChannelActivityTriageDraft | undefined>(() =>
+    triageActions[0]
+      ? buildChannelActivityTriageDraft({
+          drilldown,
+          actionKind: triageActions[0].id,
+          defaultTeammateId,
+          activeDecisionIds,
+        })
+      : undefined);
+  const [triagePending, setTriagePending] = useState(false);
+  const [triageError, setTriageError] = useState("");
+  const [triageResult, setTriageResult] = useState<ChannelActivityTriageResult | undefined>();
+  const selectedTriageAction = triageActions.find((action) => action.id === selectedTriageActionId);
+
+  useEffect(() => {
+    const firstAction = triageActions[0];
+    setSelectedTriageActionId(firstAction?.id ?? "");
+    setTriageDraft(firstAction
+      ? buildChannelActivityTriageDraft({
+          drilldown,
+          actionKind: firstAction.id,
+          defaultTeammateId,
+          activeDecisionIds,
+        })
+      : undefined);
+    setTriagePending(false);
+    setTriageError("");
+    setTriageResult(undefined);
+  }, [drilldown.id]);
+
+  function selectTriageAction(action: ChannelActivityTriageAction): void {
+    setSelectedTriageActionId(action.id);
+    setTriageDraft(buildChannelActivityTriageDraft({
+      drilldown,
+      actionKind: action.id,
+      defaultTeammateId,
+      activeDecisionIds,
+    }));
+    setTriageError("");
+    setTriageResult(undefined);
+  }
+
+  function updateTriageDraft(field: string, value: string): void {
+    setTriageDraft((current) => current ? { ...current, [field]: value } as ChannelActivityTriageDraft : current);
+  }
+
+  async function submitTriageAction(): Promise<void> {
+    if (!triageDraft || !channelActivityTriageDraftIsValid(triageDraft)) {
+      return;
+    }
+    setTriagePending(true);
+    setTriageError("");
+    try {
+      const result = await onRunTriageAction(triageDraft);
+      setTriageResult(result);
+    } catch (error) {
+      setTriageError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTriagePending(false);
+    }
+  }
+
   return (
     <aside className="activity-drilldown-drawer" aria-label={t("Activity details")}>
       <div className="activity-drilldown-header">
@@ -2690,7 +2796,157 @@ function ActivityDrilldownDrawer({
           </div>
         )}
       </section>
+      <section className="activity-drilldown-section activity-triage-section" aria-label={t("Triage actions")}>
+        <h4>{t("Triage actions")}</h4>
+        {triageActions.length === 0 ? (
+          <p className="muted-text">{t("No triage actions available")}</p>
+        ) : (
+          <>
+            <div className="activity-triage-action-picker" role="tablist" aria-label={t("Triage action picker")}>
+              {triageActions.map((action) => (
+                <button
+                  key={action.id}
+                  className={selectedTriageActionId === action.id ? "active" : ""}
+                  type="button"
+                  onClick={() => selectTriageAction(action)}
+                >
+                  {triageActionIcon(action.id)}
+                  <span>{t(action.label)}</span>
+                </button>
+              ))}
+            </div>
+            {selectedTriageAction ? (
+              <p className="activity-triage-description">{t(selectedTriageAction.description)}</p>
+            ) : null}
+            {triageDraft ? (
+              <ActivityTriageDraftForm
+                draft={triageDraft}
+                disabled={triagePending}
+                onChange={updateTriageDraft}
+              />
+            ) : null}
+            {triageError ? (
+              <div className="activity-triage-error" role="alert">
+                <CircleAlert size={14} />
+                <span>{t("Triage action failed")}: {triageError}</span>
+                <button className="secondary-button compact-button" type="button" onClick={() => void submitTriageAction()}>
+                  {t("Retry")}
+                </button>
+                <button className="secondary-button compact-button" type="button" onClick={() => setTriageError("")}>
+                  {t("Dismiss")}
+                </button>
+              </div>
+            ) : null}
+            {triageResult ? (
+              <div className="activity-triage-result" role="status">
+                <CheckCircle2 size={14} />
+                <span>{t("Triage action created")}: {channelActivityTriageResultLabel(triageResult)}</span>
+                <button className="secondary-button compact-button" type="button" onClick={() => onOpenTriageResult(triageResult)}>
+                  {t(activityTriageResultTargetLabel(triageResult))}
+                </button>
+              </div>
+            ) : null}
+            <button
+              className="primary-button compact-button activity-triage-submit"
+              type="button"
+              onClick={() => void submitTriageAction()}
+              disabled={triagePending || !channelActivityTriageDraftIsValid(triageDraft)}
+            >
+              {triagePending ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+              {triagePending ? t("Creating...") : t("Run triage action")}
+            </button>
+          </>
+        )}
+      </section>
     </aside>
+  );
+}
+
+function ActivityTriageDraftForm({
+  draft,
+  disabled,
+  onChange,
+}: {
+  readonly draft: ChannelActivityTriageDraft;
+  readonly disabled: boolean;
+  readonly onChange: (field: string, value: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  if (draft.actionKind === "follow_up_task") {
+    return (
+      <div className="activity-triage-form">
+        <label className="field wide">
+          <span>{t("Triage title")}</span>
+          <input value={draft.title} disabled={disabled} onChange={(event) => onChange("title", event.target.value)} />
+        </label>
+        <label className="field wide">
+          <span>{t("Triage prompt")}</span>
+          <textarea rows={5} value={draft.prompt} disabled={disabled} onChange={(event) => onChange("prompt", event.target.value)} />
+        </label>
+      </div>
+    );
+  }
+  if (draft.actionKind === "handoff") {
+    return (
+      <div className="activity-triage-form">
+        <label className="field wide">
+          <span>{t("Reason")}</span>
+          <input value={draft.reason} disabled={disabled} onChange={(event) => onChange("reason", event.target.value)} />
+        </label>
+        <div className="activity-triage-two-up">
+          <label className="field">
+            <span>{t("To participant")}</span>
+            <input value={draft.toParticipantId} disabled={disabled} onChange={(event) => onChange("toParticipantId", event.target.value)} />
+          </label>
+          <label className="field">
+            <span>{t("Participant label")}</span>
+            <input value={draft.toParticipantLabel} disabled={disabled} onChange={(event) => onChange("toParticipantLabel", event.target.value)} />
+          </label>
+        </div>
+        <label className="field wide">
+          <span>{t("Required input")}</span>
+          <textarea rows={5} value={draft.requiredInput} disabled={disabled} onChange={(event) => onChange("requiredInput", event.target.value)} />
+        </label>
+        <label className="field wide">
+          <span>{t("Expected output")}</span>
+          <textarea rows={3} value={draft.expectedOutput} disabled={disabled} onChange={(event) => onChange("expectedOutput", event.target.value)} />
+        </label>
+      </div>
+    );
+  }
+  if (draft.actionKind === "decision") {
+    return (
+      <div className="activity-triage-form">
+        <label className="field wide">
+          <span>{t("Triage title")}</span>
+          <input value={draft.title} disabled={disabled} onChange={(event) => onChange("title", event.target.value)} />
+        </label>
+        <label className="field wide">
+          <span>{t("Decision text")}</span>
+          <textarea rows={4} value={draft.decision} disabled={disabled} onChange={(event) => onChange("decision", event.target.value)} />
+        </label>
+        <label className="field wide">
+          <span>{t("Rationale")}</span>
+          <textarea rows={3} value={draft.rationale} disabled={disabled} onChange={(event) => onChange("rationale", event.target.value)} />
+        </label>
+      </div>
+    );
+  }
+  return (
+    <div className="activity-triage-form">
+      <label className="field wide">
+        <span>{t("Summary")}</span>
+        <textarea rows={5} value={draft.summary} disabled={disabled} onChange={(event) => onChange("summary", event.target.value)} />
+      </label>
+      <label className="field wide">
+        <span>{t("Acceptance criteria")}</span>
+        <textarea rows={3} value={draft.acceptanceCriteria} disabled={disabled} onChange={(event) => onChange("acceptanceCriteria", event.target.value)} />
+      </label>
+      <label className="field wide">
+        <span>{t("Open questions")}</span>
+        <textarea rows={3} value={draft.openQuestions} disabled={disabled} onChange={(event) => onChange("openQuestions", event.target.value)} />
+      </label>
+    </div>
   );
 }
 
@@ -2795,6 +3051,23 @@ function drilldownTargetIcon(target: ChannelActivityDrilldownTarget): JSX.Elemen
     return <CheckCircle2 size={14} />;
   }
   return <Workflow size={14} />;
+}
+
+function triageActionIcon(action: ChannelActivityTriageActionKind): JSX.Element {
+  if (action === "follow_up_task") {
+    return <SquareTerminal size={14} />;
+  }
+  if (action === "handoff") {
+    return <Workflow size={14} />;
+  }
+  if (action === "decision") {
+    return <FileCheck2 size={14} />;
+  }
+  return <FileText size={14} />;
+}
+
+function activityTriageResultTargetLabel(result: ChannelActivityTriageResult): string {
+  return result.kind === "task" ? "Open in Tasks" : "Open in Channel protocol";
 }
 
 function activityCategoryFilterLabel(filter: ActivityCategoryFilter): string {
