@@ -206,7 +206,7 @@ test("channel activity supports mentions, messages, files, links, and task creat
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await expect(page.getByRole("button", { name: "Activity" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Activity", exact: true })).toBeVisible();
   await expect(page.locator("article.task-detail")).toHaveCount(0);
   await page.locator(".mention-chip").filter({ hasText: "@Engineer" }).click();
   await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("@Engineer please refine the channel requirements https://example.com");
@@ -232,7 +232,7 @@ test("channel activity supports mentions, messages, files, links, and task creat
   await expect(page.getByText("brief.txt")).toBeVisible();
   await expect(page.getByText("Example Domain")).toBeVisible();
 
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   await page.getByRole("button", { name: "Create task" }).first().click();
   await expect(page.getByText("Task created")).toBeVisible();
   await expect.poll(() => {
@@ -505,7 +505,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
     return isRecord(brief) ? brief.objective : undefined;
   }).toBe("Ship channel v1.1 protocol");
 
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Keep v1.1 handoffs manual and visible.");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Record decision" }).first().click();
@@ -638,7 +638,7 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
     const step = state.channelWorkflowSteps.find((item) => isRecord(item) && item.id === "workflow_step_seed");
     return isRecord(step) ? step.runId : undefined;
   }).toBe("run_2");
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_2" })).toContainText("succeeded");
 });
 
@@ -803,6 +803,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.getByText("other_channel_done")).toHaveCount(0);
   await expect(page.locator("article.task-detail")).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await expect(page.locator(".mention-row .mention-chip")).toHaveCount(1);
 
   await openDetailsFrom(messageBubble, "Timeline source message");
   await openDetailsFrom(taskEventBubble, "Inspect workspace");
@@ -815,7 +816,7 @@ test("channel activity derives task run approval transition and workflow events"
   await activityDetails.getByRole("button", { name: "Open task" }).click();
   await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   await expect(activityDetails).toHaveCount(0);
 
   await runEventBubble.getByRole("button", { name: "Details" }).click();
@@ -831,25 +832,39 @@ test("channel activity derives task run approval transition and workflow events"
   await workflowStepBubble.getByRole("button", { name: "Details" }).click();
   await activityDetails.getByRole("button", { name: "Open protocol" }).click();
   await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   await expect(activityDetails).toHaveCount(0);
 
   const activityFilters = page.getByLabel("Activity filters");
   const activityFeed = page.getByLabel("Channel message feed");
   const searchInput = activityFilters.getByPlaceholder("Search activity");
-  const savedViews = activityFilters.getByLabel("Saved views");
-  const savedViewChip = (label: string) => savedViews.getByRole("button", { name: new RegExp(`^${label}(?:\\s+\\d+)?$`) });
+  const savedViewSelect = activityFilters.locator('select[aria-label="Saved views"]');
+  const savedViewOption = (label: string) => savedViewSelect.locator("option").filter({ hasText: label });
+  const selectSavedView = async (label: string) => {
+    const value = await savedViewOption(label).getAttribute("value");
+    expect(value).toBeTruthy();
+    await savedViewSelect.selectOption(value ?? "");
+  };
+  const openFilterPanel = async () => {
+    if (await activityFilters.getByLabel("Filter panel").count() === 0) {
+      await activityFilters.getByRole("button", { name: "Filter activity" }).click();
+    }
+  };
   const categoryChip = (label: string) => activityFilters.getByLabel("Activity categories").locator(".activity-filter-chip").filter({ hasText: label });
   const attentionChip = (label: string) => activityFilters.getByLabel("Activity attention filters").locator(".activity-filter-chip").filter({ hasText: label });
 
   await expect(activityFilters).toBeVisible();
-  await expect(savedViewChip("All")).toContainText("7");
-  await expect(savedViewChip("Needs attention")).toContainText("5");
-  await expect(savedViewChip("Blocked")).toContainText("1");
-  await expect(savedViewChip("Failed")).toContainText("3");
-  await expect(savedViewChip("Pending approvals")).toContainText("1");
-  await expect(savedViewChip("Failed work")).toContainText("2");
-  await expect(savedViewChip("Runtime")).toContainText("3");
+  await expect(activityFilters.locator(".activity-saved-views")).toHaveCount(0);
+  await expect(savedViewSelect).toContainText("All (7)");
+  await expect(savedViewSelect).toContainText("Needs attention (5)");
+  await expect(savedViewSelect).toContainText("Blocked (1)");
+  await expect(savedViewSelect).toContainText("Failed (3)");
+  await expect(savedViewSelect).toContainText("Pending approvals (1)");
+  await expect(savedViewSelect).toContainText("Failed work (2)");
+  await expect(savedViewSelect).toContainText("Runtime (3)");
+  await expect(activityFilters.getByLabel("Activity categories")).toHaveCount(0);
+  await openFilterPanel();
+  await expect(activityFilters.getByLabel("Filter panel")).toBeVisible();
   await expect(categoryChip("All")).toContainText("7");
   await expect(categoryChip("Messages")).toContainText("1");
   await expect(categoryChip("Work")).toContainText("2");
@@ -878,7 +893,7 @@ test("channel activity derives task run approval transition and workflow events"
   await activityDetails.getByLabel("Close details").click();
   await blockedQueueItem.locator(".attention-queue-item-open").click();
   await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   await expandQueueIfNeeded();
   await attentionQueue.locator(".attention-queue-item").filter({ hasText: "Run run_failed" }).locator(".attention-queue-item-open").click();
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
@@ -891,22 +906,23 @@ test("channel activity derives task run approval transition and workflow events"
   await attentionQueue.locator(".attention-queue-item").filter({ hasText: "Inspect workspace" }).filter({ hasText: "Task" }).locator(".attention-queue-item-open").click();
   await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
 
-  await savedViewChip("Blocked").click();
+  await selectSavedView("Blocked");
   await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
   await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
-  await savedViewChip("Pending approvals").click();
+  await selectSavedView("Pending approvals");
   await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" })).toBeVisible();
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toHaveCount(0);
-  await savedViewChip("Failed work").click();
+  await selectSavedView("Failed work");
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toBeVisible();
   await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" })).toBeVisible();
   await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toHaveCount(0);
-  await savedViewChip("Runtime").click();
+  await selectSavedView("Runtime");
   await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
   await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toBeVisible();
   await activityFilters.getByRole("button", { name: /Clear/ }).click();
+  await openFilterPanel();
 
   await searchInput.fill("Timeline source");
   await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
@@ -931,6 +947,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toBeVisible();
 
   await searchInput.fill("");
+  await openFilterPanel();
   await categoryChip("Messages").click();
   await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
   await expect(activityFeed.getByText("Inspect workspace")).toHaveCount(0);
@@ -939,6 +956,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toBeVisible();
   await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
   await activityFilters.getByRole("button", { name: /Clear/ }).click();
+  await openFilterPanel();
 
   await attentionChip("Needs attention").click();
   await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
@@ -970,31 +988,31 @@ test("channel activity derives task run approval transition and workflow events"
     await dialog.accept("Run failures");
   });
   await activityFilters.getByRole("button", { name: "Save view" }).click();
-  await expect(savedViewChip("Run failures")).toBeVisible();
+  await expect(savedViewOption("Run failures")).toHaveCount(1);
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  await expect(savedViewChip("Run failures")).toBeVisible();
-  await savedViewChip("Run failures").click();
+  await expect(savedViewOption("Run failures")).toHaveCount(1);
+  await selectSavedView("Run failures");
   await expect(searchInput).toHaveValue("run_failed");
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toBe("Rename saved view");
     await dialog.accept("Run problems");
   });
   await activityFilters.getByRole("button", { name: "Rename" }).click();
-  await expect(savedViewChip("Run problems")).toBeVisible();
+  await expect(savedViewOption("Run problems")).toHaveCount(1);
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
   await expect(searchInput).toHaveValue("");
-  await expect(savedViewChip("Run problems")).toHaveCount(0);
+  await expect(savedViewOption("Run problems")).toHaveCount(0);
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  await expect(savedViewChip("Run problems")).toBeVisible();
-  await savedViewChip("Run problems").click();
+  await expect(savedViewOption("Run problems")).toHaveCount(1);
+  await selectSavedView("Run problems");
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toBe("Delete saved view?");
     await dialog.accept();
   });
   await activityFilters.getByRole("button", { name: "Delete view" }).click();
-  await expect(savedViewChip("Run problems")).toHaveCount(0);
+  await expect(savedViewOption("Run problems")).toHaveCount(0);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
   await expect(searchInput).toHaveValue("");
@@ -1010,7 +1028,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
 
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   await page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" }).getByRole("button", { name: "Open run" }).click();
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
   await expect(page.getByText("run_failed").first()).toBeVisible();
@@ -1098,9 +1116,19 @@ test("channel activity triage actions create follow-up records and preserve loca
   const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked triage step" });
   const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
   const messageBubble = page.locator(".message-bubble").filter({ hasText: "Timeline source message for triage" });
+  const openTriageActions = async () => {
+    const triageSection = activityDetails.locator(".activity-triage-section");
+    await expect(triageSection).toBeVisible();
+    if ((await triageSection.getAttribute("open")) === null) {
+      await triageSection.locator("summary").click();
+    }
+  };
 
   await runEventBubble.getByRole("button", { name: "Details" }).click();
   await expect(activityDetails).toContainText("Triage actions");
+  await expect(activityDetails.getByLabel("Triage title")).toHaveCount(0);
+  await openTriageActions();
+  await expect(activityDetails.getByText("Choose a triage action to continue.")).toBeVisible();
   await activityDetails.getByRole("button", { name: "Create follow-up task" }).click();
   await activityDetails.getByLabel("Triage title").fill("Investigate failed run triage");
   state.failNextTaskCreate = true;
@@ -1116,8 +1144,9 @@ test("channel activity triage actions create follow-up records and preserve loca
   await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
   await expect(page.locator("article.task-detail")).toContainText("Investigate failed run triage");
 
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   await workflowStepBubble.getByRole("button", { name: "Details" }).click();
+  await openTriageActions();
   await activityDetails.getByRole("button", { name: "Create handoff" }).click();
   await activityDetails.getByLabel("Reason").fill("Escalate blocked triage step");
   await activityDetails.getByRole("button", { name: "Run triage action" }).click();
@@ -1127,8 +1156,9 @@ test("channel activity triage actions create follow-up records and preserve loca
   await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
   await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Escalate blocked triage step");
 
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   await approvalEventBubble.getByRole("button", { name: "Details" }).click();
+  await openTriageActions();
   await activityDetails.getByRole("button", { name: "Record decision" }).click();
   await activityDetails.getByLabel("Triage title").fill("Decision: approval stays pending");
   await activityDetails.getByLabel("Decision text").fill("Keep the approval pending until the user reviews the shell command.");
@@ -1137,7 +1167,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await activityDetails.getByRole("button", { name: "Open in Channel protocol" }).click();
   await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Decision: approval stays pending");
 
-  await page.getByRole("button", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   const activityFilters = page.getByLabel("Activity filters");
   const searchInput = activityFilters.getByPlaceholder("Search activity");
   const composer = page.getByPlaceholder("Message this channel or @ an AI teammate");
@@ -1149,6 +1179,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   }
   await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
   await messageBubble.getByRole("button", { name: "Details" }).click();
+  await openTriageActions();
   await activityDetails.getByRole("button", { name: "Create context summary" }).click();
   await activityDetails.getByLabel("Summary").fill("Summary from Timeline source message for triage.");
   await activityDetails.getByRole("button", { name: "Run triage action" }).click();
@@ -1186,11 +1217,9 @@ test("channel activity attention queue keeps an empty state compact", async ({ p
 
   const attentionQueue = page.getByLabel("Attention queue");
   await expect(attentionQueue).toContainText("No attention items");
-  await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Blocked 0");
-  await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Failed 0");
-  await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Pending 0");
-  await attentionQueue.locator(".attention-queue-summary").click();
-  await expect(attentionQueue.locator(".attention-queue-empty")).toContainText("No attention items");
+  await expect(attentionQueue.locator(".attention-queue-pill")).toBeVisible();
+  await expect(attentionQueue.locator(".attention-queue-summary")).toHaveCount(0);
+  await expect(attentionQueue.locator(".attention-queue-item")).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.locator("article.task-detail")).toHaveCount(0);
 });
@@ -1249,7 +1278,8 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
   await expect(page.locator(".channel-tabs").getByRole("button", { name: "动态" })).toBeVisible();
   await expect(page.getByPlaceholder("搜索动态")).toBeVisible();
-  await expect(page.getByLabel("保存的视图").getByRole("button", { name: /需要关注/ })).toBeVisible();
+  await expect(page.locator('select[aria-label="保存的视图"]')).toContainText("需要关注");
+  await page.getByRole("button", { name: "筛选动态" }).click();
   await expect(page.getByLabel("动态类别").getByRole("button", { name: /全部/ })).toBeVisible();
   await expect(page.getByLabel("动态关注筛选").getByRole("button", { name: /需要关注/ })).toBeVisible();
   await expect(page.getByLabel("关注队列")).toBeVisible();
@@ -1258,6 +1288,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(chineseDetails).toContainText("来源摘要");
   await expect(chineseDetails).toContainText("关联对象");
   await expect(chineseDetails).toContainText("分诊动作");
+  await chineseDetails.locator(".activity-triage-section summary").click();
   await expect(chineseDetails).toContainText("创建跟进任务");
   await chineseDetails.getByLabel("关闭详情").click();
   await expect(page.getByPlaceholder("给频道发消息，或 @ 一个 AI 队友")).toBeVisible();
@@ -1270,9 +1301,10 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Workspace" })).toBeVisible();
-  await expect(page.locator(".channel-tabs").getByRole("button", { name: "Activity" })).toBeVisible();
+  await expect(page.locator(".channel-tabs").getByRole("button", { name: "Activity", exact: true })).toBeVisible();
   await expect(page.getByPlaceholder("Search activity")).toBeVisible();
-  await expect(page.getByLabel("Saved views").getByRole("button", { name: /Needs attention/ })).toBeVisible();
+  await expect(page.locator('select[aria-label="Saved views"]')).toContainText("Needs attention");
+  await page.getByRole("button", { name: "Filter activity" }).click();
   await expect(page.getByLabel("Activity categories").getByRole("button", { name: /Messages/ })).toBeVisible();
   await expect(page.getByLabel("Activity attention filters").getByRole("button", { name: /Needs attention/ })).toBeVisible();
   await expect(page.getByLabel("Attention queue")).toBeVisible();
@@ -1281,6 +1313,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(englishDetails).toContainText("Source summary");
   await expect(englishDetails).toContainText("Related objects");
   await expect(englishDetails).toContainText("Triage actions");
+  await englishDetails.locator(".activity-triage-section summary").click();
   await expect(englishDetails).toContainText("Create follow-up task");
   await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
 });
