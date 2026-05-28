@@ -21,6 +21,13 @@ import type {
   ChannelMessageListResponse,
   ChannelMessageMutationResponse,
   ChannelMutationResponse,
+  ChannelWorkflowListResponse,
+  ChannelWorkflowMutationResponse,
+  ChannelWorkflowStatus,
+  ChannelWorkflowStepListResponse,
+  ChannelWorkflowStepMutationResponse,
+  ChannelWorkflowStepStartResponse,
+  ChannelWorkflowStepStatus,
   CreateChannelAttachmentRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
@@ -28,6 +35,9 @@ import type {
   CreateChannelLinkPreviewRequest,
   CreateChannelMessageRequest,
   CreateChannelRequest,
+  CreateChannelWorkflowFromHandoffRequest,
+  CreateChannelWorkflowRequest,
+  CreateChannelWorkflowStepRequest,
   CreateMediaJobRequest,
   CreateTaskRequest,
   DaemonHealthResponse,
@@ -59,8 +69,11 @@ import type {
   UpdateChannelContextSummaryRequest,
   UpdateChannelDecisionRequest,
   UpdateChannelHandoffRequest,
+  UpdateChannelWorkflowRequest,
+  UpdateChannelWorkflowStepRequest,
   UpdateChannelRequest,
   UpdateTaskRequest,
+  StartChannelWorkflowStepRequest,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "./errors.js";
 
@@ -286,6 +299,82 @@ export class LingDaemonClient {
     input: UpdateChannelContextSummaryRequest,
   ): Promise<ChannelContextSummaryMutationResponse> {
     return this.patch(`/context-summaries/${encodeURIComponent(contextSummaryId)}`, { cwd }, input);
+  }
+
+  async listChannelWorkflows(
+    cwd: string,
+    channelId: string,
+    options: { readonly status?: ChannelWorkflowStatus; readonly limit?: number } = {},
+  ): Promise<ChannelWorkflowListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/workflows`, {
+      cwd,
+      status: options.status,
+      limit: options.limit,
+    });
+  }
+
+  async createChannelWorkflow(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelWorkflowRequest,
+  ): Promise<ChannelWorkflowMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/workflows`, { cwd }, input);
+  }
+
+  async getChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowMutationResponse> {
+    return this.get(`/workflows/${encodeURIComponent(workflowId)}`, { cwd });
+  }
+
+  async updateChannelWorkflow(
+    cwd: string,
+    workflowId: string,
+    input: UpdateChannelWorkflowRequest,
+  ): Promise<ChannelWorkflowMutationResponse> {
+    return this.patch(`/workflows/${encodeURIComponent(workflowId)}`, { cwd }, input);
+  }
+
+  async createChannelWorkflowFromHandoff(
+    cwd: string,
+    handoffId: string,
+    input: CreateChannelWorkflowFromHandoffRequest,
+  ): Promise<ChannelWorkflowMutationResponse> {
+    return this.post(`/handoffs/${encodeURIComponent(handoffId)}/workflow`, { cwd }, input);
+  }
+
+  async listChannelWorkflowSteps(
+    cwd: string,
+    workflowId: string,
+    options: { readonly status?: ChannelWorkflowStepStatus; readonly limit?: number } = {},
+  ): Promise<ChannelWorkflowStepListResponse> {
+    return this.get(`/workflows/${encodeURIComponent(workflowId)}/steps`, {
+      cwd,
+      status: options.status,
+      limit: options.limit,
+    });
+  }
+
+  async createChannelWorkflowStep(
+    cwd: string,
+    workflowId: string,
+    input: CreateChannelWorkflowStepRequest,
+  ): Promise<ChannelWorkflowStepMutationResponse> {
+    return this.post(`/workflows/${encodeURIComponent(workflowId)}/steps`, { cwd }, input);
+  }
+
+  async updateChannelWorkflowStep(
+    cwd: string,
+    workflowStepId: string,
+    input: UpdateChannelWorkflowStepRequest,
+  ): Promise<ChannelWorkflowStepMutationResponse> {
+    return this.patch(`/workflow-steps/${encodeURIComponent(workflowStepId)}`, { cwd }, input);
+  }
+
+  async startChannelWorkflowStep(
+    cwd: string,
+    workflowStepId: string,
+    input: StartChannelWorkflowStepRequest,
+  ): Promise<ChannelWorkflowStepStartResponse> {
+    return this.post(`/workflow-steps/${encodeURIComponent(workflowStepId)}/start`, { cwd }, input);
   }
 
   async listTasks(cwd: string, options: ListTasksRequest = {}): Promise<TaskListResponse> {

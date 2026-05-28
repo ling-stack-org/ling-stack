@@ -24,12 +24,20 @@ import type {
   ChannelMessageListResponse,
   ChannelMessageMutationResponse,
   ChannelMutationResponse,
+  ChannelWorkflowListResponse,
+  ChannelWorkflowMutationResponse,
+  ChannelWorkflowStepListResponse,
+  ChannelWorkflowStepMutationResponse,
+  ChannelWorkflowStepStartResponse,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
   CreateChannelHandoffRequest,
   CreateChannelLinkPreviewRequest,
   CreateChannelMessageRequest,
   CreateChannelRequest,
+  CreateChannelWorkflowFromHandoffRequest,
+  CreateChannelWorkflowRequest,
+  CreateChannelWorkflowStepRequest,
   CreateMediaJobRequest,
   DaemonHealthResponse,
   MediaJobFormState,
@@ -63,8 +71,11 @@ import type {
   UpdateChannelContextSummaryRequest,
   UpdateChannelDecisionRequest,
   UpdateChannelHandoffRequest,
+  UpdateChannelWorkflowRequest,
+  UpdateChannelWorkflowStepRequest,
   UpdateChannelRequest,
   UpdateTaskRequest,
+  StartChannelWorkflowStepRequest,
 } from "./types.js";
 
 export const daemonBaseUrl = daemonBaseUrlFromEnv(import.meta.env as Record<string, string | undefined>);
@@ -235,6 +246,62 @@ export async function updateChannelContextSummary(
   input: UpdateChannelContextSummaryRequest,
 ): Promise<ChannelContextSummaryMutationResponse> {
   return daemonClient.updateChannelContextSummary(cwd, contextSummaryId, input);
+}
+
+export async function listChannelWorkflows(cwd: string, channelId: string): Promise<ChannelWorkflowListResponse> {
+  return daemonClient.listChannelWorkflows(cwd, channelId);
+}
+
+export async function createChannelWorkflow(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelWorkflowRequest,
+): Promise<ChannelWorkflowMutationResponse> {
+  return daemonClient.createChannelWorkflow(cwd, channelId, input);
+}
+
+export async function updateChannelWorkflow(
+  cwd: string,
+  workflowId: string,
+  input: UpdateChannelWorkflowRequest,
+): Promise<ChannelWorkflowMutationResponse> {
+  return daemonClient.updateChannelWorkflow(cwd, workflowId, input);
+}
+
+export async function createChannelWorkflowFromHandoff(
+  cwd: string,
+  handoffId: string,
+  input: CreateChannelWorkflowFromHandoffRequest,
+): Promise<ChannelWorkflowMutationResponse> {
+  return daemonClient.createChannelWorkflowFromHandoff(cwd, handoffId, input);
+}
+
+export async function listChannelWorkflowSteps(cwd: string, workflowId: string): Promise<ChannelWorkflowStepListResponse> {
+  return daemonClient.listChannelWorkflowSteps(cwd, workflowId);
+}
+
+export async function createChannelWorkflowStep(
+  cwd: string,
+  workflowId: string,
+  input: CreateChannelWorkflowStepRequest,
+): Promise<ChannelWorkflowStepMutationResponse> {
+  return daemonClient.createChannelWorkflowStep(cwd, workflowId, input);
+}
+
+export async function updateChannelWorkflowStep(
+  cwd: string,
+  workflowStepId: string,
+  input: UpdateChannelWorkflowStepRequest,
+): Promise<ChannelWorkflowStepMutationResponse> {
+  return daemonClient.updateChannelWorkflowStep(cwd, workflowStepId, input);
+}
+
+export async function startChannelWorkflowStep(
+  cwd: string,
+  workflowStepId: string,
+  input: StartChannelWorkflowStepRequest,
+): Promise<ChannelWorkflowStepStartResponse> {
+  return daemonClient.startChannelWorkflowStep(cwd, workflowStepId, input);
 }
 
 export async function listTasks(cwd: string, channelId?: string): Promise<TaskListResponse> {

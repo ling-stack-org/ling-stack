@@ -1506,8 +1506,8 @@ Current MVP implementation status:
 - Web now exposes `Activity`, `Tasks`, and `Files` tabs plus discussion-to-task conversion,
 - v1.1 now persists Channel Brief, Decision Log, Handoff, and Context Summary records,
   with Activity and inspector views synthesizing those protocol items,
-- v1.2 is planned in `docs/design/channel-workspace-v1.2.md` to let handoffs create
-  explicit, user-started workflow/step records,
+- v1.2 now lets handoffs create explicit, user-started workflow/step records with
+  task/run start, blocker visibility, and Runtime inspector queue tracking,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1552,11 +1552,13 @@ Current MVP implementation status:
 - [x] Add handoff activity item shape.
 - [x] Add handoff panel showing from/to participant, reason, expected output, and status.
 - [x] Add manual handoff action from task/thread.
-- [ ] Add `Start workflow` action from a handoff.
-- [ ] Persist handoff-driven `ChannelWorkflow` and `ChannelWorkflowStep` records.
-- [ ] Route workflow step start through task/run coordinator and `workflow_step` leases.
+- [x] Add `Start workflow` action from a handoff.
+- [x] Persist handoff-driven `ChannelWorkflow` and `ChannelWorkflowStep` records.
+- [x] Route workflow step start through task/run coordinator and `workflow_step` leases.
 - [ ] Add conflict record UI for contradictory AI recommendations.
 - [x] Add e2e coverage for handoff creation and completion without task status mutation.
+- [x] Add e2e coverage for workflow queue, step task creation, blocked step display,
+  and start-and-run workflow behavior.
 
 ### Phase 5: Attachment MVP
 

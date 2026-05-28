@@ -222,6 +222,136 @@ test("sqlite channel collaboration protocol persists brief, decisions, handoffs,
   }
 });
 
+test("sqlite handoff workflows persist steps, transitions, and workflow-step leases", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflows-"));
+  const now = "2026-05-28T03:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
+    const task = store.createTask({ channelId: channel.id, title: "Implement workflows", prompt: "Build v1.2." }, now);
+    const handoff = store.createChannelHandoff(
+      {
+        channelId: channel.id,
+        sourceTaskId: task.id,
+        fromParticipantId: "tian",
+        fromParticipantLabel: "Tian",
+        toParticipantId: "engineer",
+        toParticipantLabel: "Engineer",
+        reason: "Need implementation",
+        requiredInput: "v1.2 plan",
+        expectedOutput: "Patch",
+        createdBy: "local-user",
+      },
+      now,
+    );
+    const summary = store.createChannelContextSummary(
+      {
+        channelId: channel.id,
+        targetType: "task",
+        targetId: task.id,
+        summary: "Start from the handoff and create a workflow step.",
+        authorType: "local-user",
+      },
+      now,
+    );
+
+    const workflow = store.createChannelWorkflow(
+      {
+        channelId: channel.id,
+        sourceHandoffId: handoff.id,
+        title: "Engineer handoff",
+        objective: "Complete the implementation handoff.",
+        createdBy: "local-user",
+      },
+      now,
+    );
+    const step = store.createChannelWorkflowStep(
+      {
+        workflowId: workflow.id,
+        sourceHandoffId: handoff.id,
+        contextSummaryId: summary.id,
+        title: "Implement",
+        prompt: "Create the patch.",
+        toParticipantId: "engineer",
+        toParticipantLabel: "Engineer",
+      },
+      now,
+    );
+
+    assert.equal(workflow.status, "draft");
+    assert.equal(step.status, "queued");
+    assert.deepEqual(store.listChannelWorkflows({ channelId: channel.id }).map((item) => item.id), [workflow.id]);
+    assert.deepEqual(store.listChannelWorkflowSteps({ workflowId: workflow.id }).map((item) => item.id), [step.id]);
+
+    assert.deepEqual(store.transitionChannelWorkflowStatus({
+      workflowId: workflow.id,
+      expectedStatus: "draft",
+      event: "prepare",
+      actor: "system",
+      now: "2026-05-28T03:01:00.000Z",
+    }), { ok: true, from: "draft", to: "ready" });
+    assert.deepEqual(store.transitionChannelWorkflowStatus({
+      workflowId: workflow.id,
+      expectedStatus: "ready",
+      event: "start",
+      actor: "system",
+      now: "2026-05-28T03:02:00.000Z",
+    }), { ok: true, from: "ready", to: "running" });
+
+    const firstLease = store.acquireResourceLease({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      resourceType: "workflow_step",
+      resourceKey: step.id,
+      ownerType: "workflow_step",
+      ownerId: step.id,
+      acquiredAt: "2026-05-28T03:02:30.000Z",
+      expiresAt: "2026-05-28T04:02:30.000Z",
+    });
+    assert.ok(firstLease);
+    assert.equal(store.acquireResourceLease({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      resourceType: "workflow_step",
+      resourceKey: step.id,
+      ownerType: "workflow_step",
+      ownerId: "other-step",
+      acquiredAt: "2026-05-28T03:02:31.000Z",
+      expiresAt: "2026-05-28T04:02:31.000Z",
+    }), undefined);
+
+    assert.deepEqual(store.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "queued",
+      event: "claim",
+      actor: "system",
+      now: "2026-05-28T03:03:00.000Z",
+    }), { ok: true, from: "queued", to: "claimed" });
+    assert.deepEqual(store.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "claimed",
+      event: "start",
+      actor: "system",
+      now: "2026-05-28T03:04:00.000Z",
+      taskId: task.id,
+    }), { ok: true, from: "claimed", to: "running" });
+    assert.deepEqual(store.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "running",
+      event: "succeed",
+      actor: "system",
+      now: "2026-05-28T03:05:00.000Z",
+      taskId: task.id,
+      resultSummary: "Task created.",
+    }), { ok: true, from: "running", to: "succeeded" });
+    assert.equal(store.listResourceLeases({ status: "active", resourceType: "workflow_step" }).length, 0);
+
+    const events = store.listStateTransitionEvents({ entityType: "workflow_step", entityId: step.id });
+    assert.deepEqual(events.map((event) => event.toStatus).sort(), ["claimed", "running", "succeeded"]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task CAS claim and idempotency allow only one real transition", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-task-cas-"));
   const now = "2026-05-26T00:00:00.000Z";
@@ -492,6 +622,46 @@ test("sqlite channel protocol migration self-heals missing protocol tables", asy
         now,
       );
       assert.equal(brief.objective, "Self heal protocol tables");
+    } finally {
+      store.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite channel workflow migration self-heals missing workflow tables", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-heal-"));
+  const now = "2026-05-28T04:00:00.000Z";
+  const initialStore = createSqliteRunStore(cwd);
+  try {
+    const databasePath = initialStore.paths.databasePath;
+    initialStore.close();
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec(`
+        DROP TABLE channel_workflow_steps;
+        DROP TABLE channel_workflows;
+      `);
+      assert.equal(Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'channel_workflows'").get()), false);
+    } finally {
+      database.close();
+    }
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
+      const workflow = store.createChannelWorkflow(
+        {
+          channelId: channel.id,
+          title: "Self heal workflow tables",
+          objective: "Ensure old DBs can write v1.2 state.",
+          createdBy: "local-user",
+        },
+        now,
+      );
+      assert.equal(workflow.title, "Self heal workflow tables");
     } finally {
       store.close();
     }

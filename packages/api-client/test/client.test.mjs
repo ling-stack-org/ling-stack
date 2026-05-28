@@ -58,6 +58,8 @@ test("builds URL query parameters for list endpoints", async () => {
   await client.listChannelDecisions("/repo", "channel 1", { status: "active", limit: 18 });
   await client.listChannelHandoffs("/repo", "channel 1", { status: "proposed", limit: 19 });
   await client.listChannelContextSummaries("/repo", "channel 1", { targetType: "task", targetId: "task 1", limit: 20 });
+  await client.listChannelWorkflows("/repo", "channel 1", { status: "running", limit: 21 });
+  await client.listChannelWorkflowSteps("/repo", "workflow 1", { status: "queued", limit: 22 });
   await client.listTasks("/repo", { channelId: "ch 1", status: "todo", limit: 5 });
   await client.listApprovals("/repo", { status: "pending", runId: "run 1", mediaJobId: "media 1", limit: 7 });
   await client.listStateTransitions("/repo", { entityType: "task", entityId: "task 1", limit: 9 });
@@ -72,11 +74,13 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[5].url, "http://daemon.test/channels/channel%201/decisions?cwd=%2Frepo&status=active&limit=18");
   assert.equal(mock.calls[6].url, "http://daemon.test/channels/channel%201/handoffs?cwd=%2Frepo&status=proposed&limit=19");
   assert.equal(mock.calls[7].url, "http://daemon.test/channels/channel%201/context-summaries?cwd=%2Frepo&targetType=task&targetId=task+1&limit=20");
-  assert.equal(mock.calls[8].url, "http://daemon.test/tasks?cwd=%2Frepo&channelId=ch+1&status=todo&limit=5");
-  assert.equal(mock.calls[9].url, "http://daemon.test/approvals?cwd=%2Frepo&status=pending&runId=run+1&mediaJobId=media+1&limit=7");
-  assert.equal(mock.calls[10].url, "http://daemon.test/state-transitions?cwd=%2Frepo&entityType=task&entityId=task+1&limit=9");
-  assert.equal(mock.calls[11].url, "http://daemon.test/runtime/leases?cwd=%2Frepo&status=active&ownerId=run+1&limit=11");
-  assert.equal(mock.calls[12].url, "http://daemon.test/secrets/status?ref=keychain%3Aprovider+1&purpose=provider_api_key");
+  assert.equal(mock.calls[8].url, "http://daemon.test/channels/channel%201/workflows?cwd=%2Frepo&status=running&limit=21");
+  assert.equal(mock.calls[9].url, "http://daemon.test/workflows/workflow%201/steps?cwd=%2Frepo&status=queued&limit=22");
+  assert.equal(mock.calls[10].url, "http://daemon.test/tasks?cwd=%2Frepo&channelId=ch+1&status=todo&limit=5");
+  assert.equal(mock.calls[11].url, "http://daemon.test/approvals?cwd=%2Frepo&status=pending&runId=run+1&mediaJobId=media+1&limit=7");
+  assert.equal(mock.calls[12].url, "http://daemon.test/state-transitions?cwd=%2Frepo&entityType=task&entityId=task+1&limit=9");
+  assert.equal(mock.calls[13].url, "http://daemon.test/runtime/leases?cwd=%2Frepo&status=active&ownerId=run+1&limit=11");
+  assert.equal(mock.calls[14].url, "http://daemon.test/secrets/status?ref=keychain%3Aprovider+1&purpose=provider_api_key");
 });
 
 test("sends mutation bodies for channel, task, provider, policy, media, and approval requests", async () => {
@@ -143,6 +147,22 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
     authorType: "local-user",
   });
   await client.updateChannelContextSummary("/repo", "summary 1", { openQuestions: ["None"] });
+  await client.createChannelWorkflow("/repo", "channel 1", {
+    sourceHandoffId: "handoff 1",
+    title: "Engineer handoff",
+    objective: "Ship workflow",
+    createdBy: "local-user",
+  });
+  await client.updateChannelWorkflow("/repo", "workflow 1", { status: "running" });
+  await client.createChannelWorkflowFromHandoff("/repo", "handoff 1", { createdBy: "local-user" });
+  await client.createChannelWorkflowStep("/repo", "workflow 1", {
+    title: "Implement",
+    prompt: "Build the patch",
+    toParticipantId: "engineer",
+    toParticipantLabel: "Engineer",
+  });
+  await client.updateChannelWorkflowStep("/repo", "step 1", { status: "skipped", resultSummary: "Not needed" });
+  await client.startChannelWorkflowStep("/repo", "step 1", { mode: "create_task", taskTitle: "Implement" });
   await client.updateTask("/repo", "task 1", { title: "T", prompt: "P", status: "review" });
   await client.updateProvider("/repo", "provider 1", {
     kind: "openai-compatible",
@@ -204,14 +224,26 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
   assert.deepEqual(JSON.parse(mock.calls[10].body).decisionIds, ["decision 1"]);
   assert.equal(mock.calls[11].url, "http://daemon.test/context-summaries/summary%201?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[11].body), { openQuestions: ["None"] });
-  assert.equal(mock.calls[12].method, "PATCH");
-  assert.equal(mock.calls[12].url, "http://daemon.test/tasks/task%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[12].body), { title: "T", prompt: "P", status: "review" });
-  assert.equal(mock.calls[13].url, "http://daemon.test/providers/provider%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[14].body).allowedWritePaths, ["/repo"]);
-  assert.deepEqual(JSON.parse(mock.calls[15].body), { providerPresetId: "media", operation: "image_generate", prompt: "draw", input: { size: "1024x1024" } });
-  assert.deepEqual(JSON.parse(mock.calls[16].body), { reason: "looks good" });
-  assert.deepEqual(JSON.parse(mock.calls[17].body), {});
+  assert.equal(mock.calls[12].url, "http://daemon.test/channels/channel%201/workflows?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[12].body).sourceHandoffId, "handoff 1");
+  assert.equal(mock.calls[13].url, "http://daemon.test/workflows/workflow%201?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[13].body), { status: "running" });
+  assert.equal(mock.calls[14].url, "http://daemon.test/handoffs/handoff%201/workflow?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[14].body), { createdBy: "local-user" });
+  assert.equal(mock.calls[15].url, "http://daemon.test/workflows/workflow%201/steps?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[15].body).toParticipantId, "engineer");
+  assert.equal(mock.calls[16].url, "http://daemon.test/workflow-steps/step%201?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[16].body), { status: "skipped", resultSummary: "Not needed" });
+  assert.equal(mock.calls[17].url, "http://daemon.test/workflow-steps/step%201/start?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[17].body), { mode: "create_task", taskTitle: "Implement" });
+  assert.equal(mock.calls[18].method, "PATCH");
+  assert.equal(mock.calls[18].url, "http://daemon.test/tasks/task%201?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[18].body), { title: "T", prompt: "P", status: "review" });
+  assert.equal(mock.calls[19].url, "http://daemon.test/providers/provider%201?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[20].body).allowedWritePaths, ["/repo"]);
+  assert.deepEqual(JSON.parse(mock.calls[21].body), { providerPresetId: "media", operation: "image_generate", prompt: "draw", input: { size: "1024x1024" } });
+  assert.deepEqual(JSON.parse(mock.calls[22].body), { reason: "looks good" });
+  assert.deepEqual(JSON.parse(mock.calls[23].body), {});
 });
 
 test("uses expected routes for delete, cancel, check, and artifact URLs", async () => {

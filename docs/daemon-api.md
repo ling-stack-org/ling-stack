@@ -285,6 +285,57 @@ message thread id in the same channel.
 All source ids are channel-scoped. Unknown or cross-channel source references return a
 displayable `400` error. Missing channels return `404 channel_not_found`.
 
+## Channel Handoff Workflows
+
+v1.2 upgrades handoffs into explicit, user-started workflow records. Workflow mutations
+record coordination state and never bypass task/run state machines, provider preflight,
+approval policy, or runtime leases.
+
+```http
+GET /channels/:id/workflows?cwd=/path/to/project&status=running&limit=100
+POST /channels/:id/workflows?cwd=/path/to/project
+GET /workflows/:id?cwd=/path/to/project
+PATCH /workflows/:id?cwd=/path/to/project
+POST /handoffs/:id/workflow?cwd=/path/to/project
+
+GET /workflows/:id/steps?cwd=/path/to/project&status=queued&limit=100
+POST /workflows/:id/steps?cwd=/path/to/project
+PATCH /workflow-steps/:id?cwd=/path/to/project
+POST /workflow-steps/:id/start?cwd=/path/to/project
+```
+
+Workflow statuses are `draft`, `ready`, `running`, `waiting_for_approval`, `blocked`,
+`succeeded`, `failed`, and `cancelled`. Step statuses are `queued`, `claimed`,
+`running`, `waiting_for_approval`, `blocked`, `succeeded`, `failed`, `skipped`, and
+`cancelled`.
+
+`POST /handoffs/:id/workflow` creates a draft `ChannelWorkflow` and first queued
+`ChannelWorkflowStep` from the handoff. It does not start execution.
+
+`POST /workflow-steps/:id/start` accepts:
+
+```json
+{
+  "mode": "create_task",
+  "providerPresetId": "provider_...",
+  "assigneeTeammateId": "engineer",
+  "idempotencyKey": "client-generated-key"
+}
+```
+
+`create_task` creates a channel task from the step context, links it to the step, marks
+the step succeeded, and returns JSON with `workflow`, `workflowStep`, and `task`.
+
+`create_and_run_task` creates the task and then delegates to the existing run
+coordinator. When a run starts, the response is the same POST/SSE stream used by
+`POST /runs`; the step is updated with the linked task/run after the coordinator
+finishes. If provider readiness, channel status, or runtime state blocks execution before
+a run starts, the route returns JSON with `workflow`, `workflowStep`, and `blocker`.
+
+Starting a step acquires a `workflow_step` lease. Duplicate starts return
+`409 resource_conflict` while the lease is active. Step `skip` and `cancel` only mutate
+workflow-step state; they do not mark linked task/run records terminal.
+
 ### Run Persisted Task
 
 ```http

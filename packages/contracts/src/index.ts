@@ -564,6 +564,150 @@ export interface ChannelContextSummaryMutationResponse {
   readonly contextSummary: ChannelContextSummary;
 }
 
+export type ChannelWorkflowStatus =
+  | "draft"
+  | "ready"
+  | "running"
+  | "waiting_for_approval"
+  | "blocked"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export type ChannelWorkflowStepStatus =
+  | "queued"
+  | "claimed"
+  | "running"
+  | "waiting_for_approval"
+  | "blocked"
+  | "succeeded"
+  | "failed"
+  | "skipped"
+  | "cancelled";
+
+export type ChannelWorkflowStepStartMode = "create_task" | "create_and_run_task";
+
+export interface ChannelWorkflow {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceHandoffId?: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly status: ChannelWorkflowStatus;
+  readonly createdBy: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ChannelWorkflowStep {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly workflowId: string;
+  readonly sourceHandoffId?: string;
+  readonly contextSummaryId?: string;
+  readonly taskId?: string;
+  readonly runId?: string;
+  readonly position: number;
+  readonly title: string;
+  readonly prompt: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly status: ChannelWorkflowStepStatus;
+  readonly blocker?: string;
+  readonly resultSummary?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelWorkflowRequest {
+  readonly sourceHandoffId?: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly status?: ChannelWorkflowStatus;
+  readonly createdBy: string;
+}
+
+export interface CreateChannelWorkflowFromHandoffRequest {
+  readonly title?: string;
+  readonly objective?: string;
+  readonly contextSummaryId?: string;
+  readonly createdBy: string;
+}
+
+export interface UpdateChannelWorkflowRequest {
+  readonly title?: string;
+  readonly objective?: string;
+  readonly status?: ChannelWorkflowStatus;
+}
+
+export interface CreateChannelWorkflowStepRequest {
+  readonly sourceHandoffId?: string;
+  readonly contextSummaryId?: string;
+  readonly position?: number;
+  readonly title: string;
+  readonly prompt: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly status?: ChannelWorkflowStepStatus;
+}
+
+export interface UpdateChannelWorkflowStepRequest {
+  readonly sourceHandoffId?: string | null;
+  readonly contextSummaryId?: string | null;
+  readonly taskId?: string | null;
+  readonly runId?: string | null;
+  readonly position?: number;
+  readonly title?: string;
+  readonly prompt?: string;
+  readonly toParticipantId?: string;
+  readonly toParticipantLabel?: string;
+  readonly status?: ChannelWorkflowStepStatus;
+  readonly blocker?: string | null;
+  readonly resultSummary?: string | null;
+}
+
+export interface StartChannelWorkflowStepRequest {
+  readonly mode: ChannelWorkflowStepStartMode;
+  readonly taskTitle?: string;
+  readonly taskPrompt?: string;
+  readonly providerPresetId?: string;
+  readonly assigneeTeammateId?: string;
+  readonly idempotencyKey?: string;
+  readonly skipProviderPreflight?: boolean;
+}
+
+export interface ChannelWorkflowListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly workflows: readonly ChannelWorkflow[];
+}
+
+export interface ChannelWorkflowMutationResponse {
+  readonly workflow: ChannelWorkflow;
+  readonly workflowStep?: ChannelWorkflowStep;
+}
+
+export interface ChannelWorkflowStepListResponse {
+  readonly cwd: string;
+  readonly workflowId: string;
+  readonly workflowSteps: readonly ChannelWorkflowStep[];
+}
+
+export interface ChannelWorkflowStepMutationResponse {
+  readonly workflowStep: ChannelWorkflowStep;
+  readonly workflow?: ChannelWorkflow;
+}
+
+export interface ChannelWorkflowStepStartResponse {
+  readonly workflowStep: ChannelWorkflowStep;
+  readonly workflow?: ChannelWorkflow;
+  readonly task?: Task;
+  readonly run?: RunSession;
+  readonly blocker?: string;
+}
+
 export type ResourceType = "channel" | "bound_path" | "workspace" | "provider" | "task" | "workflow_step";
 
 export type ResourceLeaseStatus = "active" | "released" | "expired";

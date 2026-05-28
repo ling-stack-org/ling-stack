@@ -830,6 +830,63 @@ code,
   gap: 4px;
 }
 
+.workflow-queue-card {
+  align-items: stretch;
+}
+
+.workflow-queue-head,
+.workflow-step-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-queue-head > span,
+.workflow-step-head > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workflow-step-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workflow-step-card.compact {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-panel);
+}
+
+.context-packet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.context-packet span,
+.context-packet code {
+  max-width: 100%;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.context-packet.muted span,
+.context-packet.muted code {
+  background: transparent;
+}
+
 .protocol-row strong {
   color: var(--text-strong);
   font-size: 13px;

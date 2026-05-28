@@ -24,6 +24,13 @@ Implemented v1.1 behavior: the channel inspector adds `Brief`, `Decisions`, `Han
 context summary records. These protocol records are manual and auditable; they do not
 start runs, call AI providers, ingest attachments/links, or mutate task/run state.
 
+Implemented v1.2 behavior: handoff cards can create durable workflow/step records, the
+Runtime inspector shows a Workflow queue with context packet metadata, blockers, linked
+task/run ids, and step controls, Activity includes workflow/step items, and Task detail
+shows the source workflow/step for tasks created from a workflow step. `Start step`
+creates a task for review, while `Start + run` enters the existing task/run stream and
+approval/runtime boundaries.
+
 ## Goal
 
 Users should be able to run and inspect Ling Stack without `curl`.

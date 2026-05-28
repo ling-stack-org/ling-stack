@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned v1.2 slice after the channel workspace MVP and v1.1 protocol records.
+Implemented v1.2 slice after the channel workspace MVP and v1.1 protocol records.
 
 This document is scoped to handoff-driven workflows. The broader channel source of
 truth remains [Channel Workspace Design](channel-workspace.md).
@@ -215,7 +215,8 @@ contents or webpage bodies.
 - Step actions: `Start step`, `Skip`, `Cancel`; blocked steps can be retried after user
   fixes the blocker.
 - Activity synthesizes workflow and step events alongside messages, decisions, handoffs,
-  context summaries, tasks, runs, and approvals.
+  and context summaries. Tasks, runs, approvals, and artifacts remain available through
+  the existing task/run surfaces.
 - Task detail shows source workflow/step when present.
 
 Keep existing channel selectors stable, including `.channel-options`,
@@ -259,9 +260,23 @@ Keep existing channel selectors stable, including `.channel-options`,
 
 ### Phase 5: Docs And Tracker
 
-- Update `docs/daemon-api.md`.
-- Update `docs/design/web-ui-v0.1.md` if user-visible Web behavior changes.
-- Update `docs/design/channel-workspace.md` tracker.
+Implemented notes:
+
+- SQLite persists `channel_workflows` and `channel_workflow_steps` with migration
+  self-healing for older workspaces.
+- `POST /handoffs/:id/workflow` creates a draft workflow and first queued step.
+- `POST /workflow-steps/:id/start` supports `create_task` with JSON response and
+  `create_and_run_task` through the existing SSE run coordinator.
+- Runtime inspector renders the workflow queue, context packet metadata, blockers,
+  linked task/run ids, and step controls.
+- Task detail displays the source workflow/step when a task was created by a workflow
+  step.
+- v1.2 keeps attachment/link content out of AI context; only visible metadata appears
+  in the context packet.
+
+- [x] Update `docs/daemon-api.md`.
+- [x] Update `docs/design/web-ui-v0.1.md` for user-visible Web behavior.
+- [x] Update `docs/design/channel-workspace.md` tracker.
 
 ## Test Plan
 

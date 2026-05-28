@@ -25,6 +25,7 @@ import {
   createChannelHandoff,
   createChannelLinkPreview,
   createChannelMessage,
+  createChannelWorkflowFromHandoff,
   createMediaJob,
   createProvider,
   createTask,
@@ -49,6 +50,8 @@ import {
   listChannelHandoffs,
   listChannelLinkPreviews,
   listChannelMessages,
+  listChannelWorkflows,
+  listChannelWorkflowSteps,
   listApprovals,
   listMediaJobs,
   listProviders,
@@ -57,6 +60,7 @@ import {
   listStateTransitions,
   listTasks,
   runMediaJob,
+  startChannelWorkflowStep,
   uploadChannelAttachment,
   updateChannel,
   updateApprovalPolicy,
@@ -64,6 +68,7 @@ import {
   updateChannelContextSummary,
   updateChannelDecision,
   updateChannelHandoff,
+  updateChannelWorkflowStep,
   updateTask,
   updateTaskStatus,
   updateProvider,
@@ -84,6 +89,9 @@ import type {
   ChannelHandoffStatus,
   ChannelLinkPreview,
   ChannelMessage,
+  ChannelWorkflow,
+  ChannelWorkflowStep,
+  ChannelWorkflowStepStartMode,
   MediaJob,
   MediaJobFormState,
   ProviderCheckResult,
@@ -256,9 +264,12 @@ export function AppShell(): JSX.Element {
   const [channelDecisions, setChannelDecisions] = useState<readonly ChannelDecision[]>([]);
   const [channelHandoffs, setChannelHandoffs] = useState<readonly ChannelHandoff[]>([]);
   const [channelContextSummaries, setChannelContextSummaries] = useState<readonly ChannelContextSummary[]>([]);
+  const [channelWorkflows, setChannelWorkflows] = useState<readonly ChannelWorkflow[]>([]);
+  const [channelWorkflowSteps, setChannelWorkflowSteps] = useState<readonly ChannelWorkflowStep[]>([]);
   const [channelMessagesLoading, setChannelMessagesLoading] = useState(false);
   const [channelFilesLoading, setChannelFilesLoading] = useState(false);
   const [channelProtocolLoading, setChannelProtocolLoading] = useState(false);
+  const [runningWorkflowStepId, setRunningWorkflowStepId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
@@ -479,6 +490,8 @@ export function AppShell(): JSX.Element {
       setChannelDecisions([]);
       setChannelHandoffs([]);
       setChannelContextSummaries([]);
+      setChannelWorkflows([]);
+      setChannelWorkflowSteps([]);
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
@@ -601,6 +614,15 @@ export function AppShell(): JSX.Element {
     loadCwd: string,
     afterRunLoaded?: (runId: string) => Promise<void>,
   ): Promise<void> {
+    await streamRunRequest(`${daemonBaseUrl}/runs`, requestBody, loadCwd, afterRunLoaded);
+  }
+
+  async function streamRunRequest(
+    url: string,
+    requestBody: unknown,
+    loadCwd: string,
+    afterRunLoaded?: (runId: string) => Promise<void>,
+  ): Promise<void> {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -614,7 +636,7 @@ export function AppShell(): JSX.Element {
     try {
       let streamedRunId = "";
       await streamRun(
-        `${daemonBaseUrl}/runs`,
+        url,
         requestBody,
         (message) => {
           if (message.kind === "ready") {
@@ -944,27 +966,41 @@ export function AppShell(): JSX.Element {
       setChannelDecisions([]);
       setChannelHandoffs([]);
       setChannelContextSummaries([]);
+      setChannelWorkflows([]);
+      setChannelWorkflowSteps([]);
       return;
     }
 
     setChannelProtocolLoading(true);
     try {
       setErrorMessage("");
-      const [briefResponse, decisionsResponse, handoffsResponse, summariesResponse] = await Promise.all([
+      const [briefResponse, decisionsResponse, handoffsResponse, summariesResponse, workflowsResponse] = await Promise.all([
         getChannelBrief(form.cwd.trim(), channelId),
         listChannelDecisions(form.cwd.trim(), channelId),
         listChannelHandoffs(form.cwd.trim(), channelId),
         listChannelContextSummaries(form.cwd.trim(), channelId),
+        listChannelWorkflows(form.cwd.trim(), channelId),
       ]);
+      const workflowSteps = await loadWorkflowSteps(form.cwd.trim(), workflowsResponse.workflows);
       setChannelBrief(briefResponse.brief);
       setChannelDecisions(decisionsResponse.decisions);
       setChannelHandoffs(handoffsResponse.handoffs);
       setChannelContextSummaries(summariesResponse.contextSummaries);
+      setChannelWorkflows(workflowsResponse.workflows);
+      setChannelWorkflowSteps(workflowSteps);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setChannelProtocolLoading(false);
     }
+  }
+
+  async function loadWorkflowSteps(cwd: string, workflows: readonly ChannelWorkflow[]): Promise<readonly ChannelWorkflowStep[]> {
+    if (workflows.length === 0) {
+      return [];
+    }
+    const stepResponses = await Promise.all(workflows.map((workflow) => listChannelWorkflowSteps(cwd, workflow.id)));
+    return stepResponses.flatMap((response) => response.workflowSteps);
   }
 
   async function saveChannel(): Promise<void> {
@@ -1336,6 +1372,95 @@ export function AppShell(): JSX.Element {
       setErrorMessage("");
       const response = await updateChannelHandoff(form.cwd.trim(), handoff.id, { status });
       setChannelHandoffs((current) => current.map((item) => item.id === response.handoff.id ? response.handoff : item));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function startWorkflowFromHandoff(handoff: ChannelHandoff): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      const response = await createChannelWorkflowFromHandoff(form.cwd.trim(), handoff.id, {
+        title: `${handoff.reason || "Handoff"} workflow`,
+        objective: handoff.expectedOutput || handoff.requiredInput || handoff.reason,
+        createdBy: "local-user",
+      });
+      setChannelWorkflows((current) => [response.workflow, ...current.filter((item) => item.id !== response.workflow.id)]);
+      const createdStep = response.workflowStep;
+      if (createdStep) {
+        setChannelWorkflowSteps((current) => [createdStep, ...current.filter((item) => item.id !== createdStep.id)]);
+      }
+      await refreshChannelProtocol(selectedChannelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function startWorkflowStepAction(step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+    const workflow = channelWorkflows.find((item) => item.id === step.workflowId);
+    const channel = workflow ? channels.find((item) => item.id === workflow.channelId) : channels.find((item) => item.id === step.channelId);
+    const providerPresetId = taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId || providers.find(providerPreflightReady)?.id;
+    const request = {
+      mode,
+      providerPresetId,
+      assigneeTeammateId: step.toParticipantId,
+    };
+
+    setRunningWorkflowStepId(step.id);
+    try {
+      setErrorMessage("");
+      if (mode === "create_task") {
+        const response = await startChannelWorkflowStep(workspaceCwd, step.id, request);
+        if (response.workflow) {
+          setChannelWorkflows((current) => current.map((item) => item.id === response.workflow?.id ? response.workflow : item));
+        }
+        setChannelWorkflowSteps((current) => current.map((item) => item.id === response.workflowStep.id ? response.workflowStep : item));
+        const createdTask = response.task;
+        if (createdTask) {
+          setSelectedTaskId(createdTask.id);
+          setTasks((current) => [createdTask, ...current.filter((item) => item.id !== createdTask.id)]);
+        }
+        if (response.blocker) {
+          setErrorMessage(response.blocker);
+        }
+        await Promise.all([refreshTasks(step.channelId), refreshChannelProtocol(step.channelId), refreshRuntimeState(workspaceCwd)]);
+        return;
+      }
+
+      const url = `${daemonBaseUrl}/workflow-steps/${encodeURIComponent(step.id)}/start?cwd=${encodeURIComponent(workspaceCwd)}`;
+      await streamRunRequest(url, request, workspaceCwd, async () => {
+        await Promise.all([
+          refreshTasks(step.channelId),
+          refreshChannelProtocol(step.channelId),
+        ]);
+      });
+      await Promise.all([refreshTasks(step.channelId), refreshChannelProtocol(step.channelId), refreshRuntimeState(workspaceCwd)]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRunningWorkflowStepId((current) => current === step.id ? "" : current);
+    }
+  }
+
+  async function updateWorkflowStepStatus(step: ChannelWorkflowStep, status: "skipped" | "cancelled"): Promise<void> {
+    try {
+      setErrorMessage("");
+      const response = await updateChannelWorkflowStep(form.cwd.trim(), step.id, { status });
+      setChannelWorkflowSteps((current) => current.map((item) => item.id === response.workflowStep.id ? response.workflowStep : item));
+      if (response.workflow) {
+        setChannelWorkflows((current) => current.map((item) => item.id === response.workflow?.id ? response.workflow : item));
+      }
+      await refreshChannelProtocol(step.channelId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -1922,6 +2047,8 @@ export function AppShell(): JSX.Element {
             channelDecisions={channelDecisions}
             channelHandoffs={channelHandoffs}
             channelContextSummaries={channelContextSummaries}
+            channelWorkflows={channelWorkflows}
+            channelWorkflowSteps={channelWorkflowSteps}
             selectedTaskId={selectedTaskId}
             providers={providers}
             teammateTemplates={builtinTeammateTemplates}
@@ -1942,6 +2069,7 @@ export function AppShell(): JSX.Element {
             latestStatus={latestStatus}
             isRunning={isRunning}
             activeTaskRunAction={activeTaskRunAction}
+            runningWorkflowStepId={runningWorkflowStepId}
             errorMessage={errorMessage}
             onCwdChange={updateWorkspaceCwd}
             onChannelFormChange={setChannelForm}
@@ -1970,6 +2098,9 @@ export function AppShell(): JSX.Element {
             onCreateHandoffFromMessage={(message) => void createHandoffFromMessage(message)}
             onCreateHandoffFromTask={(task) => void createHandoffFromTask(task)}
             onUpdateHandoffStatus={(handoff, status) => void updateHandoffStatusValue(handoff, status)}
+            onStartWorkflowFromHandoff={(handoff) => void startWorkflowFromHandoff(handoff)}
+            onStartWorkflowStep={(step, mode) => void startWorkflowStepAction(step, mode)}
+            onUpdateWorkflowStepStatus={(step, status) => void updateWorkflowStepStatus(step, status)}
             onCreateTaskWithContextFromMessage={(message) => void createTaskWithContextFromMessage(message)}
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
             attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
