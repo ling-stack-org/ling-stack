@@ -17,16 +17,18 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Search,
   Send,
   SlidersHorizontal,
   SquareTerminal,
   Trash2,
   Workflow,
+  X,
 } from "lucide-react";
 import type { AiTeammateTemplate } from "@ling-stack/core";
 import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
-import { buildChannelActivityItems } from "../../lib/channel-activity.js";
+import { buildChannelActivityItems, type ChannelActivityAttention, type ChannelActivityCategory } from "../../lib/channel-activity.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { effectiveChannelRuntimePolicy } from "../../lib/channels.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
@@ -70,6 +72,8 @@ import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceCo
 
 type TaskFilter = "all" | "queued" | "running" | "review" | "done";
 type ChannelTab = "activity" | "tasks" | "files" | "protocol";
+type ActivityCategoryFilter = "all" | ChannelActivityCategory;
+type ActivityAttentionFilter = "all" | "needs_attention" | "failed" | "pending";
 type ComposerSendState = "idle" | "sending" | "failed";
 type AiReplyState = "idle" | "replying" | "failed";
 type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
@@ -96,6 +100,8 @@ interface TaskCreationNotice {
 
 const taskFilters: readonly TaskFilter[] = ["all", "queued", "running", "review", "done"];
 const channelTabs: readonly ChannelTab[] = ["activity", "tasks", "files", "protocol"];
+const activityCategoryFilters: readonly ActivityCategoryFilter[] = ["all", "message", "work", "approval", "protocol", "runtime"];
+const activityAttentionFilters: readonly Exclude<ActivityAttentionFilter, "all">[] = ["needs_attention", "failed", "pending"];
 
 function channelTabLabel(tab: ChannelTab): string {
   if (tab === "activity") {
@@ -302,6 +308,9 @@ export function WorkspaceClientView({
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
   const [activeTab, setActiveTab] = useState<ChannelTab>("activity");
+  const [activitySearch, setActivitySearch] = useState("");
+  const [activityCategoryFilter, setActivityCategoryFilter] = useState<ActivityCategoryFilter>("all");
+  const [activityAttentionFilter, setActivityAttentionFilter] = useState<ActivityAttentionFilter>("all");
   const [inspectorMode, setInspectorMode] = useState<"brief" | "decisions" | "handoffs" | "runtime">("brief");
   const [briefDraft, setBriefDraft] = useState({
     objective: "",
@@ -391,6 +400,44 @@ export function WorkspaceClientView({
       tasks,
     ],
   );
+  const searchedActivityItems = useMemo(() => {
+    const query = activitySearch.trim().toLowerCase();
+    if (!query) {
+      return activityItems;
+    }
+    return activityItems.filter((item) => item.searchText.includes(query));
+  }, [activityItems, activitySearch]);
+  const filteredActivityItems = useMemo(
+    () =>
+      searchedActivityItems.filter((item) => {
+        const categoryMatches = activityCategoryFilter === "all" || item.category === activityCategoryFilter;
+        const attentionMatches = activityMatchesAttentionFilter(activityAttentionFilter, item.attention);
+        return categoryMatches && attentionMatches;
+      }),
+    [activityAttentionFilter, activityCategoryFilter, searchedActivityItems],
+  );
+  const activityCategoryCounts = useMemo(
+    () =>
+      Object.fromEntries(
+        activityCategoryFilters.map((filter) => [
+          filter,
+          filter === "all"
+            ? searchedActivityItems.length
+            : searchedActivityItems.filter((item) => item.category === filter).length,
+        ]),
+      ) as Record<ActivityCategoryFilter, number>,
+    [searchedActivityItems],
+  );
+  const activityAttentionCounts = useMemo(
+    () =>
+      ({
+        needs_attention: searchedActivityItems.filter((item) => item.attention !== "none").length,
+        failed: searchedActivityItems.filter((item) => item.attention === "failed").length,
+        pending: searchedActivityItems.filter((item) => item.attention === "pending").length,
+      }) satisfies Record<Exclude<ActivityAttentionFilter, "all">, number>,
+    [searchedActivityItems],
+  );
+  const activityFiltersActive = activitySearch.trim().length > 0 || activityCategoryFilter !== "all" || activityAttentionFilter !== "all";
   const channelRunsForFiles = useMemo(
     () => deriveChannelRuns(selectedChannelId, tasks, runs, latestRun),
     [latestRun, runs, selectedChannelId, tasks],
@@ -421,6 +468,9 @@ export function WorkspaceClientView({
     setSendError("");
     setAiReplyState("idle");
     setTaskCreationNotice(undefined);
+    setActivitySearch("");
+    setActivityCategoryFilter("all");
+    setActivityAttentionFilter("all");
   }, [selectedChannelId]);
 
   useEffect(() => {
@@ -993,6 +1043,22 @@ export function WorkspaceClientView({
 
           {activeTab === "activity" ? (
             <div className="activity-shell">
+              <ActivityFilterToolbar
+                search={activitySearch}
+                categoryFilter={activityCategoryFilter}
+                attentionFilter={activityAttentionFilter}
+                categoryCounts={activityCategoryCounts}
+                attentionCounts={activityAttentionCounts}
+                clearDisabled={!activityFiltersActive}
+                onSearchChange={setActivitySearch}
+                onCategoryFilterChange={setActivityCategoryFilter}
+                onAttentionFilterChange={setActivityAttentionFilter}
+                onClear={() => {
+                  setActivitySearch("");
+                  setActivityCategoryFilter("all");
+                  setActivityAttentionFilter("all");
+                }}
+              />
               <div className="message-feed" aria-label={t("Channel message feed")}>
               {channelMessagesLoading || channelProtocolLoading ? (
                 <div className="client-empty-state">
@@ -1006,8 +1072,13 @@ export function WorkspaceClientView({
                   time={t("Now")}
                   body={selectedChannel ? t("Default workspace is ready. This channel is bound to {path}.", { path: selectedChannel.boundPath ?? cwd }) : t("Create a default channel to start the workspace loop.")}
                 />
+              ) : filteredActivityItems.length === 0 ? (
+                <div className="client-empty-state">
+                  <Search />
+                  <span>{t("No activity matches these filters")}</span>
+                </div>
               ) : (
-                activityItems.map((item) => {
+                filteredActivityItems.map((item) => {
                   if (item.kind === "message") {
                     const message = item.record;
                     return (
@@ -2108,6 +2179,77 @@ function MessageBubble({
   );
 }
 
+function ActivityFilterToolbar({
+  search,
+  categoryFilter,
+  attentionFilter,
+  categoryCounts,
+  attentionCounts,
+  clearDisabled,
+  onSearchChange,
+  onCategoryFilterChange,
+  onAttentionFilterChange,
+  onClear,
+}: {
+  readonly search: string;
+  readonly categoryFilter: ActivityCategoryFilter;
+  readonly attentionFilter: ActivityAttentionFilter;
+  readonly categoryCounts: Readonly<Record<ActivityCategoryFilter, number>>;
+  readonly attentionCounts: Readonly<Record<Exclude<ActivityAttentionFilter, "all">, number>>;
+  readonly clearDisabled: boolean;
+  readonly onSearchChange: (value: string) => void;
+  readonly onCategoryFilterChange: (filter: ActivityCategoryFilter) => void;
+  readonly onAttentionFilterChange: (filter: ActivityAttentionFilter) => void;
+  readonly onClear: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="activity-filter-toolbar" aria-label={t("Activity filters")}>
+      <label className="activity-search-field">
+        <Search size={14} />
+        <input
+          aria-label={t("Search activity")}
+          placeholder={t("Search activity")}
+          value={search}
+          onChange={(event) => onSearchChange(event.target.value)}
+        />
+      </label>
+      <div className="activity-filter-group activity-category-filters" aria-label={t("Activity categories")}>
+        {activityCategoryFilters.map((filter) => (
+          <button
+            key={filter}
+            type="button"
+            className={categoryFilter === filter ? "activity-filter-chip active" : "activity-filter-chip"}
+            aria-pressed={categoryFilter === filter}
+            onClick={() => onCategoryFilterChange(filter)}
+          >
+            <span>{t(activityCategoryFilterLabel(filter))}</span>
+            <small>{categoryCounts[filter]}</small>
+          </button>
+        ))}
+      </div>
+      <div className="activity-filter-group activity-attention-filters" aria-label={t("Activity attention filters")}>
+        {activityAttentionFilters.map((filter) => (
+          <button
+            key={filter}
+            type="button"
+            className={attentionFilter === filter ? "activity-filter-chip active attention" : "activity-filter-chip attention"}
+            aria-pressed={attentionFilter === filter}
+            onClick={() => onAttentionFilterChange(attentionFilter === filter ? "all" : filter)}
+          >
+            <span>{t(activityAttentionFilterLabel(filter))}</span>
+            <small>{attentionCounts[filter]}</small>
+          </button>
+        ))}
+      </div>
+      <button className="secondary-button compact-button activity-clear-filter" type="button" onClick={onClear} disabled={clearDisabled}>
+        <X size={13} />
+        {t("Clear")}
+      </button>
+    </div>
+  );
+}
+
 function taskFilterLabel(filter: TaskFilter): string {
   if (filter === "queued") {
     return "Queued";
@@ -2122,6 +2264,45 @@ function taskFilterLabel(filter: TaskFilter): string {
     return "Done";
   }
   return "All";
+}
+
+function activityCategoryFilterLabel(filter: ActivityCategoryFilter): string {
+  if (filter === "message") {
+    return "Messages";
+  }
+  if (filter === "work") {
+    return "Work";
+  }
+  if (filter === "approval") {
+    return "Approvals";
+  }
+  if (filter === "protocol") {
+    return "Protocol";
+  }
+  if (filter === "runtime") {
+    return "Runtime";
+  }
+  return "All";
+}
+
+function activityAttentionFilterLabel(filter: Exclude<ActivityAttentionFilter, "all">): string {
+  if (filter === "needs_attention") {
+    return "Needs attention";
+  }
+  if (filter === "failed") {
+    return "Failed";
+  }
+  return "Pending";
+}
+
+function activityMatchesAttentionFilter(filter: ActivityAttentionFilter, attention: ChannelActivityAttention): boolean {
+  if (filter === "all") {
+    return true;
+  }
+  if (filter === "needs_attention") {
+    return attention !== "none";
+  }
+  return attention === filter;
 }
 
 function taskMatchesFilter(filter: TaskFilter, task: Task, linkedRunStatus: string): boolean {
