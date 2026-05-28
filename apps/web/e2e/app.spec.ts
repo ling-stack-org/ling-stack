@@ -785,6 +785,78 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator("article.task-detail")).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
 
+  const activityFilters = page.getByLabel("Activity filters");
+  const activityFeed = page.getByLabel("Channel message feed");
+  const searchInput = activityFilters.getByPlaceholder("Search activity");
+  const categoryChip = (label: string) => activityFilters.getByLabel("Activity categories").locator(".activity-filter-chip").filter({ hasText: label });
+  const attentionChip = (label: string) => activityFilters.getByLabel("Activity attention filters").locator(".activity-filter-chip").filter({ hasText: label });
+
+  await expect(activityFilters).toBeVisible();
+  await expect(categoryChip("All")).toContainText("7");
+  await expect(categoryChip("Messages")).toContainText("1");
+  await expect(categoryChip("Work")).toContainText("2");
+  await expect(categoryChip("Approvals")).toContainText("1");
+  await expect(categoryChip("Protocol")).toContainText("0");
+  await expect(categoryChip("Runtime")).toContainText("3");
+
+  await searchInput.fill("Timeline source");
+  await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
+  await expect(activityFeed.getByText("Inspect workspace")).toHaveCount(0);
+  await expect(categoryChip("Messages")).toContainText("1");
+  await expect(categoryChip("Work")).toContainText("0");
+
+  await searchInput.fill("Inspect the repo");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Task event" })).toBeVisible();
+  await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
+
+  await searchInput.fill("run_failed");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" })).toBeVisible();
+
+  await searchInput.fill("Approve shell command");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toBeVisible();
+
+  await searchInput.fill("Wait for runtime recovery");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
+
+  await searchInput.fill("task_failed");
+  await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toBeVisible();
+
+  await searchInput.fill("");
+  await categoryChip("Messages").click();
+  await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
+  await expect(activityFeed.getByText("Inspect workspace")).toHaveCount(0);
+  await categoryChip("Runtime").click();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toBeVisible();
+  await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
+  await activityFilters.getByRole("button", { name: /Clear/ }).click();
+
+  await attentionChip("Needs attention").click();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
+  await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
+  await attentionChip("Failed").click();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "failed" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toHaveCount(0);
+  await attentionChip("Pending").click();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "failed" })).toHaveCount(0);
+  await activityFilters.getByRole("button", { name: /Clear/ }).click();
+
+  await searchInput.fill("definitely-not-present");
+  await expect(page.getByText("No activity matches these filters")).toBeVisible();
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
+  await expect(searchInput).toHaveValue("");
+  await expect(activityFeed.getByText("Other channel task leak").first()).toBeVisible();
+  await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
+  await expect(page.getByText("No activity matches these filters")).toHaveCount(0);
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await expect(searchInput).toHaveValue("");
+  await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
+
   await page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" }).getByRole("button", { name: "Open task" }).click();
   await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
@@ -856,6 +928,9 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
   await expect(page.locator(".channel-tabs").getByRole("button", { name: "动态" })).toBeVisible();
+  await expect(page.getByPlaceholder("搜索动态")).toBeVisible();
+  await expect(page.getByLabel("动态类别").getByRole("button", { name: /全部/ })).toBeVisible();
+  await expect(page.getByLabel("动态关注筛选").getByRole("button", { name: /需要关注/ })).toBeVisible();
   await expect(page.getByPlaceholder("给频道发消息，或 @ 一个 AI 队友")).toBeVisible();
   await expect(page.locator(".channel-composer").getByRole("button", { name: "发送" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBe("zh-CN");
@@ -867,6 +942,9 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Workspace" })).toBeVisible();
   await expect(page.locator(".channel-tabs").getByRole("button", { name: "Activity" })).toBeVisible();
+  await expect(page.getByPlaceholder("Search activity")).toBeVisible();
+  await expect(page.getByLabel("Activity categories").getByRole("button", { name: /Messages/ })).toBeVisible();
+  await expect(page.getByLabel("Activity attention filters").getByRole("button", { name: /Needs attention/ })).toBeVisible();
   await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
 });
 

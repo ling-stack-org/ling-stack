@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned implementation slice after v1.5 Activity Events.
+Implemented in `codex/channel-v1.6-activity-filters`.
 
 v1.6 makes the derived channel `Activity` timeline easier to use once it contains
 messages, task/run events, approvals, protocol records, and runtime changes. This slice
@@ -52,33 +52,34 @@ Empty states:
 - no activity at all: keep the default channel-ready message,
 - activity exists but filters match nothing: show `No activity matches these filters`.
 
-## Implementation Plan
+## Implementation Notes
 
 ### 1. Activity Metadata
 
-- Extend Web-only activity items with:
+- Web-only activity items now include:
   - `category`: `message | work | approval | protocol | runtime`,
   - `attention`: `blocked | pending | failed | none`,
   - `searchText`: lower-case local search text.
-- Search text should include message body, task title/prompt/status, run id/status,
+- Search text includes message body, task title/prompt/status, run id/status,
   approval title/status, decision/handoff/summary text, workflow/step title/prompt,
   and state-transition entity/event/status text.
-- Keep filtering out of data loading; it should only choose which items render.
+- Filtering stays out of data loading; it only chooses which items render.
 
 ### 2. Activity Toolbar
 
-- Add a toolbar above the Activity feed with search, category chips, attention chips,
+- The Activity feed now has a toolbar with search, category chips, attention chips,
   and Clear.
 - Category chips: `All`, `Messages`, `Work`, `Approvals`, `Protocol`, `Runtime`.
 - Attention chips: `Needs attention`, `Failed`, `Pending`.
 - `Needs attention` includes blocked, failed, and pending items.
 - Clear resets search, category, and attention filter.
-- Chip counts should be stable and based on the current search text.
+- Chip counts are based on the current search text.
 
 ### 3. Documentation
 
-- Update `docs/design/channel-workspace.md` tracker after implementation.
-- Update `docs/design/web-ui-v0.1.md` channel behavior summary.
+- `docs/design/channel-workspace.md` tracker is updated for the implemented slice.
+- `docs/design/web-ui-v0.1.md` channel behavior summary reflects the implemented
+  behavior.
 - `docs/daemon-api.md` does not change.
 
 ## Test Plan

@@ -823,12 +823,93 @@ code,
 
 .activity-shell {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 10px;
   min-width: 0;
   min-height: 460px;
   height: clamp(460px, calc(100vh - 280px), 760px);
   overflow: hidden;
+}
+
+.activity-filter-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(260px, 2fr) minmax(220px, 1.4fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel-strong);
+}
+
+.activity-search-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--text-muted);
+}
+
+.activity-search-field input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.activity-filter-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.activity-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.activity-filter-chip small {
+  color: currentColor;
+  font-size: 10px;
+  opacity: 0.72;
+}
+
+.activity-filter-chip.active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.activity-filter-chip.attention.active {
+  border-color: rgba(191, 86, 14, 0.34);
+  background: rgba(255, 241, 226, 0.88);
+  color: #a94e0e;
+}
+
+.activity-clear-filter {
+  justify-self: end;
+  white-space: nowrap;
 }
 
 .activity-shell .message-feed {
@@ -1902,6 +1983,14 @@ textarea:disabled {
     max-height: none;
     min-height: min(680px, calc(100vh - 140px));
   }
+
+  .activity-filter-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-clear-filter {
+    justify-self: start;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1948,6 +2037,11 @@ textarea:disabled {
 
   .task-filter-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .activity-filter-chip {
+    flex: 1 1 auto;
+    justify-content: space-between;
   }
 
   .timeline-activity-head {

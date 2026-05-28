@@ -1527,7 +1527,7 @@ Current MVP implementation status:
 - v1.5 now derives task, run, approval, state-transition, workflow, and
   workflow-step activity cards in the channel `Activity` timeline without adding
   durable channel events,
-- v1.6 is planned to add local search, category filters, attention filters, and
+- v1.6 now adds local search, category filters, attention filters, chip counts, and
   no-match states to the derived Activity timeline without backend changes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
@@ -1673,13 +1673,13 @@ Current MVP implementation status:
 
 ### Phase 14: Activity Filters and Search
 
-- [ ] Define v1.6 Activity Filters and Search plan in
+- [x] Define v1.6 Activity Filters and Search plan in
   `docs/design/channel-workspace-v1.6.md`.
-- [ ] Add activity item category, attention, and search metadata.
-- [ ] Add Activity search input, category chips, attention chips, and Clear.
-- [ ] Add no-match empty state without hiding the composer.
-- [ ] Reset Activity filters on channel switch.
-- [ ] Add e2e coverage for search, filters, counts, channel reset, and no-match state.
+- [x] Add activity item category, attention, and search metadata.
+- [x] Add Activity search input, category chips, attention chips, and Clear.
+- [x] Add no-match empty state without hiding the composer.
+- [x] Reset Activity filters on channel switch.
+- [x] Add e2e coverage for search, filters, counts, channel reset, and no-match state.
 
 ## Validation Plan
 
