@@ -13,6 +13,7 @@ Related docs:
 - [Channel Workspace v1.1 Design and Implementation Plan](channel-workspace-v1.1.md)
 - [Channel Workspace v1.2 Handoff Workflows](channel-workspace-v1.2.md)
 - [Channel Workspace v1.3 Chat Experience](channel-workspace-v1.3.md)
+- [Channel Workspace v1.4 Files and Run Artifacts](channel-workspace-v1.4.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
@@ -1519,6 +1520,8 @@ Current MVP implementation status:
 - v1.3 now implements the chat experience polish slice: sticky Activity composer,
   independent message scrolling, clearer send/AI/asset states, task-conversion
   feedback, and English/Chinese channel copy cleanup,
+- v1.4 is planned to aggregate run artifacts, summary paths, and event log paths in the
+  channel `Files` tab without adding artifact ingestion or backend routes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1623,6 +1626,7 @@ Current MVP implementation status:
 
 ### Phase 10: Files and Artifacts
 
+- [ ] Define v1.4 files and run artifacts plan in `docs/design/channel-workspace-v1.4.md`.
 - [ ] Derive channel files from runs with matching `channelId`.
 - [ ] Fetch and show run artifacts in Files tab.
 - [ ] Show summary and event log paths when present.
