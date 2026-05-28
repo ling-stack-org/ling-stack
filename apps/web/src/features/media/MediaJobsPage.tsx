@@ -26,6 +26,7 @@ export function MediaJobsPage({
   jobs,
   artifactsByJob,
   form,
+  selectedJobId,
   isLoading,
   runningJobId,
   errorMessage,
@@ -33,6 +34,7 @@ export function MediaJobsPage({
   onFormChange,
   onRefresh,
   onCreate,
+  onSelectJob,
   onRun,
   onOpenProviders,
 }: {
@@ -41,6 +43,7 @@ export function MediaJobsPage({
   readonly jobs: readonly MediaJob[];
   readonly artifactsByJob: Record<string, readonly RunArtifact[]>;
   readonly form: MediaJobFormState;
+  readonly selectedJobId: string;
   readonly isLoading: boolean;
   readonly runningJobId: string;
   readonly errorMessage: string;
@@ -48,6 +51,7 @@ export function MediaJobsPage({
   readonly onFormChange: (form: MediaJobFormState) => void;
   readonly onRefresh: () => void;
   readonly onCreate: () => void;
+  readonly onSelectJob: (jobId: string) => void;
   readonly onRun: (jobId: string) => void;
   readonly onOpenProviders: () => void;
 }): JSX.Element {
@@ -104,7 +108,19 @@ export function MediaJobsPage({
               const isRunnable = job.status === "queued" || job.status === "waiting_for_approval" || job.status === "failed" || job.status === "cancelled";
               const isRunningJob = runningJobId === job.id;
               return (
-                <article key={job.id} className="media-job-row">
+                <article
+                  key={job.id}
+                  className={selectedJobId === job.id ? "media-job-row selected" : "media-job-row"}
+                  onClick={() => onSelectJob(job.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelectJob(job.id);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
                   <div className="media-job-row-head">
                     <strong>{job.operation}</strong>
                     <span className="media-job-actions">
@@ -112,7 +128,11 @@ export function MediaJobsPage({
                       <button
                         className="secondary-button compact-button"
                         type="button"
-                        onClick={() => onRun(job.id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onSelectJob(job.id);
+                          onRun(job.id);
+                        }}
                         disabled={isLoading || isRunningJob || !isRunnable}
                         title={isRunnable ? t("Run media adapter") : t("Cannot run from {status}", { status: job.status })}
                       >

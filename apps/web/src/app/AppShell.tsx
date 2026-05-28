@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Bot,
+  PanelRightClose,
+  PanelRightOpen,
   Folder,
-  MessageSquare,
   RefreshCw,
 } from "lucide-react";
 import {
@@ -75,25 +76,25 @@ import type {
 } from "../types.js";
 import {
   channelSidebarTarget,
-  conversationSidebarTarget,
   viewDescription,
   viewTitle,
-  type SidebarConversationItem,
   type SidebarTarget,
+  type SelectedEntity,
   type ViewId,
 } from "./view-types.js";
 import { ApprovalsPage, type ApprovalResolution } from "../features/approvals/index.js";
+import { PageInspector } from "../features/inspector/PageInspector.js";
 import { MediaJobsPage } from "../features/media/index.js";
 import { SidebarNavigation } from "../features/navigation/SidebarNavigation.js";
 import { ProviderSettings, type ProviderBatchResult } from "../features/providers/index.js";
-import { RunHistory, RunInspector, RunTimeline } from "../features/runs/index.js";
+import { RunHistory } from "../features/runs/index.js";
 import { SettingsPage } from "../features/settings/index.js";
 import type {
   LocalTeammateCreateInput,
   LocalTeammateDraft,
 } from "../features/teammates/index.js";
-import { AiTeammateInspector, AiTeammatesPage } from "../features/teammates/index.js";
-import { FirstRunFlow, RuntimeStatePanel, WorkspaceClientView, WorkspaceContextPanel } from "../features/workspace/index.js";
+import { AiTeammatesPage } from "../features/teammates/index.js";
+import { WorkspaceClientView } from "../features/workspace/index.js";
 import {
   approvalPolicyToForm,
   buildRunApprovalSummaries,
@@ -131,32 +132,10 @@ import {
   providerToForm,
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
-import { AvatarInitial, StatusBadge } from "../shared/components/index.js";
+import { StatusBadge } from "../shared/components/index.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
-
-const sidebarTeammates: readonly SidebarConversationItem[] = [
-  { id: "ada", label: "Ada", kind: "teammate", avatarLabel: "A", tone: "orange" },
-  { id: "hopper", label: "Hopper", kind: "teammate", avatarLabel: "H", tone: "teal" },
-];
-
-const sidebarDirectMessages: readonly SidebarConversationItem[] = [
-  { id: "tian", label: "Tian", kind: "direct", avatarLabel: "T" },
-  { id: "mia", label: "Mia", kind: "direct", avatarLabel: "M", tone: "violet" },
-];
-
-const sidebarConversations: readonly SidebarConversationItem[] = [...sidebarTeammates, ...sidebarDirectMessages];
-
-function findSidebarConversation(target: SidebarTarget): SidebarConversationItem | undefined {
-  const match = /^(teammate|direct):(.+)$/.exec(target);
-  if (!match) {
-    return undefined;
-  }
-  const kind = match[1] as SidebarConversationItem["kind"];
-  const id = match[2];
-  return sidebarConversations.find((item) => item.kind === kind && item.id === id);
-}
 
 const defaultForm: RunFormState = {
   cwd: "",
@@ -258,6 +237,9 @@ export function AppShell(): JSX.Element {
   const [resourceLeases, setResourceLeases] = useState<readonly ResourceLease[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
+  const [selectedMediaJobId, setSelectedMediaJobId] = useState("");
+  const [selectedApprovalId, setSelectedApprovalId] = useState("");
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const abortRef = useRef<AbortController | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
@@ -329,10 +311,6 @@ export function AppShell(): JSX.Element {
     setActiveSidebarTarget(channelSidebarTarget(channelId));
   }
 
-  function openSidebarConversation(item: SidebarConversationItem): void {
-    setActiveView("workspace");
-    setActiveSidebarTarget(conversationSidebarTarget(item));
-  }
   const resolvingApprovalsRef = useRef<Set<string>>(new Set());
 
   const assistantText = useMemo(
@@ -364,13 +342,41 @@ export function AppShell(): JSX.Element {
     () => tasks.find((task) => task.id === selectedTaskId) ?? tasks[0],
     [selectedTaskId, tasks],
   );
+  const selectedEntity = useMemo<SelectedEntity>(() => {
+    if (activeView === "providers") {
+      return { type: "provider", id: editingProviderId || form.providerPresetId || providers[0]?.id || "" };
+    }
+    if (activeView === "media") {
+      return { type: "mediaJob", id: selectedMediaJobId || mediaJobs[0]?.id || "" };
+    }
+    if (activeView === "approvals") {
+      return { type: "approval", id: selectedApprovalId || approvals[0]?.id || "" };
+    }
+    if (activeView === "runs" && activeRunId) {
+      return { type: "run", id: activeRunId };
+    }
+    if (activeView === "workspace" && selectedWorkspaceTask) {
+      return { type: "task", id: selectedWorkspaceTask.id };
+    }
+    return { type: "workspace" };
+  }, [
+    activeRunId,
+    activeView,
+    approvals,
+    editingProviderId,
+    form.providerPresetId,
+    mediaJobs,
+    providers,
+    selectedApprovalId,
+    selectedMediaJobId,
+    selectedWorkspaceTask,
+  ]);
   const workspaceTimelineRunId = useMemo(() => {
     if (isRunning && activeRunId) {
       return activeRunId;
     }
     return selectedWorkspaceTask?.currentRunId || activeRunId || runs[0]?.id || "";
   }, [activeRunId, isRunning, runs, selectedWorkspaceTask]);
-  const succeededRunCount = useMemo(() => [...runById.values()].filter((item) => item.status === "succeeded").length, [runById]);
   const providerRepairRun = providerRepairRunId ? runById.get(providerRepairRunId) : undefined;
   const taskRepairRun = taskRepairRunId ? runById.get(taskRepairRunId) : undefined;
   const approvalRepairRun = approvalRepairRunId ? runById.get(approvalRepairRunId) : undefined;
@@ -465,6 +471,20 @@ export function AppShell(): JSX.Element {
       return firstMediaProvider ? { ...current, providerPresetId: firstMediaProvider.id } : current;
     });
   }, [providers]);
+
+  useEffect(() => {
+    if (selectedMediaJobId && mediaJobs.some((job) => job.id === selectedMediaJobId)) {
+      return;
+    }
+    setSelectedMediaJobId(mediaJobs[0]?.id ?? "");
+  }, [mediaJobs, selectedMediaJobId]);
+
+  useEffect(() => {
+    if (selectedApprovalId && approvals.some((approval) => approval.id === selectedApprovalId)) {
+      return;
+    }
+    setSelectedApprovalId(approvals[0]?.id ?? "");
+  }, [approvals, selectedApprovalId]);
 
   function updateWorkspaceCwd(cwd: string): void {
     const previousCwd = form.cwd;
@@ -726,6 +746,7 @@ export function AppShell(): JSX.Element {
         ...mediaJobForm,
         prompt: mediaJobForm.prompt.trim(),
       });
+      setSelectedMediaJobId(response.mediaJob.id);
       setMediaJobs((current) => [response.mediaJob, ...current.filter((job) => job.id !== response.mediaJob.id)]);
       setMediaJobArtifacts((current) => ({ ...current, [response.mediaJob.id]: response.artifacts ?? [] }));
     } catch (error) {
@@ -743,6 +764,7 @@ export function AppShell(): JSX.Element {
     }
 
     setRunningMediaJobId(jobId);
+    setSelectedMediaJobId(jobId);
     try {
       setErrorMessage("");
       const response = await runMediaJob(cwd, jobId);
@@ -868,34 +890,6 @@ export function AppShell(): JSX.Element {
         boundPath: current.boundPath || form.cwd.trim(),
         defaultProviderPresetId: readyProvider?.id ?? current.defaultProviderPresetId,
       }));
-      await refreshChannels();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function setChannelDefaultProvider(channelId: string, providerId: string): Promise<void> {
-    const channel = channels.find((item) => item.id === channelId);
-    if (!channel) {
-      setErrorMessage("找不到 channel");
-      return;
-    }
-    const provider = providers.find((item) => item.id === providerId);
-    if (!provider || !providerPreflightReady(provider)) {
-      setErrorMessage("请先选择 preflight-ready provider");
-      return;
-    }
-
-    try {
-      setErrorMessage("");
-      const response = await updateChannel(form.cwd.trim(), channelId, {
-        ...channelToForm(channel, form.cwd),
-        defaultProviderPresetId: provider.id,
-      });
-      setSelectedChannelId(response.channel.id);
-      setTaskRunProviderId("");
-      setChannelEditForm(channelToForm(response.channel, form.cwd));
-      applyProviderToRun(provider);
       await refreshChannels();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -1210,6 +1204,7 @@ export function AppShell(): JSX.Element {
         decision === "approve"
           ? await approveApproval(form.cwd.trim(), approvalId, reason)
           : await denyApproval(form.cwd.trim(), approvalId, reason);
+      setSelectedApprovalId(response.approval.id);
       setApprovals((current) => upsertApproval(current, response.approval));
 
       const resolvedRunId = response.approval.runId || approvalBeforeResolution?.runId;
@@ -1466,33 +1461,19 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  const activeConversation = findSidebarConversation(activeSidebarTarget);
-
   return (
-    <main className="app-shell">
+    <main className={inspectorCollapsed ? "app-shell inspector-collapsed" : "app-shell"}>
       <TopBar daemonHealthy={daemonHealthy} provider={`${form.provider}/${form.model}`} onRefresh={refreshHealth} />
       <SidebarNavigation
         activeSidebarTarget={activeSidebarTarget}
         channels={channels}
-        conversations={sidebarConversations}
         approvals={approvals}
-        teammateTemplates={builtinTeammateTemplates}
-        localTeammates={localTeammates}
-        pinnedTemplateIds={pinnedTemplateIds}
-        hiddenTemplateIds={hiddenTemplateIds}
-        onToggleLocalTeammatePinned={toggleLocalTeammatePinned}
-        onToggleLocalTeammateHidden={toggleLocalTeammateHidden}
-        onToggleTemplatePinned={toggleTemplatePinned}
-        onToggleTemplateHidden={toggleTemplateHidden}
         onOpenView={openPlainView}
         onOpenTasks={openTasksView}
         onSelectChannel={selectWorkspaceChannel}
-        onSelectConversation={openSidebarConversation}
       />
       <section className={activeView === "workspace" ? "workspace workspace-client-surface" : "workspace"}>
-        {activeView === "workspace" && activeConversation ? (
-          <ConversationPlaceholderView item={activeConversation} />
-        ) : activeView === "workspace" ? (
+        {activeView === "workspace" ? (
           <WorkspaceClientView
             cwd={form.cwd}
             daemonHealthy={daemonHealthy}
@@ -1656,6 +1637,7 @@ export function AppShell(): JSX.Element {
                 jobs={mediaJobs}
                 artifactsByJob={mediaJobArtifacts}
                 form={mediaJobForm}
+                selectedJobId={selectedMediaJobId}
                 isLoading={mediaJobsLoading}
                 runningJobId={runningMediaJobId}
                 errorMessage={errorMessage}
@@ -1663,6 +1645,7 @@ export function AppShell(): JSX.Element {
                 onFormChange={setMediaJobForm}
                 onRefresh={() => void refreshMediaJobs()}
                 onCreate={() => void saveMediaJob()}
+                onSelectJob={setSelectedMediaJobId}
                 onRun={(jobId) => void executeMediaJob(jobId)}
                 onOpenProviders={() => openPlainView("providers")}
               />
@@ -1684,6 +1667,7 @@ export function AppShell(): JSX.Element {
                 approvals={approvals}
                 repairRunId={approvalRepairRunId}
                 repairRun={approvalRepairRun}
+                selectedApprovalId={selectedApprovalId}
                 isLoading={approvalsLoading}
                 resolvingApprovals={resolvingApprovals}
                 errorMessage={errorMessage}
@@ -1692,6 +1676,7 @@ export function AppShell(): JSX.Element {
                   updateWorkspaceCwd(cwd);
                 }}
                 onRefresh={() => void refreshApprovals()}
+                onSelectApproval={setSelectedApprovalId}
                 onRefreshRepair={(runId) => {
                   void refreshApprovals(form.cwd.trim(), runId);
                   void loadRun(runId, form.cwd.trim());
@@ -1704,114 +1689,51 @@ export function AppShell(): JSX.Element {
           </>
         )}
       </section>
-      <aside className="right-panel">
-        {activeView === "workspace" ? (
-          <WorkspaceContextPanel
-              daemonHealthy={daemonHealthy}
-              providers={providers}
-              channels={channels}
-              tasks={tasks}
-              providersLoading={providersLoading}
-              channelsLoading={channelsLoading}
-              tasksLoading={tasksLoading}
-              runsLoading={runsLoading}
-              succeededRunCount={succeededRunCount}
-              runs={runs}
-              approvals={approvals}
-              resourceLeases={resourceLeases}
-              stateTransitions={stateTransitions}
-              onRefreshDaemon={() => void refreshHealth()}
-              onOpenProviders={() => openPlainView("providers")}
-              onOpenRuns={() => openPlainView("runs")}
-              onOpenApprovals={() => openApprovalsFromWorkspace()}
-              onCreateChannel={() => void saveDefaultChannel()}
-              onCreateTask={() => void saveTask()}
-          >
-            <RuntimeStatePanel
-              runs={runs}
-              approvals={activePendingApprovals}
-              resourceLeases={resourceLeases}
-              stateTransitions={stateTransitions}
-            />
-            <FirstRunFlow
-              providers={providers}
-              channels={channels}
-              selectedChannelId={selectedChannelId}
-              tasks={tasks}
-              selectedTaskId={selectedTaskId}
-              taskRunProviderId={taskRunProviderId}
-              fallbackProviderId={form.providerPresetId}
-              providersLoading={providersLoading}
-              channelsLoading={channelsLoading}
-              tasksLoading={tasksLoading}
-              isRunning={isRunning}
-              activeTaskRunAction={activeTaskRunAction}
-              activeRunId={activeRunId}
-              latestStatus={latestStatus}
-              currentRun={run}
-              runById={runById}
-              pendingApprovalCount={activePendingApprovals.length}
-              onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers")}
-              onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
-              onOpenRun={(runId) => void openRunFromWorkspace(runId)}
-              onCreateDefaultChannel={() => void saveDefaultChannel()}
-              onSetChannelProvider={(channelId, providerId) => void setChannelDefaultProvider(channelId, providerId)}
-              onCreateTask={() => void saveTask()}
-              onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
-              onRunTask={(task) => void runPersistedTask(task)}
-            />
-            <RunTimeline
-              events={events}
-              assistantText={assistantText}
-              errorMessage={errorMessage}
-              isRunning={isRunning}
-              pendingApprovals={activePendingApprovals}
-              approvalsLoading={approvalsLoading}
-              resolvingApprovals={resolvingApprovals}
-              onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
-              onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
-            />
-          </WorkspaceContextPanel>
-        ) : activeView === "teammates" ? (
-          <AiTeammateInspector skillPack={builtinSkillPack} localTeammates={localTeammates} />
-        ) : (
-          <RunInspector
+      <aside className={inspectorCollapsed ? "right-panel collapsed" : "right-panel"} aria-label={t("Inspector")}>
+        <button
+          className="inspector-toggle"
+          type="button"
+          onClick={() => setInspectorCollapsed((current) => !current)}
+          aria-label={inspectorCollapsed ? t("Show inspector") : t("Hide inspector")}
+        >
+          {inspectorCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}
+        </button>
+        {!inspectorCollapsed ? (
+          <PageInspector
+            activeView={activeView}
+            selectedEntity={selectedEntity}
+            selectedTask={selectedWorkspaceTask}
+            selectedRun={run}
             activeRunId={activeRunId}
             lookupRunId={lookupRunId}
-            run={run}
             events={events}
+            assistantText={assistantText}
+            errorMessage={errorMessage}
+            isRunning={isRunning}
+            pendingApprovals={activePendingApprovals}
+            approvalsLoading={approvalsLoading}
+            resolvingApprovals={resolvingApprovals}
+            providers={providers}
+            selectedProviderId={form.providerPresetId}
+            editingProviderId={editingProviderId}
+            providerCheck={providerCheck}
+            checkedProviderId={providerCheckTargetId}
+            mediaJobs={mediaJobs}
+            selectedMediaJobId={selectedMediaJobId}
+            mediaJobArtifacts={mediaJobArtifacts}
+            approvals={approvals}
+            selectedApprovalId={selectedApprovalId}
+            approvalPolicy={approvalPolicy}
+            approvalPolicyForm={approvalPolicyForm}
+            cwd={form.cwd}
             onLookupRunIdChange={setLookupRunId}
             onLoadRun={() => void loadRun()}
+            onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
+            onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
           />
-        )}
+        ) : null}
       </aside>
     </main>
-  );
-}
-
-function ConversationPlaceholderView({ item }: { readonly item: SidebarConversationItem }): JSX.Element {
-  const { t } = useI18n();
-  const kindLabel = item.kind === "teammate" ? t("AI teammate") : t("Direct message");
-  const icon = item.kind === "teammate" ? <Bot size={22} /> : <MessageSquare size={22} />;
-
-  return (
-    <div className="client-window conversation-placeholder" aria-label={item.label}>
-      <header className="channel-header">
-        <div>
-          <div className="channel-title-line">
-            <AvatarInitial label={item.avatarLabel} tone={item.tone} />
-            <h1>{item.label}</h1>
-          </div>
-          <p>{kindLabel}</p>
-        </div>
-      </header>
-      <div className="conversation-placeholder-body">
-        <div className="client-empty-state conversation-empty-state">
-          {icon}
-          <span>{t("This conversation entry is not connected yet.")}</span>
-        </div>
-      </div>
-    </div>
   );
 }
 

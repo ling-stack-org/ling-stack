@@ -25,11 +25,13 @@ export function ApprovalsPage({
   approvals,
   repairRunId,
   repairRun,
+  selectedApprovalId,
   isLoading,
   resolvingApprovals,
   errorMessage,
   onCwdChange,
   onRefresh,
+  onSelectApproval,
   onRefreshRepair,
   onResolve,
   onOpenRun,
@@ -39,11 +41,13 @@ export function ApprovalsPage({
   readonly approvals: readonly ApprovalRequest[];
   readonly repairRunId: string;
   readonly repairRun: RunSession | undefined;
+  readonly selectedApprovalId: string;
   readonly isLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly errorMessage: string;
   readonly onCwdChange: (cwd: string) => void;
   readonly onRefresh: () => void;
+  readonly onSelectApproval: (approvalId: string) => void;
   readonly onRefreshRepair: (runId: string) => void;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenRun: (runId: string) => void;
@@ -106,7 +110,9 @@ export function ApprovalsPage({
             <ApprovalCard
               key={approval.id}
               approval={approval}
+              selected={approval.id === selectedApprovalId}
               resolvingDecision={resolvingApprovals[approval.id]}
+              onSelect={onSelectApproval}
               onResolve={onResolve}
             />
           ))
@@ -179,12 +185,16 @@ function ApprovalRunRepairPanel({
 export function ApprovalCard({
   approval,
   compact = false,
+  selected = false,
   resolvingDecision,
+  onSelect,
   onResolve,
 }: {
   readonly approval: ApprovalRequest;
   readonly compact?: boolean;
+  readonly selected?: boolean;
   readonly resolvingDecision?: ApprovalResolution;
+  readonly onSelect?: (approvalId: string) => void;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -221,7 +231,10 @@ export function ApprovalCard({
   }
 
   return (
-    <article className={`approval-row ${approval.risk}${compact ? " compact" : ""}`}>
+    <article
+      className={`approval-row ${approval.risk}${compact ? " compact" : ""}${selected ? " selected" : ""}`}
+      onClick={() => onSelect?.(approval.id)}
+    >
       <div className="approval-main">
         <div className="approval-head">
           <strong>{approval.title}</strong>

@@ -108,18 +108,17 @@ interface MockMediaJob {
   updatedAt: string;
 }
 
-test("workspace readiness surfaces missing provider, expired approval, and failed run repair", async ({ page }) => {
+test("workspace opens as a task workbench with task context in the inspector", async ({ page }) => {
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
-  await expect(page.getByText("No model presets")).toBeVisible();
-  await expect(page.getByText("1 expired approval need review")).toBeVisible();
-  await expect(page.getByText(/Latest failed run needs review: run_failed/)).toBeVisible();
-
-  await expect(page.getByLabel("Task detail")).toContainText("Task detail");
-  await expect(page.getByLabel("Task detail")).toContainText("run_failed");
-  await expect(page.getByLabel("Task detail").getByText("Inspect run failure")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Workspace task toolbar")).toBeVisible();
+  const taskDetail = page.locator("article.task-detail");
+  await expect(taskDetail).toContainText("Task detail");
+  await expect(taskDetail).toContainText("run_failed");
+  await expect(page.getByLabel("Task inspector")).toContainText("Task context");
+  await expect(page.getByLabel("Task inspector")).toContainText("run_failed");
 });
 
 test("channel runtime policy is visible and used when creating channels", async ({ page }) => {
@@ -144,7 +143,7 @@ test("channel runtime policy is visible and used when creating channels", async 
 
   await expect(page.getByText("active · serial · boundPath lock")).toBeVisible();
 
-  const details = page.locator(".workspace-config-dock .config-disclosure");
+  const details = page.locator(".channel-options");
   await details.locator("summary").click();
   await details.getByLabel("Name").fill("Release");
   await details.getByLabel("Status").selectOption("paused");
@@ -171,7 +170,7 @@ test("paused channels disable task run actions", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const taskCard = page.locator(".client-task-card").filter({ hasText: "Inspect workspace" });
+  const taskCard = page.locator("article.task-detail");
   await expect(taskCard).toContainText("Channel is not active");
   await expect(taskCard.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
 });
@@ -222,20 +221,20 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.getByRole("button", { name: "中文" }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
-  await expect(page.getByRole("heading", { name: "工作区就绪状态" })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "审批" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBe("zh-CN");
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: "工作区就绪状态" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
-  await expect(page.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Workspace" })).toBeVisible();
 });
 
 test("AI teammates page creates a local teammate through the wizard", async ({ page }) => {
@@ -271,7 +270,7 @@ test("AI teammates page creates a local teammate through the wizard", async ({ p
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Add" })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByText("Ling Engineer")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add teammate" })).toBeVisible();
   await expect(page.getByLabel("Teammate setup steps")).toBeVisible();
   await page.getByLabel("Teammate template chooser").getByRole("button", { name: /Engineer/ }).click();
@@ -287,14 +286,12 @@ test("AI teammates page creates a local teammate through the wizard", async ({ p
   await page.getByRole("button", { name: "Create teammate" }).click();
 
   await expect(page.getByLabel("Local teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByText("Ling Engineer")).toBeVisible();
-  await page.getByLabel("Ling Stack navigation").getByText("Ling Engineer").hover();
-  await page.getByLabel("Ling Stack navigation").getByLabel("Pin Ling Engineer").click();
-  await page.getByLabel("Ling Stack navigation").getByText("Ling Engineer").hover();
-  await page.getByLabel("Ling Stack navigation").getByLabel("Hide Ling Engineer").click();
-  await expect(page.getByLabel("Ling Stack navigation").getByText("Ling Engineer")).toHaveCount(0);
+  const localTeammate = page.getByLabel("Local teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" });
+  await localTeammate.getByLabel("Pin Ling Engineer").click();
+  await localTeammate.getByLabel("Hide Ling Engineer").click();
+  await expect(localTeammate).toHaveClass(/hidden-row/);
   await expect(page.getByLabel("Workflow").getByRole("heading", { name: "Autoplan Lite" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Strict approval" })).toBeVisible();
+  await expect(page.getByText("Strict approval").first()).toBeVisible();
 });
 
 test("workspace path initializes from daemon default and persists edits", async ({ page }) => {
@@ -362,7 +359,7 @@ test("workspace defaults do not hardcode personal machine paths", async () => {
   expect(e2eSource).not.toContain(personalPath);
 });
 
-test("sidebar selection is exclusive for workspace, tasks, channels, teammates, and direct messages", async ({ page }) => {
+test("sidebar selection is exclusive and conversation lists no longer live in global navigation", async ({ page }) => {
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
@@ -375,28 +372,66 @@ test("sidebar selection is exclusive for workspace, tasks, channels, teammates, 
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Engineering"] });
 
-  await navigation.getByRole("button", { name: /Ada/ }).click();
-  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ada"] });
-  await expect(page.getByRole("heading", { name: "Ada" })).toBeVisible();
-  await expect(page.getByText("This conversation entry is not connected yet.")).toBeVisible();
-
-  await navigation.getByRole("button", { name: /Tian/ }).click();
-  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Tian"] });
-  await expect(page.getByRole("heading", { name: "Tian" })).toBeVisible();
-  await expect(page.getByText("Direct message", { exact: true })).toBeVisible();
+  await expect(navigation.getByText("Ada")).toHaveCount(0);
+  await expect(navigation.getByText("Tian")).toHaveCount(0);
+  await navigation.getByRole("button", { name: "AI Teammates" }).click();
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: ["AI Teammates"], selectedRows: [] });
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
 });
 
-test("model workbench is a primary sidebar item without duplicate config icon", async ({ page }) => {
+test("sidebar text entries route to context-aware inspectors", async ({ page }) => {
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await expect(navigation.locator(".primary-nav .nav-item").filter({ hasText: "Model Workbench" })).toHaveCount(1);
   await expect(navigation.locator(".config-grid").getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Media Jobs" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
 
   await navigation.locator(".primary-nav .nav-item").filter({ hasText: "Model Workbench" }).click();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: ["Model Workbench"], selectedRows: [] });
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Model Workbench context")).toBeVisible();
+  await expect(page.getByLabel("Run context")).toHaveCount(0);
+
+  await navigation.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByLabel("Settings preview")).toBeVisible();
+  await expect(page.getByLabel("Run context")).toHaveCount(0);
+
+  await navigation.getByRole("button", { name: "Media Jobs" }).click();
+  await expect(page.getByLabel("Media job context")).toBeVisible();
+  await expect(page.getByLabel("Run context")).toHaveCount(0);
+});
+
+test("workspace new task panel creates and selects the new task", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Local Relay",
+      lastCheck: {
+        ok: true,
+        code: "ready",
+        message: "Provider is reachable.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
+  ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel
+  );
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.getByLabel("New task").getByLabel("Title").fill("Design inspector behavior");
+  await page.getByLabel("New task").getByLabel("Prompt").fill("Make the inspector follow the selected task.");
+  await page.getByLabel("New task").getByRole("button", { name: "Create task" }).click();
+
+  await expect.poll(() => state.tasks.some((task) => isRecord(task) && task.title === "Design inspector behavior")).toBe(true);
+  await expect(page.locator("article.task-detail")).toContainText("Design inspector behavior");
+  await expect(page.getByLabel("Task inspector")).toContainText("Design inspector behavior");
 });
 
 test("model workbench creates custom OpenAI-compatible presets and surfaces readiness", async ({ page }) => {
@@ -539,7 +574,9 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await expect(providerSelect.locator("option").filter({ hasText: "Ready Local Relay" })).toHaveCount(1);
   await expect(providerSelect.locator("option").filter({ hasText: "Missing Key Gateway" })).toHaveCount(1);
   await expect(providerSelect.locator("option").filter({ hasText: "Seedream Image" })).toHaveCount(0);
+  await page.getByRole("button", { name: "New task" }).click();
   await expect(page.getByText("Media providers stay in Media Jobs and cannot run coding tasks.").first()).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
 
   await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
   await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
@@ -617,14 +654,16 @@ test("workspace task actions only show a spinner on the clicked task action", as
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const firstTask = page.locator(".client-task-card").filter({ hasText: "Inspect workspace" });
-  const secondTask = page.locator(".client-task-card").filter({ hasText: "Second task" });
-  await secondTask.getByRole("button", { name: "Run", exact: true }).click();
+  const firstTask = page.locator(".workbench-task-list .client-task-card").filter({ hasText: "Inspect workspace" });
+  const secondTask = page.locator(".workbench-task-list .client-task-card").filter({ hasText: "Second task" });
+  await secondTask.click();
+  const taskDetail = page.locator("article.task-detail");
+  await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
 
-  await expect(secondTask.getByRole("button", { name: "Run", exact: true }).locator(".spin")).toHaveCount(1);
-  await expect(secondTask.getByRole("button", { name: "Check run", exact: true }).locator(".spin")).toHaveCount(0);
+  await expect(taskDetail.getByRole("button", { name: "Run", exact: true }).locator(".spin")).toHaveCount(1);
+  await expect(taskDetail.getByRole("button", { name: "Check run", exact: true }).locator(".spin")).toHaveCount(0);
   await expect(firstTask.locator(".task-actions .spin")).toHaveCount(0);
-  await expect(firstTask.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+  await expect(page.locator(".task-actions .spin")).toHaveCount(1);
 
   await expect.poll(() => state.runs[0]?.taskId).toBe("task_second");
 
@@ -633,10 +672,10 @@ test("workspace task actions only show a spinner on the clicked task action", as
   );
   state.runs = [];
   state.providerCheckDelayMs = 2000;
-  await secondTask.getByRole("button", { name: "Check run", exact: true }).click();
+  await taskDetail.getByRole("button", { name: "Check run", exact: true }).click();
 
-  await expect(secondTask.getByRole("button", { name: "Check run", exact: true }).locator(".spin")).toHaveCount(1);
-  await expect(secondTask.getByRole("button", { name: "Run", exact: true }).locator(".spin")).toHaveCount(0);
+  await expect(taskDetail.getByRole("button", { name: "Check run", exact: true }).locator(".spin")).toHaveCount(1);
+  await expect(taskDetail.getByRole("button", { name: "Run", exact: true }).locator(".spin")).toHaveCount(0);
   await expect(firstTask.locator(".task-actions .spin")).toHaveCount(0);
 });
 
@@ -674,9 +713,8 @@ test("succeeded workspace tasks show a clear result action", async ({ page }) =>
   await page.goto("/");
 
   await expect(page.getByText("Task complete").first()).toBeVisible();
-  await expect(page.getByText("Inspect workspace finished successfully. Open the run to review the result, events, and artifacts.")).toBeVisible();
 
-  const taskDetail = page.getByLabel("Task detail");
+  const taskDetail = page.locator("article.task-detail");
   await expect(taskDetail).toContainText("Task complete");
   await expect(taskDetail.getByRole("button", { name: "View result" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Run activity" })).toBeVisible();
@@ -834,12 +872,13 @@ test("approval inbox shows expired approvals without decision buttons", async ({
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Approvals" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
   await expect(page.getByRole("heading", { name: "Approval requests" })).toBeVisible();
-  await expect(page.locator(".approval-row")).toContainText("expired");
-  await expect(page.locator(".approval-row")).toContainText("expired ");
-  await expect(page.locator(".approval-row").getByRole("button", { name: /Approve/ })).toHaveCount(0);
-  await expect(page.locator(".approval-row").getByRole("button", { name: /Deny/ })).toHaveCount(0);
+  const approvalRows = page.getByLabel("Approval requests").locator(".approval-row");
+  await expect(approvalRows).toContainText("expired");
+  await expect(approvalRows).toContainText("expired ");
+  await expect(approvalRows.getByRole("button", { name: /Approve/ })).toHaveCount(0);
+  await expect(approvalRows.getByRole("button", { name: /Deny/ })).toHaveCount(0);
 });
 
 test("approval inbox resolves pending approvals and refreshes state", async ({ page }) => {
@@ -847,11 +886,12 @@ test("approval inbox resolves pending approvals and refreshes state", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Approvals" }).click();
-  await expect(page.locator(".approval-row")).toContainText("pending");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  const approvalRows = page.getByLabel("Approval requests").locator(".approval-row");
+  await expect(approvalRows).toContainText("pending");
 
-  await page.locator(".approval-row").getByRole("button", { name: "Deny" }).click();
-  await expect(page.locator(".approval-row")).toContainText("denied");
+  await approvalRows.getByRole("button", { name: "Deny" }).click();
+  await expect(approvalRows).toContainText("denied");
   await expect.poll(() => state.approvals[0]?.status).toBe("denied");
 });
 
@@ -1081,8 +1121,8 @@ test("media jobs page surfaces live media cost approvals", async ({ page }) => {
   await expect(jobRow).toContainText("waiting_for_approval");
   await expect(jobRow).toContainText("Approval required before live execution");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Approvals" }).click();
-  const mediaApproval = page.locator(".approval-row").filter({ hasText: "Approve media job cost" });
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  const mediaApproval = page.getByLabel("Approval requests").locator(".approval-row").filter({ hasText: "Approve media job cost" });
   await expect(mediaApproval).toContainText("media_cost");
   await expect(mediaApproval).toContainText("media job media_job_live_pending");
   await expect(mediaApproval.getByLabel("Media cost approval summary")).toContainText("provider provider_seedream");
@@ -1538,6 +1578,22 @@ async function handleDaemonRoute(
   }
   if (request.method() === "GET" && path === "/tasks") {
     await route.fulfill({ json: { cwd, tasks: state.tasks } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/tasks") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const task = {
+      id: `task_created_${state.tasks.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId: typeof body.channelId === "string" ? body.channelId : "channel_engineering",
+      title: typeof body.title === "string" ? body.title : "Generated task",
+      prompt: typeof body.prompt === "string" ? body.prompt : "Generated prompt",
+      status: "todo",
+      createdAt: "2026-05-25T00:18:00.000Z",
+      updatedAt: "2026-05-25T00:18:00.000Z",
+    };
+    state.tasks = [task, ...state.tasks];
+    await route.fulfill({ status: 201, json: { task } });
     return;
   }
   if (request.method() === "GET" && path === "/runs") {
