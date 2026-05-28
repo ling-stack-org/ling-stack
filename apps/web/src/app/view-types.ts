@@ -2,6 +2,13 @@ export type ViewId = "workspace" | "teammates" | "runs" | "providers" | "media" 
 export type SidebarViewTarget = ViewId | "tasks";
 export type SidebarConversationKind = "teammate" | "direct";
 export type SidebarTarget = SidebarViewTarget | `channel:${string}` | `${SidebarConversationKind}:${string}`;
+export type SelectedEntity =
+  | { readonly type: "workspace" }
+  | { readonly type: "task"; readonly id: string }
+  | { readonly type: "run"; readonly id: string }
+  | { readonly type: "provider"; readonly id: string }
+  | { readonly type: "mediaJob"; readonly id: string }
+  | { readonly type: "approval"; readonly id: string };
 
 export interface SidebarConversationItem {
   readonly id: string;
