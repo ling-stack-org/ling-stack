@@ -7,6 +7,607 @@
   overflow: auto;
 }
 
+/* macOS workbench visual refresh */
+h1,
+h2,
+h3,
+.panel-title strong,
+.panel-title span,
+.channel-title-line h1,
+.provider-row-head strong,
+.approval-head strong,
+.task-row-main strong,
+.client-task-main strong,
+.message-meta strong,
+.runtime-kpi-grid strong,
+.teammate-command-strip strong,
+.teammate-stage-title span {
+  color: var(--text-strong);
+}
+
+p,
+small,
+.workspace-head p,
+.channel-header p,
+.provider-meta-line,
+.approval-main p,
+.run-detail-section > p,
+.task-row-main small,
+.client-task-main small,
+.message-content p,
+.runtime-list-row span:not(.status-badge),
+.teammate-command-strip small,
+.teammate-stage-title small {
+  color: var(--text-muted);
+}
+
+.panel,
+.inspector,
+.context-panel-card,
+.conversation-panel,
+.workspace-config-dock,
+.teammate-command-strip,
+.teammate-template-panel,
+.teammate-detail-panel,
+.teammate-add-panel,
+.teammate-workflow-panel,
+.teammate-wizard,
+.teammate-wizard-stage,
+.teammate-live-preview,
+.conversation-empty-state,
+.composer-panel,
+.task-strip,
+.dock-card,
+.runtime-state-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
+  box-shadow:
+    inset 0 1px 0 var(--hairline),
+    var(--shadow-panel);
+  backdrop-filter: var(--material-blur);
+  -webkit-backdrop-filter: var(--material-blur);
+}
+
+.workspace-context-stack > .first-run-flow,
+.workspace-context-stack > .timeline,
+.workspace-context-stack > .runtime-state-panel,
+.workspace-context-stack > .context-panel-card {
+  background: var(--surface-panel);
+}
+
+.client-window,
+.workspace-client-surface,
+.workspace:not(.workspace-client-surface) {
+  background: var(--window-bg);
+}
+
+.panel,
+.inspector {
+  padding: 16px;
+}
+
+.panel-title {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+input,
+select,
+textarea {
+  border: 1px solid var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-soft);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent-border);
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    inset 0 1px 0 var(--hairline);
+  outline: 0;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--surface-pressed);
+  color: var(--text-soft);
+}
+
+.primary-button,
+.secondary-button,
+.icon-button,
+.config-button,
+.sidebar-mini-action,
+.artifact-action-link,
+.teammate-filter-tabs button,
+.compact-button {
+  border-radius: var(--radius-md);
+}
+
+.primary-button,
+.secondary-button,
+.icon-button,
+.config-button,
+.artifact-action-link,
+.teammate-filter-tabs button {
+  box-shadow: var(--shadow-control);
+}
+
+.primary-button {
+  border-color: var(--accent-border);
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: #ffffff;
+}
+
+.primary-button:hover:not(:disabled) {
+  filter: brightness(1.03);
+}
+
+.secondary-button,
+.icon-button,
+.artifact-action-link,
+.teammate-filter-tabs button {
+  border: 1px solid var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text);
+}
+
+.secondary-button:hover:not(:disabled),
+.icon-button:hover:not(:disabled),
+.artifact-action-link:hover,
+.teammate-filter-tabs button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.secondary-button.danger {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.primary-button:disabled,
+.secondary-button:disabled,
+.icon-button:disabled {
+  opacity: 0.48;
+}
+
+.status-badge,
+.event-count,
+.glass-chip,
+.readiness-summary,
+.provider-state,
+.capability-list span,
+.approval-state,
+.approval-risk,
+.task-status,
+.artifact-type,
+.tool-token,
+.phase-token,
+.approval-profile-badge,
+.check-result-status {
+  min-height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+.health,
+.provider-pill,
+.language-switcher {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
+}
+
+.status-badge.succeeded,
+.status-badge.active,
+.status-badge.run,
+.status-badge.task,
+.status-badge.bound_path,
+.health.ok,
+.glass-chip.ok,
+.readiness-summary.ok,
+.provider-state.enabled,
+.provider-state.key-ok,
+.provider-state.run-ready,
+.provider-state.check-ok,
+.provider-batch-result.ok,
+.provider-next-action.ok,
+.provider-run-notice.ok,
+.approval-state.approved,
+.task-status.done,
+.task-run-link.succeeded,
+.check-result.ok {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status-badge.running,
+.status-badge.queued,
+.status-badge.waiting_for_approval,
+.status-badge.paused,
+.status-badge.channel,
+.status-badge.workspace,
+.status-badge.workflow_step,
+.glass-chip.attention,
+.readiness-summary.attention,
+.approval-state.pending,
+.approval-waiting-banner,
+.inline-approval-panel,
+.provider-env-hint.warning,
+.provider-repair-item.warning,
+.provider-run-notice,
+.run-repair-hint.approvals,
+.check-result.warning {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.status-badge.failed,
+.status-badge.cancelled,
+.health.down,
+.inline-error,
+.run-repair-hint,
+.provider-next-action,
+.provider-form-hint,
+.provider-batch-result.bad,
+.provider-run-repair,
+.provider-repair-item,
+.provider-state.disabled,
+.provider-state.key-missing,
+.provider-state.run-blocked,
+.provider-state.check-bad,
+.provider-run-notice.bad,
+.approval-row.high,
+.approval-row.critical,
+.approval-state.denied,
+.approval-state.expired,
+.approval-state.cancelled,
+.approval-risk.high,
+.approval-risk.critical,
+.approval-confirm-panel,
+.approval-reason-error,
+.check-result.bad,
+.run-evidence-copy.error,
+.tool-event-row.error,
+.event-row.run_error,
+.timeline-activity-row.failed {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.status-badge.archived,
+.status-badge.provider,
+.status-badge.media_job,
+.status-badge.approval,
+.provider-state.check-unknown {
+  border-color: var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.first-run-flow,
+.first-run-step,
+.readiness-item,
+.tool-toggle,
+.channel-row,
+.task-row,
+.client-task-card,
+.message-content,
+.provider-row,
+.provider-template-card,
+.provider-repair-queue,
+.provider-advanced-secret,
+.media-job-row,
+.approval-row,
+.approval-payload-summary,
+.approval-decision-reason,
+.run-evidence,
+.run-evidence-copy,
+.runtime-run-repair,
+.runtime-run-repair-meta,
+.session-file-list,
+.artifact-empty-state,
+.artifact-row,
+.tool-event-row,
+.event-row,
+.raw-event-panel,
+.timeline-activity-row,
+.policy-tool-row,
+.check-result,
+.settings-toggle,
+.teammate-step,
+.teammate-template-card,
+.teammate-provider-card,
+.teammate-scope-grid section,
+.teammate-chip,
+.teammate-toggle,
+.teammate-detail-hero,
+.teammate-template-row,
+.teammate-draft-row,
+.teammate-skill-row,
+.workflow-step-card,
+.runtime-kpi-grid div,
+.runtime-list-row,
+.mini-channel,
+.toggle-row,
+.task-run-link {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel-strong);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+.first-run-flow.ready,
+.first-run-step.ready,
+.readiness-item.ready,
+.tool-toggle.selected,
+.client-task-card.selected,
+.provider-row.selected,
+.provider-template-card.selected,
+.teammate-template-card.selected,
+.teammate-provider-card.selected,
+.timeline-activity-row.succeeded,
+.event-row.result,
+.event-row.run_end,
+.mini-channel.active {
+  border-color: var(--accent-border);
+  background:
+    linear-gradient(90deg, var(--accent-soft), transparent 34%),
+    var(--surface-panel-strong);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 1px 0 var(--hairline);
+}
+
+.first-run-flow.active,
+.first-run-step.pending,
+.readiness-item.loading,
+.readiness-item.info,
+.timeline-activity-row.waiting,
+.timeline-activity-row.running,
+.task-status.running,
+.task-status.claimed,
+.task-status.review {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.first-run-flow.attention,
+.first-run-step.attention,
+.readiness-item.attention,
+.media-job-error,
+.task-status.failed,
+.task-status.blocked,
+.task-status.cancelled {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.provider-template-card:hover,
+.provider-row:hover,
+.channel-row:hover,
+.task-row:hover,
+.client-task-card:hover,
+.artifact-row:hover,
+.media-job-row:hover,
+.approval-row:hover,
+.teammate-template-card:hover,
+.teammate-provider-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.provider-template-card.selected,
+.custom-provider-card,
+.teammate-template-card.custom-card {
+  border-color: var(--accent-border);
+}
+
+.provider-next-action,
+.provider-env-hint,
+.provider-form-hint,
+.provider-batch-result,
+.provider-run-repair,
+.provider-repair-queue,
+.provider-run-notice,
+.approval-run-repair,
+.approval-waiting-banner,
+.run-repair-hint,
+.inline-error,
+.inline-approval-panel,
+.assistant-output,
+.media-job-error,
+.media-job-approval {
+  border-radius: var(--radius-lg);
+}
+
+.assistant-output {
+  border: 1px solid var(--accent-border);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.assistant-output span,
+.assistant-output p {
+  color: var(--text);
+}
+
+.timeline-activity-icon {
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.timeline-activity-row.succeeded .timeline-activity-icon {
+  color: var(--success);
+}
+
+.timeline-activity-row.failed .timeline-activity-icon {
+  color: var(--danger);
+}
+
+.timeline-activity-row.waiting .timeline-activity-icon,
+.timeline-activity-row.running .timeline-activity-icon {
+  color: var(--warning);
+}
+
+.timeline-activity-row.running {
+  border-color: var(--info-border);
+  background: var(--info-soft);
+}
+
+.timeline-activity-row.running .timeline-activity-icon {
+  color: var(--info);
+}
+
+.raw-event-panel,
+.raw-event-list,
+.timeline-activity-list {
+  scrollbar-color: color-mix(in srgb, var(--text-soft) 48%, transparent) transparent;
+}
+
+pre,
+code,
+.provider-meta-line.mono,
+.artifact-main code,
+.event-seq,
+.session-file-list code {
+  color: var(--text);
+}
+
+.meta-list,
+.run-detail-summary,
+.run-evidence-grid,
+.session-file-list,
+.runtime-run-repair-meta,
+.tool-event-meta {
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+
+.meta-row,
+.run-detail-summary > *,
+.run-evidence-grid > *,
+.session-file-list span,
+.session-file-list code,
+.runtime-run-repair-meta > *,
+.tool-event-meta > * {
+  background: var(--surface-panel-strong);
+  color: var(--text);
+}
+
+.teammate-command-strip,
+.teammate-wizard {
+  background: var(--surface-panel);
+}
+
+.teammate-step.active,
+.teammate-step:hover,
+.teammate-filter-tabs button.active,
+.teammate-filter-tabs button:hover,
+.teammate-chip.selected {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.teammate-step.active span,
+.teammate-step.done span {
+  border-color: var(--accent-border);
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+}
+
+.provider-secret-status small,
+.provider-form-hint,
+.provider-env-hint,
+.media-job-approval,
+.tool-token.risky {
+  color: var(--warning);
+}
+
+.client-task-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+}
+
+.client-task-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.client-task-card .task-run-link {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.client-task-card .task-run-link .status-badge {
+  justify-self: start;
+}
+
+.client-task-card .task-run-link .primary-button,
+.client-task-card .task-run-link .secondary-button {
+  justify-self: start;
+}
+
+.client-task-card .task-run-link code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.client-task-card .task-actions {
+  justify-content: flex-start;
+}
+
+.task-run-summary strong {
+  color: var(--success);
+}
+
+.task-run-link code {
+  color: var(--text-muted);
+}
+
+.right-panel {
+  background: var(--surface-sidebar);
+}
+
+@media (prefers-color-scheme: dark) {
+  .top-bar::before {
+    opacity: 0.82;
+  }
+
+  .primary-button {
+    color: #111827;
+  }
+
+  .brand-mark {
+    background: linear-gradient(180deg, #f4f5f7, #b7becb);
+    color: #171a20;
+  }
+
+  .avatar-initial.gray {
+    background: linear-gradient(180deg, #8e96a3, #5f6672);
+  }
+}
+
 .context-panel-card,
 .workspace-context-stack > .first-run-flow,
 .workspace-context-stack > .timeline {
@@ -354,5 +955,281 @@ textarea {
 
   .approval-row {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Final macOS token guard: this file also contains older component rules above. */
+.context-panel-card,
+.workspace-context-stack > .first-run-flow,
+.workspace-context-stack > .timeline,
+.workspace-context-stack > .runtime-state-panel,
+.workspace-context-stack > .context-panel-card,
+.workspace-config-dock,
+.runtime-state-panel,
+.task-strip,
+.dock-card,
+.conversation-panel,
+.composer-panel {
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
+  box-shadow:
+    inset 0 1px 0 var(--hairline),
+    var(--shadow-panel);
+}
+
+input,
+select,
+textarea {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--surface-pressed);
+  color: var(--text-muted);
+}
+
+.task-strip-head span,
+.composer-head span,
+.dock-card-head,
+.client-task-main strong,
+.run-repair-copy strong,
+.timeline-activity-head strong {
+  color: var(--text-strong);
+}
+
+.client-task-main small,
+.client-empty-state,
+.timeline-activity-head time,
+.timeline-activity-copy small,
+.raw-event-panel > summary {
+  color: var(--text-muted);
+}
+
+.event-count,
+.status-badge {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+.status-badge.succeeded,
+.status-badge.active,
+.status-badge.run,
+.status-badge.task,
+.status-badge.bound_path {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status-badge.running,
+.status-badge.queued,
+.status-badge.waiting_for_approval,
+.status-badge.paused,
+.status-badge.channel,
+.status-badge.workspace,
+.status-badge.workflow_step {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.status-badge.failed,
+.status-badge.cancelled {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.client-task-card,
+.task-run-link,
+.run-list-row,
+.timeline-activity-row,
+.event-row,
+.raw-event-panel {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+.client-task-card.selected,
+.run-list-row:hover,
+.run-list-row.selected,
+.timeline-activity-row.succeeded,
+.event-row.result,
+.event-row.run_end {
+  border-color: var(--accent-border);
+  background:
+    linear-gradient(90deg, var(--accent-soft), transparent 34%),
+    var(--surface-panel-strong);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 1px 0 var(--hairline);
+}
+
+.timeline-activity-row.running {
+  border-color: var(--info-border);
+  background: var(--info-soft);
+}
+
+.timeline-activity-row.waiting {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+}
+
+.timeline-activity-row.failed,
+.event-row.run_error,
+.run-repair-hint {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.provider-repair-queue.ok,
+.provider-next-action.ok,
+.provider-run-notice.ok,
+.provider-batch-result.ok {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.provider-next-action,
+.provider-run-notice,
+.provider-batch-result,
+.provider-repair-queue,
+.tool-row,
+.policy-tool-row,
+.persistence-line {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text);
+}
+
+.policy-tool-row.risky {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+}
+
+.policy-tool-row span,
+.media-job-row-head strong {
+  color: var(--text-strong);
+}
+
+.media-job-row p {
+  color: var(--text-muted);
+}
+
+.provider-next-action code,
+.provider-env-hint code,
+.tool-row code {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+
+.tool-row span,
+.muted,
+.persistence-line,
+.run-list-main small,
+.run-list-meta time,
+.provider-template-kind,
+.provider-template-model,
+.provider-template-card small,
+.meta-row span {
+  color: var(--text-muted);
+}
+
+.run-list-main strong,
+.artifact-main strong,
+.meta-row strong,
+.provider-template-card strong {
+  color: var(--text-strong);
+}
+
+.provider-template-card code,
+.artifact-main code,
+.artifact-row small,
+.meta-row code {
+  color: var(--text);
+}
+
+.persistence-line svg {
+  color: var(--success);
+}
+
+.timeline-activity-icon {
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.timeline-activity-row.succeeded .timeline-activity-icon {
+  color: var(--success);
+}
+
+.timeline-activity-row.running .timeline-activity-icon {
+  color: var(--info);
+}
+
+.timeline-activity-row.waiting .timeline-activity-icon {
+  color: var(--warning);
+}
+
+.timeline-activity-row.failed .timeline-activity-icon {
+  color: var(--danger);
+}
+
+.assistant-output {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.assistant-output span {
+  color: var(--accent-strong);
+}
+
+.assistant-output p {
+  color: var(--text);
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 220px),
+      var(--app-bg);
+  }
+
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    background: color-mix(in srgb, var(--surface-pressed) 74%, var(--surface-panel-strong));
+    color: var(--text-muted);
+  }
+
+  .timeline-activity-row,
+  .event-row,
+  .raw-event-panel,
+  .client-task-card,
+  .task-run-link,
+  .run-list-row,
+  .provider-next-action,
+  .provider-run-notice,
+  .provider-batch-result,
+  .provider-repair-queue,
+  .tool-row,
+  .policy-tool-row,
+  .persistence-line {
+    background: color-mix(in srgb, var(--surface-panel-strong) 84%, #000000);
+  }
+
+  .status-badge,
+  .event-count {
+    background: color-mix(in srgb, var(--surface-panel-strong) 86%, #000000);
   }
 }
