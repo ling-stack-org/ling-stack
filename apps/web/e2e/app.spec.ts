@@ -28,6 +28,9 @@ interface MockState {
   nextStreamEvents?: MockRunEvent[];
   providerCheckDelayMs?: number;
   runResponseDelayMs?: number;
+  channelMessageDelayMs?: number;
+  failNextChannelMessage?: boolean;
+  linkPreviewDelayMs?: number;
   approvals: MockApproval[];
   approvalPolicy: MockApprovalPolicy;
   lastApprovalPolicyPatch?: Record<string, unknown>;
@@ -196,20 +199,30 @@ test("channel activity supports mentions, messages, files, links, and task creat
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessageDelayMs = 150;
+  state.linkPreviewDelayMs = 150;
   await mockDaemon(page, state);
   await page.goto("/");
 
   await expect(page.getByRole("button", { name: "Activity" })).toBeVisible();
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
   await page.locator(".mention-chip").filter({ hasText: "@Engineer" }).click();
   await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("@Engineer please refine the channel requirements https://example.com");
   await page.getByPlaceholder("Paste URL").fill("https://example.com");
   await page.getByRole("button", { name: "Preview link" }).click();
+  await expect(page.getByText("Fetching link preview...")).toBeVisible();
+  await expect(page.locator(".channel-tab.active")).toContainText("Activity");
+  await expect(page.getByText("Example Domain").first()).toBeVisible();
   await page.locator("input[type=file]").setInputFiles({
     name: "brief.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("channel brief"),
   });
+  await expect(page.getByText("brief.txt")).toBeVisible();
+  await expect(page.locator(".channel-tab.active")).toContainText("Activity");
   await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Sending message...")).toBeVisible();
+  await expect(page.getByText("AI teammate is replying...")).toBeVisible();
 
   await expect(page.getByText("@Engineer please refine the channel requirements")).toBeVisible();
   await expect(page.getByText("收到，我会按频道上下文推进。")).toBeVisible();
@@ -219,10 +232,89 @@ test("channel activity supports mentions, messages, files, links, and task creat
 
   await page.getByRole("button", { name: "Activity" }).click();
   await page.getByRole("button", { name: "Create task" }).first().click();
+  await expect(page.getByText("Task created")).toBeVisible();
   await expect.poll(() => {
     const created = state.tasks.find((task) => isRecord(task) && task.id === "task_2");
     return isRecord(created) ? created.assigneeTeammateId : undefined;
   }).toBe("engineer");
+  await page.getByRole("button", { name: "Open in Tasks" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
+  await expect(page.locator("article.task-detail")).toContainText("@Engineer please refine the channel requirements");
+});
+
+test("channel activity keeps the composer visible while the message feed scrolls", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = Array.from({ length: 36 }, (_, index) => ({
+    id: `msg_scroll_${index + 1}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "tian",
+    body: `Scrollable channel message ${index + 1}. This message keeps the Activity feed tall enough to scroll independently.`,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    status: "ready",
+    createdAt: new Date(Date.UTC(2026, 4, 25, 0, index, 0)).toISOString(),
+    updatedAt: new Date(Date.UTC(2026, 4, 25, 0, index, 0)).toISOString(),
+  }));
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  const scrollState = await readScrollState(page, ".activity-shell .message-feed");
+  expect(scrollState.max).toBeGreaterThan(0);
+  const tabsBefore = await page.locator(".channel-tabs").boundingBox();
+  await page.locator(".activity-shell .message-feed").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  const tabsAfter = await page.locator(".channel-tabs").boundingBox();
+  expect(Math.round(tabsAfter?.y ?? 0)).toBe(Math.round(tabsBefore?.y ?? 0));
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+});
+
+test("channel composer preserves failed sends and can retry", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.failNextChannelMessage = true;
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("Retryable channel message");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Message failed")).toBeVisible();
+  await expect(composerInput).toHaveValue("Retryable channel message");
+
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByText("Retryable channel message")).toBeVisible();
+  await expect(page.getByText("Message failed")).toHaveCount(0);
+});
+
+test("channel URL preview blocked state stays in Activity and still allows sending text", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Please remember this blocked reference.");
+  await page.getByPlaceholder("Paste URL").fill("http://127.0.0.1/private");
+  await page.getByRole("button", { name: "Preview link" }).click();
+  await expect(page.getByText("Private network previews are blocked.")).toBeVisible();
+  await expect(page.locator(".channel-tab.active")).toContainText("Activity");
+
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Please remember this blocked reference.")).toBeVisible();
 });
 
 test("channel files tab supports PDF and Office uploads without AI ingestion", async ({ page }) => {
@@ -489,6 +581,9 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
+  await expect(page.locator(".channel-tabs").getByRole("button", { name: "动态" })).toBeVisible();
+  await expect(page.getByPlaceholder("给频道发消息，或 @ 一个 AI 队友")).toBeVisible();
+  await expect(page.locator(".channel-composer").getByRole("button", { name: "发送" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBe("zh-CN");
 
   await page.reload();
@@ -497,6 +592,8 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Workspace" })).toBeVisible();
+  await expect(page.locator(".channel-tabs").getByRole("button", { name: "Activity" })).toBeVisible();
+  await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
 });
 
 test("AI teammates page creates a local teammate through the wizard", async ({ page }) => {
@@ -1858,6 +1955,14 @@ async function handleDaemonRoute(
   if (channelMessagesMatch && request.method() === "POST") {
     const channelId = decodeURIComponent(channelMessagesMatch[1]);
     const body = await request.postDataJSON() as Record<string, unknown>;
+    if (state.channelMessageDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.channelMessageDelayMs));
+    }
+    if (state.failNextChannelMessage) {
+      state.failNextChannelMessage = false;
+      await route.fulfill({ status: 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
+      return;
+    }
     const message = {
       id: `msg_${state.channelMessages.length + 1}`,
       workspaceId: "workspace_default",
@@ -1950,6 +2055,9 @@ async function handleDaemonRoute(
     const channelId = decodeURIComponent(channelLinkPreviewMatch[1]);
     const body = await request.postDataJSON() as Record<string, unknown>;
     const rawUrl = typeof body.url === "string" ? body.url : "https://example.com";
+    if (state.linkPreviewDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.linkPreviewDelayMs));
+    }
     const preview = {
       id: `link_${state.channelLinkPreviews.length + 1}`,
       workspaceId: "workspace_default",
@@ -1957,9 +2065,10 @@ async function handleDaemonRoute(
       url: rawUrl,
       normalizedUrl: rawUrl,
       title: rawUrl.includes("example.com") ? "Example Domain" : rawUrl,
-      description: "Mock link preview",
+      description: rawUrl.includes("127.0.0.1") ? undefined : "Mock link preview",
       siteName: "example.com",
-      status: "ready",
+      status: rawUrl.includes("127.0.0.1") ? "blocked" : "ready",
+      errorMessage: rawUrl.includes("127.0.0.1") ? "Private network previews are blocked." : undefined,
       createdAt: "2026-05-25T00:18:03.000Z",
       updatedAt: "2026-05-25T00:18:03.000Z",
     };

@@ -718,6 +718,10 @@ code,
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+.task-list-panel.activity-tab-panel {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
 .task-list-panel.protocol-tab-panel {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
@@ -815,6 +819,133 @@ code,
 .channel-protocol-tab-content .channel-inspector {
   padding-bottom: 0;
   border-bottom: 0;
+}
+
+.activity-shell {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  min-width: 0;
+  min-height: 460px;
+  height: clamp(460px, calc(100vh - 280px), 760px);
+  overflow: hidden;
+}
+
+.activity-shell .message-feed {
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.activity-shell .channel-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  align-self: end;
+}
+
+.activity-confirmation,
+.composer-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel-strong);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.activity-confirmation {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.activity-confirmation span,
+.composer-status-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-confirmation button {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.composer-status-list {
+  display: grid;
+  gap: 6px;
+}
+
+.composer-status-row.loading {
+  border-color: #d9bd71;
+  background: #fffaf0;
+  color: #7a4d00;
+}
+
+.composer-status-row.failed {
+  border-color: #e7b4a8;
+  background: #fff7f4;
+  color: #9a341f;
+}
+
+.composer-status-row .secondary-button:first-of-type {
+  margin-left: auto;
+}
+
+.mention-chip.default {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.pending-assets {
+  align-items: stretch;
+}
+
+.pending-asset {
+  gap: 5px;
+  max-width: min(100%, 360px);
+}
+
+.pending-asset small {
+  min-width: 0;
+  overflow: hidden;
+  color: currentColor;
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.7;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-asset button {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: currentColor;
+}
+
+.pending-asset.uploading {
+  border-color: #d9bd71;
+  background: #fffaf0;
+  color: #7a4d00;
+}
+
+.pending-asset.failed,
+.pending-asset.blocked {
+  border-color: #e7b4a8;
+  background: #fff7f4;
+  color: #9a341f;
 }
 
 .channel-inspector {
@@ -1746,6 +1877,11 @@ textarea:disabled {
   .tasks-tab-layout,
   .channel-options-grid {
     grid-template-columns: 1fr;
+  }
+
+  .task-list-panel.activity-tab-panel {
+    max-height: none;
+    min-height: min(680px, calc(100vh - 140px));
   }
 }
 

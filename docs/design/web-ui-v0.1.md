@@ -33,7 +33,7 @@ created from a workflow step. Task detail now lives inside the `Tasks` tab inste
 occupying the default channel chat view. `Start step` creates a task for review, while
 `Start + run` enters the existing task/run stream and approval/runtime boundaries.
 
-Planned v1.3 behavior: the channel Activity tab should behave like a focused chat
+Implemented v1.3 behavior: the channel Activity tab now behaves like a focused chat
 workspace with an independently scrollable message feed, sticky in-tab composer,
 explicit send/AI reply/attachment/link-preview states, task-conversion feedback that can
 open the created task in `Tasks`, and complete English/Chinese coverage for touched

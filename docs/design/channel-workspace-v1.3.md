@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned v1.3 slice after the channel workspace MVP, v1.1 protocol records, and v1.2
+Implemented v1.3 slice after the channel workspace MVP, v1.1 protocol records, and v1.2
 handoff workflows.
 
 The broader channel source of truth remains [Channel Workspace Design](channel-workspace.md).
@@ -324,14 +324,19 @@ corepack pnpm --filter @ling-stack/daemon test
 corepack pnpm --filter @ling-stack/api-client test
 ```
 
-## Rollout Plan
+## Implemented Notes
 
-1. Land this design document as the v1.3 scope baseline.
-2. Implement Activity layout and composer stickiness first.
-3. Add send, AI reply, asset, and task-conversion feedback.
-4. Complete i18n cleanup for touched channel strings.
-5. Run Web e2e and type/build checks.
-6. Update docs with implemented notes and mark tracker items complete.
+- Activity now uses a dedicated shell with an independently scrollable message feed and
+  an in-tab sticky composer.
+- Composer state distinguishes sending, failed send retry, AI reply pending/failure, and
+  per-asset upload/link preview status.
+- Pending attachment and link preview chips stay in Activity and can be removed before
+  sending.
+- Message-to-task conversion shows a compact confirmation that opens the created task in
+  the `Tasks` tab.
+- Touched channel strings have English/Chinese dictionary coverage.
+- Web e2e covers composer visibility, independent feed scrolling, failed-send retry,
+  blocked URL previews, task-conversion feedback, and channel language switching.
 
 ## Future Work
 

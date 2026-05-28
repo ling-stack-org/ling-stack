@@ -1516,7 +1516,7 @@ Current MVP implementation status:
   `Channel protocol` tab instead of a task-detail dock,
 - task detail now lives in the `Tasks` tab instead of a persistent split pane beside
   channel Activity,
-- v1.3 is planned as a chat experience polish slice: sticky Activity composer,
+- v1.3 now implements the chat experience polish slice: sticky Activity composer,
   independent message scrolling, clearer send/AI/asset states, task-conversion
   feedback, and English/Chinese channel copy cleanup,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
@@ -1648,15 +1648,15 @@ Current MVP implementation status:
 ### Phase 13: Chat Experience Polish
 
 - [x] Define v1.3 chat experience plan in `docs/design/channel-workspace-v1.3.md`.
-- [ ] Make the Activity message feed independently scrollable.
-- [ ] Keep the Activity composer sticky at the bottom of the channel conversation.
-- [ ] Add clear sending, failed-send retry, and AI reply pending/blocker states.
-- [ ] Keep pending attachments and URL previews inside the composer without switching
+- [x] Make the Activity message feed independently scrollable.
+- [x] Keep the Activity composer sticky at the bottom of the channel conversation.
+- [x] Add clear sending, failed-send retry, and AI reply pending/blocker states.
+- [x] Keep pending attachments and URL previews inside the composer without switching
   tabs.
-- [ ] Show confirmation after creating a task from a message, with an action that opens
+- [x] Show confirmation after creating a task from a message, with an action that opens
   the task in the `Tasks` tab.
-- [ ] Audit touched channel strings for English/Chinese i18n coverage.
-- [ ] Add e2e coverage for composer visibility, tab boundaries, task conversion
+- [x] Audit touched channel strings for English/Chinese i18n coverage.
+- [x] Add e2e coverage for composer visibility, tab boundaries, task conversion
   feedback, asset preview states, and language switching.
 
 ## Validation Plan
