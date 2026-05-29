@@ -19,6 +19,21 @@ test("default provider templates include Seedream live HTTP base URL without ena
   assert.equal(seedream.enabled, false);
 });
 
+test("official provider templates expose fixed default base URLs", () => {
+  const templates = defaultProviderTemplates();
+  const byId = new Map(templates.map((template) => [template.templateId, template]));
+
+  assert.equal(byId.get("openai-gpt")?.baseUrl, "https://api.openai.com/v1");
+  assert.equal(byId.get("anthropic-claude")?.baseUrl, "https://api.anthropic.com/v1");
+  assert.equal(byId.get("doubao-ark")?.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
+  assert.equal(byId.get("deepseek-dpv4")?.baseUrl, "https://api.deepseek.com");
+  assert.equal(byId.get("minimax-chat")?.baseUrl, "https://api.minimax.io/v1");
+  assert.equal(byId.get("glm-zhipu")?.baseUrl, "https://open.bigmodel.cn/api/paas/v4");
+  assert.equal(byId.get("seedream-image")?.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
+  assert.equal(byId.get("jimeng-image")?.baseUrl, "https://visual.volcengineapi.com");
+  assert.equal(byId.get("seedance-video")?.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
+});
+
 test("sqlite store persists provider check results", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-provider-"));
   const checkedAt = "2026-05-21T00:00:00.000Z";

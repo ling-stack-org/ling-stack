@@ -47,8 +47,10 @@ import type {
   ProviderCheckResult,
   ProviderFormState,
   ProviderListResponse,
+  ProviderModelListResponse,
   ProviderMutationRequest,
   ProviderMutationResponse,
+  ProviderSecretResponse,
   ProviderTemplateListResponse,
   ResourceLeaseListResponse,
   RunCancelResponse,
@@ -355,12 +357,32 @@ export async function updateProvider(cwd: string, providerId: string, form: Prov
   return daemonClient.updateProvider(cwd, providerId, providerFormToPayload(form));
 }
 
+export async function getProviderSecret(cwd: string, providerId: string): Promise<ProviderSecretResponse> {
+  return daemonClient.getProviderSecret(cwd, providerId);
+}
+
 export async function deleteProvider(cwd: string, providerId: string): Promise<void> {
   await daemonClient.deleteProvider(cwd, providerId);
 }
 
 export async function checkProvider(cwd: string, providerId: string): Promise<ProviderCheckResult> {
   return daemonClient.checkProvider(cwd, providerId);
+}
+
+export async function checkProviderDraft(cwd: string, form: ProviderFormState): Promise<ProviderCheckResult> {
+  return daemonClient.checkProviderDraft(cwd, providerFormToPayload(form));
+}
+
+export async function listProviderModels(cwd: string, form: ProviderFormState): Promise<ProviderModelListResponse> {
+  return daemonClient.listProviderModels(cwd, {
+    kind: form.kind,
+    providerId: form.providerId,
+    api: form.api,
+    baseUrl: form.baseUrl || undefined,
+    apiKey: form.apiKey.trim() || undefined,
+    apiKeyRef: form.apiKeyRef || undefined,
+    authHeader: form.authHeader,
+  });
 }
 
 export async function listApprovals(

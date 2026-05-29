@@ -12,6 +12,7 @@ const defaultRuntimePolicy = {
 
 interface MockState {
   providers: unknown[];
+  providerSecrets: Record<string, string>;
   channels: unknown[];
   channelMessages: unknown[];
   channelAttachments: unknown[];
@@ -135,6 +136,41 @@ test("workspace opens as a task workbench with task context in the inspector", a
   const taskDetail = page.locator("article.task-detail");
   await expect(taskDetail).toContainText("Task detail");
   await expect(taskDetail).toContainText("run_failed");
+});
+
+test("workspace task list scrolls internally without growing the page", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = Array.from({ length: 24 }, (_, index) => ({
+    id: `task_scroll_${index + 1}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    title: `Scrollable task ${index + 1}`,
+    prompt: `Keep task row ${index + 1} inside the workbench list instead of growing the page.`,
+    status: "todo",
+    createdAt: "2026-05-25T00:05:00.000Z",
+    updatedAt: "2026-05-25T00:05:00.000Z",
+  }));
+  state.runs = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openChannelTasksTab(page);
+
+  await expect(page.locator(".workbench-task-list .client-task-card")).toHaveCount(24);
+  await expect(page.locator(".channel-options > summary")).toContainText("Advanced channel settings");
+  const metrics = await page.evaluate(() => {
+    const taskList = document.querySelector(".workbench-task-list");
+    return {
+      viewportHeight: document.documentElement.clientHeight,
+      documentScrollHeight: document.documentElement.scrollHeight,
+      listClientHeight: taskList?.clientHeight ?? 0,
+      listScrollHeight: taskList?.scrollHeight ?? 0,
+      listOverflowY: taskList ? getComputedStyle(taskList).overflowY : "",
+    };
+  });
+  expect(metrics.documentScrollHeight).toBeLessThanOrEqual(metrics.viewportHeight + 2);
+  expect(metrics.listOverflowY).toBe("auto");
+  expect(metrics.listScrollHeight).toBeGreaterThan(metrics.listClientHeight + 20);
 });
 
 test("channel runtime policy and default teammate are visible and used when creating channels", async ({ page }) => {
@@ -1318,6 +1354,184 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
 });
 
+test("model workbench Chinese mode localizes setup copy and uses an add model sheet", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_missing_key",
+      displayName: "Missing Key Gateway",
+      apiKeyConfigured: false,
+      apiKeyRef: "env:MISSING_GATEWAY_KEY",
+    }),
+  ];
+  await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  await expect(page.getByRole("heading", { name: "模型工作台" }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "模型工作台" })).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: "模型预设" })).toBeVisible();
+  await expect(page.locator(".workspace-head .status-badge")).toHaveCount(0);
+  await expect(page.getByText("聊天能力")).toBeVisible();
+  await expect(page.getByText("Chat-capable")).toHaveCount(0);
+  await expect(page.getByText(/个聊天 \/ .*个媒体/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "添加模型" })).toBeVisible();
+  await expect(page.getByText("修复队列")).toHaveCount(0);
+  await expect(page.getByText("Repair queue")).toHaveCount(0);
+  await expect(page.getByText("MISSING_GATEWAY_KEY")).toHaveCount(0);
+  await expect(page.getByText("env:", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("New preset")).toHaveCount(0);
+  await expect(page.getByLabel("Model Workbench context")).toHaveCount(0);
+  const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
+  await expect(missingKeyGatewayRow.getByRole("button", { name: "启用" })).toBeVisible();
+  await expect(missingKeyGatewayRow.getByRole("button", { name: "使用" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "添加模型" }).first().click();
+  const editor = page.getByRole("dialog", { name: "新建预设" });
+  await expect(editor).toBeVisible();
+  const editorBox = await editor.boundingBox();
+  const viewport = page.viewportSize();
+  expect(editorBox).not.toBeNull();
+  expect((editorBox?.x ?? 0) + (editorBox?.width ?? 0)).toBeGreaterThan(1240);
+  expect(editorBox?.y ?? -1).toBeGreaterThanOrEqual(0);
+  expect((editorBox?.y ?? 0) + (editorBox?.height ?? 0)).toBeLessThanOrEqual(viewport?.height ?? 720);
+  await expect(editor.locator(".provider-sheet-header")).toHaveCSS("border-bottom-width", "0px");
+  await expect(editor.locator(".provider-sheet-footer")).toHaveCSS("border-top-width", "0px");
+  const editorBody = editor.locator(".provider-sheet-body");
+  const editorTitle = editor.getByRole("heading", { name: "新建预设" });
+  const editorCloseButton = editor.getByRole("button", { name: "关闭模型预设编辑器" });
+  const savePresetButton = editor.getByRole("button", { name: "保存" });
+  const templatePanel = editor.locator(".provider-template-panel");
+
+  await expect(editor.getByRole("tab", { name: /自定义接入/ })).toHaveAttribute("aria-selected", "true");
+  await expect(editor).toContainText("自定义 OpenAI-compatible");
+  await expect(editor).not.toContainText("本地 OpenAI-compatible Relay");
+  await expect(editor.getByRole("tab", { name: /OpenAI-compatible 中转/ })).toHaveCount(0);
+
+  await editor.getByRole("tab", { name: /^GPT/ }).click();
+  await expect(templatePanel).toContainText("OpenAI GPT");
+  await expect(templatePanel).not.toContainText("Claude");
+  await page.getByRole("button", { name: /OpenAI GPT/ }).click();
+  await expect(page.getByLabel("API 协议")).toBeDisabled();
+
+  await editor.getByRole("tab", { name: /^Claude/ }).click();
+  await expect(templatePanel).toContainText("Claude");
+  await expect(templatePanel).not.toContainText("OpenAI GPT");
+  await page.getByRole("button", { name: /Claude/ }).click();
+  await expect(page.getByLabel("API 协议")).toBeDisabled();
+
+  await editor.getByRole("tab", { name: /国内模型/ }).click();
+  await expect(editor).toContainText("豆包 Ark");
+  await expect(editor).toContainText("智谱 GLM");
+  await expect(editor).not.toContainText("Seedream 图片");
+  await expect(page.getByLabel("提供商名称")).toHaveValue("豆包 Ark");
+  await expect(page.getByLabel("提供商 ID")).toHaveValue("doubao");
+  await expect(page.getByLabel("API 协议")).toBeDisabled();
+
+  await editor.getByRole("tab", { name: /媒体/ }).click();
+  await expect(editor).toContainText("Seedream 图片");
+  await expect(editor).toContainText("Seedance 视频");
+  await expect(editor).not.toContainText("豆包 Ark");
+  await expect(page.getByLabel("提供商名称")).toHaveValue("Seedream 图片");
+  await expect(page.getByLabel("Base URL")).toHaveValue("https://ark.cn-beijing.volces.com/api/v3");
+  await expect(page.getByLabel("API 协议")).toBeDisabled();
+
+  await editor.getByRole("tab", { name: /自定义接入/ }).click();
+  await page.getByRole("button", { name: /自定义 OpenAI-compatible/ }).click();
+  await expect(page.locator(".provider-template-card.selected")).toContainText("自定义 OpenAI-compatible");
+  await expect(page.getByLabel("提供商名称")).toHaveValue("自定义 OpenAI-compatible");
+  await expect(page.getByLabel("API 协议")).toBeEnabled();
+  await expect(page.getByText("高级 env/keychain")).toHaveCount(0);
+  await expect(page.getByText("env:OPENAI_API_KEY")).toHaveCount(0);
+  await expect.poll(() =>
+    page.evaluate(() => ({
+      bodyOverflow: getComputedStyle(document.body).overflow,
+      htmlOverflow: getComputedStyle(document.documentElement).overflow,
+    })),
+  ).toEqual({ bodyOverflow: "hidden", htmlOverflow: "hidden" });
+
+  const titleBeforeScroll = await editorTitle.boundingBox();
+  const closeBeforeScroll = await editorCloseButton.boundingBox();
+  const saveBeforeScroll = await savePresetButton.boundingBox();
+  await editorBody.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(editorTitle).toBeVisible();
+  await expect(editorCloseButton).toBeVisible();
+  await expect(savePresetButton).toBeVisible();
+  const titleAfterScroll = await editorTitle.boundingBox();
+  const closeAfterScroll = await editorCloseButton.boundingBox();
+  const saveAfterScroll = await savePresetButton.boundingBox();
+  expect(titleBeforeScroll).not.toBeNull();
+  expect(closeBeforeScroll).not.toBeNull();
+  expect(saveBeforeScroll).not.toBeNull();
+  expect(titleAfterScroll).not.toBeNull();
+  expect(closeAfterScroll).not.toBeNull();
+  expect(saveAfterScroll).not.toBeNull();
+  expect(Math.abs((titleAfterScroll?.y ?? 0) - (titleBeforeScroll?.y ?? 0))).toBeLessThanOrEqual(2);
+  expect(Math.abs((closeAfterScroll?.y ?? 0) - (closeBeforeScroll?.y ?? 0))).toBeLessThanOrEqual(2);
+  expect(Math.abs((saveAfterScroll?.y ?? 0) - (saveBeforeScroll?.y ?? 0))).toBeLessThanOrEqual(2);
+  await expect(editor).not.toContainText("Local OpenAI-Compatible Relay");
+  await expect(editor).not.toContainText("Doubao Ark");
+  await expect(editor).not.toContainText("GLM Zhipu");
+  await expect(editor).not.toContainText("Jimeng Image");
+  await expect(editor).not.toContainText("Seedream Image");
+  await expect(editor).not.toContainText("Seedance Video");
+  await expect(editor).not.toContainText("Official Anthropic Messages API endpoint.");
+  await expect(editor).not.toContainText("Volcengine Ark OpenAI-compatible chat endpoint for Doubao models.");
+  await expect(page.getByText("Check provider")).toHaveCount(0);
+  await expect(editor.getByRole("button", { name: "保存" })).toHaveCount(1);
+  await expect(editor.getByRole("button", { name: "创建预设" })).toHaveCount(0);
+  await expect(editor.getByRole("button", { name: "保存修改" })).toHaveCount(0);
+  await expect(editor.getByRole("button", { name: "保存并检查" })).toHaveCount(0);
+});
+
+test("model workbench localizes unsupported daemon model discovery errors", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), {
+    templates: createDefaultProviderTemplates(),
+    providerModelsUnsupported: true,
+  });
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  await page.getByRole("button", { name: "添加模型" }).first().click();
+  await page.getByRole("button", { name: /自定义 OpenAI-compatible/ }).click();
+  await page.getByLabel("API Key", { exact: true }).fill("test-visible-key");
+  await page.getByRole("button", { name: "获取模型" }).click();
+
+  await expect(page.getByText("当前本地服务版本不支持获取模型，请停止旧服务后重新启动项目。")).toBeVisible();
+  await expect(page.getByText("No route for POST /provider-models")).toHaveCount(0);
+});
+
+test("model workbench save validates before persisting and keeps errors inside the sheet", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  await page.getByRole("button", { name: "添加模型" }).first().click();
+  const editor = page.getByRole("dialog", { name: "新建预设" });
+  await expect(editor).toBeVisible();
+  await page.getByRole("button", { name: /自定义 OpenAI-compatible/ }).click();
+  await page.getByRole("button", { name: "保存" }).click();
+
+  await expect(editor.getByText("请填写 API Key 后再保存。")).toBeVisible();
+  await expect(editor.getByText("API key missing. Add an API key before running a live check.")).toHaveCount(0);
+  await expect(page.locator(".provider-list-panel > .inline-error")).toHaveCount(0);
+  await expect.poll(() =>
+    state.providers.some((provider) => isRecord(provider) && provider.displayName === "Custom OpenAI-compatible")
+  ).toBe(false);
+});
+
 test("AI teammates page creates a local teammate through the wizard", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -1473,7 +1687,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await navigation.locator(".primary-nav .nav-item").filter({ hasText: "Model Workbench" }).click();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: ["Model Workbench"], selectedRows: [] });
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Model Workbench context")).toBeVisible();
+  await expect(page.getByLabel("Model Workbench context")).toHaveCount(0);
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "Settings" }).click();
@@ -1551,8 +1765,35 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
         checkedAt: "2026-05-25T00:00:00.000Z",
       },
     }),
+    createChatProvider({
+      id: "provider_legacy_openai",
+      kind: "openai",
+      displayName: "Legacy OpenAI Without Stored Endpoint",
+      providerId: "openai",
+      model: "gpt-5.4",
+      api: "openai-completions",
+      baseUrl: undefined,
+    }),
+    createChatProvider({
+      id: "provider_openai_proxy",
+      kind: "openai",
+      displayName: "OpenAI Proxy Custom Endpoint",
+      providerId: "openai",
+      model: "gpt-5.5",
+      api: "openai-completions",
+      baseUrl: "http://192.168.80.114:8317/v1",
+      lastCheck: {
+        ok: true,
+        code: "ready",
+        message: "Provider is reachable.",
+        checkedAt: "2026-05-25T00:00:00.000Z",
+      },
+    }),
     createMediaProvider(),
   ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel
+  );
   await mockDaemon(page, state, {
     templates: [
       {
@@ -1563,7 +1804,24 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
         providerId: "openai",
         model: "gpt-5.4",
         api: "openai-completions",
+        baseUrl: "https://api.openai.com/v1",
         apiKeyRef: "env:OPENAI_API_KEY",
+        capabilities: ["chat", "tool_call", "reasoning"],
+        input: ["text"],
+        enabled: false,
+        authHeader: true,
+        reasoning: true,
+      },
+      {
+        templateId: "anthropic-claude",
+        description: "Official Anthropic endpoint.",
+        kind: "anthropic",
+        displayName: "Claude",
+        providerId: "anthropic",
+        model: "claude-sonnet-4-5",
+        api: "anthropic-messages",
+        baseUrl: "https://api.anthropic.com/v1",
+        apiKeyRef: "env:ANTHROPIC_API_KEY",
         capabilities: ["chat", "tool_call", "reasoning"],
         input: ["text"],
         enabled: false,
@@ -1578,52 +1836,146 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
   await expect(page.getByText("Chat-capable")).toBeVisible();
   await expect(page.getByText("Coding ready")).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 
-  await expect(page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" })).toContainText("key missing");
+  const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
+  await expect(missingKeyGatewayRow).toContainText("key missing");
+  await expect(missingKeyGatewayRow.locator(".provider-state.enabled")).toHaveCount(0);
+  await expect(missingKeyGatewayRow.locator(".provider-state.key-missing")).toHaveCount(1);
+  await expect(missingKeyGatewayRow.locator(".provider-state.run-blocked")).toHaveCount(0);
+  await expect(missingKeyGatewayRow.locator(".provider-state.check-bad")).toHaveCount(0);
   await expect(page.locator(".provider-row").filter({ hasText: "Unchecked Domestic Gateway" })).toContainText("unchecked");
   await expect(page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" })).toContainText("auth failed");
-  await expect(page.locator(".provider-row").filter({ hasText: "Ready Local Relay" })).toContainText("check ready");
+  const readyLocalRelayRow = page.locator(".provider-row").filter({ hasText: "Ready Local Relay" });
+  await expect(readyLocalRelayRow).toContainText("check ready");
+  await expect(readyLocalRelayRow.getByRole("button", { name: "Stop using" })).toBeVisible();
+  await readyLocalRelayRow.getByRole("button", { name: "Stop using" }).click();
+  await expect(readyLocalRelayRow.getByRole("button", { name: "Use" })).toBeVisible();
+  await expect.poll(() =>
+    state.channels.every((channel) => !isRecord(channel) || channel.defaultProviderPresetId === undefined)
+  ).toBe(true);
+  await expect(readyLocalRelayRow.locator(".provider-state.enabled")).toHaveCount(0);
+  await expect(readyLocalRelayRow.locator(".provider-state.disabled")).toHaveCount(1);
   await expect(page.locator(".provider-row").filter({ hasText: "Seedream Image" })).toContainText("Coding task: blocked");
+  const legacyOpenAiRow = page.locator(".provider-row").filter({ hasText: "Legacy OpenAI Without Stored Endpoint" });
+  await expect(legacyOpenAiRow).toContainText("https://api.openai.com/v1");
+  await legacyOpenAiRow.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
+  await expect(page.getByLabel("Base URL")).toHaveValue("https://api.openai.com/v1");
+  await expect(page.getByLabel("Provider ID")).toBeDisabled();
+  await expect(page.getByLabel("API protocol")).toBeDisabled();
+  await page.getByRole("button", { name: "Close model preset editor" }).click();
+  const openAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
+  await openAiProxyRow.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
+  await expect(page.getByLabel("Base URL")).toHaveValue("http://192.168.80.114:8317/v1");
+  await expect(page.getByLabel("Provider ID")).toBeEnabled();
+  await expect(page.getByLabel("API protocol")).toBeEnabled();
+  await page.getByRole("button", { name: "Close model preset editor" }).click();
+  await expect(openAiProxyRow.getByRole("button", { name: "Use" })).toBeVisible();
+  await openAiProxyRow.getByRole("button", { name: "Use" }).click();
+  await expect.poll(() =>
+    state.channels.some((channel) =>
+      isRecord(channel) &&
+      channel.id === "channel_engineering" &&
+      channel.defaultProviderPresetId === "provider_openai_proxy"
+    )
+  ).toBe(true);
+  await expect(openAiProxyRow.getByRole("button", { name: "Stop using" })).toBeVisible();
+  await expect(openAiProxyRow.locator(".provider-state.enabled")).toHaveCount(1);
 
+  await page.reload();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  const reloadedOpenAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
+  await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Stop using" })).toBeVisible();
+  await expect(reloadedOpenAiProxyRow.locator(".provider-state.enabled")).toHaveCount(1);
+  await expect(page.getByText(/Ready: .* passed preflight/)).toHaveCount(0);
+  await expect(page.getByText("All saved chat providers are either preflight-ready or intentionally out of the run path.")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Add model" }).click();
+  await expect(page.getByRole("dialog", { name: "New preset" })).toBeVisible();
   await page.getByRole("button", { name: /Custom OpenAI-compatible/ }).click();
   await expect(page.locator(".provider-template-card.selected")).toContainText("Custom OpenAI-compatible");
+  await expect(page.getByRole("tab", { name: /OpenAI-compatible relay/ })).toHaveCount(0);
+  await page.getByRole("tab", { name: /^GPT/ }).click();
   await page.getByRole("button", { name: /OpenAI GPT/ }).click();
   await expect(page.locator(".provider-template-card.selected")).toContainText("OpenAI GPT");
+  await expect(page.locator(".provider-template-panel")).not.toContainText("Claude");
+  await expect(page.getByLabel("Base URL")).toHaveValue("https://api.openai.com/v1");
+  await expect(page.getByLabel("API protocol")).toBeDisabled();
+  await page.getByRole("tab", { name: /^Claude/ }).click();
+  await page.getByRole("button", { name: /Claude/ }).click();
+  await expect(page.locator(".provider-template-card.selected")).toContainText("Claude");
+  await expect(page.locator(".provider-template-panel")).not.toContainText("OpenAI GPT");
+  await expect(page.getByLabel("Base URL")).toHaveValue("https://api.anthropic.com/v1");
+  await expect(page.getByLabel("API protocol")).toBeDisabled();
   await expect(page.getByLabel("Enabled")).toBeChecked();
+  await page.getByRole("tab", { name: /Custom access/ }).click();
   await page.getByRole("button", { name: /Custom OpenAI-compatible/ }).click();
   await expect(page.locator(".provider-template-card.selected")).toContainText("Custom OpenAI-compatible");
-  await expect(page.getByLabel("Display name")).toHaveValue("Custom OpenAI-compatible");
+  await expect(page.getByLabel("Provider name")).toHaveValue("Custom OpenAI-compatible");
+  await expect(page.getByLabel("Provider ID")).toHaveValue("custom-openai-compatible");
   await expect(page.getByLabel("Base URL")).toHaveValue("https://api.example.com/v1");
+  await expect(page.getByLabel("API protocol")).toBeEnabled();
   await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
-  await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "password");
-  await page.getByLabel("API key", { exact: true }).fill("test-visible-key");
-  await page.getByRole("button", { name: "Show API key" }).click();
   await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "text");
-  await page.getByText("Advanced env/keychain").click();
-  await page.getByLabel("API key ref").fill("env:CUSTOM_MODEL_API_KEY");
-  await expect(page.getByText("API key input wins over env/keychain on save.")).toBeVisible();
+  await page.getByLabel("API key", { exact: true }).fill("test-visible-key");
+  const apiKeyVisibilityButton = page.getByRole("button", { name: "Hide API key" });
+  await expect(apiKeyVisibilityButton.locator(".lucide-eye")).toBeVisible();
+  await apiKeyVisibilityButton.click();
+  await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "password");
+  const showApiKeyButton = page.getByRole("button", { name: "Show API key" });
+  await expect(showApiKeyButton.locator(".lucide-eye-off")).toBeVisible();
+  await showApiKeyButton.click();
+  await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "text");
+  await expect(page.getByRole("button", { name: "Clear API key" })).toHaveCount(0);
+  const inlineClearButton = page.locator(".provider-secret-input .provider-secret-clear");
+  await expect(inlineClearButton).toBeVisible();
+  await expect(page.getByText("Advanced env/keychain")).toHaveCount(0);
+  await expect(page.getByText("env:CUSTOM_MODEL_API_KEY")).toHaveCount(0);
+  await page.getByRole("button", { name: "Fetch models" }).click();
+  const modelCards = page.locator(".provider-model-card");
+  await expect(modelCards).toHaveCount(2);
+  await expect(modelCards.filter({ hasText: "Custom model" })).toHaveCount(0);
+  await expect(modelCards.filter({ hasText: "cliproxy-gpt-4o" })).toBeVisible();
+  await modelCards.filter({ hasText: "cliproxy-claude-sonnet" }).click();
+  await expect(page.getByRole("textbox", { name: "Model", exact: true })).toHaveValue("cliproxy-claude-sonnet");
   await expect(page.getByLabel("Capabilities")).toHaveValue("chat, tool_call, reasoning");
 
-  await page.getByRole("button", { name: "Save & Check" }).click();
+  await page.getByRole("button", { name: "Save" }).click();
   const customProviderRow = page.locator(".provider-row").filter({ hasText: "Custom OpenAI-compatible" });
-  await expect(customProviderRow).toContainText("Saved locally");
+  await expect(customProviderRow).not.toContainText("Saved locally");
   await expect(customProviderRow).toContainText("key ready");
   await expect(customProviderRow).toContainText("check ready");
-  await expect(page.getByLabel("API key", { exact: true })).toHaveValue("test-visible-key");
+  await expect(customProviderRow.locator(".provider-meta-line").first()).toContainText("Model:");
+  await expect(customProviderRow.locator(".provider-meta-line").first()).toContainText("API protocol:");
+  await expect(customProviderRow.locator(".provider-meta-line").first()).not.toContainText("custom-openai-compatible");
+  await expect(customProviderRow.getByRole("button", { name: "Stop using" })).toBeVisible();
+  await customProviderRow.getByRole("button", { name: "Stop using" }).click();
+  await expect(customProviderRow.getByRole("button", { name: "Use" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "New preset" })).toHaveCount(0);
   await expect.poll(() =>
     state.providers.some((provider) =>
       isRecord(provider) &&
       provider.displayName === "Custom OpenAI-compatible" &&
-      provider.apiKeyRef === "local:provider_created_6" &&
+      typeof provider.apiKeyRef === "string" &&
+      provider.apiKeyRef.startsWith("local:provider_created_") &&
       provider.apiKeyConfigured === true &&
       !("apiKey" in provider)
     )
   ).toBe(true);
 
   await customProviderRow.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
+  await expect(page.getByLabel("Provider ID")).toBeEnabled();
+  await expect(page.getByLabel("API protocol")).toBeEnabled();
+  await expect(page.getByLabel("API key", { exact: true })).toHaveValue("test-visible-key");
+  await expect(page.getByRole("button", { name: "Hide API key" }).locator(".lucide-eye")).toBeVisible();
+  await page.locator(".provider-secret-input .provider-secret-clear").click();
   await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
-  await page.getByRole("button", { name: "Clear key" }).click();
-  await expect(customProviderRow).toContainText("key missing");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("dialog", { name: "Edit preset" }).getByText("API key missing. Add an API key before running a live check.")).toBeVisible();
+  await expect(customProviderRow).toContainText("key ready");
 });
 
 test("workspace task runs only expose preflight-ready coding providers", async ({ page }) => {
@@ -1854,8 +2206,10 @@ test("workspace run timeline summarizes activity and keeps raw events contained"
   await expect(rawEvents).not.toHaveAttribute("open", /.+/);
   await rawEvents.locator(":scope > summary").click();
   await expect(rawEvents.locator(".raw-event-list")).toHaveCSS("overflow-y", "auto");
+  await expect(rawEvents.locator(".raw-event-list")).toHaveCSS("overflow-x", "hidden");
   await expect.poll(() => readScrollState(page, ".raw-event-list")).toMatchObject({ atBottom: true });
   await expect(rawEvents.getByText("assistant_thinking_delta").first()).toBeVisible();
+  await expect.poll(() => readHorizontalOverflow(page, ".workspace-task-inspector, .timeline, .timeline-activity-list, .raw-event-list, .assistant-output")).toEqual([]);
 });
 
 test("save and check enables a disabled provider before checking", async ({ page }) => {
@@ -1876,7 +2230,7 @@ test("save and check enables a disabled provider before checking", async ({ page
   const disabledRow = page.locator(".provider-row").filter({ hasText: "Disabled Relay" });
   await disabledRow.getByRole("button", { name: "Edit" }).click();
   await page.getByLabel("API key", { exact: true }).fill("disabled-provider-key");
-  await page.getByRole("button", { name: "Save & Check" }).click();
+  await page.getByRole("button", { name: "Save" }).click();
 
   await expect(disabledRow).toContainText("enabled");
   await expect(disabledRow).toContainText("check ready");
@@ -1910,7 +2264,8 @@ test("row check enables a configured disabled chat provider before checking", as
   const disabledRow = page.locator(".provider-row").filter({ hasText: "Configured Disabled Relay" });
   await disabledRow.getByRole("button", { name: "Check" }).click();
 
-  await expect(disabledRow).toContainText("enabled");
+  await expect(disabledRow.locator(".provider-state.enabled")).toHaveCount(0);
+  await expect(disabledRow.getByRole("button", { name: "Use" })).toBeVisible();
   await expect(disabledRow).toContainText("check ready");
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
@@ -1950,7 +2305,7 @@ test("failed provider runs route repair back to Model Workbench", async ({ page 
   await providerRepair.getByRole("button", { name: "Model Workbench" }).click();
 
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Display name")).toHaveValue("Auth Failed Gateway");
+  await expect(page.getByLabel("Provider name")).toHaveValue("Auth Failed Gateway");
   await expect(page.getByLabel("Provider run repair")).toContainText("run_failed");
 });
 
@@ -2253,6 +2608,21 @@ async function readScrollState(page: Page, selector: string): Promise<{ readonly
   });
 }
 
+async function readHorizontalOverflow(page: Page, selector: string): Promise<string[]> {
+  return await page.evaluate((selectorText) =>
+    [...document.querySelectorAll(selectorText)]
+      .filter((element) => {
+        const overflowX = getComputedStyle(element).overflowX;
+        const canExposeHorizontalOverflow = overflowX === "auto" || overflowX === "scroll" || overflowX === "visible";
+        return canExposeHorizontalOverflow && element.scrollWidth > element.clientWidth + 1;
+      })
+      .map((element) => {
+        const className = typeof element.className === "string" ? element.className : "";
+        return `${element.tagName.toLowerCase()}.${className.replace(/\\s+/g, ".")}`;
+      }),
+  selector);
+}
+
 function createBaseState(options: { approvalStatus: "pending" | "expired" }): MockState {
   const run: MockRun = {
     id: "run_failed",
@@ -2273,6 +2643,7 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
   };
   return {
     providers: [],
+    providerSecrets: {},
     channels: [
       {
         id: "channel_engineering",
@@ -2371,6 +2742,7 @@ function createEmptyMockBrief(channelId: string): Record<string, unknown> {
 }
 
 function createVerboseRunEvents(runId: string): MockRunEvent[] {
+  const longPath = `/tmp/${"very-long-segment-".repeat(16)}workspace/src/features/workspace/WorkspaceClientView.tsx`;
   const thinkingEvents = Array.from({ length: 12 }, (_, index) => ({
     id: `evt_thinking_${index + 1}`,
     runId,
@@ -2432,7 +2804,7 @@ function createVerboseRunEvents(runId: string): MockRunEvent[] {
       seq: 17,
       ts: "2026-05-25T00:20:03.000Z",
       type: "tool_start",
-      data: { type: "tool_start", toolCallId: "call_grep", toolName: "grep", args: { path: "src", pattern: "TODO" } },
+      data: { type: "tool_start", toolCallId: "call_grep", toolName: "grep", args: { path: longPath, pattern: "TODO_WITH_A_VERY_LONG_UNBROKEN_SEARCH_PATTERN" } },
     },
     {
       id: "evt_tool_end_grep",
@@ -2502,6 +2874,139 @@ function createMediaProvider(overrides: Record<string, unknown> = {}): Record<st
     enabled: true,
     createdAt: "2026-05-25T00:00:00.000Z",
     updatedAt: "2026-05-25T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createDefaultProviderTemplates(): readonly Record<string, unknown>[] {
+  return [
+    createProviderTemplate({
+      templateId: "openai-gpt",
+      kind: "openai",
+      displayName: "OpenAI GPT",
+      description: "Official OpenAI endpoint using the built-in OpenAI provider.",
+      providerId: "openai",
+      model: "gpt-5.5",
+      api: "openai-completions",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyRef: "env:OPENAI_API_KEY",
+    }),
+    createProviderTemplate({
+      templateId: "anthropic-claude",
+      kind: "anthropic",
+      displayName: "Claude",
+      description: "Official Anthropic Messages API endpoint.",
+      providerId: "anthropic",
+      model: "claude-sonnet-4-5",
+      api: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com/v1",
+      apiKeyRef: "env:ANTHROPIC_API_KEY",
+    }),
+    createProviderTemplate({
+      templateId: "local-openai-compatible-relay",
+      kind: "openai-compatible",
+      displayName: "Local OpenAI-Compatible Relay",
+      description: "Local relay, One API, New API, LiteLLM, OpenRouter-style gateways, or private compatible gateways.",
+      providerId: "local-relay",
+      model: "dpv4",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:8317/v1",
+      apiKeyRef: "env:LOCAL_RELAY_API_KEY",
+    }),
+    createProviderTemplate({
+      templateId: "doubao-ark",
+      kind: "doubao",
+      displayName: "Doubao Ark",
+      description: "Volcengine Ark OpenAI-compatible chat endpoint for Doubao models.",
+      providerId: "doubao",
+      model: "doubao-seed-2-0-lite-260215",
+      api: "openai-completions",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKeyRef: "env:ARK_API_KEY",
+    }),
+    createProviderTemplate({
+      templateId: "deepseek-dpv4",
+      kind: "deepseek",
+      displayName: "DeepSeek V4",
+      description: "DeepSeek OpenAI-compatible chat endpoint.",
+      providerId: "deepseek",
+      model: "deepseek-v4-pro",
+      api: "openai-completions",
+      baseUrl: "https://api.deepseek.com",
+      apiKeyRef: "env:DEEPSEEK_API_KEY",
+    }),
+    createProviderTemplate({
+      templateId: "minimax-chat",
+      kind: "minimax",
+      displayName: "MiniMax",
+      description: "MiniMax OpenAI-compatible chat endpoint.",
+      providerId: "minimax",
+      model: "MiniMax-M2.7",
+      api: "openai-completions",
+      baseUrl: "https://api.minimax.io/v1",
+      apiKeyRef: "env:MINIMAX_API_KEY",
+    }),
+    createProviderTemplate({
+      templateId: "glm-zhipu",
+      kind: "glm",
+      displayName: "GLM Zhipu",
+      description: "Zhipu GLM OpenAI-compatible chat endpoint.",
+      providerId: "glm",
+      model: "glm-5.1",
+      api: "openai-completions",
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      apiKeyRef: "env:ZHIPU_API_KEY",
+    }),
+    createProviderTemplate({
+      templateId: "seedream-image",
+      kind: "seedream",
+      displayName: "Seedream Image",
+      description: "Seedream image provider. image_generate can use live Ark HTTP when mediaVendorTransport.mode is explicitly set to live; image_edit remains deferred.",
+      providerId: "seedream",
+      model: "doubao-seedream-5-0-260128",
+      api: "media-job",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKeyRef: "env:SEEDREAM_API_KEY",
+      capabilities: ["image_generate", "image_edit"],
+      input: ["text", "image"],
+    }),
+    createProviderTemplate({
+      templateId: "jimeng-image",
+      kind: "jimeng",
+      displayName: "Jimeng Image",
+      description: "Jimeng image generation/editing capability placeholder for the future media job runtime.",
+      providerId: "jimeng",
+      model: "jimeng-image",
+      api: "media-job",
+      baseUrl: "https://visual.volcengineapi.com",
+      apiKeyRef: "env:JIMENG_API_KEY",
+      capabilities: ["image_generate", "image_edit"],
+      input: ["text", "image"],
+    }),
+    createProviderTemplate({
+      templateId: "seedance-video",
+      kind: "seedance",
+      displayName: "Seedance Video",
+      description: "Seedance video generation capability placeholder for the future media job runtime.",
+      providerId: "seedance",
+      model: "seedance",
+      api: "media-job",
+      apiKeyRef: "env:SEEDANCE_API_KEY",
+      capabilities: ["video_generate"],
+      input: ["text", "image"],
+    }),
+  ];
+}
+
+function createProviderTemplate(overrides: Record<string, unknown>): Record<string, unknown> {
+  return {
+    capabilities: ["chat", "tool_call", "reasoning"],
+    input: ["text"],
+    enabled: false,
+    authHeader: true,
+    reasoning: true,
+    contextWindow: 128000,
+    maxTokens: 16384,
     ...overrides,
   };
 }
@@ -2576,7 +3081,11 @@ function buildProviderCheckResult(provider: Record<string, unknown>): Record<str
 async function mockDaemon(
   page: Page,
   state: MockState,
-  options: { readonly defaultWorkspaceCwd?: string; readonly templates?: readonly unknown[] } = {},
+  options: {
+    readonly defaultWorkspaceCwd?: string;
+    readonly templates?: readonly unknown[];
+    readonly providerModelsUnsupported?: boolean;
+  } = {},
 ): Promise<void> {
   await page.route("http://127.0.0.1:17891/**", async (route) => {
     await handleDaemonRoute(route, state, options);
@@ -2586,7 +3095,11 @@ async function mockDaemon(
 async function handleDaemonRoute(
   route: Route,
   state: MockState,
-  options: { readonly defaultWorkspaceCwd?: string },
+  options: {
+    readonly defaultWorkspaceCwd?: string;
+    readonly templates?: readonly unknown[];
+    readonly providerModelsUnsupported?: boolean;
+  },
 ): Promise<void> {
   const request = route.request();
   const url = new URL(request.url());
@@ -2610,11 +3123,72 @@ async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, providers: state.providers } });
     return;
   }
+  if (request.method() === "POST" && path === "/provider-check") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const needsApiKey = body.api === "anthropic-messages" || body.authHeader !== false;
+    const hasApiKey = typeof body.apiKey === "string" && body.apiKey.trim().length > 0;
+    const hasConfiguredRef = body.apiKeyRef === "env:LOCAL_RELAY_API_KEY";
+    if (needsApiKey && !hasApiKey && !hasConfiguredRef) {
+      await route.fulfill({
+        json: {
+          ok: false,
+          code: "secret_missing",
+          message: "API key missing. Add an API key before running a live check.",
+          checkedAt: "2026-05-25T00:11:00.000Z",
+        },
+      });
+      return;
+    }
+    await route.fulfill({ json: buildProviderCheckResult(createProviderFromBody(body, "provider_draft_check")) });
+    return;
+  }
+  if (request.method() === "POST" && path === "/provider-models") {
+    if (options.providerModelsUnsupported) {
+      await route.fulfill({ status: 404, json: { error: "not_found", message: "No route for POST /provider-models" } });
+      return;
+    }
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    if (body.baseUrl !== "https://api.example.com/v1" || body.apiKey !== "test-visible-key") {
+      await route.fulfill({ status: 400, json: { error: "unexpected_model_probe", body } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        source: "https://api.example.com/v1/models",
+        models: [
+          { id: "cliproxy-gpt-4o", ownedBy: "cliproxy" },
+          { id: "cliproxy-claude-sonnet", ownedBy: "cliproxy" },
+        ],
+      },
+    });
+    return;
+  }
   if (request.method() === "POST" && path === "/providers") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const provider = createProviderFromBody(body, `provider_created_${state.providers.length + 1}`);
     state.providers.push(provider);
+    if (typeof body.apiKey === "string" && body.apiKey.trim()) {
+      state.providerSecrets[String(provider.id)] = body.apiKey;
+    }
     await route.fulfill({ status: 201, json: { provider } });
+    return;
+  }
+  const providerSecretMatch = /^\/providers\/([^/]+)\/secret$/.exec(path);
+  if (providerSecretMatch && request.method() === "GET") {
+    const providerId = decodeURIComponent(providerSecretMatch[1]);
+    const provider = state.providers.find((item) => isRecord(item) && item.id === providerId);
+    if (!provider || !isRecord(provider)) {
+      await route.fulfill({ status: 404, json: { error: "provider_not_found" } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        providerId,
+        apiKey: state.providerSecrets[providerId] ?? "",
+        apiKeyRef: typeof provider.apiKeyRef === "string" ? provider.apiKeyRef : undefined,
+        configured: Boolean(state.providerSecrets[providerId]),
+      },
+    });
     return;
   }
   const providerMatch = /^\/providers\/([^/]+)$/.exec(path);
@@ -2631,6 +3205,12 @@ async function handleDaemonRoute(
       ? { ...existing, ...createProviderFromBody(body, providerId, existing), id: providerId, updatedAt: "2026-05-25T00:10:00.000Z" }
       : createProviderFromBody(body, providerId);
     state.providers[providerIndex] = provider;
+    if (typeof body.apiKey === "string" && body.apiKey.trim()) {
+      state.providerSecrets[providerId] = body.apiKey;
+    }
+    if (body.clearApiKey === true) {
+      delete state.providerSecrets[providerId];
+    }
     await route.fulfill({ json: { provider } });
     return;
   }

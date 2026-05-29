@@ -1795,7 +1795,7 @@ export function WorkspaceClientView({
       <details className="config-disclosure channel-options">
         <summary>
           <SlidersHorizontal size={14} />
-          {t("Channel options")}
+          {t("Advanced channel settings")}
         </summary>
         <div className="channel-options-grid">
           <label className="field wide">

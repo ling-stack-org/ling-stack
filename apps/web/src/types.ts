@@ -49,6 +49,16 @@ export interface ProviderFormState {
   readonly maxTokens: string;
 }
 
+export interface ProviderModelListFormState {
+  readonly kind: ProviderKind;
+  readonly providerId: string;
+  readonly api: ProviderApi;
+  readonly baseUrl: string;
+  readonly apiKey: string;
+  readonly apiKeyRef: string;
+  readonly authHeader: boolean;
+}
+
 export interface ChannelFormState {
   readonly name: string;
   readonly status: ChannelStatus;

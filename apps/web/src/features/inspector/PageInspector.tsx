@@ -219,7 +219,7 @@ function ProviderContextInspector({
             <MetaRow label={t("Provider")} value={provider.displayName} />
             <MetaRow label={t("Model")} value={provider.model} compact />
             <MetaRow label={t("API")} value={provider.api} compact />
-            <MetaRow label={t("Secret")} value={providerNeedsSecret(provider) ? (provider.apiKeyConfigured ? t("Saved locally") : t("API key missing")) : t("no key required")} />
+            <MetaRow label={t("Secret")} value={providerNeedsSecret(provider) ? (provider.apiKeyConfigured ? t("key ready") : t("API key missing")) : t("no key required")} />
           </div>
           <div className={blocker ? "provider-run-notice" : "provider-run-notice ok"}>
             {blocker ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />}
@@ -231,7 +231,7 @@ function ProviderContextInspector({
               <span>{visibleCheck.message}</span>
             </div>
           ) : providerPreflightReady(provider) ? (
-            <p className="muted">{t("Last check is ready. Edit URL, model, or key and Save & Check to validate again.")}</p>
+            <p className="muted">{t("Last check is ready. Edit URL, model, or key and Save to validate again.")}</p>
           ) : null}
         </>
       ) : (

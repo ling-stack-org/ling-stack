@@ -18,6 +18,7 @@ import {
   buildTaskRunRequest,
   cancelRun,
   checkProvider,
+  checkProviderDraft,
   channelAttachmentContentUrl,
   createChannel,
   createChannelContextSummary,
@@ -36,6 +37,7 @@ import {
   deleteTask,
   deleteProvider,
   getDaemonHealth,
+  getProviderSecret,
   getApprovalPolicy,
   getChannelBrief,
   getRun,
@@ -159,14 +161,17 @@ import { defaultTools } from "../lib/tools.js";
 import {
   canBatchCheckProvider,
   canUseProviderForRun,
+  customOpenAICompatibleForm,
   defaultProviderForm,
   isMediaProvider,
+  providerFormToTemplate,
   providerCheckGuidance,
   providerCheckStatusLabel,
   providerPreflightReady,
   providerRunBlockerLabel,
   providerRunPreflightBlocker,
   providerSecretReady,
+  providerEffectiveBaseUrl,
   providerTemplateToForm,
   providerToForm,
 } from "../lib/providers.js";
@@ -293,6 +298,7 @@ export function AppShell(): JSX.Element {
   const [providerCheckTargetId, setProviderCheckTargetId] = useState("");
   const [checkingProviderIds, setCheckingProviderIds] = useState<readonly string[]>([]);
   const [providerBatchResult, setProviderBatchResult] = useState<ProviderBatchResult | undefined>();
+  const [providerSaveMessage, setProviderSaveMessage] = useState("");
   const [providerRepairRunId, setProviderRepairRunId] = useState("");
   const [mediaJobs, setMediaJobs] = useState<readonly MediaJob[]>([]);
   const [mediaJobArtifacts, setMediaJobArtifacts] = useState<Record<string, readonly RunArtifact[]>>({});
@@ -322,6 +328,14 @@ export function AppShell(): JSX.Element {
   const [errorMessage, setErrorMessage] = useState("");
   const abortRef = useRef<AbortController | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
+
+  useEffect(() => {
+    if (!providerSaveMessage) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setProviderSaveMessage(""), 3500);
+    return () => window.clearTimeout(timeout);
+  }, [providerSaveMessage]);
 
   function addLocalTeammate(input: LocalTeammateCreateInput): void {
     setLocalTeammates((currentTeammates) => {
@@ -1209,7 +1223,7 @@ export function AppShell(): JSX.Element {
       setActiveSidebarTarget(channelSidebarTarget(response.channel.id));
       setTaskRunProviderId("");
       if (readyProvider) {
-        applyProviderToRun(readyProvider);
+      void applyProviderToRun(readyProvider);
       }
       setChannelForm((current) => ({
         ...current,
@@ -2025,61 +2039,53 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function saveProvider(nextProviderForm = providerForm): Promise<ProviderPreset | undefined> {
-    if (!form.cwd.trim()) {
-      setErrorMessage("请输入 workspace path");
-      return undefined;
+  async function saveProviderWithPreflight(): Promise<{ readonly ok: boolean; readonly errorMessage?: string }> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      return { ok: false, errorMessage: "请输入 workspace path" };
     }
 
+    const nextProviderForm = { ...providerForm, enabled: true };
+    const checkingId = editingProviderId || "provider_draft_check";
     try {
-      setErrorMessage("");
+      setProviderSaveMessage("");
       setProviderCheck(undefined);
-      setProviderCheckTargetId("");
+      setProviderCheckTargetId(checkingId);
       setProviderBatchResult(undefined);
+      setCheckingProviderIds([checkingId]);
+
+      const draftCheck = await checkProviderDraft(workspaceCwd, nextProviderForm);
+      setProviderCheck(draftCheck);
+      if (!draftCheck.ok) {
+        return { ok: false, errorMessage: draftCheck.message };
+      }
+
       const response = editingProviderId
-        ? await updateProvider(form.cwd.trim(), editingProviderId, nextProviderForm)
-        : await createProvider(form.cwd.trim(), nextProviderForm);
-      setEditingProviderId(response.provider.id);
+        ? await updateProvider(workspaceCwd, editingProviderId, nextProviderForm)
+        : await createProvider(workspaceCwd, nextProviderForm);
+      const savedProvider = response.provider;
+      setEditingProviderId(savedProvider.id);
       setProviderForm({
-        ...providerToForm(response.provider),
+        ...providerToForm(savedProvider, providerTemplates),
         apiKey: nextProviderForm.clearApiKey ? "" : nextProviderForm.apiKey,
       });
-      await refreshProviders();
-      applyProviderToRun(response.provider);
-      return response.provider;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      return undefined;
-    }
-  }
+      await applyProviderToRun(savedProvider);
 
-  async function saveAndCheckProvider(): Promise<void> {
-    const savedProvider = await saveProvider({ ...providerForm, enabled: true });
-    if (!savedProvider) {
-      return;
-    }
-
-    try {
-      setErrorMessage("");
-      setProviderBatchResult(undefined);
-      setCheckingProviderIds([savedProvider.id]);
       setProviderCheckTargetId(savedProvider.id);
-      const result = await checkProvider(form.cwd.trim(), savedProvider.id);
-      setProviderCheck(result);
+      const savedCheck = await checkProvider(workspaceCwd, savedProvider.id);
+      setProviderCheck(savedCheck);
       await refreshProviders();
+      if (!savedCheck.ok) {
+        return { ok: false, errorMessage: savedCheck.message };
+      }
+
+      setProviderSaveMessage(t("Model preset saved successfully."));
+      return { ok: true };
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      return { ok: false, errorMessage: error instanceof Error ? error.message : String(error) };
     } finally {
       setCheckingProviderIds([]);
     }
-  }
-
-  async function clearProviderKey(): Promise<void> {
-    if (!editingProviderId) {
-      setProviderForm((current) => ({ ...current, apiKey: "", apiKeyRef: "", clearApiKey: false }));
-      return;
-    }
-    await saveProvider({ ...providerForm, apiKey: "", apiKeyRef: "", clearApiKey: true });
   }
 
   async function removeProvider(providerId: string): Promise<void> {
@@ -2128,7 +2134,7 @@ export function AppShell(): JSX.Element {
   async function runProviderBatchCheck(): Promise<void> {
     const candidates = providers.filter(canBatchCheckProvider);
     if (candidates.length === 0) {
-      setErrorMessage("No enabled chat providers to check.");
+      setErrorMessage(t("No enabled chat providers to check."));
       return;
     }
 
@@ -2152,7 +2158,11 @@ export function AppShell(): JSX.Element {
 
       await refreshProviders();
       setProviderBatchResult({
-        message: `Checked ${candidates.length} chat providers: ${readyCount} ready, ${failedCount} failed.`,
+        message: t("Checked {count} chat providers: {readyCount} ready, {failedCount} failed.", {
+          count: candidates.length,
+          readyCount,
+          failedCount,
+        }),
         failedCount,
       });
     } catch (error) {
@@ -2168,18 +2178,89 @@ export function AppShell(): JSX.Element {
     setProviderCheck(undefined);
     setProviderCheckTargetId("");
     setProviderBatchResult(undefined);
-    setProviderForm(providerToForm(provider));
+    setProviderForm(providerToForm(provider, providerTemplates));
+    if (provider.apiKeyRef?.startsWith("local:")) {
+      void loadProviderSecretIntoForm(provider.id);
+    }
   }
 
-  function applyProviderToRun(provider: ProviderPreset): void {
+  async function loadProviderSecretIntoForm(providerId: string): Promise<void> {
+    try {
+      const secret = await getProviderSecret(form.cwd.trim(), providerId);
+      setProviderForm((current) => ({ ...current, apiKey: secret.apiKey, clearApiKey: false }));
+    } catch {
+      setProviderForm((current) => current);
+    }
+  }
+
+  async function applyProviderToRun(provider: ProviderPreset): Promise<void> {
+    setTaskRunProviderId(provider.id);
     setForm((current) => ({
       ...current,
       providerPresetId: provider.id,
       provider: provider.providerId,
       model: provider.model,
-      baseUrl: provider.baseUrl ?? "",
+      baseUrl: providerEffectiveBaseUrl(provider, providerTemplates),
       api: provider.api,
     }));
+
+    const workspaceCwd = form.cwd.trim();
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    if (!workspaceCwd || !selectedChannel) {
+      return;
+    }
+
+    const nextChannelForm = {
+      ...channelToForm(selectedChannel, workspaceCwd),
+      defaultProviderPresetId: provider.id,
+    };
+    setChannels((current) =>
+      current.map((channel) =>
+        channel.id === selectedChannel.id ? { ...channel, defaultProviderPresetId: provider.id } : channel
+      )
+    );
+    setChannelEditForm((current) =>
+      selectedChannelId === selectedChannel.id ? { ...current, defaultProviderPresetId: provider.id } : current
+    );
+    try {
+      await updateChannel(workspaceCwd, selectedChannel.id, nextChannelForm);
+      await refreshChannels(workspaceCwd);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      await refreshChannels(workspaceCwd);
+    }
+  }
+
+  async function clearProviderFromRun(): Promise<void> {
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    setForm((current) => ({
+      ...current,
+      providerPresetId: "",
+    }));
+    setTaskRunProviderId("");
+    if (!selectedChannel?.defaultProviderPresetId || !form.cwd.trim()) {
+      return;
+    }
+
+    const clearedChannelForm = {
+      ...channelToForm(selectedChannel, form.cwd),
+      defaultProviderPresetId: "",
+    };
+    setChannels((current) =>
+      current.map((channel) =>
+        channel.id === selectedChannel.id ? { ...channel, defaultProviderPresetId: undefined } : channel
+      )
+    );
+    setChannelEditForm((current) =>
+      selectedChannelId === selectedChannel.id ? { ...current, defaultProviderPresetId: "" } : current
+    );
+    try {
+      await updateChannel(form.cwd.trim(), selectedChannel.id, clearedChannelForm);
+      await refreshChannels();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      await refreshChannels();
+    }
   }
 
   async function selectRun(runId: string): Promise<void> {
@@ -2256,8 +2337,18 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  const showInspector = activeView !== "providers";
+  const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
+  const selectedProviderIdForRun =
+    taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
+  const shellClassName = [
+    "app-shell",
+    showInspector && inspectorCollapsed ? "inspector-collapsed" : "",
+    showInspector ? "" : "inspector-hidden",
+  ].filter(Boolean).join(" ");
+
   return (
-    <main className={inspectorCollapsed ? "app-shell inspector-collapsed" : "app-shell"}>
+    <main className={shellClassName}>
       <TopBar daemonHealthy={daemonHealthy} provider={`${form.provider}/${form.model}`} onRefresh={refreshHealth} />
       <SidebarNavigation
         activeSidebarTarget={activeSidebarTarget}
@@ -2322,7 +2413,7 @@ export function AppShell(): JSX.Element {
               setTaskRunProviderId(providerId);
               const provider = providers.find((item) => item.id === providerId);
               if (provider) {
-                applyProviderToRun(provider);
+                void applyProviderToRun(provider);
               }
             }}
             onSelectChannel={selectWorkspaceChannel}
@@ -2369,7 +2460,7 @@ export function AppShell(): JSX.Element {
               </div>
               {activeView === "teammates" ? (
                 <span className="status-badge succeeded">{GSTACK_DEFAULT_SKILL_PACK_ID}</span>
-              ) : (
+              ) : activeView === "providers" ? null : (
                 <StatusBadge status={latestStatus} />
               )}
             </div>
@@ -2433,7 +2524,8 @@ export function AppShell(): JSX.Element {
                 checkResult={providerCheck}
                 checkedProviderId={providerCheckTargetId}
                 batchResult={providerBatchResult}
-                selectedProviderId={form.providerPresetId}
+                successMessage={providerSaveMessage}
+                selectedProviderId={selectedProviderIdForRun}
                 selectedTemplateId={selectedProviderTemplateId}
                 repairRun={providerRepairRun}
                 isRunning={isRunning}
@@ -2445,25 +2537,25 @@ export function AppShell(): JSX.Element {
                   setSelectedProviderTemplateId(template.templateId);
                   setProviderCheck(undefined);
                   setProviderCheckTargetId("");
-                  setProviderForm(providerTemplateToForm(template));
+                  setProviderForm(providerTemplateToForm(template, t));
                 }}
                 onNew={() => {
                   setProviderRepairRunId("");
                   setEditingProviderId("");
-                  setSelectedProviderTemplateId("");
+                  const customTemplate = providerFormToTemplate(customOpenAICompatibleForm);
+                  setSelectedProviderTemplateId(customTemplate.templateId);
                   setProviderCheck(undefined);
                   setProviderCheckTargetId("");
-                  setProviderForm(defaultProviderForm);
+                  setProviderForm(providerTemplateToForm(customTemplate, t));
                 }}
-                onSave={() => void saveProvider()}
-                onSaveAndCheck={() => void saveAndCheckProvider()}
-                onClearKey={() => void clearProviderKey()}
+                onSave={saveProviderWithPreflight}
                 onRefresh={() => void refreshProviders()}
                 onEdit={editProvider}
                 onDelete={(providerId) => void removeProvider(providerId)}
                 onCheck={(providerId) => void runProviderCheck(providerId)}
                 onCheckBatch={() => void runProviderBatchCheck()}
                 onUse={applyProviderToRun}
+                onStopUse={clearProviderFromRun}
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onClearRepair={() => setProviderRepairRunId("")}
@@ -2527,50 +2619,52 @@ export function AppShell(): JSX.Element {
           </>
         )}
       </section>
-      <aside className={inspectorCollapsed ? "right-panel collapsed" : "right-panel"} aria-label={t("Inspector")}>
-        <button
-          className="inspector-toggle"
-          type="button"
-          onClick={() => setInspectorCollapsed((current) => !current)}
-          aria-label={inspectorCollapsed ? t("Show inspector") : t("Hide inspector")}
-        >
-          {inspectorCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}
-        </button>
-        {!inspectorCollapsed ? (
-          <PageInspector
-            activeView={activeView}
-            selectedEntity={selectedEntity}
-            selectedTask={selectedWorkspaceTask}
-            selectedRun={run}
-            activeRunId={activeRunId}
-            lookupRunId={lookupRunId}
-            events={events}
-            assistantText={assistantText}
-            errorMessage={errorMessage}
-            isRunning={isRunning}
-            pendingApprovals={activePendingApprovals}
-            approvalsLoading={approvalsLoading}
-            resolvingApprovals={resolvingApprovals}
-            providers={providers}
-            selectedProviderId={form.providerPresetId}
-            editingProviderId={editingProviderId}
-            providerCheck={providerCheck}
-            checkedProviderId={providerCheckTargetId}
-            mediaJobs={mediaJobs}
-            selectedMediaJobId={selectedMediaJobId}
-            mediaJobArtifacts={mediaJobArtifacts}
-            approvals={approvals}
-            selectedApprovalId={selectedApprovalId}
-            approvalPolicy={approvalPolicy}
-            approvalPolicyForm={approvalPolicyForm}
-            cwd={form.cwd}
-            onLookupRunIdChange={setLookupRunId}
-            onLoadRun={() => void loadRun()}
-            onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
-            onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
-          />
-        ) : null}
-      </aside>
+      {showInspector ? (
+        <aside className={inspectorCollapsed ? "right-panel collapsed" : "right-panel"} aria-label={t("Inspector")}>
+          <button
+            className="inspector-toggle"
+            type="button"
+            onClick={() => setInspectorCollapsed((current) => !current)}
+            aria-label={inspectorCollapsed ? t("Show inspector") : t("Hide inspector")}
+          >
+            {inspectorCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}
+          </button>
+          {!inspectorCollapsed ? (
+            <PageInspector
+              activeView={activeView}
+              selectedEntity={selectedEntity}
+              selectedTask={selectedWorkspaceTask}
+              selectedRun={run}
+              activeRunId={activeRunId}
+              lookupRunId={lookupRunId}
+              events={events}
+              assistantText={assistantText}
+              errorMessage={errorMessage}
+              isRunning={isRunning}
+              pendingApprovals={activePendingApprovals}
+              approvalsLoading={approvalsLoading}
+              resolvingApprovals={resolvingApprovals}
+              providers={providers}
+              selectedProviderId={selectedProviderIdForRun}
+              editingProviderId={editingProviderId}
+              providerCheck={providerCheck}
+              checkedProviderId={providerCheckTargetId}
+              mediaJobs={mediaJobs}
+              selectedMediaJobId={selectedMediaJobId}
+              mediaJobArtifacts={mediaJobArtifacts}
+              approvals={approvals}
+              selectedApprovalId={selectedApprovalId}
+              approvalPolicy={approvalPolicy}
+              approvalPolicyForm={approvalPolicyForm}
+              cwd={form.cwd}
+              onLookupRunIdChange={setLookupRunId}
+              onLoadRun={() => void loadRun()}
+              onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
+              onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+            />
+          ) : null}
+        </aside>
+      ) : null}
     </main>
   );
 }
