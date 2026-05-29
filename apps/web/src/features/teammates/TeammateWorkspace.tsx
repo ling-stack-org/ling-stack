@@ -27,6 +27,7 @@ import {
   listTeammateSkills,
   listTeammateTasks,
   replaceTeammateChannels,
+  replaceTeammateSkills,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
@@ -106,13 +107,32 @@ export function TeammateWorkspace({
   const [sending, setSending] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [savingChannels, setSavingChannels] = useState(false);
+  const [savingSkills, setSavingSkills] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [taskMessage, setTaskMessage] = useState("");
   const [channelMessage, setChannelMessage] = useState("");
+  const [skillMessage, setSkillMessage] = useState("");
   const [workspaceError, setWorkspaceError] = useState("");
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   const skillById = useMemo(() => new Map((skillPack?.skills ?? []).map((skill) => [skill.id, skill])), [skillPack]);
+  const bindingBySkillId = useMemo(() => new Map(skillBindings.map((binding) => [binding.skillId, binding])), [skillBindings]);
+  const enabledSkillCount = useMemo(() => skillBindings.filter((binding) => binding.enabled).length, [skillBindings]);
+  const skillRows = useMemo(() => {
+    const builtInRows = (skillPack?.skills ?? []).map((skill) => ({
+      id: skill.id,
+      skill,
+      binding: bindingBySkillId.get(skill.id),
+    }));
+    const unknownRows = skillBindings
+      .filter((binding) => !skillById.has(binding.skillId))
+      .map((binding) => ({
+        id: binding.skillId,
+        skill: undefined,
+        binding,
+      }));
+    return [...builtInRows, ...unknownRows];
+  }, [bindingBySkillId, skillBindings, skillById, skillPack]);
   const channelsById = useMemo(() => new Map(channels.map((channel) => [channel.id, channel])), [channels]);
   const membershipByChannelId = useMemo(() => new Map(memberships.map((membership) => [membership.channelId, membership])), [memberships]);
   const taskChannelOptions = useMemo(() => {
@@ -138,7 +158,7 @@ export function TeammateWorkspace({
     { id: "tasks", label: t("Tasks"), count: tasks.length },
     { id: "activity", label: t("Activity"), count: activityItems.length },
     { id: "channels", label: t("Channels"), count: memberships.length },
-    { id: "skills", label: t("Skills"), count: skillBindings.length },
+    { id: "skills", label: t("Skills"), count: enabledSkillCount },
     { id: "memory", label: t("Memory"), count: memoryScopes.length },
     { id: "settings", label: t("Settings") },
   ];
@@ -151,6 +171,7 @@ export function TeammateWorkspace({
     setSaveMessage("");
     setTaskMessage("");
     setChannelMessage("");
+    setSkillMessage("");
     setTaskForm({ channelId: "", title: "", prompt: "" });
   }, [teammate.id]);
 
@@ -322,6 +343,39 @@ export function TeammateWorkspace({
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function toggleSkillBinding(skillId: string): Promise<void> {
+    if (savingSkills) {
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setWorkspaceError(t("Workspace path is required."));
+      return;
+    }
+    setSavingSkills(true);
+    try {
+      setWorkspaceError("");
+      setSkillMessage("");
+      const nextBindings = bindingBySkillId.has(skillId)
+        ? skillBindings.map((binding) =>
+          binding.skillId === skillId
+            ? { skillId: binding.skillId, source: binding.source, enabled: !binding.enabled }
+            : { skillId: binding.skillId, source: binding.source, enabled: binding.enabled },
+        )
+        : [
+          ...skillBindings.map((binding) => ({ skillId: binding.skillId, source: binding.source, enabled: binding.enabled })),
+          { skillId, source: "user" as const, enabled: true },
+        ];
+      const response = await replaceTeammateSkills(workspaceCwd, teammate.id, nextBindings);
+      setSkillBindings(response.bindings);
+      setSkillMessage(t("Skills updated"));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingSkills(false);
     }
   }
 
@@ -562,24 +616,48 @@ export function TeammateWorkspace({
       ) : null}
 
       {activeTab === "skills" ? (
-        <TeammateListSection
-          icon={<Brain size={16} />}
-          title={t("Skills")}
-          emptyLabel={t("No skills bound to this teammate")}
-          items={skillBindings}
-          renderItem={(binding) => {
-            const skill = skillById.get(binding.skillId);
-            return (
-              <article key={binding.skillId} className="teammate-data-row">
-                <span>
-                  <strong>{skill ? t(skill.name) : binding.skillId}</strong>
-                  <small>{skill ? t(skill.summary) : binding.source}</small>
-                </span>
-                <span className={`phase-token ${skill?.workflowPhase ?? "operate"}`}>{skill ? workflowPhaseLabel(skill.workflowPhase, t) : binding.source}</span>
-              </article>
-            );
-          }}
-        />
+        <section className="teammate-list-panel teammate-skills-panel" aria-label={t("Skills")}>
+          <div className="panel-title split">
+            <span>
+              <Brain size={16} />
+              <h2>{t("Skills")}</h2>
+            </span>
+            <small>{savingSkills ? t("Saving...") : skillMessage || t("{count} bound", { count: enabledSkillCount })}</small>
+          </div>
+          {skillRows.length === 0 ? (
+            <div className="client-empty-state teammate-empty">
+              <Brain size={18} />
+              <span>{t("No skills bound to this teammate")}</span>
+            </div>
+          ) : (
+            <div className="teammate-data-list">
+              {skillRows.map(({ id, skill, binding }) => {
+                const enabled = Boolean(binding?.enabled);
+                const sourceLabel = binding
+                  ? binding.source === "template"
+                    ? t("Template skill")
+                    : t("User skill")
+                  : t("Available skill");
+                return (
+                  <article key={id} className={`teammate-data-row teammate-skill-row ${enabled ? "enabled" : ""}`}>
+                    <span>
+                      <strong>{skill ? t(skill.name) : id}</strong>
+                      <small>{skill ? t(skill.summary) : t("Custom skill binding")}</small>
+                    </span>
+                    <div className="teammate-skill-actions">
+                      <span className="skill-binding-source">{sourceLabel}</span>
+                      <span className={`phase-token ${skill?.workflowPhase ?? "operate"}`}>{skill ? workflowPhaseLabel(skill.workflowPhase, t) : t("Custom")}</span>
+                      <button className="secondary-button compact-button" type="button" onClick={() => void toggleSkillBinding(id)} disabled={savingSkills}>
+                        {enabled ? <X size={14} /> : <Plus size={14} />}
+                        {enabled ? t("Disable skill") : t("Bind skill")}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
       ) : null}
 
       {activeTab === "memory" ? (

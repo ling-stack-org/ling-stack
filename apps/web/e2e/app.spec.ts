@@ -1734,6 +1734,25 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     isRecord(item) && item.teammateId === teammateId && item.channelId === "channel_engineering"
   )).toBe(false);
 
+  await page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Skills/ }).click();
+  const skillsPanel = page.locator(".teammate-skills-panel");
+  await expect(skillsPanel).toContainText("1 bound");
+  const engineeringReviewRow = skillsPanel.locator(".teammate-skill-row").filter({ has: page.getByText("Engineering Plan Review", { exact: true }) });
+  await expect(engineeringReviewRow).toContainText("Available skill");
+  await engineeringReviewRow.getByRole("button", { name: "Bind skill" }).click();
+  await expect.poll(() => state.teammateSkillBindings.some((item) =>
+    isRecord(item) && item.teammateId === teammateId && item.skillId === "plan-eng-review" && item.enabled === true
+  )).toBe(true);
+  await expect(skillsPanel).toContainText("Skills updated");
+  const implementationRow = skillsPanel.locator(".teammate-skill-row").filter({ has: page.getByText("Implementation", { exact: true }) });
+  await implementationRow.getByRole("button", { name: "Disable skill" }).click();
+  await expect.poll(() => {
+    const binding = state.teammateSkillBindings.find((item) =>
+      isRecord(item) && item.teammateId === teammateId && item.skillId === "implement"
+    );
+    return isRecord(binding) ? binding.enabled : undefined;
+  }).toBe(false);
+
   await page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Memory/ }).click();
   await expect(page.getByText("Private chat summary")).toBeVisible();
 

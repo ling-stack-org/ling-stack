@@ -179,14 +179,16 @@ teammate belongs to that channel.
 
 ### Skills Tab
 
-Purpose: inspect and later edit skill bindings.
+Purpose: inspect and edit teammate skill bindings.
 
 Behavior:
 
-- lists skills bound to the teammate,
+- lists the built-in skill library and any unknown durable bindings,
 - shows workflow phase, required tools, provider capabilities, and approval profile,
-- starts read-only for built-in templates,
-- supports persisted overrides after `teammate_skill_bindings` exists.
+- lets the user bind or disable a skill for the selected teammate,
+- saves through `PUT /teammates/:id/skills`,
+- treats disabled bindings as metadata, not as execution permission changes by
+  themselves.
 
 Skills are workflow templates. They do not grant execution authority by themselves.
 

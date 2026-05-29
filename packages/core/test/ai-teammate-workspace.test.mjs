@@ -49,6 +49,19 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
   const engineerId = createBuiltinAiTeammateId("engineer");
   try {
     const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
+    const skillBindings = store.replaceTeammateSkillBindings(
+      engineerId,
+      [
+        { skillId: "implement", source: "template", enabled: false },
+        { skillId: "plan-eng-review", source: "user", enabled: true },
+      ],
+      now,
+    );
+    assert.deepEqual(skillBindings.map((item) => [item.skillId, item.source, item.enabled]), [
+      ["implement", "template", false],
+      ["plan-eng-review", "user", true],
+    ]);
+
     const memberships = store.replaceTeammateChannelMemberships(
       engineerId,
       [{ channelId: channel.id, isDefault: true }],

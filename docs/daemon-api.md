@@ -285,7 +285,8 @@ PUT /teammates/:id/skills?cwd=/path/to/project
 
 Skill bindings are durable metadata. They do not grant execution authority by themselves;
 runs still pass through provider capability checks, allowed tools, approval policy, and
-state-machine gates.
+state-machine gates. Disabled bindings are retained as user overrides, so a template skill
+can be turned off without deleting the skill definition from the workspace library.
 
 ```json
 {

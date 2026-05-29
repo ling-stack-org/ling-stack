@@ -143,18 +143,130 @@ The page should behave like a client management view:
 
 This page must not imply more than the implemented persistence. Durable teammate
 instances, channel memberships, skill bindings, memory-scope metadata, and private
-threads exist. Custom skill-pack import, automatic memory recall, private attachments,
-avatar uploads, and full channel/skill/memory editing inside the teammate workspace are
-follow-up slices.
+threads exist. The private workspace can edit channel memberships and bind or disable
+built-in skills for a teammate. Custom skill-pack import, automatic memory recall,
+private attachments, avatar uploads, and full memory editing inside the teammate
+workspace are follow-up slices.
 
 The durable persistence and private conversation implementation record is captured in
 [Helio-Inspired AI Teammate Private Workspace](ai-teammate-private-workspace.md).
+
+## Multi-Agent Skill Management Design
+
+External agent frameworks converge on the same core lesson: agent collaboration works
+when handoffs, tools, guardrails, and task state are explicit. OpenAI Agents SDK models
+handoffs and guardrails as first-class runtime concepts. LangGraph recommends graph-like
+supervisor, network, and handoff patterns for multi-agent state. AutoGen teams formalize
+group chat and termination conditions. CrewAI separates agents, tasks, tools, crews, and
+flows so execution does not depend on a free-form chat loop.
+
+Relevant references:
+
+- [OpenAI Agents SDK handoffs](https://openai.github.io/openai-agents-js/guides/handoffs/)
+- [OpenAI Agents SDK guardrails](https://openai.github.io/openai-agents-js/guides/guardrails/)
+- [LangGraph multi-agent systems](https://langchain-ai.github.io/langgraph/concepts/multi_agent/)
+- [AutoGen AgentChat teams](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/teams.html)
+- [CrewAI crews](https://docs.crewai.com/concepts/crews)
+
+### Product Model
+
+Ling Stack should use three layers:
+
+1. Workspace Skill Library.
+   The library stores built-in skills, future imported `AGENTS.md` skills, and future
+   custom skill definitions. A skill definition is a workflow template with prompts,
+   required tools, provider capability requirements, approval profile, state effects,
+   and compatibility metadata.
+2. Teammate Skill Bindings.
+   A teammate binding says whether one teammate may use a skill template by default.
+   Bindings can come from a template or user edit, and can be disabled without deleting
+   the library definition.
+3. Effective Capability View.
+   The runtime computes what can actually execute by intersecting teammate bindings,
+   teammate allowed tools, provider capabilities, channel runtime policy, approval
+   policy, and workflow state-machine position.
+
+The Web UI should never present "skill enabled" as "permission granted". A bound skill
+means the teammate can propose or start that workflow only when the effective capability
+check passes.
+
+### Execution Model
+
+Multi-agent work should be Flow-first:
+
+```text
+task/workflow created
+-> state machine selects next step
+-> coordinator assigns teammate + skill
+-> effective capability check
+-> scoped prompt builder
+-> run starts with explicit tools and approvals
+-> artifact/event/state transition is persisted
+-> next teammate receives filtered handoff context
+```
+
+The teammate should not self-call another teammate by private chat. Cross-agent
+handoffs must be durable workflow events with a source step, target teammate, skill id,
+filtered context, and approval profile.
+
+### Trust Boundaries
+
+- Private chat is private by default. It is not part of a channel or workflow handoff
+  unless the user promotes a message, summary, or task.
+- Channel membership does not imply memory access. Memory scopes remain explicit.
+- A skill can request tools, but final tool availability comes from the effective
+  capability check.
+- Strict skills such as `ship` and `cso` must surface higher approval requirements
+  before a run starts.
+- Imported or custom skills start as disabled drafts until parsed, reviewed, and bound.
+
+### Implementation Plan
+
+Phase 1 is now the private workspace binding editor: use existing
+`teammate_skill_bindings`, show the built-in library, bind or disable skills per teammate,
+and persist through `PUT /teammates/:id/skills`.
+
+Phase 2 should add an Effective Skills read model:
+
+```ts
+interface EffectiveTeammateSkill {
+  skillId: string;
+  teammateId: string;
+  bound: boolean;
+  enabled: boolean;
+  executable: boolean;
+  blockedReasons: string[];
+  requiredTools: string[];
+  missingTools: string[];
+  missingProviderCapabilities: string[];
+  approvalProfile: SkillApprovalProfile;
+}
+```
+
+Phase 3 should add skill-aware task and workflow starts. A task may include
+`requestedSkillId`; the runner resolves the teammate, validates effective capability,
+and records the selected skill on the run.
+
+Phase 4 should persist custom skill definitions and importers. The first supported
+formats should be Ling-native JSON plus reviewed `AGENTS.md`/skill-directory imports.
+The importer must produce draft definitions, parse warnings, required tool previews, and
+approval previews before any teammate can bind them.
+
+### Failure Modes To Avoid
+
+- Free-form agent-to-agent loops that create hidden work, hidden context transfer, or
+  no durable state.
+- Treating a skill file as executable permission. Skill text is a template, not an auth
+  grant.
+- Letting private chat memory silently leak into channel tasks or cross-agent handoffs.
+- Letting imports run immediately. Imported skills need review, diff, and explicit bind.
+- Mixing template defaults with user overrides without source and enabled state.
 
 ## Future Work
 
 - Persist custom skill packs in the workspace database.
 - Add daemon APIs for listing built-in and custom skill packs.
-- Build richer UI controls for editing channel memberships, skill bindings, and memory
-  scopes from the private workspace tabs.
+- Add the Effective Skills read model and blocked-reason UI.
+- Build richer UI controls for editing memory scopes from the private workspace tabs.
 - Add importers for `AGENTS.md` and compatible skill directories.
 - Compile workflow templates into durable workflow and workflow-step state machines.
