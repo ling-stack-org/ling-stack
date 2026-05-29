@@ -315,6 +315,83 @@ test("channel link preview blocks localhost targets instead of fetching them", a
   }
 });
 
+test("AI teammate private workspace endpoints persist roster, setup, private messages, and activity", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-api-"));
+  let daemon = await startDaemonForTest();
+  try {
+    const seeded = await getJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}&includeHidden=true&includeDisabled=true`);
+    assert.ok(seeded.teammates.some((item) => item.id === "teammate_builtin_engineer"));
+
+    const channel = await createChannel(daemon.url, cwd);
+    const created = await postJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}`, {
+      roleKey: "custom",
+      displayName: "Private Reviewer",
+      description: "Reviews private workspace notes.",
+      allowedTools: ["read"],
+      approvalProfile: { mode: "none" },
+      status: "active",
+    });
+    const teammateId = created.teammate.id;
+
+    const memberships = await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id, isDefault: true }],
+    });
+    assert.deepEqual(memberships.memberships.map((item) => [item.channelId, item.isDefault]), [[channel.id, true]]);
+
+    const skills = await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/skills?cwd=${encodeURIComponent(cwd)}`, {
+      bindings: [{ skillId: "review", source: "user", enabled: true }],
+    });
+    assert.deepEqual(skills.bindings.map((item) => item.skillId), ["review"]);
+
+    const memory = await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/memory-scopes?cwd=${encodeURIComponent(cwd)}`, {
+      scopes: [
+        { kind: "private-chat-summary", enabled: true },
+        { kind: "channel-brief", channelId: channel.id, enabled: true },
+      ],
+    });
+    assert.deepEqual(memory.scopes.map((item) => item.kind), ["private-chat-summary", "channel-brief"]);
+
+    const task = (await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      title: "Review private workspace",
+      prompt: "Verify private chat state.",
+      assigneeTeammateId: teammateId,
+    })).task;
+    const teammateTasks = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/tasks?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(teammateTasks.tasks.map((item) => item.id), [task.id]);
+
+    const message = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Please review this private workspace.",
+      requestAiReply: true,
+    });
+    assert.equal(message.message.status, "ready");
+    assert.equal(message.aiReply.status, "blocked");
+    assert.match(message.aiReply.errorMessage, /provider preset/i);
+
+    const listedMessages = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(listedMessages.messages.map((item) => item.id), [message.message.id, message.aiReply.id]);
+
+    const activity = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/activity?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(activity.items.some((item) => item.kind === "direct-message" && item.sourceId === message.message.id));
+    assert.ok(activity.items.some((item) => item.kind === "task" && item.sourceId === task.id));
+
+    await daemon.close();
+    daemon = await startDaemonForTest();
+
+    const restartedRoster = await getJson(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}&includeHidden=true&includeDisabled=true`);
+    assert.ok(restartedRoster.teammates.some((item) => item.id === teammateId && item.displayName === "Private Reviewer"));
+    const restartedChannels = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(restartedChannels.memberships.map((item) => [item.channelId, item.isDefault]), [[channel.id, true]]);
+    const restartedMessages = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(restartedMessages.messages.map((item) => item.id), [message.message.id, message.aiReply.id]);
+    const restartedTasks = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/tasks?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(restartedTasks.tasks.map((item) => item.id), [task.id]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 async function startDaemonForTest() {
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 });
   await daemon.start();
@@ -353,6 +430,18 @@ async function getJson(url) {
 async function postJson(url, body) {
   const response = await fetch(url, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
+  }
+  return await response.json();
+}
+
+async function putJson(url, body) {
+  const response = await fetch(url, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

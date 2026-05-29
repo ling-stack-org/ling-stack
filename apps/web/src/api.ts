@@ -1,5 +1,7 @@
 import { LingDaemonClient, daemonBaseUrlFromEnv } from "@ling-stack/api-client";
 import type {
+  AiTeammateListResponse,
+  AiTeammateMutationResponse,
   ApprovalListResponse,
   ApprovalMutationResponse,
   ApprovalPolicyFormState,
@@ -35,6 +37,8 @@ import type {
   CreateChannelLinkPreviewRequest,
   CreateChannelMessageRequest,
   CreateChannelRequest,
+  CreateAiTeammateRequest,
+  CreateTeammateDirectMessageRequest,
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
@@ -53,6 +57,9 @@ import type {
   ProviderSecretResponse,
   ProviderTemplateListResponse,
   ResourceLeaseListResponse,
+  ReplaceTeammateChannelMembershipRequest,
+  ReplaceTeammateMemoryScopesRequest,
+  ReplaceTeammateSkillBindingsRequest,
   RunCancelResponse,
   RunArtifactListResponse,
   RunEventsResponse,
@@ -69,6 +76,14 @@ import type {
   TaskListResponse,
   TaskMutationResponse,
   ToolName,
+  TeammateActivityListResponse,
+  TeammateChannelMembershipListResponse,
+  TeammateDirectMessageListResponse,
+  TeammateDirectMessageMutationResponse,
+  TeammateDirectThreadResponse,
+  TeammateMemoryScopeListResponse,
+  TeammateSkillBindingListResponse,
+  UpdateAiTeammateRequest,
   UpdateChannelBriefRequest,
   UpdateChannelContextSummaryRequest,
   UpdateChannelDecisionRequest,
@@ -130,6 +145,82 @@ export async function createChannelMessage(
   input: CreateChannelMessageRequest,
 ): Promise<ChannelMessageMutationResponse> {
   return daemonClient.createChannelMessage(cwd, channelId, input);
+}
+
+export async function listAiTeammates(cwd: string): Promise<AiTeammateListResponse> {
+  return daemonClient.listAiTeammates(cwd, { includeHidden: true, includeDisabled: true });
+}
+
+export async function createAiTeammate(cwd: string, input: CreateAiTeammateRequest): Promise<AiTeammateMutationResponse> {
+  return daemonClient.createAiTeammate(cwd, input);
+}
+
+export async function updateAiTeammate(cwd: string, teammateId: string, input: UpdateAiTeammateRequest): Promise<AiTeammateMutationResponse> {
+  return daemonClient.updateAiTeammate(cwd, teammateId, input);
+}
+
+export async function disableAiTeammate(cwd: string, teammateId: string): Promise<AiTeammateMutationResponse> {
+  return daemonClient.disableAiTeammate(cwd, teammateId);
+}
+
+export async function listTeammateChannels(cwd: string, teammateId: string): Promise<TeammateChannelMembershipListResponse> {
+  return daemonClient.listTeammateChannels(cwd, teammateId);
+}
+
+export async function replaceTeammateChannels(
+  cwd: string,
+  teammateId: string,
+  memberships: ReplaceTeammateChannelMembershipRequest["memberships"],
+): Promise<TeammateChannelMembershipListResponse> {
+  return daemonClient.replaceTeammateChannels(cwd, teammateId, { memberships });
+}
+
+export async function listTeammateSkills(cwd: string, teammateId: string): Promise<TeammateSkillBindingListResponse> {
+  return daemonClient.listTeammateSkills(cwd, teammateId);
+}
+
+export async function replaceTeammateSkills(
+  cwd: string,
+  teammateId: string,
+  bindings: ReplaceTeammateSkillBindingsRequest["bindings"],
+): Promise<TeammateSkillBindingListResponse> {
+  return daemonClient.replaceTeammateSkills(cwd, teammateId, { bindings });
+}
+
+export async function listTeammateMemoryScopes(cwd: string, teammateId: string): Promise<TeammateMemoryScopeListResponse> {
+  return daemonClient.listTeammateMemoryScopes(cwd, teammateId);
+}
+
+export async function replaceTeammateMemoryScopes(
+  cwd: string,
+  teammateId: string,
+  scopes: ReplaceTeammateMemoryScopesRequest["scopes"],
+): Promise<TeammateMemoryScopeListResponse> {
+  return daemonClient.replaceTeammateMemoryScopes(cwd, teammateId, { scopes });
+}
+
+export async function getTeammateDirectThread(cwd: string, teammateId: string): Promise<TeammateDirectThreadResponse> {
+  return daemonClient.getTeammateDirectThread(cwd, teammateId);
+}
+
+export async function listTeammateDirectMessages(cwd: string, teammateId: string): Promise<TeammateDirectMessageListResponse> {
+  return daemonClient.listTeammateDirectMessages(cwd, teammateId);
+}
+
+export async function createTeammateDirectMessage(
+  cwd: string,
+  teammateId: string,
+  input: CreateTeammateDirectMessageRequest,
+): Promise<TeammateDirectMessageMutationResponse> {
+  return daemonClient.createTeammateDirectMessage(cwd, teammateId, input);
+}
+
+export async function listTeammateTasks(cwd: string, teammateId: string): Promise<TaskListResponse> {
+  return daemonClient.listTeammateTasks(cwd, teammateId);
+}
+
+export async function listTeammateActivity(cwd: string, teammateId: string): Promise<TeammateActivityListResponse> {
+  return daemonClient.listTeammateActivity(cwd, teammateId);
 }
 
 export async function listChannelAttachments(cwd: string, channelId: string): Promise<ChannelAttachmentListResponse> {

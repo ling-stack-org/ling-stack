@@ -23,6 +23,12 @@ interface MockState {
   channelContextSummaries: unknown[];
   channelWorkflows: unknown[];
   channelWorkflowSteps: unknown[];
+  aiTeammates: unknown[];
+  teammateChannelMemberships: unknown[];
+  teammateSkillBindings: unknown[];
+  teammateMemoryScopes: unknown[];
+  teammateDirectThreads: Record<string, unknown>;
+  teammateDirectMessages: unknown[];
   tasks: unknown[];
   runs: MockRun[];
   eventsByRun: Record<string, MockRunEvent[]>;
@@ -1532,7 +1538,7 @@ test("model workbench save validates before persisting and keeps errors inside t
   ).toBe(false);
 });
 
-test("AI teammates page creates a local teammate through the wizard", async ({ page }) => {
+test("AI teammates page creates a durable teammate and opens its private workspace", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -1580,13 +1586,170 @@ test("AI teammates page creates a local teammate through the wizard", async ({ p
   await expect(page.getByLabel("Channel choices").getByRole("button", { name: /Engineering/ })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Create teammate" }).click();
 
-  await expect(page.getByLabel("Local teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" })).toBeVisible();
-  const localTeammate = page.getByLabel("Local teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" });
-  await localTeammate.getByLabel("Pin Ling Engineer").click();
-  await localTeammate.getByLabel("Hide Ling Engineer").click();
-  await expect(localTeammate).toHaveClass(/hidden-row/);
+  await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row.selected")).toContainText("Ling Engineer");
+  await expect(page.getByRole("button", { name: /Private chat/ })).toBeVisible();
+  await expect.poll(() => state.aiTeammates.some((item) => isRecord(item) && item.displayName === "Ling Engineer")).toBe(true);
+  await expect.poll(() => state.teammateChannelMemberships.some((item) => isRecord(item) && item.teammateId === "teammate_created_1" && item.channelId === "channel_engineering")).toBe(true);
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
+  await expect(page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" })).toBeVisible();
   await expect(page.getByLabel("Workflow").getByRole("heading", { name: "Autoplan Lite" })).toBeVisible();
   await expect(page.getByText("Strict approval").first()).toBeVisible();
+});
+
+test("AI teammate private workspace sends blocked chat replies and persists settings", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_builtin_engineer";
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: undefined })];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, defaultTeammateId: teammateId }
+      : channel,
+  );
+  state.channels.push({
+    id: "channel_design",
+    workspaceId: "workspace_default",
+    name: "Design",
+    status: "active",
+    boundPath: cwd,
+    defaultTeammateId: "designer",
+    allowedTools: ["read", "grep"],
+    runtimePolicy: defaultRuntimePolicy,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z",
+  });
+  state.teammateChannelMemberships = [
+    {
+      teammateId,
+      channelId: "channel_engineering",
+      isDefault: true,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:00.000Z",
+    },
+  ];
+  state.teammateSkillBindings = [
+    {
+      teammateId,
+      skillId: "implement",
+      source: "template",
+      enabled: true,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:00.000Z",
+    },
+  ];
+  state.teammateMemoryScopes = [
+    {
+      id: "memory_private",
+      teammateId,
+      kind: "private-chat-summary",
+      enabled: true,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:00.000Z",
+    },
+  ];
+  state.tasks = [
+    {
+      id: "task_teammate",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Private workspace task",
+      prompt: "Verify teammate private workspace.",
+      status: "todo",
+      assigneeTeammateId: teammateId,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:00.000Z",
+    },
+    ...state.tasks,
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Ling Engineer" }).click();
+  await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ling Engineer"] });
+  await expect(page.getByText("No provider is bound. Private chat will record messages but AI replies may be blocked.")).toBeVisible();
+
+  await page.getByPlaceholder("Message this AI teammate privately").fill("Please refine the private workspace acceptance criteria.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Please refine the private workspace acceptance criteria.")).toBeVisible();
+  await expect(page.getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
+  await expect.poll(() => state.teammateDirectMessages.length).toBe(2);
+
+  await page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." }).getByRole("button", { name: "Create task" }).click();
+  await expect(page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Tasks/ })).toHaveClass(/active/);
+  await expect.poll(() => {
+    const created = state.tasks.find((task) =>
+      isRecord(task) &&
+      task.prompt === "Please refine the private workspace acceptance criteria." &&
+      task.assigneeTeammateId === teammateId
+    );
+    return isRecord(created) ? created.channelId : undefined;
+  }).toBe("channel_engineering");
+
+  await page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Tasks/ }).click();
+  await expect(page.getByText("Private workspace task")).toBeVisible();
+  const taskPanel = page.locator(".teammate-task-create-panel");
+  await expect(taskPanel).toContainText("Assigned to Ling Engineer");
+  await taskPanel.getByLabel("Task title").fill("Follow up from private workspace");
+  await taskPanel.getByLabel("Task prompt").fill("Convert private workspace notes into a scoped implementation task.");
+  await taskPanel.getByRole("button", { name: "Create task" }).click();
+  await expect(taskPanel).toContainText("Task created for Ling Engineer");
+  await expect(page.getByText("Follow up from private workspace")).toBeVisible();
+  await expect.poll(() => {
+    const created = state.tasks.find((task) =>
+      isRecord(task) &&
+      task.title === "Follow up from private workspace" &&
+      task.assigneeTeammateId === teammateId
+    );
+    return isRecord(created) ? created.channelId : undefined;
+  }).toBe("channel_engineering");
+
+  await page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Channels/ }).click();
+  await expect(page.getByText("Engineering").first()).toBeVisible();
+  const designRow = page.locator(".teammate-channel-row").filter({ hasText: "Design" });
+  await expect(designRow).toContainText("Not joined");
+  await designRow.getByRole("button", { name: "Join" }).click();
+  await expect.poll(() => state.teammateChannelMemberships.some((item) =>
+    isRecord(item) && item.teammateId === teammateId && item.channelId === "channel_design"
+  )).toBe(true);
+  await designRow.getByRole("button", { name: "Set default" }).click();
+  await expect.poll(() => {
+    const design = state.channels.find((channel) => isRecord(channel) && channel.id === "channel_design");
+    return isRecord(design) ? design.defaultTeammateId : undefined;
+  }).toBe(teammateId);
+  await expect.poll(() => {
+    const membership = state.teammateChannelMemberships.find((item) =>
+      isRecord(item) && item.teammateId === teammateId && item.channelId === "channel_design"
+    );
+    return isRecord(membership) ? membership.isDefault : false;
+  }).toBe(true);
+  const engineeringRow = page.locator(".teammate-channel-row").filter({ hasText: "Engineering" });
+  await engineeringRow.getByRole("button", { name: "Leave" }).click();
+  await expect.poll(() => state.teammateChannelMemberships.some((item) =>
+    isRecord(item) && item.teammateId === teammateId && item.channelId === "channel_engineering"
+  )).toBe(false);
+
+  await page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Memory/ }).click();
+  await expect(page.getByText("Private chat summary")).toBeVisible();
+
+  await page.locator(".teammate-workspace-tabs").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Teammate name").fill("Renamed Engineer");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved")).toBeVisible();
+  await expect.poll(() => {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+    return isRecord(teammate) ? teammate.displayName : "";
+  }).toBe("Renamed Engineer");
+
+  await page.reload();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Renamed Engineer" }).click();
+  await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 1 })).toBeVisible();
+  await expect(page.getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
 });
 
 test("workspace path initializes from daemon default and persists edits", async ({ page }) => {
@@ -2667,6 +2830,12 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     channelContextSummaries: [],
     channelWorkflows: [],
     channelWorkflowSteps: [],
+    aiTeammates: [],
+    teammateChannelMemberships: [],
+    teammateSkillBindings: [],
+    teammateMemoryScopes: [],
+    teammateDirectThreads: {},
+    teammateDirectMessages: [],
     tasks: [
       {
         id: "task_inspect",
@@ -3064,6 +3233,52 @@ function createChannelFromBody(body: Record<string, unknown>, id: string): Recor
   };
 }
 
+function createMockTeammate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "teammate_builtin_engineer",
+    workspaceId: "workspace_default",
+    templateId: "engineer",
+    roleKey: "engineer",
+    displayName: "Ling Engineer",
+    description: "Owns scoped implementation in the Engineering channel.",
+    avatarTone: "teal",
+    providerPresetId: undefined,
+    systemPrompt: "You are the Engineering AI teammate.",
+    appendSystemPrompt: [],
+    allowedTools: ["read", "grep", "find", "ls"],
+    approvalProfile: { mode: "standard", risk: "medium" },
+    status: "active",
+    pinned: true,
+    hidden: false,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createTeammateFromBody(body: Record<string, unknown>, id: string, existing: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id,
+    workspaceId: "workspace_default",
+    templateId: typeof body.templateId === "string" ? body.templateId : typeof existing.templateId === "string" ? existing.templateId : undefined,
+    roleKey: typeof body.roleKey === "string" ? body.roleKey : typeof existing.roleKey === "string" ? existing.roleKey : "custom",
+    displayName: typeof body.displayName === "string" ? body.displayName : typeof existing.displayName === "string" ? existing.displayName : "Custom teammate",
+    description: typeof body.description === "string" ? body.description : typeof existing.description === "string" ? existing.description : "",
+    avatarTone: typeof body.avatarTone === "string" ? body.avatarTone : typeof existing.avatarTone === "string" ? existing.avatarTone : undefined,
+    avatarImageAttachmentId: typeof body.avatarImageAttachmentId === "string" ? body.avatarImageAttachmentId : typeof existing.avatarImageAttachmentId === "string" ? existing.avatarImageAttachmentId : undefined,
+    providerPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : typeof existing.providerPresetId === "string" ? existing.providerPresetId : undefined,
+    systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : typeof existing.systemPrompt === "string" ? existing.systemPrompt : undefined,
+    appendSystemPrompt: Array.isArray(body.appendSystemPrompt) ? body.appendSystemPrompt : Array.isArray(existing.appendSystemPrompt) ? existing.appendSystemPrompt : [],
+    allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools : Array.isArray(existing.allowedTools) ? existing.allowedTools : ["read", "grep", "find", "ls"],
+    approvalProfile: isRecord(body.approvalProfile) ? body.approvalProfile : isRecord(existing.approvalProfile) ? existing.approvalProfile : { mode: "none" },
+    status: body.status === "paused" || body.status === "disabled" ? body.status : typeof existing.status === "string" ? existing.status : "active",
+    pinned: typeof body.pinned === "boolean" ? body.pinned : existing.pinned === true,
+    hidden: typeof body.hidden === "boolean" ? body.hidden : existing.hidden === true,
+    createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-05-29T00:05:00.000Z",
+    updatedAt: "2026-05-29T00:05:00.000Z",
+  };
+}
+
 function buildProviderCheckResult(provider: Record<string, unknown>): Record<string, unknown> {
   const checkedAt = "2026-05-25T00:11:00.000Z";
   if (provider.enabled === false) {
@@ -3122,6 +3337,278 @@ async function handleDaemonRoute(
   if (request.method() === "GET" && path === "/providers") {
     await route.fulfill({ json: { cwd, providers: state.providers } });
     return;
+  }
+  if (request.method() === "GET" && path === "/teammates") {
+    const includeHidden = url.searchParams.get("includeHidden") === "true";
+    const includeDisabled = url.searchParams.get("includeDisabled") === "true";
+    const teammates = state.aiTeammates.filter((item) =>
+      isRecord(item) &&
+      (includeHidden || item.hidden !== true) &&
+      (includeDisabled || item.status !== "disabled")
+    );
+    await route.fulfill({ json: { cwd, teammates } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/teammates") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const teammate = createTeammateFromBody(body, `teammate_created_${state.aiTeammates.length + 1}`);
+    state.aiTeammates.push(teammate);
+    await route.fulfill({ status: 201, json: { teammate } });
+    return;
+  }
+  const teammateActionMatch = /^\/teammates\/([^/]+)(?:\/([^/]+))?$/.exec(path);
+  if (teammateActionMatch) {
+    const teammateId = decodeURIComponent(teammateActionMatch[1]);
+    const action = teammateActionMatch[2];
+    const teammateIndex = state.aiTeammates.findIndex((item) => isRecord(item) && item.id === teammateId);
+    const teammate = teammateIndex >= 0 && isRecord(state.aiTeammates[teammateIndex])
+      ? state.aiTeammates[teammateIndex]
+      : undefined;
+    if (!teammate) {
+      await route.fulfill({ status: 404, json: { error: "teammate_not_found" } });
+      return;
+    }
+    if (!action && request.method() === "GET") {
+      await route.fulfill({ json: { teammate } });
+      return;
+    }
+    if (!action && request.method() === "PATCH") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const updated = {
+        ...teammate,
+        ...createTeammateFromBody(
+          Object.fromEntries(Object.entries(body).filter(([, value]) => value !== null)),
+          teammateId,
+          teammate,
+        ),
+        providerPresetId: body.providerPresetId === null ? undefined : typeof body.providerPresetId === "string" ? body.providerPresetId : teammate.providerPresetId,
+        systemPrompt: body.systemPrompt === null ? undefined : typeof body.systemPrompt === "string" ? body.systemPrompt : teammate.systemPrompt,
+        updatedAt: "2026-05-29T00:06:00.000Z",
+      };
+      state.aiTeammates[teammateIndex] = updated;
+      await route.fulfill({ json: { teammate: updated } });
+      return;
+    }
+    if (!action && request.method() === "DELETE") {
+      const disabled = { ...teammate, status: "disabled", hidden: true, updatedAt: "2026-05-29T00:06:00.000Z" };
+      state.aiTeammates[teammateIndex] = disabled;
+      await route.fulfill({ json: { teammate: disabled } });
+      return;
+    }
+    if (action === "channels" && request.method() === "GET") {
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId,
+          memberships: state.teammateChannelMemberships.filter((item) => isRecord(item) && item.teammateId === teammateId),
+        },
+      });
+      return;
+    }
+    if (action === "channels" && request.method() === "PUT") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      state.teammateChannelMemberships = state.teammateChannelMemberships.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
+      state.channels = state.channels.map((channel) =>
+        isRecord(channel) && channel.defaultTeammateId === teammateId
+          ? { ...channel, defaultTeammateId: undefined, updatedAt: "2026-05-29T00:07:00.000Z" }
+          : channel,
+      );
+      const memberships = Array.isArray(body.memberships) ? body.memberships : [];
+      for (const membership of memberships) {
+        if (!isRecord(membership) || typeof membership.channelId !== "string") {
+          continue;
+        }
+        const record = {
+          teammateId,
+          channelId: membership.channelId,
+          isDefault: membership.isDefault === true,
+          createdAt: "2026-05-29T00:07:00.000Z",
+          updatedAt: "2026-05-29T00:07:00.000Z",
+        };
+        state.teammateChannelMemberships.push(record);
+        if (record.isDefault) {
+          state.channels = state.channels.map((channel) =>
+            isRecord(channel) && channel.id === record.channelId
+              ? { ...channel, defaultTeammateId: teammateId, updatedAt: record.updatedAt }
+              : channel,
+          );
+        }
+      }
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId,
+          memberships: state.teammateChannelMemberships.filter((item) => isRecord(item) && item.teammateId === teammateId),
+        },
+      });
+      return;
+    }
+    if (action === "skills" && request.method() === "GET") {
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId,
+          bindings: state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId),
+        },
+      });
+      return;
+    }
+    if (action === "skills" && request.method() === "PUT") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      state.teammateSkillBindings = state.teammateSkillBindings.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
+      const bindings = Array.isArray(body.bindings) ? body.bindings : [];
+      for (const binding of bindings) {
+        if (!isRecord(binding) || typeof binding.skillId !== "string") {
+          continue;
+        }
+        state.teammateSkillBindings.push({
+          teammateId,
+          skillId: binding.skillId,
+          source: typeof binding.source === "string" ? binding.source : "user",
+          enabled: binding.enabled !== false,
+          createdAt: "2026-05-29T00:08:00.000Z",
+          updatedAt: "2026-05-29T00:08:00.000Z",
+        });
+      }
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId,
+          bindings: state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId),
+        },
+      });
+      return;
+    }
+    if (action === "memory-scopes" && request.method() === "GET") {
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId,
+          scopes: state.teammateMemoryScopes.filter((item) => isRecord(item) && item.teammateId === teammateId),
+        },
+      });
+      return;
+    }
+    if (action === "memory-scopes" && request.method() === "PUT") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      state.teammateMemoryScopes = state.teammateMemoryScopes.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
+      const scopes = Array.isArray(body.scopes) ? body.scopes : [];
+      for (const [index, scope] of scopes.entries()) {
+        if (!isRecord(scope) || typeof scope.kind !== "string") {
+          continue;
+        }
+        state.teammateMemoryScopes.push({
+          id: typeof scope.id === "string" ? scope.id : `memory_${teammateId}_${index + 1}`,
+          teammateId,
+          kind: scope.kind,
+          channelId: typeof scope.channelId === "string" ? scope.channelId : undefined,
+          enabled: scope.enabled !== false,
+          createdAt: "2026-05-29T00:09:00.000Z",
+          updatedAt: "2026-05-29T00:09:00.000Z",
+        });
+      }
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId,
+          scopes: state.teammateMemoryScopes.filter((item) => isRecord(item) && item.teammateId === teammateId),
+        },
+      });
+      return;
+    }
+    if ((action === "direct-thread" || action === "direct-messages") && request.method() === "GET") {
+      const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
+      const messages = state.teammateDirectMessages.filter((item) => isRecord(item) && item.teammateId === teammateId && item.threadId === thread.id);
+      await route.fulfill({
+        json: action === "direct-thread"
+          ? { cwd, teammateId, thread }
+          : { cwd, teammateId, thread, messages },
+      });
+      return;
+    }
+    if (action === "direct-messages" && request.method() === "POST") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
+      const message = {
+        id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
+        workspaceId: "workspace_default",
+        threadId: thread.id,
+        teammateId,
+        authorType: "local-user",
+        authorId: "local-user",
+        body: typeof body.body === "string" ? body.body : "",
+        status: "ready",
+        createdAt: "2026-05-29T00:10:00.000Z",
+        updatedAt: "2026-05-29T00:10:00.000Z",
+      };
+      state.teammateDirectMessages.push(message);
+      const providerPresetId = typeof body.providerPresetId === "string" ? body.providerPresetId : typeof teammate.providerPresetId === "string" ? teammate.providerPresetId : undefined;
+      const provider = providerPresetId ? state.providers.find((item) => isRecord(item) && item.id === providerPresetId) : undefined;
+      const blockedReason = teammate.status !== "active"
+        ? `Teammate status is ${String(teammate.status)}.`
+        : !providerPresetId
+          ? "No provider preset is selected for this teammate."
+          : !isRecord(provider) || !isRecord(provider.lastCheck) || provider.lastCheck.ok !== true
+            ? "Provider preflight is not ready."
+            : "";
+      const aiReply = body.requestAiReply === true
+        ? {
+            id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
+            workspaceId: "workspace_default",
+            threadId: thread.id,
+            teammateId,
+            authorType: "ai-teammate",
+            authorId: teammateId,
+            body: blockedReason ? `AI teammate is blocked: ${blockedReason}` : "Private reply: I will refine this into a scoped task.",
+            status: blockedReason ? "blocked" : "ready",
+            errorMessage: blockedReason || undefined,
+            createdAt: "2026-05-29T00:10:01.000Z",
+            updatedAt: "2026-05-29T00:10:01.000Z",
+          }
+        : undefined;
+      if (aiReply) {
+        state.teammateDirectMessages.push(aiReply);
+      }
+      await route.fulfill({ status: 201, json: aiReply ? { message, aiReply } : { message } });
+      return;
+    }
+    if (action === "tasks" && request.method() === "GET") {
+      const tasks = state.tasks.filter((task) => isRecord(task) && task.assigneeTeammateId === teammateId);
+      await route.fulfill({ json: { cwd, tasks } });
+      return;
+    }
+    if (action === "activity" && request.method() === "GET") {
+      const directItems = state.teammateDirectMessages
+        .filter((item) => isRecord(item) && item.teammateId === teammateId)
+        .map((item) => ({
+          id: `direct-message:${item.id}`,
+          kind: "direct-message",
+          title: item.authorType === "ai-teammate" ? "AI teammate replied" : "Private message",
+          subtitle: typeof item.body === "string" ? item.body : "",
+          status: typeof item.status === "string" ? item.status : "ready",
+          createdAt: typeof item.createdAt === "string" ? item.createdAt : "2026-05-29T00:10:00.000Z",
+          sourceId: item.id,
+        }));
+      const taskItems = state.tasks
+        .filter((task) => isRecord(task) && task.assigneeTeammateId === teammateId)
+        .map((task) => ({
+          id: `task:${task.id}`,
+          kind: "task",
+          title: typeof task.title === "string" ? task.title : "Task",
+          subtitle: typeof task.prompt === "string" ? task.prompt : "",
+          status: typeof task.status === "string" ? task.status : "todo",
+          createdAt: typeof task.createdAt === "string" ? task.createdAt : "2026-05-29T00:10:00.000Z",
+          sourceId: task.id,
+        }));
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId,
+          items: [...directItems, ...taskItems].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt))),
+        },
+      });
+      return;
+    }
   }
   if (request.method() === "POST" && path === "/provider-check") {
     const body = await request.postDataJSON() as Record<string, unknown>;
@@ -4111,6 +4598,27 @@ function inferMockChannelAttachment(fileName: string): { readonly kind: string; 
     return { kind: "text", contentType: "text/markdown; charset=utf-8" };
   }
   return { kind: "text", contentType: "text/plain; charset=utf-8" };
+}
+
+function getOrCreateMockTeammateThread(
+  state: MockState,
+  teammateId: string,
+  teammate: Record<string, unknown>,
+): Record<string, unknown> {
+  const existing = state.teammateDirectThreads[teammateId];
+  if (isRecord(existing)) {
+    return existing;
+  }
+  const thread = {
+    id: `tdthread_${teammateId}`,
+    workspaceId: "workspace_default",
+    teammateId,
+    title: typeof teammate.displayName === "string" ? teammate.displayName : teammateId,
+    createdAt: "2026-05-29T00:09:30.000Z",
+    updatedAt: "2026-05-29T00:09:30.000Z",
+  };
+  state.teammateDirectThreads[teammateId] = thread;
+  return thread;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

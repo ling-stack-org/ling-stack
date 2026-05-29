@@ -19,6 +19,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Approval policy](docs/design/approval-policy.md)
 - [Channel workspace](docs/design/channel-workspace.md)
 - [AI teammates and skills](docs/design/ai-teammates-and-skills.md)
+- [AI teammate private workspace](docs/design/ai-teammate-private-workspace.md)
 - [Platform architecture](docs/design/platform-architecture.md)
 - [GitHub automation](docs/design/github-automation.md)
 - [Web modularization](docs/design/web-modularization.md)
@@ -361,7 +362,8 @@ Implemented:
 - Pi pre-tool approval gate for `bash`, `edit`, and `write`.
 - Workspace approval policy storage, daemon API, Web settings UI, CLI policy commands, tool decisions, and write path scopes.
 - Local web UI with channel/task workspace, channel detail editing, task detail editing, task run entry, event stream, persisted run detail/rerun, Model Workbench provider setup, approval list, and persisted English / Chinese UI language switching.
-- AI Teammates Web wizard for local drafts with `gstack-default` roles, per-teammate model selection, channel/memory/file scoping, and sidebar pin/hide controls. Persistence remains a follow-up daemon/DB slice.
+- Durable AI teammate storage and daemon APIs: seeded `gstack-default` teammates, custom teammate creation, channel memberships, skill bindings, memory-scope metadata, private direct threads/messages, task/activity read models, and soft disable.
+- AI Teammates Web wizard and private workspace: per-teammate model selection, channel/memory/file scoping metadata, daemon-backed sidebar roster, private chat, tasks/activity/channels/skills/memory/settings tabs, and persisted pin/hide/status/settings controls.
 - Model Workbench grouping for GPT/Claude, domestic AI, OpenAI-compatible relays, custom compatible access, and media providers, with coding-task readiness shown separately from media-only capabilities.
 - Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
 - Automatic artifact extraction from Pi tool outputs, generated text/log/Markdown/diff content, and generated file path metadata.

@@ -47,9 +47,14 @@ interface AiTeammateTemplate {
 }
 ```
 
-The first implementation is static and read-only in `packages/core`. It deliberately does not add daemon API or SQLite tables yet.
+The first implementation started as static, read-only metadata in `packages/core`. The
+durable teammate workspace slice now adds SQLite-backed teammate instances, channel
+memberships, skill bindings, memory-scope metadata, and direct private threads.
 
-The Web UI can read the built-in pack and expose a management surface, but any added teammate is only a local UI draft until the daemon and database contract exists.
+The Web UI still reads the built-in pack for template detail, but saving from the wizard
+now creates a durable daemon-backed teammate. The wizard remains a draft input surface
+until the user presses `Create teammate`; after save, the sidebar and management roster
+come from daemon state.
 
 The current Web slice models the future client flow without locking the backend schema:
 
@@ -58,10 +63,12 @@ choose role template or blank
 -> choose provider/model preset
 -> fill teammate name and brief
 -> choose channels and memory/file sources
--> create local draft
+-> create durable workspace teammate
 ```
 
-This is intentionally UI state only. It proves the product interaction for per-teammate model selection, channel binding, and scoped memory/file configuration without giving skills execution authority or bypassing the coordinator/state-machine path.
+This proves the product interaction for per-teammate model selection, channel binding, and
+scoped memory metadata without giving skills execution authority or bypassing the
+coordinator/state-machine path.
 
 ## Built-In Pack: `gstack-default`
 
@@ -125,20 +132,29 @@ The page should behave like a client management view:
 
 - list built-in teammate templates from `@ling-stack/core/builtin-skill-packs`,
 - show each template's role, default skills, allowed tools, provider capabilities, system prompt, and approval profile,
-- provide a four-step `Role -> Model -> Profile -> Scope` wizard that creates a local draft in UI state only,
+- provide a four-step `Role -> Model -> Profile -> Scope` wizard that creates a durable
+  workspace teammate through the daemon,
 - prefer adapted default roles from `gstack-default`; if no template fits, allow `Start from blank` with a short description,
-- let each draft bind a different provider/model preset,
-- let each draft record intended channel membership and memory/file sources,
-- expose lightweight sidebar pin/hide controls for teammate presence,
+- let each teammate bind a different provider/model preset,
+- let each teammate persist channel membership and memory-scope metadata,
+- expose sidebar pin/hide controls backed by teammate settings,
 - show the `autoplan-lite` workflow as a state-machine-gated sequence,
 - keep strict skills such as `ship` and `cso` visibly marked as stricter approval paths.
 
-This page must not imply persistence before a daemon API exists. Saving teammate instances, editing bindings, importing custom packs, and assigning teammates to channels are follow-up slices.
+This page must not imply more than the implemented persistence. Durable teammate
+instances, channel memberships, skill bindings, memory-scope metadata, and private
+threads exist. Custom skill-pack import, automatic memory recall, private attachments,
+avatar uploads, and full channel/skill/memory editing inside the teammate workspace are
+follow-up slices.
+
+The durable persistence and private conversation implementation record is captured in
+[Helio-Inspired AI Teammate Private Workspace](ai-teammate-private-workspace.md).
 
 ## Future Work
 
 - Persist custom skill packs in the workspace database.
 - Add daemon APIs for listing built-in and custom skill packs.
-- Persist Web-created teammate instances and allow assigning skills to teammates.
+- Build richer UI controls for editing channel memberships, skill bindings, and memory
+  scopes from the private workspace tabs.
 - Add importers for `AGENTS.md` and compatible skill directories.
 - Compile workflow templates into durable workflow and workflow-step state machines.

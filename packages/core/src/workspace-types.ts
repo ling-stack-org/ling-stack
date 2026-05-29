@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
+import type { AiTeammateRoleKey, SkillApprovalProfile } from "./skill-types.js";
 
 export const DEFAULT_WORKSPACE_ID = "workspace_default";
 
@@ -126,7 +127,175 @@ export interface TaskUpdateInput {
 
 export interface ListTasksOptions {
   readonly channelId?: string;
+  readonly assigneeTeammateId?: string;
   readonly status?: TaskStatus;
+  readonly limit?: number;
+}
+
+export type AiTeammateStatus = "active" | "paused" | "disabled";
+
+export const aiTeammateStatuses: readonly AiTeammateStatus[] = ["active", "paused", "disabled"];
+
+export interface AiTeammate {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly templateId?: string;
+  readonly roleKey: AiTeammateRoleKey;
+  readonly displayName: string;
+  readonly description: string;
+  readonly avatarTone?: string;
+  readonly avatarImageAttachmentId?: string;
+  readonly providerPresetId?: string;
+  readonly systemPrompt?: string;
+  readonly appendSystemPrompt: readonly string[];
+  readonly allowedTools: readonly RunTool[];
+  readonly approvalProfile: SkillApprovalProfile;
+  readonly status: AiTeammateStatus;
+  readonly pinned: boolean;
+  readonly hidden: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateAiTeammateInput {
+  readonly id?: string;
+  readonly templateId?: string;
+  readonly roleKey: AiTeammateRoleKey;
+  readonly displayName: string;
+  readonly description: string;
+  readonly avatarTone?: string;
+  readonly avatarImageAttachmentId?: string;
+  readonly providerPresetId?: string;
+  readonly systemPrompt?: string;
+  readonly appendSystemPrompt?: readonly string[];
+  readonly allowedTools?: readonly RunTool[];
+  readonly approvalProfile: SkillApprovalProfile;
+  readonly status?: AiTeammateStatus;
+  readonly pinned?: boolean;
+  readonly hidden?: boolean;
+}
+
+export interface AiTeammateUpdateInput {
+  readonly templateId?: string | null;
+  readonly roleKey?: AiTeammateRoleKey;
+  readonly displayName?: string;
+  readonly description?: string;
+  readonly avatarTone?: string | null;
+  readonly avatarImageAttachmentId?: string | null;
+  readonly providerPresetId?: string | null;
+  readonly systemPrompt?: string | null;
+  readonly appendSystemPrompt?: readonly string[];
+  readonly allowedTools?: readonly RunTool[];
+  readonly approvalProfile?: SkillApprovalProfile;
+  readonly status?: AiTeammateStatus;
+  readonly pinned?: boolean;
+  readonly hidden?: boolean;
+}
+
+export interface ListAiTeammatesOptions {
+  readonly status?: AiTeammateStatus;
+  readonly includeHidden?: boolean;
+  readonly includeDisabled?: boolean;
+  readonly limit?: number;
+}
+
+export interface TeammateChannelMembership {
+  readonly teammateId: string;
+  readonly channelId: string;
+  readonly isDefault: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ReplaceTeammateChannelMembershipInput {
+  readonly channelId: string;
+  readonly isDefault?: boolean;
+}
+
+export type TeammateSkillBindingSource = "template" | "user";
+
+export interface TeammateSkillBinding {
+  readonly teammateId: string;
+  readonly skillId: string;
+  readonly source: TeammateSkillBindingSource;
+  readonly enabled: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ReplaceTeammateSkillBindingInput {
+  readonly skillId: string;
+  readonly source?: TeammateSkillBindingSource;
+  readonly enabled?: boolean;
+}
+
+export type TeammateMemoryScopeKind =
+  | "channel-brief"
+  | "channel-decisions"
+  | "private-chat-summary"
+  | "private-notes";
+
+export interface TeammateMemoryScope {
+  readonly id: string;
+  readonly teammateId: string;
+  readonly kind: TeammateMemoryScopeKind;
+  readonly channelId?: string;
+  readonly enabled: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ReplaceTeammateMemoryScopeInput {
+  readonly id?: string;
+  readonly kind: TeammateMemoryScopeKind;
+  readonly channelId?: string;
+  readonly enabled?: boolean;
+}
+
+export interface TeammateDirectThread {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly teammateId: string;
+  readonly title: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type TeammateDirectMessageStatus = "ready" | "blocked" | "failed";
+
+export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
+
+export interface TeammateDirectMessage {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly teammateId: string;
+  readonly authorType: TeammateDirectMessageAuthorType;
+  readonly authorId?: string;
+  readonly body: string;
+  readonly status: TeammateDirectMessageStatus;
+  readonly errorMessage?: string;
+  readonly linkedTaskId?: string;
+  readonly linkedRunId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateTeammateDirectMessageInput {
+  readonly threadId: string;
+  readonly teammateId: string;
+  readonly authorType: TeammateDirectMessageAuthorType;
+  readonly authorId?: string;
+  readonly body: string;
+  readonly status?: TeammateDirectMessageStatus;
+  readonly errorMessage?: string;
+  readonly linkedTaskId?: string;
+  readonly linkedRunId?: string;
+}
+
+export interface ListTeammateDirectMessagesOptions {
+  readonly teammateId: string;
+  readonly threadId?: string;
   readonly limit?: number;
 }
 
@@ -604,6 +773,26 @@ export function createChannelId(): string {
 
 export function createTaskId(): string {
   return `task_${randomUUID()}`;
+}
+
+export function createAiTeammateId(): string {
+  return `teammate_${randomUUID()}`;
+}
+
+export function createBuiltinAiTeammateId(templateId: string): string {
+  return `teammate_builtin_${templateId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+export function createTeammateMemoryScopeId(): string {
+  return `memory_scope_${randomUUID()}`;
+}
+
+export function createTeammateDirectThreadId(): string {
+  return `dm_thread_${randomUUID()}`;
+}
+
+export function createTeammateDirectMessageId(): string {
+  return `dm_msg_${randomUUID()}`;
 }
 
 export function createChannelMessageId(): string {

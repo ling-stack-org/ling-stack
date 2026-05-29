@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  Bot,
   Database,
   Hash,
   History,
@@ -15,29 +16,35 @@ import {
 import { useI18n } from "../../i18n.js";
 import {
   channelSidebarTarget,
+  teammateSidebarTarget,
   type SidebarTarget,
   type ViewId,
 } from "../../app/view-types.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
-import type { ApprovalRequest, Channel } from "../../types.js";
+import type { AiTeammate, ApprovalRequest, Channel } from "../../types.js";
 
 export function SidebarNavigation({
   activeSidebarTarget,
   channels,
+  teammates,
   approvals,
   onOpenView,
   onOpenTasks,
   onSelectChannel,
+  onSelectTeammate,
 }: {
   readonly activeSidebarTarget: SidebarTarget;
   readonly channels: readonly Channel[];
+  readonly teammates: readonly AiTeammate[];
   readonly approvals: readonly ApprovalRequest[];
   readonly onOpenView: (view: ViewId) => void;
   readonly onOpenTasks: () => void;
   readonly onSelectChannel: (channelId: string) => void;
+  readonly onSelectTeammate: (teammateId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
+  const visibleTeammates = teammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled");
 
   return (
     <aside className="left-nav" aria-label="Ling Stack navigation">
@@ -76,6 +83,27 @@ export function SidebarNavigation({
             >
               <Hash size={14} />
               <span>{channel.name}</span>
+            </button>
+          ))
+        )}
+      </SidebarSection>
+
+      <SidebarSection title={t("AI Teammates")} actionLabel={visibleTeammates.length === 0 ? t("Create") : undefined}>
+        {visibleTeammates.length === 0 ? (
+          <button className="sidebar-row muted-row" type="button" onClick={() => onOpenView("teammates")}>
+            <Bot size={14} />
+            <span>{t("No teammate yet")}</span>
+          </button>
+        ) : (
+          visibleTeammates.map((teammate) => (
+            <button
+              key={teammate.id}
+              className={activeSidebarTarget === teammateSidebarTarget(teammate.id) ? "sidebar-row selected" : "sidebar-row"}
+              type="button"
+              onClick={() => onSelectTeammate(teammate.id)}
+            >
+              <Bot size={14} />
+              <span>{teammate.displayName}</span>
             </button>
           ))
         )}

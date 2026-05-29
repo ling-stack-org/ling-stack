@@ -776,3 +776,307 @@
   border-radius: 8px;
   background: rgba(245, 242, 235, 0.48);
 }
+
+.teammate-workspace {
+  display: grid;
+  gap: 12px;
+}
+
+.teammate-workspace-hero,
+.teammate-list-panel,
+.teammate-private-chat,
+.teammate-settings-panel {
+  border: 1px solid rgba(37, 42, 45, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+.teammate-workspace-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 14px;
+}
+
+.teammate-workspace-identity {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.teammate-workspace-identity .avatar-initial {
+  width: 54px;
+  height: 54px;
+  font-size: 17px;
+}
+
+.teammate-workspace-identity h2 {
+  margin: 2px 0 4px;
+  color: #17211f;
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.teammate-workspace-identity p {
+  color: #59635f;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.teammate-workspace-actions,
+.teammate-settings-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.teammate-workspace-meta {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(33, 38, 42, 0.08);
+}
+
+.teammate-workspace-hero .provider-run-notice {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.teammate-workspace-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.teammate-workspace-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #58635f;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.teammate-workspace-tabs button.active,
+.teammate-workspace-tabs button:hover {
+  background: #ffffff;
+  color: #0f211d;
+}
+
+.teammate-workspace-tabs button span {
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(33, 38, 42, 0.08);
+  color: #59635f;
+  font-size: 10px;
+}
+
+.teammate-private-chat {
+  display: grid;
+  min-height: 480px;
+  overflow: hidden;
+}
+
+.teammate-message-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 14px;
+}
+
+.teammate-message-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.teammate-message-row > div {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(248, 247, 243, 0.58);
+}
+
+.teammate-message-row.ai-teammate > div {
+  background: rgba(240, 252, 248, 0.72);
+}
+
+.teammate-message-row header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.teammate-message-row header strong {
+  color: #18211f;
+  font-size: 13px;
+}
+
+.teammate-message-row header time,
+.teammate-message-row small {
+  color: #6d7471;
+  font-size: 11px;
+}
+
+.teammate-message-row p {
+  color: #2f3936;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.teammate-message-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.teammate-chat-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid rgba(33, 38, 42, 0.08);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.teammate-chat-composer textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.teammate-list-panel,
+.teammate-settings-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.teammate-data-list {
+  display: grid;
+  gap: 8px;
+}
+
+.teammate-task-create-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.teammate-task-create-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.teammate-task-create-footer,
+.teammate-channel-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.teammate-task-create-footer {
+  justify-content: space-between;
+}
+
+.teammate-data-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 9px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.teammate-data-row span:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.teammate-data-row strong {
+  overflow: hidden;
+  color: #1f2528;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-data-row small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #6d7370;
+  font-size: 12px;
+  line-height: 1.38;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.teammate-channel-row {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+}
+
+.teammate-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.teammate-settings-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.teammate-toggle.inline-toggle {
+  min-height: 62px;
+}
+
+@media (max-width: 980px) {
+  .teammate-workspace-hero,
+  .teammate-chat-composer,
+  .teammate-task-create-grid,
+  .teammate-channel-row,
+  .teammate-settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .teammate-task-create-footer,
+  .teammate-channel-actions {
+    justify-content: flex-start;
+  }
+
+  .teammate-workspace-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

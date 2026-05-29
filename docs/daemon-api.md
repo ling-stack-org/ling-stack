@@ -182,6 +182,197 @@ DELETE /tasks/:id?cwd=/path/to/project
 
 When a persisted task is run through `/runs`, the daemon updates the linked task status to `running`, then `done`, `failed`, or `cancelled`.
 
+## AI Teammates
+
+AI teammates are durable workspace members. The daemon seeds built-in `gstack-default`
+teammates with deterministic ids such as `teammate_builtin_engineer`, migrates legacy
+template references such as `engineer`, and stores custom teammates in the workspace
+SQLite database.
+
+All teammate endpoints require `cwd`.
+
+### List And Create Teammates
+
+```http
+GET /teammates?cwd=/path/to/project&includeHidden=false&includeDisabled=false&limit=100
+POST /teammates?cwd=/path/to/project
+```
+
+`GET` returns active, visible teammates by default. `includeHidden=true` and
+`includeDisabled=true` widen the roster.
+
+```json
+{
+  "cwd": "/path/to/project",
+  "teammates": [
+    {
+      "id": "teammate_builtin_engineer",
+      "workspaceId": "workspace_default",
+      "templateId": "engineer",
+      "roleKey": "engineer",
+      "displayName": "Engineer",
+      "description": "Owns scoped implementation.",
+      "providerPresetId": "provider_...",
+      "appendSystemPrompt": [],
+      "allowedTools": ["read", "grep", "find", "ls"],
+      "approvalProfile": { "mode": "ask" },
+      "status": "active",
+      "pinned": true,
+      "hidden": false,
+      "createdAt": "2026-05-29T00:00:00.000Z",
+      "updatedAt": "2026-05-29T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+`POST` creates a durable teammate:
+
+```json
+{
+  "templateId": "engineer",
+  "roleKey": "engineer",
+  "displayName": "Ling Engineer",
+  "description": "Owns scoped implementation in the Engineering channel.",
+  "providerPresetId": "provider_...",
+  "systemPrompt": "You are the Engineering AI teammate.",
+  "allowedTools": ["read", "grep", "find", "ls"],
+  "approvalProfile": { "mode": "ask" },
+  "status": "active",
+  "pinned": true,
+  "hidden": false
+}
+```
+
+### Get, Update, Disable Teammate
+
+```http
+GET /teammates/:id?cwd=/path/to/project
+PATCH /teammates/:id?cwd=/path/to/project
+DELETE /teammates/:id?cwd=/path/to/project
+```
+
+`PATCH` accepts partial identity, provider, prompt, allowed tool, approval profile,
+status, pin, and hidden fields. Nullable fields can be cleared with `null`.
+
+`DELETE` is a soft disable in this slice. It sets `status` to `disabled` and `hidden` to
+`true`; private history and related records remain available for retention/audit.
+
+### Channel Memberships
+
+```http
+GET /teammates/:id/channels?cwd=/path/to/project
+PUT /teammates/:id/channels?cwd=/path/to/project
+```
+
+`PUT` replaces the teammate's memberships. When a membership has `isDefault: true`, the
+daemon also updates the matching channel's `defaultTeammateId`.
+
+```json
+{
+  "memberships": [
+    { "channelId": "channel_...", "isDefault": true }
+  ]
+}
+```
+
+### Skill Bindings
+
+```http
+GET /teammates/:id/skills?cwd=/path/to/project
+PUT /teammates/:id/skills?cwd=/path/to/project
+```
+
+Skill bindings are durable metadata. They do not grant execution authority by themselves;
+runs still pass through provider capability checks, allowed tools, approval policy, and
+state-machine gates.
+
+```json
+{
+  "bindings": [
+    { "skillId": "implement", "source": "template", "enabled": true }
+  ]
+}
+```
+
+### Memory Scopes
+
+```http
+GET /teammates/:id/memory-scopes?cwd=/path/to/project
+PUT /teammates/:id/memory-scopes?cwd=/path/to/project
+```
+
+Memory scopes are visible trust-boundary metadata in this slice. They do not automatically
+feed private chat prompts.
+
+```json
+{
+  "scopes": [
+    { "kind": "private-chat-summary", "enabled": true },
+    { "kind": "channel-brief", "channelId": "channel_...", "enabled": true }
+  ]
+}
+```
+
+Supported scope kinds:
+
+```text
+channel-brief, channel-decisions, private-chat-summary, private-notes
+```
+
+### Private Thread And Messages
+
+```http
+GET /teammates/:id/direct-thread?cwd=/path/to/project
+GET /teammates/:id/direct-messages?cwd=/path/to/project&limit=100
+POST /teammates/:id/direct-messages?cwd=/path/to/project
+```
+
+`direct-thread` creates the one-to-one teammate thread if it does not exist. Private
+messages are durable. `POST` persists the local-user message before provider resolution;
+if the teammate is paused, disabled, missing a provider, or the provider cannot run, the
+daemon stores a blocked AI reply instead of dropping the user message.
+
+```json
+{
+  "body": "Can you help refine this task?",
+  "requestAiReply": true,
+  "providerPresetId": "provider_..."
+}
+```
+
+Response:
+
+```json
+{
+  "message": {
+    "id": "tdmsg_...",
+    "authorType": "local-user",
+    "status": "ready"
+  },
+  "aiReply": {
+    "id": "tdmsg_...",
+    "authorType": "ai-teammate",
+    "status": "blocked",
+    "errorMessage": "No provider preset is selected for this teammate."
+  }
+}
+```
+
+Private chat uses no tools and does not include channel messages, files, memory scopes, or
+web content unless a future explicit inclusion model adds that behavior.
+
+### Teammate Read Models
+
+```http
+GET /teammates/:id/tasks?cwd=/path/to/project&status=todo&limit=100
+GET /teammates/:id/activity?cwd=/path/to/project&limit=100
+```
+
+`tasks` returns tasks assigned through `assigneeTeammateId`. `activity` composes private
+messages, assigned tasks, teammate runs, approvals attached to teammate runs, and channel
+messages that mention the teammate.
+
 ## Channel Messages, Attachments, and Links
 
 Channel discussion is durable in the workspace SQLite database. Uploaded files are stored under:

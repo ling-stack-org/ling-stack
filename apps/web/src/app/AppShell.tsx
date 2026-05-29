@@ -27,6 +27,7 @@ import {
   createChannelLinkPreview,
   createChannelMessage,
   createChannelWorkflowFromHandoff,
+  createAiTeammate,
   createMediaJob,
   createProvider,
   createTask,
@@ -54,6 +55,7 @@ import {
   listChannelMessages,
   listChannelWorkflows,
   listChannelWorkflowSteps,
+  listAiTeammates,
   listApprovals,
   listMediaJobs,
   listProviders,
@@ -62,8 +64,12 @@ import {
   listStateTransitions,
   listTasks,
   runMediaJob,
+  replaceTeammateChannels,
+  replaceTeammateMemoryScopes,
+  replaceTeammateSkills,
   startChannelWorkflowStep,
   uploadChannelAttachment,
+  updateAiTeammate,
   updateChannel,
   updateApprovalPolicy,
   updateChannelBrief,
@@ -73,6 +79,7 @@ import {
   updateChannelWorkflowStep,
   updateTask,
   updateTaskStatus,
+  disableAiTeammate,
   updateProvider,
 } from "../api.js";
 import { LanguageSwitcher, useI18n } from "../i18n.js";
@@ -81,6 +88,7 @@ import type {
   ApprovalRequest,
   ApprovalPolicy,
   ApprovalPolicyFormState,
+  AiTeammate,
   ChannelAttachment,
   ChannelBrief,
   Channel,
@@ -94,12 +102,14 @@ import type {
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
+  CreateAiTeammateRequest,
   MediaJob,
   MediaJobFormState,
   ProviderCheckResult,
   ProviderFormState,
   ProviderPreset,
   ProviderTemplate,
+  ReplaceTeammateMemoryScopesRequest,
   ResourceLease,
   RunArtifact,
   RunEventEnvelope,
@@ -111,10 +121,13 @@ import type {
   TaskEditFormState,
   TaskFormState,
   TaskRunActionState,
+  UpdateAiTeammateRequest,
   UpdateChannelBriefRequest,
 } from "../types.js";
 import {
   channelSidebarTarget,
+  readTeammateSidebarTarget,
+  teammateSidebarTarget,
   viewDescription,
   viewTitle,
   type SidebarTarget,
@@ -132,7 +145,7 @@ import type {
   LocalTeammateCreateInput,
   LocalTeammateDraft,
 } from "../features/teammates/index.js";
-import { AiTeammatesPage } from "../features/teammates/index.js";
+import { AiTeammatesPage, TeammateWorkspace } from "../features/teammates/index.js";
 import { WorkspaceClientView } from "../features/workspace/index.js";
 import {
   approvalPolicyToForm,
@@ -257,9 +270,8 @@ export function AppShell(): JSX.Element {
   const [channels, setChannels] = useState<readonly Channel[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
   const [selectedChannelId, setSelectedChannelId] = useState("");
-  const [localTeammates, setLocalTeammates] = useState<readonly LocalTeammateDraft[]>([]);
-  const [pinnedTemplateIds, setPinnedTemplateIds] = useState<readonly string[]>(["engineer"]);
-  const [hiddenTemplateIds, setHiddenTemplateIds] = useState<readonly string[]>([]);
+  const [aiTeammates, setAiTeammates] = useState<readonly AiTeammate[]>([]);
+  const [aiTeammatesLoading, setAiTeammatesLoading] = useState(false);
   const [channelForm, setChannelForm] = useState<ChannelFormState>(() => ({
     ...defaultChannelForm,
     boundPath: initialWorkspaceCwd,
@@ -337,51 +349,123 @@ export function AppShell(): JSX.Element {
     return () => window.clearTimeout(timeout);
   }, [providerSaveMessage]);
 
-  function addLocalTeammate(input: LocalTeammateCreateInput): void {
-    setLocalTeammates((currentTeammates) => {
-      const baseName = input.displayName.trim() || "Custom teammate";
-      const duplicateCount = currentTeammates.filter((teammate) => teammate.displayName === baseName).length;
-      const displayName = duplicateCount > 0 ? `${baseName} ${duplicateCount + 1}` : baseName;
-      return [
-        ...currentTeammates,
-        {
-          ...input,
-          displayName,
-          id: `teammate-${Date.now()}`,
-          pinned: false,
-          hidden: false,
-          createdAt: new Date().toISOString(),
-        },
-      ];
-    });
+  async function addAiTeammate(input: LocalTeammateCreateInput): Promise<void> {
+    const cwd = form.cwd.trim();
+    if (!cwd) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+    const template = input.templateId ? builtinTeammateTemplates.find((item) => item.id === input.templateId) : undefined;
+    const payload: CreateAiTeammateRequest = template
+      ? {
+        templateId: template.id,
+        roleKey: template.roleKey,
+        displayName: input.displayName.trim() || template.name,
+        description: input.description.trim() || template.summary,
+        providerPresetId: input.providerPresetId,
+        systemPrompt: template.systemPrompt,
+        allowedTools: template.allowedTools.filter(isContractToolName),
+        approvalProfile: toContractApprovalProfile(template.approvalProfile),
+        status: "active",
+      }
+      : {
+        roleKey: "custom",
+        displayName: input.displayName.trim() || "Custom teammate",
+        description: input.description.trim(),
+        providerPresetId: input.providerPresetId,
+        systemPrompt: `You are ${input.displayName.trim() || "a custom AI teammate"}. ${input.description.trim()}`,
+        allowedTools: ["read", "grep", "find", "ls"],
+        approvalProfile: { mode: "none" },
+        status: "active",
+      };
+
+    setAiTeammatesLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await createAiTeammate(cwd, payload);
+      const teammateId = response.teammate.id;
+      const setupCalls: Promise<unknown>[] = [];
+      if (input.channelIds.length > 0) {
+        setupCalls.push(
+          replaceTeammateChannels(
+            cwd,
+            teammateId,
+            input.channelIds.map((channelId, index) => ({ channelId, isDefault: index === 0 })),
+          ),
+        );
+      }
+      if (template && template.defaultSkillIds.length > 0) {
+        setupCalls.push(
+          replaceTeammateSkills(
+            cwd,
+            teammateId,
+            template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
+          ),
+        );
+      }
+      const memoryScopes = buildMemoryScopesForTeammate(input.channelIds, input.memorySources);
+      if (memoryScopes.length > 0) {
+        setupCalls.push(replaceTeammateMemoryScopes(cwd, teammateId, memoryScopes));
+      }
+      await Promise.all(setupCalls);
+      await refreshAiTeammates(cwd);
+      setActiveView("teammates");
+      setActiveSidebarTarget(teammateSidebarTarget(teammateId));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAiTeammatesLoading(false);
+    }
   }
 
-  function removeLocalTeammate(teammateId: string): void {
-    setLocalTeammates((currentTeammates) => currentTeammates.filter((teammate) => teammate.id !== teammateId));
+  async function removeAiTeammate(teammateId: string): Promise<void> {
+    const cwd = form.cwd.trim();
+    if (!cwd) {
+      return;
+    }
+    try {
+      setErrorMessage("");
+      await disableAiTeammate(cwd, teammateId);
+      await refreshAiTeammates(cwd);
+      if (activeSidebarTarget === teammateSidebarTarget(teammateId)) {
+        openPlainView("teammates");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
   }
 
-  function toggleLocalTeammatePinned(teammateId: string): void {
-    setLocalTeammates((currentTeammates) =>
-      currentTeammates.map((teammate) => (teammate.id === teammateId ? { ...teammate, pinned: !teammate.pinned } : teammate)),
-    );
+  async function updateAiTeammateSettings(teammateId: string, input: UpdateAiTeammateRequest): Promise<void> {
+    const cwd = form.cwd.trim();
+    if (!cwd) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+    setAiTeammatesLoading(true);
+    try {
+      setErrorMessage("");
+      await updateAiTeammate(cwd, teammateId, input);
+      await refreshAiTeammates(cwd);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setAiTeammatesLoading(false);
+    }
   }
 
-  function toggleLocalTeammateHidden(teammateId: string): void {
-    setLocalTeammates((currentTeammates) =>
-      currentTeammates.map((teammate) => (teammate.id === teammateId ? { ...teammate, hidden: !teammate.hidden } : teammate)),
-    );
+  async function toggleAiTeammatePinned(teammateId: string): Promise<void> {
+    const teammate = aiTeammates.find((item) => item.id === teammateId);
+    if (teammate) {
+      await updateAiTeammateSettings(teammateId, { pinned: !teammate.pinned });
+    }
   }
 
-  function toggleTemplatePinned(templateId: string): void {
-    setPinnedTemplateIds((currentIds) =>
-      currentIds.includes(templateId) ? currentIds.filter((id) => id !== templateId) : [...currentIds, templateId],
-    );
-  }
-
-  function toggleTemplateHidden(templateId: string): void {
-    setHiddenTemplateIds((currentIds) =>
-      currentIds.includes(templateId) ? currentIds.filter((id) => id !== templateId) : [...currentIds, templateId],
-    );
+  async function toggleAiTeammateHidden(teammateId: string): Promise<void> {
+    const teammate = aiTeammates.find((item) => item.id === teammateId);
+    if (teammate) {
+      await updateAiTeammateSettings(teammateId, { hidden: !teammate.hidden });
+    }
   }
 
   function openPlainView(view: ViewId): void {
@@ -402,6 +486,11 @@ export function AppShell(): JSX.Element {
     setTaskRunProviderId("");
     setActiveView("workspace");
     setActiveSidebarTarget(channelSidebarTarget(channelId));
+  }
+
+  function selectAiTeammate(teammateId: string): void {
+    setActiveView("teammates");
+    setActiveSidebarTarget(teammateSidebarTarget(teammateId));
   }
 
   const resolvingApprovalsRef = useRef<Set<string>>(new Set());
@@ -431,6 +520,12 @@ export function AppShell(): JSX.Element {
     }
     return items;
   }, [run, runs]);
+  const localTeammates = useMemo(
+    () => aiTeammates.map((teammate) => aiTeammateToLocalDraft(teammate, providers)),
+    [aiTeammates, providers],
+  );
+  const activeTeammateId = readTeammateSidebarTarget(activeSidebarTarget);
+  const selectedAiTeammate = activeTeammateId ? aiTeammates.find((teammate) => teammate.id === activeTeammateId) : undefined;
   const selectedWorkspaceTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) ?? tasks[0],
     [selectedTaskId, tasks],
@@ -492,6 +587,7 @@ export function AppShell(): JSX.Element {
     void refreshHealth();
     void refreshProviderTemplates();
     void refreshProviders();
+    void refreshAiTeammates();
   }, []);
 
   useEffect(() => {
@@ -505,6 +601,11 @@ export function AppShell(): JSX.Element {
     }
     if (activeView === "providers") {
       void refreshProviderTemplates();
+      void refreshProviders();
+    }
+    if (activeView === "teammates") {
+      void refreshAiTeammates();
+      void refreshChannels();
       void refreshProviders();
     }
     if (activeView === "media") {
@@ -656,6 +757,7 @@ export function AppShell(): JSX.Element {
         void Promise.all([
           refreshProviders(defaultWorkspaceCwd),
           refreshChannels(defaultWorkspaceCwd),
+          refreshAiTeammates(defaultWorkspaceCwd),
           refreshRuns(defaultWorkspaceCwd),
           refreshApprovals(defaultWorkspaceCwd),
         ]).catch((error: unknown) => {
@@ -930,6 +1032,24 @@ export function AppShell(): JSX.Element {
       void refreshMediaJobs(cwd);
     } finally {
       setRunningMediaJobId("");
+    }
+  }
+
+  async function refreshAiTeammates(cwd = form.cwd.trim()): Promise<void> {
+    if (!cwd) {
+      setAiTeammates([]);
+      return;
+    }
+
+    setAiTeammatesLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await listAiTeammates(cwd);
+      setAiTeammates(response.teammates);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAiTeammatesLoading(false);
     }
   }
 
@@ -2353,10 +2473,12 @@ export function AppShell(): JSX.Element {
       <SidebarNavigation
         activeSidebarTarget={activeSidebarTarget}
         channels={channels}
+        teammates={aiTeammates}
         approvals={approvals}
         onOpenView={openPlainView}
         onOpenTasks={openTasksView}
         onSelectChannel={selectWorkspaceChannel}
+        onSelectTeammate={selectAiTeammate}
       />
       <section className={activeView === "workspace" ? "workspace workspace-client-surface" : "workspace"}>
         {activeView === "workspace" ? (
@@ -2385,7 +2507,7 @@ export function AppShell(): JSX.Element {
             channelActivityTransitionError={channelActivityTransitionError}
             selectedTaskId={selectedTaskId}
             providers={providers}
-            teammateTemplates={builtinTeammateTemplates}
+            teammateTemplates={aiTeammates.length > 0 ? [] : builtinTeammateTemplates}
             localTeammates={localTeammates}
             taskRunProviderId={taskRunProviderId}
             fallbackProviderId={form.providerPresetId}
@@ -2455,25 +2577,38 @@ export function AppShell(): JSX.Element {
           <>
             <div className="workspace-head">
               <div>
-                <h1>{t(viewTitle(activeView))}</h1>
-                <p>{t(viewDescription(activeView))}</p>
+                <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
+                <p>{selectedAiTeammate ? selectedAiTeammate.description : t(viewDescription(activeView))}</p>
               </div>
               {activeView === "teammates" ? (
-                <span className="status-badge succeeded">{GSTACK_DEFAULT_SKILL_PACK_ID}</span>
+                <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
               ) : activeView === "providers" ? null : (
                 <StatusBadge status={latestStatus} />
               )}
             </div>
-            {activeView === "teammates" ? (
+            {activeView === "teammates" && selectedAiTeammate ? (
+              <TeammateWorkspace
+                cwd={form.cwd}
+                teammate={selectedAiTeammate}
+                providers={providers}
+                channels={channels}
+                skillPack={builtinSkillPack}
+                onUpdateTeammate={updateAiTeammateSettings}
+                onDisableTeammate={removeAiTeammate}
+                onOpenProviders={() => openPlainView("providers")}
+                onRefreshChannels={() => refreshChannels()}
+                onRefreshTasks={(channelId) => refreshTasks(channelId)}
+              />
+            ) : activeView === "teammates" ? (
               <AiTeammatesPage
                 skillPack={builtinSkillPack}
                 providers={providers}
                 channels={channels}
                 localTeammates={localTeammates}
-                onCreateTeammate={addLocalTeammate}
-                onRemoveTeammate={removeLocalTeammate}
-                onToggleTeammatePinned={toggleLocalTeammatePinned}
-                onToggleTeammateHidden={toggleLocalTeammateHidden}
+                onCreateTeammate={(input) => void addAiTeammate(input)}
+                onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
+                onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
+                onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
                 onOpenProviders={() => openPlainView("providers")}
               />
             ) : activeView === "runs" ? (
@@ -2666,6 +2801,76 @@ export function AppShell(): JSX.Element {
         </aside>
       ) : null}
     </main>
+  );
+}
+
+function aiTeammateToLocalDraft(teammate: AiTeammate, providers: readonly ProviderPreset[]): LocalTeammateDraft {
+  const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
+  return {
+    id: teammate.id,
+    templateId: teammate.templateId,
+    displayName: teammate.displayName,
+    description: teammate.description,
+    providerPresetId: teammate.providerPresetId,
+    modelLabel: provider ? `${provider.displayName} / ${provider.model}` : "No model selected",
+    channelIds: [],
+    memorySources: [],
+    pinned: teammate.pinned,
+    hidden: teammate.hidden || teammate.status === "disabled",
+    createdAt: teammate.createdAt,
+  };
+}
+
+function buildMemoryScopesForTeammate(
+  channelIds: readonly string[],
+  memorySources: readonly string[],
+): ReplaceTeammateMemoryScopesRequest["scopes"] {
+  const scopes: ReplaceTeammateMemoryScopesRequest["scopes"][number][] = [
+    { kind: "private-chat-summary", enabled: true },
+  ];
+  if (memorySources.includes("private-notes")) {
+    scopes.push({ kind: "private-notes", enabled: true });
+  }
+  for (const channelId of channelIds) {
+    if (memorySources.includes("project-files") || memorySources.includes("agents-md")) {
+      scopes.push({ kind: "channel-brief", channelId, enabled: true });
+    }
+    if (memorySources.includes("skill-pack")) {
+      scopes.push({ kind: "channel-decisions", channelId, enabled: true });
+    }
+  }
+  return scopes;
+}
+
+function toContractApprovalProfile(
+  profile: (typeof builtinTeammateTemplates)[number]["approvalProfile"],
+): CreateAiTeammateRequest["approvalProfile"] {
+  return {
+    mode: profile.mode,
+    risk: profile.risk,
+    requiredForTools: profile.requiredForTools?.filter(isContractToolName),
+    requiredForActions: profile.requiredForActions?.filter(isContractApprovalAction),
+  };
+}
+
+function isContractToolName(value: string): value is NonNullable<CreateAiTeammateRequest["allowedTools"]>[number] {
+  return value === "read" || value === "grep" || value === "find" || value === "ls" || value === "bash" || value === "edit" || value === "write";
+}
+
+function isContractApprovalAction(
+  value: string,
+): value is NonNullable<CreateAiTeammateRequest["approvalProfile"]["requiredForActions"]>[number] {
+  return (
+    value === "write" ||
+    value === "edit" ||
+    value === "bash" ||
+    value === "git_commit" ||
+    value === "git_push" ||
+    value === "external_send" ||
+    value === "deploy" ||
+    value === "media_cost" ||
+    value === "credential_change" ||
+    value === "provider_change"
   );
 }
 

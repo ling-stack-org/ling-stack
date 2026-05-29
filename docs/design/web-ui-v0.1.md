@@ -13,7 +13,7 @@ This design depends on:
 
 The current `apps/web` package now provides the local app shell, Model Workbench provider setup with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, a client-style channel workspace, compact task creation/running, channel runtime policy controls, active lease/conflict signals, state-machine timelines, contextual readiness and first-run panels, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
 
-The AI teammates page now uses the same client direction: a Helio-inspired, macOS-like wizard for choosing a default role, binding a model, filling profile details, and scoping channels/memory/files. It is still a local draft flow until the daemon teammate API exists.
+The AI teammates page now uses the same client direction: a Helio-inspired, macOS-like wizard for choosing a default role, binding a model, filling profile details, and scoping channels/memory/files. Saving from the wizard now creates a durable daemon-backed workspace teammate.
 
 The richer channel surface is tracked in [Channel Workspace Design](channel-workspace.md). That document is the source of truth for channel tabs, default AI teammate assignment, member/notification/settings inspector behavior, file/artifact access, and the phased implementation checklist.
 
@@ -253,7 +253,8 @@ Purpose:
 
 - expose the default Ling/gstack-inspired AI teammate bench,
 - make teammate roles, skills, tools, provider capability needs, and approval profiles inspectable,
-- support a first `Add teammate` interaction without claiming persistence before the daemon contract exists.
+- support durable teammate creation, private chat, and teammate-specific read models
+  without bypassing the task/run/approval path.
 
 Current page shape:
 
@@ -262,15 +263,25 @@ Current page shape:
 - role selection prioritizes built-in `gstack-default` templates and also supports `Start from blank`,
 - model selection binds a provider preset per teammate instead of assuming one global model,
 - scope selection lets the user choose channels and planned memory/file sources,
-- below the wizard, local teammate drafts, built-in roles, selected template detail, and the `autoplan-lite` workflow remain inspectable,
-- the left sidebar shows teammate presence and supports lightweight pin/hide controls,
-- right context panel summarizes the active skill pack, local draft count, and strict approval skills.
+- below the wizard, workspace teammates, built-in roles, selected template detail, and the `autoplan-lite` workflow remain inspectable,
+- the left sidebar shows daemon-backed teammate presence and supports pin/hide controls,
+- right context panel summarizes the active skill pack, workspace teammate count, and strict approval skills.
 
 Current boundary:
 
-- adding a teammate creates a local UI draft only,
-- sidebar pin/hide is local UI state only,
-- teammate persistence, channel assignment persistence, custom skill packs, isolated memory stores, model override APIs, and AGENTS.md import remain future daemon/DB work.
+- adding a teammate creates a durable daemon record,
+- sidebar pin/hide, provider binding, status, and identity settings persist through
+  teammate update APIs,
+- channel memberships, skill bindings, and memory scopes are durable metadata,
+- private chat persists local-user messages and ready/blocked AI replies,
+- custom skill packs, vector memory, automatic recall, private attachments, avatar
+  upload, hard delete, and AGENTS.md import remain future work.
+
+Implemented design slice:
+
+- [Helio-Inspired AI Teammate Private Workspace](ai-teammate-private-workspace.md)
+  promotes AI teammates into durable workspace members with private chat, task/activity
+  tabs, channel membership, skill inspection, memory scopes, and settings.
 
 Empty state priority:
 

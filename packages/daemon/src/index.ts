@@ -34,6 +34,8 @@ import {
   type ApprovalStatus,
   type ApprovalToolDecision,
   type ArtifactType,
+  type AiTeammate,
+  type AiTeammateUpdateInput,
   type ChannelAttachment,
   type ChannelAttachmentKind,
   type ChannelBrief,
@@ -58,6 +60,7 @@ import {
   type ChannelMessageIntent,
   type ChannelMessageKind,
   type CreateApprovalRequestInput,
+  type CreateAiTeammateInput,
   type ChannelUpdateInput,
   type Channel,
   type CreateMediaJobInput,
@@ -86,9 +89,13 @@ import {
   type RunSummary,
   type RunStatus,
   type ResourceLease,
+  type ReplaceTeammateChannelMembershipInput,
+  type ReplaceTeammateMemoryScopeInput,
+  type ReplaceTeammateSkillBindingInput,
   type ResolvedSecret,
   type SecretPurpose,
   type SecretResolver,
+  type SkillApprovalProfile,
   type SecretStatus,
   type Task,
   type TaskStatus,
@@ -483,6 +490,11 @@ async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/teammates") {
+    await handleTeammatesCollection(request, response, config, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/tasks") {
     await handleTasksCollection(request, response, config, storeRegistry);
     return;
@@ -658,6 +670,12 @@ async function routeRequest(
       return;
     }
     await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId);
+    return;
+  }
+
+  const teammateRoute = parseTeammateRoute(url.pathname);
+  if (teammateRoute) {
+    await handleTeammateRoute(request, response, config, runner, storeRegistry, secretResolver, teammateRoute);
     return;
   }
 
@@ -1402,6 +1420,239 @@ async function handleChannelMessagesCollection(
     }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel messages` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleTeammatesCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        teammates: store.listAiTeammates({
+          includeHidden: url.searchParams.get("includeHidden") === "true",
+          includeDisabled: url.searchParams.get("includeDisabled") === "true",
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const teammate = store.createAiTeammate(parseCreateAiTeammateInput(body), new Date().toISOString());
+      writeJson(response, 201, { teammate });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /teammates` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleTeammateRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+  route: { readonly teammateId: string; readonly action?: "channels" | "skills" | "memory-scopes" | "direct-thread" | "direct-messages" | "tasks" | "activity" },
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const teammate = store.getAiTeammate(route.teammateId);
+    if (!teammate) {
+      writeJson(response, 404, { error: "teammate_not_found", message: `AI teammate not found: ${route.teammateId}` });
+      return;
+    }
+
+    if (!route.action) {
+      if (request.method === "GET") {
+        writeJson(response, 200, { teammate });
+        return;
+      }
+      if (request.method === "PATCH") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const updated = store.updateAiTeammate(route.teammateId, parseAiTeammateUpdateInput(body), new Date().toISOString());
+        writeJson(response, 200, { teammate: updated });
+        return;
+      }
+      if (request.method === "DELETE") {
+        const disabled = store.disableAiTeammate(route.teammateId, new Date().toISOString());
+        writeJson(response, 200, { teammate: disabled });
+        return;
+      }
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate` });
+      return;
+    }
+
+    if (route.action === "channels") {
+      if (request.method === "GET") {
+        writeJson(response, 200, {
+          cwd,
+          teammateId: route.teammateId,
+          memberships: store.listTeammateChannelMemberships(route.teammateId),
+        });
+        return;
+      }
+      if (request.method === "PUT") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const memberships = store.replaceTeammateChannelMemberships(
+          route.teammateId,
+          parseReplaceTeammateChannelMembershipsRequest(body),
+          new Date().toISOString(),
+        );
+        writeJson(response, 200, { cwd, teammateId: route.teammateId, memberships });
+        return;
+      }
+    }
+
+    if (route.action === "skills") {
+      if (request.method === "GET") {
+        writeJson(response, 200, {
+          cwd,
+          teammateId: route.teammateId,
+          bindings: store.listTeammateSkillBindings(route.teammateId),
+        });
+        return;
+      }
+      if (request.method === "PUT") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const bindings = store.replaceTeammateSkillBindings(
+          route.teammateId,
+          parseReplaceTeammateSkillBindingsRequest(body),
+          new Date().toISOString(),
+        );
+        writeJson(response, 200, { cwd, teammateId: route.teammateId, bindings });
+        return;
+      }
+    }
+
+    if (route.action === "memory-scopes") {
+      if (request.method === "GET") {
+        writeJson(response, 200, {
+          cwd,
+          teammateId: route.teammateId,
+          scopes: store.listTeammateMemoryScopes(route.teammateId),
+        });
+        return;
+      }
+      if (request.method === "PUT") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const scopes = store.replaceTeammateMemoryScopes(
+          route.teammateId,
+          parseReplaceTeammateMemoryScopesRequest(body),
+          new Date().toISOString(),
+        );
+        writeJson(response, 200, { cwd, teammateId: route.teammateId, scopes });
+        return;
+      }
+    }
+
+    if (route.action === "direct-thread") {
+      if (request.method === "GET") {
+        const thread = store.getOrCreateTeammateDirectThread(route.teammateId, new Date().toISOString());
+        writeJson(response, 200, { cwd, teammateId: route.teammateId, thread });
+        return;
+      }
+    }
+
+    if (route.action === "direct-messages") {
+      const thread = store.getOrCreateTeammateDirectThread(route.teammateId, new Date().toISOString());
+      if (request.method === "GET") {
+        writeJson(response, 200, {
+          cwd,
+          teammateId: route.teammateId,
+          thread,
+          messages: store.listTeammateDirectMessages({
+            teammateId: route.teammateId,
+            threadId: thread.id,
+            limit: readOptionalIntegerQuery(url, "limit", 1),
+          }),
+        });
+        return;
+      }
+      if (request.method === "POST") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const input = parseTeammateDirectMessageRequest(body);
+        const now = new Date().toISOString();
+        const message = store.createTeammateDirectMessage(
+          {
+            threadId: thread.id,
+            teammateId: route.teammateId,
+            authorType: "local-user",
+            authorId: "local-user",
+            body: input.body,
+          },
+          now,
+        );
+        const aiReply = input.requestAiReply
+          ? await createAiTeammateDirectReply({
+              runner,
+              store,
+              teammate,
+              thread,
+              sourceMessage: message,
+              providerPresetId: input.providerPresetId,
+              secretResolver,
+            })
+          : undefined;
+        writeJson(response, 201, aiReply ? { message, aiReply } : { message });
+        return;
+      }
+    }
+
+    if (route.action === "tasks" && request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        tasks: store.listTasks({
+          assigneeTeammateId: route.teammateId,
+          status: readOptionalTaskStatusQuery(url),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    if (route.action === "activity" && request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        teammateId: route.teammateId,
+        items: buildTeammateActivityItems(store, route.teammateId, readOptionalIntegerQuery(url, "limit", 1) ?? 100),
+      });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate ${route.action}` });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
@@ -2654,6 +2905,7 @@ async function handleTasksCollection(
         cwd,
         tasks: store.listTasks({
           channelId: url.searchParams.get("channelId") ?? undefined,
+          assigneeTeammateId: url.searchParams.get("assigneeTeammateId") ?? undefined,
           status: readOptionalTaskStatusQuery(url),
           limit: readOptionalIntegerQuery(url, "limit", 1),
         }),
@@ -3714,6 +3966,122 @@ async function createAiChannelReply(input: {
   }
 }
 
+async function createAiTeammateDirectReply(input: {
+  readonly runner: RunnerAdapter;
+  readonly store: RunStore;
+  readonly teammate: AiTeammate;
+  readonly thread: { readonly id: string };
+  readonly sourceMessage: { readonly id: string; readonly body: string };
+  readonly providerPresetId?: string;
+  readonly secretResolver: SecretResolver;
+}): Promise<ReturnType<RunStore["createTeammateDirectMessage"]>> {
+  const providerPresetId = input.providerPresetId ?? input.teammate.providerPresetId;
+  const now = new Date().toISOString();
+  if (input.teammate.status !== "active") {
+    return input.store.createTeammateDirectMessage(
+      {
+        threadId: input.thread.id,
+        teammateId: input.teammate.id,
+        authorType: "ai-teammate",
+        authorId: input.teammate.id,
+        body: `AI teammate is ${input.teammate.status}.`,
+        status: "blocked",
+        errorMessage: `Teammate status is ${input.teammate.status}.`,
+      },
+      now,
+    );
+  }
+
+  if (!providerPresetId) {
+    return input.store.createTeammateDirectMessage(
+      {
+        threadId: input.thread.id,
+        teammateId: input.teammate.id,
+        authorType: "ai-teammate",
+        authorId: input.teammate.id,
+        body: "AI teammate is blocked: no provider preset is selected.",
+        status: "blocked",
+        errorMessage: "No provider preset is selected for this teammate.",
+      },
+      now,
+    );
+  }
+
+  const recentMessages = input.store.listTeammateDirectMessages({
+    teammateId: input.teammate.id,
+    threadId: input.thread.id,
+    limit: 20,
+  });
+  const textDeltas: string[] = [];
+  try {
+    const task = {
+      id: input.sourceMessage.id,
+      title: `Private chat with ${input.teammate.displayName}`,
+      prompt: formatTeammateDirectPrompt(input.teammate, recentMessages),
+      channelId: "private",
+    };
+    const systemPrompt = [
+      input.teammate.systemPrompt ?? `You are ${input.teammate.displayName}, an AI teammate inside Ling Stack.`,
+      ...input.teammate.appendSystemPrompt,
+      "Reply concisely to the private conversation.",
+      "This private chat has no tool access and cannot mutate files, send external messages, or inspect channel files.",
+      "Do not claim to see channel history, attachments, private memory, or web pages unless the user explicitly pasted that content in this chat.",
+    ].join("\n");
+    const provider = resolveProviderForRun(
+      input.store,
+      {
+        cwd: input.store.paths.cwd,
+        workspaceCwd: input.store.paths.cwd,
+        task,
+        providerPresetId,
+        tools: [],
+        thinkingLevel: "medium",
+        systemPrompt,
+      },
+      input.secretResolver,
+    );
+
+    const result = await input.runner.runTask({
+      cwd: input.store.paths.cwd,
+      task,
+      provider,
+      tools: [],
+      thinkingLevel: "medium",
+      systemPrompt,
+      onEvent: (event) => {
+        if (event.type === "assistant_text_delta") {
+          textDeltas.push(event.text);
+        }
+      },
+    });
+    const replyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
+    return input.store.createTeammateDirectMessage(
+      {
+        threadId: input.thread.id,
+        teammateId: input.teammate.id,
+        authorType: "ai-teammate",
+        authorId: input.teammate.id,
+        body: replyText,
+      },
+      new Date().toISOString(),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return input.store.createTeammateDirectMessage(
+      {
+        threadId: input.thread.id,
+        teammateId: input.teammate.id,
+        authorType: "ai-teammate",
+        authorId: input.teammate.id,
+        body: `AI teammate is blocked: ${message}`,
+        status: "blocked",
+        errorMessage: message,
+      },
+      new Date().toISOString(),
+    );
+  }
+}
+
 function formatChannelDiscussionPrompt(channel: Channel, message: ChannelMessage): string {
   const mentions = message.mentions.length > 0
     ? message.mentions.map((mention) => `@${mention.label}`).join(", ")
@@ -3726,6 +4094,133 @@ function formatChannelDiscussionPrompt(channel: Channel, message: ChannelMessage
     "",
     "Reply as the channel AI teammate. Keep the response actionable and brief.",
   ].join("\n");
+}
+
+function formatTeammateDirectPrompt(
+  teammate: AiTeammate,
+  messages: readonly { readonly authorType: string; readonly body: string; readonly status: string }[],
+): string {
+  const history = messages
+    .filter((message) => message.status === "ready")
+    .slice(-20)
+    .map((message) => `${message.authorType === "ai-teammate" ? teammate.displayName : "User"}: ${message.body}`)
+    .join("\n");
+  return [
+    `Teammate: ${teammate.displayName}`,
+    `Role: ${teammate.roleKey}`,
+    `Description: ${teammate.description}`,
+    "",
+    "Private conversation:",
+    history || "No prior messages.",
+    "",
+    "Reply to the latest user message.",
+  ].join("\n");
+}
+
+function buildTeammateActivityItems(
+  store: RunStore,
+  teammateId: string,
+  limit: number,
+): Array<{
+  readonly id: string;
+  readonly kind: "direct-message" | "task" | "run" | "approval" | "channel-message";
+  readonly title: string;
+  readonly subtitle?: string;
+  readonly status?: string;
+  readonly createdAt: string;
+  readonly sourceId: string;
+}> {
+  const items: Array<{
+    readonly id: string;
+    readonly kind: "direct-message" | "task" | "run" | "approval" | "channel-message";
+    readonly title: string;
+    readonly subtitle?: string;
+    readonly status?: string;
+    readonly createdAt: string;
+    readonly sourceId: string;
+  }> = [];
+
+  const thread = store.getOrCreateTeammateDirectThread(teammateId, new Date().toISOString());
+  for (const message of store.listTeammateDirectMessages({ teammateId, threadId: thread.id, limit })) {
+    items.push({
+      id: `direct-message:${message.id}`,
+      kind: "direct-message",
+      title: message.authorType === "ai-teammate" ? "AI teammate replied" : "Private message",
+      subtitle: previewText(message.body),
+      status: message.status,
+      createdAt: message.createdAt,
+      sourceId: message.id,
+    });
+  }
+
+  for (const task of store.listTasks({ assigneeTeammateId: teammateId, limit })) {
+    items.push({
+      id: `task:${task.id}`,
+      kind: "task",
+      title: task.title,
+      subtitle: previewText(task.prompt),
+      status: task.status,
+      createdAt: task.createdAt,
+      sourceId: task.id,
+    });
+  }
+
+  for (const run of store.listRuns({ teammateId, limit })) {
+    items.push({
+      id: `run:${run.id}`,
+      kind: "run",
+      title: run.taskSnapshot && isRecord(run.taskSnapshot) && typeof run.taskSnapshot.title === "string"
+        ? run.taskSnapshot.title
+        : run.taskId,
+      subtitle: run.providerModel,
+      status: run.status,
+      createdAt: run.createdAt,
+      sourceId: run.id,
+    });
+  }
+
+  const teammateRunIds = new Set(store.listRuns({ teammateId, limit: 200 }).map((run) => run.id));
+  for (const approval of store.listApprovalRequests({ status: "pending", limit: 200 })) {
+    if (approval.runId && teammateRunIds.has(approval.runId)) {
+      items.push({
+        id: `approval:${approval.id}`,
+        kind: "approval",
+        title: approval.title,
+        subtitle: approval.description,
+        status: approval.status,
+        createdAt: approval.createdAt,
+        sourceId: approval.id,
+      });
+    }
+  }
+
+  for (const channel of store.listChannels({ limit: 200 })) {
+    for (const message of store.listChannelMessages({ channelId: channel.id, limit: 200 })) {
+      if (message.mentions.some((mention) => mention.kind === "ai-teammate" && mention.id === teammateId)) {
+        items.push({
+          id: `channel-message:${message.id}`,
+          kind: "channel-message",
+          title: `Mentioned in #${channel.name}`,
+          subtitle: previewText(message.body),
+          status: message.status,
+          createdAt: message.createdAt,
+          sourceId: message.id,
+        });
+      }
+    }
+  }
+
+  return items
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, Math.min(Math.max(limit, 1), 200));
+}
+
+function previewText(value: string, maxLength = 140): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, maxLength - 1)}...`;
 }
 
 function extractAssistantText(messages: readonly unknown[]): string | undefined {
@@ -5847,6 +6342,34 @@ function parseChannelRoute(
   return undefined;
 }
 
+function parseTeammateRoute(
+  pathname: string,
+): {
+  readonly teammateId: string;
+  readonly action?: "channels" | "skills" | "memory-scopes" | "direct-thread" | "direct-messages" | "tasks" | "activity";
+} | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "teammates") {
+    return { teammateId: segments[1] };
+  }
+  if (
+    segments.length === 3 &&
+    segments[0] === "teammates" &&
+    (
+      segments[2] === "channels" ||
+      segments[2] === "skills" ||
+      segments[2] === "memory-scopes" ||
+      segments[2] === "direct-thread" ||
+      segments[2] === "direct-messages" ||
+      segments[2] === "tasks" ||
+      segments[2] === "activity"
+    )
+  ) {
+    return { teammateId: segments[1], action: segments[2] };
+  }
+  return undefined;
+}
+
 function parseChannelAttachmentRoute(
   pathname: string,
 ): { readonly attachmentId: string; readonly action?: "content" } | undefined {
@@ -6069,6 +6592,127 @@ function validateTaskInput(input: TaskUpdateInput): void {
   if (input.prompt !== undefined && input.prompt.trim().length === 0) {
     throw new Error("prompt must be a non-empty string");
   }
+}
+
+function parseCreateAiTeammateInput(value: unknown): CreateAiTeammateInput {
+  if (!isRecord(value)) {
+    throw new Error("AI teammate request must be a JSON object");
+  }
+  const input: CreateAiTeammateInput = {
+    templateId: readOptionalString(value, "templateId"),
+    roleKey: readAiTeammateRoleKey(value, "roleKey"),
+    displayName: readString(value, "displayName"),
+    description: readStringAllowEmpty(value, "description"),
+    avatarTone: readOptionalString(value, "avatarTone"),
+    avatarImageAttachmentId: readOptionalString(value, "avatarImageAttachmentId"),
+    providerPresetId: readOptionalString(value, "providerPresetId"),
+    systemPrompt: readOptionalString(value, "systemPrompt"),
+    appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
+    allowedTools: readOptionalRunTools(value, "allowedTools"),
+    approvalProfile: readApprovalProfile(value, "approvalProfile"),
+    status: readOptionalAiTeammateStatus(value, "status"),
+    pinned: readOptionalBoolean(value, "pinned"),
+    hidden: readOptionalBoolean(value, "hidden"),
+  };
+  validateAiTeammateInput(input);
+  return input;
+}
+
+function parseAiTeammateUpdateInput(value: unknown): AiTeammateUpdateInput {
+  if (!isRecord(value)) {
+    throw new Error("AI teammate update must be a JSON object");
+  }
+  const input: AiTeammateUpdateInput = {
+    templateId: readNullableString(value, "templateId"),
+    roleKey: readOptionalAiTeammateRoleKey(value, "roleKey"),
+    displayName: readOptionalString(value, "displayName"),
+    description: readOptionalString(value, "description"),
+    avatarTone: readNullableString(value, "avatarTone"),
+    avatarImageAttachmentId: readNullableString(value, "avatarImageAttachmentId"),
+    providerPresetId: readNullableString(value, "providerPresetId"),
+    systemPrompt: readNullableString(value, "systemPrompt"),
+    appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
+    allowedTools: readOptionalRunTools(value, "allowedTools"),
+    approvalProfile: readOptionalApprovalProfile(value, "approvalProfile"),
+    status: readOptionalAiTeammateStatus(value, "status"),
+    pinned: readOptionalBoolean(value, "pinned"),
+    hidden: readOptionalBoolean(value, "hidden"),
+  };
+  validateAiTeammateInput(input);
+  return input;
+}
+
+function validateAiTeammateInput(input: AiTeammateUpdateInput): void {
+  if (input.displayName !== undefined && input.displayName.trim().length === 0) {
+    throw new Error("displayName must be a non-empty string");
+  }
+  if (input.allowedTools !== undefined && input.allowedTools.length === 0) {
+    throw new Error("allowedTools must contain at least one tool");
+  }
+}
+
+function parseReplaceTeammateChannelMembershipsRequest(value: unknown): readonly ReplaceTeammateChannelMembershipInput[] {
+  if (!isRecord(value) || !Array.isArray(value.memberships)) {
+    throw new Error("memberships must be an array");
+  }
+  return value.memberships.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`memberships[${index}] must be an object`);
+    }
+    return {
+      channelId: readString(item, "channelId"),
+      isDefault: readOptionalBoolean(item, "isDefault"),
+    };
+  });
+}
+
+function parseReplaceTeammateSkillBindingsRequest(value: unknown): readonly ReplaceTeammateSkillBindingInput[] {
+  if (!isRecord(value) || !Array.isArray(value.bindings)) {
+    throw new Error("bindings must be an array");
+  }
+  return value.bindings.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`bindings[${index}] must be an object`);
+    }
+    const source = readOptionalString(item, "source");
+    if (source !== undefined && source !== "template" && source !== "user") {
+      throw new Error(`bindings[${index}].source must be template or user`);
+    }
+    return {
+      skillId: readString(item, "skillId"),
+      source,
+      enabled: readOptionalBoolean(item, "enabled"),
+    };
+  });
+}
+
+function parseReplaceTeammateMemoryScopesRequest(value: unknown): readonly ReplaceTeammateMemoryScopeInput[] {
+  if (!isRecord(value) || !Array.isArray(value.scopes)) {
+    throw new Error("scopes must be an array");
+  }
+  return value.scopes.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`scopes[${index}] must be an object`);
+    }
+    return {
+      id: readOptionalString(item, "id"),
+      kind: readTeammateMemoryScopeKind(item, "kind"),
+      channelId: readOptionalString(item, "channelId"),
+      enabled: readOptionalBoolean(item, "enabled"),
+    };
+  });
+}
+
+function parseTeammateDirectMessageRequest(value: unknown): { readonly body: string; readonly requestAiReply: boolean; readonly providerPresetId?: string } {
+  if (!isRecord(value)) {
+    throw new Error("Direct message request must be a JSON object");
+  }
+  const body = readString(value, "body");
+  return {
+    body,
+    requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
+    providerPresetId: readOptionalString(value, "providerPresetId"),
+  };
 }
 
 function parseChannelMessageRequest(value: unknown): ChannelMessageRequest {
@@ -7130,7 +7774,7 @@ function writeSse(response: ServerResponse, event: string, data: unknown): void 
 
 function setCorsHeaders(response: ServerResponse): void {
   response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
@@ -7319,6 +7963,92 @@ function readOptionalStringArray<T extends string = string>(
 
 function readOptionalRunTools(record: Record<string, unknown>, key: string): RunTool[] | undefined {
   return readOptionalStringArray(record, key, [...readOnlyRunTools, "bash", "edit", "write"] as const);
+}
+
+function readAiTeammateRoleKey(record: Record<string, unknown>, key: string): CreateAiTeammateInput["roleKey"] {
+  const value = readString(record, key);
+  if (!["product", "architect", "engineer", "designer", "qa", "security", "release", "docs", "custom"].includes(value)) {
+    throw new Error(`${key} must be a supported AI teammate role`);
+  }
+  return value as CreateAiTeammateInput["roleKey"];
+}
+
+function readOptionalAiTeammateRoleKey(record: Record<string, unknown>, key: string): AiTeammateUpdateInput["roleKey"] | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!["product", "architect", "engineer", "designer", "qa", "security", "release", "docs", "custom"].includes(value)) {
+    throw new Error(`${key} must be a supported AI teammate role`);
+  }
+  return value as AiTeammateUpdateInput["roleKey"];
+}
+
+function readOptionalAiTeammateStatus(record: Record<string, unknown>, key: string): CreateAiTeammateInput["status"] | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "active" && value !== "paused" && value !== "disabled") {
+    throw new Error(`${key} must be one of: active, paused, disabled`);
+  }
+  return value;
+}
+
+function readApprovalProfile(record: Record<string, unknown>, key: string): SkillApprovalProfile {
+  const value = record[key];
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  return parseApprovalProfileObject(value, key);
+}
+
+function readOptionalApprovalProfile(record: Record<string, unknown>, key: string): SkillApprovalProfile | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  return parseApprovalProfileObject(value, key);
+}
+
+function parseApprovalProfileObject(value: Record<string, unknown>, key: string): SkillApprovalProfile {
+  if (value.mode !== "none" && value.mode !== "standard" && value.mode !== "strict") {
+    throw new Error(`${key}.mode must be one of: none, standard, strict`);
+  }
+  const requiredForTools = readOptionalStringArray(value, "requiredForTools", [...readOnlyRunTools, "bash", "edit", "write"] as const);
+  const requiredForActions = readOptionalStringArray(value, "requiredForActions", [
+    "write",
+    "edit",
+    "bash",
+    "git_commit",
+    "git_push",
+    "external_send",
+    "deploy",
+    "media_cost",
+    "credential_change",
+    "provider_change",
+  ] as const);
+  const risk = readOptionalString(value, "risk");
+  if (risk !== undefined && risk !== "low" && risk !== "medium" && risk !== "high" && risk !== "critical") {
+    throw new Error(`${key}.risk must be one of: low, medium, high, critical`);
+  }
+  return {
+    mode: value.mode,
+    ...(risk ? { risk: risk as SkillApprovalProfile["risk"] } : {}),
+    ...(requiredForTools ? { requiredForTools } : {}),
+    ...(requiredForActions ? { requiredForActions } : {}),
+  };
+}
+
+function readTeammateMemoryScopeKind(record: Record<string, unknown>, key: string): ReplaceTeammateMemoryScopeInput["kind"] {
+  const value = readString(record, key);
+  if (value !== "channel-brief" && value !== "channel-decisions" && value !== "private-chat-summary" && value !== "private-notes") {
+    throw new Error(`${key} must be a supported memory scope kind`);
+  }
+  return value;
 }
 
 function readOptionalApprovalToolDecisions(

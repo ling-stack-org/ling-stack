@@ -24,6 +24,8 @@ import type {
   UpdateMediaJobStatusInput,
 } from "./media-types.js";
 import type {
+  AiTeammate,
+  AiTeammateUpdateInput,
   Channel,
   ChannelAttachment,
   ChannelBrief,
@@ -44,7 +46,10 @@ import type {
   CreateChannelInput,
   CreateChannelLinkPreviewInput,
   CreateChannelMessageInput,
+  CreateAiTeammateInput,
+  CreateTeammateDirectMessageInput,
   CreateTaskInput,
+  ListAiTeammatesOptions,
   ListChannelAttachmentsOptions,
   ListChannelContextSummariesOptions,
   ListChannelDecisionsOptions,
@@ -54,9 +59,18 @@ import type {
   ListChannelsOptions,
   ListChannelLinkPreviewsOptions,
   ListChannelMessagesOptions,
+  ListTeammateDirectMessagesOptions,
   ListTasksOptions,
+  ReplaceTeammateChannelMembershipInput,
+  ReplaceTeammateMemoryScopeInput,
+  ReplaceTeammateSkillBindingInput,
   Task,
   TaskUpdateInput,
+  TeammateChannelMembership,
+  TeammateDirectMessage,
+  TeammateDirectThread,
+  TeammateMemoryScope,
+  TeammateSkillBinding,
   UpdateChannelBriefInput,
   UpdateChannelContextSummaryInput,
   UpdateChannelDecisionInput,
@@ -160,6 +174,7 @@ export interface ListRunEventsOptions {
 
 export interface ListRunsOptions {
   readonly status?: RunStatus;
+  readonly teammateId?: string;
   readonly limit?: number;
 }
 
@@ -265,6 +280,32 @@ export interface RunStore {
   listTasks(options?: ListTasksOptions): Task[];
   updateTask(id: string, input: TaskUpdateInput, now: string): Task | undefined;
   deleteTask(id: string): boolean;
+  createAiTeammate(input: CreateAiTeammateInput, now: string): AiTeammate;
+  getAiTeammate(id: string): AiTeammate | undefined;
+  listAiTeammates(options?: ListAiTeammatesOptions): AiTeammate[];
+  updateAiTeammate(id: string, input: AiTeammateUpdateInput, now: string): AiTeammate | undefined;
+  disableAiTeammate(id: string, now: string): AiTeammate | undefined;
+  listTeammateChannelMemberships(teammateId: string): TeammateChannelMembership[];
+  replaceTeammateChannelMemberships(
+    teammateId: string,
+    memberships: readonly ReplaceTeammateChannelMembershipInput[],
+    now: string,
+  ): TeammateChannelMembership[];
+  listTeammateSkillBindings(teammateId: string): TeammateSkillBinding[];
+  replaceTeammateSkillBindings(
+    teammateId: string,
+    bindings: readonly ReplaceTeammateSkillBindingInput[],
+    now: string,
+  ): TeammateSkillBinding[];
+  listTeammateMemoryScopes(teammateId: string): TeammateMemoryScope[];
+  replaceTeammateMemoryScopes(
+    teammateId: string,
+    scopes: readonly ReplaceTeammateMemoryScopeInput[],
+    now: string,
+  ): TeammateMemoryScope[];
+  getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread;
+  listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[];
+  createTeammateDirectMessage(input: CreateTeammateDirectMessageInput, now: string): TeammateDirectMessage;
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage;
   getChannelMessage(id: string): ChannelMessage | undefined;
   listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[];

@@ -42,6 +42,7 @@ export interface RunSession {
   readonly cwd: string;
   readonly taskId: string;
   readonly channelId?: string;
+  readonly teammateId?: string;
   readonly providerPresetId?: string;
   readonly providerName: string;
   readonly providerModel: string;
@@ -1003,8 +1004,237 @@ export type ToolName = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "writ
 
 export interface ListTasksRequest {
   readonly channelId?: string;
+  readonly assigneeTeammateId?: string;
   readonly status?: TaskStatus;
   readonly limit?: number;
+}
+
+export type AiTeammateRoleKey =
+  | "product"
+  | "architect"
+  | "engineer"
+  | "designer"
+  | "qa"
+  | "security"
+  | "release"
+  | "docs"
+  | "custom";
+
+export type SkillApprovalMode = "none" | "standard" | "strict";
+
+export interface SkillApprovalProfile {
+  readonly mode: SkillApprovalMode;
+  readonly risk?: ApprovalRisk;
+  readonly requiredForTools?: readonly ToolName[];
+  readonly requiredForActions?: readonly ApprovalActionType[];
+}
+
+export type AiTeammateStatus = "active" | "paused" | "disabled";
+
+export interface AiTeammate {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly templateId?: string;
+  readonly roleKey: AiTeammateRoleKey;
+  readonly displayName: string;
+  readonly description: string;
+  readonly avatarTone?: string;
+  readonly avatarImageAttachmentId?: string;
+  readonly providerPresetId?: string;
+  readonly systemPrompt?: string;
+  readonly appendSystemPrompt: readonly string[];
+  readonly allowedTools: readonly ToolName[];
+  readonly approvalProfile: SkillApprovalProfile;
+  readonly status: AiTeammateStatus;
+  readonly pinned: boolean;
+  readonly hidden: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateAiTeammateRequest {
+  readonly templateId?: string;
+  readonly roleKey: AiTeammateRoleKey;
+  readonly displayName: string;
+  readonly description: string;
+  readonly avatarTone?: string;
+  readonly avatarImageAttachmentId?: string;
+  readonly providerPresetId?: string;
+  readonly systemPrompt?: string;
+  readonly appendSystemPrompt?: readonly string[];
+  readonly allowedTools?: readonly ToolName[];
+  readonly approvalProfile: SkillApprovalProfile;
+  readonly status?: AiTeammateStatus;
+  readonly pinned?: boolean;
+  readonly hidden?: boolean;
+}
+
+export interface UpdateAiTeammateRequest {
+  readonly templateId?: string | null;
+  readonly roleKey?: AiTeammateRoleKey;
+  readonly displayName?: string;
+  readonly description?: string;
+  readonly avatarTone?: string | null;
+  readonly avatarImageAttachmentId?: string | null;
+  readonly providerPresetId?: string | null;
+  readonly systemPrompt?: string | null;
+  readonly appendSystemPrompt?: readonly string[];
+  readonly allowedTools?: readonly ToolName[];
+  readonly approvalProfile?: SkillApprovalProfile;
+  readonly status?: AiTeammateStatus;
+  readonly pinned?: boolean;
+  readonly hidden?: boolean;
+}
+
+export interface AiTeammateListResponse {
+  readonly cwd: string;
+  readonly teammates: readonly AiTeammate[];
+}
+
+export interface AiTeammateMutationResponse {
+  readonly teammate: AiTeammate;
+}
+
+export interface TeammateChannelMembership {
+  readonly teammateId: string;
+  readonly channelId: string;
+  readonly isDefault: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ReplaceTeammateChannelMembershipRequest {
+  readonly memberships: readonly {
+    readonly channelId: string;
+    readonly isDefault?: boolean;
+  }[];
+}
+
+export interface TeammateChannelMembershipListResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly memberships: readonly TeammateChannelMembership[];
+}
+
+export type TeammateSkillBindingSource = "template" | "user";
+
+export interface TeammateSkillBinding {
+  readonly teammateId: string;
+  readonly skillId: string;
+  readonly source: TeammateSkillBindingSource;
+  readonly enabled: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ReplaceTeammateSkillBindingsRequest {
+  readonly bindings: readonly {
+    readonly skillId: string;
+    readonly source?: TeammateSkillBindingSource;
+    readonly enabled?: boolean;
+  }[];
+}
+
+export interface TeammateSkillBindingListResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly bindings: readonly TeammateSkillBinding[];
+}
+
+export type TeammateMemoryScopeKind = "channel-brief" | "channel-decisions" | "private-chat-summary" | "private-notes";
+
+export interface TeammateMemoryScope {
+  readonly id: string;
+  readonly teammateId: string;
+  readonly kind: TeammateMemoryScopeKind;
+  readonly channelId?: string;
+  readonly enabled: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ReplaceTeammateMemoryScopesRequest {
+  readonly scopes: readonly {
+    readonly id?: string;
+    readonly kind: TeammateMemoryScopeKind;
+    readonly channelId?: string;
+    readonly enabled?: boolean;
+  }[];
+}
+
+export interface TeammateMemoryScopeListResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly scopes: readonly TeammateMemoryScope[];
+}
+
+export interface TeammateDirectThread {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly teammateId: string;
+  readonly title: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
+
+export type TeammateDirectMessageStatus = "ready" | "blocked" | "failed";
+
+export interface TeammateDirectMessage {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly teammateId: string;
+  readonly authorType: TeammateDirectMessageAuthorType;
+  readonly authorId?: string;
+  readonly body: string;
+  readonly status: TeammateDirectMessageStatus;
+  readonly errorMessage?: string;
+  readonly linkedTaskId?: string;
+  readonly linkedRunId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateTeammateDirectMessageRequest {
+  readonly body: string;
+  readonly requestAiReply?: boolean;
+  readonly providerPresetId?: string;
+}
+
+export interface TeammateDirectThreadResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly thread: TeammateDirectThread;
+}
+
+export interface TeammateDirectMessageListResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly thread: TeammateDirectThread;
+  readonly messages: readonly TeammateDirectMessage[];
+}
+
+export interface TeammateDirectMessageMutationResponse {
+  readonly message: TeammateDirectMessage;
+  readonly aiReply?: TeammateDirectMessage;
+}
+
+export interface TeammateActivityItem {
+  readonly id: string;
+  readonly kind: "direct-message" | "task" | "run" | "approval" | "channel-message";
+  readonly title: string;
+  readonly subtitle?: string;
+  readonly status?: string;
+  readonly createdAt: string;
+  readonly sourceId: string;
+}
+
+export interface TeammateActivityListResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly items: readonly TeammateActivityItem[];
 }
 
 export interface ListApprovalsRequest {

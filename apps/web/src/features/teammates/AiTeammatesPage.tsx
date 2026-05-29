@@ -448,18 +448,18 @@ export function AiTeammatesPage({
       </section>
 
       <div className="teammate-management-grid">
-        <section className="teammate-add-panel" aria-label={t("Local teammates")}>
+        <section className="teammate-add-panel" aria-label={t("Workspace teammates")}>
           <div className="panel-title split">
             <span>
               <Users size={16} />
-              <h2>{t("Local teammates")}</h2>
+              <h2>{t("Workspace teammates")}</h2>
             </span>
             <small>{t("{count} configured", { count: localTeammates.length })}</small>
           </div>
           {localTeammates.length === 0 ? (
             <div className="client-empty-state teammate-empty">
               <Bot size={18} />
-              <span>{t("No local teammate drafts")}</span>
+              <span>{t("No workspace teammates")}</span>
             </div>
           ) : (
             <div className="teammate-draft-list">

@@ -34,6 +34,8 @@ import {
 } from "../approval-policy.js";
 import {
   DEFAULT_WORKSPACE_ID,
+  createAiTeammateId,
+  createBuiltinAiTeammateId,
   createChannelAttachmentId,
   createChannelBriefId,
   createChannelContextSummaryId,
@@ -44,8 +46,14 @@ import {
   createChannelMessageId,
   createChannelWorkflowId,
   createChannelWorkflowStepId,
+  createTeammateDirectMessageId,
+  createTeammateDirectThreadId,
+  createTeammateMemoryScopeId,
   createTaskId,
   normalizeChannelRuntimePolicy,
+  type AiTeammate,
+  type AiTeammateStatus,
+  type AiTeammateUpdateInput,
   type Channel,
   type ChannelAttachment,
   type ChannelAttachmentKind,
@@ -70,6 +78,7 @@ import {
   type ChannelWorkflowStep,
   type ChannelWorkflowStepStatus,
   type ChannelWorkflowStatus,
+  type CreateAiTeammateInput,
   type CreateChannelAttachmentInput,
   type CreateChannelContextSummaryInput,
   type CreateChannelDecisionInput,
@@ -79,7 +88,9 @@ import {
   type CreateChannelMessageInput,
   type CreateChannelWorkflowInput,
   type CreateChannelWorkflowStepInput,
+  type CreateTeammateDirectMessageInput,
   type CreateTaskInput,
+  type ListAiTeammatesOptions,
   type ListChannelAttachmentsOptions,
   type ListChannelContextSummariesOptions,
   type ListChannelDecisionsOptions,
@@ -89,10 +100,23 @@ import {
   type ListChannelMessagesOptions,
   type ListChannelWorkflowsOptions,
   type ListChannelWorkflowStepsOptions,
+  type ListTeammateDirectMessagesOptions,
   type ListTasksOptions,
+  type ReplaceTeammateChannelMembershipInput,
+  type ReplaceTeammateMemoryScopeInput,
+  type ReplaceTeammateSkillBindingInput,
   type Task,
   type TaskStatus,
   type TaskUpdateInput,
+  type TeammateChannelMembership,
+  type TeammateDirectMessage,
+  type TeammateDirectMessageAuthorType,
+  type TeammateDirectMessageStatus,
+  type TeammateDirectThread,
+  type TeammateMemoryScope,
+  type TeammateMemoryScopeKind,
+  type TeammateSkillBinding,
+  type TeammateSkillBindingSource,
   type UpdateChannelBriefInput,
   type UpdateChannelContextSummaryInput,
   type UpdateChannelDecisionInput,
@@ -101,6 +125,8 @@ import {
   type UpdateChannelWorkflowInput,
   type UpdateChannelWorkflowStepInput,
 } from "../workspace-types.js";
+import { GSTACK_DEFAULT_SKILL_PACK_ID, listDefaultTeammateTemplates } from "../builtin-skill-packs.js";
+import type { AiTeammateRoleKey, SkillApprovalProfile } from "../skill-types.js";
 import {
   createArtifactId,
   createEventId,
@@ -182,6 +208,8 @@ const CHANNEL_PROTOCOL_MIGRATION_VERSION = 14;
 const CHANNEL_PROTOCOL_MIGRATION_NAME = "create_channel_collaboration_protocol";
 const CHANNEL_WORKFLOW_MIGRATION_VERSION = 15;
 const CHANNEL_WORKFLOW_MIGRATION_NAME = "create_channel_handoff_workflows";
+const AI_TEAMMATE_WORKSPACE_MIGRATION_VERSION = 16;
+const AI_TEAMMATE_WORKSPACE_MIGRATION_NAME = "create_ai_teammate_private_workspace";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -202,6 +230,7 @@ export class SqliteRunStore implements RunStore {
     this.applyMigrations();
     this.ensureDefaultWorkspace();
     this.ensureDefaultApprovalPolicy();
+    this.ensureDefaultAiTeammates();
 
     if (!existed) {
       this.database.exec("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -348,7 +377,18 @@ export class SqliteRunStore implements RunStore {
 
   listRuns(options: ListRunsOptions = {}): RunSession[] {
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-    const statusClause = options.status ? "WHERE status = ?" : "";
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.teammateId) {
+      clauses.push("teammate_id = ?");
+      params.push(options.teammateId);
+    }
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    params.push(limit);
     const statement = this.database.prepare(`
       SELECT
         id,
@@ -371,11 +411,11 @@ export class SqliteRunStore implements RunStore {
         ended_at,
         updated_at
       FROM run_sessions
-      ${statusClause}
+      ${whereClause}
       ORDER BY created_at DESC
       LIMIT ?
     `);
-    const rows = options.status ? statement.all(options.status, limit) : statement.all(limit);
+    const rows = statement.all(...params);
     return rows.map(mapRunSession);
   }
 
@@ -1008,6 +1048,10 @@ export class SqliteRunStore implements RunStore {
       clauses.push("channel_id = ?");
       params.push(options.channelId);
     }
+    if (options.assigneeTeammateId) {
+      clauses.push("assignee_teammate_id = ?");
+      params.push(options.assigneeTeammateId);
+    }
     if (options.status) {
       clauses.push("status = ?");
       params.push(options.status);
@@ -1067,6 +1111,434 @@ export class SqliteRunStore implements RunStore {
   deleteTask(id: string): boolean {
     const result = this.database.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     return Number(result.changes) > 0;
+  }
+
+  createAiTeammate(input: CreateAiTeammateInput, now: string): AiTeammate {
+    const teammate: AiTeammate = {
+      id: input.id ?? createAiTeammateId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      templateId: input.templateId,
+      roleKey: input.roleKey,
+      displayName: input.displayName,
+      description: input.description,
+      avatarTone: input.avatarTone,
+      avatarImageAttachmentId: input.avatarImageAttachmentId,
+      providerPresetId: input.providerPresetId,
+      systemPrompt: input.systemPrompt,
+      appendSystemPrompt: input.appendSystemPrompt ?? [],
+      allowedTools: input.allowedTools ?? [...readOnlyRunTools],
+      approvalProfile: input.approvalProfile,
+      status: input.status ?? "active",
+      pinned: input.pinned ?? false,
+      hidden: input.hidden ?? false,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO ai_teammates (
+          id,
+          workspace_id,
+          template_id,
+          role_key,
+          display_name,
+          description,
+          avatar_tone,
+          avatar_image_attachment_id,
+          provider_preset_id,
+          system_prompt,
+          append_system_prompt_json,
+          allowed_tools_json,
+          approval_profile_json,
+          status,
+          pinned,
+          hidden,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        teammate.id,
+        teammate.workspaceId,
+        teammate.templateId ?? null,
+        teammate.roleKey,
+        teammate.displayName,
+        teammate.description,
+        teammate.avatarTone ?? null,
+        teammate.avatarImageAttachmentId ?? null,
+        teammate.providerPresetId ?? null,
+        teammate.systemPrompt ?? null,
+        stringifyJson(teammate.appendSystemPrompt),
+        stringifyJson(teammate.allowedTools),
+        stringifyJson(teammate.approvalProfile),
+        teammate.status,
+        teammate.pinned ? 1 : 0,
+        teammate.hidden ? 1 : 0,
+        teammate.createdAt,
+        teammate.updatedAt,
+      );
+
+    const created = this.getAiTeammate(teammate.id);
+    if (!created) {
+      throw new Error(`Failed to create AI teammate: ${teammate.id}`);
+    }
+    return created;
+  }
+
+  getAiTeammate(id: string): AiTeammate | undefined {
+    const row = this.database.prepare(aiTeammateSelectSql("WHERE id = ?")).get(id);
+    return row ? mapAiTeammate(row) : undefined;
+  }
+
+  listAiTeammates(options: ListAiTeammatesOptions = {}): AiTeammate[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    } else if (!options.includeDisabled) {
+      clauses.push("status != 'disabled'");
+    }
+    if (!options.includeHidden) {
+      clauses.push("hidden = 0");
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${aiTeammateSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY pinned DESC, display_name ASC, created_at ASC LIMIT ?`)
+      .all(...params)
+      .map(mapAiTeammate);
+  }
+
+  updateAiTeammate(id: string, input: AiTeammateUpdateInput, now: string): AiTeammate | undefined {
+    const existing = this.getAiTeammate(id);
+    if (!existing) {
+      return undefined;
+    }
+
+    const next: AiTeammate = {
+      ...existing,
+      templateId: nullableUpdate(input.templateId, existing.templateId),
+      roleKey: input.roleKey ?? existing.roleKey,
+      displayName: input.displayName ?? existing.displayName,
+      description: input.description ?? existing.description,
+      avatarTone: nullableUpdate(input.avatarTone, existing.avatarTone),
+      avatarImageAttachmentId: nullableUpdate(input.avatarImageAttachmentId, existing.avatarImageAttachmentId),
+      providerPresetId: nullableUpdate(input.providerPresetId, existing.providerPresetId),
+      systemPrompt: nullableUpdate(input.systemPrompt, existing.systemPrompt),
+      appendSystemPrompt: input.appendSystemPrompt ?? existing.appendSystemPrompt,
+      allowedTools: input.allowedTools ?? existing.allowedTools,
+      approvalProfile: input.approvalProfile ?? existing.approvalProfile,
+      status: input.status ?? existing.status,
+      pinned: input.pinned ?? existing.pinned,
+      hidden: input.hidden ?? existing.hidden,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        UPDATE ai_teammates
+        SET
+          template_id = ?,
+          role_key = ?,
+          display_name = ?,
+          description = ?,
+          avatar_tone = ?,
+          avatar_image_attachment_id = ?,
+          provider_preset_id = ?,
+          system_prompt = ?,
+          append_system_prompt_json = ?,
+          allowed_tools_json = ?,
+          approval_profile_json = ?,
+          status = ?,
+          pinned = ?,
+          hidden = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.templateId ?? null,
+        next.roleKey,
+        next.displayName,
+        next.description,
+        next.avatarTone ?? null,
+        next.avatarImageAttachmentId ?? null,
+        next.providerPresetId ?? null,
+        next.systemPrompt ?? null,
+        stringifyJson(next.appendSystemPrompt),
+        stringifyJson(next.allowedTools),
+        stringifyJson(next.approvalProfile),
+        next.status,
+        next.pinned ? 1 : 0,
+        next.hidden ? 1 : 0,
+        next.updatedAt,
+        id,
+      );
+
+    return this.getAiTeammate(id);
+  }
+
+  disableAiTeammate(id: string, now: string): AiTeammate | undefined {
+    return this.updateAiTeammate(id, { status: "disabled", hidden: true }, now);
+  }
+
+  listTeammateChannelMemberships(teammateId: string): TeammateChannelMembership[] {
+    return this.database
+      .prepare(`${teammateChannelMembershipSelectSql("WHERE teammate_id = ?")} ORDER BY created_at ASC`)
+      .all(teammateId)
+      .map(mapTeammateChannelMembership);
+  }
+
+  replaceTeammateChannelMemberships(
+    teammateId: string,
+    memberships: readonly ReplaceTeammateChannelMembershipInput[],
+    now: string,
+  ): TeammateChannelMembership[] {
+    if (!this.getAiTeammate(teammateId)) {
+      throw new Error(`AI teammate not found: ${teammateId}`);
+    }
+
+    const normalized = dedupeMembershipInputs(memberships);
+    for (const membership of normalized) {
+      if (!this.getChannel(membership.channelId)) {
+        throw new Error(`Channel not found: ${membership.channelId}`);
+      }
+    }
+
+    this.database.exec("BEGIN");
+    try {
+      this.database.prepare("DELETE FROM teammate_channel_memberships WHERE teammate_id = ?").run(teammateId);
+      this.database.prepare("UPDATE channels SET default_teammate_id = NULL, updated_at = ? WHERE default_teammate_id = ?").run(now, teammateId);
+      const insert = this.database.prepare(`
+        INSERT INTO teammate_channel_memberships (
+          teammate_id,
+          channel_id,
+          is_default,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+      `);
+      for (const membership of normalized) {
+        insert.run(teammateId, membership.channelId, membership.isDefault ? 1 : 0, now, now);
+        if (membership.isDefault) {
+          this.database.prepare("UPDATE channels SET default_teammate_id = ?, updated_at = ? WHERE id = ?").run(teammateId, now, membership.channelId);
+        }
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+
+    return this.listTeammateChannelMemberships(teammateId);
+  }
+
+  listTeammateSkillBindings(teammateId: string): TeammateSkillBinding[] {
+    return this.database
+      .prepare(`${teammateSkillBindingSelectSql("WHERE teammate_id = ?")} ORDER BY skill_id ASC`)
+      .all(teammateId)
+      .map(mapTeammateSkillBinding);
+  }
+
+  replaceTeammateSkillBindings(
+    teammateId: string,
+    bindings: readonly ReplaceTeammateSkillBindingInput[],
+    now: string,
+  ): TeammateSkillBinding[] {
+    if (!this.getAiTeammate(teammateId)) {
+      throw new Error(`AI teammate not found: ${teammateId}`);
+    }
+
+    const normalized = dedupeSkillBindingInputs(bindings);
+    this.database.exec("BEGIN");
+    try {
+      this.database.prepare("DELETE FROM teammate_skill_bindings WHERE teammate_id = ?").run(teammateId);
+      const insert = this.database.prepare(`
+        INSERT INTO teammate_skill_bindings (
+          teammate_id,
+          skill_id,
+          source,
+          enabled,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const binding of normalized) {
+        insert.run(teammateId, binding.skillId, binding.source ?? "user", binding.enabled === false ? 0 : 1, now, now);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+
+    return this.listTeammateSkillBindings(teammateId);
+  }
+
+  listTeammateMemoryScopes(teammateId: string): TeammateMemoryScope[] {
+    return this.database
+      .prepare(`${teammateMemoryScopeSelectSql("WHERE teammate_id = ?")} ORDER BY created_at ASC`)
+      .all(teammateId)
+      .map(mapTeammateMemoryScope);
+  }
+
+  replaceTeammateMemoryScopes(
+    teammateId: string,
+    scopes: readonly ReplaceTeammateMemoryScopeInput[],
+    now: string,
+  ): TeammateMemoryScope[] {
+    if (!this.getAiTeammate(teammateId)) {
+      throw new Error(`AI teammate not found: ${teammateId}`);
+    }
+    for (const scope of scopes) {
+      if (scope.channelId && !this.getChannel(scope.channelId)) {
+        throw new Error(`Channel not found: ${scope.channelId}`);
+      }
+    }
+
+    this.database.exec("BEGIN");
+    try {
+      this.database.prepare("DELETE FROM teammate_memory_scopes WHERE teammate_id = ?").run(teammateId);
+      const insert = this.database.prepare(`
+        INSERT INTO teammate_memory_scopes (
+          id,
+          teammate_id,
+          kind,
+          channel_id,
+          enabled,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const scope of scopes) {
+        insert.run(scope.id ?? createTeammateMemoryScopeId(), teammateId, scope.kind, scope.channelId ?? null, scope.enabled === false ? 0 : 1, now, now);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+
+    return this.listTeammateMemoryScopes(teammateId);
+  }
+
+  getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread {
+    const teammate = this.getAiTeammate(teammateId);
+    if (!teammate) {
+      throw new Error(`AI teammate not found: ${teammateId}`);
+    }
+    const existing = this.database
+      .prepare(teammateDirectThreadSelectSql("WHERE workspace_id = ? AND teammate_id = ?"))
+      .get(DEFAULT_WORKSPACE_ID, teammateId);
+    if (existing) {
+      return mapTeammateDirectThread(existing);
+    }
+
+    const thread: TeammateDirectThread = {
+      id: createTeammateDirectThreadId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      teammateId,
+      title: teammate.displayName,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO teammate_direct_threads (
+          id,
+          workspace_id,
+          teammate_id,
+          title,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `)
+      .run(thread.id, thread.workspaceId, thread.teammateId, thread.title, thread.createdAt, thread.updatedAt);
+
+    return thread;
+  }
+
+  listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[] {
+    const clauses = ["workspace_id = ?", "teammate_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.teammateId];
+    if (options.threadId) {
+      clauses.push("thread_id = ?");
+      params.push(options.threadId);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${teammateDirectMessageSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at ASC, rowid ASC LIMIT ?`)
+      .all(...params)
+      .map(mapTeammateDirectMessage);
+  }
+
+  createTeammateDirectMessage(input: CreateTeammateDirectMessageInput, now: string): TeammateDirectMessage {
+    const teammate = this.getAiTeammate(input.teammateId);
+    if (!teammate) {
+      throw new Error(`AI teammate not found: ${input.teammateId}`);
+    }
+    const thread = this.getOrCreateTeammateDirectThread(input.teammateId, now);
+    if (thread.id !== input.threadId) {
+      throw new Error(`Direct thread does not belong to teammate: ${input.threadId}`);
+    }
+
+    const message: TeammateDirectMessage = {
+      id: createTeammateDirectMessageId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      threadId: input.threadId,
+      teammateId: input.teammateId,
+      authorType: input.authorType,
+      authorId: input.authorId,
+      body: input.body,
+      status: input.status ?? "ready",
+      errorMessage: input.errorMessage,
+      linkedTaskId: input.linkedTaskId,
+      linkedRunId: input.linkedRunId,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO teammate_direct_messages (
+          id,
+          workspace_id,
+          thread_id,
+          teammate_id,
+          author_type,
+          author_id,
+          body,
+          status,
+          error_message,
+          linked_task_id,
+          linked_run_id,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        message.id,
+        message.workspaceId,
+        message.threadId,
+        message.teammateId,
+        message.authorType,
+        message.authorId ?? null,
+        message.body,
+        message.status,
+        message.errorMessage ?? null,
+        message.linkedTaskId ?? null,
+        message.linkedRunId ?? null,
+        message.createdAt,
+        message.updatedAt,
+      );
+
+    const created = this.database.prepare(teammateDirectMessageSelectSql("WHERE id = ?")).get(message.id);
+    if (!created) {
+      throw new Error(`Failed to create teammate direct message: ${message.id}`);
+    }
+    return mapTeammateDirectMessage(created);
   }
 
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage {
@@ -3532,6 +4004,127 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(CHANNEL_WORKFLOW_MIGRATION_VERSION, CHANNEL_WORKFLOW_MIGRATION_NAME);
       }
     }
+
+    const hasAiTeammateWorkspaceMigration = this.hasMigration(AI_TEAMMATE_WORKSPACE_MIGRATION_VERSION);
+    if (
+      !hasAiTeammateWorkspaceMigration ||
+      !this.hasTable("ai_teammates") ||
+      !this.hasTable("teammate_channel_memberships") ||
+      !this.hasTable("teammate_skill_bindings") ||
+      !this.hasTable("teammate_memory_scopes") ||
+      !this.hasTable("teammate_direct_threads") ||
+      !this.hasTable("teammate_direct_messages")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS ai_teammates (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          template_id TEXT,
+          role_key TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          avatar_tone TEXT,
+          avatar_image_attachment_id TEXT,
+          provider_preset_id TEXT,
+          system_prompt TEXT,
+          append_system_prompt_json TEXT NOT NULL,
+          allowed_tools_json TEXT NOT NULL,
+          approval_profile_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          pinned INTEGER NOT NULL,
+          hidden INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ai_teammates_workspace_status
+        ON ai_teammates(workspace_id, status, hidden, pinned);
+
+        CREATE TABLE IF NOT EXISTS teammate_channel_memberships (
+          teammate_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          is_default INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(teammate_id, channel_id),
+          FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_teammate_channel_memberships_channel
+        ON teammate_channel_memberships(channel_id);
+
+        CREATE TABLE IF NOT EXISTS teammate_skill_bindings (
+          teammate_id TEXT NOT NULL,
+          skill_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          enabled INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(teammate_id, skill_id),
+          FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS teammate_memory_scopes (
+          id TEXT PRIMARY KEY,
+          teammate_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          channel_id TEXT,
+          enabled INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_teammate_memory_scopes_teammate
+        ON teammate_memory_scopes(teammate_id, enabled);
+
+        CREATE TABLE IF NOT EXISTS teammate_direct_threads (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          teammate_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_teammate_direct_threads_teammate
+        ON teammate_direct_threads(workspace_id, teammate_id);
+
+        CREATE TABLE IF NOT EXISTS teammate_direct_messages (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          thread_id TEXT NOT NULL,
+          teammate_id TEXT NOT NULL,
+          author_type TEXT NOT NULL,
+          author_id TEXT,
+          body TEXT NOT NULL,
+          status TEXT NOT NULL,
+          error_message TEXT,
+          linked_task_id TEXT,
+          linked_run_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(thread_id) REFERENCES teammate_direct_threads(id) ON DELETE CASCADE,
+          FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_teammate_direct_messages_thread_created
+        ON teammate_direct_messages(thread_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_teammate_direct_messages_teammate_created
+        ON teammate_direct_messages(teammate_id, created_at);
+      `);
+
+      if (!hasAiTeammateWorkspaceMigration) {
+        this.recordMigration(AI_TEAMMATE_WORKSPACE_MIGRATION_VERSION, AI_TEAMMATE_WORKSPACE_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -3566,6 +4159,61 @@ export class SqliteRunStore implements RunStore {
         policy.createdAt,
         policy.updatedAt,
       );
+  }
+
+  private ensureDefaultAiTeammates(): void {
+    if (!this.hasTable("ai_teammates")) {
+      return;
+    }
+    const now = new Date().toISOString();
+    for (const template of listDefaultTeammateTemplates(GSTACK_DEFAULT_SKILL_PACK_ID)) {
+      const teammateId = createBuiltinAiTeammateId(template.id);
+      const existing = this.getAiTeammate(teammateId);
+      if (existing) {
+        if (this.listTeammateSkillBindings(teammateId).length === 0) {
+          this.replaceTeammateSkillBindings(
+            teammateId,
+            template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
+            now,
+          );
+        }
+        this.database
+          .prepare("UPDATE channels SET default_teammate_id = ?, updated_at = ? WHERE default_teammate_id = ?")
+          .run(teammateId, now, template.id);
+        this.database
+          .prepare("UPDATE tasks SET assignee_teammate_id = ?, updated_at = ? WHERE assignee_teammate_id = ?")
+          .run(teammateId, now, template.id);
+        continue;
+      }
+
+      this.createAiTeammate(
+        {
+          id: teammateId,
+          templateId: template.id,
+          roleKey: template.roleKey,
+          displayName: template.name,
+          description: template.summary,
+          systemPrompt: template.systemPrompt,
+          allowedTools: template.allowedTools,
+          approvalProfile: template.approvalProfile,
+          status: "active",
+          pinned: template.id === "engineer" || template.id === "designer",
+          hidden: false,
+        },
+        now,
+      );
+      this.replaceTeammateSkillBindings(
+        teammateId,
+        template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
+        now,
+      );
+      this.database
+        .prepare("UPDATE channels SET default_teammate_id = ?, updated_at = ? WHERE default_teammate_id = ?")
+        .run(teammateId, now, template.id);
+      this.database
+        .prepare("UPDATE tasks SET assignee_teammate_id = ?, updated_at = ? WHERE assignee_teammate_id = ?")
+        .run(teammateId, now, template.id);
+    }
   }
 
   private hasMigration(version: number): boolean {
@@ -3842,6 +4490,91 @@ function mapTask(row: Record<string, SQLOutputValue>): Task {
     status: readString(row, "status") as TaskStatus,
     assigneeTeammateId: readNullableString(row, "assignee_teammate_id"),
     currentRunId: readNullableString(row, "current_run_id"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapAiTeammate(row: Record<string, SQLOutputValue>): AiTeammate {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    templateId: readNullableString(row, "template_id"),
+    roleKey: readString(row, "role_key") as AiTeammateRoleKey,
+    displayName: readString(row, "display_name"),
+    description: readString(row, "description"),
+    avatarTone: readNullableString(row, "avatar_tone"),
+    avatarImageAttachmentId: readNullableString(row, "avatar_image_attachment_id"),
+    providerPresetId: readNullableString(row, "provider_preset_id"),
+    systemPrompt: readNullableString(row, "system_prompt"),
+    appendSystemPrompt: parseJsonStringArray(readString(row, "append_system_prompt_json")),
+    allowedTools: parseJsonStringArray(readString(row, "allowed_tools_json")) as RunTool[],
+    approvalProfile: parseApprovalProfile(readString(row, "approval_profile_json")),
+    status: readString(row, "status") as AiTeammateStatus,
+    pinned: readBoolean(row, "pinned"),
+    hidden: readBoolean(row, "hidden"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapTeammateChannelMembership(row: Record<string, SQLOutputValue>): TeammateChannelMembership {
+  return {
+    teammateId: readString(row, "teammate_id"),
+    channelId: readString(row, "channel_id"),
+    isDefault: readBoolean(row, "is_default"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  };
+}
+
+function mapTeammateSkillBinding(row: Record<string, SQLOutputValue>): TeammateSkillBinding {
+  return {
+    teammateId: readString(row, "teammate_id"),
+    skillId: readString(row, "skill_id"),
+    source: readString(row, "source") as TeammateSkillBindingSource,
+    enabled: readBoolean(row, "enabled"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  };
+}
+
+function mapTeammateMemoryScope(row: Record<string, SQLOutputValue>): TeammateMemoryScope {
+  return omitUndefined({
+    id: readString(row, "id"),
+    teammateId: readString(row, "teammate_id"),
+    kind: readString(row, "kind") as TeammateMemoryScopeKind,
+    channelId: readNullableString(row, "channel_id"),
+    enabled: readBoolean(row, "enabled"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapTeammateDirectThread(row: Record<string, SQLOutputValue>): TeammateDirectThread {
+  return {
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    teammateId: readString(row, "teammate_id"),
+    title: readString(row, "title"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  };
+}
+
+function mapTeammateDirectMessage(row: Record<string, SQLOutputValue>): TeammateDirectMessage {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    threadId: readString(row, "thread_id"),
+    teammateId: readString(row, "teammate_id"),
+    authorType: readString(row, "author_type") as TeammateDirectMessageAuthorType,
+    authorId: readNullableString(row, "author_id"),
+    body: readString(row, "body"),
+    status: readString(row, "status") as TeammateDirectMessageStatus,
+    errorMessage: readNullableString(row, "error_message"),
+    linkedTaskId: readNullableString(row, "linked_task_id"),
+    linkedRunId: readNullableString(row, "linked_run_id"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
@@ -4248,6 +4981,109 @@ function taskSelectSql(whereClause: string): string {
   `;
 }
 
+function aiTeammateSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      template_id,
+      role_key,
+      display_name,
+      description,
+      avatar_tone,
+      avatar_image_attachment_id,
+      provider_preset_id,
+      system_prompt,
+      append_system_prompt_json,
+      allowed_tools_json,
+      approval_profile_json,
+      status,
+      pinned,
+      hidden,
+      created_at,
+      updated_at
+    FROM ai_teammates
+    ${whereClause}
+  `;
+}
+
+function teammateChannelMembershipSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      teammate_id,
+      channel_id,
+      is_default,
+      created_at,
+      updated_at
+    FROM teammate_channel_memberships
+    ${whereClause}
+  `;
+}
+
+function teammateSkillBindingSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      teammate_id,
+      skill_id,
+      source,
+      enabled,
+      created_at,
+      updated_at
+    FROM teammate_skill_bindings
+    ${whereClause}
+  `;
+}
+
+function teammateMemoryScopeSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      teammate_id,
+      kind,
+      channel_id,
+      enabled,
+      created_at,
+      updated_at
+    FROM teammate_memory_scopes
+    ${whereClause}
+  `;
+}
+
+function teammateDirectThreadSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      teammate_id,
+      title,
+      created_at,
+      updated_at
+    FROM teammate_direct_threads
+    ${whereClause}
+  `;
+}
+
+function teammateDirectMessageSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      thread_id,
+      teammate_id,
+      author_type,
+      author_id,
+      body,
+      status,
+      error_message,
+      linked_task_id,
+      linked_run_id,
+      created_at,
+      updated_at
+    FROM teammate_direct_messages
+    ${whereClause}
+  `;
+}
+
 function channelMessageSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -4606,6 +5442,34 @@ function parseChannelMentions(value: string): ChannelMessage["mentions"] {
       kind: item.kind,
     };
   });
+}
+
+function parseApprovalProfile(value: string): SkillApprovalProfile {
+  const parsed = parseJsonObject(value);
+  if (parsed.mode !== "none" && parsed.mode !== "standard" && parsed.mode !== "strict") {
+    throw new Error("Expected approval profile mode from SQLite");
+  }
+  return parsed as unknown as SkillApprovalProfile;
+}
+
+function dedupeMembershipInputs(
+  memberships: readonly ReplaceTeammateChannelMembershipInput[],
+): readonly ReplaceTeammateChannelMembershipInput[] {
+  const byChannel = new Map<string, ReplaceTeammateChannelMembershipInput>();
+  for (const membership of memberships) {
+    byChannel.set(membership.channelId, membership);
+  }
+  return [...byChannel.values()];
+}
+
+function dedupeSkillBindingInputs(
+  bindings: readonly ReplaceTeammateSkillBindingInput[],
+): readonly ReplaceTeammateSkillBindingInput[] {
+  const bySkill = new Map<string, ReplaceTeammateSkillBindingInput>();
+  for (const binding of bindings) {
+    bySkill.set(binding.skillId, binding);
+  }
+  return [...bySkill.values()];
 }
 
 function isJsonRecord(value: unknown): value is Record<string, unknown> {

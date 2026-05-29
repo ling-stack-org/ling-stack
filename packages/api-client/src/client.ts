@@ -1,4 +1,6 @@
 import type {
+  AiTeammateListResponse,
+  AiTeammateMutationResponse,
   ApprovalListResponse,
   ApprovalMutationResponse,
   ApprovalPolicyResponse,
@@ -35,6 +37,8 @@ import type {
   CreateChannelLinkPreviewRequest,
   CreateChannelMessageRequest,
   CreateChannelRequest,
+  CreateAiTeammateRequest,
+  CreateTeammateDirectMessageRequest,
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
@@ -78,6 +82,17 @@ import type {
   UpdateChannelRequest,
   UpdateTaskRequest,
   StartChannelWorkflowStepRequest,
+  ReplaceTeammateChannelMembershipRequest,
+  ReplaceTeammateMemoryScopesRequest,
+  ReplaceTeammateSkillBindingsRequest,
+  TeammateActivityListResponse,
+  TeammateChannelMembershipListResponse,
+  TeammateDirectMessageListResponse,
+  TeammateDirectMessageMutationResponse,
+  TeammateDirectThreadResponse,
+  TeammateMemoryScopeListResponse,
+  TeammateSkillBindingListResponse,
+  UpdateAiTeammateRequest,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "./errors.js";
 
@@ -170,6 +185,89 @@ export class LingDaemonClient {
     input: CreateChannelMessageRequest,
   ): Promise<ChannelMessageMutationResponse> {
     return this.post(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd }, input);
+  }
+
+  async listAiTeammates(
+    cwd: string,
+    options: { readonly includeHidden?: boolean; readonly includeDisabled?: boolean; readonly limit?: number } = {},
+  ): Promise<AiTeammateListResponse> {
+    return this.get("/teammates", { cwd, ...options });
+  }
+
+  async createAiTeammate(cwd: string, input: CreateAiTeammateRequest): Promise<AiTeammateMutationResponse> {
+    return this.post("/teammates", { cwd }, input);
+  }
+
+  async getAiTeammate(cwd: string, teammateId: string): Promise<AiTeammateMutationResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}`, { cwd });
+  }
+
+  async updateAiTeammate(cwd: string, teammateId: string, input: UpdateAiTeammateRequest): Promise<AiTeammateMutationResponse> {
+    return this.patch(`/teammates/${encodeURIComponent(teammateId)}`, { cwd }, input);
+  }
+
+  async disableAiTeammate(cwd: string, teammateId: string): Promise<AiTeammateMutationResponse> {
+    return this.request("DELETE", `/teammates/${encodeURIComponent(teammateId)}`, { cwd });
+  }
+
+  async listTeammateChannels(cwd: string, teammateId: string): Promise<TeammateChannelMembershipListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/channels`, { cwd });
+  }
+
+  async replaceTeammateChannels(
+    cwd: string,
+    teammateId: string,
+    input: ReplaceTeammateChannelMembershipRequest,
+  ): Promise<TeammateChannelMembershipListResponse> {
+    return this.put(`/teammates/${encodeURIComponent(teammateId)}/channels`, { cwd }, input);
+  }
+
+  async listTeammateSkills(cwd: string, teammateId: string): Promise<TeammateSkillBindingListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/skills`, { cwd });
+  }
+
+  async replaceTeammateSkills(
+    cwd: string,
+    teammateId: string,
+    input: ReplaceTeammateSkillBindingsRequest,
+  ): Promise<TeammateSkillBindingListResponse> {
+    return this.put(`/teammates/${encodeURIComponent(teammateId)}/skills`, { cwd }, input);
+  }
+
+  async listTeammateMemoryScopes(cwd: string, teammateId: string): Promise<TeammateMemoryScopeListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/memory-scopes`, { cwd });
+  }
+
+  async replaceTeammateMemoryScopes(
+    cwd: string,
+    teammateId: string,
+    input: ReplaceTeammateMemoryScopesRequest,
+  ): Promise<TeammateMemoryScopeListResponse> {
+    return this.put(`/teammates/${encodeURIComponent(teammateId)}/memory-scopes`, { cwd }, input);
+  }
+
+  async getTeammateDirectThread(cwd: string, teammateId: string): Promise<TeammateDirectThreadResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-thread`, { cwd });
+  }
+
+  async listTeammateDirectMessages(cwd: string, teammateId: string, limit = 100): Promise<TeammateDirectMessageListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-messages`, { cwd, limit });
+  }
+
+  async createTeammateDirectMessage(
+    cwd: string,
+    teammateId: string,
+    input: CreateTeammateDirectMessageRequest,
+  ): Promise<TeammateDirectMessageMutationResponse> {
+    return this.post(`/teammates/${encodeURIComponent(teammateId)}/direct-messages`, { cwd }, input);
+  }
+
+  async listTeammateTasks(cwd: string, teammateId: string, limit = 100): Promise<TaskListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/tasks`, { cwd, limit });
+  }
+
+  async listTeammateActivity(cwd: string, teammateId: string, limit = 100): Promise<TeammateActivityListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/activity`, { cwd, limit });
   }
 
   async listChannelAttachments(cwd: string, channelId: string, limit = 100): Promise<ChannelAttachmentListResponse> {
@@ -507,6 +605,10 @@ export class LingDaemonClient {
 
   private post<T>(path: string, query: Query = {}, body?: unknown): Promise<T> {
     return this.request("POST", path, query, body);
+  }
+
+  private put<T>(path: string, query: Query = {}, body?: unknown): Promise<T> {
+    return this.request("PUT", path, query, body);
   }
 
   private patch<T>(path: string, query: Query = {}, body?: unknown): Promise<T> {

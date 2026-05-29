@@ -21,6 +21,7 @@ Related docs:
 - [Channel Workspace v1.9 Activity Triage Actions](channel-workspace-v1.9.md)
 - [Channel Workspace v1.10 Activity Layout Cleanup](channel-workspace-v1.10.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
+- [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
 - [Daemon API](../daemon-api.md)
@@ -1571,7 +1572,7 @@ Current MVP implementation status:
 
 - [x] Define v1.1 Brief, Decision Log, Handoff, and Context Summary plan in
   `docs/design/channel-workspace-v1.1.md`.
-- [ ] Add channel roster derived from built-in teammates, local drafts, and selected channel defaults.
+- [ ] Add channel roster derived from durable workspace teammates and selected channel defaults.
 - [ ] Add participant status chips for idle/running/waiting/blocked states.
 - [x] Add Channel Brief panel with objective, scope, acceptance criteria, risks, and open questions.
 - [ ] Add lightweight collaboration stage state for discussion/task threads.
@@ -1656,8 +1657,8 @@ Current MVP implementation status:
 
 ### Phase 11: Member and Notification Persistence
 
-- [ ] Decide whether built-in teammate template IDs are valid persisted `defaultTeammateId` values.
-- [ ] Add teammate daemon/DB contract before persisting custom teammate instances.
+- [x] Decide whether built-in teammate template IDs are valid persisted `defaultTeammateId` values.
+- [x] Add teammate daemon/DB contract before persisting custom teammate instances.
 - [ ] Store notification preferences in local storage for MVP.
 - [ ] Consider workspace-level persistence after settings schema exists.
 
@@ -1782,9 +1783,9 @@ Focused e2e scenarios:
 
 ## Open Questions
 
-- MVP decision: built-in teammate template IDs such as `engineer` are valid persisted
-  `defaultTeammateId` values. A future teammate instance table can introduce stable
-  custom teammate IDs without changing built-in template IDs.
+- Implemented decision: built-in template references such as `engineer` are migrated to
+  deterministic workspace teammate ids such as `teammate_builtin_engineer`. Channels and
+  tasks should reference durable teammate ids going forward.
 - MVP decision: the first AI mention wins task `assigneeTeammateId`; if no AI mention is
   present, task creation falls back to channel `defaultTeammateId`.
 - MVP decision: Files includes user-uploaded attachments, shared links, and run artifact
@@ -1856,5 +1857,5 @@ The channel feature is ready for the next implementation slice when:
 - channel members, notifications, settings, and runtime context are inspectable from the
   right side,
 - channel files can be reached without first visiting Run History,
-- the implementation does not imply cloud collaboration or persistent custom teammates
-  before those contracts exist.
+- the implementation does not imply cloud collaboration, even though local durable custom
+  teammates now exist.

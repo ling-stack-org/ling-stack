@@ -26,6 +26,14 @@ export function conversationSidebarTarget(item: SidebarConversationItem): Sideba
   return `${item.kind}:${item.id}` as SidebarTarget;
 }
 
+export function teammateSidebarTarget(teammateId: string): SidebarTarget {
+  return `teammate:${teammateId}`;
+}
+
+export function readTeammateSidebarTarget(target: SidebarTarget): string | undefined {
+  return target.startsWith("teammate:") ? target.slice("teammate:".length) : undefined;
+}
+
 export function viewTitle(view: ViewId): string {
   if (view === "workspace") {
     return "Run workspace";
