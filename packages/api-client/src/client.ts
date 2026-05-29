@@ -2,9 +2,42 @@ import type {
   ApprovalListResponse,
   ApprovalMutationResponse,
   ApprovalPolicyResponse,
+  ChannelAttachmentListResponse,
+  ChannelAttachmentMutationResponse,
+  ChannelBriefMutationResponse,
+  ChannelBriefResponse,
+  ChannelContextSummaryListResponse,
+  ChannelContextSummaryMutationResponse,
+  ChannelContextSummaryTargetType,
+  ChannelDecisionListResponse,
+  ChannelDecisionMutationResponse,
+  ChannelDecisionStatus,
+  ChannelHandoffListResponse,
+  ChannelHandoffMutationResponse,
+  ChannelHandoffStatus,
+  ChannelLinkPreviewListResponse,
+  ChannelLinkPreviewMutationResponse,
   ChannelListResponse,
+  ChannelMessageListResponse,
+  ChannelMessageMutationResponse,
   ChannelMutationResponse,
+  ChannelWorkflowListResponse,
+  ChannelWorkflowMutationResponse,
+  ChannelWorkflowStatus,
+  ChannelWorkflowStepListResponse,
+  ChannelWorkflowStepMutationResponse,
+  ChannelWorkflowStepStartResponse,
+  ChannelWorkflowStepStatus,
+  CreateChannelAttachmentRequest,
+  CreateChannelContextSummaryRequest,
+  CreateChannelDecisionRequest,
+  CreateChannelHandoffRequest,
+  CreateChannelLinkPreviewRequest,
+  CreateChannelMessageRequest,
   CreateChannelRequest,
+  CreateChannelWorkflowFromHandoffRequest,
+  CreateChannelWorkflowRequest,
+  CreateChannelWorkflowStepRequest,
   CreateMediaJobRequest,
   CreateTaskRequest,
   DaemonHealthResponse,
@@ -36,8 +69,15 @@ import type {
   TaskListResponse,
   TaskMutationResponse,
   UpdateApprovalPolicyRequest,
+  UpdateChannelBriefRequest,
+  UpdateChannelContextSummaryRequest,
+  UpdateChannelDecisionRequest,
+  UpdateChannelHandoffRequest,
+  UpdateChannelWorkflowRequest,
+  UpdateChannelWorkflowStepRequest,
   UpdateChannelRequest,
   UpdateTaskRequest,
+  StartChannelWorkflowStepRequest,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "./errors.js";
 
@@ -118,6 +158,227 @@ export class LingDaemonClient {
 
   async deleteChannel(cwd: string, channelId: string): Promise<void> {
     await this.request("DELETE", `/channels/${encodeURIComponent(channelId)}`, { cwd });
+  }
+
+  async listChannelMessages(cwd: string, channelId: string, limit = 100): Promise<ChannelMessageListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd, limit });
+  }
+
+  async createChannelMessage(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelMessageRequest,
+  ): Promise<ChannelMessageMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd }, input);
+  }
+
+  async listChannelAttachments(cwd: string, channelId: string, limit = 100): Promise<ChannelAttachmentListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/attachments`, { cwd, limit });
+  }
+
+  async createChannelAttachment(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelAttachmentRequest,
+  ): Promise<ChannelAttachmentMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/attachments`, { cwd }, input);
+  }
+
+  async deleteChannelAttachment(cwd: string, attachmentId: string): Promise<void> {
+    await this.request("DELETE", `/attachments/${encodeURIComponent(attachmentId)}`, { cwd });
+  }
+
+  attachmentContentUrl(attachmentId: string, cwd?: string): string {
+    return this.url(`/attachments/${encodeURIComponent(attachmentId)}/content`, { cwd });
+  }
+
+  async listChannelLinkPreviews(cwd: string, channelId: string, limit = 100): Promise<ChannelLinkPreviewListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/link-previews`, { cwd, limit });
+  }
+
+  async createChannelLinkPreview(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelLinkPreviewRequest,
+  ): Promise<ChannelLinkPreviewMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/link-previews`, { cwd }, input);
+  }
+
+  async refreshChannelLinkPreview(cwd: string, linkPreviewId: string): Promise<ChannelLinkPreviewMutationResponse> {
+    return this.post(`/link-previews/${encodeURIComponent(linkPreviewId)}/refresh`, { cwd });
+  }
+
+  async getChannelBrief(cwd: string, channelId: string): Promise<ChannelBriefResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/brief`, { cwd });
+  }
+
+  async updateChannelBrief(
+    cwd: string,
+    channelId: string,
+    input: UpdateChannelBriefRequest,
+  ): Promise<ChannelBriefMutationResponse> {
+    return this.patch(`/channels/${encodeURIComponent(channelId)}/brief`, { cwd }, input);
+  }
+
+  async listChannelDecisions(
+    cwd: string,
+    channelId: string,
+    options: { readonly status?: ChannelDecisionStatus; readonly limit?: number } = {},
+  ): Promise<ChannelDecisionListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/decisions`, {
+      cwd,
+      status: options.status,
+      limit: options.limit,
+    });
+  }
+
+  async createChannelDecision(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelDecisionRequest,
+  ): Promise<ChannelDecisionMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/decisions`, { cwd }, input);
+  }
+
+  async updateChannelDecision(
+    cwd: string,
+    decisionId: string,
+    input: UpdateChannelDecisionRequest,
+  ): Promise<ChannelDecisionMutationResponse> {
+    return this.patch(`/decisions/${encodeURIComponent(decisionId)}`, { cwd }, input);
+  }
+
+  async listChannelHandoffs(
+    cwd: string,
+    channelId: string,
+    options: { readonly status?: ChannelHandoffStatus; readonly limit?: number } = {},
+  ): Promise<ChannelHandoffListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/handoffs`, {
+      cwd,
+      status: options.status,
+      limit: options.limit,
+    });
+  }
+
+  async createChannelHandoff(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelHandoffRequest,
+  ): Promise<ChannelHandoffMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/handoffs`, { cwd }, input);
+  }
+
+  async updateChannelHandoff(
+    cwd: string,
+    handoffId: string,
+    input: UpdateChannelHandoffRequest,
+  ): Promise<ChannelHandoffMutationResponse> {
+    return this.patch(`/handoffs/${encodeURIComponent(handoffId)}`, { cwd }, input);
+  }
+
+  async listChannelContextSummaries(
+    cwd: string,
+    channelId: string,
+    options: { readonly targetType?: ChannelContextSummaryTargetType; readonly targetId?: string; readonly limit?: number } = {},
+  ): Promise<ChannelContextSummaryListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/context-summaries`, {
+      cwd,
+      targetType: options.targetType,
+      targetId: options.targetId,
+      limit: options.limit,
+    });
+  }
+
+  async createChannelContextSummary(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelContextSummaryRequest,
+  ): Promise<ChannelContextSummaryMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/context-summaries`, { cwd }, input);
+  }
+
+  async updateChannelContextSummary(
+    cwd: string,
+    contextSummaryId: string,
+    input: UpdateChannelContextSummaryRequest,
+  ): Promise<ChannelContextSummaryMutationResponse> {
+    return this.patch(`/context-summaries/${encodeURIComponent(contextSummaryId)}`, { cwd }, input);
+  }
+
+  async listChannelWorkflows(
+    cwd: string,
+    channelId: string,
+    options: { readonly status?: ChannelWorkflowStatus; readonly limit?: number } = {},
+  ): Promise<ChannelWorkflowListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/workflows`, {
+      cwd,
+      status: options.status,
+      limit: options.limit,
+    });
+  }
+
+  async createChannelWorkflow(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelWorkflowRequest,
+  ): Promise<ChannelWorkflowMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/workflows`, { cwd }, input);
+  }
+
+  async getChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowMutationResponse> {
+    return this.get(`/workflows/${encodeURIComponent(workflowId)}`, { cwd });
+  }
+
+  async updateChannelWorkflow(
+    cwd: string,
+    workflowId: string,
+    input: UpdateChannelWorkflowRequest,
+  ): Promise<ChannelWorkflowMutationResponse> {
+    return this.patch(`/workflows/${encodeURIComponent(workflowId)}`, { cwd }, input);
+  }
+
+  async createChannelWorkflowFromHandoff(
+    cwd: string,
+    handoffId: string,
+    input: CreateChannelWorkflowFromHandoffRequest,
+  ): Promise<ChannelWorkflowMutationResponse> {
+    return this.post(`/handoffs/${encodeURIComponent(handoffId)}/workflow`, { cwd }, input);
+  }
+
+  async listChannelWorkflowSteps(
+    cwd: string,
+    workflowId: string,
+    options: { readonly status?: ChannelWorkflowStepStatus; readonly limit?: number } = {},
+  ): Promise<ChannelWorkflowStepListResponse> {
+    return this.get(`/workflows/${encodeURIComponent(workflowId)}/steps`, {
+      cwd,
+      status: options.status,
+      limit: options.limit,
+    });
+  }
+
+  async createChannelWorkflowStep(
+    cwd: string,
+    workflowId: string,
+    input: CreateChannelWorkflowStepRequest,
+  ): Promise<ChannelWorkflowStepMutationResponse> {
+    return this.post(`/workflows/${encodeURIComponent(workflowId)}/steps`, { cwd }, input);
+  }
+
+  async updateChannelWorkflowStep(
+    cwd: string,
+    workflowStepId: string,
+    input: UpdateChannelWorkflowStepRequest,
+  ): Promise<ChannelWorkflowStepMutationResponse> {
+    return this.patch(`/workflow-steps/${encodeURIComponent(workflowStepId)}`, { cwd }, input);
+  }
+
+  async startChannelWorkflowStep(
+    cwd: string,
+    workflowStepId: string,
+    input: StartChannelWorkflowStepRequest,
+  ): Promise<ChannelWorkflowStepStartResponse> {
+    return this.post(`/workflow-steps/${encodeURIComponent(workflowStepId)}/start`, { cwd }, input);
   }
 
   async listTasks(cwd: string, options: ListTasksRequest = {}): Promise<TaskListResponse> {

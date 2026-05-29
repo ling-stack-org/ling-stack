@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 
 const cwd = "/tmp/ling-stack-workspace";
 const defaultRuntimePolicy = {
@@ -14,12 +14,25 @@ interface MockState {
   providers: unknown[];
   providerSecrets: Record<string, string>;
   channels: unknown[];
+  channelMessages: unknown[];
+  channelAttachments: unknown[];
+  channelLinkPreviews: unknown[];
+  channelBriefs: Record<string, unknown>;
+  channelDecisions: unknown[];
+  channelHandoffs: unknown[];
+  channelContextSummaries: unknown[];
+  channelWorkflows: unknown[];
+  channelWorkflowSteps: unknown[];
   tasks: unknown[];
   runs: MockRun[];
   eventsByRun: Record<string, MockRunEvent[]>;
   nextStreamEvents?: MockRunEvent[];
   providerCheckDelayMs?: number;
   runResponseDelayMs?: number;
+  channelMessageDelayMs?: number;
+  failNextChannelMessage?: boolean;
+  failNextTaskCreate?: boolean;
+  linkPreviewDelayMs?: number;
   approvals: MockApproval[];
   approvalPolicy: MockApprovalPolicy;
   lastApprovalPolicyPatch?: Record<string, unknown>;
@@ -43,6 +56,7 @@ interface MockRun {
   providerSnapshot: unknown;
   requestSnapshot: unknown;
   eventLogPath: string;
+  summaryPath?: string;
   errorMessage?: string;
   createdAt: string;
   updatedAt: string;
@@ -115,11 +129,13 @@ test("workspace opens as a task workbench with task context in the inspector", a
 
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Workspace task toolbar")).toBeVisible();
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await expect(page.getByLabel("Task inspector")).toContainText("Task context");
+  await expect(page.getByLabel("Task inspector")).toContainText("run_failed");
+  await openChannelTasksTab(page);
   const taskDetail = page.locator("article.task-detail");
   await expect(taskDetail).toContainText("Task detail");
   await expect(taskDetail).toContainText("run_failed");
-  await expect(page.getByLabel("Task inspector")).toContainText("Task context");
-  await expect(page.getByLabel("Task inspector")).toContainText("run_failed");
 });
 
 test("workspace task list scrolls internally without growing the page", async ({ page }) => {
@@ -138,6 +154,7 @@ test("workspace task list scrolls internally without growing the page", async ({
   state.runs = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openChannelTasksTab(page);
 
   await expect(page.locator(".workbench-task-list .client-task-card")).toHaveCount(24);
   await expect(page.locator(".channel-options > summary")).toContainText("Advanced channel settings");
@@ -156,7 +173,7 @@ test("workspace task list scrolls internally without growing the page", async ({
   expect(metrics.listScrollHeight).toBeGreaterThan(metrics.listClientHeight + 20);
 });
 
-test("channel runtime policy is visible and used when creating channels", async ({ page }) => {
+test("channel runtime policy and default teammate are visible and used when creating channels", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
   const openAiTemplate = {
     templateId: "openai-gpt",
@@ -177,11 +194,13 @@ test("channel runtime policy is visible and used when creating channels", async 
   await page.goto("/");
 
   await expect(page.getByText("active · serial · boundPath lock")).toBeVisible();
+  await expect(page.locator(".channel-header-actions")).toContainText("Engineer");
 
   const details = page.locator(".channel-options");
   await details.locator("summary").click();
   await details.getByLabel("Name").fill("Release");
   await details.getByLabel("Status").selectOption("paused");
+  await details.getByLabel("Default AI teammate").selectOption("designer");
   await details.getByLabel("Execution mode").selectOption("parallel");
   await details.getByLabel("Write lock").selectOption("workspace");
   await details.getByLabel("Max runs").fill("2");
@@ -192,11 +211,13 @@ test("channel runtime policy is visible and used when creating channels", async 
   const created = state.channels.find((channel) => isRecord(channel) && channel.name === "Release");
   expect(created).toBeTruthy();
   expect(isRecord(created) ? created.status : undefined).toBe("paused");
+  expect(isRecord(created) ? created.defaultTeammateId : undefined).toBe("designer");
   const runtimePolicy = isRecord(created) && isRecord(created.runtimePolicy) ? created.runtimePolicy : {};
   expect(runtimePolicy.executionMode).toBe("parallel");
   expect(runtimePolicy.writeLockScope).toBe("workspace");
   expect(runtimePolicy.maxConcurrentRuns).toBe(2);
   expect(runtimePolicy.queueOnConflict).toBe(false);
+  await expect(page.locator(".channel-header-actions")).toContainText("Designer");
 });
 
 test("paused channels disable task run actions", async ({ page }) => {
@@ -205,9 +226,1038 @@ test("paused channels disable task run actions", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   const taskCard = page.locator("article.task-detail");
   await expect(taskCard).toContainText("Channel is not active");
   await expect(taskCard.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+});
+
+test("channel activity supports mentions, messages, files, links, and task creation", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessageDelayMs = 150;
+  state.linkPreviewDelayMs = 150;
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.getByRole("button", { name: "Activity", exact: true })).toBeVisible();
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await page.locator(".mention-chip").filter({ hasText: "@Engineer" }).click();
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("@Engineer please refine the channel requirements https://example.com");
+  await page.getByPlaceholder("Paste URL").fill("https://example.com");
+  await page.getByRole("button", { name: "Preview link" }).click();
+  await expect(page.getByText("Fetching link preview...")).toBeVisible();
+  await expect(page.locator(".channel-tab.active")).toContainText("Activity");
+  await expect(page.getByText("Example Domain").first()).toBeVisible();
+  await page.locator("input[type=file]").setInputFiles({
+    name: "brief.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("channel brief"),
+  });
+  await expect(page.getByText("brief.txt")).toBeVisible();
+  await expect(page.locator(".channel-tab.active")).toContainText("Activity");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Sending message...")).toBeVisible();
+  await expect(page.getByText("AI teammate is replying...")).toBeVisible();
+
+  await expect(page.getByText("@Engineer please refine the channel requirements")).toBeVisible();
+  await expect(page.getByText("收到，我会按频道上下文推进。")).toBeVisible();
+  await page.getByRole("button", { name: "Files" }).click();
+  await expect(page.getByText("brief.txt")).toBeVisible();
+  await expect(page.getByText("Example Domain")).toBeVisible();
+
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await page.getByRole("button", { name: "Create task" }).first().click();
+  await expect(page.getByText("Task created")).toBeVisible();
+  await expect.poll(() => {
+    const created = state.tasks.find((task) => isRecord(task) && task.id === "task_2");
+    return isRecord(created) ? created.assigneeTeammateId : undefined;
+  }).toBe("engineer");
+  await page.getByRole("button", { name: "Open in Tasks" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
+  await expect(page.locator("article.task-detail")).toContainText("@Engineer please refine the channel requirements");
+});
+
+test("channel activity keeps the composer visible while the message feed scrolls", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = Array.from({ length: 36 }, (_, index) => ({
+    id: `msg_scroll_${index + 1}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "tian",
+    body: `Scrollable channel message ${index + 1}. This message keeps the Activity feed tall enough to scroll independently.`,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    status: "ready",
+    createdAt: new Date(Date.UTC(2026, 4, 25, 0, index, 0)).toISOString(),
+    updatedAt: new Date(Date.UTC(2026, 4, 25, 0, index, 0)).toISOString(),
+  }));
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  const scrollState = await readScrollState(page, ".activity-shell .message-feed");
+  expect(scrollState.max).toBeGreaterThan(0);
+  const tabsBefore = await page.locator(".channel-tabs").boundingBox();
+  await page.locator(".activity-shell .message-feed").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  const tabsAfter = await page.locator(".channel-tabs").boundingBox();
+  expect(Math.round(tabsAfter?.y ?? 0)).toBe(Math.round(tabsBefore?.y ?? 0));
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+});
+
+test("channel composer preserves failed sends and can retry", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.failNextChannelMessage = true;
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("Retryable channel message");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Message failed")).toBeVisible();
+  await expect(composerInput).toHaveValue("Retryable channel message");
+
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByLabel("Channel message feed").getByText("Retryable channel message")).toBeVisible();
+  await expect(composerInput).toHaveValue("");
+  await expect(page.getByText("Message failed")).toHaveCount(0);
+});
+
+test("channel URL preview blocked state stays in Activity and still allows sending text", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Please remember this blocked reference.");
+  await page.getByPlaceholder("Paste URL").fill("http://127.0.0.1/private");
+  await page.getByRole("button", { name: "Preview link" }).click();
+  await expect(page.getByText("Private network previews are blocked.")).toBeVisible();
+  await expect(page.locator(".channel-tab.active")).toContainText("Activity");
+
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Please remember this blocked reference.")).toBeVisible();
+});
+
+test("channel files tab supports PDF and Office uploads without AI ingestion", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const initialMessageCount = state.channelMessages.length;
+  const initialTaskCount = state.tasks.length;
+  await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
+  await page.locator("input[type=file]").setInputFiles([
+    {
+      name: "requirements.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.7"),
+    },
+    {
+      name: "notes.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      buffer: Buffer.from("docx"),
+    },
+    {
+      name: "budget.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: Buffer.from("xlsx"),
+    },
+    {
+      name: "deck.pptx",
+      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      buffer: Buffer.from("pptx"),
+    },
+  ]);
+
+  await expect.poll(() => state.channelAttachments.length).toBe(4);
+  await page.getByRole("button", { name: "Files" }).click();
+  await expect(page.getByRole("button", { name: "Files" })).toHaveClass(/active/);
+  for (const fileName of ["requirements.pdf", "notes.docx", "budget.xlsx", "deck.pptx"]) {
+    const card = page.locator(".file-card").filter({ hasText: fileName });
+    await expect(card).toBeVisible();
+    await expect(card.getByRole("link", { name: "Open" })).toHaveAttribute("href", /\/attachments\/att_.*\/content/);
+  }
+  expect(state.channelAttachments.filter((attachment) => isRecord(attachment)).map((attachment) => attachment.fileName).sort()).toEqual([
+    "budget.xlsx",
+    "deck.pptx",
+    "notes.docx",
+    "requirements.pdf",
+  ]);
+  expect(state.channelAttachments.every((attachment) => isRecord(attachment) && (attachment.kind === "pdf" || attachment.kind === "office"))).toBe(true);
+  expect(state.channelMessages.length).toBe(initialMessageCount);
+  expect(state.tasks.length).toBe(initialTaskCount);
+});
+
+test("channel files tab aggregates run artifacts and keeps other channel artifacts isolated", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channels.push({
+    id: "channel_design",
+    workspaceId: "workspace_default",
+    name: "Design",
+    status: "active",
+    boundPath: cwd,
+    defaultTeammateId: "designer",
+    allowedTools: ["read", "grep"],
+    runtimePolicy: defaultRuntimePolicy,
+    createdAt: "2026-05-22T00:00:00.000Z",
+    updatedAt: "2026-05-22T00:00:00.000Z",
+  });
+  state.tasks.push({
+    id: "task_design",
+    workspaceId: "workspace_default",
+    channelId: "channel_design",
+    title: "Design artifact task",
+    prompt: "Produce design artifacts.",
+    status: "done",
+    currentRunId: "run_design",
+    createdAt: "2026-05-25T00:10:00.000Z",
+    updatedAt: "2026-05-25T00:20:00.000Z",
+  });
+  state.runs = [
+    {
+      ...state.runs[0],
+      status: "succeeded",
+      summaryPath: ".ling-stack/summaries/run_failed.json",
+      errorMessage: undefined,
+      updatedAt: "2026-05-25T00:20:30.000Z",
+    },
+    {
+      id: "run_design",
+      status: "succeeded",
+      cwd,
+      taskId: "task_design",
+      channelId: "channel_design",
+      providerPresetId: "provider_local",
+      providerName: "local-relay",
+      providerModel: "gpt-5.5",
+      taskSnapshot: { id: "task_design", title: "Design artifact task" },
+      providerSnapshot: { provider: "local-relay", model: "gpt-5.5" },
+      requestSnapshot: { cwd, providerPresetId: "provider_local" },
+      eventLogPath: ".ling-stack/sessions/run_design.jsonl",
+      summaryPath: ".ling-stack/summaries/run_design.json",
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:20:00.000Z",
+    },
+  ];
+  state.artifactsByRun.run_failed = [
+    {
+      id: "artifact_channel_report",
+      runId: "run_failed",
+      type: "markdown",
+      path: "run_failed/001-channel-report.md",
+      title: "Channel report",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 512,
+      createdAt: "2026-05-25T00:20:31.000Z",
+    },
+    {
+      id: "artifact_channel_image",
+      runId: "run_failed",
+      type: "image",
+      path: "run_failed/002-channel-image.png",
+      title: "Channel image",
+      contentType: "image/png",
+      sizeBytes: 2048,
+      createdAt: "2026-05-25T00:20:32.000Z",
+    },
+  ];
+  state.artifactsByRun.run_design = [
+    {
+      id: "artifact_design_report",
+      runId: "run_design",
+      type: "markdown",
+      path: "run_design/001-design-report.md",
+      title: "Other channel report",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 128,
+      createdAt: "2026-05-25T00:20:33.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Files" }).click();
+  await expect(page.getByText("Loading run artifacts...")).toHaveCount(0);
+  await expect(page.getByText("Run artifacts")).toBeVisible();
+  await expect(page.locator(".run-artifact-group")).toHaveCount(1);
+  const runGroup = page.locator(".run-artifact-group").filter({ hasText: "run_failed" });
+  await expect(runGroup).toContainText("Inspect workspace");
+  await expect(runGroup).toContainText(".ling-stack/sessions/run_failed.jsonl");
+  await expect(runGroup).toContainText(".ling-stack/summaries/run_failed.json");
+  await expect(runGroup.locator(".artifact-row").first()).toContainText("Channel report");
+  await expect(runGroup.locator(".artifact-row").first()).toHaveAttribute(
+    "href",
+    /\/artifacts\/artifact_channel_report\/content\?cwd=%2Ftmp%2Fling-stack-workspace/,
+  );
+  const imageRow = runGroup.locator(".artifact-row").filter({ hasText: "Channel image" });
+  await expect(imageRow.getByRole("link", { name: "Open" })).toHaveAttribute("href", /\/artifacts\/artifact_channel_image\/content/);
+  await expect(imageRow.getByRole("link", { name: "Download" })).toHaveAttribute("href", /\/artifacts\/artifact_channel_image\/content/);
+  await expect(page.getByText("Other channel report")).toHaveCount(0);
+});
+
+test("channel v1.1 protocol supports brief, decisions, handoffs, and context task creation", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  const briefLoaded = page.waitForResponse((response) => response.url().includes("/channels/channel_engineering/brief") && response.request().method() === "GET");
+  await page.goto("/");
+  await briefLoaded;
+
+  await expect(page.getByText("Loading protocol...")).toHaveCount(0);
+  await expect(page.getByLabel("Objective")).toHaveCount(0);
+  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByLabel("Objective").fill("Ship channel v1.1 protocol");
+  await page.getByLabel("Scope").fill("Brief, decisions, handoffs, context summaries");
+  await page.getByLabel("Acceptance criteria").fill("Brief saves\nActivity shows protocol items");
+  await page.getByRole("button", { name: "Save brief" }).click();
+  await expect.poll(() => {
+    const brief = state.channelBriefs.channel_engineering;
+    return isRecord(brief) ? brief.objective : undefined;
+  }).toBe("Ship channel v1.1 protocol");
+
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Keep v1.1 handoffs manual and visible.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Record decision" }).first().click();
+  await expect.poll(() => state.channelDecisions.length).toBe(1);
+  await expect(page.getByText("Decision log")).toBeVisible();
+
+  await page.getByRole("button", { name: "Supersede" }).first().click();
+  await expect.poll(() => state.channelDecisions.filter((decision) => isRecord(decision) && decision.status === "active").length).toBe(1);
+  await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.status === "superseded")).toBe(true);
+
+  await page.getByRole("button", { name: "Create handoff" }).first().click();
+  await expect.poll(() => state.channelHandoffs.length).toBe(1);
+  await expect(page.getByText("Handoff", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Complete" }).first().click();
+  await expect.poll(() => isRecord(state.channelHandoffs[0]) ? state.channelHandoffs[0].status : undefined).toBe("completed");
+  await expect.poll(() => isRecord(state.tasks.find((task) => isRecord(task) && task.id === "task_inspect")) ? state.tasks.find((task) => isRecord(task) && task.id === "task_inspect")?.status : undefined).toBe("failed");
+
+  const taskCount = state.tasks.length;
+  await page.getByRole("button", { name: "Create task with context" }).first().click();
+  await expect.poll(() => state.channelContextSummaries.length).toBe(1);
+  await expect.poll(() => state.tasks.length).toBe(taskCount + 1);
+  await expect(page.getByText("Context summary", { exact: true }).first()).toBeVisible();
+
+  await page.reload();
+  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await expect(page.getByLabel("Objective")).toHaveValue("Ship channel v1.1 protocol");
+});
+
+test("channel v1.2 handoff workflows can start steps and surface runtime context", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [createChatProvider()];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Hand this implementation to Engineer.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Create handoff" }).first().click();
+  await expect.poll(() => state.channelHandoffs.length).toBe(1);
+
+  await page.getByRole("button", { name: "Start workflow" }).first().click();
+  await expect.poll(() => state.channelWorkflows.length).toBe(1);
+  await expect.poll(() => state.channelWorkflowSteps.length).toBe(1);
+  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Runtime" }).click();
+  await expect(page.getByText("Workflow queue")).toBeVisible();
+  await expect(page.getByText("Active decisions: 0")).toBeVisible();
+
+  const taskCount = state.tasks.length;
+  await page.getByRole("button", { name: "Start step" }).click();
+  await expect.poll(() => state.tasks.length).toBe(taskCount + 1);
+  await expect.poll(() => {
+    const step = state.channelWorkflowSteps[0];
+    return isRecord(step) ? step.status : undefined;
+  }).toBe("succeeded");
+  await openChannelTasksTab(page);
+  await expect(page.locator("article.task-detail")).toContainText("Source workflow");
+
+  const blockedStep = {
+    id: "workflow_step_blocked",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    workflowId: isRecord(state.channelWorkflows[0]) ? state.channelWorkflows[0].id : "workflow_1",
+    position: 2,
+    title: "Blocked follow-up",
+    prompt: "Needs provider recovery.",
+    toParticipantId: "engineer",
+    toParticipantLabel: "Engineer",
+    status: "blocked",
+    blocker: "Provider preflight failed.",
+    createdAt: "2026-05-25T00:35:00.000Z",
+    updatedAt: "2026-05-25T00:35:00.000Z",
+  };
+  state.channelWorkflowSteps.push(blockedStep);
+  const workflow = state.channelWorkflows[0];
+  if (isRecord(workflow)) {
+    workflow.status = "running";
+  }
+  await page.reload();
+  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Runtime" }).click();
+  await expect(page.locator(".workflow-step-card").filter({ hasText: "Blocked follow-up" })).toContainText("Provider preflight failed.");
+});
+
+test("channel v1.2 workflow start and run uses the existing run surface", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [createChatProvider()];
+  state.channelWorkflows = [
+    {
+      id: "workflow_seed",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Seed workflow",
+      objective: "Create and run a task from a workflow step.",
+      status: "ready",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:34:00.000Z",
+      updatedAt: "2026-05-25T00:34:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_seed",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_seed",
+      position: 1,
+      title: "Run seeded step",
+      prompt: "Run this workflow step.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "queued",
+      createdAt: "2026-05-25T00:34:00.000Z",
+      updatedAt: "2026-05-25T00:34:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Runtime" }).click();
+  await page.getByRole("button", { name: "Start + run" }).click();
+  await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
+  await expect.poll(() => {
+    const step = state.channelWorkflowSteps.find((item) => isRecord(item) && item.id === "workflow_step_seed");
+    return isRecord(step) ? step.runId : undefined;
+  }).toBe("run_2");
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_2" })).toContainText("succeeded");
+});
+
+test("channel activity derives task run approval transition and workflow events", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = [
+    {
+      id: "msg_timeline",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Timeline source message",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:02:00.000Z",
+      updatedAt: "2026-05-25T00:02:00.000Z",
+    },
+  ];
+  state.channels.push({
+    id: "channel_design",
+    workspaceId: "workspace_default",
+    name: "Design",
+    status: "active",
+    boundPath: cwd,
+    defaultTeammateId: "designer",
+    allowedTools: ["read"],
+    runtimePolicy: defaultRuntimePolicy,
+    createdAt: "2026-05-22T00:00:00.000Z",
+    updatedAt: "2026-05-22T00:00:00.000Z",
+  });
+  state.tasks.push({
+    id: "task_design_timeline",
+    workspaceId: "workspace_default",
+    channelId: "channel_design",
+    title: "Other channel task leak",
+    prompt: "Should not appear in Engineering.",
+    status: "done",
+    currentRunId: "run_design_timeline",
+    createdAt: "2026-05-25T00:02:00.000Z",
+    updatedAt: "2026-05-25T00:03:00.000Z",
+  });
+  state.runs.push({
+    id: "run_design_timeline",
+    status: "succeeded",
+    cwd,
+    taskId: "task_design_timeline",
+    channelId: "channel_design",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_design_timeline", title: "Other channel task leak" },
+    providerSnapshot: { provider: "local-relay" },
+    requestSnapshot: { cwd },
+    eventLogPath: ".ling-stack/sessions/run_design_timeline.jsonl",
+    createdAt: "2026-05-25T00:02:00.000Z",
+    updatedAt: "2026-05-25T00:03:00.000Z",
+  });
+  state.approvals.push({
+    id: "approval_design_timeline",
+    runId: "run_design_timeline",
+    taskId: "task_design_timeline",
+    actionType: "bash",
+    risk: "medium",
+    title: "Other channel approval leak",
+    description: "echo design",
+    payload: {},
+    status: "pending",
+    createdAt: "2026-05-25T00:03:00.000Z",
+    expiresAt: "2099-01-01T00:01:00.000Z",
+  });
+  state.channelWorkflows = [
+    {
+      id: "workflow_activity",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Timeline workflow",
+      objective: "Show workflow in Activity.",
+      status: "succeeded",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:05:00.000Z",
+      updatedAt: "2026-05-25T00:06:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_activity",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_activity",
+      position: 1,
+      title: "Blocked timeline step",
+      prompt: "Wait for runtime recovery.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "blocked",
+      blocker: "Runtime policy is waiting.",
+      createdAt: "2026-05-25T00:06:00.000Z",
+      updatedAt: "2026-05-25T00:07:00.000Z",
+    },
+  ];
+  state.stateTransitions = [
+    {
+      id: "transition_task_timeline",
+      workspaceId: "workspace_default",
+      entityType: "task",
+      entityId: "task_inspect",
+      fromStatus: "todo",
+      toStatus: "failed",
+      event: "task_failed",
+      actor: "runner",
+      createdAt: "2026-05-25T00:03:00.000Z",
+    },
+    {
+      id: "transition_design_timeline",
+      workspaceId: "workspace_default",
+      entityType: "task",
+      entityId: "task_design_timeline",
+      fromStatus: "todo",
+      toStatus: "done",
+      event: "other_channel_done",
+      actor: "runner",
+      createdAt: "2026-05-25T00:04:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const messageBubble = page.locator(".message-bubble").filter({ hasText: "Timeline source message" });
+  const taskEventBubble = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" });
+  const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" });
+  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
+  const stateTransitionBubble = page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" });
+  const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" });
+  const activityDetails = page.getByLabel("Activity details");
+  const openDetailsFrom = async (bubble: Locator, expectedText: string) => {
+    await bubble.getByRole("button", { name: "Details" }).click();
+    await expect(activityDetails).toBeVisible();
+    await expect(activityDetails).toContainText(expectedText);
+    await expect(activityDetails).toContainText("Source summary");
+    await expect(activityDetails).toContainText("Source metadata");
+    await expect(activityDetails).toContainText("Related objects");
+    await activityDetails.getByLabel("Close details").click();
+    await expect(activityDetails).toHaveCount(0);
+  };
+
+  await expect(messageBubble).toBeVisible();
+  await expect(taskEventBubble).toContainText("failed");
+  await expect(runEventBubble).toContainText("failed");
+  await expect(approvalEventBubble).toContainText("pending");
+  await expect(stateTransitionBubble).toBeVisible();
+  await expect(workflowStepBubble).toContainText("Runtime policy is waiting.");
+  await expect(page.getByText("Other channel task leak")).toHaveCount(0);
+  await expect(page.getByText("Other channel approval leak")).toHaveCount(0);
+  await expect(page.getByText("other_channel_done")).toHaveCount(0);
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await expect(page.locator(".mention-row .mention-chip")).toHaveCount(1);
+
+  await openDetailsFrom(messageBubble, "Timeline source message");
+  await openDetailsFrom(taskEventBubble, "Inspect workspace");
+  await openDetailsFrom(runEventBubble, "Run run_failed");
+  await openDetailsFrom(approvalEventBubble, "Approve shell command");
+  await openDetailsFrom(stateTransitionBubble, "task_failed");
+  await openDetailsFrom(workflowStepBubble, "Blocked timeline step");
+
+  await taskEventBubble.getByRole("button", { name: "Details" }).click();
+  await activityDetails.getByRole("button", { name: "Open task" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
+  await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await expect(activityDetails).toHaveCount(0);
+
+  await runEventBubble.getByRole("button", { name: "Details" }).click();
+  await activityDetails.getByRole("button", { name: "Open run" }).click();
+  await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+
+  await approvalEventBubble.getByRole("button", { name: "Details" }).click();
+  await activityDetails.getByRole("button", { name: "Open approval" }).click();
+  await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+
+  await workflowStepBubble.getByRole("button", { name: "Details" }).click();
+  await activityDetails.getByRole("button", { name: "Open protocol" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await expect(activityDetails).toHaveCount(0);
+
+  const activityFilters = page.getByLabel("Activity filters");
+  const activityFeed = page.getByLabel("Channel message feed");
+  const searchInput = activityFilters.getByPlaceholder("Search activity");
+  const savedViewSelect = activityFilters.locator('select[aria-label="Saved views"]');
+  const savedViewOption = (label: string) => savedViewSelect.locator("option").filter({ hasText: label });
+  const selectSavedView = async (label: string) => {
+    const value = await savedViewOption(label).getAttribute("value");
+    expect(value).toBeTruthy();
+    await savedViewSelect.selectOption(value ?? "");
+  };
+  const openFilterPanel = async () => {
+    if (await activityFilters.getByLabel("Filter panel").count() === 0) {
+      await activityFilters.getByRole("button", { name: "Filter activity" }).click();
+    }
+  };
+  const categoryChip = (label: string) => activityFilters.getByLabel("Activity categories").locator(".activity-filter-chip").filter({ hasText: label });
+  const attentionChip = (label: string) => activityFilters.getByLabel("Activity attention filters").locator(".activity-filter-chip").filter({ hasText: label });
+
+  await expect(activityFilters).toBeVisible();
+  await expect(activityFilters.locator(".activity-saved-views")).toHaveCount(0);
+  await expect(savedViewSelect).toContainText("All (7)");
+  await expect(savedViewSelect).toContainText("Needs attention (5)");
+  await expect(savedViewSelect).toContainText("Blocked (1)");
+  await expect(savedViewSelect).toContainText("Failed (3)");
+  await expect(savedViewSelect).toContainText("Pending approvals (1)");
+  await expect(savedViewSelect).toContainText("Failed work (2)");
+  await expect(savedViewSelect).toContainText("Runtime (3)");
+  await expect(activityFilters.getByLabel("Activity categories")).toHaveCount(0);
+  await openFilterPanel();
+  await expect(activityFilters.getByLabel("Filter panel")).toBeVisible();
+  await expect(categoryChip("All")).toContainText("7");
+  await expect(categoryChip("Messages")).toContainText("1");
+  await expect(categoryChip("Work")).toContainText("2");
+  await expect(categoryChip("Approvals")).toContainText("1");
+  await expect(categoryChip("Protocol")).toContainText("0");
+  await expect(categoryChip("Runtime")).toContainText("3");
+
+  const attentionQueue = page.getByLabel("Attention queue");
+  await expect(attentionQueue).toContainText("5 items need attention");
+  await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Blocked 1");
+  await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Failed 3");
+  await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Pending 1");
+  await attentionQueue.locator(".attention-queue-summary").click();
+  const topAttentionItems = attentionQueue.getByLabel("Top attention items");
+  await expect(topAttentionItems.locator(".attention-queue-item")).toHaveCount(5);
+  await expect(topAttentionItems.locator(".attention-queue-item-open").first()).toContainText("Blocked timeline step");
+  const expandQueueIfNeeded = async () => {
+    if (await attentionQueue.locator(".attention-queue-item").count() === 0) {
+      await attentionQueue.locator(".attention-queue-summary").click();
+    }
+  };
+  const blockedQueueItem = attentionQueue.locator(".attention-queue-item").filter({ hasText: "Blocked timeline step" });
+  await blockedQueueItem.getByRole("button", { name: "Details" }).click();
+  await expect(activityDetails).toContainText("Blocked timeline step");
+  await expect(activityDetails).toContainText("Runtime policy is waiting.");
+  await activityDetails.getByLabel("Close details").click();
+  await blockedQueueItem.locator(".attention-queue-item-open").click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await expandQueueIfNeeded();
+  await attentionQueue.locator(".attention-queue-item").filter({ hasText: "Run run_failed" }).locator(".attention-queue-item-open").click();
+  await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await expandQueueIfNeeded();
+  await attentionQueue.locator(".attention-queue-item").filter({ hasText: "Approve shell command" }).locator(".attention-queue-item-open").click();
+  await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await expandQueueIfNeeded();
+  await attentionQueue.locator(".attention-queue-item").filter({ hasText: "Inspect workspace" }).filter({ hasText: "Task" }).locator(".attention-queue-item-open").click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
+  await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+
+  await selectSavedView("Blocked");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
+  await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
+  await selectSavedView("Pending approvals");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toHaveCount(0);
+  await selectSavedView("Failed work");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toHaveCount(0);
+  await selectSavedView("Runtime");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toBeVisible();
+  await activityFilters.getByRole("button", { name: /Clear/ }).click();
+  await openFilterPanel();
+
+  await searchInput.fill("Timeline source");
+  await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
+  await expect(activityFeed.getByText("Inspect workspace")).toHaveCount(0);
+  await expect(categoryChip("Messages")).toContainText("1");
+  await expect(categoryChip("Work")).toContainText("0");
+
+  await searchInput.fill("Inspect the repo");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Task event" })).toBeVisible();
+  await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
+
+  await searchInput.fill("run_failed");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" })).toBeVisible();
+
+  await searchInput.fill("Approve shell command");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toBeVisible();
+
+  await searchInput.fill("Wait for runtime recovery");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
+
+  await searchInput.fill("task_failed");
+  await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toBeVisible();
+
+  await searchInput.fill("");
+  await openFilterPanel();
+  await categoryChip("Messages").click();
+  await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
+  await expect(activityFeed.getByText("Inspect workspace")).toHaveCount(0);
+  await categoryChip("Runtime").click();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toBeVisible();
+  await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
+  await activityFilters.getByRole("button", { name: /Clear/ }).click();
+  await openFilterPanel();
+
+  await attentionChip("Needs attention").click();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
+  await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
+  await attentionChip("Failed").click();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "failed" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toHaveCount(0);
+  await attentionChip("Pending").click();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "failed" })).toHaveCount(0);
+  await activityFilters.getByRole("button", { name: /Clear/ }).click();
+
+  await searchInput.fill("definitely-not-present");
+  await expect(page.getByText("No activity matches these filters")).toBeVisible();
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await searchInput.fill("run_failed");
+  await expandQueueIfNeeded();
+  await expect(runEventBubble).toBeVisible();
+  await runEventBubble.getByRole("button", { name: "Details" }).click();
+  await expect(activityDetails).toContainText("Run run_failed");
+  await expect(searchInput).toHaveValue("run_failed");
+  await expect(attentionQueue.locator(".attention-queue-item")).toHaveCount(5);
+  await activityDetails.getByLabel("Close details").click();
+  await expect(searchInput).toHaveValue("run_failed");
+  await expect(attentionQueue.locator(".attention-queue-item")).toHaveCount(5);
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toBe("Saved view name");
+    await dialog.accept("Run failures");
+  });
+  await activityFilters.getByRole("button", { name: "Save view" }).click();
+  await expect(savedViewOption("Run failures")).toHaveCount(1);
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await expect(savedViewOption("Run failures")).toHaveCount(1);
+  await selectSavedView("Run failures");
+  await expect(searchInput).toHaveValue("run_failed");
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toBe("Rename saved view");
+    await dialog.accept("Run problems");
+  });
+  await activityFilters.getByRole("button", { name: "Rename" }).click();
+  await expect(savedViewOption("Run problems")).toHaveCount(1);
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
+  await expect(searchInput).toHaveValue("");
+  await expect(savedViewOption("Run problems")).toHaveCount(0);
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await expect(savedViewOption("Run problems")).toHaveCount(1);
+  await selectSavedView("Run problems");
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toBe("Delete saved view?");
+    await dialog.accept();
+  });
+  await activityFilters.getByRole("button", { name: "Delete view" }).click();
+  await expect(savedViewOption("Run problems")).toHaveCount(0);
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
+  await expect(searchInput).toHaveValue("");
+  await expect(activityFeed.getByText("Other channel task leak").first()).toBeVisible();
+  await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
+  await expect(page.getByText("No activity matches these filters")).toHaveCount(0);
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await expect(searchInput).toHaveValue("");
+  await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
+
+  await page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" }).getByRole("button", { name: "Open task" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
+  await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
+
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" }).getByRole("button", { name: "Open run" }).click();
+  await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
+  await expect(page.getByText("run_failed").first()).toBeVisible();
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" }).getByRole("button", { name: "Open approval" }).click();
+  await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" }).getByRole("button", { name: "Open protocol" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
+});
+
+test("channel activity triage actions create follow-up records and preserve local state", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = [
+    {
+      id: "msg_triage",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Timeline source message for triage",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:02:00.000Z",
+      updatedAt: "2026-05-25T00:02:00.000Z",
+    },
+  ];
+  state.channelWorkflows = [
+    {
+      id: "workflow_triage",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Triage workflow",
+      objective: "Show blocked workflow step triage.",
+      status: "blocked",
+      createdBy: "local-user",
+      createdAt: "2026-05-25T00:05:00.000Z",
+      updatedAt: "2026-05-25T00:06:00.000Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_triage",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_triage",
+      position: 1,
+      title: "Blocked triage step",
+      prompt: "Wait for runtime recovery.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "blocked",
+      blocker: "Runtime policy is waiting.",
+      createdAt: "2026-05-25T00:06:00.000Z",
+      updatedAt: "2026-05-25T00:07:00.000Z",
+    },
+  ];
+  state.stateTransitions = [
+    {
+      id: "transition_triage_task",
+      workspaceId: "workspace_default",
+      entityType: "task",
+      entityId: "task_inspect",
+      fromStatus: "todo",
+      toStatus: "failed",
+      event: "task_failed",
+      actor: "runner",
+      createdAt: "2026-05-25T00:03:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const activityDetails = page.getByLabel("Activity details");
+  const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" });
+  const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked triage step" });
+  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
+  const messageBubble = page.locator(".message-bubble").filter({ hasText: "Timeline source message for triage" });
+  const openTriageActions = async () => {
+    const triageSection = activityDetails.locator(".activity-triage-section");
+    await expect(triageSection).toBeVisible();
+    if ((await triageSection.getAttribute("open")) === null) {
+      await triageSection.locator("summary").click();
+    }
+  };
+
+  await runEventBubble.getByRole("button", { name: "Details" }).click();
+  await expect(activityDetails).toContainText("Triage actions");
+  await expect(activityDetails.getByLabel("Triage title")).toHaveCount(0);
+  await openTriageActions();
+  await expect(activityDetails.getByText("Choose a triage action to continue.")).toBeVisible();
+  await activityDetails.getByRole("button", { name: "Create follow-up task" }).click();
+  await activityDetails.getByLabel("Triage title").fill("Investigate failed run triage");
+  state.failNextTaskCreate = true;
+  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
+  await expect(activityDetails.getByRole("alert")).toContainText("Triage action failed");
+  await expect(activityDetails.getByLabel("Triage title")).toHaveValue("Investigate failed run triage");
+  await expect(activityDetails.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(activityDetails.getByRole("button", { name: "Dismiss" })).toBeVisible();
+  await activityDetails.getByRole("button", { name: "Retry" }).click();
+  await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
+  await expect.poll(() => state.tasks.some((task) => isRecord(task) && task.title === "Investigate failed run triage")).toBe(true);
+  await activityDetails.getByRole("button", { name: "Open in Tasks" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
+  await expect(page.locator("article.task-detail")).toContainText("Investigate failed run triage");
+
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await workflowStepBubble.getByRole("button", { name: "Details" }).click();
+  await openTriageActions();
+  await activityDetails.getByRole("button", { name: "Create handoff" }).click();
+  await activityDetails.getByLabel("Reason").fill("Escalate blocked triage step");
+  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
+  await expect.poll(() => state.channelHandoffs.some((handoff) => isRecord(handoff) && handoff.reason === "Escalate blocked triage step")).toBe(true);
+  await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
+  await activityDetails.getByRole("button", { name: "Open in Channel protocol" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
+  await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Escalate blocked triage step");
+
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await approvalEventBubble.getByRole("button", { name: "Details" }).click();
+  await openTriageActions();
+  await activityDetails.getByRole("button", { name: "Record decision" }).click();
+  await activityDetails.getByLabel("Triage title").fill("Decision: approval stays pending");
+  await activityDetails.getByLabel("Decision text").fill("Keep the approval pending until the user reviews the shell command.");
+  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
+  await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.title === "Decision: approval stays pending")).toBe(true);
+  await activityDetails.getByRole("button", { name: "Open in Channel protocol" }).click();
+  await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Decision: approval stays pending");
+
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  const activityFilters = page.getByLabel("Activity filters");
+  const searchInput = activityFilters.getByPlaceholder("Search activity");
+  const composer = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const attentionQueue = page.getByLabel("Attention queue");
+  await searchInput.fill("Timeline source");
+  await composer.fill("Composer draft survives triage");
+  if (await attentionQueue.locator(".attention-queue-item").count() === 0) {
+    await attentionQueue.locator(".attention-queue-summary").click();
+  }
+  await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
+  await messageBubble.getByRole("button", { name: "Details" }).click();
+  await openTriageActions();
+  await activityDetails.getByRole("button", { name: "Create context summary" }).click();
+  await activityDetails.getByLabel("Summary").fill("Summary from Timeline source message for triage.");
+  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
+  await expect.poll(() => state.channelContextSummaries.some((summary) => isRecord(summary) && summary.summary === "Summary from Timeline source message for triage.")).toBe(true);
+  await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
+  await activityDetails.getByLabel("Close details").click();
+  await expect(searchInput).toHaveValue("Timeline source");
+  await expect(composer).toHaveValue("Composer draft survives triage");
+  await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
+  const summaryBubble = page.locator(".message-bubble").filter({ hasText: "Context summary" }).filter({ hasText: "Summary from Timeline source" });
+  await expect(summaryBubble).toBeVisible();
+  const taskCount = state.tasks.length;
+  await summaryBubble.getByRole("button", { name: "Create task" }).click();
+  await expect.poll(() => state.tasks.length).toBe(taskCount + 1);
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+});
+
+test("channel activity attention queue keeps an empty state compact", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.approvals = [];
+  state.tasks = state.tasks.map((task) =>
+    isRecord(task) ? { ...task, status: "done", updatedAt: "2026-05-25T00:02:00.000Z" } : task,
+  );
+  state.runs = state.runs.map((run) => ({
+    ...run,
+    status: "succeeded",
+    endedAt: "2026-05-25T00:02:00.000Z",
+    updatedAt: "2026-05-25T00:02:00.000Z",
+  }));
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const attentionQueue = page.getByLabel("Attention queue");
+  await expect(attentionQueue).toContainText("No attention items");
+  await expect(attentionQueue.locator(".attention-queue-pill")).toBeVisible();
+  await expect(attentionQueue.locator(".attention-queue-summary")).toHaveCount(0);
+  await expect(attentionQueue.locator(".attention-queue-item")).toHaveCount(0);
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
 });
 
 test("run detail renders state transitions from daemon timeline API", async ({ page }) => {
@@ -262,6 +1312,23 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
+  await expect(page.locator(".channel-tabs").getByRole("button", { name: "动态" })).toBeVisible();
+  await expect(page.getByPlaceholder("搜索动态")).toBeVisible();
+  await expect(page.locator('select[aria-label="保存的视图"]')).toContainText("需要关注");
+  await page.getByRole("button", { name: "筛选动态" }).click();
+  await expect(page.getByLabel("动态类别").getByRole("button", { name: /全部/ })).toBeVisible();
+  await expect(page.getByLabel("动态关注筛选").getByRole("button", { name: /需要关注/ })).toBeVisible();
+  await expect(page.getByLabel("关注队列")).toBeVisible();
+  await page.locator(".message-bubble").filter({ hasText: "任务事件" }).first().getByRole("button", { name: "详情" }).click();
+  const chineseDetails = page.getByRole("complementary", { name: "动态详情" });
+  await expect(chineseDetails).toContainText("来源摘要");
+  await expect(chineseDetails).toContainText("关联对象");
+  await expect(chineseDetails).toContainText("分诊动作");
+  await chineseDetails.locator(".activity-triage-section summary").click();
+  await expect(chineseDetails).toContainText("创建跟进任务");
+  await chineseDetails.getByLabel("关闭详情").click();
+  await expect(page.getByPlaceholder("给频道发消息，或 @ 一个 AI 队友")).toBeVisible();
+  await expect(page.locator(".channel-composer").getByRole("button", { name: "发送" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.locale"))).toBe("zh-CN");
 
   await page.reload();
@@ -270,6 +1337,21 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Workspace" })).toBeVisible();
+  await expect(page.locator(".channel-tabs").getByRole("button", { name: "Activity", exact: true })).toBeVisible();
+  await expect(page.getByPlaceholder("Search activity")).toBeVisible();
+  await expect(page.locator('select[aria-label="Saved views"]')).toContainText("Needs attention");
+  await page.getByRole("button", { name: "Filter activity" }).click();
+  await expect(page.getByLabel("Activity categories").getByRole("button", { name: /Messages/ })).toBeVisible();
+  await expect(page.getByLabel("Activity attention filters").getByRole("button", { name: /Needs attention/ })).toBeVisible();
+  await expect(page.getByLabel("Attention queue")).toBeVisible();
+  await page.locator(".message-bubble").filter({ hasText: "Task event" }).first().getByRole("button", { name: "Details" }).click();
+  const englishDetails = page.getByRole("complementary", { name: "Activity details" });
+  await expect(englishDetails).toContainText("Source summary");
+  await expect(englishDetails).toContainText("Related objects");
+  await expect(englishDetails).toContainText("Triage actions");
+  await englishDetails.locator(".activity-triage-section summary").click();
+  await expect(englishDetails).toContainText("Create follow-up task");
+  await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
 });
 
 test("model workbench Chinese mode localizes setup copy and uses an add model sheet", async ({ page }) => {
@@ -921,6 +2003,7 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
   await expect(providerSelect.locator("option").filter({ hasText: "Ready Local Relay" })).toHaveCount(1);
   await expect(providerSelect.locator("option").filter({ hasText: "Missing Key Gateway" })).toHaveCount(1);
@@ -959,6 +2042,7 @@ test("workspace task run uses the displayed ready provider fallback", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
   await expect(providerSelect).toHaveValue("provider_ready");
 
@@ -1005,6 +2089,7 @@ test("workspace task actions only show a spinner on the clicked task action", as
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   const firstTask = page.locator(".workbench-task-list .client-task-card").filter({ hasText: "Inspect workspace" });
   const secondTask = page.locator(".workbench-task-list .client-task-card").filter({ hasText: "Second task" });
   await secondTask.click();
@@ -1063,6 +2148,7 @@ test("succeeded workspace tasks show a clear result action", async ({ page }) =>
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   await expect(page.getByText("Task complete").first()).toBeVisible();
 
   const taskDetail = page.locator("article.task-detail");
@@ -1098,6 +2184,7 @@ test("workspace run timeline summarizes activity and keeps raw events contained"
   await mockDaemon(page, state);
   await page.goto("/");
 
+  await openChannelTasksTab(page);
   await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
 
   await expect(page.getByRole("heading", { name: "Run activity" })).toBeVisible();
@@ -1506,6 +2593,10 @@ async function readSidebarSelection(page: Page): Promise<{ readonly activeNav: s
   });
 }
 
+async function openChannelTasksTab(page: Page): Promise<void> {
+  await page.locator(".channel-tabs").getByRole("button", { name: "Tasks" }).click();
+}
+
 async function readScrollState(page: Page, selector: string): Promise<{ readonly atBottom: boolean; readonly top: number; readonly max: number }> {
   return await page.locator(selector).evaluate((element) => {
     const max = element.scrollHeight - element.clientHeight;
@@ -1560,12 +2651,22 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
         name: "Engineering",
         status: "active",
         boundPath: cwd,
+        defaultTeammateId: "engineer",
         allowedTools: ["read", "grep", "find", "ls"],
         runtimePolicy: defaultRuntimePolicy,
         createdAt: "2026-05-22T00:00:00.000Z",
         updatedAt: "2026-05-22T00:00:00.000Z",
       },
     ],
+    channelMessages: [],
+    channelAttachments: [],
+    channelLinkPreviews: [],
+    channelBriefs: {},
+    channelDecisions: [],
+    channelHandoffs: [],
+    channelContextSummaries: [],
+    channelWorkflows: [],
+    channelWorkflowSteps: [],
     tasks: [
       {
         id: "task_inspect",
@@ -1618,6 +2719,25 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     stateTransitions: [],
     artifactsByRun: {},
     artifactsByMediaJob: {},
+  };
+}
+
+function createEmptyMockBrief(channelId: string): Record<string, unknown> {
+  return {
+    id: `brief_${channelId}`,
+    workspaceId: "workspace_default",
+    channelId,
+    objective: "",
+    scope: "",
+    acceptanceCriteria: [],
+    openQuestions: [],
+    risks: [],
+    decisionIds: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    updatedBy: "system",
+    createdAt: "2026-05-22T00:00:00.000Z",
+    updatedAt: "2026-05-22T00:00:00.000Z",
   };
 }
 
@@ -1936,6 +3056,7 @@ function createChannelFromBody(body: Record<string, unknown>, id: string): Recor
     status: body.status === "paused" || body.status === "archived" ? body.status : "active",
     boundPath: typeof body.boundPath === "string" ? body.boundPath : cwd,
     defaultProviderPresetId: typeof body.defaultProviderPresetId === "string" ? body.defaultProviderPresetId : undefined,
+    defaultTeammateId: typeof body.defaultTeammateId === "string" ? body.defaultTeammateId : undefined,
     allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools : ["read", "grep", "find", "ls"],
     runtimePolicy: isRecord(body.runtimePolicy) ? { ...defaultRuntimePolicy, ...body.runtimePolicy } : defaultRuntimePolicy,
     createdAt: "2026-05-25T00:15:00.000Z",
@@ -2121,6 +3242,525 @@ async function handleDaemonRoute(
     await route.fulfill({ status: 201, json: { channel } });
     return;
   }
+  const channelMessagesMatch = /^\/channels\/([^/]+)\/messages$/.exec(path);
+  if (channelMessagesMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelMessagesMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        messages: state.channelMessages.filter((message) => isRecord(message) && message.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelMessagesMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelMessagesMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    if (state.channelMessageDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.channelMessageDelayMs));
+    }
+    if (state.failNextChannelMessage) {
+      state.failNextChannelMessage = false;
+      await route.fulfill({ status: 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
+      return;
+    }
+    const message = {
+      id: `msg_${state.channelMessages.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      kind: typeof body.kind === "string" ? body.kind : "message",
+      intent: typeof body.intent === "string" ? body.intent : "discuss",
+      authorType: typeof body.authorType === "string" ? body.authorType : "local-user",
+      authorId: typeof body.authorId === "string" ? body.authorId : "tian",
+      body: typeof body.body === "string" ? body.body : "",
+      mentions: Array.isArray(body.mentions) ? body.mentions : [],
+      attachmentIds: Array.isArray(body.attachmentIds) ? body.attachmentIds : [],
+      linkPreviewIds: Array.isArray(body.linkPreviewIds) ? body.linkPreviewIds : [],
+      linkedTaskId: typeof body.linkedTaskId === "string" ? body.linkedTaskId : undefined,
+      linkedRunId: typeof body.linkedRunId === "string" ? body.linkedRunId : undefined,
+      status: "ready",
+      createdAt: "2026-05-25T00:18:00.000Z",
+      updatedAt: "2026-05-25T00:18:00.000Z",
+    };
+    state.channelMessages.push(message);
+    const aiReply = body.requestAiReply === true
+      ? {
+          id: `msg_${state.channelMessages.length + 1}`,
+          workspaceId: "workspace_default",
+          channelId,
+          threadId: message.id,
+          kind: "ai_reply",
+          intent: "discuss",
+          authorType: "ai-teammate",
+          authorId: "engineer",
+          body: "收到，我会按频道上下文推进。",
+          mentions: [],
+          attachmentIds: [],
+          linkPreviewIds: [],
+          status: "ready",
+          createdAt: "2026-05-25T00:18:01.000Z",
+          updatedAt: "2026-05-25T00:18:01.000Z",
+        }
+      : undefined;
+    if (aiReply) {
+      state.channelMessages.push(aiReply);
+    }
+    await route.fulfill({ status: 201, json: aiReply ? { message, aiReply } : { message } });
+    return;
+  }
+  const channelAttachmentsMatch = /^\/channels\/([^/]+)\/attachments$/.exec(path);
+  if (channelAttachmentsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelAttachmentsMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        attachments: state.channelAttachments.filter((attachment) => isRecord(attachment) && attachment.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelAttachmentsMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelAttachmentsMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const fileName = typeof body.fileName === "string" ? body.fileName : "upload.txt";
+    const inferred = inferMockChannelAttachment(fileName);
+    const attachment = {
+      id: `att_${state.channelAttachments.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      kind: inferred.kind,
+      fileName,
+      contentType: inferred.contentType,
+      sizeBytes: typeof body.contentBase64 === "string" ? body.contentBase64.length : 0,
+      path: `${channelId}/${fileName}`,
+      createdAt: "2026-05-25T00:18:02.000Z",
+    };
+    state.channelAttachments.unshift(attachment);
+    await route.fulfill({ status: 201, json: { attachment } });
+    return;
+  }
+  const channelLinkPreviewMatch = /^\/channels\/([^/]+)\/link-previews$/.exec(path);
+  if (channelLinkPreviewMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelLinkPreviewMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        linkPreviews: state.channelLinkPreviews.filter((preview) => isRecord(preview) && preview.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelLinkPreviewMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelLinkPreviewMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const rawUrl = typeof body.url === "string" ? body.url : "https://example.com";
+    if (state.linkPreviewDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.linkPreviewDelayMs));
+    }
+    const preview = {
+      id: `link_${state.channelLinkPreviews.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      url: rawUrl,
+      normalizedUrl: rawUrl,
+      title: rawUrl.includes("example.com") ? "Example Domain" : rawUrl,
+      description: rawUrl.includes("127.0.0.1") ? undefined : "Mock link preview",
+      siteName: "example.com",
+      status: rawUrl.includes("127.0.0.1") ? "blocked" : "ready",
+      errorMessage: rawUrl.includes("127.0.0.1") ? "Private network previews are blocked." : undefined,
+      createdAt: "2026-05-25T00:18:03.000Z",
+      updatedAt: "2026-05-25T00:18:03.000Z",
+    };
+    state.channelLinkPreviews.unshift(preview);
+    await route.fulfill({ status: 201, json: { linkPreview: preview } });
+    return;
+  }
+  const channelBriefMatch = /^\/channels\/([^/]+)\/brief$/.exec(path);
+  if (channelBriefMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelBriefMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        brief: state.channelBriefs[channelId] ?? createEmptyMockBrief(channelId),
+      },
+    });
+    return;
+  }
+  if (channelBriefMatch && request.method() === "PATCH") {
+    const channelId = decodeURIComponent(channelBriefMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const existing = state.channelBriefs[channelId];
+    const brief = {
+      ...(isRecord(existing) ? existing : createEmptyMockBrief(channelId)),
+      objective: typeof body.objective === "string" ? body.objective : "",
+      scope: typeof body.scope === "string" ? body.scope : "",
+      acceptanceCriteria: Array.isArray(body.acceptanceCriteria) ? body.acceptanceCriteria : [],
+      openQuestions: Array.isArray(body.openQuestions) ? body.openQuestions : [],
+      risks: Array.isArray(body.risks) ? body.risks : [],
+      decisionIds: Array.isArray(body.decisionIds) ? body.decisionIds : [],
+      attachmentIds: Array.isArray(body.attachmentIds) ? body.attachmentIds : [],
+      linkPreviewIds: Array.isArray(body.linkPreviewIds) ? body.linkPreviewIds : [],
+      updatedBy: typeof body.updatedBy === "string" ? body.updatedBy : "local-user",
+      updatedAt: "2026-05-25T00:21:00.000Z",
+    };
+    state.channelBriefs[channelId] = brief;
+    await route.fulfill({ json: { brief } });
+    return;
+  }
+  const channelDecisionsMatch = /^\/channels\/([^/]+)\/decisions$/.exec(path);
+  if (channelDecisionsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelDecisionsMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        decisions: state.channelDecisions.filter((decision) => isRecord(decision) && decision.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelDecisionsMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelDecisionsMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    if (typeof body.supersedesDecisionId === "string") {
+      state.channelDecisions = state.channelDecisions.map((decision) =>
+        isRecord(decision) && decision.id === body.supersedesDecisionId ? { ...decision, status: "superseded" } : decision
+      );
+    }
+    const decision = {
+      id: `decision_${state.channelDecisions.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      sourceMessageId: typeof body.sourceMessageId === "string" ? body.sourceMessageId : undefined,
+      sourceTaskId: typeof body.sourceTaskId === "string" ? body.sourceTaskId : undefined,
+      sourceRunId: typeof body.sourceRunId === "string" ? body.sourceRunId : undefined,
+      title: typeof body.title === "string" ? body.title : "Decision",
+      decision: typeof body.decision === "string" ? body.decision : "",
+      rationale: typeof body.rationale === "string" ? body.rationale : "",
+      alternatives: Array.isArray(body.alternatives) ? body.alternatives : [],
+      status: "active",
+      supersedesDecisionId: typeof body.supersedesDecisionId === "string" ? body.supersedesDecisionId : undefined,
+      createdBy: typeof body.createdBy === "string" ? body.createdBy : "local-user",
+      createdAt: "2026-05-25T00:22:00.000Z",
+      updatedAt: "2026-05-25T00:22:00.000Z",
+    };
+    state.channelDecisions.unshift(decision);
+    await route.fulfill({ status: 201, json: { decision } });
+    return;
+  }
+  const decisionMatch = /^\/decisions\/([^/]+)$/.exec(path);
+  if (decisionMatch && request.method() === "PATCH") {
+    const decisionId = decodeURIComponent(decisionMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated;
+    state.channelDecisions = state.channelDecisions.map((decision) => {
+      if (isRecord(decision) && decision.id === decisionId) {
+        updated = { ...decision, ...body, updatedAt: "2026-05-25T00:23:00.000Z" };
+        return updated;
+      }
+      return decision;
+    });
+    await route.fulfill({ json: { decision: updated } });
+    return;
+  }
+  const channelHandoffsMatch = /^\/channels\/([^/]+)\/handoffs$/.exec(path);
+  if (channelHandoffsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelHandoffsMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        handoffs: state.channelHandoffs.filter((handoff) => isRecord(handoff) && handoff.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelHandoffsMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelHandoffsMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const handoff = {
+      id: `handoff_${state.channelHandoffs.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      ...body,
+      status: typeof body.status === "string" ? body.status : "proposed",
+      createdAt: "2026-05-25T00:24:00.000Z",
+      updatedAt: "2026-05-25T00:24:00.000Z",
+    };
+    state.channelHandoffs.unshift(handoff);
+    await route.fulfill({ status: 201, json: { handoff } });
+    return;
+  }
+  const handoffMatch = /^\/handoffs\/([^/]+)$/.exec(path);
+  if (handoffMatch && request.method() === "PATCH") {
+    const handoffId = decodeURIComponent(handoffMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated;
+    state.channelHandoffs = state.channelHandoffs.map((handoff) => {
+      if (isRecord(handoff) && handoff.id === handoffId) {
+        updated = { ...handoff, ...body, updatedAt: "2026-05-25T00:25:00.000Z" };
+        return updated;
+      }
+      return handoff;
+    });
+    await route.fulfill({ json: { handoff: updated } });
+    return;
+  }
+  const handoffWorkflowMatch = /^\/handoffs\/([^/]+)\/workflow$/.exec(path);
+  if (handoffWorkflowMatch && request.method() === "POST") {
+    const handoffId = decodeURIComponent(handoffWorkflowMatch[1]);
+    const handoff = state.channelHandoffs.find((item) => isRecord(item) && item.id === handoffId);
+    if (!isRecord(handoff)) {
+      await route.fulfill({ status: 404, json: { error: "handoff_not_found" } });
+      return;
+    }
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const workflow = {
+      id: `workflow_${state.channelWorkflows.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId: handoff.channelId,
+      sourceHandoffId: handoff.id,
+      title: typeof body.title === "string" ? body.title : `${String(handoff.reason ?? "Handoff")} workflow`,
+      objective: typeof body.objective === "string" ? body.objective : String(handoff.expectedOutput ?? handoff.reason ?? ""),
+      status: "draft",
+      createdBy: typeof body.createdBy === "string" ? body.createdBy : "local-user",
+      createdAt: "2026-05-25T00:32:00.000Z",
+      updatedAt: "2026-05-25T00:32:00.000Z",
+    };
+    const workflowStep = {
+      id: `workflow_step_${state.channelWorkflowSteps.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId: handoff.channelId,
+      workflowId: workflow.id,
+      sourceHandoffId: handoff.id,
+      contextSummaryId: typeof body.contextSummaryId === "string" ? body.contextSummaryId : undefined,
+      position: 1,
+      title: typeof handoff.reason === "string" ? handoff.reason : "Complete handoff",
+      prompt: typeof handoff.requiredInput === "string" ? handoff.requiredInput : String(handoff.reason ?? ""),
+      toParticipantId: typeof handoff.toParticipantId === "string" ? handoff.toParticipantId : "engineer",
+      toParticipantLabel: typeof handoff.toParticipantLabel === "string" ? handoff.toParticipantLabel : "Engineer",
+      status: "queued",
+      createdAt: "2026-05-25T00:32:00.000Z",
+      updatedAt: "2026-05-25T00:32:00.000Z",
+    };
+    state.channelWorkflows.unshift(workflow);
+    state.channelWorkflowSteps.unshift(workflowStep);
+    await route.fulfill({ status: 201, json: { workflow, workflowStep } });
+    return;
+  }
+  const channelWorkflowsMatch = /^\/channels\/([^/]+)\/workflows$/.exec(path);
+  if (channelWorkflowsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelWorkflowsMatch[1]);
+    const status = url.searchParams.get("status");
+    const workflows = state.channelWorkflows.filter((workflow) =>
+      isRecord(workflow) &&
+      workflow.channelId === channelId &&
+      (!status || workflow.status === status)
+    );
+    await route.fulfill({ json: { cwd, channelId, workflows } });
+    return;
+  }
+  const workflowMatch = /^\/workflows\/([^/]+)$/.exec(path);
+  if (workflowMatch && request.method() === "GET") {
+    const workflowId = decodeURIComponent(workflowMatch[1]);
+    const workflow = state.channelWorkflows.find((item) => isRecord(item) && item.id === workflowId);
+    await route.fulfill({ status: workflow ? 200 : 404, json: workflow ? { workflow } : { error: "workflow_not_found" } });
+    return;
+  }
+  if (workflowMatch && request.method() === "PATCH") {
+    const workflowId = decodeURIComponent(workflowMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated;
+    state.channelWorkflows = state.channelWorkflows.map((workflow) => {
+      if (isRecord(workflow) && workflow.id === workflowId) {
+        updated = { ...workflow, ...body, updatedAt: "2026-05-25T00:33:00.000Z" };
+        return updated;
+      }
+      return workflow;
+    });
+    await route.fulfill({ status: updated ? 200 : 404, json: updated ? { workflow: updated } : { error: "workflow_not_found" } });
+    return;
+  }
+  const workflowStepsMatch = /^\/workflows\/([^/]+)\/steps$/.exec(path);
+  if (workflowStepsMatch && request.method() === "GET") {
+    const workflowId = decodeURIComponent(workflowStepsMatch[1]);
+    const status = url.searchParams.get("status");
+    const workflowSteps = state.channelWorkflowSteps.filter((step) =>
+      isRecord(step) &&
+      step.workflowId === workflowId &&
+      (!status || step.status === status)
+    );
+    await route.fulfill({ json: { cwd, workflowId, workflowSteps } });
+    return;
+  }
+  const workflowStepStartMatch = /^\/workflow-steps\/([^/]+)\/start$/.exec(path);
+  if (workflowStepStartMatch && request.method() === "POST") {
+    const stepId = decodeURIComponent(workflowStepStartMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const stepIndex = state.channelWorkflowSteps.findIndex((step) => isRecord(step) && step.id === stepId);
+    if (stepIndex === -1 || !isRecord(state.channelWorkflowSteps[stepIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_step_not_found" } });
+      return;
+    }
+    const step = state.channelWorkflowSteps[stepIndex] as Record<string, unknown>;
+    const workflowIndex = state.channelWorkflows.findIndex((workflow) => isRecord(workflow) && workflow.id === step.workflowId);
+    const workflow = workflowIndex >= 0 && isRecord(state.channelWorkflows[workflowIndex])
+      ? state.channelWorkflows[workflowIndex] as Record<string, unknown>
+      : undefined;
+    const task = {
+      id: `task_${state.tasks.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId: typeof step.channelId === "string" ? step.channelId : "channel_engineering",
+      title: typeof body.taskTitle === "string" ? body.taskTitle : String(step.title ?? "Workflow task"),
+      prompt: typeof body.taskPrompt === "string" ? body.taskPrompt : String(step.prompt ?? ""),
+      status: body.mode === "create_and_run_task" ? "done" : "todo",
+      assigneeTeammateId: typeof body.assigneeTeammateId === "string" ? body.assigneeTeammateId : step.toParticipantId,
+      createdAt: "2026-05-25T00:36:00.000Z",
+      updatedAt: "2026-05-25T00:36:00.000Z",
+    };
+    state.tasks.unshift(task);
+    const runId = body.mode === "create_and_run_task" ? `run_${state.runs.length + 1}` : undefined;
+    const updatedStep = {
+      ...step,
+      status: "succeeded",
+      taskId: task.id,
+      runId,
+      resultSummary: runId ? "Run succeeded." : "Task created from workflow step.",
+      updatedAt: "2026-05-25T00:36:30.000Z",
+    };
+    state.channelWorkflowSteps[stepIndex] = updatedStep;
+    if (workflow) {
+      const updatedWorkflow = { ...workflow, status: "succeeded", updatedAt: "2026-05-25T00:36:30.000Z" };
+      state.channelWorkflows[workflowIndex] = updatedWorkflow;
+      if (runId) {
+        const run: MockRun = {
+          id: runId,
+          status: "succeeded",
+          cwd,
+          taskId: task.id,
+          channelId: typeof task.channelId === "string" ? task.channelId : "channel_engineering",
+          providerPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : "provider_local",
+          providerName: "local-relay",
+          providerModel: "dpv4",
+          taskSnapshot: { id: task.id, title: task.title, prompt: task.prompt },
+          providerSnapshot: { providerPresetId: body.providerPresetId ?? "provider_local" },
+          requestSnapshot: body,
+          eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+          createdAt: "2026-05-25T00:36:00.000Z",
+          updatedAt: "2026-05-25T00:36:30.000Z",
+        };
+        state.runs.unshift(run);
+        state.eventsByRun[runId] = [
+          {
+            id: `evt_${runId}_end`,
+            runId,
+            seq: 1,
+            ts: run.updatedAt,
+            type: "run_end",
+            data: { status: "succeeded" },
+          },
+        ];
+        await route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: [
+            `event: ready\ndata: ${JSON.stringify({ runId })}`,
+            `event: message\ndata: ${JSON.stringify(state.eventsByRun[runId][0])}`,
+            "",
+          ].join("\n\n"),
+        });
+        return;
+      }
+      await route.fulfill({ json: { workflow: updatedWorkflow, workflowStep: updatedStep, task } });
+      return;
+    }
+    await route.fulfill({ json: { workflowStep: updatedStep, task } });
+    return;
+  }
+  const workflowStepMatch = /^\/workflow-steps\/([^/]+)$/.exec(path);
+  if (workflowStepMatch && request.method() === "PATCH") {
+    const stepId = decodeURIComponent(workflowStepMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated;
+    state.channelWorkflowSteps = state.channelWorkflowSteps.map((step) => {
+      if (isRecord(step) && step.id === stepId) {
+        updated = { ...step, ...body, updatedAt: "2026-05-25T00:37:00.000Z" };
+        return updated;
+      }
+      return step;
+    });
+    const workflow = isRecord(updated)
+      ? state.channelWorkflows.find((item) => isRecord(item) && item.id === updated.workflowId)
+      : undefined;
+    await route.fulfill({ status: updated ? 200 : 404, json: updated ? { workflowStep: updated, workflow } : { error: "workflow_step_not_found" } });
+    return;
+  }
+  const channelSummariesMatch = /^\/channels\/([^/]+)\/context-summaries$/.exec(path);
+  if (channelSummariesMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelSummariesMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        contextSummaries: state.channelContextSummaries.filter((summary) => isRecord(summary) && summary.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelSummariesMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelSummariesMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const contextSummary = {
+      id: `summary_${state.channelContextSummaries.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      targetType: typeof body.targetType === "string" ? body.targetType : "thread",
+      targetId: typeof body.targetId === "string" ? body.targetId : "msg_1",
+      sourceMessageIds: Array.isArray(body.sourceMessageIds) ? body.sourceMessageIds : [],
+      decisionIds: Array.isArray(body.decisionIds) ? body.decisionIds : [],
+      summary: typeof body.summary === "string" ? body.summary : "",
+      acceptanceCriteria: Array.isArray(body.acceptanceCriteria) ? body.acceptanceCriteria : [],
+      openQuestions: Array.isArray(body.openQuestions) ? body.openQuestions : [],
+      authorType: typeof body.authorType === "string" ? body.authorType : "local-user",
+      authorId: typeof body.authorId === "string" ? body.authorId : undefined,
+      createdAt: "2026-05-25T00:26:00.000Z",
+      updatedAt: "2026-05-25T00:26:00.000Z",
+    };
+    state.channelContextSummaries.unshift(contextSummary);
+    await route.fulfill({ status: 201, json: { contextSummary } });
+    return;
+  }
+  const summaryMatch = /^\/context-summaries\/([^/]+)$/.exec(path);
+  if (summaryMatch && request.method() === "PATCH") {
+    const summaryId = decodeURIComponent(summaryMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated;
+    state.channelContextSummaries = state.channelContextSummaries.map((summary) => {
+      if (isRecord(summary) && summary.id === summaryId) {
+        updated = { ...summary, ...body, updatedAt: "2026-05-25T00:27:00.000Z" };
+        return updated;
+      }
+      return summary;
+    });
+    await route.fulfill({ json: { contextSummary: updated } });
+    return;
+  }
+  const attachmentContentMatch = /^\/attachments\/([^/]+)\/content$/.exec(path);
+  if (attachmentContentMatch && request.method() === "GET") {
+    await route.fulfill({ body: "mock attachment content", contentType: "text/plain" });
+    return;
+  }
+  const attachmentMatch = /^\/attachments\/([^/]+)$/.exec(path);
+  if (attachmentMatch && request.method() === "DELETE") {
+    const attachmentId = decodeURIComponent(attachmentMatch[1]);
+    state.channelAttachments = state.channelAttachments.filter((attachment) => !isRecord(attachment) || attachment.id !== attachmentId);
+    await route.fulfill({ json: { ok: true } });
+    return;
+  }
   const channelMatch = /^\/channels\/([^/]+)$/.exec(path);
   if (channelMatch && request.method() === "PATCH") {
     const channelId = decodeURIComponent(channelMatch[1]);
@@ -2156,22 +3796,32 @@ async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/tasks") {
-    await route.fulfill({ json: { cwd, tasks: state.tasks } });
+    const channelId = url.searchParams.get("channelId");
+    const tasks = channelId
+      ? state.tasks.filter((task) => isRecord(task) && task.channelId === channelId)
+      : state.tasks;
+    await route.fulfill({ json: { cwd, tasks } });
     return;
   }
   if (request.method() === "POST" && path === "/tasks") {
+    if (state.failNextTaskCreate) {
+      state.failNextTaskCreate = false;
+      await route.fulfill({ status: 500, json: { error: "task_create_failed" } });
+      return;
+    }
     const body = await request.postDataJSON() as Record<string, unknown>;
     const task = {
-      id: `task_created_${state.tasks.length + 1}`,
+      id: `task_${state.tasks.length + 1}`,
       workspaceId: "workspace_default",
       channelId: typeof body.channelId === "string" ? body.channelId : "channel_engineering",
-      title: typeof body.title === "string" ? body.title : "Generated task",
-      prompt: typeof body.prompt === "string" ? body.prompt : "Generated prompt",
+      title: typeof body.title === "string" ? body.title : "New task",
+      prompt: typeof body.prompt === "string" ? body.prompt : "",
       status: "todo",
-      createdAt: "2026-05-25T00:18:00.000Z",
-      updatedAt: "2026-05-25T00:18:00.000Z",
+      assigneeTeammateId: typeof body.assigneeTeammateId === "string" ? body.assigneeTeammateId : undefined,
+      createdAt: "2026-05-25T00:19:00.000Z",
+      updatedAt: "2026-05-25T00:19:00.000Z",
     };
-    state.tasks = [task, ...state.tasks];
+    state.tasks.unshift(task);
     await route.fulfill({ status: 201, json: { task } });
     return;
   }
@@ -2432,6 +4082,35 @@ async function handleDaemonRoute(
   }
 
   await route.fulfill({ status: 404, json: { error: "not_found", path } });
+}
+
+function inferMockChannelAttachment(fileName: string): { readonly kind: string; readonly contentType: string } {
+  const extension = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension)) {
+    return { kind: "image", contentType: extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : `image/${extension.slice(1)}` };
+  }
+  if (extension === ".pdf") {
+    return { kind: "pdf", contentType: "application/pdf" };
+  }
+  if (extension === ".docx") {
+    return { kind: "office", contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+  }
+  if (extension === ".xlsx") {
+    return { kind: "office", contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+  }
+  if (extension === ".pptx") {
+    return { kind: "office", contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+  }
+  if (extension === ".json") {
+    return { kind: "text", contentType: "application/json; charset=utf-8" };
+  }
+  if (extension === ".csv") {
+    return { kind: "text", contentType: "text/csv; charset=utf-8" };
+  }
+  if (extension === ".md") {
+    return { kind: "text", contentType: "text/markdown; charset=utf-8" };
+  }
+  return { kind: "text", contentType: "text/plain; charset=utf-8" };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

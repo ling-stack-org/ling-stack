@@ -25,13 +25,45 @@ import type {
 } from "./media-types.js";
 import type {
   Channel,
+  ChannelAttachment,
+  ChannelBrief,
+  ChannelContextSummary,
+  ChannelDecision,
+  ChannelWorkflow,
+  ChannelWorkflowStep,
+  ChannelHandoff,
+  ChannelLinkPreview,
+  ChannelMessage,
   ChannelUpdateInput,
+  CreateChannelAttachmentInput,
+  CreateChannelContextSummaryInput,
+  CreateChannelDecisionInput,
+  CreateChannelWorkflowInput,
+  CreateChannelWorkflowStepInput,
+  CreateChannelHandoffInput,
   CreateChannelInput,
+  CreateChannelLinkPreviewInput,
+  CreateChannelMessageInput,
   CreateTaskInput,
+  ListChannelAttachmentsOptions,
+  ListChannelContextSummariesOptions,
+  ListChannelDecisionsOptions,
+  ListChannelWorkflowStepsOptions,
+  ListChannelWorkflowsOptions,
+  ListChannelHandoffsOptions,
   ListChannelsOptions,
+  ListChannelLinkPreviewsOptions,
+  ListChannelMessagesOptions,
   ListTasksOptions,
   Task,
   TaskUpdateInput,
+  UpdateChannelBriefInput,
+  UpdateChannelContextSummaryInput,
+  UpdateChannelDecisionInput,
+  UpdateChannelWorkflowInput,
+  UpdateChannelWorkflowStepInput,
+  UpdateChannelHandoffInput,
+  UpdateChannelLinkPreviewInput,
 } from "./workspace-types.js";
 import type {
   CreateResourceLeaseInput,
@@ -48,6 +80,8 @@ import type {
   StateTransitionActor,
   TaskTransitionEvent,
   TransitionResult,
+  WorkflowStepTransitionEvent,
+  WorkflowTransitionEvent,
 } from "./state-machines.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
@@ -231,6 +265,65 @@ export interface RunStore {
   listTasks(options?: ListTasksOptions): Task[];
   updateTask(id: string, input: TaskUpdateInput, now: string): Task | undefined;
   deleteTask(id: string): boolean;
+  createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage;
+  getChannelMessage(id: string): ChannelMessage | undefined;
+  listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[];
+  createChannelAttachment(input: CreateChannelAttachmentInput): ChannelAttachment;
+  getChannelAttachment(id: string): ChannelAttachment | undefined;
+  listChannelAttachments(options: ListChannelAttachmentsOptions): ChannelAttachment[];
+  deleteChannelAttachment(id: string): boolean;
+  createChannelLinkPreview(input: CreateChannelLinkPreviewInput, now: string): ChannelLinkPreview;
+  getChannelLinkPreview(id: string): ChannelLinkPreview | undefined;
+  listChannelLinkPreviews(options: ListChannelLinkPreviewsOptions): ChannelLinkPreview[];
+  updateChannelLinkPreview(id: string, input: UpdateChannelLinkPreviewInput, now: string): ChannelLinkPreview | undefined;
+  getChannelBrief(channelId: string): ChannelBrief | undefined;
+  updateChannelBrief(channelId: string, input: UpdateChannelBriefInput, now: string): ChannelBrief;
+  createChannelDecision(input: CreateChannelDecisionInput, now: string): ChannelDecision;
+  getChannelDecision(id: string): ChannelDecision | undefined;
+  listChannelDecisions(options: ListChannelDecisionsOptions): ChannelDecision[];
+  updateChannelDecision(id: string, input: UpdateChannelDecisionInput, now: string): ChannelDecision | undefined;
+  createChannelHandoff(input: CreateChannelHandoffInput, now: string): ChannelHandoff;
+  getChannelHandoff(id: string): ChannelHandoff | undefined;
+  listChannelHandoffs(options: ListChannelHandoffsOptions): ChannelHandoff[];
+  updateChannelHandoff(id: string, input: UpdateChannelHandoffInput, now: string): ChannelHandoff | undefined;
+  createChannelContextSummary(input: CreateChannelContextSummaryInput, now: string): ChannelContextSummary;
+  getChannelContextSummary(id: string): ChannelContextSummary | undefined;
+  listChannelContextSummaries(options: ListChannelContextSummariesOptions): ChannelContextSummary[];
+  updateChannelContextSummary(
+    id: string,
+    input: UpdateChannelContextSummaryInput,
+    now: string,
+  ): ChannelContextSummary | undefined;
+  createChannelWorkflow(input: CreateChannelWorkflowInput, now: string): ChannelWorkflow;
+  getChannelWorkflow(id: string): ChannelWorkflow | undefined;
+  listChannelWorkflows(options: ListChannelWorkflowsOptions): ChannelWorkflow[];
+  updateChannelWorkflow(id: string, input: UpdateChannelWorkflowInput, now: string): ChannelWorkflow | undefined;
+  transitionChannelWorkflowStatus(input: {
+    readonly workflowId: string;
+    readonly expectedStatus?: ChannelWorkflow["status"];
+    readonly event: WorkflowTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+  }): TransitionResult<ChannelWorkflow["status"]>;
+  createChannelWorkflowStep(input: CreateChannelWorkflowStepInput, now: string): ChannelWorkflowStep;
+  getChannelWorkflowStep(id: string): ChannelWorkflowStep | undefined;
+  listChannelWorkflowSteps(options: ListChannelWorkflowStepsOptions): ChannelWorkflowStep[];
+  updateChannelWorkflowStep(id: string, input: UpdateChannelWorkflowStepInput, now: string): ChannelWorkflowStep | undefined;
+  transitionChannelWorkflowStepStatus(input: {
+    readonly workflowStepId: string;
+    readonly expectedStatus?: ChannelWorkflowStep["status"];
+    readonly event: WorkflowStepTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+    readonly taskId?: string | null;
+    readonly runId?: string | null;
+    readonly blocker?: string | null;
+    readonly resultSummary?: string | null;
+  }): TransitionResult<ChannelWorkflowStep["status"]>;
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset;
   getProviderPreset(id: string): ProviderPreset | undefined;
   listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];

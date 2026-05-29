@@ -9,10 +9,78 @@ This design depends on:
 - [Session persistence](session-persistence.md)
 - [Provider presets](provider-presets.md)
 - [Approval policy](approval-policy.md)
+- [Channel workspace](channel-workspace.md)
 
 The current `apps/web` package now provides the local app shell, Model Workbench provider setup with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, a client-style channel workspace, compact task creation/running, channel runtime policy controls, active lease/conflict signals, state-machine timelines, contextual readiness and first-run panels, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
 
 The AI teammates page now uses the same client direction: a Helio-inspired, macOS-like wizard for choosing a default role, binding a model, filling profile details, and scoping channels/memory/files. It is still a local draft flow until the daemon teammate API exists.
+
+The richer channel surface is tracked in [Channel Workspace Design](channel-workspace.md). That document is the source of truth for channel tabs, default AI teammate assignment, member/notification/settings inspector behavior, file/artifact access, and the phased implementation checklist.
+
+Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, `Files`, and `Channel protocol` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions; durable channel messages; no-tools AI discussion replies; user attachments; metadata-only web link previews; and discussion-to-task conversion with `assigneeTeammateId` derived from the first AI mention or channel default teammate.
+
+Implemented v1.1 behavior: the channel inspector adds `Brief`, `Decisions`, `Handoffs`, and
+`Runtime` modes. Activity now synthesizes channel messages with decision, handoff, and
+context summary records. These protocol records are manual and auditable; they do not
+start runs, call AI providers, ingest attachments/links, or mutate task/run state.
+
+Implemented v1.2 behavior: handoff cards can create durable workflow/step records, the
+channel protocol surface lives behind the `Channel protocol` tab beside Activity, Tasks,
+and Files instead of occupying the task detail panel, Runtime shows a Workflow queue with
+context packet metadata, blockers, linked task/run ids, and step controls, Activity
+includes workflow/step items, and Task detail shows the source workflow/step for tasks
+created from a workflow step. Task detail now lives inside the `Tasks` tab instead of
+occupying the default channel chat view. `Start step` creates a task for review, while
+`Start + run` enters the existing task/run stream and approval/runtime boundaries.
+
+Implemented v1.3 behavior: the channel Activity tab now behaves like a focused chat
+workspace with an independently scrollable message feed, sticky in-tab composer,
+explicit send/AI reply/attachment/link-preview states, task-conversion feedback that can
+open the created task in `Tasks`, and complete English/Chinese coverage for touched
+channel strings. v1.3 remains a Web experience polish slice and does not add automatic
+multi-agent loops, file/webpage body ingestion, notification persistence, or a custom
+workflow builder.
+
+Implemented v1.4 behavior: the channel `Files` tab now separates user uploads, shared
+links, and run artifacts. It shows selected-channel run artifacts, summary paths, and
+event log paths through existing artifact APIs without reading artifact bodies or adding
+backend contracts.
+
+Implemented v1.5 behavior: the channel `Activity` tab is now a derived timeline that mixes
+messages, protocol records, tasks, runs, approvals, state transitions, workflows, and
+workflow steps. v1.5 remains Web-only and does not add durable channel event storage,
+notification persistence, ingestion, automatic multi-agent loops, or a workflow builder.
+
+Implemented v1.6 behavior: the channel `Activity` timeline now has local search,
+category filters, attention filters, counts, and no-match empty states. v1.6 remains
+Web-only and does not add backend contracts, durable channel events, notification
+persistence, ingestion, automatic multi-agent loops, or a workflow builder.
+
+Implemented v1.7 behavior: the channel `Activity` timeline now has local saved views and
+a compact attention queue for blocked, failed, and pending items. v1.7 remains Web-only
+and does not add backend contracts, durable channel events, notification persistence,
+ingestion, automatic multi-agent loops, or a workflow builder.
+
+Implemented v1.8 behavior: Activity cards and Attention Queue items now have a lightweight
+source drilldown drawer that explains the selected event, related objects, and existing
+navigation actions without restoring a persistent task-detail split pane. v1.8 remains
+Web-only and does not add backend contracts, durable channel events, notification
+persistence, ingestion, automatic multi-agent loops, or a workflow builder.
+
+Implemented v1.9 behavior: the Activity details drawer now has lightweight triage actions
+for creating follow-up tasks, handoffs, decisions, and context summaries from the
+selected event. It preserves local Activity state, keeps drafts on mutation failure, and
+uses existing task/protocol records for confirmations and navigation. v1.9 remains
+Web-only and does not add backend contracts, durable channel events, persisted triage
+resolution state, notification persistence, ingestion, automatic multi-agent loops, or a
+workflow builder.
+
+Implemented v1.10 behavior: the channel Activity tab keeps the v1.6-v1.9 controls but
+moves secondary surfaces behind progressive disclosure. Saved views are a compact view
+selector, category and attention filters live behind a filter panel, empty attention
+state no longer occupies a full card, composer AI teammate mentions collapse to the
+default teammate plus picker, and details drawer metadata/triage sections are folded by
+default. v1.10 remains Web-only and does not add backend contracts.
 
 ## Goal
 
@@ -67,7 +135,8 @@ The default Web entry should now behave like a lightweight desktop client:
 - keep workspace, channels, AI teammates, and direct messages in the left sidebar,
 - keep provider setup, approval inbox/policy, media jobs, and settings in the configuration rail or dedicated pages,
 - give AI teammates a dedicated management page instead of leaving them as decorative sidebar presence,
-- keep the center focused on channel activity, task cards, and the task composer,
+- keep the center focused on channel activity and the discussion/task composer by default,
+- keep task detail inside the `Tasks` tab so chat is not squeezed by a persistent detail pane,
 - keep readiness, first-run guidance, approvals, and live events in the right context panel,
 - avoid showing channel/provider/policy forms as the first thing a ready user sees.
 
@@ -107,7 +176,7 @@ Use a three-region app shell with macOS-style glass surfaces:
 ├──────────────┬──────────────────────────────┬────────────┤
 │ Sidebar      │ Channel workspace            │ Context    │
 │ Workspace    │ # engineering activity       │ readiness  │
-│ Inbox/Tasks  │ task cards + composer        │ first-run   │
+│ Inbox/Tasks  │ chat / task tabs             │ first-run   │
 │ Channels     │                              │ approvals  │
 │ AI teammates │                              │ event feed  │
 │ DMs          │                              │            │
@@ -156,7 +225,7 @@ Purpose:
 Current homepage shape:
 
 - left sidebar owns workspace navigation, channel selection, AI teammate presence, direct messages, and compact configuration icons,
-- center channel window shows the selected channel header, daemon/provider chips, activity messages, task cards, and a task composer,
+- center channel window shows the selected channel header, daemon/provider chips, Activity chat/composer, and task queue/detail inside the Tasks tab,
 - right context panel shows readiness, first-run state, pending approvals, and event stream,
 - runtime state panel shows active runs, pending approvals, active resource leases, and recent state transitions,
 - channel creation and other configuration controls are collapsed or moved out of the primary center flow.

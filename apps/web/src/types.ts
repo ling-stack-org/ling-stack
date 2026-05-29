@@ -64,6 +64,7 @@ export interface ChannelFormState {
   readonly status: ChannelStatus;
   readonly boundPath: string;
   readonly defaultProviderPresetId: string;
+  readonly defaultTeammateId: string;
   readonly allowedTools: readonly ToolName[];
   readonly runtimePolicy: ChannelRuntimePolicy;
 }
@@ -71,6 +72,7 @@ export interface ChannelFormState {
 export interface TaskFormState {
   readonly title: string;
   readonly prompt: string;
+  readonly assigneeTeammateId?: string;
 }
 
 export interface TaskRunActionState {

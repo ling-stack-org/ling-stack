@@ -4,11 +4,40 @@ import type {
   ApprovalMutationResponse,
   ApprovalPolicyFormState,
   ApprovalPolicyResponse,
+  ChannelAttachment,
+  ChannelAttachmentListResponse,
+  ChannelAttachmentMutationResponse,
+  ChannelBriefMutationResponse,
+  ChannelBriefResponse,
+  ChannelContextSummaryListResponse,
+  ChannelContextSummaryMutationResponse,
+  ChannelContextSummaryTargetType,
+  ChannelDecisionListResponse,
+  ChannelDecisionMutationResponse,
+  ChannelHandoffListResponse,
+  ChannelHandoffMutationResponse,
+  ChannelLinkPreviewListResponse,
+  ChannelLinkPreviewMutationResponse,
   Channel,
   ChannelFormState,
   ChannelListResponse,
+  ChannelMessageListResponse,
+  ChannelMessageMutationResponse,
   ChannelMutationResponse,
+  ChannelWorkflowListResponse,
+  ChannelWorkflowMutationResponse,
+  ChannelWorkflowStepListResponse,
+  ChannelWorkflowStepMutationResponse,
+  ChannelWorkflowStepStartResponse,
+  CreateChannelContextSummaryRequest,
+  CreateChannelDecisionRequest,
+  CreateChannelHandoffRequest,
+  CreateChannelLinkPreviewRequest,
+  CreateChannelMessageRequest,
   CreateChannelRequest,
+  CreateChannelWorkflowFromHandoffRequest,
+  CreateChannelWorkflowRequest,
+  CreateChannelWorkflowStepRequest,
   CreateMediaJobRequest,
   DaemonHealthResponse,
   MediaJobFormState,
@@ -40,8 +69,15 @@ import type {
   TaskListResponse,
   TaskMutationResponse,
   ToolName,
+  UpdateChannelBriefRequest,
+  UpdateChannelContextSummaryRequest,
+  UpdateChannelDecisionRequest,
+  UpdateChannelHandoffRequest,
+  UpdateChannelWorkflowRequest,
+  UpdateChannelWorkflowStepRequest,
   UpdateChannelRequest,
   UpdateTaskRequest,
+  StartChannelWorkflowStepRequest,
 } from "./types.js";
 
 export const daemonBaseUrl = daemonBaseUrlFromEnv(import.meta.env as Record<string, string | undefined>);
@@ -84,6 +120,192 @@ export async function deleteChannel(cwd: string, channelId: string): Promise<voi
   await daemonClient.deleteChannel(cwd, channelId);
 }
 
+export async function listChannelMessages(cwd: string, channelId: string): Promise<ChannelMessageListResponse> {
+  return daemonClient.listChannelMessages(cwd, channelId);
+}
+
+export async function createChannelMessage(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelMessageRequest,
+): Promise<ChannelMessageMutationResponse> {
+  return daemonClient.createChannelMessage(cwd, channelId, input);
+}
+
+export async function listChannelAttachments(cwd: string, channelId: string): Promise<ChannelAttachmentListResponse> {
+  return daemonClient.listChannelAttachments(cwd, channelId);
+}
+
+export async function uploadChannelAttachment(
+  cwd: string,
+  channelId: string,
+  file: File,
+  messageId?: string,
+): Promise<ChannelAttachmentMutationResponse> {
+  return daemonClient.createChannelAttachment(cwd, channelId, {
+    fileName: file.name,
+    contentType: file.type || undefined,
+    contentBase64: await fileToBase64(file),
+    messageId,
+  });
+}
+
+export async function deleteChannelAttachment(cwd: string, attachmentId: string): Promise<void> {
+  await daemonClient.deleteChannelAttachment(cwd, attachmentId);
+}
+
+export function channelAttachmentContentUrl(attachment: ChannelAttachment, cwd?: string): string {
+  return daemonClient.attachmentContentUrl(attachment.id, cwd);
+}
+
+export async function listChannelLinkPreviews(cwd: string, channelId: string): Promise<ChannelLinkPreviewListResponse> {
+  return daemonClient.listChannelLinkPreviews(cwd, channelId);
+}
+
+export async function createChannelLinkPreview(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelLinkPreviewRequest,
+): Promise<ChannelLinkPreviewMutationResponse> {
+  return daemonClient.createChannelLinkPreview(cwd, channelId, input);
+}
+
+export async function refreshChannelLinkPreview(cwd: string, linkPreviewId: string): Promise<ChannelLinkPreviewMutationResponse> {
+  return daemonClient.refreshChannelLinkPreview(cwd, linkPreviewId);
+}
+
+export async function getChannelBrief(cwd: string, channelId: string): Promise<ChannelBriefResponse> {
+  return daemonClient.getChannelBrief(cwd, channelId);
+}
+
+export async function updateChannelBrief(
+  cwd: string,
+  channelId: string,
+  input: UpdateChannelBriefRequest,
+): Promise<ChannelBriefMutationResponse> {
+  return daemonClient.updateChannelBrief(cwd, channelId, input);
+}
+
+export async function listChannelDecisions(cwd: string, channelId: string): Promise<ChannelDecisionListResponse> {
+  return daemonClient.listChannelDecisions(cwd, channelId);
+}
+
+export async function createChannelDecision(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelDecisionRequest,
+): Promise<ChannelDecisionMutationResponse> {
+  return daemonClient.createChannelDecision(cwd, channelId, input);
+}
+
+export async function updateChannelDecision(
+  cwd: string,
+  decisionId: string,
+  input: UpdateChannelDecisionRequest,
+): Promise<ChannelDecisionMutationResponse> {
+  return daemonClient.updateChannelDecision(cwd, decisionId, input);
+}
+
+export async function listChannelHandoffs(cwd: string, channelId: string): Promise<ChannelHandoffListResponse> {
+  return daemonClient.listChannelHandoffs(cwd, channelId);
+}
+
+export async function createChannelHandoff(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelHandoffRequest,
+): Promise<ChannelHandoffMutationResponse> {
+  return daemonClient.createChannelHandoff(cwd, channelId, input);
+}
+
+export async function updateChannelHandoff(
+  cwd: string,
+  handoffId: string,
+  input: UpdateChannelHandoffRequest,
+): Promise<ChannelHandoffMutationResponse> {
+  return daemonClient.updateChannelHandoff(cwd, handoffId, input);
+}
+
+export async function listChannelContextSummaries(
+  cwd: string,
+  channelId: string,
+  options: { readonly targetType?: ChannelContextSummaryTargetType; readonly targetId?: string } = {},
+): Promise<ChannelContextSummaryListResponse> {
+  return daemonClient.listChannelContextSummaries(cwd, channelId, options);
+}
+
+export async function createChannelContextSummary(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelContextSummaryRequest,
+): Promise<ChannelContextSummaryMutationResponse> {
+  return daemonClient.createChannelContextSummary(cwd, channelId, input);
+}
+
+export async function updateChannelContextSummary(
+  cwd: string,
+  contextSummaryId: string,
+  input: UpdateChannelContextSummaryRequest,
+): Promise<ChannelContextSummaryMutationResponse> {
+  return daemonClient.updateChannelContextSummary(cwd, contextSummaryId, input);
+}
+
+export async function listChannelWorkflows(cwd: string, channelId: string): Promise<ChannelWorkflowListResponse> {
+  return daemonClient.listChannelWorkflows(cwd, channelId);
+}
+
+export async function createChannelWorkflow(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelWorkflowRequest,
+): Promise<ChannelWorkflowMutationResponse> {
+  return daemonClient.createChannelWorkflow(cwd, channelId, input);
+}
+
+export async function updateChannelWorkflow(
+  cwd: string,
+  workflowId: string,
+  input: UpdateChannelWorkflowRequest,
+): Promise<ChannelWorkflowMutationResponse> {
+  return daemonClient.updateChannelWorkflow(cwd, workflowId, input);
+}
+
+export async function createChannelWorkflowFromHandoff(
+  cwd: string,
+  handoffId: string,
+  input: CreateChannelWorkflowFromHandoffRequest,
+): Promise<ChannelWorkflowMutationResponse> {
+  return daemonClient.createChannelWorkflowFromHandoff(cwd, handoffId, input);
+}
+
+export async function listChannelWorkflowSteps(cwd: string, workflowId: string): Promise<ChannelWorkflowStepListResponse> {
+  return daemonClient.listChannelWorkflowSteps(cwd, workflowId);
+}
+
+export async function createChannelWorkflowStep(
+  cwd: string,
+  workflowId: string,
+  input: CreateChannelWorkflowStepRequest,
+): Promise<ChannelWorkflowStepMutationResponse> {
+  return daemonClient.createChannelWorkflowStep(cwd, workflowId, input);
+}
+
+export async function updateChannelWorkflowStep(
+  cwd: string,
+  workflowStepId: string,
+  input: UpdateChannelWorkflowStepRequest,
+): Promise<ChannelWorkflowStepMutationResponse> {
+  return daemonClient.updateChannelWorkflowStep(cwd, workflowStepId, input);
+}
+
+export async function startChannelWorkflowStep(
+  cwd: string,
+  workflowStepId: string,
+  input: StartChannelWorkflowStepRequest,
+): Promise<ChannelWorkflowStepStartResponse> {
+  return daemonClient.startChannelWorkflowStep(cwd, workflowStepId, input);
+}
+
 export async function listTasks(cwd: string, channelId?: string): Promise<TaskListResponse> {
   return daemonClient.listTasks(cwd, { channelId });
 }
@@ -93,6 +315,7 @@ export async function createTask(cwd: string, channelId: string, form: TaskFormS
     channelId,
     title: form.title,
     prompt: form.prompt,
+    assigneeTeammateId: form.assigneeTeammateId,
   });
 }
 
@@ -338,6 +561,7 @@ function channelFormToPayload(form: ChannelFormState): CreateChannelRequest {
     status: form.status,
     boundPath: form.boundPath.trim() || undefined,
     defaultProviderPresetId: form.defaultProviderPresetId || undefined,
+    defaultTeammateId: form.defaultTeammateId || undefined,
     allowedTools: form.allowedTools.filter(isRunnerTool),
     runtimePolicy: form.runtimePolicy,
   };
@@ -349,6 +573,7 @@ function channelFormToUpdatePayload(form: ChannelFormState): UpdateChannelReques
     status: form.status,
     boundPath: form.boundPath.trim() || null,
     defaultProviderPresetId: form.defaultProviderPresetId || null,
+    defaultTeammateId: form.defaultTeammateId || null,
     allowedTools: form.allowedTools.filter(isRunnerTool),
     runtimePolicy: form.runtimePolicy,
   };
@@ -395,6 +620,23 @@ function splitLines(value: string): string[] {
     .split(/\r?\n/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("FileReader did not return a data URL"));
+        return;
+      }
+      resolve(reader.result);
+    });
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("Failed to read file")));
+    reader.readAsDataURL(file);
+  });
+  const commaIndex = dataUrl.indexOf(",");
+  return commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl;
 }
 
 function isRunnerTool(tool: ToolName): tool is "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write" {

@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, isAbsolute, relative, resolve as resolvePath } from "node:path";
+import { lookup } from "node:dns/promises";
+import { mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { isIP } from "node:net";
+import { basename, extname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import {
   approvalToolDecisions,
   approvalStatuses,
@@ -32,6 +34,29 @@ import {
   type ApprovalStatus,
   type ApprovalToolDecision,
   type ArtifactType,
+  type ChannelAttachment,
+  type ChannelAttachmentKind,
+  type ChannelBrief,
+  channelContextSummaryAuthorTypes,
+  channelContextSummaryTargetTypes,
+  channelWorkflowStatuses,
+  channelWorkflowStepStatuses,
+  type ChannelContextSummaryAuthorType,
+  type ChannelContextSummaryTargetType,
+  channelDecisionStatuses,
+  type ChannelDecisionStatus,
+  channelHandoffStatuses,
+  type ChannelHandoff,
+  type ChannelHandoffStatus,
+  type ChannelWorkflowStatus,
+  type ChannelWorkflowStepStartMode,
+  type ChannelWorkflowStepStatus,
+  type ChannelLinkPreview,
+  type ChannelMention,
+  type ChannelMessage,
+  type ChannelMessageAuthorType,
+  type ChannelMessageIntent,
+  type ChannelMessageKind,
   type CreateApprovalRequestInput,
   type ChannelUpdateInput,
   type Channel,
@@ -65,6 +90,7 @@ import {
   type SecretPurpose,
   type SecretResolver,
   type SecretStatus,
+  type Task,
   type TaskStatus,
   type TaskUpdateInput,
 } from "@ling-stack/core";
@@ -131,6 +157,11 @@ const APPROVAL_PREVIEW_LIMIT = 1_200;
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
 const MAX_EXTRACTED_ARTIFACT_BYTES = 256 * 1024;
 const MAX_EXTRACTED_ARTIFACTS_PER_TOOL = 6;
+const CHANNEL_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+const CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES = 40 * 1024 * 1024;
+const CHANNEL_LINK_PREVIEW_TIMEOUT_MS = 5_000;
+const CHANNEL_LINK_PREVIEW_MAX_BYTES = 192 * 1024;
+const CHANNEL_LINK_PREVIEW_MAX_REDIRECTS = 3;
 
 export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider"> {
   readonly workspaceCwd?: string;
@@ -138,6 +169,175 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly provider?: PiRunnerProviderConfig;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
+}
+
+interface ChannelMessageRequest {
+  readonly threadId?: string;
+  readonly kind?: ChannelMessageKind;
+  readonly intent?: ChannelMessageIntent;
+  readonly authorType: ChannelMessageAuthorType;
+  readonly authorId?: string;
+  readonly body: string;
+  readonly mentions: readonly ChannelMention[];
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly linkedTaskId?: string;
+  readonly linkedRunId?: string;
+  readonly requestAiReply: boolean;
+  readonly providerPresetId?: string;
+  readonly teammateId?: string;
+}
+
+interface ChannelAttachmentRequest {
+  readonly fileName: string;
+  readonly contentType?: string;
+  readonly contentBase64: string;
+  readonly messageId?: string;
+}
+
+interface ChannelLinkPreviewRequest {
+  readonly url: string;
+  readonly messageId?: string;
+}
+
+interface ChannelBriefRequest {
+  readonly objective: string;
+  readonly scope: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly openQuestions: readonly string[];
+  readonly risks: readonly string[];
+  readonly decisionIds: readonly string[];
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly updatedBy: string;
+}
+
+interface ChannelDecisionRequest {
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly title: string;
+  readonly decision: string;
+  readonly rationale?: string;
+  readonly alternatives: readonly string[];
+  readonly status?: ChannelDecisionStatus;
+  readonly supersedesDecisionId?: string;
+  readonly createdBy: string;
+}
+
+interface ChannelDecisionUpdateRequest {
+  readonly title?: string;
+  readonly decision?: string;
+  readonly rationale?: string;
+  readonly alternatives?: readonly string[];
+  readonly status?: ChannelDecisionStatus;
+}
+
+interface ChannelHandoffRequest {
+  readonly sourceMessageId?: string;
+  readonly sourceTaskId?: string;
+  readonly sourceRunId?: string;
+  readonly fromParticipantId: string;
+  readonly fromParticipantLabel: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly reason: string;
+  readonly requiredInput: string;
+  readonly expectedOutput: string;
+  readonly status?: ChannelHandoffStatus;
+  readonly createdBy: string;
+}
+
+interface ChannelHandoffUpdateRequest {
+  readonly fromParticipantId?: string;
+  readonly fromParticipantLabel?: string;
+  readonly toParticipantId?: string;
+  readonly toParticipantLabel?: string;
+  readonly reason?: string;
+  readonly requiredInput?: string;
+  readonly expectedOutput?: string;
+  readonly status?: ChannelHandoffStatus;
+}
+
+interface ChannelContextSummaryRequest {
+  readonly targetType: ChannelContextSummaryTargetType;
+  readonly targetId: string;
+  readonly sourceMessageIds: readonly string[];
+  readonly decisionIds: readonly string[];
+  readonly summary: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly openQuestions: readonly string[];
+  readonly authorType: ChannelContextSummaryAuthorType;
+  readonly authorId?: string;
+}
+
+interface ChannelContextSummaryUpdateRequest {
+  readonly targetType?: ChannelContextSummaryTargetType;
+  readonly targetId?: string;
+  readonly sourceMessageIds?: readonly string[];
+  readonly decisionIds?: readonly string[];
+  readonly summary?: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly openQuestions?: readonly string[];
+  readonly authorType?: ChannelContextSummaryAuthorType;
+  readonly authorId?: string | null;
+}
+
+interface ChannelWorkflowRequest {
+  readonly sourceHandoffId?: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly status?: ChannelWorkflowStatus;
+  readonly createdBy: string;
+}
+
+interface ChannelWorkflowFromHandoffRequest {
+  readonly title?: string;
+  readonly objective?: string;
+  readonly contextSummaryId?: string;
+  readonly createdBy: string;
+}
+
+interface ChannelWorkflowUpdateRequest {
+  readonly title?: string;
+  readonly objective?: string;
+  readonly status?: ChannelWorkflowStatus;
+}
+
+interface ChannelWorkflowStepRequest {
+  readonly sourceHandoffId?: string;
+  readonly contextSummaryId?: string;
+  readonly position?: number;
+  readonly title: string;
+  readonly prompt: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly status?: ChannelWorkflowStepStatus;
+}
+
+interface ChannelWorkflowStepUpdateRequest {
+  readonly sourceHandoffId?: string | null;
+  readonly contextSummaryId?: string | null;
+  readonly taskId?: string | null;
+  readonly runId?: string | null;
+  readonly position?: number;
+  readonly title?: string;
+  readonly prompt?: string;
+  readonly toParticipantId?: string;
+  readonly toParticipantLabel?: string;
+  readonly status?: ChannelWorkflowStepStatus;
+  readonly blocker?: string | null;
+  readonly resultSummary?: string | null;
+}
+
+interface ChannelWorkflowStepStartRequest {
+  readonly mode: ChannelWorkflowStepStartMode;
+  readonly taskTitle?: string;
+  readonly taskPrompt?: string;
+  readonly providerPresetId?: string;
+  readonly assigneeTeammateId?: string;
+  readonly idempotencyKey?: string;
+  readonly skipProviderPreflight?: boolean;
 }
 
 interface PreparedRunConcurrency {
@@ -375,8 +575,88 @@ async function routeRequest(
     return;
   }
 
+  const attachmentRoute = parseChannelAttachmentRoute(url.pathname);
+  if (attachmentRoute) {
+    await handleChannelAttachmentItem(request, response, config, storeRegistry, attachmentRoute);
+    return;
+  }
+
+  const linkPreviewRoute = parseChannelLinkPreviewRoute(url.pathname);
+  if (linkPreviewRoute) {
+    await handleChannelLinkPreviewItem(request, response, config, storeRegistry, linkPreviewRoute);
+    return;
+  }
+
+  const decisionRoute = parseChannelDecisionRoute(url.pathname);
+  if (decisionRoute) {
+    await handleChannelDecisionItem(request, response, config, storeRegistry, decisionRoute.decisionId);
+    return;
+  }
+
+  const handoffRoute = parseChannelHandoffRoute(url.pathname);
+  if (handoffRoute) {
+    if (handoffRoute.action === "workflow") {
+      await handleChannelWorkflowFromHandoff(request, response, config, storeRegistry, handoffRoute.handoffId);
+      return;
+    }
+    await handleChannelHandoffItem(request, response, config, storeRegistry, handoffRoute.handoffId);
+    return;
+  }
+
+  const workflowRoute = parseChannelWorkflowRoute(url.pathname);
+  if (workflowRoute) {
+    if (workflowRoute.kind === "workflow") {
+      await handleChannelWorkflowItem(request, response, config, storeRegistry, workflowRoute.workflowId);
+      return;
+    }
+    if (workflowRoute.kind === "steps") {
+      await handleChannelWorkflowStepsCollection(request, response, config, storeRegistry, workflowRoute.workflowId);
+      return;
+    }
+    await handleChannelWorkflowStepItem(request, response, config, runner, storeRegistry, activeRuns, secretResolver, workflowRoute.workflowStepId, workflowRoute.action);
+    return;
+  }
+
+  const contextSummaryRoute = parseChannelContextSummaryRoute(url.pathname);
+  if (contextSummaryRoute) {
+    await handleChannelContextSummaryItem(request, response, config, storeRegistry, contextSummaryRoute.contextSummaryId);
+    return;
+  }
+
   const channelRoute = parseChannelRoute(url.pathname);
   if (channelRoute) {
+    if (channelRoute.action === "brief") {
+      await handleChannelBrief(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "messages") {
+      await handleChannelMessagesCollection(request, response, config, runner, storeRegistry, secretResolver, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "attachments") {
+      await handleChannelAttachmentsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "link-previews") {
+      await handleChannelLinkPreviewsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "decisions") {
+      await handleChannelDecisionsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "handoffs") {
+      await handleChannelHandoffsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "context-summaries") {
+      await handleChannelContextSummariesCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "workflows") {
+      await handleChannelWorkflowsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
     await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId);
     return;
   }
@@ -474,7 +754,7 @@ async function executeRunRequest(
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
   secretResolver: SecretResolver,
-): Promise<void> {
+): Promise<string | undefined> {
   let store: RunStore | undefined;
   let run: RunSession | undefined;
   let runnerRequest: PiRunnerRunOptions;
@@ -540,19 +820,19 @@ async function executeRunRequest(
       writeSseHead(response);
       writeSse(response, "ready", { ok: true, runId: error.runId, duplicate: true });
       response.end();
-      return;
+      return error.runId;
     }
     const statusCode = error instanceof HttpError ? error.statusCode : 500;
     writeJson(response, statusCode, {
       error: error instanceof HttpError ? error.code : "run_storage_unavailable",
       message: error instanceof Error ? error.message : String(error),
     });
-    return;
+    return undefined;
   }
 
   if (!store || !run) {
     writeJson(response, 500, { error: "run_storage_unavailable", message: "Run was not initialized." });
-    return;
+    return undefined;
   }
 
   writeSseHead(response);
@@ -683,7 +963,7 @@ async function executeRunRequest(
       if (!clientClosed) {
         response.end();
       }
-      return;
+      return run.id;
     }
 
     const resultEnvelope = appendAndMaybeStream("result", {
@@ -744,7 +1024,7 @@ async function executeRunRequest(
       if (!clientClosed) {
         response.end();
       }
-      return;
+      return run.id;
     }
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), resolvedSecretValues);
     const endedAt = new Date().toISOString();
@@ -790,6 +1070,7 @@ async function executeRunRequest(
     store.releaseResourceLeasesForOwner("run", run.id, new Date().toISOString());
     activeRuns.delete(run.id);
   }
+  return run.id;
 }
 
 function prepareRunConcurrency(input: {
@@ -1034,6 +1315,1323 @@ async function handleChannelItem(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+async function handleChannelMessagesCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        messages: store.listChannelMessages({
+          channelId,
+          threadId: url.searchParams.get("threadId") ?? undefined,
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelMessageRequest(body);
+      const referenceError = validateChannelMessageReferences(store, channelId, input.attachmentIds, input.linkPreviewIds);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, {
+          error: referenceError.code,
+          message: referenceError.message,
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      const message = store.createChannelMessage(
+        {
+          channelId,
+          threadId: input.threadId,
+          kind: input.kind ?? "message",
+          intent: input.intent ?? "discuss",
+          authorType: input.authorType,
+          authorId: input.authorId,
+          body: input.body,
+          mentions: input.mentions,
+          attachmentIds: input.attachmentIds,
+          linkPreviewIds: input.linkPreviewIds,
+          linkedTaskId: input.linkedTaskId,
+          linkedRunId: input.linkedRunId,
+        },
+        now,
+      );
+
+      let aiReply: ChannelMessage | undefined;
+      if (input.requestAiReply) {
+        aiReply = await createAiChannelReply({
+          runner,
+          store,
+          channel,
+          sourceMessage: message,
+          providerPresetId: input.providerPresetId,
+          teammateId: input.teammateId,
+          secretResolver,
+        });
+      }
+
+      writeJson(response, 201, aiReply ? { message, aiReply } : { message });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel messages` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelAttachmentsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        attachments: store.listChannelAttachments({ channelId, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, Math.max(config.maxBodyBytes, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES));
+      const input = parseChannelAttachmentRequest(body);
+      const messageError = input.messageId ? validateChannelMessageOwner(store, channelId, input.messageId) : undefined;
+      if (messageError) {
+        writeJson(response, messageError.statusCode, { error: messageError.code, message: messageError.message });
+        return;
+      }
+      const attachment = persistChannelAttachment(store, channelId, input);
+      writeJson(response, 201, { attachment });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel attachments` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelAttachmentItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  route: { readonly attachmentId: string; readonly action?: "content" },
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const attachment = store.getChannelAttachment(route.attachmentId);
+    if (!attachment) {
+      writeJson(response, 404, { error: "attachment_not_found", message: `Attachment not found: ${route.attachmentId}` });
+      return;
+    }
+
+    if (request.method === "GET" && route.action === "content") {
+      handleGetChannelAttachmentContent(response, store, attachment);
+      return;
+    }
+
+    if (request.method === "GET" && !route.action) {
+      writeJson(response, 200, { attachment });
+      return;
+    }
+
+    if (request.method === "DELETE" && !route.action) {
+      deleteChannelAttachmentContent(store, attachment);
+      store.deleteChannelAttachment(route.attachmentId);
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel attachment` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelLinkPreviewsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        linkPreviews: store.listChannelLinkPreviews({ channelId, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelLinkPreviewRequest(body);
+      const messageError = input.messageId ? validateChannelMessageOwner(store, channelId, input.messageId) : undefined;
+      if (messageError) {
+        writeJson(response, messageError.statusCode, { error: messageError.code, message: messageError.message });
+        return;
+      }
+      const linkPreview = await createOrFetchChannelLinkPreview(store, channelId, input);
+      writeJson(response, 201, { linkPreview });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel link previews` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelLinkPreviewItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  route: { readonly linkPreviewId: string; readonly action: "refresh" },
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const existing = store.getChannelLinkPreview(route.linkPreviewId);
+    if (!existing) {
+      writeJson(response, 404, { error: "link_preview_not_found", message: `Link preview not found: ${route.linkPreviewId}` });
+      return;
+    }
+    if (request.method !== "POST") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for link preview refresh` });
+      return;
+    }
+    const metadata = await fetchLinkPreviewMetadata(existing.normalizedUrl);
+    const updated = store.updateChannelLinkPreview(
+      existing.id,
+      metadata,
+      new Date().toISOString(),
+    );
+    writeJson(response, 200, { linkPreview: updated ?? existing });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelBrief(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        brief: store.getChannelBrief(channelId) ?? createEmptyChannelBrief(channel),
+      });
+      return;
+    }
+
+    if (request.method === "PATCH") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelBriefRequest(body);
+      const referenceError = validateChannelBriefReferences(store, channelId, input);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
+        return;
+      }
+      const brief = store.updateChannelBrief(channelId, input, new Date().toISOString());
+      writeJson(response, 200, { brief });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel brief` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelDecisionsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      const status = readOptionalChannelDecisionStatusQuery(url, "status");
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        decisions: store.listChannelDecisions({ channelId, status, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelDecisionRequest(body);
+      const referenceError = validateProtocolSourceReferences(store, channelId, input) ??
+        (input.supersedesDecisionId ? validateChannelDecisionOwner(store, channelId, input.supersedesDecisionId) : undefined);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
+        return;
+      }
+      const decision = store.createChannelDecision({ ...input, channelId }, new Date().toISOString());
+      writeJson(response, 201, { decision });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel decisions` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelDecisionItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  decisionId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const existing = store.getChannelDecision(decisionId);
+    if (!existing) {
+      writeJson(response, 404, { error: "decision_not_found", message: `Channel decision not found: ${decisionId}` });
+      return;
+    }
+    if (request.method !== "PATCH") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel decision` });
+      return;
+    }
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseChannelDecisionUpdateRequest(body);
+    const decision = store.updateChannelDecision(decisionId, input, new Date().toISOString());
+    writeJson(response, 200, { decision: decision ?? existing });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelHandoffsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      const status = readOptionalChannelHandoffStatusQuery(url, "status");
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        handoffs: store.listChannelHandoffs({ channelId, status, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelHandoffRequest(body);
+      const referenceError = validateProtocolSourceReferences(store, channelId, input);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
+        return;
+      }
+      const handoff = store.createChannelHandoff({ ...input, channelId }, new Date().toISOString());
+      writeJson(response, 201, { handoff });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel handoffs` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelHandoffItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  handoffId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const existing = store.getChannelHandoff(handoffId);
+    if (!existing) {
+      writeJson(response, 404, { error: "handoff_not_found", message: `Channel handoff not found: ${handoffId}` });
+      return;
+    }
+    if (request.method !== "PATCH") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel handoff` });
+      return;
+    }
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseChannelHandoffUpdateRequest(body);
+    const handoff = store.updateChannelHandoff(handoffId, input, new Date().toISOString());
+    writeJson(response, 200, { handoff: handoff ?? existing });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelContextSummariesCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      const targetType = readOptionalChannelContextSummaryTargetTypeQuery(url, "targetType");
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        contextSummaries: store.listChannelContextSummaries({
+          channelId,
+          targetType,
+          targetId: url.searchParams.get("targetId") ?? undefined,
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelContextSummaryRequest(body);
+      const referenceError = validateChannelContextSummaryReferences(store, channelId, input);
+      if (referenceError) {
+        writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
+        return;
+      }
+      const contextSummary = store.createChannelContextSummary({ ...input, channelId }, new Date().toISOString());
+      writeJson(response, 201, { contextSummary });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel context summaries` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelContextSummaryItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  contextSummaryId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const existing = store.getChannelContextSummary(contextSummaryId);
+    if (!existing) {
+      writeJson(response, 404, { error: "context_summary_not_found", message: `Channel context summary not found: ${contextSummaryId}` });
+      return;
+    }
+    if (request.method !== "PATCH") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel context summary` });
+      return;
+    }
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseChannelContextSummaryUpdateRequest(body);
+    const referenceError = validateChannelContextSummaryReferences(store, existing.channelId, {
+      targetType: input.targetType ?? existing.targetType,
+      targetId: input.targetId ?? existing.targetId,
+      sourceMessageIds: input.sourceMessageIds ?? existing.sourceMessageIds,
+      decisionIds: input.decisionIds ?? existing.decisionIds,
+    });
+    if (referenceError) {
+      writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
+      return;
+    }
+    const contextSummary = store.updateChannelContextSummary(contextSummaryId, input, new Date().toISOString());
+    writeJson(response, 200, { contextSummary: contextSummary ?? existing });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelWorkflowsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannel(channelId)) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        workflows: store.listChannelWorkflows({
+          channelId,
+          status: readOptionalChannelWorkflowStatusQuery(url, "status"),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelWorkflowRequest(body);
+      const workflow = store.createChannelWorkflow({ ...input, channelId }, new Date().toISOString());
+      writeJson(response, 201, { workflow });
+      return;
+    }
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel workflows` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelWorkflowFromHandoff(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  handoffId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for handoff workflow creation` });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const handoff = store.getChannelHandoff(handoffId);
+    if (!handoff) {
+      writeJson(response, 404, { error: "handoff_not_found", message: `Channel handoff not found: ${handoffId}` });
+      return;
+    }
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseChannelWorkflowFromHandoffRequest(body);
+    const workflow = store.createChannelWorkflow(
+      {
+        channelId: handoff.channelId,
+        sourceHandoffId: handoff.id,
+        title: input.title ?? `Handoff to ${handoff.toParticipantLabel}`,
+        objective: input.objective ?? (handoff.expectedOutput || handoff.reason || "Complete handoff workflow."),
+        createdBy: input.createdBy,
+      },
+      new Date().toISOString(),
+    );
+    const workflowStep = store.createChannelWorkflowStep(
+      {
+        workflowId: workflow.id,
+        sourceHandoffId: handoff.id,
+        contextSummaryId: input.contextSummaryId,
+        title: `Complete handoff: ${handoff.expectedOutput || handoff.reason || handoff.toParticipantLabel}`,
+        prompt: formatHandoffStepPrompt(handoff),
+        toParticipantId: handoff.toParticipantId,
+        toParticipantLabel: handoff.toParticipantLabel,
+      },
+      new Date().toISOString(),
+    );
+    writeJson(response, 201, { workflow, workflowStep });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelWorkflowItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  workflowId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const existing = store.getChannelWorkflow(workflowId);
+    if (!existing) {
+      writeJson(response, 404, { error: "workflow_not_found", message: `Channel workflow not found: ${workflowId}` });
+      return;
+    }
+    if (request.method === "GET") {
+      writeJson(response, 200, { workflow: existing });
+      return;
+    }
+    if (request.method !== "PATCH") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel workflow` });
+      return;
+    }
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseChannelWorkflowUpdateRequest(body);
+    if (input.status && input.status !== existing.status) {
+      const transition = transitionWorkflowToStatus(store, existing.id, existing.status, input.status, new Date().toISOString());
+      if (!transition.ok) {
+        writeJson(response, 409, { error: transition.code, message: `Workflow transition failed: ${transition.code}` });
+        return;
+      }
+    }
+    const workflow = store.updateChannelWorkflow(workflowId, { title: input.title, objective: input.objective }, new Date().toISOString());
+    writeJson(response, 200, { workflow: workflow ?? store.getChannelWorkflow(workflowId) ?? existing });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelWorkflowStepsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  workflowId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (!store.getChannelWorkflow(workflowId)) {
+      writeJson(response, 404, { error: "workflow_not_found", message: `Channel workflow not found: ${workflowId}` });
+      return;
+    }
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        workflowId,
+        workflowSteps: store.listChannelWorkflowSteps({
+          workflowId,
+          status: readOptionalChannelWorkflowStepStatusQuery(url, "status"),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelWorkflowStepRequest(body);
+      const workflowStep = store.createChannelWorkflowStep({ ...input, workflowId }, new Date().toISOString());
+      writeJson(response, 201, { workflowStep });
+      return;
+    }
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel workflow steps` });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelWorkflowStepItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
+  secretResolver: SecretResolver,
+  workflowStepId: string,
+  action?: "start",
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const existing = store.getChannelWorkflowStep(workflowStepId);
+    if (!existing) {
+      writeJson(response, 404, { error: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` });
+      return;
+    }
+    if (action === "start") {
+      await handleChannelWorkflowStepStart(request, response, config, runner, storeRegistry, activeRuns, secretResolver, cwd, existing.id);
+      return;
+    }
+    if (request.method === "GET") {
+      writeJson(response, 200, { workflowStep: existing });
+      return;
+    }
+    if (request.method !== "PATCH") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel workflow step` });
+      return;
+    }
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseChannelWorkflowStepUpdateRequest(body);
+    if (input.status && input.status !== existing.status) {
+      const transition = transitionWorkflowStepToStatus(store, existing.id, existing.status, input.status, new Date().toISOString(), {
+        taskId: input.taskId,
+        runId: input.runId,
+        blocker: input.blocker,
+        resultSummary: input.resultSummary,
+      });
+      if (!transition.ok) {
+        writeJson(response, 409, { error: transition.code, message: `Workflow step transition failed: ${transition.code}` });
+        return;
+      }
+    }
+    const workflowStep = store.updateChannelWorkflowStep(
+      workflowStepId,
+      { ...input, status: undefined },
+      new Date().toISOString(),
+    );
+    writeJson(response, 200, { workflowStep: workflowStep ?? store.getChannelWorkflowStep(workflowStepId) ?? existing });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleChannelWorkflowStepStart(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
+  secretResolver: SecretResolver,
+  cwd: string,
+  workflowStepId: string,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow step start` });
+    return;
+  }
+
+  const store = storeRegistry.getStore(cwd);
+  const body = await readJsonBody(request, config.maxBodyBytes);
+  const input = parseChannelWorkflowStepStartRequest(body);
+  const started = prepareWorkflowStepStart(store, workflowStepId, input, cwd, secretResolver);
+  if (started.kind === "blocked") {
+    writeJson(response, 200, {
+      workflow: store.getChannelWorkflow(started.workflowId),
+      workflowStep: store.getChannelWorkflowStep(workflowStepId),
+      blocker: started.blocker,
+    });
+    return;
+  }
+  if (started.kind === "error") {
+    writeJson(response, started.statusCode, { error: started.code, message: started.message });
+    return;
+  }
+
+  if (input.mode === "create_task") {
+    const finishedAt = new Date().toISOString();
+    store.transitionChannelWorkflowStepStatus({
+      workflowStepId,
+      expectedStatus: "running",
+      event: "succeed",
+      actor: "system",
+      reason: `task:${started.task.id}`,
+      now: finishedAt,
+      taskId: started.task.id,
+      resultSummary: "Task created from workflow step.",
+    });
+    completeWorkflowIfStepsFinished(store, started.workflowId, finishedAt);
+    writeJson(response, 200, {
+      workflow: store.getChannelWorkflow(started.workflowId),
+      workflowStep: store.getChannelWorkflowStep(workflowStepId),
+      task: started.task,
+    });
+    return;
+  }
+
+  const runId = await executeRunRequest(started.runRequest, response, runner, storeRegistry, activeRuns, secretResolver);
+  const completedAt = new Date().toISOString();
+  if (!runId) {
+    store.transitionChannelWorkflowStepStatus({
+      workflowStepId,
+      expectedStatus: "running",
+      event: "blocked",
+      actor: "system",
+      reason: "Run did not start.",
+      now: completedAt,
+      taskId: started.task.id,
+      blocker: "Run did not start.",
+    });
+    store.transitionChannelWorkflowStatus({
+      workflowId: started.workflowId,
+      event: "step_blocked",
+      actor: "system",
+      reason: "Run did not start.",
+      now: completedAt,
+    });
+    return;
+  }
+  const run = store.getRun(runId);
+  if (run?.status === "succeeded") {
+    store.transitionChannelWorkflowStepStatus({
+      workflowStepId,
+      expectedStatus: "running",
+      event: "succeed",
+      actor: "runner",
+      reason: `run:${runId}`,
+      now: completedAt,
+      taskId: started.task.id,
+      runId,
+      resultSummary: "Run succeeded.",
+    });
+    completeWorkflowIfStepsFinished(store, started.workflowId, completedAt);
+    return;
+  }
+  store.transitionChannelWorkflowStepStatus({
+    workflowStepId,
+    expectedStatus: "running",
+    event: "fail",
+    actor: "runner",
+    reason: run?.errorMessage ?? `run:${runId}`,
+    now: completedAt,
+    taskId: started.task.id,
+    runId,
+    blocker: run?.errorMessage,
+  });
+  store.transitionChannelWorkflowStatus({
+    workflowId: started.workflowId,
+    event: "step_failed",
+    actor: "runner",
+    reason: run?.errorMessage ?? `run:${runId}`,
+    now: completedAt,
+  });
+}
+
+type PreparedWorkflowStepStart =
+  | { readonly kind: "ready"; readonly workflowId: string; readonly task: Task; readonly runRequest: RunRequest }
+  | { readonly kind: "blocked"; readonly workflowId: string; readonly blocker: string }
+  | { readonly kind: "error"; readonly statusCode: number; readonly code: string; readonly message: string };
+
+function prepareWorkflowStepStart(
+  store: RunStore,
+  workflowStepId: string,
+  input: ChannelWorkflowStepStartRequest,
+  cwd: string,
+  secretResolver: SecretResolver,
+): PreparedWorkflowStepStart {
+  const step = store.getChannelWorkflowStep(workflowStepId);
+  if (!step) {
+    return { kind: "error", statusCode: 404, code: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` };
+  }
+  const workflow = store.getChannelWorkflow(step.workflowId);
+  if (!workflow) {
+    return { kind: "error", statusCode: 404, code: "workflow_not_found", message: `Channel workflow not found: ${step.workflowId}` };
+  }
+  const channel = store.getChannel(step.channelId);
+  if (!channel) {
+    return { kind: "error", statusCode: 404, code: "channel_not_found", message: `Channel not found: ${step.channelId}` };
+  }
+
+  const now = new Date().toISOString();
+  store.expireResourceLeases(now);
+  const lease = store.acquireResourceLease({
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    resourceType: "workflow_step",
+    resourceKey: step.id,
+    ownerType: "workflow_step",
+    ownerId: step.id,
+    acquiredAt: now,
+    expiresAt: new Date(new Date(now).getTime() + RESOURCE_LEASE_TTL_MS).toISOString(),
+  });
+  if (!lease) {
+    const blockingLease = store.getBlockingResourceLease("workflow_step", step.id);
+    return {
+      kind: "error",
+      statusCode: 409,
+      code: "resource_conflict",
+      message: blockingLease ? `Workflow step is locked by ${blockingLease.ownerType}:${blockingLease.ownerId}` : `Workflow step is locked: ${step.id}`,
+    };
+  }
+
+  const fail = (statusCode: number, code: string, message: string): PreparedWorkflowStepStart => {
+    store.releaseResourceLeasesForOwner("workflow_step", step.id, new Date().toISOString());
+    return { kind: "error", statusCode, code, message };
+  };
+  const block = (message: string): PreparedWorkflowStepStart => {
+    const blockedAt = new Date().toISOString();
+    store.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "running",
+      event: "blocked",
+      actor: "system",
+      reason: message,
+      now: blockedAt,
+      blocker: message,
+    });
+    store.transitionChannelWorkflowStatus({
+      workflowId: workflow.id,
+      event: "step_blocked",
+      actor: "system",
+      reason: message,
+      now: blockedAt,
+    });
+    store.releaseResourceLeasesForOwner("workflow_step", step.id, blockedAt);
+    return { kind: "blocked", workflowId: workflow.id, blocker: message };
+  };
+
+  const workflowTransition = ensureWorkflowRunning(store, workflow.id, workflow.status, now);
+  if (!workflowTransition.ok) {
+    return fail(409, workflowTransition.code, `Workflow transition failed: ${workflowTransition.code}`);
+  }
+  const latestStep = store.getChannelWorkflowStep(step.id) ?? step;
+  const stepTransition = ensureWorkflowStepRunning(store, step.id, latestStep.status, now);
+  if (!stepTransition.ok) {
+    return fail(409, stepTransition.code, `Workflow step transition failed: ${stepTransition.code}`);
+  }
+
+  const providerPresetId = input.providerPresetId ?? channel.defaultProviderPresetId;
+  const taskTitle = input.taskTitle ?? step.title;
+  const taskPrompt = input.taskPrompt ?? formatWorkflowStepTaskPrompt(step.prompt, workflow.objective);
+  const runRequestBase: RunRequest = {
+    workspaceCwd: cwd,
+    cwd: channel.boundPath ?? cwd,
+    providerPresetId,
+    skipProviderPreflight: input.skipProviderPreflight ?? false,
+    idempotencyKey: input.idempotencyKey ?? `workflow-step:${step.id}`,
+    task: {
+      id: "pending",
+      title: taskTitle,
+      prompt: taskPrompt,
+      channelId: channel.id,
+    },
+    tools: channel.allowedTools,
+    thinkingLevel: "medium",
+  };
+
+  if (input.mode === "create_and_run_task") {
+    if (!providerPresetId) {
+      return block("No provider preset is selected for this workflow step.");
+    }
+    try {
+      resolveProviderForRun(store, runRequestBase, secretResolver);
+    } catch (error) {
+      return block(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  const task = store.createTask(
+    {
+      channelId: channel.id,
+      title: taskTitle,
+      prompt: taskPrompt,
+      assigneeTeammateId: input.assigneeTeammateId ?? step.toParticipantId,
+    },
+    new Date().toISOString(),
+  );
+  store.updateChannelWorkflowStep(step.id, { taskId: task.id }, new Date().toISOString());
+
+  return {
+    kind: "ready",
+    workflowId: workflow.id,
+    task,
+    runRequest: {
+      ...runRequestBase,
+      task: {
+        id: task.id,
+        title: task.title,
+        prompt: task.prompt,
+        channelId: task.channelId,
+      },
+    },
+  };
+}
+
+function ensureWorkflowRunning(
+  store: RunStore,
+  workflowId: string,
+  status: ChannelWorkflowStatus,
+  now: string,
+): ReturnType<RunStore["transitionChannelWorkflowStatus"]> {
+  if (status === "running") {
+    return { ok: true, from: status, to: status };
+  }
+  if (status === "draft") {
+    const prepared = store.transitionChannelWorkflowStatus({
+      workflowId,
+      expectedStatus: "draft",
+      event: "prepare",
+      actor: "system",
+      now,
+    });
+    if (!prepared.ok) {
+      return prepared;
+    }
+    return store.transitionChannelWorkflowStatus({
+      workflowId,
+      expectedStatus: "ready",
+      event: "start",
+      actor: "system",
+      now,
+    });
+  }
+  if (status === "ready" || status === "blocked") {
+    return store.transitionChannelWorkflowStatus({
+      workflowId,
+      expectedStatus: status,
+      event: "start",
+      actor: "system",
+      now,
+    });
+  }
+  return { ok: false, code: "invalid_transition", currentStatus: status };
+}
+
+function ensureWorkflowStepRunning(
+  store: RunStore,
+  workflowStepId: string,
+  status: ChannelWorkflowStepStatus,
+  now: string,
+): ReturnType<RunStore["transitionChannelWorkflowStepStatus"]> {
+  if (status === "running") {
+    return { ok: true, from: status, to: status };
+  }
+  if (status === "queued") {
+    const claimed = store.transitionChannelWorkflowStepStatus({
+      workflowStepId,
+      expectedStatus: "queued",
+      event: "claim",
+      actor: "system",
+      now,
+    });
+    if (!claimed.ok) {
+      return claimed;
+    }
+    return store.transitionChannelWorkflowStepStatus({
+      workflowStepId,
+      expectedStatus: "claimed",
+      event: "start",
+      actor: "system",
+      now,
+      blocker: null,
+    });
+  }
+  if (status === "blocked") {
+    const resumed = store.transitionChannelWorkflowStepStatus({
+      workflowStepId,
+      expectedStatus: "blocked",
+      event: "resume",
+      actor: "system",
+      now,
+      blocker: null,
+    });
+    if (!resumed.ok) {
+      return resumed;
+    }
+    return store.transitionChannelWorkflowStepStatus({
+      workflowStepId,
+      expectedStatus: "claimed",
+      event: "start",
+      actor: "system",
+      now,
+      blocker: null,
+    });
+  }
+  if (status === "claimed") {
+    return store.transitionChannelWorkflowStepStatus({
+      workflowStepId,
+      expectedStatus: "claimed",
+      event: "start",
+      actor: "system",
+      now,
+      blocker: null,
+    });
+  }
+  return { ok: false, code: "invalid_transition", currentStatus: status };
+}
+
+function transitionWorkflowToStatus(
+  store: RunStore,
+  workflowId: string,
+  currentStatus: ChannelWorkflowStatus,
+  nextStatus: ChannelWorkflowStatus,
+  now: string,
+): ReturnType<RunStore["transitionChannelWorkflowStatus"]> {
+  if (currentStatus === nextStatus) {
+    return { ok: true, from: currentStatus, to: nextStatus };
+  }
+  const event =
+    currentStatus === "draft" && nextStatus === "ready" ? "prepare"
+      : (currentStatus === "ready" || currentStatus === "blocked") && nextStatus === "running" ? "start"
+        : currentStatus === "running" && nextStatus === "waiting_for_approval" ? "approval_requested"
+          : currentStatus === "waiting_for_approval" && nextStatus === "running" ? "approval_approved"
+            : currentStatus === "running" && nextStatus === "blocked" ? "step_blocked"
+              : (currentStatus === "running" || currentStatus === "blocked") && nextStatus === "failed" ? "step_failed"
+                : currentStatus === "running" && nextStatus === "succeeded" ? "all_steps_succeeded"
+                  : nextStatus === "cancelled" ? "cancel"
+                    : undefined;
+  if (!event) {
+    return { ok: false, code: "invalid_transition", currentStatus };
+  }
+  return store.transitionChannelWorkflowStatus({
+    workflowId,
+    expectedStatus: currentStatus,
+    event,
+    actor: "local-user",
+    now,
+  });
+}
+
+function transitionWorkflowStepToStatus(
+  store: RunStore,
+  workflowStepId: string,
+  currentStatus: ChannelWorkflowStepStatus,
+  nextStatus: ChannelWorkflowStepStatus,
+  now: string,
+  metadata: {
+    readonly taskId?: string | null;
+    readonly runId?: string | null;
+    readonly blocker?: string | null;
+    readonly resultSummary?: string | null;
+  } = {},
+): ReturnType<RunStore["transitionChannelWorkflowStepStatus"]> {
+  if (currentStatus === nextStatus) {
+    return { ok: true, from: currentStatus, to: nextStatus };
+  }
+  const event =
+    currentStatus === "queued" && nextStatus === "claimed" ? "claim"
+      : currentStatus === "queued" && nextStatus === "skipped" ? "skip"
+        : currentStatus === "claimed" && nextStatus === "running" ? "start"
+          : currentStatus === "running" && nextStatus === "waiting_for_approval" ? "approval_requested"
+            : currentStatus === "waiting_for_approval" && nextStatus === "running" ? "approval_approved"
+              : currentStatus === "running" && nextStatus === "blocked" ? "blocked"
+                : currentStatus === "blocked" && nextStatus === "claimed" ? "resume"
+                  : currentStatus === "running" && nextStatus === "succeeded" ? "succeed"
+                    : (currentStatus === "running" || currentStatus === "waiting_for_approval" || currentStatus === "blocked") && nextStatus === "failed" ? "fail"
+                      : nextStatus === "cancelled" ? "cancel"
+                        : undefined;
+  if (!event) {
+    return { ok: false, code: "invalid_transition", currentStatus };
+  }
+  return store.transitionChannelWorkflowStepStatus({
+    workflowStepId,
+    expectedStatus: currentStatus,
+    event,
+    actor: "local-user",
+    now,
+    taskId: metadata.taskId,
+    runId: metadata.runId,
+    blocker: metadata.blocker,
+    resultSummary: metadata.resultSummary,
+  });
+}
+
+function completeWorkflowIfStepsFinished(store: RunStore, workflowId: string, now: string): void {
+  const workflow = store.getChannelWorkflow(workflowId);
+  if (!workflow || workflow.status !== "running") {
+    return;
+  }
+  const steps = store.listChannelWorkflowSteps({ workflowId, limit: 500 });
+  if (steps.length === 0 || steps.some((step) => step.status !== "succeeded" && step.status !== "skipped")) {
+    return;
+  }
+  store.transitionChannelWorkflowStatus({
+    workflowId,
+    expectedStatus: "running",
+    event: "all_steps_succeeded",
+    actor: "system",
+    now,
+  });
+}
+
+function formatHandoffStepPrompt(handoff: ChannelHandoff): string {
+  return [
+    `Reason: ${handoff.reason || "No reason provided."}`,
+    `Required input: ${handoff.requiredInput || "No required input provided."}`,
+    `Expected output: ${handoff.expectedOutput || "No expected output provided."}`,
+    "",
+    "Use the visible channel Brief, active decisions, and linked context summary before starting work.",
+  ].join("\n");
+}
+
+function formatWorkflowStepTaskPrompt(prompt: string, workflowObjective: string): string {
+  return [`Workflow objective: ${workflowObjective || "No objective provided."}`, "", prompt].join("\n");
 }
 
 async function handleTasksCollection(
@@ -1998,6 +3596,746 @@ function handleGetArtifactContent(
       error: "artifact_content_not_found",
       message: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+async function createAiChannelReply(input: {
+  readonly runner: RunnerAdapter;
+  readonly store: RunStore;
+  readonly channel: Channel;
+  readonly sourceMessage: ChannelMessage;
+  readonly providerPresetId?: string;
+  readonly teammateId?: string;
+  readonly secretResolver: SecretResolver;
+}): Promise<ChannelMessage> {
+  const teammateId =
+    input.teammateId ??
+    input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
+    input.channel.defaultTeammateId ??
+    "ai-teammate";
+  const providerPresetId = input.providerPresetId ?? input.channel.defaultProviderPresetId;
+  const now = new Date().toISOString();
+
+  if (!providerPresetId) {
+    return input.store.createChannelMessage(
+      {
+        channelId: input.channel.id,
+        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: teammateId,
+        body: "AI teammate is not configured for this channel.",
+        status: "blocked",
+        errorMessage: "No provider preset is selected for this channel discussion.",
+      },
+      now,
+    );
+  }
+
+  const textDeltas: string[] = [];
+  try {
+    const provider = resolveProviderForRun(
+      input.store,
+      {
+        cwd: input.store.paths.cwd,
+        workspaceCwd: input.store.paths.cwd,
+        task: {
+          id: input.sourceMessage.id,
+          title: `Channel discussion in ${input.channel.name}`,
+          prompt: formatChannelDiscussionPrompt(input.channel, input.sourceMessage),
+          channelId: input.channel.id,
+        },
+        providerPresetId,
+        tools: [],
+        thinkingLevel: "medium",
+        systemPrompt: [
+          "You are an AI teammate inside a Ling Stack channel.",
+          "Reply concisely and only to the current channel discussion.",
+          "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
+          "Do not perform tool use or side effects.",
+        ].join("\n"),
+      },
+      input.secretResolver,
+    );
+
+    const result = await input.runner.runTask({
+      cwd: input.store.paths.cwd,
+      task: {
+        id: input.sourceMessage.id,
+        title: `Channel discussion in ${input.channel.name}`,
+        prompt: formatChannelDiscussionPrompt(input.channel, input.sourceMessage),
+        channelId: input.channel.id,
+      },
+      provider,
+      tools: [],
+      thinkingLevel: "medium",
+      systemPrompt: [
+        "You are an AI teammate inside a Ling Stack channel.",
+        "Reply concisely and only to the current channel discussion.",
+        "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
+        "Do not perform tool use or side effects.",
+      ].join("\n"),
+      onEvent: (event) => {
+        if (event.type === "assistant_text_delta") {
+          textDeltas.push(event.text);
+        }
+      },
+    });
+    const replyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
+    return input.store.createChannelMessage(
+      {
+        channelId: input.channel.id,
+        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: teammateId,
+        body: replyText,
+      },
+      new Date().toISOString(),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return input.store.createChannelMessage(
+      {
+        channelId: input.channel.id,
+        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: teammateId,
+        body: `AI teammate is blocked: ${message}`,
+        status: "blocked",
+        errorMessage: message,
+      },
+      new Date().toISOString(),
+    );
+  }
+}
+
+function formatChannelDiscussionPrompt(channel: Channel, message: ChannelMessage): string {
+  const mentions = message.mentions.length > 0
+    ? message.mentions.map((mention) => `@${mention.label}`).join(", ")
+    : "none";
+  return [
+    `Channel: ${channel.name}`,
+    `Mentions: ${mentions}`,
+    `User message:`,
+    message.body,
+    "",
+    "Reply as the channel AI teammate. Keep the response actionable and brief.",
+  ].join("\n");
+}
+
+function extractAssistantText(messages: readonly unknown[]): string | undefined {
+  for (const message of [...messages].reverse()) {
+    const text = extractTextFromUnknown(message);
+    if (text) {
+      return text;
+    }
+  }
+  return undefined;
+}
+
+function extractTextFromUnknown(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value.trim() || undefined;
+  }
+  if (Array.isArray(value)) {
+    return value.map(extractTextFromUnknown).filter(Boolean).join("").trim() || undefined;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  for (const key of ["text", "content", "message"]) {
+    const text = extractTextFromUnknown(value[key]);
+    if (text) {
+      return text;
+    }
+  }
+  return undefined;
+}
+
+function validateChannelMessageReferences(
+  store: RunStore,
+  channelId: string,
+  attachmentIds: readonly string[],
+  linkPreviewIds: readonly string[],
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  for (const attachmentId of attachmentIds) {
+    const attachment = store.getChannelAttachment(attachmentId);
+    if (!attachment) {
+      return {
+        statusCode: 404,
+        code: "attachment_not_found",
+        message: `Channel attachment not found: ${attachmentId}`,
+      };
+    }
+    if (attachment.channelId !== channelId) {
+      return {
+        statusCode: 400,
+        code: "attachment_channel_mismatch",
+        message: `Attachment does not belong to channel: ${attachmentId}`,
+      };
+    }
+  }
+
+  for (const linkPreviewId of linkPreviewIds) {
+    const linkPreview = store.getChannelLinkPreview(linkPreviewId);
+    if (!linkPreview) {
+      return {
+        statusCode: 404,
+        code: "link_preview_not_found",
+        message: `Channel link preview not found: ${linkPreviewId}`,
+      };
+    }
+    if (linkPreview.channelId !== channelId) {
+      return {
+        statusCode: 400,
+        code: "link_preview_channel_mismatch",
+        message: `Link preview does not belong to channel: ${linkPreviewId}`,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function validateChannelMessageOwner(
+  store: RunStore,
+  channelId: string,
+  messageId: string,
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  const message = store.getChannelMessage(messageId);
+  if (!message) {
+    return {
+      statusCode: 404,
+      code: "message_not_found",
+      message: `Channel message not found: ${messageId}`,
+    };
+  }
+  if (message.channelId !== channelId) {
+    return {
+      statusCode: 400,
+      code: "message_channel_mismatch",
+      message: `Message does not belong to channel: ${messageId}`,
+    };
+  }
+  return undefined;
+}
+
+function validateChannelBriefReferences(
+  store: RunStore,
+  channelId: string,
+  input: Pick<ChannelBriefRequest, "decisionIds" | "attachmentIds" | "linkPreviewIds">,
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  for (const decisionId of input.decisionIds) {
+    const error = validateChannelDecisionOwner(store, channelId, decisionId);
+    if (error) {
+      return error;
+    }
+  }
+  const assetError = validateChannelMessageReferences(store, channelId, input.attachmentIds, input.linkPreviewIds);
+  return assetError?.statusCode === 404 ? { ...assetError, statusCode: 400 } : assetError;
+}
+
+function validateProtocolSourceReferences(
+  store: RunStore,
+  channelId: string,
+  input: { readonly sourceMessageId?: string; readonly sourceTaskId?: string; readonly sourceRunId?: string },
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  if (input.sourceMessageId) {
+    const messageError = validateChannelMessageOwner(store, channelId, input.sourceMessageId);
+    if (messageError) {
+      return messageError.statusCode === 404 ? { ...messageError, statusCode: 400 } : messageError;
+    }
+  }
+  if (input.sourceTaskId) {
+    const task = store.getTask(input.sourceTaskId);
+    if (!task) {
+      return { statusCode: 400, code: "task_not_found", message: `Task not found: ${input.sourceTaskId}` };
+    }
+    if (task.channelId !== channelId) {
+      return {
+        statusCode: 400,
+        code: "task_channel_mismatch",
+        message: `Task does not belong to channel: ${input.sourceTaskId}`,
+      };
+    }
+  }
+  if (input.sourceRunId) {
+    const run = store.getRun(input.sourceRunId);
+    if (!run) {
+      return { statusCode: 400, code: "run_not_found", message: `Run session not found: ${input.sourceRunId}` };
+    }
+    if (run.channelId !== channelId) {
+      return {
+        statusCode: 400,
+        code: "run_channel_mismatch",
+        message: `Run does not belong to channel: ${input.sourceRunId}`,
+      };
+    }
+  }
+  return undefined;
+}
+
+function validateChannelDecisionOwner(
+  store: RunStore,
+  channelId: string,
+  decisionId: string,
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  const decision = store.getChannelDecision(decisionId);
+  if (!decision) {
+    return { statusCode: 400, code: "decision_not_found", message: `Channel decision not found: ${decisionId}` };
+  }
+  if (decision.channelId !== channelId) {
+    return {
+      statusCode: 400,
+      code: "decision_channel_mismatch",
+      message: `Decision does not belong to channel: ${decisionId}`,
+    };
+  }
+  return undefined;
+}
+
+function validateChannelContextSummaryReferences(
+  store: RunStore,
+  channelId: string,
+  input: Pick<ChannelContextSummaryRequest, "targetType" | "targetId" | "sourceMessageIds" | "decisionIds">,
+): { readonly statusCode: number; readonly code: string; readonly message: string } | undefined {
+  if (input.targetType === "task") {
+    const target = store.getTask(input.targetId);
+    if (!target) {
+      return { statusCode: 400, code: "summary_target_not_found", message: `Task not found: ${input.targetId}` };
+    }
+    if (target.channelId !== channelId) {
+      return {
+        statusCode: 400,
+        code: "summary_target_channel_mismatch",
+        message: `Summary target does not belong to channel: ${input.targetId}`,
+      };
+    }
+  } else if (!isThreadTargetInChannel(store, channelId, input.targetId)) {
+    return { statusCode: 400, code: "summary_target_not_found", message: `Channel thread not found: ${input.targetId}` };
+  }
+
+  for (const messageId of input.sourceMessageIds) {
+    const messageError = validateChannelMessageOwner(store, channelId, messageId);
+    if (messageError) {
+      return messageError.statusCode === 404 ? { ...messageError, statusCode: 400 } : messageError;
+    }
+  }
+  for (const decisionId of input.decisionIds) {
+    const decisionError = validateChannelDecisionOwner(store, channelId, decisionId);
+    if (decisionError) {
+      return decisionError;
+    }
+  }
+  return undefined;
+}
+
+function isThreadTargetInChannel(store: RunStore, channelId: string, targetId: string): boolean {
+  const directMessage = store.getChannelMessage(targetId);
+  if (directMessage) {
+    return directMessage.channelId === channelId;
+  }
+  return store.listChannelMessages({ channelId, threadId: targetId, limit: 1 }).length > 0;
+}
+
+function createEmptyChannelBrief(channel: Channel): ChannelBrief {
+  return {
+    id: `brief_${channel.id}`,
+    workspaceId: channel.workspaceId,
+    channelId: channel.id,
+    objective: "",
+    scope: "",
+    acceptanceCriteria: [],
+    openQuestions: [],
+    risks: [],
+    decisionIds: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    updatedBy: "system",
+    createdAt: channel.createdAt,
+    updatedAt: channel.updatedAt,
+  };
+}
+
+function persistChannelAttachment(store: RunStore, channelId: string, input: ChannelAttachmentRequest): ChannelAttachment {
+  const safeFileName = sanitizeAttachmentFileName(input.fileName);
+  const inferred = inferChannelAttachmentKind(safeFileName, input.contentType);
+  const content = Buffer.from(input.contentBase64, "base64");
+  if (content.byteLength === 0) {
+    throw new Error("Attachment content is empty");
+  }
+  if (content.byteLength > CHANNEL_ATTACHMENT_MAX_BYTES) {
+    throw new Error(`Attachment exceeds ${CHANNEL_ATTACHMENT_MAX_BYTES} bytes`);
+  }
+
+  const now = new Date().toISOString();
+  const storageName = `${formatTimestampSlug(now)}-${safeFileName}`;
+  const relativePath = normalizeArtifactPath(join(channelId, storageName));
+  const absoluteDir = resolvePath(store.paths.attachmentsDir, channelId);
+  const absolutePath = resolvePath(store.paths.attachmentsDir, relativePath);
+  if (!isPathInsideRoot(store.paths.attachmentsDir, absolutePath)) {
+    throw new Error("Attachment content path is outside .ling-stack/attachments");
+  }
+  mkdirSync(absoluteDir, { recursive: true });
+  writeFileSync(absolutePath, content);
+
+  return store.createChannelAttachment({
+    channelId,
+    messageId: input.messageId,
+    kind: inferred.kind,
+    fileName: safeFileName,
+    contentType: inferred.contentType,
+    sizeBytes: content.byteLength,
+    path: relativePath,
+    createdAt: now,
+  });
+}
+
+function sanitizeAttachmentFileName(fileName: string): string {
+  const trimmed = fileName.trim();
+  if (trimmed !== basename(trimmed) || trimmed.includes("\\") || trimmed.includes("/")) {
+    throw new Error("fileName must not contain path separators");
+  }
+  const safe = trimmed.replace(/[^A-Za-z0-9._ -]+/g, "_").replace(/^\.+/, "").trim();
+  if (!safe) {
+    throw new Error("fileName must contain a safe filename");
+  }
+  inferChannelAttachmentKind(safe);
+  return safe.slice(0, 160);
+}
+
+function inferChannelAttachmentKind(fileName: string, _contentType?: string): { readonly kind: ChannelAttachmentKind; readonly contentType: string } {
+  const extension = extname(fileName).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension)) {
+    return { kind: "image", contentType: imageContentTypeForExtension(extension) };
+  }
+  if (extension === ".pdf") {
+    return { kind: "pdf", contentType: "application/pdf" };
+  }
+  if ([".docx", ".xlsx", ".pptx"].includes(extension)) {
+    return { kind: "office", contentType: officeContentTypeForExtension(extension) };
+  }
+  if ([".txt", ".md", ".csv", ".json", ".log"].includes(extension)) {
+    return { kind: "text", contentType: textContentTypeForExtension(extension) };
+  }
+  throw new Error("Unsupported attachment type. Allowed: png, jpg, jpeg, webp, gif, pdf, docx, xlsx, pptx, txt, md, csv, json, log");
+}
+
+function imageContentTypeForExtension(extension: string): string {
+  if (extension === ".jpg" || extension === ".jpeg") {
+    return "image/jpeg";
+  }
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+  if (extension === ".gif") {
+    return "image/gif";
+  }
+  return "image/png";
+}
+
+function officeContentTypeForExtension(extension: string): string {
+  if (extension === ".docx") {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (extension === ".xlsx") {
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  }
+  return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+}
+
+function textContentTypeForExtension(extension: string): string {
+  if (extension === ".md") {
+    return "text/markdown; charset=utf-8";
+  }
+  if (extension === ".csv") {
+    return "text/csv; charset=utf-8";
+  }
+  if (extension === ".json") {
+    return "application/json; charset=utf-8";
+  }
+  return "text/plain; charset=utf-8";
+}
+
+function handleGetChannelAttachmentContent(response: ServerResponse, store: RunStore, attachment: ChannelAttachment): void {
+  let contentPath: string;
+  try {
+    contentPath = resolveChannelAttachmentContentPath(store, attachment);
+  } catch (error) {
+    writeJson(response, 403, {
+      error: "attachment_outside_root",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  try {
+    const stats = statSync(contentPath);
+    if (!stats.isFile()) {
+      writeJson(response, 404, {
+        error: "attachment_content_not_found",
+        message: `Attachment content is not a file: ${attachment.id}`,
+      });
+      return;
+    }
+    const content = readFileSync(contentPath);
+    setCorsHeaders(response);
+    response.writeHead(200, {
+      "Content-Type": attachment.contentType,
+      "Content-Length": String(content.byteLength),
+      "Content-Disposition": `inline; filename="${attachment.fileName.replace(/"/g, "")}"`,
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(content);
+  } catch (error) {
+    writeJson(response, 404, {
+      error: "attachment_content_not_found",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function deleteChannelAttachmentContent(store: RunStore, attachment: ChannelAttachment): void {
+  try {
+    unlinkSync(resolveChannelAttachmentContentPath(store, attachment));
+  } catch {
+    // Missing files should not block metadata cleanup.
+  }
+}
+
+function resolveChannelAttachmentContentPath(store: RunStore, attachment: ChannelAttachment): string {
+  const absolutePath = isAbsolute(attachment.path)
+    ? attachment.path
+    : resolvePath(store.paths.attachmentsDir, attachment.path);
+  if (!isPathInsideRoot(store.paths.attachmentsDir, absolutePath)) {
+    throw new Error(`Attachment content path is outside .ling-stack/attachments: ${attachment.path}`);
+  }
+  return absolutePath;
+}
+
+async function createOrFetchChannelLinkPreview(
+  store: RunStore,
+  channelId: string,
+  input: ChannelLinkPreviewRequest,
+): Promise<ChannelLinkPreview> {
+  const normalizedUrl = normalizePreviewUrl(input.url);
+  const existing = store
+    .listChannelLinkPreviews({ channelId, limit: 500 })
+    .find((preview) => preview.normalizedUrl === normalizedUrl);
+  if (existing) {
+    return existing;
+  }
+
+  const metadata = await fetchLinkPreviewMetadata(normalizedUrl);
+  return store.createChannelLinkPreview(
+    {
+      channelId,
+      messageId: input.messageId,
+      url: input.url,
+      normalizedUrl,
+      title: metadata.title ?? undefined,
+      description: metadata.description ?? undefined,
+      imageUrl: metadata.imageUrl ?? undefined,
+      siteName: metadata.siteName ?? undefined,
+      status: metadata.status,
+      errorMessage: metadata.errorMessage ?? undefined,
+    },
+    new Date().toISOString(),
+  );
+}
+
+async function fetchLinkPreviewMetadata(url: string): Promise<{
+  readonly title?: string | null;
+  readonly description?: string | null;
+  readonly imageUrl?: string | null;
+  readonly siteName?: string | null;
+  readonly status: ChannelLinkPreview["status"];
+  readonly errorMessage?: string | null;
+}> {
+  try {
+    const final = await fetchPreviewHtml(url);
+    return {
+      ...parseLinkPreviewHtml(final.url, final.html),
+      status: "ready",
+      errorMessage: null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      status: isBlockedPreviewError(error) ? "blocked" : "failed",
+      errorMessage: message,
+      title: null,
+      description: null,
+      imageUrl: null,
+      siteName: null,
+    };
+  }
+}
+
+async function fetchPreviewHtml(initialUrl: string): Promise<{ readonly url: string; readonly html: string }> {
+  let currentUrl = normalizePreviewUrl(initialUrl);
+  for (let redirectCount = 0; redirectCount <= CHANNEL_LINK_PREVIEW_MAX_REDIRECTS; redirectCount += 1) {
+    await assertPreviewUrlAllowed(currentUrl);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CHANNEL_LINK_PREVIEW_TIMEOUT_MS);
+    try {
+      const response = await fetch(currentUrl, {
+        redirect: "manual",
+        signal: controller.signal,
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          "User-Agent": "LingStackLinkPreview/0.1",
+        },
+      });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) {
+          throw new Error("Redirect response is missing Location");
+        }
+        currentUrl = normalizePreviewUrl(new URL(location, currentUrl).toString());
+        continue;
+      }
+      if (!response.ok) {
+        throw new Error(`Preview fetch failed with HTTP ${response.status}`);
+      }
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType && !contentType.toLowerCase().includes("text/html")) {
+        throw new Error(`Preview content type is not HTML: ${contentType}`);
+      }
+      const reader = response.body?.getReader();
+      if (!reader) {
+        return { url: currentUrl, html: await response.text() };
+      }
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      while (true) {
+        const result = await reader.read();
+        if (result.done) {
+          break;
+        }
+        total += result.value.byteLength;
+        if (total > CHANNEL_LINK_PREVIEW_MAX_BYTES) {
+          throw new Error(`Preview HTML exceeds ${CHANNEL_LINK_PREVIEW_MAX_BYTES} bytes`);
+        }
+        chunks.push(result.value);
+      }
+      return { url: currentUrl, html: Buffer.concat(chunks).toString("utf8") };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw new Error("Preview exceeded redirect limit");
+}
+
+function parseLinkPreviewHtml(url: string, html: string): {
+  readonly title?: string | null;
+  readonly description?: string | null;
+  readonly imageUrl?: string | null;
+  readonly siteName?: string | null;
+} {
+  const title = readMeta(html, "og:title") ?? readTitle(html);
+  const description = readMeta(html, "og:description") ?? readMeta(html, "description");
+  const image = readMeta(html, "og:image");
+  const siteName = readMeta(html, "og:site_name") ?? new URL(url).hostname;
+  return {
+    title,
+    description,
+    imageUrl: image ? new URL(image, url).toString() : null,
+    siteName,
+  };
+}
+
+function readMeta(html: string, name: string): string | undefined {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`<meta\\s+[^>]*(?:property|name)=["']${escaped}["'][^>]*content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta\\s+[^>]*content=["']([^"']+)["'][^>]*(?:property|name)=["']${escaped}["'][^>]*>`, "i"),
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(html);
+    if (match?.[1]) {
+      return decodeHtmlEntities(match[1]).slice(0, 300);
+    }
+  }
+  return undefined;
+}
+
+function readTitle(html: string): string | undefined {
+  const match = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
+  return match?.[1] ? decodeHtmlEntities(match[1]).slice(0, 300) : undefined;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
+function normalizePreviewUrl(rawUrl: string): string {
+  const parsed = new URL(rawUrl.trim());
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Only http and https links can be previewed");
+  }
+  parsed.username = "";
+  parsed.password = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+async function assertPreviewUrlAllowed(url: string): Promise<void> {
+  const parsed = new URL(url);
+  if (parsed.hostname === "localhost" || parsed.hostname.endsWith(".localhost")) {
+    throw new PreviewBlockedError("Link preview blocks localhost hosts");
+  }
+  const addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
+  if (addresses.length === 0) {
+    throw new Error(`Unable to resolve host: ${parsed.hostname}`);
+  }
+  for (const address of addresses) {
+    if (isBlockedPreviewAddress(address.address)) {
+      throw new PreviewBlockedError(`Link preview blocks private or local address: ${address.address}`);
+    }
+  }
+}
+
+function isBlockedPreviewAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) {
+    const parts = address.split(".").map(Number);
+    const [a, b] = parts;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  }
+  if (family === 6) {
+    const lower = address.toLowerCase();
+    return lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80:");
+  }
+  return true;
+}
+
+function isBlockedPreviewError(error: unknown): boolean {
+  return error instanceof PreviewBlockedError;
+}
+
+class PreviewBlockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PreviewBlockedError";
   }
 }
 
@@ -3480,10 +5818,104 @@ function parseArtifactRoute(pathname: string): { kind: "artifact"; artifactId: s
   return undefined;
 }
 
-function parseChannelRoute(pathname: string): { readonly channelId: string } | undefined {
+function parseChannelRoute(
+  pathname: string,
+): {
+  readonly channelId: string;
+  readonly action?: "brief" | "messages" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows";
+} | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "channels") {
     return { channelId: segments[1] };
+  }
+  if (
+    segments.length === 3 &&
+    segments[0] === "channels" &&
+    (
+      segments[2] === "brief" ||
+      segments[2] === "messages" ||
+      segments[2] === "attachments" ||
+      segments[2] === "link-previews" ||
+      segments[2] === "decisions" ||
+      segments[2] === "handoffs" ||
+      segments[2] === "context-summaries" ||
+      segments[2] === "workflows"
+    )
+  ) {
+    return { channelId: segments[1], action: segments[2] };
+  }
+  return undefined;
+}
+
+function parseChannelAttachmentRoute(
+  pathname: string,
+): { readonly attachmentId: string; readonly action?: "content" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "attachments") {
+    return { attachmentId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "attachments" && segments[2] === "content") {
+    return { attachmentId: segments[1], action: "content" };
+  }
+  return undefined;
+}
+
+function parseChannelLinkPreviewRoute(
+  pathname: string,
+): { readonly linkPreviewId: string; readonly action: "refresh" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "link-previews" && segments[2] === "refresh") {
+    return { linkPreviewId: segments[1], action: "refresh" };
+  }
+  return undefined;
+}
+
+function parseChannelDecisionRoute(pathname: string): { readonly decisionId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "decisions") {
+    return { decisionId: segments[1] };
+  }
+  return undefined;
+}
+
+function parseChannelHandoffRoute(pathname: string): { readonly handoffId: string; readonly action?: "workflow" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "handoffs") {
+    return { handoffId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "handoffs" && segments[2] === "workflow") {
+    return { handoffId: segments[1], action: "workflow" };
+  }
+  return undefined;
+}
+
+function parseChannelWorkflowRoute(
+  pathname: string,
+):
+  | { readonly kind: "workflow"; readonly workflowId: string }
+  | { readonly kind: "steps"; readonly workflowId: string }
+  | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" }
+  | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "workflows") {
+    return { kind: "workflow", workflowId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "steps") {
+    return { kind: "steps", workflowId: segments[1] };
+  }
+  if (segments.length === 2 && segments[0] === "workflow-steps") {
+    return { kind: "workflow-step", workflowStepId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "workflow-steps" && segments[2] === "start") {
+    return { kind: "workflow-step", workflowStepId: segments[1], action: "start" };
+  }
+  return undefined;
+}
+
+function parseChannelContextSummaryRoute(pathname: string): { readonly contextSummaryId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "context-summaries") {
+    return { contextSummaryId: segments[1] };
   }
   return undefined;
 }
@@ -3637,6 +6069,269 @@ function validateTaskInput(input: TaskUpdateInput): void {
   if (input.prompt !== undefined && input.prompt.trim().length === 0) {
     throw new Error("prompt must be a non-empty string");
   }
+}
+
+function parseChannelMessageRequest(value: unknown): ChannelMessageRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel message request must be a JSON object");
+  }
+  const input: ChannelMessageRequest = {
+    threadId: readOptionalString(value, "threadId"),
+    kind: readOptionalChannelMessageKind(value, "kind"),
+    intent: readOptionalChannelMessageIntent(value, "intent") ?? "discuss",
+    authorType: readOptionalChannelMessageAuthorType(value, "authorType") ?? "local-user",
+    authorId: readOptionalString(value, "authorId"),
+    body: readString(value, "body"),
+    mentions: readOptionalChannelMentions(value, "mentions") ?? [],
+    attachmentIds: readOptionalStringArray(value, "attachmentIds") ?? [],
+    linkPreviewIds: readOptionalStringArray(value, "linkPreviewIds") ?? [],
+    linkedTaskId: readOptionalString(value, "linkedTaskId"),
+    linkedRunId: readOptionalString(value, "linkedRunId"),
+    requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
+    providerPresetId: readOptionalString(value, "providerPresetId"),
+    teammateId: readOptionalString(value, "teammateId"),
+  };
+  if (!input.body.trim() && input.attachmentIds.length === 0 && input.linkPreviewIds.length === 0) {
+    throw new Error("body, attachmentIds, or linkPreviewIds is required");
+  }
+  if (input.attachmentIds.length > 10) {
+    throw new Error("A channel message can reference at most 10 attachments");
+  }
+  return input;
+}
+
+function parseChannelAttachmentRequest(value: unknown): ChannelAttachmentRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel attachment request must be a JSON object");
+  }
+  const input: ChannelAttachmentRequest = {
+    fileName: readString(value, "fileName"),
+    contentType: readOptionalString(value, "contentType"),
+    contentBase64: readString(value, "contentBase64"),
+    messageId: readOptionalString(value, "messageId"),
+  };
+  if (!input.fileName.trim()) {
+    throw new Error("fileName must be a non-empty string");
+  }
+  if (!input.contentBase64.trim()) {
+    throw new Error("contentBase64 must be a non-empty string");
+  }
+  return input;
+}
+
+function parseChannelLinkPreviewRequest(value: unknown): ChannelLinkPreviewRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel link preview request must be a JSON object");
+  }
+  return {
+    url: readString(value, "url"),
+    messageId: readOptionalString(value, "messageId"),
+  };
+}
+
+function parseChannelBriefRequest(value: unknown): ChannelBriefRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel brief request must be a JSON object");
+  }
+  return {
+    objective: readStringAllowEmpty(value, "objective"),
+    scope: readStringAllowEmpty(value, "scope"),
+    acceptanceCriteria: readOptionalStringArray(value, "acceptanceCriteria") ?? [],
+    openQuestions: readOptionalStringArray(value, "openQuestions") ?? [],
+    risks: readOptionalStringArray(value, "risks") ?? [],
+    decisionIds: readOptionalStringArray(value, "decisionIds") ?? [],
+    attachmentIds: readOptionalStringArray(value, "attachmentIds") ?? [],
+    linkPreviewIds: readOptionalStringArray(value, "linkPreviewIds") ?? [],
+    updatedBy: readString(value, "updatedBy"),
+  };
+}
+
+function parseChannelDecisionRequest(value: unknown): ChannelDecisionRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel decision request must be a JSON object");
+  }
+  return {
+    sourceMessageId: readOptionalString(value, "sourceMessageId"),
+    sourceTaskId: readOptionalString(value, "sourceTaskId"),
+    sourceRunId: readOptionalString(value, "sourceRunId"),
+    title: readString(value, "title"),
+    decision: readString(value, "decision"),
+    rationale: readOptionalString(value, "rationale"),
+    alternatives: readOptionalStringArray(value, "alternatives") ?? [],
+    status: readOptionalChannelDecisionStatus(value, "status"),
+    supersedesDecisionId: readOptionalString(value, "supersedesDecisionId"),
+    createdBy: readString(value, "createdBy"),
+  };
+}
+
+function parseChannelDecisionUpdateRequest(value: unknown): ChannelDecisionUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel decision update must be a JSON object");
+  }
+  return {
+    title: readOptionalString(value, "title"),
+    decision: readOptionalString(value, "decision"),
+    rationale: readOptionalString(value, "rationale"),
+    alternatives: readOptionalStringArray(value, "alternatives"),
+    status: readOptionalChannelDecisionStatus(value, "status"),
+  };
+}
+
+function parseChannelHandoffRequest(value: unknown): ChannelHandoffRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel handoff request must be a JSON object");
+  }
+  return {
+    sourceMessageId: readOptionalString(value, "sourceMessageId"),
+    sourceTaskId: readOptionalString(value, "sourceTaskId"),
+    sourceRunId: readOptionalString(value, "sourceRunId"),
+    fromParticipantId: readString(value, "fromParticipantId"),
+    fromParticipantLabel: readString(value, "fromParticipantLabel"),
+    toParticipantId: readString(value, "toParticipantId"),
+    toParticipantLabel: readString(value, "toParticipantLabel"),
+    reason: readStringAllowEmpty(value, "reason"),
+    requiredInput: readStringAllowEmpty(value, "requiredInput"),
+    expectedOutput: readStringAllowEmpty(value, "expectedOutput"),
+    status: readOptionalChannelHandoffStatus(value, "status"),
+    createdBy: readString(value, "createdBy"),
+  };
+}
+
+function parseChannelHandoffUpdateRequest(value: unknown): ChannelHandoffUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel handoff update must be a JSON object");
+  }
+  return {
+    fromParticipantId: readOptionalString(value, "fromParticipantId"),
+    fromParticipantLabel: readOptionalString(value, "fromParticipantLabel"),
+    toParticipantId: readOptionalString(value, "toParticipantId"),
+    toParticipantLabel: readOptionalString(value, "toParticipantLabel"),
+    reason: readOptionalString(value, "reason"),
+    requiredInput: readOptionalString(value, "requiredInput"),
+    expectedOutput: readOptionalString(value, "expectedOutput"),
+    status: readOptionalChannelHandoffStatus(value, "status"),
+  };
+}
+
+function parseChannelContextSummaryRequest(value: unknown): ChannelContextSummaryRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel context summary request must be a JSON object");
+  }
+  return {
+    targetType: readChannelContextSummaryTargetType(value, "targetType"),
+    targetId: readString(value, "targetId"),
+    sourceMessageIds: readOptionalStringArray(value, "sourceMessageIds") ?? [],
+    decisionIds: readOptionalStringArray(value, "decisionIds") ?? [],
+    summary: readString(value, "summary"),
+    acceptanceCriteria: readOptionalStringArray(value, "acceptanceCriteria") ?? [],
+    openQuestions: readOptionalStringArray(value, "openQuestions") ?? [],
+    authorType: readChannelContextSummaryAuthorType(value, "authorType"),
+    authorId: readOptionalString(value, "authorId"),
+  };
+}
+
+function parseChannelContextSummaryUpdateRequest(value: unknown): ChannelContextSummaryUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel context summary update must be a JSON object");
+  }
+  return {
+    targetType: readOptionalChannelContextSummaryTargetType(value, "targetType"),
+    targetId: readOptionalString(value, "targetId"),
+    sourceMessageIds: readOptionalStringArray(value, "sourceMessageIds"),
+    decisionIds: readOptionalStringArray(value, "decisionIds"),
+    summary: readOptionalString(value, "summary"),
+    acceptanceCriteria: readOptionalStringArray(value, "acceptanceCriteria"),
+    openQuestions: readOptionalStringArray(value, "openQuestions"),
+    authorType: readOptionalChannelContextSummaryAuthorType(value, "authorType"),
+    authorId: readNullableString(value, "authorId"),
+  };
+}
+
+function parseChannelWorkflowRequest(value: unknown): ChannelWorkflowRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel workflow request must be a JSON object");
+  }
+  return {
+    sourceHandoffId: readOptionalString(value, "sourceHandoffId"),
+    title: readString(value, "title"),
+    objective: readStringAllowEmpty(value, "objective"),
+    status: readOptionalChannelWorkflowStatus(value, "status"),
+    createdBy: readString(value, "createdBy"),
+  };
+}
+
+function parseChannelWorkflowFromHandoffRequest(value: unknown): ChannelWorkflowFromHandoffRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel workflow from handoff request must be a JSON object");
+  }
+  return {
+    title: readOptionalString(value, "title"),
+    objective: readOptionalString(value, "objective"),
+    contextSummaryId: readOptionalString(value, "contextSummaryId"),
+    createdBy: readString(value, "createdBy"),
+  };
+}
+
+function parseChannelWorkflowUpdateRequest(value: unknown): ChannelWorkflowUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel workflow update must be a JSON object");
+  }
+  return {
+    title: readOptionalString(value, "title"),
+    objective: readOptionalString(value, "objective"),
+    status: readOptionalChannelWorkflowStatus(value, "status"),
+  };
+}
+
+function parseChannelWorkflowStepRequest(value: unknown): ChannelWorkflowStepRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel workflow step request must be a JSON object");
+  }
+  return {
+    sourceHandoffId: readOptionalString(value, "sourceHandoffId"),
+    contextSummaryId: readOptionalString(value, "contextSummaryId"),
+    position: readOptionalNumber(value, "position"),
+    title: readString(value, "title"),
+    prompt: readString(value, "prompt"),
+    toParticipantId: readString(value, "toParticipantId"),
+    toParticipantLabel: readString(value, "toParticipantLabel"),
+    status: readOptionalChannelWorkflowStepStatus(value, "status"),
+  };
+}
+
+function parseChannelWorkflowStepUpdateRequest(value: unknown): ChannelWorkflowStepUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel workflow step update must be a JSON object");
+  }
+  return {
+    sourceHandoffId: readNullableString(value, "sourceHandoffId"),
+    contextSummaryId: readNullableString(value, "contextSummaryId"),
+    taskId: readNullableString(value, "taskId"),
+    runId: readNullableString(value, "runId"),
+    position: readOptionalNumber(value, "position"),
+    title: readOptionalString(value, "title"),
+    prompt: readOptionalString(value, "prompt"),
+    toParticipantId: readOptionalString(value, "toParticipantId"),
+    toParticipantLabel: readOptionalString(value, "toParticipantLabel"),
+    status: readOptionalChannelWorkflowStepStatus(value, "status"),
+    blocker: readNullableString(value, "blocker"),
+    resultSummary: readNullableString(value, "resultSummary"),
+  };
+}
+
+function parseChannelWorkflowStepStartRequest(value: unknown): ChannelWorkflowStepStartRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel workflow step start request must be a JSON object");
+  }
+  return {
+    mode: readChannelWorkflowStepStartMode(value, "mode"),
+    taskTitle: readOptionalString(value, "taskTitle"),
+    taskPrompt: readOptionalString(value, "taskPrompt"),
+    providerPresetId: readOptionalString(value, "providerPresetId"),
+    assigneeTeammateId: readOptionalString(value, "assigneeTeammateId"),
+    idempotencyKey: readOptionalString(value, "idempotencyKey"),
+    skipProviderPreflight: readOptionalBoolean(value, "skipProviderPreflight"),
+  };
 }
 
 function parseCreateMediaJobInput(value: unknown): CreateMediaJobInput {
@@ -4447,6 +7142,14 @@ function readString(record: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function readStringAllowEmpty(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string") {
+    throw new Error(`${key} must be a string`);
+  }
+  return value;
+}
+
 function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   if (value === undefined) {
@@ -4655,6 +7358,157 @@ function readOptionalTaskStatus(record: Record<string, unknown>, key: string): T
   return value as TaskStatus;
 }
 
+function readOptionalChannelMessageKind(record: Record<string, unknown>, key: string): ChannelMessageKind | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "message" && value !== "ai_reply" && value !== "system" && value !== "task_link") {
+    throw new Error(`${key} must be one of: message, ai_reply, system, task_link`);
+  }
+  return value;
+}
+
+function readOptionalChannelMessageIntent(record: Record<string, unknown>, key: string): ChannelMessageIntent | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "discuss" && value !== "task") {
+    throw new Error(`${key} must be one of: discuss, task`);
+  }
+  return value;
+}
+
+function readOptionalChannelMessageAuthorType(record: Record<string, unknown>, key: string): ChannelMessageAuthorType | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "local-user" && value !== "ai-teammate" && value !== "system") {
+    throw new Error(`${key} must be one of: local-user, ai-teammate, system`);
+  }
+  return value;
+}
+
+function readOptionalChannelDecisionStatus(record: Record<string, unknown>, key: string): ChannelDecisionStatus | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelDecisionStatuses.includes(value as ChannelDecisionStatus)) {
+    throw new Error(`${key} must be one of: ${channelDecisionStatuses.join(", ")}`);
+  }
+  return value as ChannelDecisionStatus;
+}
+
+function readOptionalChannelHandoffStatus(record: Record<string, unknown>, key: string): ChannelHandoffStatus | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelHandoffStatuses.includes(value as ChannelHandoffStatus)) {
+    throw new Error(`${key} must be one of: ${channelHandoffStatuses.join(", ")}`);
+  }
+  return value as ChannelHandoffStatus;
+}
+
+function readOptionalChannelWorkflowStatus(record: Record<string, unknown>, key: string): ChannelWorkflowStatus | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelWorkflowStatuses.includes(value as ChannelWorkflowStatus)) {
+    throw new Error(`${key} must be one of: ${channelWorkflowStatuses.join(", ")}`);
+  }
+  return value as ChannelWorkflowStatus;
+}
+
+function readOptionalChannelWorkflowStepStatus(record: Record<string, unknown>, key: string): ChannelWorkflowStepStatus | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelWorkflowStepStatuses.includes(value as ChannelWorkflowStepStatus)) {
+    throw new Error(`${key} must be one of: ${channelWorkflowStepStatuses.join(", ")}`);
+  }
+  return value as ChannelWorkflowStepStatus;
+}
+
+function readChannelWorkflowStepStartMode(record: Record<string, unknown>, key: string): ChannelWorkflowStepStartMode {
+  const value = readString(record, key);
+  if (value !== "create_task" && value !== "create_and_run_task") {
+    throw new Error(`${key} must be one of: create_task, create_and_run_task`);
+  }
+  return value;
+}
+
+function readChannelContextSummaryTargetType(record: Record<string, unknown>, key: string): ChannelContextSummaryTargetType {
+  const value = readString(record, key);
+  if (!channelContextSummaryTargetTypes.includes(value as ChannelContextSummaryTargetType)) {
+    throw new Error(`${key} must be one of: ${channelContextSummaryTargetTypes.join(", ")}`);
+  }
+  return value as ChannelContextSummaryTargetType;
+}
+
+function readOptionalChannelContextSummaryTargetType(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelContextSummaryTargetType | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelContextSummaryTargetTypes.includes(value as ChannelContextSummaryTargetType)) {
+    throw new Error(`${key} must be one of: ${channelContextSummaryTargetTypes.join(", ")}`);
+  }
+  return value as ChannelContextSummaryTargetType;
+}
+
+function readChannelContextSummaryAuthorType(record: Record<string, unknown>, key: string): ChannelContextSummaryAuthorType {
+  const value = readString(record, key);
+  if (!channelContextSummaryAuthorTypes.includes(value as ChannelContextSummaryAuthorType)) {
+    throw new Error(`${key} must be one of: ${channelContextSummaryAuthorTypes.join(", ")}`);
+  }
+  return value as ChannelContextSummaryAuthorType;
+}
+
+function readOptionalChannelContextSummaryAuthorType(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelContextSummaryAuthorType | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelContextSummaryAuthorTypes.includes(value as ChannelContextSummaryAuthorType)) {
+    throw new Error(`${key} must be one of: ${channelContextSummaryAuthorTypes.join(", ")}`);
+  }
+  return value as ChannelContextSummaryAuthorType;
+}
+
+function readOptionalChannelMentions(record: Record<string, unknown>, key: string): ChannelMention[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be an array`);
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key}[${index}] must be an object`);
+    }
+    const id = readString(item, "id");
+    const label = readString(item, "label");
+    const kind = readString(item, "kind");
+    if (kind !== "ai-teammate" && kind !== "local-user" && kind !== "channel") {
+      throw new Error(`${key}[${index}].kind must be one of: ai-teammate, local-user, channel`);
+    }
+    return { id, label, kind };
+  });
+}
+
 function readOptionalChannelStatus(record: Record<string, unknown>, key: string): Channel["status"] | undefined {
   const value = readOptionalString(record, key);
   if (value === undefined) {
@@ -4810,6 +7664,64 @@ function readOptionalApprovalStatusQuery(url: URL): ApprovalStatus | undefined {
     throw new Error(`status must be one of: ${approvalStatuses.join(", ")}`);
   }
   return value as ApprovalStatus;
+}
+
+function readOptionalChannelDecisionStatusQuery(url: URL, key: string): ChannelDecisionStatus | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelDecisionStatuses.includes(value as ChannelDecisionStatus)) {
+    throw new Error(`${key} must be one of: ${channelDecisionStatuses.join(", ")}`);
+  }
+  return value as ChannelDecisionStatus;
+}
+
+function readOptionalChannelHandoffStatusQuery(url: URL, key: string): ChannelHandoffStatus | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelHandoffStatuses.includes(value as ChannelHandoffStatus)) {
+    throw new Error(`${key} must be one of: ${channelHandoffStatuses.join(", ")}`);
+  }
+  return value as ChannelHandoffStatus;
+}
+
+function readOptionalChannelWorkflowStatusQuery(url: URL, key: string): ChannelWorkflowStatus | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelWorkflowStatuses.includes(value as ChannelWorkflowStatus)) {
+    throw new Error(`${key} must be one of: ${channelWorkflowStatuses.join(", ")}`);
+  }
+  return value as ChannelWorkflowStatus;
+}
+
+function readOptionalChannelWorkflowStepStatusQuery(url: URL, key: string): ChannelWorkflowStepStatus | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelWorkflowStepStatuses.includes(value as ChannelWorkflowStepStatus)) {
+    throw new Error(`${key} must be one of: ${channelWorkflowStepStatuses.join(", ")}`);
+  }
+  return value as ChannelWorkflowStepStatus;
+}
+
+function readOptionalChannelContextSummaryTargetTypeQuery(
+  url: URL,
+  key: string,
+): ChannelContextSummaryTargetType | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelContextSummaryTargetTypes.includes(value as ChannelContextSummaryTargetType)) {
+    throw new Error(`${key} must be one of: ${channelContextSummaryTargetTypes.join(", ")}`);
+  }
+  return value as ChannelContextSummaryTargetType;
 }
 
 function readOptionalMediaJobStatusQuery(url: URL): MediaJobStatus | undefined {

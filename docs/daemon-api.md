@@ -182,6 +182,160 @@ DELETE /tasks/:id?cwd=/path/to/project
 
 When a persisted task is run through `/runs`, the daemon updates the linked task status to `running`, then `done`, `failed`, or `cancelled`.
 
+## Channel Messages, Attachments, and Links
+
+Channel discussion is durable in the workspace SQLite database. Uploaded files are stored under:
+
+```text
+.ling-stack/attachments
+```
+
+### Messages
+
+```http
+GET /channels/:id/messages?cwd=/path/to/project&limit=100
+POST /channels/:id/messages?cwd=/path/to/project
+```
+
+`POST` accepts a local/user/system message plus structured mentions, attachment ids, link preview ids, and optional `requestAiReply`. Referenced attachments and link previews must belong to the same channel. When AI reply is requested, the daemon uses the selected provider preset or the channel default provider in text-only, no-tools mode. If no provider is ready, the user message is still persisted and the AI reply is stored with `status: "blocked"`.
+
+```json
+{
+  "body": "请 @Engineer 完善需求",
+  "mentions": [{ "id": "engineer", "label": "Engineer", "kind": "ai-teammate" }],
+  "attachmentIds": ["att_..."],
+  "linkPreviewIds": ["link_..."],
+  "requestAiReply": true,
+  "providerPresetId": "provider_...",
+  "teammateId": "engineer"
+}
+```
+
+### Attachments
+
+```http
+GET /channels/:id/attachments?cwd=/path/to/project&limit=100
+POST /channels/:id/attachments?cwd=/path/to/project
+GET /attachments/:id/content?cwd=/path/to/project
+DELETE /attachments/:id?cwd=/path/to/project
+```
+
+`POST` uses JSON with base64 content:
+
+```json
+{
+  "fileName": "brief.pdf",
+  "contentType": "application/pdf",
+  "contentBase64": "JVBERi0x..."
+}
+```
+
+`contentType` is accepted as an upload hint, but the daemon serves downloads with a content type derived from the validated extension. MVP limits: 25MB per file, at most 10 attachment ids per message, allowed extensions are `png`, `jpg`, `jpeg`, `webp`, `gif`, `pdf`, `docx`, `xlsx`, `pptx`, `txt`, `md`, `csv`, `json`, and `log`. Attachments are metadata and downloadable inputs only; AI ingestion is not automatic.
+
+### Link Previews
+
+```http
+GET /channels/:id/link-previews?cwd=/path/to/project&limit=100
+POST /channels/:id/link-previews?cwd=/path/to/project
+POST /link-previews/:id/refresh?cwd=/path/to/project
+```
+
+The daemon fetches public HTML metadata only: title, description, image URL, and site name. It does not send cookies, credentials, page bodies, or extracted content to AI. Preview fetches block localhost, private, link-local, and metadata-network addresses, enforce redirect/timeout/body-size limits, and store failed or blocked previews as visible records.
+
+## Channel Collaboration Protocol
+
+v1.1 adds durable protocol records for channel coordination. These endpoints only record
+state; they do not start runs, call an AI provider, mutate task/run status, or bypass
+approval/runtime locks.
+
+```http
+GET /channels/:id/brief?cwd=/path/to/project
+PATCH /channels/:id/brief?cwd=/path/to/project
+
+GET /channels/:id/decisions?cwd=/path/to/project&status=active&limit=100
+POST /channels/:id/decisions?cwd=/path/to/project
+PATCH /decisions/:id?cwd=/path/to/project
+
+GET /channels/:id/handoffs?cwd=/path/to/project&status=proposed&limit=100
+POST /channels/:id/handoffs?cwd=/path/to/project
+PATCH /handoffs/:id?cwd=/path/to/project
+
+GET /channels/:id/context-summaries?cwd=/path/to/project&targetType=task&targetId=task_...&limit=100
+POST /channels/:id/context-summaries?cwd=/path/to/project
+PATCH /context-summaries/:id?cwd=/path/to/project
+```
+
+Brief `GET` returns an empty Brief-shaped record when no Brief has been saved yet.
+Brief `PATCH` is a full replacement for objective, scope, criteria, questions, risks,
+and linked source ids.
+
+Decision `POST` creates an `active` decision by default. If `supersedesDecisionId` is
+provided, the daemon marks the old decision `superseded` and creates a new active
+decision. Decision `PATCH` can update text fields or set `status` to `active`,
+`superseded`, or `rejected`.
+
+Handoff `POST` records a manual from/to participant transfer with reason, required input,
+expected output, and status. Handoff `PATCH` only updates the handoff record; completing a
+handoff does not mark a task done.
+
+Context summaries target either `task` or `thread`. `task` targets must reference a task in
+the same channel. `thread` targets must reference a channel message id or an existing
+message thread id in the same channel.
+
+All source ids are channel-scoped. Unknown or cross-channel source references return a
+displayable `400` error. Missing channels return `404 channel_not_found`.
+
+## Channel Handoff Workflows
+
+v1.2 upgrades handoffs into explicit, user-started workflow records. Workflow mutations
+record coordination state and never bypass task/run state machines, provider preflight,
+approval policy, or runtime leases.
+
+```http
+GET /channels/:id/workflows?cwd=/path/to/project&status=running&limit=100
+POST /channels/:id/workflows?cwd=/path/to/project
+GET /workflows/:id?cwd=/path/to/project
+PATCH /workflows/:id?cwd=/path/to/project
+POST /handoffs/:id/workflow?cwd=/path/to/project
+
+GET /workflows/:id/steps?cwd=/path/to/project&status=queued&limit=100
+POST /workflows/:id/steps?cwd=/path/to/project
+PATCH /workflow-steps/:id?cwd=/path/to/project
+POST /workflow-steps/:id/start?cwd=/path/to/project
+```
+
+Workflow statuses are `draft`, `ready`, `running`, `waiting_for_approval`, `blocked`,
+`succeeded`, `failed`, and `cancelled`. Step statuses are `queued`, `claimed`,
+`running`, `waiting_for_approval`, `blocked`, `succeeded`, `failed`, `skipped`, and
+`cancelled`.
+
+`POST /handoffs/:id/workflow` creates a draft `ChannelWorkflow` and first queued
+`ChannelWorkflowStep` from the handoff. It does not start execution.
+
+`POST /workflow-steps/:id/start` accepts:
+
+```json
+{
+  "mode": "create_task",
+  "providerPresetId": "provider_...",
+  "assigneeTeammateId": "engineer",
+  "idempotencyKey": "client-generated-key"
+}
+```
+
+`create_task` creates a channel task from the step context, links it to the step, marks
+the step succeeded, and returns JSON with `workflow`, `workflowStep`, and `task`.
+
+`create_and_run_task` creates the task and then delegates to the existing run
+coordinator. When a run starts, the response is the same POST/SSE stream used by
+`POST /runs`; the step is updated with the linked task/run after the coordinator
+finishes. If provider readiness, channel status, or runtime state blocks execution before
+a run starts, the route returns JSON with `workflow`, `workflowStep`, and `blocker`.
+
+Starting a step acquires a `workflow_step` lease. Duplicate starts return
+`409 resource_conflict` while the lease is active. Step `skip` and `cancel` only mutate
+workflow-step state; they do not mark linked task/run records terminal.
+
 ### Run Persisted Task
 
 ```http
