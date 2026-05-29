@@ -10,7 +10,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "lint": "echo \"lint not configured yet\"",
     "test": "echo \"tests not configured yet\"",
-    "test:e2e": "playwright test"
+    "test:e2e": "corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && playwright test"
   },
   "dependencies": {
     "@ling-stack/api-client": "workspace:*",

@@ -45,6 +45,9 @@ import {
   type ProviderCapability,
   type ProviderCheckResult,
   type ProviderKind,
+  type ProviderModelListRequest,
+  type ProviderModelListResponse,
+  type ProviderModelOption,
   type ProviderPreset,
   type ProviderPresetInput,
   type ProviderPresetUpdateInput,
@@ -287,6 +290,16 @@ async function routeRequest(
 
   if (url.pathname === "/providers") {
     await handleProvidersCollection(request, response, config, storeRegistry, secretResolver);
+    return;
+  }
+
+  if (url.pathname === "/provider-check") {
+    await handleProviderDraftCheck(request, response, config, storeRegistry, secretResolver);
+    return;
+  }
+
+  if (url.pathname === "/provider-models") {
+    await handleProviderModelsProbe(request, response, config, storeRegistry, secretResolver);
     return;
   }
 
@@ -1236,13 +1249,48 @@ async function handleProvidersCollection(
   writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /providers` });
 }
 
+async function handleProviderDraftCheck(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /provider-check` });
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseProviderPresetCreateRequest(body);
+    const store = storeRegistry.getStore(cwd);
+    const preset = providerDraftInputToPreset(input.presetInput, input.apiKey, new Date().toISOString());
+    const resolver = input.apiKey ? createDraftProviderSecretResolver(secretResolver, input.apiKey) : secretResolver;
+    const result = await checkProviderPreset(store, preset, resolver);
+    writeJson(response, 200, result);
+  } catch (error) {
+    const statusCode = error instanceof HttpError ? error.statusCode : 400;
+    writeJson(response, statusCode, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function handleProviderItem(
   request: IncomingMessage,
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   secretResolver: SecretResolver,
-  route: { readonly providerId: string; readonly action?: "check" },
+  route: { readonly providerId: string; readonly action?: "check" | "secret" },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -1262,6 +1310,11 @@ async function handleProviderItem(
     const checkResult = await checkProviderPreset(store, preset, secretResolver);
     store.recordProviderCheckResult(route.providerId, checkResult);
     writeJson(response, 200, checkResult);
+    return;
+  }
+
+  if (request.method === "GET" && route.action === "secret") {
+    writeJson(response, 200, toProviderSecretResponse(store, preset));
     return;
   }
 
@@ -1311,6 +1364,39 @@ async function handleProviderItem(
   }
 
   writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for provider presets` });
+}
+
+async function handleProviderModelsProbe(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /provider-models` });
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseProviderModelListRequest(body);
+    const store = storeRegistry.getStore(cwd);
+    const result = await listProviderModels(store, input, secretResolver);
+    writeJson(response, 200, result);
+  } catch (error) {
+    const statusCode = error instanceof HttpError ? error.statusCode : 400;
+    writeJson(response, statusCode, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function handleMediaJobsCollection(
@@ -3413,13 +3499,16 @@ function parseTaskRoute(pathname: string): { readonly taskId: string; readonly a
   return undefined;
 }
 
-function parseProviderRoute(pathname: string): { readonly providerId: string; readonly action?: "check" } | undefined {
+function parseProviderRoute(pathname: string): { readonly providerId: string; readonly action?: "check" | "secret" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "providers") {
     return { providerId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "providers" && segments[2] === "check") {
     return { providerId: segments[1], action: "check" };
+  }
+  if (segments.length === 3 && segments[0] === "providers" && segments[2] === "secret") {
+    return { providerId: segments[1], action: "secret" };
   }
   return undefined;
 }
@@ -3687,6 +3776,22 @@ function parseProviderPresetUpdateRequest(value: unknown): ProviderPresetUpdateR
   };
 }
 
+function parseProviderModelListRequest(value: unknown): ProviderModelListRequest {
+  if (!isRecord(value)) {
+    throw new Error("Provider model list request must be a JSON object");
+  }
+  return {
+    kind: readProviderKind(value, "kind"),
+    providerId: readString(value, "providerId"),
+    api: readProviderApi(value, "api"),
+    baseUrl: readOptionalString(value, "baseUrl"),
+    apiKeyRef: readOptionalApiKeyRef(value),
+    apiKey: readOptionalApiKey(value),
+    headers: readOptionalStringRecord(value, "headers"),
+    authHeader: readOptionalBoolean(value, "authHeader"),
+  };
+}
+
 function providerUpdateWithSecretRef(providerId: string, input: ProviderPresetUpdateRequest): ProviderPresetUpdateInput {
   if (input.apiKey) {
     return { ...input.updateInput, apiKeyRef: localProviderSecretRef(providerId) };
@@ -3700,6 +3805,59 @@ function providerUpdateWithSecretRef(providerId: string, input: ProviderPresetUp
 function saveLocalProviderSecret(store: RunStore, preset: ProviderPreset, apiKey: string, now: string): ProviderPreset {
   store.setProviderSecret(preset.id, apiKey, now);
   return store.updateProviderPreset(preset.id, { apiKeyRef: localProviderSecretRef(preset.id) }, now) ?? preset;
+}
+
+const draftProviderSecretRef = "keychain:LING_STACK_DRAFT_PROVIDER_API_KEY";
+
+function providerDraftInputToPreset(input: ProviderPresetInput, apiKey: string | undefined, now: string): ProviderPreset {
+  return {
+    id: "provider_draft_check",
+    kind: input.kind,
+    displayName: input.displayName,
+    providerId: input.providerId,
+    model: input.model,
+    api: input.api,
+    baseUrl: input.baseUrl,
+    apiKeyRef: apiKey ? draftProviderSecretRef : input.apiKeyRef,
+    headers: input.headers ?? {},
+    authHeader: input.authHeader,
+    reasoning: input.reasoning,
+    input: input.input ?? ["text"],
+    contextWindow: input.contextWindow,
+    maxTokens: input.maxTokens,
+    compat: input.compat ?? {},
+    capabilities: input.capabilities,
+    enabled: input.enabled ?? true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function createDraftProviderSecretResolver(delegate: SecretResolver, apiKey: string): SecretResolver {
+  return {
+    status(ref: string, purpose?: SecretPurpose): SecretStatus {
+      if (ref === draftProviderSecretRef) {
+        return {
+          ref,
+          kind: "keychain",
+          configured: true,
+        };
+      }
+      return delegate.status(ref, purpose);
+    },
+    resolve(ref: string, purpose?: SecretPurpose): ResolvedSecret {
+      const status = this.status(ref, purpose);
+      if (ref === draftProviderSecretRef) {
+        return {
+          ref,
+          configured: true,
+          value: apiKey,
+          status,
+        };
+      }
+      return delegate.resolve(ref, purpose);
+    },
+  };
 }
 
 function localProviderSecretRef(providerId: string): string {
@@ -3833,6 +3991,26 @@ function toPublicProviderPreset(store: RunStore, preset: ProviderPreset, secretR
   };
 }
 
+function toProviderSecretResponse(store: RunStore, preset: ProviderPreset): { readonly providerId: string; readonly apiKey: string; readonly apiKeyRef?: string; readonly configured: boolean } {
+  if (!preset.apiKeyRef || !isLocalProviderSecretRef(preset.apiKeyRef)) {
+    return {
+      providerId: preset.id,
+      apiKey: "",
+      apiKeyRef: preset.apiKeyRef,
+      configured: false,
+    };
+  }
+  const providerId = readLocalProviderSecretProviderId(preset.apiKeyRef);
+  const validLocalRef = providerId === preset.id;
+  const apiKey = validLocalRef ? store.getProviderSecret(providerId) ?? "" : "";
+  return {
+    providerId: preset.id,
+    apiKey,
+    apiKeyRef: preset.apiKeyRef,
+    configured: apiKey.length > 0,
+  };
+}
+
 async function checkProviderPreset(store: RunStore, preset: ProviderPreset, secretResolver: SecretResolver): Promise<ProviderCheckResult> {
   const checkedAt = new Date().toISOString();
   if (preset.baseUrl) {
@@ -3923,6 +4101,166 @@ async function checkProviderPreset(store: RunStore, preset: ProviderPreset, secr
   }
 
   return await probeChatProvider(store, preset, checkedAt, secretResolver);
+}
+
+async function listProviderModels(
+  store: RunStore,
+  input: ProviderModelListRequest,
+  secretResolver: SecretResolver,
+): Promise<ProviderModelListResponse> {
+  const preset = providerModelListInputToPreset(input);
+  if (preset.baseUrl) {
+    validateUrl(preset.baseUrl, "baseUrl");
+  }
+  if (preset.api === "media-job") {
+    throw new HttpError(400, "unsupported_capability", "Model discovery is available for chat providers only.");
+  }
+  if (!["openai-completions", "openai-responses", "anthropic-messages"].includes(preset.api)) {
+    throw new HttpError(400, "unsupported_capability", `Model discovery is not implemented for ${preset.api}.`);
+  }
+  const secret = resolveProviderModelListSecret(store, preset, input, secretResolver);
+  if ((preset.api === "anthropic-messages" || preset.authHeader !== false) && !secret.configured) {
+    throw new HttpError(400, "secret_missing", "API key missing. Add an API key before fetching models.");
+  }
+
+  const source = buildProviderModelsUrl(preset);
+  try {
+    const response = await fetch(source, {
+      method: "GET",
+      headers: buildProviderModelsHeaders(preset, secret),
+      signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new HttpError(
+        response.status === 401 || response.status === 403 ? 401 : 400,
+        response.status === 401 || response.status === 403 ? "auth_failed" : "provider_error",
+        await providerModelListFailureMessage(response, secret.value),
+      );
+    }
+    const body = await response.json() as unknown;
+    return {
+      source,
+      models: parseProviderModelsResponse(body),
+    };
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw error;
+    }
+    throw new HttpError(
+      400,
+      "network_failed",
+      `Provider model discovery failed: ${redactTextWithSecrets(error instanceof Error ? error.message : String(error), [secret.value])}`,
+    );
+  }
+}
+
+function providerModelListInputToPreset(input: ProviderModelListRequest): ProviderPreset {
+  return {
+    id: "provider_model_probe",
+    kind: input.kind,
+    displayName: "Provider model probe",
+    providerId: input.providerId,
+    model: "model-probe",
+    api: input.api,
+    baseUrl: input.baseUrl,
+    apiKeyRef: input.apiKey ? "__request_api_key__" : input.apiKeyRef,
+    headers: input.headers ?? {},
+    authHeader: input.authHeader ?? true,
+    reasoning: false,
+    input: ["text"],
+    compat: {},
+    capabilities: ["chat"],
+    enabled: true,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  };
+}
+
+function resolveProviderModelListSecret(
+  store: RunStore,
+  preset: ProviderPreset,
+  input: ProviderModelListRequest,
+  secretResolver: SecretResolver,
+): ResolvedSecret {
+  if (input.apiKey) {
+    return {
+      ref: "__request_api_key__",
+      configured: true,
+      value: input.apiKey,
+      status: {
+        ref: "__request_api_key__",
+        kind: "local",
+        configured: true,
+      },
+    };
+  }
+  return preset.apiKeyRef ? resolveProviderSecret(store, preset, secretResolver) : { configured: false };
+}
+
+function buildProviderModelsUrl(preset: ProviderPreset): string {
+  return `${normalizeProviderBaseUrl(preset)}/models`;
+}
+
+function buildProviderModelsHeaders(preset: ProviderPreset, secret: ResolvedSecret): Record<string, string> {
+  const headers: Record<string, string> = { ...preset.headers };
+  if (preset.api === "anthropic-messages") {
+    if (secret.value) {
+      headers["x-api-key"] = secret.value;
+    }
+    headers["anthropic-version"] = headers["anthropic-version"] ?? "2023-06-01";
+    return headers;
+  }
+  if (preset.authHeader !== false && secret.value) {
+    headers.Authorization = `Bearer ${secret.value}`;
+  }
+  return headers;
+}
+
+async function providerModelListFailureMessage(response: Response, secret?: string): Promise<string> {
+  const bodyText = redactTextWithSecrets(await readLimitedResponseText(response, 800), [secret]);
+  return `Provider returned HTTP ${response.status}${bodyText ? `: ${bodyText}` : "."}`;
+}
+
+function parseProviderModelsResponse(body: unknown): readonly ProviderModelOption[] {
+  const data = isRecord(body) && Array.isArray(body.data) ? body.data : Array.isArray(body) ? body : [];
+  const models: ProviderModelOption[] = [];
+  const seen = new Set<string>();
+  for (const item of data) {
+    const model = parseProviderModelOption(item);
+    if (!model || seen.has(model.id)) {
+      continue;
+    }
+    seen.add(model.id);
+    models.push(model);
+    if (models.length >= 200) {
+      break;
+    }
+  }
+  return models;
+}
+
+function parseProviderModelOption(value: unknown): ProviderModelOption | undefined {
+  if (typeof value === "string") {
+    const id = value.trim();
+    return id ? { id } : undefined;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const id = typeof value.id === "string"
+    ? value.id.trim()
+    : typeof value.name === "string"
+      ? value.name.trim()
+      : "";
+  if (!id) {
+    return undefined;
+  }
+  return removeUndefined({
+    id,
+    displayName: typeof value.display_name === "string" ? value.display_name : typeof value.displayName === "string" ? value.displayName : undefined,
+    ownedBy: typeof value.owned_by === "string" ? value.owned_by : typeof value.ownedBy === "string" ? value.ownedBy : undefined,
+    createdAt: typeof value.created_at === "string" ? value.created_at : undefined,
+  });
 }
 
 async function probeChatProvider(store: RunStore, preset: ProviderPreset, checkedAt: string, secretResolver: SecretResolver): Promise<ProviderCheckResult> {

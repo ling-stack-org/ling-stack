@@ -429,7 +429,7 @@ test("provider check and run startup use the injected secret resolver without le
   }
 });
 
-test("provider local API keys are write-only, checked from sqlite, updated, cleared, and deleted", async () => {
+test("provider local API keys are edited from sqlite without leaking in provider responses", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-local-secret-"));
   const openai = await startMockOpenAICompatibleServer();
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
@@ -453,6 +453,12 @@ test("provider local API keys are write-only, checked from sqlite, updated, clea
     assert.equal(created.provider.apiKeyStatus.kind, "local");
     assert.doesNotMatch(JSON.stringify(created), /local-secret-one/);
 
+    const firstSecret = await getJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/secret?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(firstSecret.providerId, providerId);
+    assert.equal(firstSecret.apiKey, "local-secret-one");
+    assert.equal(firstSecret.apiKeyRef, `local:${providerId}`);
+    assert.equal(firstSecret.configured, true);
+
     const firstCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(firstCheck.ok, true);
     assert.equal(openai.requests[0].authorization, "Bearer local-secret-one");
@@ -468,6 +474,10 @@ test("provider local API keys are write-only, checked from sqlite, updated, clea
     assert.equal(updated.provider.model, "updated-model");
     assert.equal(updated.provider.apiKeyRef, `local:${providerId}`);
     assert.doesNotMatch(JSON.stringify(updated), /local-secret-two/);
+    const listedAfterUpdate = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
+    assert.doesNotMatch(JSON.stringify(listedAfterUpdate), /local-secret-two/);
+    const updatedSecret = await getJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/secret?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(updatedSecret.apiKey, "local-secret-two");
 
     const secondCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(secondCheck.ok, true);
@@ -480,6 +490,9 @@ test("provider local API keys are write-only, checked from sqlite, updated, clea
     });
     assert.equal(cleared.provider.apiKeyRef, undefined);
     assert.equal(cleared.provider.apiKeyConfigured, false);
+    const clearedSecret = await getJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/secret?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(clearedSecret.apiKey, "");
+    assert.equal(clearedSecret.configured, false);
 
     const missingCheck = await postJson(`${daemon.url}/providers/${encodeURIComponent(providerId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(missingCheck.ok, false);
@@ -499,6 +512,89 @@ test("provider local API keys are write-only, checked from sqlite, updated, clea
     } finally {
       store.close();
     }
+  } finally {
+    await daemon.close();
+    await openai.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+  });
+
+  test("provider draft check validates direct API keys without persisting providers", async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-draft-check-"));
+    const openai = await startMockOpenAICompatibleServer();
+    const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+      toolCallId: "tool_unused_draft_check",
+      toolName: "bash",
+      input: { command: "echo unused" },
+    }));
+    try {
+      const missingCheck = await postJson(`${daemon.url}/provider-check?cwd=${encodeURIComponent(cwd)}`, {
+        kind: "openai-compatible",
+        displayName: "Draft Gateway",
+        providerId: "draft-gateway",
+        model: "draft-model",
+        api: "openai-completions",
+        baseUrl: `${openai.url}/v1`,
+        authHeader: true,
+        capabilities: ["chat", "tool_call"],
+        enabled: true,
+      });
+      assert.equal(missingCheck.ok, false);
+      assert.equal(missingCheck.code, "secret_missing");
+      assert.match(missingCheck.message, /API key missing/);
+      const listedAfterMissing = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(listedAfterMissing.providers.length, 0);
+
+      const readyCheck = await postJson(`${daemon.url}/provider-check?cwd=${encodeURIComponent(cwd)}`, {
+        kind: "openai-compatible",
+        displayName: "Draft Gateway",
+        providerId: "draft-gateway",
+        model: "draft-model",
+        api: "openai-completions",
+        baseUrl: `${openai.url}/v1`,
+        authHeader: true,
+        apiKey: "draft-secret",
+        capabilities: ["chat", "tool_call"],
+        enabled: true,
+      });
+      assert.equal(readyCheck.ok, true);
+      assert.equal(openai.requests[0].path, "/v1/chat/completions");
+      assert.equal(openai.requests[0].authorization, "Bearer draft-secret");
+      assert.equal(openai.requests[0].body.model, "draft-model");
+      assert.doesNotMatch(JSON.stringify(readyCheck), /draft-secret/);
+      const listedAfterReady = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(listedAfterReady.providers.length, 0);
+    } finally {
+      await daemon.close();
+      await openai.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("provider model listing probes the endpoint with the provided API key", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-models-"));
+  const openai = await startMockOpenAICompatibleServer();
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_model_list",
+    toolName: "bash",
+    input: { command: "echo unused" },
+  }));
+  try {
+    const result = await postJson(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      providerId: "cliproxy",
+      api: "openai-completions",
+      baseUrl: `${openai.url}/v1`,
+      authHeader: true,
+      apiKey: "model-list-secret",
+    });
+
+    assert.equal(openai.requests[0].method, "GET");
+    assert.equal(openai.requests[0].path, "/v1/models");
+    assert.equal(openai.requests[0].authorization, "Bearer model-list-secret");
+    assert.deepEqual(result.models.map((model) => model.id), ["cliproxy-gpt-4o", "cliproxy-claude-sonnet"], JSON.stringify({ result, requests: openai.requests }));
+    assert.equal(result.source, `${openai.url}/v1/models`);
+    assert.doesNotMatch(JSON.stringify(result), /model-list-secret/);
   } finally {
     await daemon.close();
     await openai.close();
@@ -1688,6 +1784,17 @@ async function startMockOpenAICompatibleServer() {
       authorization: request.headers.authorization,
       body,
     });
+    if (request.method === "GET" && new URL(request.url ?? "/", "http://127.0.0.1").pathname.endsWith("/models")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        object: "list",
+        data: [
+          { id: "cliproxy-gpt-4o", object: "model", owned_by: "cliproxy" },
+          { id: "cliproxy-claude-sonnet", object: "model", owned_by: "cliproxy" },
+        ],
+      }));
+      return;
+    }
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       id: "chatcmpl-local-secret-test",

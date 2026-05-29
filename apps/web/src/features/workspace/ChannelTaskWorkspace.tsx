@@ -24,6 +24,7 @@ import {
   isMediaProvider,
   providerLastCheckClass,
   providerLastCheckLabel,
+  providerCheckMessage,
   providerPreflightReady,
   providerRunBlockerLabel,
   providerRunPreflightBlocker,
@@ -671,17 +672,17 @@ function TaskProviderReadiness({
         <div className="task-provider-readiness-head">
 	          <strong>{ready ? t("Provider ready") : t("Provider needs attention")}</strong>
           <span className={provider ? providerLastCheckClass(provider) : "provider-state check-unknown"}>
-	            {provider ? providerLastCheckLabel(provider) : t("no provider")}
+		            {provider ? providerLastCheckLabel(provider, t) : t("no provider")}
           </span>
         </div>
-        <p>{taskProviderReadinessMessage(provider, blocker)}</p>
+        <p>{taskProviderReadinessMessage(provider, blocker, t)}</p>
         <div className="task-provider-readiness-meta">
 	          <MetaRow label={t("Provider")} value={provider ? provider.displayName : "-"} compact />
 	          <MetaRow label={t("Model")} value={provider ? provider.model : "-"} compact />
 	          <MetaRow label={t("Checked")} value={checkedAt} compact />
         </div>
-        {lastCheck && !lastCheck.ok ? <small>{lastCheck.message}</small> : null}
-        <small>{taskProviderReadinessGuidance(provider)}</small>
+        {lastCheck && !lastCheck.ok ? <small>{providerCheckMessage(lastCheck, t)}</small> : null}
+        <small>{taskProviderReadinessGuidance(provider, t)}</small>
       </div>
       <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
 	        {t("Model Workbench")}

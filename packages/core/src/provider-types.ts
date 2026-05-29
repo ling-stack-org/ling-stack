@@ -106,6 +106,29 @@ export interface ProviderCheckResult {
   readonly checkedAt: string;
 }
 
+export interface ProviderModelOption {
+  readonly id: string;
+  readonly displayName?: string;
+  readonly ownedBy?: string;
+  readonly createdAt?: string;
+}
+
+export interface ProviderModelListRequest {
+  readonly kind: ProviderKind;
+  readonly providerId: string;
+  readonly api: ProviderApi;
+  readonly baseUrl?: string;
+  readonly apiKeyRef?: string;
+  readonly apiKey?: string;
+  readonly headers?: Record<string, string>;
+  readonly authHeader?: boolean;
+}
+
+export interface ProviderModelListResponse {
+  readonly source: string;
+  readonly models: readonly ProviderModelOption[];
+}
+
 export interface ListProviderPresetsOptions {
   readonly enabled?: boolean;
 }

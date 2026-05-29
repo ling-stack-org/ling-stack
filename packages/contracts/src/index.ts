@@ -368,6 +368,13 @@ export interface ProviderMutationResponse {
   readonly provider: ProviderPreset;
 }
 
+export interface ProviderSecretResponse {
+  readonly providerId: string;
+  readonly apiKey: string;
+  readonly apiKeyRef?: string;
+  readonly configured: boolean;
+}
+
 export interface ProviderTemplate {
   readonly templateId: string;
   readonly description: string;
@@ -393,12 +400,37 @@ export interface ProviderTemplateListResponse {
   readonly templates: readonly ProviderTemplate[];
 }
 
+export interface ProviderModelOption {
+  readonly id: string;
+  readonly displayName?: string;
+  readonly ownedBy?: string;
+  readonly createdAt?: string;
+}
+
+export interface ProviderModelListRequest {
+  readonly kind: ProviderKind;
+  readonly providerId: string;
+  readonly api: ProviderApi;
+  readonly baseUrl?: string;
+  readonly apiKeyRef?: string;
+  readonly apiKey?: string;
+  readonly headers?: Record<string, string>;
+  readonly authHeader?: boolean;
+}
+
+export interface ProviderModelListResponse {
+  readonly source: string;
+  readonly models: readonly ProviderModelOption[];
+}
+
 export interface ProviderCheckResult {
   readonly ok: boolean;
   readonly code?: string;
   readonly message: string;
   readonly checkedAt: string;
 }
+
+export interface ProviderDraftCheckRequest extends ProviderMutationRequest {}
 
 export interface ProviderMutationRequest {
   readonly kind: ProviderKind;

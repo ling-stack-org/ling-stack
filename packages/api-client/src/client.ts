@@ -16,9 +16,13 @@ import type {
   MediaJobListResponse,
   MediaJobMutationResponse,
   ProviderCheckResult,
+  ProviderDraftCheckRequest,
   ProviderListResponse,
+  ProviderModelListRequest,
+  ProviderModelListResponse,
   ProviderMutationRequest,
   ProviderMutationResponse,
+  ProviderSecretResponse,
   ProviderTemplateListResponse,
   ResourceLeaseListResponse,
   RunArtifactListResponse,
@@ -148,12 +152,24 @@ export class LingDaemonClient {
     return this.patch(`/providers/${encodeURIComponent(providerId)}`, { cwd }, input);
   }
 
+  async getProviderSecret(cwd: string, providerId: string): Promise<ProviderSecretResponse> {
+    return this.get(`/providers/${encodeURIComponent(providerId)}/secret`, { cwd });
+  }
+
   async deleteProvider(cwd: string, providerId: string): Promise<void> {
     await this.request("DELETE", `/providers/${encodeURIComponent(providerId)}`, { cwd });
   }
 
   async checkProvider(cwd: string, providerId: string): Promise<ProviderCheckResult> {
     return this.post(`/providers/${encodeURIComponent(providerId)}/check`, { cwd });
+  }
+
+  async checkProviderDraft(cwd: string, input: ProviderDraftCheckRequest): Promise<ProviderCheckResult> {
+    return this.post("/provider-check", { cwd }, input);
+  }
+
+  async listProviderModels(cwd: string, input: ProviderModelListRequest): Promise<ProviderModelListResponse> {
+    return this.post("/provider-models", { cwd }, input);
   }
 
   async listApprovals(cwd: string, options: ListApprovalsRequest = {}): Promise<ApprovalListResponse> {
