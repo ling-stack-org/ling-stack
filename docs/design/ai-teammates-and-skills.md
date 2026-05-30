@@ -224,7 +224,9 @@ filtered context, and approval profile.
 
 Phase 1 is now the private workspace binding editor: use existing
 `teammate_skill_bindings`, show the built-in library, bind or disable skills per teammate,
-and persist through `PUT /teammates/:id/skills`.
+manually add custom `source: "user"` skill ids, delete manually added bindings, and persist
+through `PUT /teammates/:id/skills`. Template-default `source: "template"` bindings are
+protected by the store and cannot be deleted; users can only disable them.
 
 Phase 2 should add an Effective Skills read model:
 

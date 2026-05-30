@@ -186,6 +186,9 @@ Behavior:
 - lists the built-in skill library and any unknown durable bindings,
 - shows workflow phase, required tools, provider capabilities, and approval profile,
 - lets the user bind or disable a skill for the selected teammate,
+- lets the user manually add a custom skill binding by id, repo shorthand, or URL,
+- lets the user delete manually added `source: "user"` bindings,
+- does not expose deletion for template-default `source: "template"` bindings,
 - saves through `PUT /teammates/:id/skills`,
 - treats disabled bindings as metadata, not as execution permission changes by
   themselves.

@@ -14,6 +14,7 @@ import {
   Settings,
   ShieldCheck,
   SquareTerminal,
+  Trash2,
   X,
 } from "lucide-react";
 import type { SkillPack } from "@ling-stack/core/skill-types";
@@ -101,6 +102,7 @@ export function TeammateWorkspace({
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [activityItems, setActivityItems] = useState<readonly TeammateActivityItem[]>([]);
   const [messageDraft, setMessageDraft] = useState("");
+  const [manualSkillInput, setManualSkillInput] = useState("");
   const [taskForm, setTaskForm] = useState<TeammateTaskCreateForm>({ channelId: "", title: "", prompt: "" });
   const [settingsForm, setSettingsForm] = useState<TeammateSettingsForm>(() => teammateToSettingsForm(teammate));
   const [loading, setLoading] = useState(false);
@@ -172,6 +174,7 @@ export function TeammateWorkspace({
     setTaskMessage("");
     setChannelMessage("");
     setSkillMessage("");
+    setManualSkillInput("");
     setTaskForm({ channelId: "", title: "", prompt: "" });
   }, [teammate.id]);
 
@@ -346,37 +349,84 @@ export function TeammateWorkspace({
     }
   }
 
-  async function toggleSkillBinding(skillId: string): Promise<void> {
+  async function saveSkillBindings(
+    nextBindings: readonly { readonly skillId: string; readonly source?: TeammateSkillBinding["source"]; readonly enabled?: boolean }[],
+    message: string,
+  ): Promise<boolean> {
     if (savingSkills) {
-      return;
+      return false;
     }
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) {
       setWorkspaceError(t("Workspace path is required."));
-      return;
+      return false;
     }
     setSavingSkills(true);
     try {
       setWorkspaceError("");
       setSkillMessage("");
-      const nextBindings = bindingBySkillId.has(skillId)
-        ? skillBindings.map((binding) =>
-          binding.skillId === skillId
-            ? { skillId: binding.skillId, source: binding.source, enabled: !binding.enabled }
-            : { skillId: binding.skillId, source: binding.source, enabled: binding.enabled },
-        )
-        : [
-          ...skillBindings.map((binding) => ({ skillId: binding.skillId, source: binding.source, enabled: binding.enabled })),
-          { skillId, source: "user" as const, enabled: true },
-        ];
       const response = await replaceTeammateSkills(workspaceCwd, teammate.id, nextBindings);
       setSkillBindings(response.bindings);
-      setSkillMessage(t("Skills updated"));
+      setSkillMessage(message);
+      return true;
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
       setSavingSkills(false);
     }
+  }
+
+  async function toggleSkillBinding(skillId: string): Promise<void> {
+    const nextBindings = bindingBySkillId.has(skillId)
+      ? skillBindings.map((binding) =>
+        binding.skillId === skillId
+          ? { skillId: binding.skillId, source: binding.source, enabled: !binding.enabled }
+          : { skillId: binding.skillId, source: binding.source, enabled: binding.enabled },
+      )
+      : [
+        ...skillBindings.map((binding) => ({ skillId: binding.skillId, source: binding.source, enabled: binding.enabled })),
+        { skillId, source: "user" as const, enabled: true },
+      ];
+    await saveSkillBindings(nextBindings, t("Skills updated"));
+  }
+
+  async function addManualSkillBinding(): Promise<void> {
+    const skillId = normalizeManualSkillId(manualSkillInput);
+    if (!skillId) {
+      setSkillMessage(t("Enter a skill id first"));
+      return;
+    }
+    const existing = bindingBySkillId.get(skillId);
+    if (existing?.enabled) {
+      setSkillMessage(t("Skill already exists"));
+      return;
+    }
+    const nextBindings = existing
+      ? skillBindings.map((binding) =>
+        binding.skillId === skillId
+          ? { skillId: binding.skillId, source: binding.source, enabled: true }
+          : { skillId: binding.skillId, source: binding.source, enabled: binding.enabled },
+      )
+      : [
+        ...skillBindings.map((binding) => ({ skillId: binding.skillId, source: binding.source, enabled: binding.enabled })),
+        { skillId, source: "user" as const, enabled: true },
+      ];
+    if (await saveSkillBindings(nextBindings, t("Skill added"))) {
+      setManualSkillInput("");
+    }
+  }
+
+  async function deleteUserSkillBinding(skillId: string): Promise<void> {
+    const binding = bindingBySkillId.get(skillId);
+    if (!binding || binding.source === "template") {
+      setSkillMessage(t("Default skills cannot be deleted"));
+      return;
+    }
+    const nextBindings = skillBindings
+      .filter((item) => item.skillId !== skillId)
+      .map((item) => ({ skillId: item.skillId, source: item.source, enabled: item.enabled }));
+    await saveSkillBindings(nextBindings, t("Skill deleted"));
   }
 
   function resolvePreferredTaskChannelId(channelId: string): string {
@@ -624,6 +674,26 @@ export function TeammateWorkspace({
             </span>
             <small>{savingSkills ? t("Saving...") : skillMessage || t("{count} bound", { count: enabledSkillCount })}</small>
           </div>
+          <div className="teammate-skill-add-row">
+            <label className="field">
+              <span>{t("Manual skill")}</span>
+              <input
+                value={manualSkillInput}
+                onChange={(event) => setManualSkillInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void addManualSkillBinding();
+                  }
+                }}
+                placeholder={t("URL, repo/name, or skill id")}
+              />
+            </label>
+            <button className="secondary-button" type="button" onClick={() => void addManualSkillBinding()} disabled={savingSkills}>
+              <Plus size={15} />
+              {t("Add custom skill")}
+            </button>
+          </div>
           {skillRows.length === 0 ? (
             <div className="client-empty-state teammate-empty">
               <Brain size={18} />
@@ -635,9 +705,10 @@ export function TeammateWorkspace({
                 const enabled = Boolean(binding?.enabled);
                 const sourceLabel = binding
                   ? binding.source === "template"
-                    ? t("Template skill")
+                    ? t("Default skill")
                     : t("User skill")
                   : t("Available skill");
+                const canDelete = binding?.source === "user";
                 return (
                   <article key={id} className={`teammate-data-row teammate-skill-row ${enabled ? "enabled" : ""}`}>
                     <span>
@@ -649,8 +720,14 @@ export function TeammateWorkspace({
                       <span className={`phase-token ${skill?.workflowPhase ?? "operate"}`}>{skill ? workflowPhaseLabel(skill.workflowPhase, t) : t("Custom")}</span>
                       <button className="secondary-button compact-button" type="button" onClick={() => void toggleSkillBinding(id)} disabled={savingSkills}>
                         {enabled ? <X size={14} /> : <Plus size={14} />}
-                        {enabled ? t("Disable skill") : t("Bind skill")}
+                        {binding ? enabled ? t("Disable skill") : t("Enable skill") : t("Bind skill")}
                       </button>
+                      {canDelete ? (
+                        <button className="secondary-button danger compact-button" type="button" onClick={() => void deleteUserSkillBinding(id)} disabled={savingSkills}>
+                          <Trash2 size={14} />
+                          {t("Delete skill")}
+                        </button>
+                      ) : null}
                     </div>
                   </article>
                 );
@@ -787,6 +864,32 @@ function TeammateListSection<T>({
       )}
     </section>
   );
+}
+
+function normalizeManualSkillId(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const urlSkillId = parseSkillIdFromUrl(trimmed);
+  const candidate = urlSkillId || trimmed;
+  return candidate
+    .toLowerCase()
+    .replace(/[^a-z0-9._/-]+/g, "-")
+    .replace(/\/{2,}/g, "/")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+}
+
+function parseSkillIdFromUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    const segments = url.pathname.split("/").filter(Boolean);
+    return [url.hostname, ...segments.slice(-2)].join("/");
+  } catch {
+    return "";
+  }
 }
 
 function teammateToSettingsForm(teammate: AiTeammate): TeammateSettingsForm {

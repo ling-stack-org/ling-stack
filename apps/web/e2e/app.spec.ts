@@ -1745,6 +1745,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   )).toBe(true);
   await expect(skillsPanel).toContainText("Skills updated");
   const implementationRow = skillsPanel.locator(".teammate-skill-row").filter({ has: page.getByText("Implementation", { exact: true }) });
+  await expect(implementationRow.getByRole("button", { name: "Delete skill" })).toHaveCount(0);
   await implementationRow.getByRole("button", { name: "Disable skill" }).click();
   await expect.poll(() => {
     const binding = state.teammateSkillBindings.find((item) =>
@@ -1752,6 +1753,20 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     );
     return isRecord(binding) ? binding.enabled : undefined;
   }).toBe(false);
+  await skillsPanel.getByLabel("Manual skill").fill("triage-playbook");
+  await skillsPanel.getByRole("button", { name: "Add custom skill" }).click();
+  await expect.poll(() => {
+    const binding = state.teammateSkillBindings.find((item) =>
+      isRecord(item) && item.teammateId === teammateId && item.skillId === "triage-playbook"
+    );
+    return isRecord(binding) ? [binding.source, binding.enabled] : undefined;
+  }).toEqual(["user", true]);
+  const customSkillRow = skillsPanel.locator(".teammate-skill-row").filter({ has: page.getByText("triage-playbook", { exact: true }) });
+  await expect(customSkillRow).toContainText("User skill");
+  await customSkillRow.getByRole("button", { name: "Delete skill" }).click();
+  await expect.poll(() => state.teammateSkillBindings.some((item) =>
+    isRecord(item) && item.teammateId === teammateId && item.skillId === "triage-playbook"
+  )).toBe(false);
 
   await page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Memory/ }).click();
   await expect(page.getByText("Private chat summary")).toBeVisible();

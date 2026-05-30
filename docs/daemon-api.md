@@ -287,6 +287,9 @@ Skill bindings are durable metadata. They do not grant execution authority by th
 runs still pass through provider capability checks, allowed tools, approval policy, and
 state-machine gates. Disabled bindings are retained as user overrides, so a template skill
 can be turned off without deleting the skill definition from the workspace library.
+Template-default bindings are protected by storage: omitting them from a replacement
+request does not delete them. Manually added `source: "user"` bindings can be deleted by
+omitting them from the replacement set.
 
 ```json
 {

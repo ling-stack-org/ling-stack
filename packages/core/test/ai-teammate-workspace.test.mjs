@@ -59,7 +59,20 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
     );
     assert.deepEqual(skillBindings.map((item) => [item.skillId, item.source, item.enabled]), [
       ["implement", "template", false],
+      ["investigate", "template", true],
       ["plan-eng-review", "user", true],
+      ["review", "template", true],
+    ]);
+    const deletedUserSkillBindings = store.replaceTeammateSkillBindings(
+      engineerId,
+      [{ skillId: "triage-playbook", source: "user", enabled: true }],
+      "2026-05-29T01:00:01.000Z",
+    );
+    assert.deepEqual(deletedUserSkillBindings.map((item) => [item.skillId, item.source, item.enabled]), [
+      ["implement", "template", false],
+      ["investigate", "template", true],
+      ["review", "template", true],
+      ["triage-playbook", "user", true],
     ]);
 
     const memberships = store.replaceTeammateChannelMemberships(

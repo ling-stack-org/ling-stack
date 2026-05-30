@@ -1048,6 +1048,17 @@
   grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
 }
 
+.teammate-skill-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(248, 247, 243, 0.5);
+}
+
 .teammate-skill-row {
   grid-template-columns: minmax(0, 1fr) minmax(250px, auto);
 }
@@ -1090,12 +1101,15 @@
   .teammate-chat-composer,
   .teammate-task-create-grid,
   .teammate-channel-row,
+  .teammate-skill-add-row,
+  .teammate-skill-row,
   .teammate-settings-grid {
     grid-template-columns: 1fr;
   }
 
   .teammate-task-create-footer,
-  .teammate-channel-actions {
+  .teammate-channel-actions,
+  .teammate-skill-actions {
     justify-content: flex-start;
   }
 

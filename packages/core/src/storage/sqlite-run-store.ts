@@ -1346,11 +1346,13 @@ export class SqliteRunStore implements RunStore {
     bindings: readonly ReplaceTeammateSkillBindingInput[],
     now: string,
   ): TeammateSkillBinding[] {
-    if (!this.getAiTeammate(teammateId)) {
+    const teammate = this.getAiTeammate(teammateId);
+    if (!teammate) {
       throw new Error(`AI teammate not found: ${teammateId}`);
     }
 
-    const normalized = dedupeSkillBindingInputs(bindings);
+    const existing = this.listTeammateSkillBindings(teammateId);
+    const normalized = protectDefaultSkillBindings(teammate, existing, dedupeSkillBindingInputs(bindings));
     this.database.exec("BEGIN");
     try {
       this.database.prepare("DELETE FROM teammate_skill_bindings WHERE teammate_id = ?").run(teammateId);
@@ -5468,6 +5470,36 @@ function dedupeSkillBindingInputs(
   const bySkill = new Map<string, ReplaceTeammateSkillBindingInput>();
   for (const binding of bindings) {
     bySkill.set(binding.skillId, binding);
+  }
+  return [...bySkill.values()];
+}
+
+function protectDefaultSkillBindings(
+  teammate: AiTeammate,
+  existing: readonly TeammateSkillBinding[],
+  bindings: readonly ReplaceTeammateSkillBindingInput[],
+): readonly ReplaceTeammateSkillBindingInput[] {
+  const bySkill = new Map<string, ReplaceTeammateSkillBindingInput>();
+  for (const binding of bindings) {
+    bySkill.set(binding.skillId, binding);
+  }
+
+  const template = teammate.templateId
+    ? listDefaultTeammateTemplates(GSTACK_DEFAULT_SKILL_PACK_ID).find((item) => item.id === teammate.templateId)
+    : undefined;
+  if (!template) {
+    return [...bySkill.values()];
+  }
+
+  const existingBySkill = new Map(existing.map((binding) => [binding.skillId, binding]));
+  for (const skillId of template.defaultSkillIds) {
+    const requested = bySkill.get(skillId);
+    const previous = existingBySkill.get(skillId);
+    bySkill.set(skillId, {
+      skillId,
+      source: "template",
+      enabled: requested?.enabled ?? previous?.enabled ?? true,
+    });
   }
   return [...bySkill.values()];
 }
