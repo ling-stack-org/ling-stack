@@ -7,7 +7,7 @@
   overflow: auto;
 }
 
-/* macOS workbench visual refresh */
+/* Strict console component token refresh. */
 h1,
 h2,
 h3,
@@ -589,26 +589,58 @@ code,
   background: var(--surface-sidebar);
 }
 
-@media (prefers-color-scheme: dark) {
-  .top-bar::before {
-    opacity: 0.82;
-  }
-
-  .primary-button {
-    color: #111827;
-  }
-
-  .brand-mark {
-    background: linear-gradient(180deg, #f4f5f7, #b7becb);
-    color: #171a20;
-  }
-
-  .avatar-initial.gray {
-    background: linear-gradient(180deg, #8e96a3, #5f6672);
-  }
+:root[data-theme="dark"] .channel-tabs,
+:root[data-theme="dark"] .activity-view-select,
+:root[data-theme="dark"] .activity-search-field,
+:root[data-theme="dark"] .activity-filter-toggle,
+:root[data-theme="dark"] .attention-queue-pill,
+:root[data-theme="dark"] .segmented-control,
+:root[data-theme="dark"] .mention-chip,
+:root[data-theme="dark"] .mention-picker,
+:root[data-theme="dark"] .link-preview-input,
+:root[data-theme="dark"] .provider-run-notice.neutral {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
+  box-shadow: none;
 }
 
-/* macOS workbench interaction pass */
+:root[data-theme="dark"] .channel-tab.active,
+:root[data-theme="dark"] .segmented-control button.active,
+:root[data-theme="dark"] .activity-filter-toggle.active,
+:root[data-theme="dark"] .activity-filter-toggle:hover {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .channel-tab,
+:root[data-theme="dark"] .segmented-control button,
+:root[data-theme="dark"] .mention-picker select,
+:root[data-theme="dark"] .link-preview-input input {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .provider-run-notice.neutral strong,
+:root[data-theme="dark"] .activity-view-select strong,
+:root[data-theme="dark"] .attention-queue-pill strong {
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .primary-button {
+  color: #050505;
+}
+
+:root[data-theme="dark"] .brand-mark {
+  background: var(--accent);
+  color: var(--app-bg);
+}
+
+:root[data-theme="dark"] .avatar-initial.gray {
+  background: var(--surface-subtle);
+  color: var(--text-strong);
+}
+
+/* Strict console workbench interaction pass. */
 .app-shell.inspector-collapsed {
   grid-template-columns: 236px minmax(0, 1fr) 44px;
 }
@@ -2461,7 +2493,7 @@ textarea {
   }
 }
 
-/* Final macOS token guard: this file also contains older component rules above. */
+/* Final strict token guard: this file also contains older component rules above. */
 .context-panel-card,
 .workspace-context-stack > .first-run-flow,
 .workspace-context-stack > .timeline,
@@ -2701,40 +2733,32 @@ textarea:disabled {
   color: var(--text);
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 220px),
-      var(--app-bg);
-  }
+:root[data-theme="dark"] input:disabled,
+:root[data-theme="dark"] select:disabled,
+:root[data-theme="dark"] textarea:disabled {
+  background: color-mix(in srgb, var(--surface-pressed) 74%, var(--surface-panel-strong));
+  color: var(--text-muted);
+}
 
-  input:disabled,
-  select:disabled,
-  textarea:disabled {
-    background: color-mix(in srgb, var(--surface-pressed) 74%, var(--surface-panel-strong));
-    color: var(--text-muted);
-  }
+:root[data-theme="dark"] .timeline-activity-row,
+:root[data-theme="dark"] .event-row,
+:root[data-theme="dark"] .raw-event-panel,
+:root[data-theme="dark"] .client-task-card,
+:root[data-theme="dark"] .task-run-link,
+:root[data-theme="dark"] .run-list-row,
+:root[data-theme="dark"] .provider-next-action,
+:root[data-theme="dark"] .provider-run-notice,
+:root[data-theme="dark"] .provider-batch-result,
+:root[data-theme="dark"] .provider-repair-queue,
+:root[data-theme="dark"] .tool-row,
+:root[data-theme="dark"] .policy-tool-row,
+:root[data-theme="dark"] .persistence-line {
+  background: color-mix(in srgb, var(--surface-panel-strong) 84%, #000000);
+}
 
-  .timeline-activity-row,
-  .event-row,
-  .raw-event-panel,
-  .client-task-card,
-  .task-run-link,
-  .run-list-row,
-  .provider-next-action,
-  .provider-run-notice,
-  .provider-batch-result,
-  .provider-repair-queue,
-  .tool-row,
-  .policy-tool-row,
-  .persistence-line {
-    background: color-mix(in srgb, var(--surface-panel-strong) 84%, #000000);
-  }
-
-  .status-badge,
-  .event-count {
-    background: color-mix(in srgb, var(--surface-panel-strong) 86%, #000000);
-  }
+:root[data-theme="dark"] .status-badge,
+:root[data-theme="dark"] .event-count {
+  background: color-mix(in srgb, var(--surface-panel-strong) 86%, #000000);
 }
 
 /* Final responsive workbench overrides, kept last because legacy media rules above still exist. */

@@ -3,6 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (() => {
+        try {
+          const saved = localStorage.getItem("ling-stack.themePreference");
+          const preference = saved === "light" || saved === "dark" ? saved : "system";
+          const theme =
+            preference === "system" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : preference;
+          document.documentElement.dataset.theme = theme === "system" ? "light" : theme;
+          document.documentElement.dataset.themePreference = preference;
+          document.documentElement.style.colorScheme = document.documentElement.dataset.theme;
+        } catch {
+          document.documentElement.dataset.theme = "light";
+          document.documentElement.dataset.themePreference = "system";
+          document.documentElement.style.colorScheme = "light";
+        }
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Ling Stack</title>
   </head>

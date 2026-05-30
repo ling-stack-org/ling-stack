@@ -1,18 +1,16 @@
-/* macOS-style client shell */
+/* Strict Web console shell. Desktop keeps its macOS glass treatment in the shell layer. */
 body {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.46), rgba(255, 255, 255, 0) 220px),
-    var(--app-bg);
+  background: var(--app-bg);
   color: var(--text);
 }
 
 .app-shell {
-  grid-template-columns: 236px minmax(0, 1fr) 382px;
-  grid-template-rows: 44px minmax(0, 1fr);
+  grid-template-columns: 248px minmax(0, 1fr) 360px;
+  grid-template-rows: 52px minmax(0, 1fr);
   min-height: 100vh;
-  padding: 10px;
-  gap: 10px;
-  background: transparent;
+  padding: 0;
+  gap: 0;
+  background: var(--app-bg);
 }
 
 .top-bar,
@@ -25,30 +23,22 @@ body {
 .context-panel-card {
   border: 1px solid var(--border);
   background: var(--surface-panel);
-  box-shadow:
-    inset 0 1px 0 var(--hairline),
-    var(--shadow-window);
+  box-shadow: none;
   backdrop-filter: var(--material-blur);
   -webkit-backdrop-filter: var(--material-blur);
 }
 
 .top-bar {
-  height: 44px;
-  padding: 0 12px;
-  border-radius: var(--radius-lg);
+  height: 52px;
+  padding: 0 16px;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
   background: var(--window-bg);
 }
 
 .top-bar::before {
-  content: "";
-  display: inline-flex;
-  width: 52px;
-  height: 12px;
-  margin-right: 8px;
-  background:
-    radial-gradient(circle at 6px 6px, #ff5f57 0 5px, transparent 5.5px),
-    radial-gradient(circle at 26px 6px, #febc2e 0 5px, transparent 5.5px),
-    radial-gradient(circle at 46px 6px, #28c840 0 5px, transparent 5.5px);
+  content: none;
 }
 
 .top-path {
@@ -83,8 +73,9 @@ textarea {
 
 .primary-button {
   border-color: var(--accent-border);
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 24%, transparent);
+  background: var(--accent);
+  color: var(--window-bg);
+  box-shadow: none;
 }
 
 .secondary-button {
@@ -95,9 +86,11 @@ textarea {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 12px;
-  border-right: 0;
-  border-radius: var(--radius-lg);
+  padding: 16px 14px;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
   background: var(--surface-sidebar);
   overflow: hidden;
 }
@@ -108,8 +101,13 @@ textarea {
 
 .brand-mark {
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, #333945, #171b22);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  background: var(--accent);
+  color: var(--window-bg);
+  box-shadow: none;
+}
+
+.brand-mark svg {
+  display: block;
 }
 
 .primary-nav {
@@ -141,7 +139,7 @@ textarea {
 .config-button:hover {
   background: var(--surface-selected);
   color: var(--text-strong);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: none;
 }
 
 .nav-item.active::before,
@@ -296,7 +294,7 @@ textarea {
 .sidebar-mini-action.active,
 .sidebar-mini-action:hover {
   background: var(--accent-soft);
-  color: var(--accent-strong);
+  color: var(--text-strong);
 }
 
 .sidebar-row span:not(.avatar-initial) {
@@ -331,33 +329,33 @@ textarea {
 }
 
 .avatar-initial.orange {
-  background: linear-gradient(180deg, #f8a45c, #ed6c1e);
-  color: #fffaf4;
+  background: var(--surface-subtle);
+  color: var(--text-strong);
 }
 
 .avatar-initial.teal {
-  background: linear-gradient(180deg, #57c5b5, #168c78);
-  color: #f6fffd;
+  background: var(--surface-subtle);
+  color: var(--text-strong);
 }
 
 .avatar-initial.violet {
-  background: linear-gradient(180deg, #b7a8ff, #6f63c7);
-  color: #ffffff;
+  background: var(--surface-subtle);
+  color: var(--text-strong);
 }
 
 .avatar-initial.blue {
-  background: linear-gradient(180deg, #76b7ff, #2877c8);
-  color: #ffffff;
+  background: var(--surface-subtle);
+  color: var(--text-strong);
 }
 
 .avatar-initial.rose {
-  background: linear-gradient(180deg, #ff9c9c, #c43f52);
-  color: #ffffff;
+  background: var(--surface-subtle);
+  color: var(--text-strong);
 }
 
 .avatar-initial.gray {
-  background: linear-gradient(180deg, #ccd1d0, #7c8583);
-  color: #ffffff;
+  background: var(--surface-subtle);
+  color: var(--text-strong);
 }
 
 .sidebar-config {
@@ -405,7 +403,10 @@ textarea {
 
 .workspace {
   padding: 0;
-  border-radius: var(--radius-lg);
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
   background: var(--surface-panel);
 }
 
@@ -420,12 +421,10 @@ textarea {
 .client-window {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: calc(100vh - 74px);
+  min-height: calc(100vh - 52px);
   border: 0;
-  border-radius: var(--radius-lg);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-strong) 92%, transparent), var(--surface-panel)),
-    var(--surface-panel);
+  border-radius: 0;
+  background: var(--surface-panel);
   box-shadow: none;
 }
 
@@ -534,10 +533,10 @@ textarea {
 .conversation-panel,
 .workspace-config-dock {
   min-height: 0;
-  border: 1px solid rgba(37, 42, 45, 0.09);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.48);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  background: var(--surface-panel);
+  box-shadow: none;
 }
 
 .conversation-panel {
@@ -574,9 +573,9 @@ textarea {
   display: grid;
   gap: 5px;
   padding: 10px 12px;
-  border: 1px solid rgba(33, 38, 42, 0.08);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
+  background: var(--surface-panel-strong);
 }
 
 .message-meta {
@@ -586,26 +585,26 @@ textarea {
 }
 
 .message-meta strong {
-  color: #1f2528;
+  color: var(--text-strong);
   font-size: 13px;
 }
 
 .message-meta small {
   padding: 1px 5px;
-  border: 1px solid rgba(248, 117, 0, 0.24);
+  border: 1px solid var(--warning-border);
   border-radius: 5px;
-  color: #b65f14;
+  color: var(--warning);
   font-size: 9px;
   font-weight: 800;
 }
 
 .message-meta time {
-  color: #87857f;
+  color: var(--text-soft);
   font-size: 11px;
 }
 
 .message-content p {
-  color: #3f4647;
+  color: var(--text);
   font-size: 13px;
   line-height: 1.52;
   white-space: pre-wrap;

@@ -135,6 +135,15 @@ MVP composer:
 - blocked/failed status,
 - no attachments until private attachment scope is designed.
 
+Visual treatment:
+
+- Web uses the same strict platform-console surface model as the rest of the Web shell.
+- In dark mode, the private workspace hero, tabs, empty chat state, message rows, and
+  composer stay on near-black semantic tokens instead of legacy glass or translucent
+  light panels.
+- The send button remains a compact primary action and must not stretch into a tall
+  high-contrast column beside the textarea.
+
 ### Tasks Tab
 
 Purpose: show work assigned to this teammate.

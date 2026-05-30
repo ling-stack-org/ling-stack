@@ -84,6 +84,7 @@ import {
 } from "../api.js";
 import { LanguageSwitcher, useI18n } from "../i18n.js";
 import { streamRun } from "../sse.js";
+import { ThemeSwitcher } from "../theme.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -2942,6 +2943,7 @@ function TopBar({
           <Bot size={15} />
           {provider}
         </span>
+        <ThemeSwitcher />
         <LanguageSwitcher />
         <button className="icon-button" type="button" onClick={onRefresh} aria-label={t("Refresh daemon health")}>
           <RefreshCw size={16} />

@@ -8,6 +8,10 @@ Desktop should make Ling Stack feel like a local app, but it should not fork the
 model. The product state remains in the local daemon and Web feature modules. Desktop
 owns OS integration.
 
+Desktop keeps the macOS client visual treatment. Web may use a stricter platform-console
+treatment, but both surfaces share the same navigation terms, state semantics, daemon
+contracts, and approval boundaries.
+
 ## Goals
 
 - Package the local Ling Stack experience.
@@ -71,6 +75,28 @@ Desktop does not own:
 - provider adapters,
 - GitHub automation logic,
 - workspace persistence schema.
+
+## Visual And Theme Model
+
+Desktop uses the same Ling Stack product model as Web, but a different surface
+treatment:
+
+| Surface | Light treatment | Dark treatment | Theme control |
+| --- | --- | --- | --- |
+| Web | Strict optical-white developer console | Strict dark technical console | system / light / dark |
+| Desktop | macOS glass workspace | macOS dark glass workspace | system / light / dark |
+
+Desktop theme behavior:
+
+- Default to `system` so the app follows macOS appearance.
+- Let users manually choose `light` or `dark`; manual choice takes precedence over
+  system until reset to `system`.
+- Keep glass, blur, rounded app-window surfaces, macOS traffic-light chrome, and local
+  client affordances in Desktop.
+- Do not copy Web's strict rectangular console chrome into Desktop unless the user is in
+  a dense inspector/table subview where platform-console density is useful.
+- Use shared semantic tokens for status, approval, run, provider, and health states so
+  screenshots remain comparable across Web and Desktop.
 
 ## Daemon Lifecycle
 

@@ -21,6 +21,7 @@ import {
   type ViewId,
 } from "../../app/view-types.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
+import { LingStackLogo } from "../../shared/components/index.js";
 import type { AiTeammate, ApprovalRequest, Channel } from "../../types.js";
 
 export function SidebarNavigation({
@@ -49,7 +50,9 @@ export function SidebarNavigation({
   return (
     <aside className="left-nav" aria-label="Ling Stack navigation">
       <div className="brand">
-        <div className="brand-mark">L</div>
+        <div className="brand-mark">
+          <LingStackLogo size={18} />
+        </div>
         <div>
           <strong>Ling Stack</strong>
           <span>{t("AI teammate workspace")}</span>

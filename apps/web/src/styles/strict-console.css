@@ -1,0 +1,412 @@
+/* Final Web-only visual layer: keep feature pages on strict console tokens. */
+.provider-row,
+.provider-repair-queue,
+.provider-run-repair,
+.provider-repair-item,
+.provider-next-action,
+.provider-env-hint,
+.provider-form-hint,
+.provider-batch-result,
+.provider-template-card,
+.provider-run-notice,
+.run-detail-summary,
+.approval-state-section,
+.runtime-run-repair,
+.runtime-run-repair-meta,
+.run-evidence,
+.run-evidence-grid,
+.run-evidence-copy,
+.session-file-list,
+.artifact-empty-state,
+.artifact-row,
+.approval-run-repair,
+.approval-row,
+.approval-payload-summary,
+.approval-main .approval-decision-reason,
+.approval-confirm-panel,
+.meta-list,
+.meta-row,
+.tool-row,
+.media-job-row,
+.settings-toggle,
+.policy-tool-row,
+.teammate-command-strip,
+.teammate-template-panel,
+.teammate-detail-panel,
+.teammate-add-panel,
+.teammate-workflow-panel,
+.teammate-wizard,
+.teammate-wizard-stage,
+.teammate-live-preview,
+.teammate-step,
+.teammate-filter-tabs button,
+.teammate-template-card,
+.teammate-provider-card {
+  border-color: var(--border);
+  background: var(--surface-panel);
+  color: var(--text);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.channel-tabs,
+.activity-view-select,
+.activity-search-field,
+.activity-filter-toggle,
+.attention-queue-pill,
+.segmented-control,
+.mention-chip,
+.mention-chip.muted,
+.pending-assets span,
+.mention-picker,
+.link-preview-input {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.channel-tab,
+.segmented-control button,
+.mention-picker select,
+.link-preview-input input {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.channel-tab.active,
+.segmented-control button.active,
+.activity-filter-toggle.active,
+.activity-filter-toggle:hover {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.activity-view-select strong,
+.attention-queue-pill strong,
+.provider-run-notice.neutral strong {
+  color: var(--text-strong);
+}
+
+.provider-row.selected,
+.provider-template-card.selected,
+.provider-model-card.selected,
+.run-evidence-item.selected,
+.artifact-row.selected,
+.approval-row.selected,
+.media-job-row.selected,
+.teammate-step.active,
+.teammate-step:hover,
+.teammate-template-card.selected,
+.teammate-provider-card.selected,
+.teammate-filter-tabs button.active,
+.teammate-filter-tabs button:hover {
+  border-color: var(--accent-border);
+  background: var(--surface-selected);
+  color: var(--text-strong);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.provider-row:hover,
+.provider-template-card:hover,
+.provider-model-card:hover,
+.approval-row:hover,
+.media-job-row:hover,
+.artifact-row:hover,
+.tool-row:hover,
+.policy-tool-row:hover,
+.teammate-template-card:hover,
+.teammate-provider-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.provider-next-action.ok,
+.provider-repair-queue.ok,
+.provider-batch-result.ok,
+.provider-state.enabled,
+.provider-state.key-ok,
+.provider-state.run-ready,
+.provider-state.check-ok,
+.provider-run-notice.ok,
+.approval-state.approved,
+.check-result.ok,
+.media-job-row.succeeded,
+.run-evidence-item.succeeded,
+.teammate-status.ok {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.provider-repair-item.warning,
+.provider-env-hint.warning,
+.approval-run-repair,
+.approval-state.pending,
+.approval-waiting-banner,
+.provider-run-notice.neutral,
+.policy-tool-row.risky,
+.check-result.warning,
+.media-job-approval {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.provider-next-action,
+.provider-env-hint,
+.provider-form-hint,
+.provider-batch-result.bad,
+.provider-run-repair,
+.provider-repair-item,
+.provider-state.disabled,
+.provider-state.key-missing,
+.provider-state.run-blocked,
+.provider-state.check-bad,
+.approval-row.high,
+.approval-row.critical,
+.approval-state.denied,
+.approval-state.expired,
+.approval-state.cancelled,
+.approval-risk.high,
+.approval-risk.critical,
+.approval-confirm-panel,
+.approval-reason-error,
+.run-evidence-copy.error,
+.check-result.bad,
+.media-job-error {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.provider-state,
+.capability-list span,
+.approval-state,
+.approval-risk,
+.check-result-status,
+.provider-state.check-unknown,
+.provider-run-notice.neutral,
+.settings-toggle,
+.tool-row,
+.teammate-pack-label {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
+}
+
+.provider-row-head strong,
+.provider-run-repair-head strong,
+.provider-repair-copy strong,
+.provider-template-card strong,
+.provider-model-discovery-header strong,
+.provider-model-card strong,
+.run-detail-section > strong,
+.runtime-run-repair-head strong,
+.run-evidence-block > strong,
+.run-evidence-copy strong,
+.artifact-empty-state span,
+.approval-run-repair-head strong,
+.approval-head strong,
+.meta-row strong,
+.media-job-row-head strong,
+.policy-tool-row span,
+.teammate-command-strip strong,
+.teammate-step strong,
+.teammate-stage-title span,
+.teammate-template-card strong,
+.teammate-provider-card strong {
+  color: var(--text-strong);
+}
+
+.provider-meta-line,
+.provider-run-repair-copy,
+.provider-run-repair-copy code,
+.provider-repair-copy small,
+.provider-template-card small,
+.provider-template-card code,
+.provider-template-kind,
+.provider-template-model,
+.run-detail-section > p,
+.runtime-run-repair-copy,
+.runtime-run-repair-copy code,
+.run-evidence-copy,
+.session-file-list span,
+.session-file-list code,
+.artifact-empty-state small,
+.approval-run-repair-copy,
+.approval-run-repair-copy code,
+.approval-main p,
+.approval-payload-summary,
+.approval-reason-field span,
+.meta-row span,
+.tool-row span,
+.tool-row code,
+.muted,
+.persistence-line,
+.media-job-row p,
+.settings-toggle,
+.teammate-command-strip small,
+.teammate-step,
+.teammate-step small,
+.teammate-stage-title small,
+.teammate-filter-tabs button,
+.teammate-template-card small,
+.teammate-provider-card small {
+  color: var(--text-muted);
+}
+
+.provider-run-repair-copy code,
+.provider-next-action code,
+.provider-env-hint code,
+.runtime-run-repair-copy code,
+.run-evidence-copy,
+.session-file-list code,
+.approval-run-repair-copy code,
+.meta-row.compact strong,
+.tool-row code,
+.policy-tool-row span {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+
+.run-detail-summary,
+.runtime-run-repair-meta,
+.run-evidence-grid,
+.session-file-list,
+.meta-list {
+  gap: 1px;
+  background: var(--border);
+}
+
+.run-detail-summary > *,
+.runtime-run-repair-meta > *,
+.run-evidence-grid > *,
+.session-file-list span,
+.session-file-list code,
+.meta-row {
+  background: var(--surface-panel);
+}
+
+.provider-sheet-backdrop {
+  background: color-mix(in srgb, var(--app-bg) 62%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.provider-sheet-header.panel-title,
+.provider-sheet-footer,
+.provider-sheet-header.panel-title::after,
+.provider-sheet-footer::before {
+  background: var(--surface-panel-strong);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.teammate-workspace-hero,
+.teammate-list-panel,
+.teammate-private-chat,
+.teammate-settings-panel,
+.teammate-empty {
+  border-color: var(--border);
+  background: var(--surface-panel);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.teammate-workspace-identity h2,
+.teammate-message-row header strong,
+.teammate-data-row strong {
+  color: var(--text-strong);
+}
+
+.teammate-workspace-identity p,
+.teammate-message-row header time,
+.teammate-message-row small,
+.teammate-data-row small {
+  color: var(--text-muted);
+}
+
+.teammate-workspace-meta,
+.teammate-workspace-tabs {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  box-shadow: none;
+}
+
+.teammate-workspace-tabs button {
+  color: var(--text-muted);
+}
+
+.teammate-workspace-tabs button.active,
+.teammate-workspace-tabs button:hover {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.teammate-workspace-tabs button span {
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.teammate-message-row > div,
+.teammate-message-row.ai-teammate > div,
+.teammate-data-row,
+.teammate-chat-composer {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  box-shadow: none;
+}
+
+.teammate-chat-composer {
+  grid-template-columns: minmax(0, 1fr) 104px;
+  align-items: end;
+}
+
+.teammate-chat-composer .primary-button {
+  align-self: end;
+  width: 100%;
+  min-height: 40px;
+}
+
+.teammate-chat-composer .primary-button:disabled {
+  opacity: 1;
+  border-color: var(--border);
+  background: var(--surface-pressed);
+  color: var(--text-muted);
+}
+
+.teammate-message-row p {
+  color: var(--text);
+}
+
+.teammate-chat-composer textarea {
+  background: var(--surface-panel);
+}
+
+.teammate-step span {
+  border-color: var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.teammate-step.active span,
+.teammate-step.done span {
+  border-color: var(--accent-border);
+  background: var(--accent);
+  color: var(--window-bg);
+}
+
+:root[data-theme="dark"] .primary-button,
+:root[data-theme="dark"] .teammate-step.active span,
+:root[data-theme="dark"] .teammate-step.done span {
+  color: var(--app-bg);
+}
+
+:root[data-theme="dark"] .teammate-chat-composer .primary-button:disabled {
+  color: var(--text-muted);
+}

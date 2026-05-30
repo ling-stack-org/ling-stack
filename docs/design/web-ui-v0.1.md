@@ -129,7 +129,8 @@ This is an operational tool. It should feel dense, calm, inspectable, and built 
 - explicit approval cards,
 - no decorative sections that hide the workflow.
 
-The default Web entry should now behave like a lightweight desktop client:
+The default Web entry should now behave like a strict platform console for the same
+Ling Stack product model:
 
 - open directly into the selected channel, usually `# engineering`,
 - keep workspace, channels, AI teammates, and direct messages in the left sidebar,
@@ -139,6 +140,32 @@ The default Web entry should now behave like a lightweight desktop client:
 - keep task detail inside the `Tasks` tab so chat is not squeezed by a persistent detail pane,
 - keep readiness, first-run guidance, approvals, and live events in the right context panel,
 - avoid showing channel/provider/policy forms as the first thing a ready user sees.
+- keep the Web visual treatment distinct from Desktop: Web uses a strict OpenAI
+  Platform-like console, while Desktop keeps the macOS glass client treatment.
+
+## Surface And Theme Model
+
+Ling Stack has one product model and two surface treatments:
+
+| Surface | Light treatment | Dark treatment | Theme control |
+| --- | --- | --- | --- |
+| Web | Strict optical-white developer console | Strict dark technical console | system / light / dark |
+| Desktop | macOS glass workspace | macOS dark glass workspace | system / light / dark |
+
+Shared across both surfaces:
+
+- navigation terms: Workspace, Channels, Tasks, Runs, Approvals, AI Teammates, Direct Messages, Model Workbench, Media Jobs, Settings,
+- state semantics: ready, running, queued, pending approval, blocked, failed, succeeded,
+- approval and run boundaries,
+- daemon/provider health language,
+- task/run/channel data shape.
+
+The Web console should not use glass, blur, large shadows, decorative gradients, warm
+paper backgrounds, or marketing composition. It should use exact white surfaces in light
+mode, near-black technical surfaces in dark mode, 1px dividers, compact controls, and
+small local state fills for selected/hovered rows. Typography stays sans-serif for UI
+copy; monospace is reserved for IDs, logs, payloads, paths, commands, and model/runtime
+metadata.
 
 ## Application Shape
 
@@ -168,11 +195,11 @@ VITE_LING_STACK_DAEMON_URL=http://127.0.0.1:17891
 
 ## Layout
 
-Use a three-region app shell with macOS-style glass surfaces:
+Use a three-region app shell with strict platform-console surfaces:
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│ Mac top bar: daemon status, provider status, language    │
+│ Top bar: daemon status, provider status, theme, language │
 ├──────────────┬──────────────────────────────┬────────────┤
 │ Sidebar      │ Channel workspace            │ Context    │
 │ Workspace    │ # engineering activity       │ readiness  │

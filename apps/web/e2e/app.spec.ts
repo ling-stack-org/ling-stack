@@ -1360,6 +1360,44 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
 });
 
+test("theme switcher supports system, light, and dark preferences", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem("ling-stack.themeTestInitialized")) {
+      localStorage.setItem("ling-stack.locale", "en-US");
+      localStorage.removeItem("ling-stack.themePreference");
+      sessionStorage.setItem("ling-stack.themeTestInitialized", "true");
+    }
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+
+  const html = page.locator("html");
+  await expect(html).toHaveAttribute("data-theme", "dark");
+  await expect(html).toHaveAttribute("data-theme-preference", "system");
+  await expect(page.getByRole("button", { name: "System" })).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByRole("button", { name: "Light" }).click();
+  await expect(html).toHaveAttribute("data-theme", "light");
+  await expect(html).toHaveAttribute("data-theme-preference", "light");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBe("light");
+
+  await page.getByRole("button", { name: "Dark" }).click();
+  await expect(html).toHaveAttribute("data-theme", "dark");
+  await expect(html).toHaveAttribute("data-theme-preference", "dark");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBe("dark");
+  await page.reload();
+  await expect(html).toHaveAttribute("data-theme", "dark");
+  await expect(html).toHaveAttribute("data-theme-preference", "dark");
+
+  await page.getByRole("button", { name: "System" }).click();
+  await expect(html).toHaveAttribute("data-theme", "dark");
+  await expect(html).toHaveAttribute("data-theme-preference", "system");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBeNull();
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(html).toHaveAttribute("data-theme", "light");
+});
+
 test("model workbench Chinese mode localizes setup copy and uses an add model sheet", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
@@ -1601,6 +1639,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
 test("AI teammate private workspace sends blocked chat replies and persists settings", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.themePreference", "dark");
   });
   const state = createBaseState({ approvalStatus: "expired" });
   const teammateId = "teammate_builtin_engineer";
@@ -1671,8 +1710,30 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Ling Engineer" }).click();
   await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
+  await expect(page.locator(".brand-mark svg")).toBeVisible();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ling Engineer"] });
   await expect(page.getByText("No provider is bound. Private chat will record messages but AI replies may be blocked.")).toBeVisible();
+  const privateChatDarkSurfaces = await page.evaluate(() => {
+    const selectors = [
+      ".teammate-workspace-hero",
+      ".teammate-workspace-tabs",
+      ".teammate-private-chat",
+      ".teammate-empty",
+      ".teammate-chat-composer",
+      ".teammate-chat-composer .primary-button:disabled",
+    ];
+    return selectors.map((selector) => {
+      const element = document.querySelector(selector);
+      const color = element ? getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [] : [];
+      return {
+        selector,
+        maxChannel: color.length > 0 ? Math.max(...color) : 255,
+      };
+    });
+  });
+  for (const surface of privateChatDarkSurfaces) {
+    expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
+  }
 
   await page.getByPlaceholder("Message this AI teammate privately").fill("Please refine the private workspace acceptance criteria.");
   await page.getByRole("button", { name: "Send" }).click();

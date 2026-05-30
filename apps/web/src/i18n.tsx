@@ -1187,6 +1187,10 @@ const dictionaries: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     "Inspect run failure": "检查运行失败",
     "The failure looks like a runtime or tool issue. Inspect events, fix the workspace or task, then rerun.": "失败看起来是运行时或工具问题。请检查事件、修复工作区或任务后重跑。",
     "Open Model Workbench to enable a chat-capable preset before running.": "打开模型工作台，先启用一个支持聊天的预设再运行。",
+    "Theme": "主题",
+    "System": "系统",
+    "Light": "浅色",
+    "Dark": "夜览",
   },
 };
 
