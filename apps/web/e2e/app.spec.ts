@@ -286,6 +286,69 @@ test("channel activity supports mentions, messages, files, links, and task creat
   await expect(page.locator("article.task-detail")).toContainText("@Engineer please refine the channel requirements");
 });
 
+test("channel files tab keeps empty dark surfaces on strict console tokens", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.themePreference", "dark");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Files" }).click();
+  await expect(page.getByText("No attachments in this channel")).toBeVisible();
+  await expect(page.getByText("No shared links in this channel")).toBeVisible();
+  await expect(page.getByText("No run artifacts in this channel")).toBeVisible();
+  const fileTabDarkSurfaces = await page.evaluate(() => {
+    const selectors = [".file-section", ".channel-files .client-empty-state"];
+    return selectors.flatMap((selector) =>
+      Array.from(document.querySelectorAll(selector)).map((element) => {
+        const color = getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
+        return {
+          selector,
+          maxChannel: color.length > 0 ? Math.max(...color) : 255,
+        };
+      }),
+    );
+  });
+  expect(fileTabDarkSurfaces).toHaveLength(6);
+  for (const surface of fileTabDarkSurfaces) {
+    expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
+  }
+});
+
+test("channel activity filter chips keep dark console tokens", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.themePreference", "dark");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const activityFilters = page.getByLabel("Activity filters");
+  await activityFilters.getByRole("button", { name: "Filter activity" }).click();
+  await expect(activityFilters.getByLabel("Filter panel")).toBeVisible();
+  await activityFilters.getByLabel("Activity attention filters").locator(".activity-filter-chip").filter({ hasText: "Failed" }).click();
+  const filterChipSurfaces = await page.evaluate(() => {
+    const selectors = [".activity-filter-chip", ".activity-filter-chip.attention.active"];
+    return selectors.flatMap((selector) =>
+      Array.from(document.querySelectorAll(selector)).map((element) => {
+        const color = getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
+        return {
+          selector,
+          maxChannel: color.length > 0 ? Math.max(...color) : 255,
+        };
+      }),
+    );
+  });
+  expect(filterChipSurfaces.length).toBeGreaterThan(0);
+  for (const surface of filterChipSurfaces) {
+    expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
+  }
+});
+
 test("channel activity keeps the composer visible while the message feed scrolls", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -1798,6 +1861,22 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Skills/ }).click();
   const skillsPanel = page.locator(".teammate-skills-panel");
   await expect(skillsPanel).toContainText("1 bound");
+  const skillsDarkSurfaces = await page.evaluate(() => {
+    const selectors = [".teammate-skill-add-row", ".teammate-skill-row", ".teammate-skills-panel .phase-token"];
+    return selectors.flatMap((selector) =>
+      Array.from(document.querySelectorAll(selector)).map((element) => {
+        const color = getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
+        return {
+          selector,
+          maxChannel: color.length > 0 ? Math.max(...color) : 255,
+        };
+      }),
+    );
+  });
+  expect(skillsDarkSurfaces.length).toBeGreaterThan(0);
+  for (const surface of skillsDarkSurfaces) {
+    expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
+  }
   const engineeringReviewRow = skillsPanel.locator(".teammate-skill-row").filter({ has: page.getByText("Engineering Plan Review", { exact: true }) });
   await expect(engineeringReviewRow).toContainText("Available skill");
   await engineeringReviewRow.getByRole("button", { name: "Bind skill" }).click();

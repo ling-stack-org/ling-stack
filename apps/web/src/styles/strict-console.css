@@ -16,9 +16,13 @@
 .run-evidence,
 .run-evidence-grid,
 .run-evidence-copy,
+.file-section,
+.file-card,
+.link-card,
 .session-file-list,
 .artifact-empty-state,
 .artifact-row,
+.run-artifact-group,
 .approval-run-repair,
 .approval-row,
 .approval-payload-summary,
@@ -38,6 +42,7 @@
 .teammate-wizard,
 .teammate-wizard-stage,
 .teammate-live-preview,
+.teammate-skill-add-row,
 .teammate-step,
 .teammate-filter-tabs button,
 .teammate-template-card,
@@ -54,6 +59,7 @@
 .activity-view-select,
 .activity-search-field,
 .activity-filter-toggle,
+.activity-filter-chip,
 .attention-queue-pill,
 .segmented-control,
 .mention-chip,
@@ -80,7 +86,9 @@
 .channel-tab.active,
 .segmented-control button.active,
 .activity-filter-toggle.active,
-.activity-filter-toggle:hover {
+.activity-filter-toggle:hover,
+.activity-filter-chip.active,
+.activity-filter-chip.attention.active {
   background: var(--surface-selected);
   color: var(--text-strong);
 }
@@ -100,6 +108,7 @@
 .media-job-row.selected,
 .teammate-step.active,
 .teammate-step:hover,
+.teammate-skill-row.enabled,
 .teammate-template-card.selected,
 .teammate-provider-card.selected,
 .teammate-filter-tabs button.active,
@@ -116,12 +125,30 @@
 .approval-row:hover,
 .media-job-row:hover,
 .artifact-row:hover,
+.file-card:hover,
+.link-card:hover,
+.activity-filter-chip:hover,
 .tool-row:hover,
 .policy-tool-row:hover,
+.teammate-skill-row:hover,
 .teammate-template-card:hover,
 .teammate-provider-card:hover {
   border-color: var(--border-strong);
   background: var(--surface-hover);
+}
+
+.teammate-skill-row.enabled {
+  border-color: var(--border-strong);
+  background: var(--surface-selected);
+  color: var(--text-strong);
+  box-shadow: none;
+}
+
+.activity-filter-chip.active,
+.activity-filter-chip.attention.active {
+  border-color: var(--border-strong);
+  background: var(--surface-selected);
+  color: var(--text-strong);
 }
 
 .provider-next-action.ok,
@@ -192,6 +219,7 @@
 .provider-run-notice.neutral,
 .settings-toggle,
 .tool-row,
+.phase-token,
 .teammate-pack-label {
   border-color: var(--border);
   background: var(--surface-panel-strong);
@@ -208,7 +236,11 @@
 .runtime-run-repair-head strong,
 .run-evidence-block > strong,
 .run-evidence-copy strong,
+.file-section .task-strip-head strong,
+.file-card strong,
+.link-card strong,
 .artifact-empty-state span,
+.run-artifact-head strong,
 .approval-run-repair-head strong,
 .approval-head strong,
 .meta-row strong,
@@ -234,9 +266,13 @@
 .runtime-run-repair-copy,
 .runtime-run-repair-copy code,
 .run-evidence-copy,
+.file-section .task-strip-head small,
+.file-card small,
+.link-card small,
 .session-file-list span,
 .session-file-list code,
 .artifact-empty-state small,
+.run-artifact-head small,
 .approval-run-repair-copy,
 .approval-run-repair-copy code,
 .approval-main p,
@@ -250,6 +286,8 @@
 .media-job-row p,
 .settings-toggle,
 .teammate-command-strip small,
+.teammate-skill-add-row label > span,
+.skill-binding-source,
 .teammate-step,
 .teammate-step small,
 .teammate-stage-title small,
@@ -271,6 +309,20 @@
 .policy-tool-row span {
   background: var(--surface-subtle);
   color: var(--text);
+}
+
+.file-icon {
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.phase-token.ship,
+.phase-token.secure,
+.phase-token.implement,
+.phase-token.test {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
 }
 
 .run-detail-summary,

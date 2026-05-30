@@ -141,6 +141,9 @@ Visual treatment:
 - In dark mode, the private workspace hero, tabs, empty chat state, message rows, and
   composer stay on near-black semantic tokens instead of legacy glass or translucent
   light panels.
+- Skills tab add rows, enabled skill rows, and phase tokens follow the same strict
+  console dark/light tokens; no legacy pale green, gray, beige, or glass panels should
+  appear in dark mode.
 - The send button remains a compact primary action and must not stretch into a tall
   high-contrast column beside the textarea.
 

@@ -1480,6 +1480,11 @@ Keep the existing macOS-like client direction:
 - compact inspector rows instead of full-page forms,
 - cards only for repeated objects such as tasks and files.
 
+Web notes:
+
+- channel Files tab sections, file/link cards, run artifact groups, and empty states must use strict console light/dark tokens; dark mode must not fall back to legacy translucent gray or glass panels.
+- Activity filter panel chips, including attention chips, must also use strict console light/dark tokens; dark mode must not fall back to legacy pale chip fills.
+
 Avoid:
 
 - marketing hero layout,
