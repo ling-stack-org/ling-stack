@@ -245,6 +245,32 @@ export interface ExternalWorkSchedulerState {
   readonly updatedAt: string;
 }
 
+export interface ExternalWorkView {
+  readonly externalWork: ExternalWorkRecord;
+  readonly workflow?: ChannelWorkflow;
+  readonly workflowStep?: ChannelWorkflowStep;
+  readonly schedulerState?: ExternalWorkSchedulerState;
+  readonly artifacts: readonly RunArtifact[];
+}
+
+export interface ExternalWorkListRequest {
+  readonly channelId?: string;
+  readonly sourceKind?: ExternalSourceKind;
+  readonly workItemKind?: ExternalWorkItemKind;
+  readonly schedulerStatus?: ExternalWorkSchedulerStatus;
+  readonly limit?: number;
+}
+
+export interface ExternalWorkListResponse {
+  readonly cwd: string;
+  readonly externalWork: readonly ExternalWorkView[];
+}
+
+export interface ExternalWorkDetailResponse {
+  readonly cwd: string;
+  readonly externalWork: ExternalWorkView;
+}
+
 export interface ExternalWorkPollRequest {
   readonly channelId: string;
   readonly workflowPath?: string;

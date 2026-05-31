@@ -247,6 +247,10 @@ test("GitHub external work poll creates scheduler state and blocks active subjec
     assert.equal(first.schedulerStates[0].schedulerStatus, "ready");
     assert.ok(first.schedulerStates[0].workspacePath.includes(".ling-stack"));
     assert.equal(store.listChannelWorkflows({ channelId: channel.id }).length, 1);
+    assert.equal(store.listExternalWorkRecords({ channelId: channel.id }).length, 1);
+    assert.equal(store.listExternalWorkRecords({ schedulerStatus: "ready" }).length, 1);
+    assert.equal(store.listExternalWorkRecords({ workItemKind: "github_pull_request" })[0].identifier, "openclaw/openclaw#86279");
+    assert.equal(store.listExternalWorkRecords({ schedulerStatus: "terminal" }).length, 0);
 
     const duplicate = await pollGitHubExternalWork({
       store,
