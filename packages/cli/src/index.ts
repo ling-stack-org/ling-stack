@@ -1572,6 +1572,9 @@ async function handleExternalWork(args: readonly string[], options: GlobalOption
   if (source === "github") {
     return await handleExternalWorkGitHub(rest, options);
   }
+  if (source === "linear") {
+    return await handleExternalWorkLinear(rest, options);
+  }
   throw new CliError(2, "unknown_command", `Unknown external-work source: ${source}`);
 }
 
@@ -1620,10 +1623,27 @@ async function handleExternalWorkGitHub(args: readonly string[], options: Global
   if (subcommand === "poll") {
     return await handleExternalWorkGitHubPoll(rest, options);
   }
+  if (subcommand === "background") {
+    return await handleExternalWorkGitHubBackground(rest, options);
+  }
   if (subcommand === "ci") {
     return await handleExternalWorkGitHubCi(rest, options);
   }
   throw new CliError(2, "unknown_command", `Unknown external-work github command: ${subcommand}`);
+}
+
+async function handleExternalWorkGitHubBackground(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "list", ...rest] = args;
+  if (subcommand === "start") {
+    return await handleExternalWorkGitHubBackgroundStart(rest, options);
+  }
+  if (subcommand === "list") {
+    return await handleExternalWorkGitHubBackgroundList(rest, options);
+  }
+  if (subcommand === "stop") {
+    return await handleExternalWorkGitHubBackgroundStop(rest, options);
+  }
+  throw new CliError(2, "unknown_command", `Unknown external-work github background command: ${subcommand}`);
 }
 
 async function handleExternalWorkGitHubCi(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -1637,6 +1657,17 @@ async function handleExternalWorkGitHubCi(args: readonly string[], options: Glob
   throw new CliError(2, "unknown_command", `Unknown external-work github ci command: ${subcommand}`);
 }
 
+async function handleExternalWorkLinear(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "import", ...rest] = args;
+  if (subcommand === "import") {
+    return await handleExternalWorkLinearImport(rest, options);
+  }
+  if (subcommand === "poll") {
+    return await handleExternalWorkLinearPoll(rest, options);
+  }
+  throw new CliError(2, "unknown_command", `Unknown external-work linear command: ${subcommand}`);
+}
+
 async function handleExternalWorkActions(args: readonly string[], options: GlobalOptions): Promise<number> {
   const [subcommand = "list", ...rest] = args;
   if (subcommand === "propose-comment") {
@@ -1644,6 +1675,9 @@ async function handleExternalWorkActions(args: readonly string[], options: Globa
   }
   if (subcommand === "propose-labels") {
     return await handleExternalWorkActionProposeLabels(rest, options);
+  }
+  if (subcommand === "propose-review") {
+    return await handleExternalWorkActionProposeReview(rest, options);
   }
   if (subcommand === "list") {
     return await handleExternalWorkActionsList(rest, options);
@@ -1713,6 +1747,45 @@ async function handleExternalWorkActionProposeLabels(args: readonly string[], op
       labels,
     },
   }));
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkActionMutation(response, "External work action proposed");
+  return 0;
+}
+
+async function handleExternalWorkActionProposeReview(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["external-work", "event", "body-file", "approval"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work actions propose-review");
+  const externalWorkId = getFlag(parsed, "external-work");
+  if (!externalWorkId) {
+    throw new CliError(2, "missing_option", "external-work actions propose-review requires --external-work <id>.");
+  }
+  const event = getFlag(parsed, "event");
+  if (event !== "COMMENT" && event !== "APPROVE" && event !== "REQUEST_CHANGES") {
+    throw new CliError(2, "bad_option", "external-work actions propose-review requires --event COMMENT|APPROVE|REQUEST_CHANGES.");
+  }
+  const bodyFile = getFlag(parsed, "body-file");
+  if (!bodyFile) {
+    throw new CliError(2, "missing_option", "external-work actions propose-review requires --body-file <review.md>.");
+  }
+  const approvalRequirement = readApprovalRequirementFlag(parsed) ?? "strict";
+  if (approvalRequirement !== "strict") {
+    throw new CliError(2, "bad_option", "github_pr_review actions require --approval strict.");
+  }
+  const response = await requestJson(options, "POST", "/external-work/actions/propose", { cwd: options.cwd }, {
+    externalWorkId,
+    actionKind: "github_pr_review",
+    approvalRequirement,
+    payload: {
+      type: "github_pr_review",
+      event,
+      body: await readUtf8File(bodyFile, "review body file"),
+    },
+  });
   if (options.json) {
     printJson(response);
     return 0;
@@ -1856,6 +1929,128 @@ async function handleExternalWorkGitHubPoll(args: readonly string[], options: Gl
     return 0;
   }
   printExternalWorkPoll(response);
+  return 0;
+}
+
+async function handleExternalWorkLinearImport(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["channel", "event-type", "payload-file", "workflow-path", "workflow-markdown-file"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work linear import");
+  const channelId = getFlag(parsed, "channel");
+  if (!channelId) {
+    throw new CliError(2, "missing_option", "external-work linear import requires --channel <channelId>.");
+  }
+  const eventType = getFlag(parsed, "event-type");
+  if (!eventType) {
+    throw new CliError(2, "missing_option", "external-work linear import requires --event-type <eventType>.");
+  }
+  const payloadFile = getFlag(parsed, "payload-file");
+  if (!payloadFile) {
+    throw new CliError(2, "missing_option", "external-work linear import requires --payload-file <payload.json>.");
+  }
+  const workflowPath = getFlag(parsed, "workflow-path");
+  const workflowMarkdownFile = getFlag(parsed, "workflow-markdown-file");
+  if (workflowPath && workflowMarkdownFile) {
+    throw new CliError(2, "bad_usage", "--workflow-path and --workflow-markdown-file are mutually exclusive.");
+  }
+
+  const payload = await readJsonFile(payloadFile, "payload file");
+  const workflowMarkdown = workflowMarkdownFile ? await readUtf8File(workflowMarkdownFile, "workflow markdown file") : undefined;
+  const response = await requestJson(options, "POST", "/external-work/linear/import", { cwd: options.cwd }, removeUndefined({
+    channelId,
+    eventType,
+    payload,
+    workflowPath,
+    workflowMarkdown,
+  }));
+
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkImport(response);
+  return 0;
+}
+
+async function handleExternalWorkLinearPoll(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["channel", "workflow-path", "limit"]),
+    booleanFlags: new Set(["execute-hooks"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work linear poll");
+  const channelId = getFlag(parsed, "channel");
+  if (!channelId) {
+    throw new CliError(2, "missing_option", "external-work linear poll requires --channel <channelId>.");
+  }
+  const limit = readOptionalIntegerFlag(parsed, "limit");
+  if (limit !== undefined && limit > 100) {
+    throw new CliError(2, "bad_number", "--limit must be at most 100.");
+  }
+  const response = await requestJson(options, "POST", "/external-work/linear/poll", { cwd: options.cwd }, removeUndefined({
+    channelId,
+    workflowPath: getFlag(parsed, "workflow-path"),
+    limit,
+    executeHooks: parsed.booleans.has("execute-hooks") ? true : undefined,
+  }));
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkPoll(response);
+  return 0;
+}
+
+async function handleExternalWorkGitHubBackgroundStart(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["channel", "workflow-path", "limit"]),
+    booleanFlags: new Set(["execute-hooks", "no-run-immediately"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work github background start");
+  const channelId = getFlag(parsed, "channel");
+  if (!channelId) {
+    throw new CliError(2, "missing_option", "external-work github background start requires --channel <channelId>.");
+  }
+  const limit = readOptionalIntegerFlag(parsed, "limit");
+  if (limit !== undefined && limit > 100) {
+    throw new CliError(2, "bad_number", "--limit must be at most 100.");
+  }
+  const response = await requestJson(options, "POST", "/external-work/github/background/start", { cwd: options.cwd }, removeUndefined({
+    channelId,
+    workflowPath: getFlag(parsed, "workflow-path"),
+    limit,
+    executeHooks: parsed.booleans.has("execute-hooks") ? true : undefined,
+    runImmediately: parsed.booleans.has("no-run-immediately") ? false : undefined,
+  }));
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkBackgroundMutation(response, "External work background scheduler started");
+  return 0;
+}
+
+async function handleExternalWorkGitHubBackgroundList(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  assertNoPositionals(parsed.positionals, "external-work github background list");
+  const response = await requestJson(options, "GET", "/external-work/background", { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkBackgroundList(response);
+  return 0;
+}
+
+async function handleExternalWorkGitHubBackgroundStop(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const schedulerId = singlePositional(parsed.positionals, "external-work github background stop <schedulerId>");
+  const response = await requestJson(options, "POST", `/external-work/background/${encodeURIComponent(schedulerId)}/stop`, { cwd: options.cwd }, {});
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkBackgroundMutation(response, "External work background scheduler stopped");
   return 0;
 }
 
@@ -3689,6 +3884,44 @@ function printExternalWorkPoll(response: unknown): void {
   printExternalWorkResults(response);
 }
 
+function printExternalWorkBackgroundMutation(response: unknown, title: string): void {
+  const scheduler = readRequiredRecord(response, "scheduler");
+  console.log(`${title}: ${readString(scheduler, "id") ?? ""}`);
+  console.log(`Duplicate: ${readBoolean(response, "duplicate") ?? false}`);
+  console.log(`Status: ${readString(scheduler, "status") ?? ""}`);
+  console.log(`Channel: ${readString(scheduler, "channelId") ?? ""}`);
+  console.log(`Repository: ${readString(scheduler, "repository") ?? ""}`);
+  console.log(`Poll interval ms: ${readNumber(scheduler, "pollIntervalMs") ?? 0}`);
+  console.log(`Tick count: ${readNumber(scheduler, "tickCount") ?? 0}`);
+  console.log(`Next poll: ${readString(scheduler, "nextPollAt") ?? ""}`);
+  const lastError = readString(scheduler, "lastErrorMessage");
+  if (lastError) {
+    console.log(`Last error: ${lastError}`);
+  }
+}
+
+function printExternalWorkBackgroundList(response: unknown): void {
+  const schedulers = readArray(response, "schedulers");
+  console.log("External work background schedulers:");
+  if (schedulers.length === 0) {
+    console.log("No external work background schedulers found.");
+    return;
+  }
+  printTable(
+    ["ID", "Status", "Channel", "Repository", "Interval", "Ticks", "Next Poll", "Error"],
+    schedulers.map((scheduler) => [
+      truncate(readString(scheduler, "id") ?? "", 34),
+      readString(scheduler, "status") ?? "",
+      truncate(readString(scheduler, "channelId") ?? "", 24),
+      truncate(readString(scheduler, "repository") ?? "", 30),
+      String(readNumber(scheduler, "pollIntervalMs") ?? 0),
+      String(readNumber(scheduler, "tickCount") ?? 0),
+      truncate(readString(scheduler, "nextPollAt") ?? "", 24),
+      truncate(readString(scheduler, "lastErrorMessage") ?? "", 42),
+    ]),
+  );
+}
+
 function printExternalWorkCiTriage(response: unknown): void {
   console.log("External work CI triage:");
   console.log(`Triaged: ${readNumber(response, "triaged") ?? 0}`);
@@ -4086,11 +4319,15 @@ Usage:
   ling-stack [global options] runs cancel <id>
   ling-stack [global options] external-work github import --channel <id> --event-type <event> --payload-file <payload.json>
   ling-stack [global options] external-work github poll --channel <id> [--workflow-path WORKFLOW.md]
+  ling-stack [global options] external-work github background start --channel <id> [--workflow-path WORKFLOW.md]
+  ling-stack [global options] external-work github background list
+  ling-stack [global options] external-work github background stop <schedulerId>
   ling-stack [global options] external-work github ci triage --external-work <id> [--workflow-path WORKFLOW.md]
   ling-stack [global options] external-work list [--channel <id>] [--status ready]
   ling-stack [global options] external-work show <externalWorkId>
   ling-stack [global options] external-work actions propose-comment --external-work <id> --body-file comment.md
   ling-stack [global options] external-work actions propose-labels --external-work <id> --label name
+  ling-stack [global options] external-work actions propose-review --external-work <id> --event COMMENT --body-file review.md
   ling-stack [global options] external-work reconcile [--channel <id>] [--workflow-path WORKFLOW.md]
   ling-stack [global options] external-work actions execute <actionId> [--workflow-path WORKFLOW.md]
   ling-stack [global options] approvals list
@@ -4210,12 +4447,16 @@ function printExternalWorkHelp(): void {
   console.log(`Usage:
   ling-stack external-work github import --channel <channelId> --event-type <eventType> --payload-file <payload.json> [options]
   ling-stack external-work github poll --channel <channelId> [options]
+  ling-stack external-work github background start --channel <channelId> [options]
+  ling-stack external-work github background list
+  ling-stack external-work github background stop <schedulerId>
   ling-stack external-work github ci triage --external-work <externalWorkId> [options]
   ling-stack external-work github ci run --triage <externalWorkCiTriageId> --provider <providerPresetId> [options]
   ling-stack external-work list [--channel <channelId>] [--status ready|blocked|retry_wait|terminal] [--limit 50]
   ling-stack external-work show <externalWorkId>
   ling-stack external-work actions propose-comment --external-work <id> --body-file comment.md [--approval standard|strict]
   ling-stack external-work actions propose-labels --external-work <id> --label name [--label other] [--approval standard|strict]
+  ling-stack external-work actions propose-review --external-work <id> --event COMMENT|APPROVE|REQUEST_CHANGES --body-file review.md [--approval strict]
   ling-stack external-work actions list [--external-work <id>] [--status waiting_for_approval]
   ling-stack external-work actions show <actionId>
   ling-stack external-work actions cancel <actionId> [--reason "..."]
@@ -4229,6 +4470,7 @@ Options:
   --workflow-path <path>          WORKFLOW.md path resolved and bounded by the daemon
   --workflow-markdown-file <path> Read workflow markdown from a local file and send it inline
   --limit <n>                     Poll at most n GitHub candidates, max 100
+  --no-run-immediately            Register background scheduler without an immediate first tick
   --no-create-task                CI triage writes records/artifacts without creating a local fix task
   --provider <id>                 Provider preset for an explicit local CI fix run
   --skip-preflight                Skip provider last-check gate for debugging local CI fix runs
@@ -4243,14 +4485,16 @@ Options:
 Behavior:
   Import creates or reuses local Ling workflow records from local fixtures.
   Poll uses read-only GitHub API calls for PR and issue discovery.
+  Background start registers a process-local GitHub poll/reconcile timer for one cwd, channel, and workflow.
+  Background list/stop inspect or stop that local timer; they do not call GitHub.
   CI triage reads GitHub checks/actions logs for an existing PR external work item and creates local evidence/tasks.
   CI run starts an explicit local fix run for a triage record through the normal task/run path.
   List and show read local workflow, scheduler, workspace, and artifact state.
   Action propose/list/show/cancel manages local proposed actions and approvals only.
   Action execute requires an approved action, revalidates the GitHub target, then only
-  calls the approved GitHub comment or label endpoint.
+  calls the approved GitHub comment, label, or PR review endpoint.
   Reconcile repairs local scheduler state and can optionally check remote terminal state.
-  Import, poll, triage, list, show, action propose/cancel, and reconcile do not start a runner.
+  Import, poll, background start/list/stop, triage, list, show, action propose/cancel, and reconcile do not start a runner.
   Only ci run starts a local runner. Only action execute can mutate GitHub.
 `);
 }

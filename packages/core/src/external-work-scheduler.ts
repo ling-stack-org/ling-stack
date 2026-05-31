@@ -7,6 +7,7 @@ import { redactSecrets } from "./redaction.js";
 import type { RunArtifact, RunStore } from "./run-types.js";
 import {
   normalizeGitHubExternalWorkItem,
+  normalizeLinearExternalWorkItem,
   renderExternalWorkflowPrompt,
   ExternalWorkflowValidationError,
 } from "./external-work.js";
@@ -24,7 +25,7 @@ import type {
   ExternalWorkspaceMode,
 } from "./external-work-types.js";
 
-type FetchLike = (input: string, init?: { readonly method?: string; readonly headers?: Record<string, string> }) => Promise<{
+type FetchLike = (input: string, init?: { readonly method?: string; readonly headers?: Record<string, string>; readonly body?: string }) => Promise<{
   readonly ok: boolean;
   readonly status: number;
   readonly statusText: string;
@@ -37,6 +38,11 @@ export interface GitHubExternalWorkAdapterOptions {
   readonly apiBaseUrl?: string;
 }
 
+export interface LinearExternalWorkAdapterOptions {
+  readonly fetch?: FetchLike;
+  readonly apiBaseUrl?: string;
+}
+
 export interface ExternalWorkPollGitHubInput {
   readonly store: RunStore;
   readonly cwd: string;
@@ -44,6 +50,19 @@ export interface ExternalWorkPollGitHubInput {
   readonly workflowDefinition: ExternalWorkflowDefinition;
   readonly workflowDirectory: string;
   readonly githubToken?: string;
+  readonly fetch?: FetchLike;
+  readonly limit?: number;
+  readonly executeHooks?: boolean;
+  readonly now?: string;
+}
+
+export interface ExternalWorkPollLinearInput {
+  readonly store: RunStore;
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly workflowDefinition: ExternalWorkflowDefinition;
+  readonly workflowDirectory: string;
+  readonly linearToken?: string;
   readonly fetch?: FetchLike;
   readonly limit?: number;
   readonly executeHooks?: boolean;
@@ -139,6 +158,37 @@ export function createGitHubExternalWorkAdapter(options: GitHubExternalWorkAdapt
   };
 }
 
+export function createLinearExternalWorkAdapter(options: LinearExternalWorkAdapterOptions = {}): ExternalWorkSourceAdapter {
+  const fetchImpl = options.fetch ?? globalThis.fetch?.bind(globalThis);
+  if (!fetchImpl) {
+    throw new Error("A fetch implementation is required for Linear external work polling.");
+  }
+  const apiBaseUrl = options.apiBaseUrl ?? "https://api.linear.app/graphql";
+
+  return {
+    id: "linear-readonly",
+    kind: "linear",
+    async loadCandidates(input: ExternalWorkLoadCandidatesInput): Promise<readonly ExternalWorkItem[]> {
+      const limit = clampLimit(input.limit);
+      const projectSlug = input.repository;
+      const value = await linearGraphQL(fetchImpl, apiBaseUrl, input.token, LINEAR_ISSUES_QUERY, { first: limit });
+      const issues = readLinearIssueNodes(value);
+      return issues
+        .filter((issue) => matchesLinearProject(issue, projectSlug))
+        .map((issue) => normalizeLinearExternalWorkItem({
+          eventType: pickLinearEvent(input.events, "issue.created"),
+          payload: issue,
+          projectSlug,
+          payloadRef: `linear:poll:issue:${projectSlug}:${readLinearIdentifier(issue)}`,
+        }))
+        .slice(0, limit);
+    },
+    async getWorkItem(): Promise<ExternalWorkItem | undefined> {
+      return undefined;
+    },
+  };
+}
+
 export async function pollGitHubExternalWork(input: ExternalWorkPollGitHubInput): Promise<ExternalWorkPollResponse> {
   if (input.workflowDefinition.config.source.kind !== "github") {
     throw new ExternalWorkflowValidationError(`Unsupported external source kind: ${input.workflowDefinition.config.source.kind}`);
@@ -190,6 +240,68 @@ export async function pollGitHubExternalWork(input: ExternalWorkPollGitHubInput)
         sourceKey,
         pollOwnerId,
         now,
+        externalToken: input.githubToken,
+        response,
+      });
+    }
+    return response;
+  } finally {
+    input.store.releaseResourceLeasesForOwner("system", pollOwnerId, new Date().toISOString());
+  }
+}
+
+export async function pollLinearExternalWork(input: ExternalWorkPollLinearInput): Promise<ExternalWorkPollResponse> {
+  if (input.workflowDefinition.config.source.kind !== "linear") {
+    throw new ExternalWorkflowValidationError(`Unsupported external source kind: ${input.workflowDefinition.config.source.kind}`);
+  }
+  const projectSlug = input.workflowDefinition.config.source.projectSlug;
+  if (!projectSlug) {
+    throw new ExternalWorkflowValidationError("WORKFLOW.md source.projectSlug is required.");
+  }
+  const channel = requireChannel(input.store, input.channelId);
+  const now = input.now ?? new Date().toISOString();
+  const sourceKey = `linear:${projectSlug}`;
+  const pollOwnerId = `external_work_poll:${sourceKey}:${Date.parse(now) || Date.now()}`;
+  const sourceLease = input.store.acquireResourceLease({
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    resourceType: "external_source",
+    resourceKey: sourceKey,
+    ownerType: "system",
+    ownerId: pollOwnerId,
+    acquiredAt: now,
+    expiresAt: addMilliseconds(now, EXTERNAL_WORK_LEASE_TTL_MS),
+  });
+  if (!sourceLease) {
+    const blocker = input.store.getBlockingResourceLease("external_source", sourceKey);
+    return emptyPollResponse({
+      blocked: 1,
+      results: [{
+        action: "blocked",
+        message: blocker ? `External source is locked by ${blocker.ownerType}:${blocker.ownerId}` : `External source is locked: ${sourceKey}`,
+      }],
+    });
+  }
+
+  try {
+    const adapter = createLinearExternalWorkAdapter({ fetch: input.fetch });
+    const candidates = await adapter.loadCandidates({
+      repository: projectSlug,
+      events: input.workflowDefinition.config.source.events,
+      activeStates: input.workflowDefinition.config.source.activeStates,
+      token: input.linearToken,
+      limit: input.limit,
+    });
+    const response = emptyPollResponse({ candidates: candidates.length });
+    for (const item of candidates) {
+      await processCandidate({
+        ...input,
+        store: input.store,
+        channel,
+        item,
+        sourceKey,
+        pollOwnerId,
+        now,
+        externalToken: input.linearToken,
         response,
       });
     }
@@ -295,7 +407,7 @@ async function processCandidate(input: {
   readonly channelId: string;
   readonly workflowDefinition: ExternalWorkflowDefinition;
   readonly workflowDirectory: string;
-  readonly githubToken?: string;
+  readonly externalToken?: string;
   readonly item: ExternalWorkItem;
   readonly sourceKey: string;
   readonly pollOwnerId: string;
@@ -408,7 +520,7 @@ async function processCandidate(input: {
         runAfterCreate: createdWorkspace,
         ownerId: `${input.pollOwnerId}:hooks:${hashText(imported.externalWork.id).slice(0, 12)}`,
         now: input.now,
-        extraSecrets: [input.githubToken],
+        extraSecrets: [input.externalToken],
       })
       : [];
     const allArtifactIds = uniqueStrings([...imported.externalWork.artifactIds, ...evidenceIds, ...hookArtifacts.map((artifact) => artifact.id)]);
@@ -677,7 +789,7 @@ function allocateExternalWorkspace(input: {
   const mode = input.workflowDefinition.config.workspace.mode;
   const root = input.workflowDefinition.config.workspace.root
     ? resolvePath(input.workflowDirectory, input.workflowDefinition.config.workspace.root)
-    : resolvePath(input.channel.boundPath ?? input.cwd, ".ling-stack", "external-workspaces", "github");
+    : resolvePath(input.channel.boundPath ?? input.cwd, ".ling-stack", "external-workspaces", input.workflowDefinition.config.source.kind);
   const subjectDir = hashText(input.subjectKey).slice(0, 24);
   const path = mode === "per_attempt"
     ? resolvePath(root, subjectDir, `attempt-${input.attemptCount + 1}`)
@@ -713,6 +825,102 @@ type MutablePollResponse = {
   results: ExternalWorkPollResultItem[];
   schedulerStates: ExternalWorkSchedulerState[];
 };
+
+const LINEAR_ISSUES_QUERY = `
+query LingStackExternalWorkIssues($first: Int!) {
+  issues(first: $first) {
+    nodes {
+      id
+      identifier
+      title
+      description
+      url
+      priority
+      branchName
+      updatedAt
+      state {
+        name
+        type
+      }
+      labels {
+        nodes {
+          name
+        }
+      }
+      project {
+        name
+        slug
+      }
+      team {
+        key
+        name
+      }
+    }
+  }
+}
+`;
+
+async function linearGraphQL(
+  fetchImpl: FetchLike,
+  url: string,
+  token: string | undefined,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<unknown> {
+  const response = await fetchImpl(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": "ling-stack-external-work",
+      ...(token ? { Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!response.ok) {
+    let body = "";
+    try {
+      body = await response.text();
+    } catch {
+      body = "";
+    }
+    throw new Error(`Linear read-only request failed: ${response.status} ${response.statusText}${body ? ` ${body.slice(0, 300)}` : ""}`);
+  }
+  const value = await response.json();
+  if (isRecord(value) && Array.isArray(value.errors) && value.errors.length > 0) {
+    throw new Error(`Linear read-only request failed: ${JSON.stringify(value.errors).slice(0, 300)}`);
+  }
+  return value;
+}
+
+function readLinearIssueNodes(value: unknown): readonly Record<string, unknown>[] {
+  const root = readRecord(value, "Linear response");
+  const data = readRecord(root.data, "Linear response data");
+  const issues = readRecord(data.issues, "Linear issues");
+  if (!Array.isArray(issues.nodes)) {
+    throw new Error("Linear issues response must include nodes.");
+  }
+  return issues.nodes.map((node, index) => readRecord(node, `Linear issue node ${index}`));
+}
+
+function matchesLinearProject(issue: Record<string, unknown>, projectSlug: string): boolean {
+  const project = isRecord(issue.project) ? issue.project : undefined;
+  const slug = typeof project?.slug === "string" ? project.slug : undefined;
+  const name = typeof project?.name === "string" ? project.name : undefined;
+  return !projectSlug || slug === projectSlug || name === projectSlug;
+}
+
+function readLinearIdentifier(issue: Record<string, unknown>): string {
+  const identifier = issue.identifier;
+  if (typeof identifier !== "string" || !identifier.trim()) {
+    throw new Error("Linear issue identifier is required.");
+  }
+  return identifier.trim();
+}
+
+function pickLinearEvent(events: readonly string[], fallback: string): string {
+  return events.find((event) => event === "issue" || event.startsWith("issue.")) ?? fallback;
+}
 
 async function githubJsonArray(fetchImpl: FetchLike, url: string, token: string | undefined): Promise<readonly unknown[]> {
   const value = await githubJson(fetchImpl, url, token);
@@ -827,6 +1035,13 @@ function isTerminalWorkflowStatus(status: string): boolean {
 
 function isTerminalWorkflowStepStatus(status: string): boolean {
   return status === "succeeded" || status === "failed" || status === "skipped" || status === "cancelled";
+}
+
+function readRecord(value: unknown, name: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`${name} must be an object.`);
+  }
+  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

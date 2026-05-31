@@ -46,6 +46,9 @@ import type {
   CreateTaskRequest,
   DaemonHealthResponse,
   ExternalGitHubImportRequest,
+  ExternalLinearImportRequest,
+  ExternalWorkBackgroundListResponse,
+  ExternalWorkBackgroundMutationResponse,
   ExternalWorkActionCancelRequest,
   ExternalWorkActionDetailResponse,
   ExternalWorkActionExecuteRequest,
@@ -60,6 +63,7 @@ import type {
   ExternalWorkCiTriageRequest,
   ExternalWorkCiTriageResponse,
   ExternalWorkDetailResponse,
+  ExternalWorkGitHubBackgroundStartRequest,
   ExternalWorkListRequest,
   ExternalWorkListResponse,
   ExternalWorkPollRequest,
@@ -599,6 +603,10 @@ export class LingDaemonClient {
     return this.post("/external-work/github/import", { cwd }, input);
   }
 
+  async importLinearExternalWork(cwd: string, input: ExternalLinearImportRequest): Promise<ExternalWorkImportResponse> {
+    return this.post("/external-work/linear/import", { cwd }, input);
+  }
+
   async listExternalWork(cwd: string, options: ExternalWorkListRequest = {}): Promise<ExternalWorkListResponse> {
     return this.get("/external-work", {
       cwd,
@@ -651,6 +659,25 @@ export class LingDaemonClient {
 
   async pollGitHubExternalWork(cwd: string, input: ExternalWorkPollRequest): Promise<ExternalWorkPollResponse> {
     return this.post("/external-work/github/poll", { cwd }, input);
+  }
+
+  async pollLinearExternalWork(cwd: string, input: ExternalWorkPollRequest): Promise<ExternalWorkPollResponse> {
+    return this.post("/external-work/linear/poll", { cwd }, input);
+  }
+
+  async startGitHubExternalWorkBackground(
+    cwd: string,
+    input: ExternalWorkGitHubBackgroundStartRequest,
+  ): Promise<ExternalWorkBackgroundMutationResponse> {
+    return this.post("/external-work/github/background/start", { cwd }, input);
+  }
+
+  async listExternalWorkBackgroundSchedulers(cwd: string): Promise<ExternalWorkBackgroundListResponse> {
+    return this.get("/external-work/background", { cwd });
+  }
+
+  async stopExternalWorkBackgroundScheduler(cwd: string, schedulerId: string): Promise<ExternalWorkBackgroundMutationResponse> {
+    return this.post(`/external-work/background/${encodeURIComponent(schedulerId)}/stop`, { cwd }, {});
   }
 
   async triageGitHubExternalWorkCi(cwd: string, input: ExternalWorkCiTriageRequest): Promise<ExternalWorkCiTriageResponse> {

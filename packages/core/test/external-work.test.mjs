@@ -9,10 +9,13 @@ import {
   createGitHubCiTriageAdapter,
   createGitHubExternalActionAdapter,
   createGitHubExternalWorkAdapter,
+  createLinearExternalWorkAdapter,
   executeExternalWorkAction,
   normalizeGitHubExternalWorkItem,
+  normalizeLinearExternalWorkItem,
   parseExternalWorkflowMarkdown,
   pollGitHubExternalWork,
+  pollLinearExternalWork,
   proposeExternalWorkAction,
   triageGitHubExternalWorkCi,
   cancelExternalWorkAction,
@@ -40,6 +43,22 @@ Labels: {{ item.labels }}
 Head: {{ item.headSha }}
 `;
 
+const linearWorkflowMarkdown = `---
+source:
+  kind: linear
+  projectSlug: ling-stack
+  events:
+    - issue.created
+agent:
+  teammateId: engineer
+---
+
+Review {{ item.identifier }}.
+
+Title: {{ item.title }}
+State: {{ item.state }}
+`;
+
 test("external WORKFLOW.md parser reads front matter and renders strict item variables", () => {
   const workflow = parseExternalWorkflowMarkdown(workflowMarkdown);
   assert.equal(workflow.config.source.kind, "github");
@@ -65,8 +84,8 @@ test("external WORKFLOW.md parser rejects missing source, unsupported source, mi
     /source\.kind is required/,
   );
   assert.throws(
-    () => parseExternalWorkflowMarkdown("---\nsource:\n  kind: linear\n  projectSlug: x\n---\nBody"),
-    /Unsupported external source kind: linear/,
+    () => parseExternalWorkflowMarkdown("---\nsource:\n  kind: jira\n  projectSlug: x\n---\nBody"),
+    /Unsupported external source kind: jira/,
   );
   assert.throws(
     () => parseExternalWorkflowMarkdown("---\nsource:\n  kind: github\n  repository: openclaw\/openclaw\n---\n"),
@@ -105,6 +124,28 @@ test("GitHub PR and issue fixtures normalize into stable external work items", (
   assert.equal(issue.kind, "github_issue");
   assert.equal(issue.identifier, "openclaw/openclaw#42");
   assert.equal(issue.idempotencyKey, "github:issue:openclaw/openclaw:42:2026-05-29T19:00:00Z");
+});
+
+test("Linear issue fixtures normalize into stable external work items", () => {
+  const workflow = parseExternalWorkflowMarkdown(linearWorkflowMarkdown);
+  assert.equal(workflow.config.source.kind, "linear");
+  assert.equal(workflow.config.source.projectSlug, "ling-stack");
+
+  const issue = normalizeLinearExternalWorkItem({
+    eventType: "issue.created",
+    payload: linearIssuePayload(),
+    projectSlug: workflow.config.source.projectSlug,
+  });
+  assert.equal(issue.sourceKind, "linear");
+  assert.equal(issue.kind, "linear_issue");
+  assert.equal(issue.identifier, "LIN-123");
+  assert.equal(issue.state, "Todo");
+  assert.deepEqual(issue.labels, ["external-work", "phase-7"]);
+  assert.equal(issue.idempotencyKey, "linear:issue:ling-stack:LIN-123:2026-06-01T00:00:00.000Z");
+
+  const prompt = renderExternalWorkflowPrompt(workflow.promptTemplate, { item: issue });
+  assert.match(prompt, /Review LIN-123/);
+  assert.match(prompt, /Title: Wire Linear external work/);
 });
 
 test("GitHub external work examples stay parseable and render for PR and issue fixtures", async () => {
@@ -259,6 +300,50 @@ test("sqlite external work actions propose, reuse, approve, and cancel with appr
     const synced = syncExternalWorkActionForApproval(store, approved, "2026-05-30T00:02:00.000Z");
     assert.equal(synced.status, "approved");
 
+    const review = proposeExternalWorkAction({
+      store,
+      request: {
+        externalWorkId: imported.externalWork.id,
+        actionKind: "github_pr_review",
+        payload: { type: "github_pr_review", event: "REQUEST_CHANGES", body: "Please fix the failing CI before merge." },
+      },
+      now: "2026-05-30T00:02:30.000Z",
+    });
+    assert.equal(review.action.actionKind, "github_pr_review");
+    assert.equal(review.action.approvalRequirement, "strict");
+    assert.equal(review.approval.risk, "high");
+    const reviewPreview = await readFile(resolve(store.paths.artifactsDir, review.artifacts[2].path), "utf8");
+    assert.match(reviewPreview, /Review event: REQUEST_CHANGES/);
+    assert.match(reviewPreview, /Please fix the failing CI/);
+
+    assert.throws(
+      () => proposeExternalWorkAction({
+        store,
+        request: {
+          externalWorkId: imported.externalWork.id,
+          actionKind: "github_pr_review",
+          approvalRequirement: "standard",
+          payload: { type: "github_pr_review", event: "COMMENT", body: "Standard review should fail." },
+        },
+        now: "2026-05-30T00:02:45.000Z",
+      }),
+      /require strict approval/,
+    );
+
+    const issueImport = createImportedIssueWork(store, cwd, "2026-05-30T00:02:50.000Z");
+    assert.throws(
+      () => proposeExternalWorkAction({
+        store,
+        request: {
+          externalWorkId: issueImport.externalWork.id,
+          actionKind: "github_pr_review",
+          payload: { type: "github_pr_review", event: "COMMENT", body: "Issue target should fail." },
+        },
+        now: "2026-05-30T00:02:55.000Z",
+      }),
+      /require github_pull_request/,
+    );
+
     const label = proposeExternalWorkAction({
       store,
       request: {
@@ -358,6 +443,29 @@ test("GitHub external action execution requires approval, revalidates, mutates o
     assert.equal(labelExecuted.action.status, "succeeded");
     assert.equal(calls.at(-1).init.method, "POST");
     assert.equal(new URL(calls.at(-1).url).pathname, "/repos/openclaw/openclaw/issues/86279/labels");
+
+    const review = proposeExternalWorkAction({
+      store,
+      request: {
+        externalWorkId: imported.externalWork.id,
+        actionKind: "github_pr_review",
+        payload: { type: "github_pr_review", event: "COMMENT", body: "Review body from Ling." },
+      },
+      now: "2026-05-30T00:07:00.000Z",
+    });
+    const reviewApproved = store.approveApprovalRequest(review.approval.id, { resolvedBy: "local-user" }, "2026-05-30T00:08:00.000Z");
+    syncExternalWorkActionForApproval(store, reviewApproved, "2026-05-30T00:08:00.000Z");
+    const reviewExecuted = await executeExternalWorkAction({
+      store,
+      actionId: review.action.id,
+      fetch: createGitHubActionFetch(calls),
+      now: "2026-05-30T00:09:00.000Z",
+    });
+    assert.equal(reviewExecuted.action.status, "succeeded");
+    assert.deepEqual(calls.slice(-2).map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+      "GET /repos/openclaw/openclaw/pulls/86279",
+      "POST /repos/openclaw/openclaw/pulls/86279/reviews",
+    ]);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -451,7 +559,7 @@ test("GitHub external action execution marks stale target before mutation when i
   }
 });
 
-test("GitHub external action adapter calls only issue comment and issue label mutation endpoints", async () => {
+test("GitHub external action adapter calls only explicit action mutation endpoints", async () => {
   const calls = [];
   const adapter = createGitHubExternalActionAdapter({ fetch: createGitHubActionFetch(calls) });
   await adapter.createIssueComment({
@@ -466,10 +574,18 @@ test("GitHub external action adapter calls only issue comment and issue label mu
     labels: ["agent-ready"],
     token: "github-token-secret",
   });
+  await adapter.createPullRequestReview({
+    repository: "openclaw/openclaw",
+    number: 86279,
+    event: "APPROVE",
+    body: "Approved by Ling.",
+    token: "github-token-secret",
+  });
 
   assert.deepEqual(calls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
     "POST /repos/openclaw/openclaw/issues/86279/comments",
     "POST /repos/openclaw/openclaw/issues/86279/labels",
+    "POST /repos/openclaw/openclaw/pulls/86279/reviews",
   ]);
 });
 
@@ -504,6 +620,44 @@ test("GitHub read-only adapter loads PRs and standalone issues without double-im
   assert.equal(items[0].identifier, "openclaw/openclaw#86279");
   assert.equal(items[1].identifier, "openclaw/openclaw#42");
   assert.match(calls[0].init.headers.Authorization, /Bearer github-token/);
+});
+
+test("Linear read-only adapter loads project issues through GraphQL", async () => {
+  const calls = [];
+  const adapter = createLinearExternalWorkAdapter({
+    fetch: async (url, init) => {
+      calls.push({ url, init });
+      assert.equal(init.method, "POST");
+      return jsonResponse({
+        data: {
+          issues: {
+            nodes: [
+              linearIssuePayload(),
+              linearIssuePayload({
+                id: "linear-issue-other",
+                identifier: "OTHER-1",
+                project: { name: "Other", slug: "other" },
+              }),
+            ],
+          },
+        },
+      });
+    },
+  });
+
+  const items = await adapter.loadCandidates({
+    repository: "ling-stack",
+    events: ["issue.created"],
+    activeStates: ["Todo"],
+    token: "linear-token",
+    limit: 10,
+  });
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].kind, "linear_issue");
+  assert.equal(items[0].identifier, "LIN-123");
+  assert.match(calls[0].init.headers.Authorization, /Bearer linear-token/);
+  assert.match(JSON.parse(calls[0].init.body).query, /issues/);
 });
 
 test("GitHub external work poll creates scheduler state and blocks active subject duplicates", async () => {
@@ -563,6 +717,36 @@ test("GitHub external work poll creates scheduler state and blocks active subjec
     assert.equal(blocked.blocked, 1);
     assert.match(blocked.results[0].message, /another idempotency key/);
     assert.equal(store.listChannelWorkflows({ channelId: channel.id }).length, 1);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Linear external work poll creates scheduler state with the shared workflow pipeline", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-linear-external-work-poll-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Linear", boundPath: cwd, defaultTeammateId: "engineer" }, "2026-06-01T00:00:00.000Z");
+    const workflow = parseExternalWorkflowMarkdown(linearWorkflowMarkdown);
+    const result = await pollLinearExternalWork({
+      store,
+      cwd,
+      channelId: channel.id,
+      workflowDefinition: workflow,
+      workflowDirectory: cwd,
+      linearToken: "linear-token-secret",
+      fetch: async () => jsonResponse({ data: { issues: { nodes: [linearIssuePayload()] } } }),
+      now: "2026-06-01T00:00:00.000Z",
+    });
+
+    assert.equal(result.candidates, 1);
+    assert.equal(result.claimed, 1);
+    assert.equal(result.artifacts.length, 2);
+    assert.equal(result.schedulerStates[0].schedulerStatus, "ready");
+    assert.match(result.schedulerStates[0].workspacePath, /external-workspaces\/linear/);
+    assert.equal(store.listExternalWorkRecords({ sourceKind: "linear" }).length, 1);
+    assert.equal(store.listExternalWorkRecords({ workItemKind: "linear_issue" })[0].identifier, "LIN-123");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -886,6 +1070,13 @@ Title: {{ item.title }}
 function createGitHubActionFetch(calls, options = {}) {
   return async (url, init = {}) => {
     calls.push({ url, init });
+    if (url.includes("/pulls/86279/reviews")) {
+      return jsonResponse({
+        id: 7,
+        html_url: "https://github.com/openclaw/openclaw/pull/86279#pullrequestreview-7",
+        state: "APPROVED",
+      }, { status: 200, statusText: "OK" });
+    }
     if (url.includes("/pulls/86279")) {
       return jsonResponse(options.pullRequest ?? githubPullRequestPayload().pull_request);
     }
@@ -942,6 +1133,35 @@ function githubIssuePayload() {
       labels: ["bug"],
       updated_at: "2026-05-29T19:00:00Z",
     },
+  };
+}
+
+function linearIssuePayload(overrides = {}) {
+  return {
+    id: "linear-issue-123",
+    identifier: "LIN-123",
+    title: "Wire Linear external work",
+    description: "Import and poll Linear issues through the external work pipeline.",
+    url: "https://linear.app/ling-stack/issue/LIN-123/wire-linear-external-work",
+    priority: 2,
+    branchName: "tx/linear-external-work",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+    state: {
+      name: "Todo",
+      type: "unstarted",
+    },
+    labels: {
+      nodes: [{ name: "external-work" }, { name: "phase-7" }],
+    },
+    project: {
+      name: "Ling Stack",
+      slug: "ling-stack",
+    },
+    team: {
+      key: "LIN",
+      name: "Ling",
+    },
+    ...overrides,
   };
 }
 

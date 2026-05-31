@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises";
 import { mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { basename, extname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   approvalToolDecisions,
   approvalStatuses,
@@ -16,7 +17,9 @@ import {
   cancelExternalWorkAction,
   executeExternalWorkAction,
   normalizeGitHubExternalWorkItem,
+  normalizeLinearExternalWorkItem,
   pollGitHubExternalWork,
+  pollLinearExternalWork,
   parseExternalWorkflowMarkdown,
   proposeExternalWorkAction,
   reconcileExternalWork,
@@ -94,6 +97,10 @@ import {
   type PublicProviderPreset,
   type RunArtifact,
   type ExternalWorkImportResponse,
+  type ExternalWorkBackgroundListResponse,
+  type ExternalWorkBackgroundMutationResponse,
+  type ExternalWorkBackgroundScheduler,
+  type ExternalWorkGitHubBackgroundStartRequest,
   type ExternalWorkActionDetailResponse,
   type ExternalWorkActionExecuteRequest,
   type ExternalWorkActionKind,
@@ -206,7 +213,7 @@ const MAX_EXTRACTED_ARTIFACTS_PER_TOOL = 6;
 const CHANNEL_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const externalSourceKinds = ["github", "linear"] as const satisfies readonly ExternalSourceKind[];
 const externalWorkItemKinds = ["github_pull_request", "github_issue", "linear_issue"] as const satisfies readonly ExternalWorkItemKind[];
-const externalWorkActionKinds = ["github_comment", "github_label"] as const satisfies readonly ExternalWorkActionKind[];
+const externalWorkActionKinds = ["github_comment", "github_label", "github_pr_review"] as const satisfies readonly ExternalWorkActionKind[];
 const externalWorkActionStatuses = [
   "proposed",
   "waiting_for_approval",
@@ -430,6 +437,14 @@ interface ExternalGitHubImportRequest {
   readonly workflowPath?: string;
 }
 
+interface ExternalLinearImportRequest {
+  readonly channelId: string;
+  readonly eventType: string;
+  readonly payload: unknown;
+  readonly workflowMarkdown?: string;
+  readonly workflowPath?: string;
+}
+
 interface PreparedRunConcurrency {
   readonly channel?: Channel;
   readonly taskExists: boolean;
@@ -456,10 +471,11 @@ export function createDaemonServer(
   const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver();
   const externalWorkFetch = dependencies.externalWorkFetch;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore);
+  const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
   const server = createServer(async (request, response) => {
     try {
-      await routeRequest(request, response, resolvedConfig, runner, storeRegistry, activeRuns, secretResolver, externalWorkFetch);
+      await routeRequest(request, response, resolvedConfig, runner, storeRegistry, activeRuns, secretResolver, externalWorkFetch, backgroundSchedulers);
     } catch (error) {
       if (!response.headersSent) {
         writeJson(response, 500, {
@@ -487,6 +503,7 @@ export function createDaemonServer(
     stop: () =>
       new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();
+        backgroundSchedulers.stopAll();
         server.close((error) => {
           storeRegistry.closeAll();
           if (error) {
@@ -550,6 +567,7 @@ async function routeRequest(
   activeRuns: ActiveRunRegistry,
   secretResolver: SecretResolver,
   externalWorkFetch?: typeof globalThis.fetch,
+  backgroundSchedulers?: ExternalWorkBackgroundSchedulerRegistry,
 ): Promise<void> {
   setCorsHeaders(response);
 
@@ -610,8 +628,34 @@ async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/external-work/linear/import") {
+    await handleExternalLinearImport(request, response, config, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/external-work/github/poll") {
     await handleExternalGitHubPoll(request, response, config, storeRegistry, secretResolver, externalWorkFetch);
+    return;
+  }
+
+  if (url.pathname === "/external-work/linear/poll") {
+    await handleExternalLinearPoll(request, response, config, storeRegistry, secretResolver, externalWorkFetch);
+    return;
+  }
+
+  if (url.pathname === "/external-work/github/background/start") {
+    await handleExternalGitHubBackgroundStart(request, response, config, storeRegistry, backgroundSchedulers);
+    return;
+  }
+
+  if (url.pathname === "/external-work/background") {
+    await handleExternalWorkBackgroundCollection(request, response, config, backgroundSchedulers);
+    return;
+  }
+
+  const externalWorkBackgroundStopRoute = parseExternalWorkBackgroundStopRoute(url.pathname);
+  if (externalWorkBackgroundStopRoute) {
+    await handleExternalWorkBackgroundStop(request, response, config, backgroundSchedulers, externalWorkBackgroundStopRoute.schedulerId);
     return;
   }
 
@@ -3520,6 +3564,75 @@ async function handleExternalGitHubImport(
   }
 }
 
+async function handleExternalLinearImport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for Linear external work import` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseExternalLinearImportRequest(body);
+    const channel = store.getChannel(input.channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+      return;
+    }
+
+    const workflowMarkdown = readExternalWorkflowMarkdown(input, channel, cwd);
+    const workflowDefinition = parseExternalWorkflowMarkdown(workflowMarkdown);
+    if (workflowDefinition.config.source.kind !== "linear") {
+      writeJson(response, 400, { error: "unsupported_source", message: `Unsupported external source kind: ${workflowDefinition.config.source.kind}` });
+      return;
+    }
+    const externalWorkItem = normalizeLinearExternalWorkItem({
+      eventType: input.eventType,
+      payload: input.payload,
+      projectSlug: workflowDefinition.config.source.projectSlug,
+    });
+    const renderedPrompt = renderExternalWorkflowPrompt(workflowDefinition.promptTemplate, { item: externalWorkItem });
+    const now = new Date().toISOString();
+    const imported = store.createOrReuseExternalWorkWorkflow(
+      {
+        channelId: channel.id,
+        externalWorkItem,
+        workflowDefinition,
+        renderedPrompt,
+      },
+      now,
+    );
+    const artifacts = imported.duplicate
+      ? store.listExternalWorkArtifacts(imported.externalWork.id)
+      : createExternalWorkEvidenceArtifacts(store, imported.externalWork.id, externalWorkItem, renderedPrompt, now);
+    if (!imported.duplicate) {
+      store.updateExternalWorkArtifacts(imported.externalWork.id, artifacts.map((artifact) => artifact.id), new Date().toISOString());
+    }
+    const responseBody: ExternalWorkImportResponse = {
+      externalWorkItem,
+      workflow: imported.workflow,
+      workflowStep: imported.workflowStep,
+      artifacts,
+      duplicate: imported.duplicate,
+    };
+    writeJson(response, imported.duplicate ? 200 : 201, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 async function handleExternalWorkCollection(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3834,6 +3947,154 @@ async function handleExternalGitHubPoll(
   }
 }
 
+async function handleExternalLinearPoll(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+  externalWorkFetch?: typeof globalThis.fetch,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for Linear external work poll` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseExternalLinearPollRequest(body);
+    const channel = store.getChannel(input.channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+      return;
+    }
+    const workflowFile = readExternalWorkflowFile(input, channel, cwd);
+    const workflowDefinition = parseExternalWorkflowMarkdown(workflowFile.markdown);
+    if (workflowDefinition.config.source.kind !== "linear") {
+      writeJson(response, 400, { error: "unsupported_source", message: `Unsupported external source kind: ${workflowDefinition.config.source.kind}` });
+      return;
+    }
+    const linearToken = resolveExternalSourceToken(workflowDefinition, secretResolver, "linear_token", "Linear");
+    const pollResponse: ExternalWorkPollResponse = await pollLinearExternalWork({
+      store,
+      cwd,
+      channelId: input.channelId,
+      workflowDefinition,
+      workflowDirectory: workflowFile.directory,
+      linearToken,
+      fetch: externalWorkFetch,
+      limit: input.limit,
+      executeHooks: input.executeHooks === true,
+    });
+    writeJson(response, 200, pollResponse);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleExternalGitHubBackgroundStart(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  backgroundSchedulers: ExternalWorkBackgroundSchedulerRegistry | undefined,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for GitHub external work background start` });
+    return;
+  }
+  if (!backgroundSchedulers) {
+    writeJson(response, 500, { error: "background_scheduler_unavailable", message: "External work background scheduler is unavailable." });
+    return;
+  }
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseExternalGitHubBackgroundStartRequest(body);
+    storeRegistry.getStore(cwd);
+    const result = await backgroundSchedulers.start(cwd, input);
+    const responseBody: ExternalWorkBackgroundMutationResponse = {
+      cwd,
+      scheduler: result.scheduler,
+      duplicate: result.duplicate,
+      ...(result.startupReconcile ? { startupReconcile: result.startupReconcile } : {}),
+    };
+    writeJson(response, 200, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleExternalWorkBackgroundCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  backgroundSchedulers: ExternalWorkBackgroundSchedulerRegistry | undefined,
+): Promise<void> {
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work background schedulers` });
+    return;
+  }
+  if (!backgroundSchedulers) {
+    writeJson(response, 500, { error: "background_scheduler_unavailable", message: "External work background scheduler is unavailable." });
+    return;
+  }
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  const responseBody: ExternalWorkBackgroundListResponse = {
+    cwd,
+    schedulers: backgroundSchedulers.list(cwd),
+  };
+  writeJson(response, 200, responseBody);
+}
+
+async function handleExternalWorkBackgroundStop(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  backgroundSchedulers: ExternalWorkBackgroundSchedulerRegistry | undefined,
+  schedulerId: string,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work background stop` });
+    return;
+  }
+  if (!backgroundSchedulers) {
+    writeJson(response, 500, { error: "background_scheduler_unavailable", message: "External work background scheduler is unavailable." });
+    return;
+  }
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  const scheduler = backgroundSchedulers.stop(cwd, schedulerId);
+  if (!scheduler) {
+    writeJson(response, 404, { error: "background_scheduler_not_found", message: `External work background scheduler not found: ${schedulerId}` });
+    return;
+  }
+  const responseBody: ExternalWorkBackgroundMutationResponse = { cwd, scheduler };
+  writeJson(response, 200, responseBody);
+}
+
 async function handleExternalGitHubCiTriage(
   request: IncomingMessage,
   response: ServerResponse,
@@ -4074,7 +4335,9 @@ async function handleExternalWorkReconcile(
       }
       const workflowFile = readExternalWorkflowFile(input, channel, cwd);
       workflowDefinition = parseExternalWorkflowMarkdown(workflowFile.markdown);
-      githubToken = resolveExternalGitHubToken(workflowDefinition, secretResolver);
+      githubToken = workflowDefinition.config.source.kind === "github"
+        ? resolveExternalGitHubToken(workflowDefinition, secretResolver)
+        : undefined;
     }
     const reconcileResponse: ExternalWorkReconcileResponse = await reconcileExternalWork({
       store,
@@ -4105,6 +4368,22 @@ function parseExternalGitHubImportRequest(value: unknown): ExternalGitHubImportR
   };
 }
 
+function parseExternalLinearImportRequest(value: unknown): ExternalLinearImportRequest {
+  if (!isRecord(value)) {
+    throw new Error("Request body must be an object");
+  }
+  if (value.payload === undefined) {
+    throw new Error("payload is required");
+  }
+  return {
+    channelId: readString(value, "channelId"),
+    eventType: readString(value, "eventType"),
+    payload: value.payload,
+    workflowMarkdown: readOptionalString(value, "workflowMarkdown"),
+    workflowPath: readOptionalString(value, "workflowPath"),
+  };
+}
+
 function parseExternalGitHubPollRequest(value: unknown): ExternalWorkPollRequest {
   if (!isRecord(value)) {
     throw new Error("Request body must be an object");
@@ -4118,6 +4397,27 @@ function parseExternalGitHubPollRequest(value: unknown): ExternalWorkPollRequest
     workflowPath: readOptionalString(value, "workflowPath"),
     limit,
     executeHooks: readOptionalBoolean(value, "executeHooks"),
+  };
+}
+
+function parseExternalLinearPollRequest(value: unknown): ExternalWorkPollRequest {
+  return parseExternalGitHubPollRequest(value);
+}
+
+function parseExternalGitHubBackgroundStartRequest(value: unknown): ExternalWorkGitHubBackgroundStartRequest {
+  if (!isRecord(value)) {
+    throw new Error("Request body must be an object");
+  }
+  const limit = readOptionalNumber(value, "limit");
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 100)) {
+    throw new Error("limit must be an integer between 1 and 100");
+  }
+  return {
+    channelId: readString(value, "channelId"),
+    workflowPath: readOptionalString(value, "workflowPath"),
+    limit,
+    executeHooks: readOptionalBoolean(value, "executeHooks"),
+    runImmediately: readOptionalBoolean(value, "runImmediately"),
   };
 }
 
@@ -4214,13 +4514,22 @@ function readExternalWorkflowFile(
 }
 
 function resolveExternalGitHubToken(workflowDefinition: ExternalWorkflowDefinition, secretResolver: SecretResolver): string | undefined {
+  return resolveExternalSourceToken(workflowDefinition, secretResolver, "github_token", "GitHub");
+}
+
+function resolveExternalSourceToken(
+  workflowDefinition: ExternalWorkflowDefinition,
+  secretResolver: SecretResolver,
+  purpose: SecretPurpose,
+  label: string,
+): string | undefined {
   const secretRef = workflowDefinition.config.source.secretRef;
   if (!secretRef) {
     return undefined;
   }
-  const secret = secretResolver.resolve(secretRef, "github_token");
+  const secret = secretResolver.resolve(secretRef, purpose);
   if (!secret.configured || !secret.value) {
-    throw new Error(secret.status?.message ?? `GitHub token is not configured: ${secretRef}`);
+    throw new Error(secret.status?.message ?? `${label} token is not configured: ${secretRef}`);
   }
   return secret.value;
 }
@@ -7500,6 +7809,15 @@ function parseExternalWorkCiTriageItemRoute(pathname: string): { readonly triage
   return undefined;
 }
 
+function parseExternalWorkBackgroundStopRoute(pathname: string): { readonly schedulerId: string } | undefined {
+  const prefix = "/external-work/background/";
+  if (!pathname.startsWith(prefix) || !pathname.endsWith("/stop")) {
+    return undefined;
+  }
+  const schedulerId = decodeURIComponent(pathname.slice(prefix.length, -"/stop".length));
+  return schedulerId ? { schedulerId } : undefined;
+}
+
 function parseExternalWorkCiTriageRunRoute(pathname: string): { readonly triageId: string } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (
@@ -9571,7 +9889,10 @@ function readOptionalExternalWorkCiTriageStatusQuery(url: URL): ExternalWorkCiTr
 function readExternalWorkActionProposeRequest(value: unknown): {
   readonly externalWorkId: string;
   readonly actionKind: ExternalWorkActionKind;
-  readonly payload: { readonly type: "github_comment"; readonly body: string } | { readonly type: "github_label"; readonly labels: readonly string[] };
+  readonly payload:
+    | { readonly type: "github_comment"; readonly body: string }
+    | { readonly type: "github_label"; readonly labels: readonly string[] }
+    | { readonly type: "github_pr_review"; readonly event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES"; readonly body: string };
   readonly approvalRequirement?: "standard" | "strict";
   readonly expiresAt?: string;
 } {
@@ -9596,9 +9917,11 @@ function readExternalWorkActionProposeRequest(value: unknown): {
     ? { type: "github_comment" as const, body: readString(payload, "body") }
     : payloadType === "github_label"
       ? { type: "github_label" as const, labels: readOptionalStringArray(payload, "labels") ?? [] }
-      : undefined;
+      : payloadType === "github_pr_review"
+        ? readGitHubPrReviewPayload(payload)
+        : undefined;
   if (!parsedPayload) {
-    throw new Error("payload.type must be github_comment or github_label");
+    throw new Error("payload.type must be github_comment, github_label, or github_pr_review");
   }
   return {
     externalWorkId,
@@ -9606,6 +9929,22 @@ function readExternalWorkActionProposeRequest(value: unknown): {
     payload: parsedPayload,
     approvalRequirement,
     expiresAt: readOptionalString(value, "expiresAt"),
+  };
+}
+
+function readGitHubPrReviewPayload(payload: Record<string, unknown>): {
+  readonly type: "github_pr_review";
+  readonly event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+  readonly body: string;
+} {
+  const event = readString(payload, "event");
+  if (event !== "COMMENT" && event !== "APPROVE" && event !== "REQUEST_CHANGES") {
+    throw new Error("payload.event must be COMMENT, APPROVE, or REQUEST_CHANGES");
+  }
+  return {
+    type: "github_pr_review",
+    event,
+    body: readString(payload, "body"),
   };
 }
 
@@ -9677,6 +10016,224 @@ class ActiveRunRegistry {
       run.abortController.abort();
     }
     this.activeRuns.clear();
+  }
+}
+
+interface ExternalWorkBackgroundSchedulerEntry {
+  scheduler: ExternalWorkBackgroundScheduler;
+  key: string;
+  timer?: ReturnType<typeof setTimeout>;
+  running: boolean;
+}
+
+class ExternalWorkBackgroundSchedulerRegistry {
+  private readonly entriesById = new Map<string, ExternalWorkBackgroundSchedulerEntry>();
+  private readonly idsByKey = new Map<string, string>();
+
+  constructor(
+    private readonly storeRegistry: RunStoreRegistry,
+    private readonly secretResolver: SecretResolver,
+    private readonly externalWorkFetch?: typeof globalThis.fetch,
+  ) {}
+
+  async start(cwd: string, input: ExternalWorkGitHubBackgroundStartRequest): Promise<{
+    readonly scheduler: ExternalWorkBackgroundScheduler;
+    readonly duplicate: boolean;
+    readonly startupReconcile?: ExternalWorkReconcileResponse;
+  }> {
+    const prepared = this.prepare(cwd, input);
+    const key = this.key(cwd, input.channelId, prepared.workflowFile.path);
+    const existingId = this.idsByKey.get(key);
+    if (existingId) {
+      const existing = this.entriesById.get(existingId);
+      if (existing && existing.scheduler.status === "running") {
+        return { scheduler: existing.scheduler, duplicate: true };
+      }
+    }
+
+    const now = new Date().toISOString();
+    const scheduler: ExternalWorkBackgroundScheduler = {
+      id: `external_work_background_${randomUUID()}`,
+      cwd,
+      sourceKind: "github",
+      channelId: input.channelId,
+      ...(input.workflowPath ? { workflowPath: input.workflowPath } : {}),
+      repository: prepared.workflowDefinition.config.source.repository,
+      pollIntervalMs: prepared.workflowDefinition.config.scheduler.pollIntervalMs,
+      ...(input.limit ? { limit: input.limit } : {}),
+      executeHooks: input.executeHooks === true,
+      status: "running",
+      startedAt: now,
+      tickCount: 0,
+    };
+    const entry: ExternalWorkBackgroundSchedulerEntry = { scheduler, key, running: false };
+    this.entriesById.set(scheduler.id, entry);
+    this.idsByKey.set(key, scheduler.id);
+
+    let startupReconcile: ExternalWorkReconcileResponse | undefined;
+    if (prepared.workflowDefinition.config.scheduler.reconcileOnStartup) {
+      startupReconcile = await reconcileExternalWork({
+        store: prepared.store,
+        channelId: input.channelId,
+        workflowDefinition: prepared.workflowDefinition,
+        githubToken: prepared.githubToken,
+        fetch: this.externalWorkFetch,
+      });
+      entry.scheduler = {
+        ...entry.scheduler,
+        lastReconcileAt: new Date().toISOString(),
+        lastReconcile: startupReconcile,
+      };
+    }
+
+    if (input.runImmediately !== false) {
+      await this.runTick(entry);
+    }
+    this.schedule(entry);
+    return { scheduler: entry.scheduler, duplicate: false, ...(startupReconcile ? { startupReconcile } : {}) };
+  }
+
+  list(cwd: string): ExternalWorkBackgroundScheduler[] {
+    return Array.from(this.entriesById.values())
+      .filter((entry) => entry.scheduler.cwd === cwd)
+      .map((entry) => entry.scheduler);
+  }
+
+  stop(cwd: string, schedulerId: string): ExternalWorkBackgroundScheduler | undefined {
+    const entry = this.entriesById.get(schedulerId);
+    if (!entry || entry.scheduler.cwd !== cwd) {
+      return undefined;
+    }
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+      entry.timer = undefined;
+    }
+    entry.scheduler = {
+      ...entry.scheduler,
+      status: "stopped",
+      stoppedAt: new Date().toISOString(),
+      nextPollAt: undefined,
+    };
+    this.idsByKey.delete(entry.key);
+    return entry.scheduler;
+  }
+
+  stopAll(): void {
+    for (const entry of this.entriesById.values()) {
+      if (entry.timer) {
+        clearTimeout(entry.timer);
+        entry.timer = undefined;
+      }
+      entry.scheduler = {
+        ...entry.scheduler,
+        status: "stopped",
+        stoppedAt: new Date().toISOString(),
+        nextPollAt: undefined,
+      };
+    }
+    this.idsByKey.clear();
+  }
+
+  private schedule(entry: ExternalWorkBackgroundSchedulerEntry): void {
+    if (entry.scheduler.status !== "running") {
+      return;
+    }
+    const nextPollAt = new Date(Date.now() + entry.scheduler.pollIntervalMs).toISOString();
+    entry.scheduler = { ...entry.scheduler, nextPollAt };
+    entry.timer = setTimeout(() => {
+      void this.runTick(entry).finally(() => this.schedule(entry));
+    }, entry.scheduler.pollIntervalMs);
+    entry.timer.unref?.();
+  }
+
+  private async runTick(entry: ExternalWorkBackgroundSchedulerEntry): Promise<void> {
+    if (entry.running || entry.scheduler.status !== "running") {
+      return;
+    }
+    entry.running = true;
+    const now = new Date().toISOString();
+    try {
+      const prepared = this.prepare(entry.scheduler.cwd, {
+        channelId: entry.scheduler.channelId,
+        workflowPath: entry.scheduler.workflowPath,
+        limit: entry.scheduler.limit,
+        executeHooks: entry.scheduler.executeHooks,
+      });
+      const poll = await pollGitHubExternalWork({
+        store: prepared.store,
+        cwd: entry.scheduler.cwd,
+        channelId: entry.scheduler.channelId,
+        workflowDefinition: prepared.workflowDefinition,
+        workflowDirectory: prepared.workflowFile.directory,
+        githubToken: prepared.githubToken,
+        fetch: this.externalWorkFetch,
+        limit: entry.scheduler.limit,
+        executeHooks: entry.scheduler.executeHooks,
+        now,
+      });
+      const reconcile = await reconcileExternalWork({
+        store: prepared.store,
+        channelId: entry.scheduler.channelId,
+        workflowDefinition: prepared.workflowDefinition,
+        githubToken: prepared.githubToken,
+        fetch: this.externalWorkFetch,
+        now: new Date().toISOString(),
+      });
+      entry.scheduler = {
+        ...entry.scheduler,
+        repository: prepared.workflowDefinition.config.source.repository,
+        pollIntervalMs: prepared.workflowDefinition.config.scheduler.pollIntervalMs,
+        status: "running",
+        tickCount: entry.scheduler.tickCount + 1,
+        lastPollAt: now,
+        lastReconcileAt: new Date().toISOString(),
+        lastErrorCode: undefined,
+        lastErrorMessage: undefined,
+        lastPoll: poll,
+        lastReconcile: reconcile,
+      };
+    } catch (error) {
+      entry.scheduler = {
+        ...entry.scheduler,
+        status: "running",
+        tickCount: entry.scheduler.tickCount + 1,
+        lastPollAt: now,
+        lastErrorCode: "background_tick_failed",
+        lastErrorMessage: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      entry.running = false;
+    }
+  }
+
+  private prepare(cwd: string, input: Pick<ExternalWorkGitHubBackgroundStartRequest, "channelId" | "workflowPath" | "limit" | "executeHooks">): {
+    readonly store: RunStore;
+    readonly channel: Channel;
+    readonly workflowFile: ReturnType<typeof readExternalWorkflowFile>;
+    readonly workflowDefinition: ExternalWorkflowDefinition;
+    readonly githubToken: string | undefined;
+  } {
+    const store = this.storeRegistry.getStore(cwd);
+    const channel = store.getChannel(input.channelId);
+    if (!channel) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+    const workflowFile = readExternalWorkflowFile({ workflowPath: input.workflowPath }, channel, cwd);
+    const workflowDefinition = parseExternalWorkflowMarkdown(workflowFile.markdown);
+    if (workflowDefinition.config.source.kind !== "github") {
+      throw new Error(`Unsupported external source kind: ${workflowDefinition.config.source.kind}`);
+    }
+    return {
+      store,
+      channel,
+      workflowFile,
+      workflowDefinition,
+      githubToken: resolveExternalGitHubToken(workflowDefinition, this.secretResolver),
+    };
+  }
+
+  private key(cwd: string, channelId: string, workflowPath: string | undefined): string {
+    return [cwd, channelId, workflowPath ?? "WORKFLOW.md"].join("\0");
   }
 }
 

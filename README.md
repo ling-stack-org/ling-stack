@@ -27,6 +27,9 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [External work Phase 2 implementation](docs/design/external-work-phase-2-implementation.md)
 - [External work Phase 3 implementation](docs/design/external-work-phase-3-implementation.md)
 - [External work Phase 4 implementation](docs/design/external-work-phase-4-implementation.md)
+- [External work Phase 5 implementation](docs/design/external-work-phase-5-implementation.md)
+- [External work Phase 6 implementation](docs/design/external-work-phase-6-implementation.md)
+- [External work Phase 7 implementation](docs/design/external-work-phase-7-implementation.md)
 - [GitHub automation](docs/design/github-automation.md)
 - [Web modularization](docs/design/web-modularization.md)
 - [Contracts / API Client](docs/design/contracts-api-client.md)
@@ -278,7 +281,7 @@ node packages/cli/dist/index.js channel create --name Engineering --path "$PWD" 
 node packages/cli/dist/index.js task create --channel channel_... --title "Inspect repo" --prompt "List files and summarize this repo."
 ```
 
-### 7. Import, poll, or triage GitHub external work
+### 7. Import, poll, or triage external work
 
 GitHub external work orchestration is read-only for import, poll, reconcile, and CI
 triage. Fixture import parses
@@ -288,17 +291,27 @@ to discover open PR/issue candidates, claim each subject, prepare isolated local
 workspace state, and reconcile durable scheduler state. Manual CI triage reads failing
 checks, workflow jobs, and bounded redacted logs for an existing PR external-work item,
 then creates or reuses local triage records, evidence artifacts, and scoped fix tasks.
-Import, poll, reconcile, and CI triage do not start the runner or mutate GitHub. Phase
-4.1 adds a separate explicit local CI fix run bridge for an existing triage record; it
-still does not mutate GitHub. Phase 3 adds approval-gated action records for GitHub
-comments and labels. Propose/list/show/cancel stay local-only; `actions execute` is the
-only command that can call the approved GitHub comment or label endpoint after
-stale-target revalidation. The Web Inbox now shows GitHub external action approval cards
+Import, poll, reconcile, background scheduler registration, and CI triage do not start
+the runner or mutate GitHub. Phase 4.1 adds a separate explicit local CI fix run bridge
+for an existing triage record; it still does not mutate GitHub. Phase 3 adds
+approval-gated action records for GitHub comments and labels. Phase 5 adds strict
+approval-gated GitHub PR review actions. Phase 6 adds explicit GitHub background
+polling registration for one `cwd + channel + WORKFLOW.md`; it is not a webhook receiver
+or hidden all-repository crawler. Propose/list/show/cancel stay local-only; `actions
+execute` is the only command that can call the approved GitHub comment, label, or PR
+review endpoint after stale-target revalidation. The Web Inbox now shows GitHub
+external action approval cards
 with the target snapshot, proposed payload, linked evidence artifacts, and a separate
 Execute action button after approval; approving in Web does not execute the mutation.
 The Web Workspace and task Inspector also show local GitHub CI triage records, failed
 check metadata, reproduction hints, linked artifacts, and linked fix task/run ids
 without starting a runner.
+
+Phase 7 adds Linear as the second source adapter. Linear is read-only in this slice:
+manual import and poll normalize `linear_issue` items, reuse the same workflow,
+scheduler-state, workspace, hook, and artifact paths, and do not propose or execute
+Linear mutations. Linear workflows use `source.kind: linear`, `source.projectSlug`, and
+an optional `source.secretRef: env:LINEAR_TOKEN`.
 
 For live poll/reconcile, prefer authenticated GitHub reads. The bundled example
 `WORKFLOW.md` uses `source.secretRef: env:GITHUB_TOKEN`; start or restart the daemon
@@ -312,6 +325,26 @@ node packages/cli/dist/index.js external-work github import \
   --workflow-path WORKFLOW.md
 
 node packages/cli/dist/index.js external-work github poll \
+  --channel channel_... \
+  --workflow-path WORKFLOW.md \
+  --limit 50
+
+node packages/cli/dist/index.js external-work github background start \
+  --channel channel_... \
+  --workflow-path WORKFLOW.md \
+  --limit 50
+
+node packages/cli/dist/index.js external-work github background list
+
+node packages/cli/dist/index.js external-work github background stop external_work_background_...
+
+node packages/cli/dist/index.js external-work linear import \
+  --channel channel_... \
+  --event-type issue.created \
+  --payload-file issue.json \
+  --workflow-path WORKFLOW.md
+
+node packages/cli/dist/index.js external-work linear poll \
   --channel channel_... \
   --workflow-path WORKFLOW.md \
   --limit 50
@@ -336,6 +369,11 @@ node packages/cli/dist/index.js external-work actions propose-comment \
   --body-file comment.md \
   --approval standard
 
+node packages/cli/dist/index.js external-work actions propose-review \
+  --external-work external_work_... \
+  --event REQUEST_CHANGES \
+  --body-file review.md
+
 node packages/cli/dist/index.js external-work actions list \
   --external-work external_work_... \
   --status waiting_for_approval
@@ -348,7 +386,7 @@ node packages/cli/dist/index.js external-work actions cancel external_work_actio
 
 # Or approve and execute it:
 node packages/cli/dist/index.js approvals approve approval_... \
-  --reason "Approved comment or label execution"
+  --reason "Approved external action execution"
 
 node packages/cli/dist/index.js external-work actions execute external_work_action_... \
   --workflow-path WORKFLOW.md
@@ -367,8 +405,12 @@ mutate GitHub. A copy-pasteable fixture smoke path lives in
 repository smoke with an isolated daemon, live GitHub reads, local action proposal, Web
 approval checks, and a separately gated mutation step lives in
 [External work live smoke](docs/external-work-live-smoke.md).
-The forward plan from Phase 4.1 closure through Phase 7 and GA hardening is tracked in
-[External work roadmap](docs/design/external-work-roadmap.md).
+The forward plan from the Phase 5 strict PR review action slice through Phase 7 and GA
+hardening is tracked in [External work roadmap](docs/design/external-work-roadmap.md)
+plus the Phase 5, Phase 6, and Phase 7 implementation plans:
+[Phase 5](docs/design/external-work-phase-5-implementation.md),
+[Phase 6](docs/design/external-work-phase-6-implementation.md), and
+[Phase 7](docs/design/external-work-phase-7-implementation.md).
 
 ### 8. Run a task through the Pi runner
 

@@ -67,6 +67,19 @@ export function normalizeGitHubExternalWorkItem(input: {
   throw new ExternalWorkflowValidationError(`Unsupported GitHub event type: ${input.eventType}`);
 }
 
+export function normalizeLinearExternalWorkItem(input: {
+  readonly eventType: string;
+  readonly payload: unknown;
+  readonly projectSlug?: string;
+  readonly payloadRef?: string;
+}): ExternalWorkItem {
+  const payload = readRecord(input.payload, "Linear payload");
+  if (!input.eventType.startsWith("issue.")) {
+    throw new ExternalWorkflowValidationError(`Unsupported Linear event type: ${input.eventType}`);
+  }
+  return normalizeLinearIssue(payload, input);
+}
+
 function splitMarkdownFrontMatter(markdown: string): { readonly frontMatter: string; readonly body: string } {
   const normalized = markdown.replace(/\r\n/g, "\n");
   if (!normalized.startsWith("---\n")) {
@@ -115,14 +128,15 @@ function normalizeSourceConfig(raw: Record<string, unknown> | undefined): Extern
     throw new ExternalWorkflowValidationError("WORKFLOW.md source.kind is required.");
   }
   const kind = readRequiredString(raw.kind, "source.kind") as ExternalSourceKind;
-  if (kind !== "github") {
+  if (kind !== "github" && kind !== "linear") {
     throw new ExternalWorkflowValidationError(`Unsupported external source kind: ${kind}`);
   }
-  const repository = readRequiredString(raw.repository, "source.repository");
+  const repository = kind === "github" ? readRequiredString(raw.repository, "source.repository") : readOptionalString(raw.repository, "source.repository");
+  const projectSlug = kind === "linear" ? readRequiredString(raw.projectSlug, "source.projectSlug") : readOptionalString(raw.projectSlug, "source.projectSlug");
   return {
     kind,
     repository,
-    projectSlug: readOptionalString(raw.projectSlug, "source.projectSlug"),
+    projectSlug,
     events: readOptionalStringArray(raw.events, "source.events"),
     activeStates: readOptionalStringArray(raw.activeStates, "source.activeStates", DEFAULT_ACTIVE_STATES),
     terminalStates: readOptionalStringArray(raw.terminalStates, "source.terminalStates", DEFAULT_TERMINAL_STATES),
@@ -261,6 +275,65 @@ function normalizeGitHubIssue(
   };
 }
 
+function normalizeLinearIssue(
+  payload: Record<string, unknown>,
+  input: { readonly eventType: string; readonly projectSlug?: string; readonly payloadRef?: string },
+): ExternalWorkItem {
+  const issue = readRecord(payload.issue ?? payload.data ?? payload, "Linear issue");
+  const identifier = readRequiredString(issue.identifier, "issue.identifier");
+  const title = readRequiredString(issue.title, "issue.title");
+  const state = normalizeLinearState(issue.state);
+  const updatedAt = readOptionalString(issue.updatedAt, "issue.updatedAt") ?? readOptionalString(issue.updated_at, "issue.updated_at");
+  const project = readOptionalRecord(issue.project, "issue.project");
+  const projectSlug = readOptionalString(project?.slug, "issue.project.slug") ?? input.projectSlug;
+  const linearId = readOptionalString(issue.id, "issue.id") ?? identifier;
+  const idempotencyKey = [
+    "linear:issue",
+    projectSlug ?? "no-project",
+    identifier,
+    updatedAt ?? state,
+  ].join(":");
+  return {
+    id: `linear:issue:${linearId}`,
+    sourceKind: "linear",
+    kind: "linear_issue",
+    identifier,
+    title,
+    description: readOptionalString(issue.description, "issue.description"),
+    url: readOptionalString(issue.url, "issue.url"),
+    state,
+    priority: readOptionalNumber(issue.priority, "issue.priority"),
+    labels: normalizeLinearLabels(issue.labels),
+    branchName: readOptionalString(issue.branchName, "issue.branchName") ?? readOptionalString(issue.branch_name, "issue.branch_name"),
+    updatedAt,
+    payloadRef: input.payloadRef ?? `${input.eventType}:${identifier}`,
+    idempotencyKey,
+  };
+}
+
+function normalizeLinearState(raw: unknown): string {
+  if (isRecord(raw)) {
+    return readOptionalString(raw.name, "issue.state.name") ?? readOptionalString(raw.type, "issue.state.type") ?? "open";
+  }
+  return readOptionalString(raw, "issue.state") ?? "open";
+}
+
+function normalizeLinearLabels(raw: unknown): string[] {
+  const values = isRecord(raw) && Array.isArray(raw.nodes) ? raw.nodes : Array.isArray(raw) ? raw : [];
+  return values
+    .map((label) => {
+      if (typeof label === "string") {
+        return label;
+      }
+      if (isRecord(label)) {
+        return readOptionalString(label.name, "label.name") ?? "";
+      }
+      return "";
+    })
+    .map((label) => label.trim())
+    .filter(Boolean);
+}
+
 function normalizeGitHubRepository(raw: unknown, fallbackFullName: string | undefined): ExternalWorkRepositoryRef {
   const repository = isRecord(raw) ? raw : undefined;
   const fullName = readOptionalString(repository?.full_name, "repository.full_name") ?? fallbackFullName;
@@ -359,6 +432,13 @@ function readRequiredNumber(value: unknown, name: string): number {
     throw new ExternalWorkflowValidationError(`${name} must be a number.`);
   }
   return value;
+}
+
+function readOptionalNumber(value: unknown, name: string): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return readRequiredNumber(value, name);
 }
 
 function readOptionalStringArray(value: unknown, name: string, defaultValue: readonly string[] = []): readonly string[] {

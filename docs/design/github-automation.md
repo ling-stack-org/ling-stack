@@ -620,7 +620,7 @@ Required behavior:
 
 ## Implementation Phases
 
-The cross-source roadmap after Phase 4.0 is tracked in
+The cross-source roadmap after Phase 4.2 is tracked in
 [External Work Roadmap](external-work-roadmap.md). This GitHub-specific section records
 the GitHub side of that roadmap.
 
@@ -693,23 +693,40 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 - Connect discovered/imported GitHub work, isolated workspaces, teammate runs, evidence,
   proposed actions, approval cards, and explicit execution into one auditable operator
   flow.
-- Add review decisions, push commits, merge, and release actions only as strict proposed
-  actions with durable evidence, target revalidation, CODEOWNERS or branch protection
-  checks where relevant, and no force-push by default.
+- First add `github_pr_review` as a strict PR-only proposed action. It supports
+  `COMMENT`, `APPROVE`, and `REQUEST_CHANGES`, requires a body, rejects standard
+  approval, and executes only after PR state and head SHA revalidation.
+- Defer push commits, merge, and release actions until the PR review path proves the
+  strict action model. Those later actions still require durable evidence, target
+  revalidation, CODEOWNERS or branch-protection checks where relevant, and no
+  force-push by default.
 - Keep edit-and-approve out of the first loop. Cancel and re-propose instead.
+- Track the implementation details in
+  [External Work Phase 5 Implementation](external-work-phase-5-implementation.md).
 
 ### Phase 6: Background GitHub Operation
 
-- Add webhook ingestion or scheduled polling after manual poll/reconcile/action execution
-  paths are stable.
-- Add startup reconciliation for scheduler state, leases, stale workspaces, pending
-  approvals, and external actions.
-- Keep every GitHub mutation behind proposed action execution.
+- Add runtime-registered scheduled polling after manual poll/reconcile/action execution
+  paths are stable. The first cut registers background operation explicitly by `cwd`,
+  `channelId`, and `WORKFLOW.md`; it does not scan every workspace and does not add a
+  webhook receiver.
+- Add startup reconciliation when the scheduler is explicitly registered, covering
+  scheduler state, leases, stale workspaces, pending approvals, and external actions.
+- Keep every GitHub mutation behind proposed action execution. Background ticks may read
+  GitHub PRs/issues and create or reuse local records, but they must not start runners
+  or execute GitHub mutations.
+- Track the implementation details in
+  [External Work Phase 6 Implementation](external-work-phase-6-implementation.md).
 
 ### Phase 7 and GA
 
-- Phase 7 belongs to the cross-source roadmap: add a second channel adapter such as
-  Linear using the same orchestration contracts.
+- Phase 7 belongs to the cross-source roadmap: add Linear as the second channel adapter
+  using the same orchestration contracts.
+- The first Linear slice is read-only manual import and poll for issues. It does not add
+  GitHub feature surface, Linear mutations, background Linear polling, webhook
+  ingestion, or runner startup.
+- Track the cross-source implementation details in
+  [External Work Phase 7 Implementation](external-work-phase-7-implementation.md).
 - After Phase 7, prefer GA hardening over broad new GitHub feature surface: live smoke
   suites, permission audits, audit search/export, policy controls, rate-limit tuning,
   security review, and recovery docs.
