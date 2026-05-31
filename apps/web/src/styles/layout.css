@@ -6,14 +6,13 @@ body {
 
 .app-shell {
   grid-template-columns: 248px minmax(0, 1fr) 360px;
-  grid-template-rows: 52px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-height: 100vh;
   padding: 0;
   gap: 0;
   background: var(--app-bg);
 }
 
-.top-bar,
 .left-nav,
 .workspace,
 .right-panel,
@@ -26,24 +25,6 @@ body {
   box-shadow: none;
   backdrop-filter: var(--material-blur);
   -webkit-backdrop-filter: var(--material-blur);
-}
-
-.top-bar {
-  height: 52px;
-  padding: 0 16px;
-  border-right: 0;
-  border-left: 0;
-  border-radius: 0;
-  background: var(--window-bg);
-}
-
-.top-bar::before {
-  content: none;
-}
-
-.top-path {
-  flex: 1;
-  font-size: 12px;
 }
 
 .health,
@@ -421,7 +402,7 @@ textarea {
 .client-window {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: calc(100vh - 52px);
+  min-height: 100vh;
   border: 0;
   border-radius: 0;
   background: var(--surface-panel);

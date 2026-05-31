@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity,
-  Bot,
   PanelRightClose,
   PanelRightOpen,
-  Folder,
-  RefreshCw,
 } from "lucide-react";
 import {
   GSTACK_DEFAULT_SKILL_PACK_ID,
@@ -66,6 +62,7 @@ import {
   listProviderTemplates,
   listRuns,
   listStateTransitions,
+  listTeammateChannels,
   listTasks,
   runMediaJob,
   replaceTeammateChannels,
@@ -86,9 +83,8 @@ import {
   disableAiTeammate,
   updateProvider,
 } from "../api.js";
-import { LanguageSwitcher, useI18n } from "../i18n.js";
+import { useI18n } from "../i18n.js";
 import { streamRun } from "../sse.js";
-import { ThemeSwitcher } from "../theme.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -129,6 +125,7 @@ import type {
   TaskEditFormState,
   TaskFormState,
   TaskRunActionState,
+  TeammateChannelMembership,
   UpdateAiTeammateRequest,
   UpdateChannelBriefRequest,
 } from "../types.js";
@@ -282,6 +279,9 @@ export function AppShell(): JSX.Element {
   const [selectedChannelId, setSelectedChannelId] = useState("");
   const [aiTeammates, setAiTeammates] = useState<readonly AiTeammate[]>([]);
   const [aiTeammatesLoading, setAiTeammatesLoading] = useState(false);
+  const [teammateChannelMembershipsByTeammate, setTeammateChannelMembershipsByTeammate] = useState<Readonly<Record<string, readonly TeammateChannelMembership[]>>>({});
+  const [teammateChannelMembershipsLoading, setTeammateChannelMembershipsLoading] = useState(false);
+  const [channelTeammateSavingId, setChannelTeammateSavingId] = useState("");
   const [channelForm, setChannelForm] = useState<ChannelFormState>(() => ({
     ...defaultChannelForm,
     boundPath: initialWorkspaceCwd,
@@ -482,6 +482,101 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function refreshTeammateChannelMemberships(
+    cwd = form.cwd.trim(),
+    teammates = aiTeammates,
+  ): Promise<void> {
+    if (!cwd || teammates.length === 0) {
+      setTeammateChannelMembershipsByTeammate({});
+      return;
+    }
+
+    setTeammateChannelMembershipsLoading(true);
+    try {
+      const responses = await Promise.all(
+        teammates.map((teammate) => listTeammateChannels(cwd, teammate.id)),
+      );
+      setTeammateChannelMembershipsByTeammate(Object.fromEntries(
+        responses.map((response) => [response.teammateId, response.memberships]),
+      ));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTeammateChannelMembershipsLoading(false);
+    }
+  }
+
+  function readTeammateChannelMembershipPayload(teammateId: string): { readonly channelId: string; readonly isDefault?: boolean }[] {
+    return (teammateChannelMembershipsByTeammate[teammateId] ?? []).map((membership) => ({
+      channelId: membership.channelId,
+      isDefault: membership.isDefault,
+    }));
+  }
+
+  async function saveTeammateChannelMemberships(
+    teammateId: string,
+    memberships: readonly { readonly channelId: string; readonly isDefault?: boolean }[],
+  ): Promise<void> {
+    const cwd = form.cwd.trim();
+    if (!cwd) {
+      setErrorMessage("请输入 workspace path");
+      return;
+    }
+
+    setChannelTeammateSavingId(teammateId);
+    try {
+      setErrorMessage("");
+      const response = await replaceTeammateChannels(cwd, teammateId, memberships);
+      setTeammateChannelMembershipsByTeammate((current) => ({
+        ...current,
+        [teammateId]: response.memberships,
+      }));
+      await refreshChannels(cwd);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setChannelTeammateSavingId("");
+    }
+  }
+
+  async function addChannelTeammate(teammateId: string): Promise<void> {
+    if (!selectedChannelId) {
+      return;
+    }
+    const current = readTeammateChannelMembershipPayload(teammateId)
+      .filter((membership) => membership.channelId !== selectedChannelId);
+    await saveTeammateChannelMemberships(teammateId, [
+      ...current,
+      { channelId: selectedChannelId, isDefault: false },
+    ]);
+  }
+
+  async function removeChannelTeammate(teammateId: string): Promise<void> {
+    if (!selectedChannelId) {
+      return;
+    }
+    const next = readTeammateChannelMembershipPayload(teammateId)
+      .filter((membership) => membership.channelId !== selectedChannelId);
+    await saveTeammateChannelMemberships(teammateId, next);
+  }
+
+  async function setDefaultChannelTeammate(teammateId: string): Promise<void> {
+    if (!selectedChannelId) {
+      return;
+    }
+    const current = readTeammateChannelMembershipPayload(teammateId);
+    const hasMembership = current.some((membership) => membership.channelId === selectedChannelId);
+    const next = current.map((membership) => ({
+      ...membership,
+      isDefault: membership.channelId === selectedChannelId,
+    }));
+    if (!hasMembership) {
+      next.push({ channelId: selectedChannelId, isDefault: true });
+    }
+    await saveTeammateChannelMemberships(teammateId, next);
+  }
+
   function openPlainView(view: ViewId): void {
     if (view === "approvals") {
       setApprovalRepairRunId("");
@@ -538,6 +633,33 @@ export function AppShell(): JSX.Element {
     () => aiTeammates.map((teammate) => aiTeammateToLocalDraft(teammate, providers)),
     [aiTeammates, providers],
   );
+  const selectedChannelTeammateMemberships = useMemo(() => {
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    const memberships = Object.values(teammateChannelMembershipsByTeammate)
+      .flat()
+      .filter((membership) => membership.channelId === selectedChannelId);
+    if (
+      selectedChannel?.defaultTeammateId &&
+      aiTeammates.some((teammate) => teammate.id === selectedChannel.defaultTeammateId) &&
+      !memberships.some((membership) => membership.teammateId === selectedChannel.defaultTeammateId)
+    ) {
+      memberships.push({
+        teammateId: selectedChannel.defaultTeammateId,
+        channelId: selectedChannel.id,
+        isDefault: true,
+        createdAt: selectedChannel.createdAt,
+        updatedAt: selectedChannel.updatedAt,
+      });
+    }
+    return memberships.sort((left, right) => {
+      const leftDefault = left.teammateId === selectedChannel?.defaultTeammateId;
+      const rightDefault = right.teammateId === selectedChannel?.defaultTeammateId;
+      if (leftDefault !== rightDefault) {
+        return leftDefault ? -1 : 1;
+      }
+      return left.teammateId.localeCompare(right.teammateId);
+    });
+  }, [aiTeammates, channels, selectedChannelId, teammateChannelMembershipsByTeammate]);
   const activeTeammateId = readTeammateSidebarTarget(activeSidebarTarget);
   const selectedAiTeammate = activeTeammateId ? aiTeammates.find((teammate) => teammate.id === activeTeammateId) : undefined;
   const selectedWorkspaceTask = useMemo(
@@ -1055,6 +1177,7 @@ export function AppShell(): JSX.Element {
   async function refreshAiTeammates(cwd = form.cwd.trim()): Promise<void> {
     if (!cwd) {
       setAiTeammates([]);
+      setTeammateChannelMembershipsByTeammate({});
       return;
     }
 
@@ -1063,6 +1186,7 @@ export function AppShell(): JSX.Element {
       setErrorMessage("");
       const response = await listAiTeammates(cwd);
       setAiTeammates(response.teammates);
+      await refreshTeammateChannelMemberships(cwd, response.teammates);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1374,7 +1498,7 @@ export function AppShell(): JSX.Element {
         status: channelForm.status,
         boundPath: channelForm.boundPath.trim() || form.cwd.trim(),
         defaultProviderPresetId: readyProvider?.id ?? channelForm.defaultProviderPresetId,
-        defaultTeammateId: channelForm.defaultTeammateId || "engineer",
+        defaultTeammateId: channelForm.defaultTeammateId,
         allowedTools: channelForm.allowedTools.length > 0 ? channelForm.allowedTools : defaultTools,
         runtimePolicy: channelForm.runtimePolicy,
       });
@@ -1389,7 +1513,7 @@ export function AppShell(): JSX.Element {
         name: "",
         boundPath: current.boundPath || form.cwd.trim(),
         defaultProviderPresetId: readyProvider?.id ?? current.defaultProviderPresetId,
-        defaultTeammateId: current.defaultTeammateId || "engineer",
+        defaultTeammateId: current.defaultTeammateId,
       }));
       await refreshChannels();
     } catch (error) {
@@ -2587,7 +2711,7 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  const showInspector = activeView !== "providers";
+  const showInspector = activeView !== "providers" && activeView !== "workspace";
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
@@ -2599,7 +2723,6 @@ export function AppShell(): JSX.Element {
 
   return (
     <main className={shellClassName}>
-      <TopBar daemonHealthy={daemonHealthy} provider={`${form.provider}/${form.model}`} onRefresh={refreshHealth} />
       <SidebarNavigation
         activeSidebarTarget={activeSidebarTarget}
         channels={channels}
@@ -2641,6 +2764,9 @@ export function AppShell(): JSX.Element {
             providers={providers}
             teammateTemplates={aiTeammates.length > 0 ? [] : builtinTeammateTemplates}
             localTeammates={localTeammates}
+            channelTeammateMemberships={selectedChannelTeammateMemberships}
+            channelTeammateMembershipsLoading={teammateChannelMembershipsLoading}
+            channelTeammateSavingId={channelTeammateSavingId}
             taskRunProviderId={taskRunProviderId}
             fallbackProviderId={form.providerPresetId}
             channelsLoading={channelsLoading}
@@ -2670,7 +2796,10 @@ export function AppShell(): JSX.Element {
                 void applyProviderToRun(provider);
               }
             }}
-            onSelectChannel={selectWorkspaceChannel}
+            onAddChannelTeammate={(teammateId) => addChannelTeammate(teammateId)}
+            onRemoveChannelTeammate={(teammateId) => removeChannelTeammate(teammateId)}
+            onSetDefaultChannelTeammate={(teammateId) => setDefaultChannelTeammate(teammateId)}
+            onOpenTeammates={() => openPlainView("teammates")}
             onRefreshChannels={() => void refreshChannels()}
             onCreateDefaultChannel={() => void saveDefaultChannel()}
             onCreateChannel={() => void saveChannel()}
@@ -3057,40 +3186,4 @@ function buildChannelTransitionEntities(
   return [...deduped.values()]
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 20);
-}
-
-function TopBar({
-  daemonHealthy,
-  provider,
-  onRefresh,
-}: {
-  readonly daemonHealthy: boolean | undefined;
-  readonly provider: string;
-  readonly onRefresh: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-
-  return (
-    <header className="top-bar">
-      <div className="top-path">
-        <Folder size={16} />
-        <span>{daemonBaseUrl}</span>
-      </div>
-      <div className="top-status">
-        <span className={daemonHealthy ? "health ok" : "health down"}>
-          <Activity size={15} />
-          {daemonHealthy === undefined ? t("Checking daemon") : daemonHealthy ? t("Daemon ready") : t("Daemon offline")}
-        </span>
-        <span className="provider-pill">
-          <Bot size={15} />
-          {provider}
-        </span>
-        <ThemeSwitcher />
-        <LanguageSwitcher />
-        <button className="icon-button" type="button" onClick={onRefresh} aria-label={t("Refresh daemon health")}>
-          <RefreshCw size={16} />
-        </button>
-      </div>
-    </header>
-  );
 }

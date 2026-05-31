@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -99,6 +99,7 @@ import type {
   Task,
   TaskFormState,
   TaskRunActionState,
+  TeammateChannelMembership,
   UpdateChannelBriefRequest,
 } from "../../types.js";
 import { CiTriageAuditPanel } from "../external-work/CiTriageAuditPanel.js";
@@ -129,6 +130,12 @@ interface PendingLinkPreviewItem {
   readonly error?: string;
 }
 
+interface ActiveMentionPicker {
+  readonly query: string;
+  readonly start: number;
+  readonly end: number;
+}
+
 interface TaskCreationNotice {
   readonly title: string;
 }
@@ -148,7 +155,7 @@ function channelTabLabel(tab: ChannelTab): string {
   if (tab === "files") {
     return "Files";
   }
-  return "Channel protocol";
+  return "Context";
 }
 
 function channelTabIcon(tab: ChannelTab, size: number): JSX.Element {
@@ -193,6 +200,9 @@ export function WorkspaceClientView({
   providers,
   teammateTemplates,
   localTeammates,
+  channelTeammateMemberships,
+  channelTeammateMembershipsLoading,
+  channelTeammateSavingId,
   taskRunProviderId,
   fallbackProviderId,
   channelsLoading,
@@ -216,7 +226,10 @@ export function WorkspaceClientView({
   onChannelFormChange,
   onTaskFormChange,
   onProviderSelect,
-  onSelectChannel,
+  onAddChannelTeammate,
+  onRemoveChannelTeammate,
+  onSetDefaultChannelTeammate,
+  onOpenTeammates,
   onRefreshChannels,
   onCreateDefaultChannel,
   onCreateChannel,
@@ -280,6 +293,9 @@ export function WorkspaceClientView({
   readonly providers: readonly ProviderPreset[];
   readonly teammateTemplates: readonly AiTeammateTemplate[];
   readonly localTeammates: readonly LocalTeammateDraft[];
+  readonly channelTeammateMemberships: readonly TeammateChannelMembership[];
+  readonly channelTeammateMembershipsLoading: boolean;
+  readonly channelTeammateSavingId: string;
   readonly taskRunProviderId: string;
   readonly fallbackProviderId: string;
   readonly channelsLoading: boolean;
@@ -303,7 +319,10 @@ export function WorkspaceClientView({
   readonly onChannelFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
   readonly onProviderSelect: (providerId: string) => void;
-  readonly onSelectChannel: (channelId: string) => void;
+  readonly onAddChannelTeammate: (teammateId: string) => Promise<void>;
+  readonly onRemoveChannelTeammate: (teammateId: string) => Promise<void>;
+  readonly onSetDefaultChannelTeammate: (teammateId: string) => Promise<void>;
+  readonly onOpenTeammates: () => void;
   readonly onRefreshChannels: () => void;
   readonly onCreateDefaultChannel: () => void;
   readonly onCreateChannel: () => void;
@@ -360,6 +379,7 @@ export function WorkspaceClientView({
   const [attentionQueueExpanded, setAttentionQueueExpanded] = useState(false);
   const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
   const [inspectorMode, setInspectorMode] = useState<"brief" | "decisions" | "handoffs" | "runtime">("brief");
+  const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
   const [briefDraft, setBriefDraft] = useState({
     objective: "",
     scope: "",
@@ -369,16 +389,19 @@ export function WorkspaceClientView({
   });
   const [composerMode, setComposerMode] = useState<"discuss" | "task">("discuss");
   const [messageDraft, setMessageDraft] = useState("");
-  const [askAi, setAskAi] = useState(true);
   const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem[]>([]);
   const [pendingLinkPreviews, setPendingLinkPreviews] = useState<readonly PendingLinkPreviewItem[]>([]);
-  const [linkDraft, setLinkDraft] = useState("");
   const [messageMentions, setMessageMentions] = useState<readonly ChannelMention[]>([]);
+  const [mentionPicker, setMentionPicker] = useState<ActiveMentionPicker | undefined>();
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
+  const [composerDragActive, setComposerDragActive] = useState(false);
   const [composerBusy, setComposerBusy] = useState(false);
   const [sendState, setSendState] = useState<ComposerSendState>("idle");
   const [sendError, setSendError] = useState("");
   const [aiReplyState, setAiReplyState] = useState<AiReplyState>("idle");
   const [taskCreationNotice, setTaskCreationNotice] = useState<TaskCreationNotice | undefined>();
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const autoPreviewUrlsRef = useRef(new Set<string>());
   const previousChannelIdRef = useRef(selectedChannelId);
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
   const readyProvider = providers.find(providerPreflightReady);
@@ -563,9 +586,11 @@ export function WorkspaceClientView({
     }
     setMessageDraft("");
     setMessageMentions([]);
+    setMentionPicker(undefined);
+    setMentionActiveIndex(0);
     setPendingAttachments([]);
     setPendingLinkPreviews([]);
-    setLinkDraft("");
+    autoPreviewUrlsRef.current.clear();
     setSendState("idle");
     setSendError("");
     setAiReplyState("idle");
@@ -825,23 +850,176 @@ export function WorkspaceClientView({
     onRefreshChannelActivity();
   }
 
-  const teammateOptions = useMemo(
+  const allTeammateOptions = useMemo(
     () => [
       ...teammateTemplates.map((template) => ({ id: template.id, label: template.name, kind: "ai-teammate" as const })),
       ...localTeammates.map((teammate) => ({ id: teammate.id, label: teammate.displayName, kind: "ai-teammate" as const })),
     ],
     [localTeammates, teammateTemplates],
   );
+  const channelTeammateIds = useMemo(
+    () => new Set(channelTeammateMemberships.map((membership) => membership.teammateId)),
+    [channelTeammateMemberships],
+  );
+  const teammateOptions = useMemo(
+    () => [
+      ...allTeammateOptions.filter((option) => channelTeammateIds.has(option.id)),
+      ...allTeammateOptions.filter((option) => !channelTeammateIds.has(option.id)),
+    ],
+    [allTeammateOptions, channelTeammateIds],
+  );
+  const mentionPickerOptions = useMemo(
+    () => {
+      if (!mentionPicker) {
+        return [];
+      }
+      const query = mentionPicker.query.trim().toLowerCase();
+      return teammateOptions
+        .filter((option) => {
+          if (!query) {
+            return true;
+          }
+          return option.label.toLowerCase().includes(query) || option.id.toLowerCase().includes(query);
+        })
+        .slice(0, 6);
+    },
+    [mentionPicker, teammateOptions],
+  );
   const defaultTeammate = selectedChannel?.defaultTeammateId
-    ? teammateOptions.find((teammate) => teammate.id === selectedChannel.defaultTeammateId)
+    ? allTeammateOptions.find((teammate) => teammate.id === selectedChannel.defaultTeammateId)
     : undefined;
+  const localTeammateById = useMemo(
+    () => new Map(localTeammates.map((teammate) => [teammate.id, teammate])),
+    [localTeammates],
+  );
+  const channelTeammates = useMemo(
+    () => {
+      const selectedChannelDefaultTeammateId = selectedChannel?.defaultTeammateId;
+      return channelTeammateMemberships.map((membership) => {
+        const teammate = localTeammateById.get(membership.teammateId);
+        return teammate ? { membership, teammate, isDefault: selectedChannelDefaultTeammateId === teammate.id } : undefined;
+      })
+        .filter((item): item is { readonly membership: TeammateChannelMembership; readonly teammate: LocalTeammateDraft; readonly isDefault: boolean } => Boolean(item));
+    },
+    [channelTeammateMemberships, localTeammateById, selectedChannel?.defaultTeammateId],
+  );
+  const availableChannelTeammates = useMemo(
+    () => localTeammates.filter((teammate) => !teammate.hidden && !channelTeammateIds.has(teammate.id)),
+    [channelTeammateIds, localTeammates],
+  );
 
-  function addMention(option: ChannelMention): void {
-    setMessageMentions((current) => current.some((mention) => mention.id === option.id) ? current : [...current, option]);
-    setMessageDraft((current) => `${current}${current.endsWith(" ") || current.length === 0 ? "" : " "}@${option.label} `);
-    if (composerMode === "task") {
-      onTaskFormChange({ ...taskForm, assigneeTeammateId: option.id });
+  function updateMentionPicker(value: string, caret: number): void {
+    const activeMention = findActiveMention(value, caret);
+    setMentionPicker(activeMention);
+    setMentionActiveIndex(0);
+  }
+
+  function focusComposerAt(caret: number): void {
+    const focus = (): void => {
+      const textarea = composerTextareaRef.current;
+      textarea?.focus();
+      textarea?.setSelectionRange(caret, caret);
+    };
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(focus);
+      return;
     }
+    globalThis.setTimeout(focus, 0);
+  }
+
+  function commitMention(option: ChannelMention): void {
+    const source = composerMode === "discuss" ? messageDraft : taskForm.prompt;
+    const inserted = insertMentionToken(source, mentionPicker, option.label);
+    if (composerMode === "discuss") {
+      setMessageDraft(inserted.value);
+      setSendState("idle");
+      setSendError("");
+      setMessageMentions((current) => current.some((mention) => mention.id === option.id) ? current : [...current, option]);
+    } else {
+      onTaskFormChange({ ...taskForm, prompt: inserted.value, assigneeTeammateId: option.id });
+    }
+    setMentionPicker(undefined);
+    setMentionActiveIndex(0);
+    focusComposerAt(inserted.caret);
+  }
+
+  function removeMessageMention(mentionId: string): void {
+    setMessageMentions((current) => current.filter((mention) => mention.id !== mentionId));
+  }
+
+  function handleComposerTextChange(event: ChangeEvent<HTMLTextAreaElement>): void {
+    const value = event.currentTarget.value;
+    if (composerMode === "discuss") {
+      setMessageDraft(value);
+      setSendState("idle");
+      setSendError("");
+    } else {
+      onTaskFormChange({ ...taskForm, prompt: value });
+    }
+    updateMentionPicker(value, event.currentTarget.selectionStart ?? value.length);
+  }
+
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
+    if (!mentionPicker || mentionPickerOptions.length === 0) {
+      if (event.key === "Escape") {
+        setMentionPicker(undefined);
+      }
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setMentionActiveIndex((current) => (current + 1) % mentionPickerOptions.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setMentionActiveIndex((current) => (current - 1 + mentionPickerOptions.length) % mentionPickerOptions.length);
+      return;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      commitMention(mentionPickerOptions[Math.min(mentionActiveIndex, mentionPickerOptions.length - 1)]);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setMentionPicker(undefined);
+      setMentionActiveIndex(0);
+    }
+  }
+
+  function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+    if (composerMode !== "discuss" || event.clipboardData.files.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    void attachFiles(event.clipboardData.files);
+  }
+
+  function handleComposerDragOver(event: DragEvent<HTMLElement>): void {
+    if (composerMode !== "discuss" || !Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setComposerDragActive(true);
+  }
+
+  function handleComposerDragLeave(event: DragEvent<HTMLElement>): void {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+    setComposerDragActive(false);
+  }
+
+  function handleComposerDrop(event: DragEvent<HTMLElement>): void {
+    if (composerMode !== "discuss" || event.dataTransfer.files.length === 0) {
+      setComposerDragActive(false);
+      return;
+    }
+    event.preventDefault();
+    setComposerDragActive(false);
+    void attachFiles(event.dataTransfer.files);
   }
 
   async function attachFiles(files: FileList | readonly File[]): Promise<void> {
@@ -881,7 +1059,7 @@ export function WorkspaceClientView({
     }
   }
 
-  async function addLinkPreview(rawUrl = linkDraft): Promise<void> {
+  async function addLinkPreview(rawUrl: string): Promise<void> {
     const url = rawUrl.trim();
     if (!url) {
       return;
@@ -903,7 +1081,6 @@ export function WorkspaceClientView({
               error: preview.errorMessage,
             }
           : item));
-        setLinkDraft("");
       } else {
         setPendingLinkPreviews((current) => current.map((item) => item.localId === localId
           ? { ...item, state: "failed", error: t("Preview failed") }
@@ -925,7 +1102,7 @@ export function WorkspaceClientView({
     const newPreviews: ChannelLinkPreview[] = [];
     const attachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
     const pendingPreviewRecords = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview] : []);
-    const shouldRequestAi = askAi || messageMentions.some((mention) => mention.kind === "ai-teammate");
+    const shouldRequestAi = messageMentions.some((mention) => mention.kind === "ai-teammate");
     setComposerBusy(true);
     setSendState("sending");
     setSendError("");
@@ -959,6 +1136,7 @@ export function WorkspaceClientView({
       setMessageMentions([]);
       setPendingAttachments([]);
       setPendingLinkPreviews([]);
+      autoPreviewUrlsRef.current.clear();
       setSendState("idle");
       setSendError("");
       setAiReplyState("idle");
@@ -988,8 +1166,38 @@ export function WorkspaceClientView({
   }
 
   function removePendingLinkPreview(localId: string): void {
+    const removed = pendingLinkPreviews.find((item) => item.localId === localId);
+    if (removed) {
+      autoPreviewUrlsRef.current.delete(removed.url);
+      if (removed.preview) {
+        autoPreviewUrlsRef.current.delete(removed.preview.url);
+        autoPreviewUrlsRef.current.delete(removed.preview.normalizedUrl);
+      }
+    }
     setPendingLinkPreviews((current) => current.filter((item) => item.localId !== localId));
   }
+
+  useEffect(() => {
+    if (composerMode !== "discuss" || !selectedChannelId) {
+      return undefined;
+    }
+    const knownPreviewUrls = new Set(
+      pendingLinkPreviews.flatMap((item) => [
+        item.url,
+        item.preview?.url,
+        item.preview?.normalizedUrl,
+      ]).filter((item): item is string => Boolean(item)),
+    );
+    const nextUrl = extractUrls(messageDraft).find((url) => !knownPreviewUrls.has(url) && !autoPreviewUrlsRef.current.has(url));
+    if (!nextUrl) {
+      return undefined;
+    }
+    const timeoutId = globalThis.setTimeout(() => {
+      autoPreviewUrlsRef.current.add(nextUrl);
+      void addLinkPreview(nextUrl);
+    }, 450);
+    return () => globalThis.clearTimeout(timeoutId);
+  }, [composerMode, messageDraft, pendingLinkPreviews, selectedChannelId]);
 
   const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
   const readyLinkPreviewIds = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview.id] : []);
@@ -1011,40 +1219,6 @@ export function WorkspaceClientView({
           </button>
         </div>
       </div>
-      <div className="mention-row compact" aria-label={t("AI mentions")}>
-        {defaultTeammate ? (
-          <button
-            type="button"
-            className="mention-chip default"
-            onClick={() => addMention(defaultTeammate)}
-            title={t("Default teammate")}
-          >
-            @{defaultTeammate.label}
-          </button>
-        ) : (
-          <span className="mention-chip muted">{t("No default teammate")}</span>
-        )}
-        <label className="mention-picker">
-          <span>@</span>
-          <select
-            aria-label={t("Mention teammate")}
-            value=""
-            onChange={(event) => {
-              const option = teammateOptions.find((candidate) => candidate.id === event.target.value);
-              if (option) {
-                addMention(option);
-              }
-            }}
-          >
-            <option value="">{t("Add mention")}</option>
-            {teammateOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
       {composerMode === "task" ? (
         <input
           className="composer-title"
@@ -1053,124 +1227,71 @@ export function WorkspaceClientView({
           placeholder={t("Title")}
         />
       ) : null}
-      <textarea
-        value={composerMode === "discuss" ? messageDraft : taskForm.prompt}
-        rows={3}
-        onChange={(event) => {
-          if (composerMode === "discuss") {
-            setMessageDraft(event.target.value);
-            setSendState("idle");
-            setSendError("");
-          } else {
-            onTaskFormChange({ ...taskForm, prompt: event.target.value });
-          }
-        }}
-        placeholder={composerMode === "discuss" ? t("Message this channel or @ an AI teammate") : t("Prompt")}
-      />
-      {composerMode === "discuss" ? (
-        <>
-          <div className="composer-assets">
-            <label className="secondary-button compact-button">
-              <FileText size={14} />
-              {t("Attach files")}
-              <input
-                type="file"
-                multiple
-                hidden
-                accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
-                onChange={(event) => {
-                  if (event.target.files) {
-                    void attachFiles(event.target.files);
-                  }
-                  event.target.value = "";
-                }}
-              />
-            </label>
-            <label className="link-preview-input">
-              <Link2 size={14} />
-              <input value={linkDraft} onChange={(event) => setLinkDraft(event.target.value)} placeholder={t("Paste URL")} />
-            </label>
-            <button className="secondary-button compact-button" type="button" onClick={() => void addLinkPreview()} disabled={!linkDraft.trim() || composerBusy}>
-              <Plus size={14} />
-              {t("Preview link")}
-            </button>
-            <label className="ask-ai-toggle">
-              <input type="checkbox" checked={askAi} onChange={(event) => setAskAi(event.target.checked)} />
-              <span>{t("Ask AI")}</span>
-            </label>
+      <div
+        className={composerDragActive ? "composer-drop-zone active" : "composer-drop-zone"}
+        onDragOver={handleComposerDragOver}
+        onDragLeave={handleComposerDragLeave}
+        onDrop={handleComposerDrop}
+      >
+        <textarea
+          ref={composerTextareaRef}
+          value={composerMode === "discuss" ? messageDraft : taskForm.prompt}
+          rows={3}
+          onChange={handleComposerTextChange}
+          onKeyDown={handleComposerKeyDown}
+          onPaste={handleComposerPaste}
+          onSelect={(event) => updateMentionPicker(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
+          placeholder={composerMode === "discuss" ? t("Message this channel or @ an AI teammate") : t("Prompt")}
+          aria-describedby={composerMode === "discuss" ? "channel-composer-smart-help" : undefined}
+        />
+        {mentionPicker ? (
+          <div className="mention-picker-popover" role="listbox" aria-label={t("Mention teammate")}>
+            {mentionPickerOptions.length > 0 ? mentionPickerOptions.map((option, index) => (
+              <button
+                key={option.id}
+                type="button"
+                role="option"
+                aria-selected={index === Math.min(mentionActiveIndex, mentionPickerOptions.length - 1)}
+                className={index === Math.min(mentionActiveIndex, mentionPickerOptions.length - 1) ? "mention-suggestion active" : "mention-suggestion"}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => commitMention(option)}
+              >
+                <span>@{option.label}</span>
+                {channelTeammateIds.has(option.id) ? <small>{t("Channel teammate")}</small> : <small>{t("Workspace teammate")}</small>}
+              </button>
+            )) : (
+              <span className="mention-suggestion empty">{t("No matching teammates")}</span>
+            )}
           </div>
-          {(pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0) ? (
-            <div className="pending-assets" aria-label={t("Pending message assets")}>
-              {messageMentions.map((mention) => <span key={mention.id}>@{mention.label}</span>)}
-              {pendingAttachments.map((item) => (
-                <span key={item.localId} className={`pending-asset ${item.state}`}>
-                  {item.state === "uploading" ? <Loader2 className="spin" size={12} /> : null}
-                  {item.fileName}
-                  <small>{t(pendingAssetLabel(item.state))}</small>
-                  <button type="button" onClick={() => removePendingAttachment(item.localId)} aria-label={t("Remove pending attachment")}>
-                    <Trash2 size={12} />
-                  </button>
-                </span>
-              ))}
-              {pendingLinkPreviews.map((item) => (
-                <span key={item.localId} className={`pending-asset ${item.state}`}>
-                  {item.state === "uploading" ? <Loader2 className="spin" size={12} /> : <Link2 size={12} />}
-                  {item.preview?.title ?? item.url}
-                  <small>{item.error ?? t(pendingPreviewLabel(item.state))}</small>
-                  <button type="button" onClick={() => removePendingLinkPreview(item.localId)} aria-label={t("Remove pending link preview")}>
-                    <Trash2 size={12} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {(sendState !== "idle" || aiReplyState !== "idle") ? (
-            <div className="composer-status-list" aria-live="polite">
-              {sendState === "sending" ? (
-                <div className="composer-status-row loading">
-                  <Loader2 className="spin" size={14} />
-                  <span>{t("Sending message...")}</span>
-                </div>
-              ) : null}
-              {aiReplyState === "replying" ? (
-                <div className="composer-status-row loading">
-                  <Loader2 className="spin" size={14} />
-                  <span>{t("AI teammate is replying...")}</span>
-                </div>
-              ) : null}
-              {sendState === "failed" ? (
-                <div className="composer-status-row failed">
-                  <CircleAlert size={14} />
-                  <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
-                  <button className="secondary-button compact-button" type="button" onClick={() => void sendMessage()}>
-                    <RefreshCw size={13} />
-                    {t("Retry")}
-                  </button>
-                  <button className="secondary-button compact-button" type="button" onClick={() => {
-                    setSendState("idle");
-                    setSendError("");
-                    setAiReplyState("idle");
-                  }}>
-                    {t("Dismiss")}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </>
-      ) : null}
-      {mediaProviders.length > 0 ? (
-        <div className="provider-run-notice neutral client-provider-notice">
-          <Database size={16} />
-          <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
-        </div>
-      ) : null}
-      <div className="composer-footer">
-        <div className="tool-token-list" aria-label={t("Tool calls")}>
-          {(selectedChannel?.allowedTools ?? defaultTools).map((tool) => (
-            <span key={tool} className={riskyTools.includes(tool) ? "tool-token risky" : "tool-token"}>{tool}</span>
-          ))}
-        </div>
+        ) : null}
+        {composerDragActive ? (
+          <div className="composer-drop-hint">
+            <FileText size={16} />
+            <span>{t("Drop files to attach")}</span>
+          </div>
+        ) : null}
+      </div>
+      <div className="composer-primary-actions">
+        <span id="channel-composer-smart-help" className="composer-smart-hint">
+          {composerMode === "discuss" ? t("@ teammates, drop files, or paste links") : t("@ a teammate to assign the task")}
+        </span>
+        {composerMode === "discuss" ? (
+          <label className="icon-button composer-attach-button" aria-label={t("Attach files")} title={t("Attach files")}>
+            <FileText size={15} />
+            <input
+              type="file"
+              multiple
+              hidden
+              accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
+              onChange={(event) => {
+                if (event.target.files) {
+                  void attachFiles(event.target.files);
+                }
+                event.target.value = "";
+              }}
+            />
+          </label>
+        ) : null}
         {composerMode === "discuss" ? (
           <button className="primary-button" type="button" onClick={() => void sendMessage()} disabled={!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent}>
             {sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
@@ -1183,6 +1304,144 @@ export function WorkspaceClientView({
           </button>
         )}
       </div>
+      {composerMode === "discuss" && (pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0) ? (
+        <div className="pending-assets" aria-label={t("Pending message assets")}>
+          {messageMentions.map((mention) => (
+            <span key={mention.id} className="pending-asset ready">
+              @{mention.label}
+              <small>{t("Mention")}</small>
+              <button type="button" onClick={() => removeMessageMention(mention.id)} aria-label={t("Remove pending mention")}>
+                <Trash2 size={12} />
+              </button>
+            </span>
+          ))}
+          {pendingAttachments.map((item) => (
+            <span key={item.localId} className={`pending-asset ${item.state}`}>
+              {item.state === "uploading" ? <Loader2 className="spin" size={12} /> : null}
+              {item.fileName}
+              <small>{t(pendingAssetLabel(item.state))}</small>
+              <button type="button" onClick={() => removePendingAttachment(item.localId)} aria-label={t("Remove pending attachment")}>
+                <Trash2 size={12} />
+              </button>
+            </span>
+          ))}
+          {pendingLinkPreviews.map((item) => (
+            <span key={item.localId} className={`pending-asset ${item.state}`}>
+              {item.state === "uploading" ? <Loader2 className="spin" size={12} /> : <Link2 size={12} />}
+              {item.preview?.title ?? item.url}
+              <small>{item.error ?? t(pendingPreviewLabel(item.state))}</small>
+              <button type="button" onClick={() => removePendingLinkPreview(item.localId)} aria-label={t("Remove pending link preview")}>
+                <Trash2 size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {composerMode === "discuss" && (sendState !== "idle" || aiReplyState !== "idle") ? (
+        <div className="composer-status-list" aria-live="polite">
+          {sendState === "sending" ? (
+            <div className="composer-status-row loading">
+              <Loader2 className="spin" size={14} />
+              <span>{t("Sending message...")}</span>
+            </div>
+          ) : null}
+          {aiReplyState === "replying" ? (
+            <div className="composer-status-row loading">
+              <Loader2 className="spin" size={14} />
+              <span>{t("AI teammate is replying...")}</span>
+            </div>
+          ) : null}
+          {sendState === "failed" ? (
+            <div className="composer-status-row failed">
+              <CircleAlert size={14} />
+              <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
+              <button className="secondary-button compact-button" type="button" onClick={() => void sendMessage()}>
+                <RefreshCw size={13} />
+                {t("Retry")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => {
+                setSendState("idle");
+                setSendError("");
+                setAiReplyState("idle");
+              }}>
+                {t("Dismiss")}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+
+  const channelTeammateManager = (
+    <section className="channel-teammate-manager" aria-label={t("Channel teammates")}>
+      <div className="channel-settings-section-head">
+        <span>
+          <MessageSquare size={15} />
+          <strong>{t("Channel teammates")}</strong>
+        </span>
+        <small>
+          {channelTeammateMembershipsLoading
+            ? t("Loading teammates...")
+            : t("{count} teammates", { count: channelTeammates.length })}
+        </small>
+      </div>
+      <div className="channel-teammate-add-row">
+        <label className="field">
+          <span>{t("Add teammate")}</span>
+          <select
+            value=""
+            disabled={!selectedChannelId || availableChannelTeammates.length === 0 || Boolean(channelTeammateSavingId)}
+            onChange={(event) => {
+              const teammateId = event.target.value;
+              if (teammateId) {
+                void onAddChannelTeammate(teammateId);
+              }
+            }}
+          >
+            <option value="">{availableChannelTeammates.length > 0 ? t("Select teammate to add") : t("No teammates available")}</option>
+            {availableChannelTeammates.map((teammate) => (
+              <option key={teammate.id} value={teammate.id}>{teammate.displayName}</option>
+            ))}
+          </select>
+        </label>
+        <button className="secondary-button compact-button" type="button" onClick={onOpenTeammates}>
+          <Plus size={14} />
+          {t("Open AI Teammates")}
+        </button>
+      </div>
+      {channelTeammates.length === 0 ? (
+        <div className="client-empty-state channel-teammate-empty">
+          <MessageSquare size={18} />
+          <span>{localTeammates.length === 0 ? t("Create a workspace teammate before assigning channel members.") : t("No teammates in this channel")}</span>
+        </div>
+      ) : (
+        <div className="channel-teammate-list">
+          {channelTeammates.map(({ isDefault, teammate }) => {
+            const saving = channelTeammateSavingId === teammate.id;
+            return (
+              <article key={teammate.id} className="channel-teammate-row">
+                <AvatarInitial label={teammate.displayName.slice(0, 1).toUpperCase() || "A"} tone={isDefault ? "teal" : "gray"} />
+                <span>
+                  <strong>{teammate.displayName}</strong>
+                  <small>{teammate.modelLabel}</small>
+                </span>
+                {isDefault ? <span className="status-badge">{t("Default teammate")}</span> : null}
+                <div className="channel-teammate-actions">
+                  <button className="secondary-button compact-button" type="button" onClick={() => void onSetDefaultChannelTeammate(teammate.id)} disabled={saving || isDefault}>
+                    {saving ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                    {isDefault ? t("Default teammate") : t("Set default")}
+                  </button>
+                  <button className="secondary-button compact-button" type="button" onClick={() => void onRemoveChannelTeammate(teammate.id)} disabled={saving}>
+                    {saving ? <Loader2 className="spin" size={14} /> : <X size={14} />}
+                    {t("Remove from channel")}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 
@@ -1197,22 +1456,32 @@ export function WorkspaceClientView({
           <p>{channelStatusText}{selectedChannel?.boundPath ? ` · ${selectedChannel.boundPath}` : ""}</p>
         </div>
         <div className="channel-header-actions">
-          <span className={daemonHealthy ? "glass-chip ok" : "glass-chip attention"}>
-            <Activity size={14} />
-            {daemonHealthy === undefined ? t("Checking daemon") : daemonHealthy ? t("Daemon ready") : t("Daemon offline")}
-          </span>
-          <span className={providerBlocker ? "glass-chip attention" : "glass-chip ok"}>
-            <Command size={14} />
-            {effectiveProvider?.displayName ?? providerLabel}
-          </span>
+          {daemonHealthy !== true ? (
+            <span className="glass-chip attention">
+              <Activity size={14} />
+              {daemonHealthy === undefined ? t("Checking daemon") : t("Daemon offline")}
+            </span>
+          ) : null}
+          {providerBlocker ? (
+            <span className="glass-chip attention">
+              <Command size={14} />
+              {effectiveProvider?.displayName ?? providerLabel}
+            </span>
+          ) : null}
           <span className={selectedChannel?.defaultTeammateId ? "glass-chip ok" : "glass-chip attention"}>
             <MessageSquare size={14} />
             {defaultTeammate?.label ?? selectedChannel?.defaultTeammateId ?? t("No default teammate")}
           </span>
-          {selectedChannel ? (
-            <span className={selectedChannel.status === "active" ? "glass-chip ok" : "glass-chip attention"}>
+          {selectedChannel && selectedChannel.status !== "active" ? (
+            <span className="glass-chip attention">
               <Workflow size={14} />
               {t(selectedChannel.status)}
+            </span>
+          ) : null}
+          {pendingApprovalCount > 0 ? (
+            <span className="glass-chip attention">
+              <CheckCircle2 size={14} />
+              {t("Pending approvals")} {pendingApprovalCount}
             </span>
           ) : null}
           {activeLeaseCount > 0 ? (
@@ -1221,45 +1490,82 @@ export function WorkspaceClientView({
               {t("{count} active leases", { count: activeLeaseCount })}
             </span>
           ) : null}
+          <button
+            className={workspaceSettingsOpen ? "secondary-button compact-button active task-toolbar-settings" : "secondary-button compact-button task-toolbar-settings"}
+            type="button"
+            aria-expanded={workspaceSettingsOpen}
+            onClick={() => setWorkspaceSettingsOpen((current) => !current)}
+          >
+            <SlidersHorizontal size={15} />
+            {t("Settings")}
+          </button>
+          <button
+            className="primary-button compact-button task-toolbar-create"
+            type="button"
+            onClick={() => {
+              setActiveTab("tasks");
+              setCreateTaskOpen(true);
+            }}
+            disabled={!selectedChannelId}
+          >
+            <Plus size={15} />
+            {t("New task")}
+          </button>
         </div>
       </header>
 
-      <section className="task-workbench-toolbar" aria-label={t("Workspace task toolbar")}>
-        <label className="field toolbar-path-field">
-          <span>{t("Workspace path")}</span>
-          <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
-        </label>
-        <label className="field toolbar-channel-field">
-          <span>{t("Channel")}</span>
-          <select value={selectedChannelId} onChange={(event) => onSelectChannel(event.target.value)} disabled={channelsLoading || channels.length === 0}>
-            {channels.length === 0 ? <option value="">{t("No channel yet")}</option> : null}
-            {channels.map((channel) => (
-              <option key={channel.id} value={channel.id}>
-                {channel.name} / {t(channel.status)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field run-provider-field">
-          <span>{t("Run provider")}</span>
-          <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providersLoading || providers.length === 0}>
-            <option value="">{t("Select provider preset")}</option>
-            <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-          </select>
-        </label>
-        <button
-          className="primary-button task-toolbar-create"
-          type="button"
-          onClick={() => {
-            setActiveTab("tasks");
-            setCreateTaskOpen(true);
-          }}
-          disabled={!selectedChannelId}
-        >
-          <Plus size={15} />
-          {t("New task")}
-        </button>
-      </section>
+      {workspaceSettingsOpen ? (
+        <section className="workbench-settings-panel channel-options" aria-label={t("Advanced channel settings")}>
+          {channelTeammateManager}
+          <div className="channel-options-grid">
+            <label className="field wide">
+              <span>{t("Workspace path")}</span>
+              <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
+            </label>
+            <label className="field wide">
+              <span>{t("Run provider")}</span>
+              <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providersLoading || providers.length === 0}>
+                <option value="">{t("Select provider preset")}</option>
+                <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
+              </select>
+            </label>
+            <label className="field wide">
+              <span>{t("Name")}</span>
+              <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} />
+            </label>
+            <label className="field wide">
+              <span>{t("Execution path")}</span>
+              <input value={channelForm.boundPath} onChange={(event) => onChannelFormChange({ ...channelForm, boundPath: event.target.value })} />
+            </label>
+            <label className="field wide">
+              <span>{t("Default AI teammate")}</span>
+              <select value={channelForm.defaultTeammateId} onChange={(event) => onChannelFormChange({ ...channelForm, defaultTeammateId: event.target.value })}>
+                <option value="">{t("No default teammate")}</option>
+                {teammateOptions.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <ChannelRuntimePolicyFields form={channelForm} onChange={onChannelFormChange} />
+            <div className="channel-option-actions">
+              {channels.length === 0 ? (
+                <button className="secondary-button compact-button" type="button" onClick={onCreateDefaultChannel} disabled={channelsLoading || !readyProvider}>
+                  <Plus size={14} />
+                  {t("Create default")}
+                </button>
+              ) : null}
+              <button className="secondary-button compact-button" type="button" onClick={onRefreshChannels} disabled={channelsLoading}>
+                {channelsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                {t("Refresh channels")}
+              </button>
+              <button className="primary-button compact-button" type="button" onClick={onCreateChannel}>
+                <Plus size={14} />
+                {t("Create channel")}
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {errorMessage ? (
         <div className="inline-error">
@@ -1278,13 +1584,17 @@ export function WorkspaceClientView({
           ].filter(Boolean).join(" ")}
           aria-label={t("Channel activity")}
         >
-          <div className="panel-title split">
-            <span>
-              {channelTabIcon(activeTab, 16)}
-              <h2>{t(channelTabLabel(activeTab))}</h2>
-            </span>
+          <div className="channel-tabs-row">
+            <div className="channel-tabs" role="tablist" aria-label={t("Channel tabs")}>
+              {channelTabs.map((tab) => (
+                <button key={tab} type="button" className={activeTab === tab ? "channel-tab active" : "channel-tab"} onClick={() => setActiveTab(tab)}>
+                  {channelTabIcon(tab, 14)}
+                  {t(channelTabLabel(tab))}
+                </button>
+              ))}
+            </div>
             <button
-              className="icon-button"
+              className="icon-button channel-tabs-refresh"
               type="button"
               onClick={refreshActiveTab}
               disabled={!selectedChannelId || activeTabLoading}
@@ -1292,15 +1602,6 @@ export function WorkspaceClientView({
             >
               {activeTabLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
             </button>
-          </div>
-
-          <div className="channel-tabs" role="tablist" aria-label={t("Channel tabs")}>
-            {channelTabs.map((tab) => (
-              <button key={tab} type="button" className={activeTab === tab ? "channel-tab active" : "channel-tab"} onClick={() => setActiveTab(tab)}>
-                {channelTabIcon(tab, 14)}
-                {t(channelTabLabel(tab))}
-              </button>
-            ))}
           </div>
 
           {activeTab === "activity" ? (
@@ -1434,7 +1735,7 @@ export function WorkspaceClientView({
                             </button>
                             <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("decisions")}>
                               <Workflow size={14} />
-                              {t("Open protocol")}
+                              {t("Open context")}
                             </button>
                           </>)
                         }
@@ -1466,7 +1767,7 @@ export function WorkspaceClientView({
                             </button>
                             <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("handoffs")}>
                               <Workflow size={14} />
-                              {t("Open protocol")}
+                              {t("Open context")}
                             </button>
                           </>)
                         }
@@ -1489,7 +1790,7 @@ export function WorkspaceClientView({
                             <small>{t("{count} steps", { count: steps.length })}</small>
                             <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
                               <Workflow size={14} />
-                              {t("Open protocol")}
+                              {t("Open context")}
                             </button>
                           </>)
                         }
@@ -1515,7 +1816,7 @@ export function WorkspaceClientView({
                               </div>
                               <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
                                 <Workflow size={14} />
-                                {t("Open protocol")}
+                                {t("Open context")}
                               </button>
                             </>)
                           ) : step.taskId ? (
@@ -1523,14 +1824,14 @@ export function WorkspaceClientView({
                               <code>{step.taskId}{step.runId ? ` / ${step.runId}` : ""}</code>
                               <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
                                 <Workflow size={14} />
-                                {t("Open protocol")}
+                                {t("Open context")}
                               </button>
                             </>)
                           ) : (
                             activityActionRow(item.id, (
                               <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
                                 <Workflow size={14} />
-                                {t("Open protocol")}
+                                {t("Open context")}
                               </button>
                             ))
                           )
@@ -1661,7 +1962,7 @@ export function WorkspaceClientView({
                           </button>
                           <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("brief")}>
                             <Workflow size={14} />
-                            {t("Open protocol")}
+                            {t("Open context")}
                           </button>
                         </>)
                       }
@@ -1813,48 +2114,6 @@ export function WorkspaceClientView({
         </section>
 
       </div>
-      <details className="config-disclosure channel-options">
-        <summary>
-          <SlidersHorizontal size={14} />
-          {t("Advanced channel settings")}
-        </summary>
-        <div className="channel-options-grid">
-          <label className="field wide">
-            <span>{t("Name")}</span>
-            <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} />
-          </label>
-          <label className="field wide">
-            <span>{t("Execution path")}</span>
-            <input value={channelForm.boundPath} onChange={(event) => onChannelFormChange({ ...channelForm, boundPath: event.target.value })} />
-          </label>
-          <label className="field wide">
-            <span>{t("Default AI teammate")}</span>
-            <select value={channelForm.defaultTeammateId} onChange={(event) => onChannelFormChange({ ...channelForm, defaultTeammateId: event.target.value })}>
-              <option value="">{t("No default teammate")}</option>
-              {teammateOptions.map((option) => (
-                <option key={option.id} value={option.id}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <ChannelRuntimePolicyFields form={channelForm} onChange={onChannelFormChange} />
-          <div className="channel-option-actions">
-            {channels.length === 0 ? (
-              <button className="secondary-button compact-button" type="button" onClick={onCreateDefaultChannel} disabled={channelsLoading || !readyProvider}>
-                <Plus size={14} />
-                {t("Create default")}
-              </button>
-            ) : null}
-            <button className="secondary-button compact-button" type="button" onClick={onRefreshChannels} disabled={channelsLoading}>
-              {channelsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-              {t("Refresh channels")}
-            </button>
-            <button className="primary-button compact-button" type="button" onClick={onCreateChannel}>
-              <Plus size={14} />
-              {t("Create channel")}
-            </button>
-          </div>
-        </div>
-      </details>
     </div>
   );
 }
@@ -2570,17 +2829,6 @@ function ActivityFilterToolbar({
             ))}
           </select>
         </label>
-        <div className="activity-saved-view-actions compact" aria-label={t("Saved view actions")}>
-          <button className="icon-button compact-icon-button" type="button" onClick={onSaveView} disabled={customViewLimitReached} aria-label={t("Save view")} title={t("Save view")}>
-            <Plus size={13} />
-          </button>
-          <button className="icon-button compact-icon-button" type="button" onClick={onRenameView} disabled={!selectedCustomView} aria-label={t("Rename")} title={t("Rename")}>
-            <FileText size={13} />
-          </button>
-          <button className="icon-button compact-icon-button" type="button" onClick={onDeleteView} disabled={!selectedCustomView} aria-label={t("Delete view")} title={t("Delete view")}>
-            <Trash2 size={13} />
-          </button>
-        </div>
       </div>
       <label className="activity-search-field">
         <Search size={14} />
@@ -2608,6 +2856,20 @@ function ActivityFilterToolbar({
       </button>
       {filtersExpanded ? (
         <div className="activity-filter-panel" aria-label={t("Filter panel")}>
+          <div className="activity-saved-view-actions" aria-label={t("Saved view actions")}>
+            <button className="secondary-button compact-button" type="button" onClick={onSaveView} disabled={customViewLimitReached}>
+              <Plus size={13} />
+              {t("Save view")}
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={onRenameView} disabled={!selectedCustomView}>
+              <FileText size={13} />
+              {t("Rename")}
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={onDeleteView} disabled={!selectedCustomView}>
+              <Trash2 size={13} />
+              {t("Delete view")}
+            </button>
+          </div>
           <div className="activity-filter-group activity-category-filters" aria-label={t("Activity categories")}>
             {activityCategoryFilters.map((filter) => (
               <button
@@ -2654,22 +2916,14 @@ function AttentionQueue({
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly onOpenItem: (item: ChannelAttentionQueueItem) => void;
   readonly onOpenItemDetails: (item: ChannelAttentionQueueItem) => void;
-}): JSX.Element {
+}): JSX.Element | null {
   const { t } = useI18n();
   const blockedCount = items.filter((item) => item.attention === "blocked").length;
   const failedCount = items.filter((item) => item.attention === "failed").length;
   const pendingCount = items.filter((item) => item.attention === "pending").length;
   const visibleItems = items.slice(0, 5);
   if (items.length === 0) {
-    return (
-      <section className="attention-queue empty" aria-label={t("Attention queue")}>
-        <div className="attention-queue-pill">
-          <CheckCircle2 size={13} />
-          <strong>{t("Attention")}</strong>
-          <span>{t("No attention items")}</span>
-        </div>
-      </section>
-    );
+    return null;
   }
   return (
     <section className="attention-queue compact" aria-label={t("Attention queue")}>
@@ -3057,7 +3311,7 @@ function attentionQueueTargetLabel(target: ChannelAttentionQueueTarget): string 
   if (target.kind === "approval") {
     return "Approval";
   }
-  return "Channel protocol";
+  return "Context";
 }
 
 function activityKindLabel(kind: ChannelActivityDrilldownItem["kind"]): string {
@@ -3108,7 +3362,7 @@ function drilldownTargetLabel(target: ChannelActivityDrilldownTarget): string {
   if (target.kind === "approval") {
     return "Open approval";
   }
-  return "Open protocol";
+  return "Open context";
 }
 
 function drilldownTargetIcon(target: ChannelActivityDrilldownTarget): JSX.Element {
@@ -3138,7 +3392,7 @@ function triageActionIcon(action: ChannelActivityTriageActionKind): JSX.Element 
 }
 
 function activityTriageResultTargetLabel(result: ChannelActivityTriageResult): string {
-  return result.kind === "task" ? "Open in Tasks" : "Open in Channel protocol";
+  return result.kind === "task" ? "Open in Tasks" : "Open in Context";
 }
 
 function activityCategoryFilterLabel(filter: ActivityCategoryFilter): string {
@@ -3393,6 +3647,32 @@ function splitLines(value: string): string[] {
 function extractUrls(value: string): string[] {
   const matches = value.match(/https?:\/\/[^\s)]+/g) ?? [];
   return [...new Set(matches.map((item) => item.replace(/[.,;!?]+$/, "")))];
+}
+
+function findActiveMention(value: string, caret: number): ActiveMentionPicker | undefined {
+  const beforeCaret = value.slice(0, caret);
+  const match = /(^|\s)@([^\s@]{0,40})$/.exec(beforeCaret);
+  if (!match) {
+    return undefined;
+  }
+  const query = match[2] ?? "";
+  return {
+    query,
+    start: caret - query.length - 1,
+    end: caret,
+  };
+}
+
+function insertMentionToken(value: string, picker: ActiveMentionPicker | undefined, label: string): { readonly value: string; readonly caret: number } {
+  const start = Math.max(0, Math.min(picker?.start ?? value.length, value.length));
+  const end = Math.max(start, Math.min(picker?.end ?? value.length, value.length));
+  const prefix = value.slice(0, start);
+  const suffix = value.slice(end).replace(/^\s+/, "");
+  const mention = `@${label}`;
+  return {
+    value: `${prefix}${mention}${suffix ? ` ${suffix}` : " "}`,
+    caret: prefix.length + mention.length + 1,
+  };
 }
 
 function pendingAssetLabel(state: PendingAssetState): string {

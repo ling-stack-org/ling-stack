@@ -1,14 +1,17 @@
 import {
   CircleAlert,
+  Languages,
   Loader2,
+  Palette,
   RefreshCw,
   Save,
   Settings,
 } from "lucide-react";
-import { useI18n } from "../../i18n.js";
+import { LanguageSwitcher, useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { allTools, riskyTools } from "../../lib/tools.js";
 import { MetaRow } from "../../shared/components/index.js";
+import { ThemeSwitcher } from "../../theme.js";
 import type {
   ApprovalPolicy,
   ApprovalPolicyFormState,
@@ -39,7 +42,31 @@ export function SettingsPage({
   const { t } = useI18n();
 
   return (
-    <section className="panel settings-panel" aria-labelledby="settings-title">
+    <div className="settings-stack">
+      <section className="panel settings-panel interface-settings-panel" aria-labelledby="interface-settings-title">
+        <div className="panel-title">
+          <Palette size={18} />
+          <h2 id="interface-settings-title">{t("Interface preferences")}</h2>
+        </div>
+        <div className="interface-preference-grid">
+          <div className="interface-preference-row">
+            <span>
+              <Palette size={16} />
+              <strong>{t("Theme")}</strong>
+            </span>
+            <ThemeSwitcher />
+          </div>
+          <div className="interface-preference-row">
+            <span>
+              <Languages size={16} />
+              <strong>{t("Language")}</strong>
+            </span>
+            <LanguageSwitcher />
+          </div>
+        </div>
+      </section>
+
+      <section className="panel settings-panel" aria-labelledby="settings-title">
       <div className="panel-title split">
         <span>
           <Settings size={18} />
@@ -106,6 +133,7 @@ export function SettingsPage({
           {t("Save policy")}
         </button>
       </div>
-    </section>
+      </section>
+    </div>
   );
 }

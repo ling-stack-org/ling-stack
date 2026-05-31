@@ -285,8 +285,8 @@ test("channel runtime policy and default teammate are visible and used when crea
   await expect(page.getByText("active · serial · boundPath lock")).toBeVisible();
   await expect(page.locator(".channel-header-actions")).toContainText("Engineer");
 
-  const details = page.locator(".channel-options");
-  await details.locator("summary").click();
+  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  const details = page.getByLabel("Advanced channel settings");
   await details.getByLabel("Name").fill("Release");
   await details.getByLabel("Status").selectOption("paused");
   await details.getByLabel("Default AI teammate").selectOption("designer");
@@ -307,6 +307,72 @@ test("channel runtime policy and default teammate are visible and used when crea
   expect(runtimePolicy.maxConcurrentRuns).toBe(2);
   expect(runtimePolicy.queueOnConflict).toBe(false);
   await expect(page.locator(".channel-header-actions")).toContainText("Designer");
+});
+
+test("channel settings can add remove and set default teammates", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, defaultTeammateId: undefined }
+      : channel,
+  );
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Ling Engineer" }),
+    createMockTeammate({
+      id: "teammate_builtin_designer",
+      templateId: "designer",
+      roleKey: "designer",
+      displayName: "Ling Designer",
+      description: "Owns channel design review.",
+    }),
+  ];
+  state.teammateChannelMemberships = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.locator(".channel-header-actions")).toContainText("No default teammate");
+  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  const manager = page.getByLabel("Channel teammates");
+  await expect(manager).toContainText("No teammates in this channel");
+  await manager.getByLabel("Add teammate").selectOption("teammate_builtin_engineer");
+  await expect.poll(() => state.teammateChannelMemberships.some((membership) =>
+    isRecord(membership) &&
+    membership.teammateId === "teammate_builtin_engineer" &&
+    membership.channelId === "channel_engineering"
+  )).toBe(true);
+  const engineerRow = manager.locator(".channel-teammate-row").filter({ hasText: "Ling Engineer" });
+  await expect(engineerRow).toBeVisible();
+  await expect(page.locator(".channel-header-actions")).toContainText("No default teammate");
+
+  await engineerRow.getByRole("button", { name: "Set default" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    return isRecord(channel) ? channel.defaultTeammateId : undefined;
+  }).toBe("teammate_builtin_engineer");
+  await expect(page.locator(".channel-header-actions")).toContainText("Ling Engineer");
+  await expect(engineerRow).toContainText("Default teammate");
+
+  await manager.getByLabel("Add teammate").selectOption("teammate_builtin_designer");
+  const designerRow = manager.locator(".channel-teammate-row").filter({ hasText: "Ling Designer" });
+  await expect(designerRow).toBeVisible();
+  await designerRow.getByRole("button", { name: "Set default" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    return isRecord(channel) ? channel.defaultTeammateId : undefined;
+  }).toBe("teammate_builtin_designer");
+  await expect(page.locator(".channel-header-actions")).toContainText("Ling Designer");
+
+  await engineerRow.getByRole("button", { name: "Remove from channel" }).click();
+  await expect.poll(() => state.teammateChannelMemberships.some((membership) =>
+    isRecord(membership) &&
+    membership.teammateId === "teammate_builtin_engineer" &&
+    membership.channelId === "channel_engineering"
+  )).toBe(false);
+  await expect(engineerRow).toHaveCount(0);
+  await expect(designerRow).toBeVisible();
 });
 
 test("paused channels disable task run actions", async ({ page }) => {
@@ -333,18 +399,25 @@ test("channel activity supports mentions, messages, files, links, and task creat
 
   await expect(page.getByRole("button", { name: "Activity", exact: true })).toBeVisible();
   await expect(page.locator("article.task-detail")).toHaveCount(0);
-  await page.locator(".mention-chip").filter({ hasText: "@Engineer" }).click();
-  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("@Engineer please refine the channel requirements https://example.com");
-  await page.getByPlaceholder("Paste URL").fill("https://example.com");
-  await page.getByRole("button", { name: "Preview link" }).click();
-  await expect(page.getByText("Fetching link preview...")).toBeVisible();
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await composerInput.fill("@Eng");
+  await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
+  await page.getByRole("option", { name: /@Engineer/ }).click();
+  await expect(page.getByLabel("Pending message assets")).toContainText("@Engineer");
+  await expect(composerInput).toHaveValue("@Engineer ");
+  await composerInput.type("please refine the channel requirements https://example.com");
   await expect(page.locator(".channel-tab.active")).toContainText("Activity");
-  await expect(page.getByText("Example Domain").first()).toBeVisible();
-  await page.locator("input[type=file]").setInputFiles({
-    name: "brief.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("channel brief"),
+  await expect(page.getByText("Example Domain").first()).toBeVisible({ timeout: 3_000 });
+  const dataTransfer = await page.evaluateHandle(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["channel brief"], "brief.txt", { type: "text/plain" }));
+    return transfer;
   });
+  const dropZone = page.locator(".composer-drop-zone");
+  await dropZone.dispatchEvent("dragover", { dataTransfer });
+  await expect(page.getByText("Drop files to attach")).toBeVisible();
+  await dropZone.dispatchEvent("drop", { dataTransfer });
+  await dataTransfer.dispose();
   await expect(page.getByText("brief.txt")).toBeVisible();
   await expect(page.locator(".channel-tab.active")).toContainText("Activity");
   await page.getByRole("button", { name: "Send" }).click();
@@ -458,8 +531,14 @@ test("channel activity keeps the composer visible while the message feed scrolls
 
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await expect(page.locator('[aria-label="Channel activity"] > .panel-title')).toHaveCount(0);
   const scrollState = await readScrollState(page, ".activity-shell .message-feed");
   expect(scrollState.max).toBeGreaterThan(0);
+  const panelBox = await page.locator(".task-list-panel.activity-tab-panel").boundingBox();
+  const feedBox = await page.locator(".activity-shell .message-feed").boundingBox();
+  const composerBox = await page.getByLabel("Channel composer").boundingBox();
+  expect(feedBox?.height ?? 0).toBeGreaterThan(180);
+  expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeGreaterThan((panelBox?.y ?? 0) + (panelBox?.height ?? 0) - 24);
   const tabsBefore = await page.locator(".channel-tabs").boundingBox();
   await page.locator(".activity-shell .message-feed").evaluate((element) => {
     element.scrollTop = element.scrollHeight;
@@ -498,14 +577,12 @@ test("channel URL preview blocked state stays in Activity and still allows sendi
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Please remember this blocked reference.");
-  await page.getByPlaceholder("Paste URL").fill("http://127.0.0.1/private");
-  await page.getByRole("button", { name: "Preview link" }).click();
-  await expect(page.getByText("Private network previews are blocked.")).toBeVisible();
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Please remember this blocked reference http://127.0.0.1/private");
+  await expect(page.getByText("Private network previews are blocked.")).toBeVisible({ timeout: 3_000 });
   await expect(page.locator(".channel-tab.active")).toContainText("Activity");
 
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText("Please remember this blocked reference.")).toBeVisible();
+  await expect(page.getByText("Please remember this blocked reference http://127.0.0.1/private")).toBeVisible();
 });
 
 test("channel files tab supports PDF and Office uploads without AI ingestion", async ({ page }) => {
@@ -683,7 +760,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
 
   await expect(page.getByText("Loading protocol...")).toHaveCount(0);
   await expect(page.getByLabel("Objective")).toHaveCount(0);
-  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Context" }).click();
   await page.getByLabel("Objective").fill("Ship channel v1.1 protocol");
   await page.getByLabel("Scope").fill("Brief, decisions, handoffs, context summaries");
   await page.getByLabel("Acceptance criteria").fill("Brief saves\nActivity shows protocol items");
@@ -718,7 +795,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
   await expect(page.getByText("Context summary", { exact: true }).first()).toBeVisible();
 
   await page.reload();
-  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Context" }).click();
   await expect(page.getByLabel("Objective")).toHaveValue("Ship channel v1.1 protocol");
 });
 
@@ -739,7 +816,7 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
   await page.getByRole("button", { name: "Start workflow" }).first().click();
   await expect.poll(() => state.channelWorkflows.length).toBe(1);
   await expect.poll(() => state.channelWorkflowSteps.length).toBe(1);
-  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Context" }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await expect(page.getByText("Workflow queue")).toBeVisible();
   await expect(page.getByText("Active decisions: 0")).toBeVisible();
@@ -775,7 +852,7 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
     workflow.status = "running";
   }
   await page.reload();
-  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Context" }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await expect(page.locator(".workflow-step-card").filter({ hasText: "Blocked follow-up" })).toContainText("Provider preflight failed.");
 });
@@ -818,7 +895,7 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("button", { name: "Channel protocol" }).click();
+  await page.getByRole("button", { name: "Context" }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await page.getByRole("button", { name: "Start + run" }).click();
   await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
@@ -990,8 +1067,13 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.getByText("Other channel approval leak")).toHaveCount(0);
   await expect(page.getByText("other_channel_done")).toHaveCount(0);
   await expect(page.locator("article.task-detail")).toHaveCount(0);
-  await expect(page.getByLabel("Channel composer")).toBeVisible();
-  await expect(page.locator(".mention-row .mention-chip")).toHaveCount(1);
+  const composer = page.getByLabel("Channel composer");
+  await expect(composer).toBeVisible();
+  await expect(composer.getByRole("button", { name: "More" })).toHaveCount(0);
+  await composer.getByPlaceholder("Message this channel or @ an AI teammate").fill("@Eng");
+  await expect(composer.getByRole("option", { name: /@Engineer/ })).toBeVisible();
+  await composer.getByRole("option", { name: /@Engineer/ }).click();
+  await expect(composer.getByLabel("Pending message assets")).toContainText("@Engineer");
 
   await openDetailsFrom(messageBubble, "Timeline source message");
   await openDetailsFrom(taskEventBubble, "Inspect workspace");
@@ -1018,8 +1100,8 @@ test("channel activity derives task run approval transition and workflow events"
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
 
   await workflowStepBubble.getByRole("button", { name: "Details" }).click();
-  await activityDetails.getByRole("button", { name: "Open protocol" }).click();
-  await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
+  await activityDetails.getByRole("button", { name: "Open context" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Context");
   await page.getByRole("button", { name: "Activity", exact: true }).click();
   await expect(activityDetails).toHaveCount(0);
 
@@ -1080,7 +1162,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(activityDetails).toContainText("Runtime policy is waiting.");
   await activityDetails.getByLabel("Close details").click();
   await blockedQueueItem.locator(".attention-queue-item-open").click();
-  await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
+  await expect(page.locator(".channel-tab.active")).toContainText("Context");
   await page.getByRole("button", { name: "Activity", exact: true }).click();
   await expandQueueIfNeeded();
   await attentionQueue.locator(".attention-queue-item").filter({ hasText: "Run run_failed" }).locator(".attention-queue-item-open").click();
@@ -1183,6 +1265,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(savedViewOption("Run failures")).toHaveCount(1);
   await selectSavedView("Run failures");
   await expect(searchInput).toHaveValue("run_failed");
+  await openFilterPanel();
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toBe("Rename saved view");
     await dialog.accept("Run problems");
@@ -1195,6 +1278,7 @@ test("channel activity derives task run approval transition and workflow events"
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(savedViewOption("Run problems")).toHaveCount(1);
   await selectSavedView("Run problems");
+  await openFilterPanel();
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toBe("Delete saved view?");
     await dialog.accept();
@@ -1226,8 +1310,8 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  await page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" }).getByRole("button", { name: "Open protocol" }).click();
-  await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
+  await page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" }).getByRole("button", { name: "Open context" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Context");
 });
 
 test("channel activity triage actions create follow-up records and preserve local state", async ({ page }) => {
@@ -1340,8 +1424,8 @@ test("channel activity triage actions create follow-up records and preserve loca
   await activityDetails.getByRole("button", { name: "Run triage action" }).click();
   await expect.poll(() => state.channelHandoffs.some((handoff) => isRecord(handoff) && handoff.reason === "Escalate blocked triage step")).toBe(true);
   await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
-  await activityDetails.getByRole("button", { name: "Open in Channel protocol" }).click();
-  await expect(page.locator(".channel-tab.active")).toContainText("Channel protocol");
+  await activityDetails.getByRole("button", { name: "Open in Context" }).click();
+  await expect(page.locator(".channel-tab.active")).toContainText("Context");
   await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Escalate blocked triage step");
 
   await page.getByRole("button", { name: "Activity", exact: true }).click();
@@ -1352,7 +1436,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await activityDetails.getByLabel("Decision text").fill("Keep the approval pending until the user reviews the shell command.");
   await activityDetails.getByRole("button", { name: "Run triage action" }).click();
   await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.title === "Decision: approval stays pending")).toBe(true);
-  await activityDetails.getByRole("button", { name: "Open in Channel protocol" }).click();
+  await activityDetails.getByRole("button", { name: "Open in Context" }).click();
   await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Decision: approval stays pending");
 
   await page.getByRole("button", { name: "Activity", exact: true }).click();
@@ -1385,7 +1469,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await expect(page.locator("article.task-detail")).toHaveCount(0);
 });
 
-test("channel activity attention queue keeps an empty state compact", async ({ page }) => {
+test("channel activity hides the attention queue when no items need attention", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -1403,11 +1487,7 @@ test("channel activity attention queue keeps an empty state compact", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const attentionQueue = page.getByLabel("Attention queue");
-  await expect(attentionQueue).toContainText("No attention items");
-  await expect(attentionQueue.locator(".attention-queue-pill")).toBeVisible();
-  await expect(attentionQueue.locator(".attention-queue-summary")).toHaveCount(0);
-  await expect(attentionQueue.locator(".attention-queue-item")).toHaveCount(0);
+  await expect(page.getByLabel("Attention queue")).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.locator("article.task-detail")).toHaveCount(0);
 });
@@ -1460,8 +1540,12 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
 
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("heading", { name: "Interface preferences" })).toBeVisible();
   await page.getByRole("button", { name: "中文" }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  await expect(page.getByRole("heading", { name: "界面偏好" })).toBeVisible();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
   await expect(page.locator(".channel-tabs").getByRole("button", { name: "动态" })).toBeVisible();
@@ -1486,9 +1570,11 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await page.reload();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Workspace" })).toBeVisible();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.locator(".channel-tabs").getByRole("button", { name: "Activity", exact: true })).toBeVisible();
   await expect(page.getByPlaceholder("Search activity")).toBeVisible();
   await expect(page.locator('select[aria-label="Saved views"]')).toContainText("Needs attention");
@@ -1506,21 +1592,23 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
 });
 
-test("Chinese mode localizes workspace inspector, runtime policy, and teammate setup labels", async ({ page }) => {
+test("Chinese mode localizes workspace settings, runtime policy, and teammate setup labels", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await expect(page.getByLabel("任务检查器")).toBeVisible();
-  await expect(page.getByLabel("任务检查器")).toContainText("任务上下文");
+  await expect(page.getByLabel("任务检查器")).toHaveCount(0);
   await expect(page.getByText("Task context")).toHaveCount(0);
   await expect(page.getByText("No task selected")).toHaveCount(0);
   await expect(page.getByText("active · serial · boundPath lock")).toHaveCount(0);
   await expect(page.getByText(/已启用 · 串行 · 绑定路径锁/)).toBeVisible();
   await expect(page.getByText("Daemon ready")).toHaveCount(0);
-  await expect(page.getByText("本地服务已就绪").first()).toBeVisible();
+  await expect(page.getByText("本地服务已就绪")).toHaveCount(0);
+  await page.locator(".channel-header-actions").getByRole("button", { name: "设置" }).click();
+  await expect(page.getByLabel("频道高级设置")).toContainText("运行模型预设");
+  await expect(page.getByLabel("频道运行策略")).toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI 队友" }).click();
   await expect(page.getByRole("heading", { name: "AI 队友", level: 1 })).toBeVisible();
@@ -1550,6 +1638,8 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   const html = page.locator("html");
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "system");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("heading", { name: "Interface preferences" })).toBeVisible();
   await expect(page.getByRole("button", { name: "System" })).toHaveAttribute("aria-pressed", "true");
 
   await page.getByRole("button", { name: "Light" }).click();
@@ -1565,6 +1655,7 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "dark");
 
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: "System" }).click();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "system");
@@ -2074,7 +2165,7 @@ test("settings approval policy loads, edits, and saves tool decisions and write 
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  const settingsPanel = page.locator(".settings-panel");
+  const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Approval policy" });
   await expect(page.getByRole("heading", { name: "Approval policy" })).toBeVisible();
   await expect(settingsPanel).toContainText("workspace_default");
 

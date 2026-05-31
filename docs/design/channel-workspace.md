@@ -20,6 +20,8 @@ Related docs:
 - [Channel Workspace v1.8 Activity Source Drilldown](channel-workspace-v1.8.md)
 - [Channel Workspace v1.9 Activity Triage Actions](channel-workspace-v1.9.md)
 - [Channel Workspace v1.10 Activity Layout Cleanup](channel-workspace-v1.10.md)
+- [Channel Workspace v1.11 Surface Simplification](channel-workspace-v1.11.md)
+- [Channel Workspace v1.12 Teammate Management](channel-workspace-v1.12.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
@@ -208,7 +210,7 @@ Tabs are:
 Activity
 Tasks
 Files
-Channel protocol
+Context
 ```
 
 `Activity` is the default tab.
@@ -1521,12 +1523,12 @@ Current MVP implementation status:
 - Discuss mode can request a no-tools, text-only AI reply and persists blocker replies,
 - channel attachments are stored under `.ling-stack/attachments` with a 25MB/file allow-list policy,
 - link previews are fetched by the daemon with SSRF protections and metadata-only storage,
-- Web now exposes `Activity`, `Tasks`, `Files`, and `Channel protocol` tabs plus discussion-to-task conversion,
+- Web now exposes `Activity`, `Tasks`, `Files`, and `Context` tabs plus discussion-to-task conversion,
 - v1.1 now persists Channel Brief, Decision Log, Handoff, and Context Summary records,
   with Activity and inspector views synthesizing those protocol items,
 - v1.2 now lets handoffs create explicit, user-started workflow/step records with
   task/run start, blocker visibility, Runtime inspector queue tracking, and a dedicated
-  `Channel protocol` tab instead of a task-detail dock,
+  `Context` tab instead of a task-detail dock,
 - task detail now lives in the `Tasks` tab instead of a persistent split pane beside
   channel Activity,
 - v1.3 now implements the chat experience polish slice: sticky Activity composer,
@@ -1546,6 +1548,16 @@ Current MVP implementation status:
   backend changes,
 - v1.10 now implements an Activity layout cleanup slice that moves secondary controls
   behind progressive disclosure without backend changes,
+- v1.11 now simplifies the default channel surface by hiding the workspace right
+  inspector, removing the global top bar, relying on the left sidebar for channel
+  switching, moving path/provider/runtime controls into Settings, moving theme/language
+  controls into the main Settings section, labeling `Channel protocol` as `Context`,
+  hiding empty attention state, removing the separate Activity title bar, pinning the
+  composer to the bottom of the Activity panel, and folding composer extras into More
+  without backend changes,
+- v1.12 now adds channel teammate membership management behind channel Settings, allowing
+  existing workspace teammates to be added to or removed from a channel and set as the
+  selected channel's default teammate without adding backend contracts,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and notification persistence remain future slices.
 
@@ -1747,6 +1759,55 @@ Current MVP implementation status:
 - [x] Add e2e coverage for compact toolbar, filter panel, queue, drawer folds,
   composer, and i18n labels.
 
+### Phase 19: Channel Surface Simplification
+
+- [x] Define v1.11 Surface Simplification plan in
+  `docs/design/channel-workspace-v1.11.md`.
+- [x] Hide the workspace right inspector by default on the channel workspace route.
+- [x] Remove the global top bar from the Web shell.
+- [x] Remove the duplicate body channel selector and keep channel switching in the left
+  sidebar.
+- [x] Remove the separate workspace toolbar and keep Settings/New task as channel header
+  actions.
+- [x] Move workspace path, run provider, channel creation, and runtime policy controls
+  behind an explicit Settings entry.
+- [x] Move theme and language controls into the main Settings section.
+- [x] Rename the Web tab label from `Channel protocol` to `Context` while preserving
+  the existing protocol data model.
+- [x] Move Activity saved-view management into the expanded filter panel.
+- [x] Hide the empty Attention Queue row.
+- [x] Remove the separate Activity title bar and merge refresh into the compact tab row.
+- [x] Keep the Activity composer attached to the bottom while the message feed expands
+  and scrolls independently.
+- [x] Move composer mentions, attachments, links, Ask AI, media-provider notice, and
+  allowed-tool tokens behind More while keeping pending assets and send state visible.
+
+### Phase 20: Channel Teammate Management
+
+- [x] Define v1.12 Teammate Management plan in
+  `docs/design/channel-workspace-v1.12.md`.
+- [x] Treat a channel as valid when it has no teammate members and no default teammate.
+- [x] Load teammate-channel memberships for the workspace roster in the Web client.
+- [x] Add a `Channel teammates` manager behind channel Settings.
+- [x] Add existing workspace teammates to the selected channel without making them
+  default automatically.
+- [x] Set the selected channel default teammate from the channel teammate list.
+- [x] Remove a teammate from the selected channel without deleting the durable teammate.
+- [x] Prioritize selected-channel teammates in composer mention options.
+
+### Phase 21: Smart Composer Simplification
+
+- [x] Define v1.13 Smart Composer plan in
+  `docs/design/channel-workspace-v1.13.md`.
+- [x] Remove the Activity composer `More` / `Hide options` tool panel from the default
+  chat workflow.
+- [x] Replace the explicit mention picker with an inline `@` teammate suggestion popover.
+- [x] Keep selected mentions visible as removable pending chips.
+- [x] Attach dropped or pasted files through the existing channel attachment upload path.
+- [x] Auto-create link previews from URLs in the message body without a separate
+  `Preview link` action.
+- [x] Request an AI discussion reply only when an AI teammate is explicitly mentioned.
+
 ## Validation Plan
 
 Run these before landing channel UI changes:
@@ -1765,6 +1826,8 @@ Focused e2e scenarios:
 - selecting a channel opens the channel workspace and not a generic dashboard,
 - setting default teammate sends `defaultTeammateId`,
 - `@` opens a mention picker with AI teammates before users,
+- channel composer does not expose a `More` panel in the default Activity path,
+- dropped or pasted files attach from the composer without expanding secondary controls,
 - Discuss mode can produce an AI teammate reply without creating a task,
 - `Create task from this` preserves the source discussion in the task prompt or link,
 - channel roster shows active/default AI teammates and their blocked/running/waiting state,
@@ -1808,8 +1871,9 @@ Focused e2e scenarios:
   preview, or a task context record?
 - Should image attachments be available to all chat providers, or only providers that
   declare image input capability?
-- MVP decision: link previews can be created from explicit Preview link action or
-  auto-created from pasted URLs on send.
+- MVP decision: Activity composer link previews are auto-created from URLs in the
+  message body; the old explicit Preview link action is removed from the default channel
+  chat path.
 - MVP decision: link previews are daemon-side metadata fetches only and block localhost,
   private, link-local, and metadata-network addresses with redirect, timeout, and body
   size limits.

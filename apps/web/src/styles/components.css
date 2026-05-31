@@ -171,6 +171,12 @@ textarea:disabled {
   color: var(--text-strong);
 }
 
+.secondary-button.active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .secondary-button.danger {
   border-color: var(--danger-border);
   background: var(--danger-soft);
@@ -598,6 +604,8 @@ code,
 :root[data-theme="dark"] .mention-chip,
 :root[data-theme="dark"] .mention-picker,
 :root[data-theme="dark"] .link-preview-input,
+:root[data-theme="dark"] .mention-picker-popover,
+:root[data-theme="dark"] .mention-suggestion,
 :root[data-theme="dark"] .provider-run-notice.neutral {
   border-color: var(--border);
   background: var(--surface-panel-strong);
@@ -608,7 +616,8 @@ code,
 :root[data-theme="dark"] .channel-tab.active,
 :root[data-theme="dark"] .segmented-control button.active,
 :root[data-theme="dark"] .activity-filter-toggle.active,
-:root[data-theme="dark"] .activity-filter-toggle:hover {
+:root[data-theme="dark"] .activity-filter-toggle:hover,
+:root[data-theme="dark"] .mention-suggestion.active {
   background: var(--surface-selected);
   color: var(--text-strong);
 }
@@ -647,7 +656,6 @@ code,
 
 .app-shell.inspector-hidden {
   grid-template-areas:
-    "top top"
     "nav workspace";
   grid-template-columns: 236px minmax(0, 1fr);
 }
@@ -716,24 +724,128 @@ code,
   padding-bottom: 12px;
 }
 
-.task-workbench-toolbar {
-  display: grid;
-  grid-template-columns: minmax(220px, 1.2fr) minmax(150px, 0.7fr) minmax(180px, 0.9fr) auto;
-  align-items: end;
-  gap: 10px;
-  min-width: 0;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface-panel-strong) 72%, transparent);
-}
-
-.task-workbench-toolbar .field {
-  margin: 0;
-}
-
 .task-toolbar-create {
   min-height: 34px;
   white-space: nowrap;
+}
+
+.task-toolbar-settings {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+.workbench-settings-panel {
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-panel-strong) 82%, transparent);
+}
+
+.workbench-settings-panel.channel-options {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 12px;
+}
+
+.channel-teammate-manager {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
+}
+
+.channel-settings-section-head,
+.channel-settings-section-head span,
+.channel-teammate-row,
+.channel-teammate-actions {
+  display: flex;
+  align-items: center;
+}
+
+.channel-settings-section-head {
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.channel-settings-section-head span {
+  gap: 7px;
+  min-width: 0;
+}
+
+.channel-settings-section-head strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.channel-settings-section-head small {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.channel-teammate-add-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.channel-teammate-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.channel-teammate-row {
+  gap: 9px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel-strong);
+}
+
+.channel-teammate-row > span:not(.avatar-initial):not(.status-badge) {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.channel-teammate-row strong,
+.channel-teammate-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-teammate-row strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.channel-teammate-row small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.channel-teammate-row .status-badge {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.channel-teammate-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.channel-teammate-empty {
+  min-height: 76px;
 }
 
 .task-workbench-main {
@@ -754,15 +866,35 @@ code,
 
 .task-list-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
 }
 
 .task-list-panel.activity-tab-panel {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .task-list-panel.protocol-tab-panel {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.channel-tabs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.channel-tabs-row .channel-tabs {
+  min-width: 0;
+}
+
+.channel-tabs-refresh {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
 }
 
 .task-detail-panel {
@@ -861,19 +993,19 @@ code,
 }
 
 .activity-shell {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   position: relative;
   min-width: 0;
-  min-height: 460px;
-  height: clamp(460px, calc(100vh - 280px), 760px);
+  min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 
 .activity-filter-toolbar {
   display: grid;
-  grid-template-columns: minmax(190px, 0.9fr) minmax(240px, 1.4fr) minmax(150px, auto) auto;
+  grid-template-columns: minmax(160px, 0.72fr) minmax(240px, 1.4fr) minmax(140px, auto) auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -926,8 +1058,9 @@ code,
 .activity-saved-view-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 5px;
-  min-width: max-content;
+  min-width: 0;
 }
 
 .activity-saved-view-actions.compact {
@@ -1511,15 +1644,19 @@ code,
 }
 
 .activity-shell .message-feed {
+  flex: 1 1 auto;
   min-height: 0;
   max-height: none;
   overflow-y: auto;
   padding-right: 4px;
+  overscroll-behavior: contain;
 }
 
 .activity-shell .channel-composer {
+  flex: 0 0 auto;
   position: relative;
   align-self: end;
+  width: 100%;
 }
 
 .activity-confirmation,
@@ -1575,6 +1712,122 @@ code,
 .composer-status-list {
   display: grid;
   gap: 6px;
+}
+
+.composer-primary-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.composer-drop-zone {
+  position: relative;
+  display: grid;
+}
+
+.composer-drop-zone textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.composer-drop-zone.active textarea {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.mention-picker-popover {
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 6px);
+  left: 8px;
+  z-index: 20;
+  display: grid;
+  gap: 4px;
+  max-height: 220px;
+  padding: 6px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel-strong);
+  box-shadow: var(--shadow-panel);
+}
+
+.mention-suggestion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 760;
+  text-align: left;
+}
+
+.mention-suggestion small {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.mention-suggestion.active,
+.mention-suggestion:hover:not(.empty) {
+  border-color: var(--accent-border);
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.mention-suggestion.empty {
+  justify-content: flex-start;
+  color: var(--text-muted);
+}
+
+.composer-drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  border: 1px dashed var(--accent-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-panel-strong) 84%, var(--accent-soft));
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 780;
+  pointer-events: none;
+}
+
+.composer-smart-hint {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attach-button {
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.composer-options-panel {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-panel-strong) 78%, transparent);
 }
 
 .composer-status-row.loading {
@@ -1881,9 +2134,9 @@ code,
   .app-shell.inspector-hidden {
     grid-template-columns: 220px minmax(0, 1fr);
     grid-template-areas:
-      "top top"
       "nav workspace"
       "inspector inspector";
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 
   .right-panel {
@@ -1896,7 +2149,6 @@ code,
 }
 
 @media (max-width: 980px) {
-  .task-workbench-toolbar,
   .task-workbench-main,
   .tasks-tab-layout,
   .channel-options-grid {
@@ -1920,7 +2172,6 @@ code,
   .app-shell,
   .app-shell.inspector-collapsed {
     grid-template-areas:
-      "top"
       "workspace"
       "nav"
       "inspector";
@@ -1935,8 +2186,7 @@ code,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .task-workbench-main,
-  .task-workbench-toolbar {
+  .task-workbench-main {
     padding: 10px;
   }
 }
@@ -1944,20 +2194,18 @@ code,
 @media (max-width: 1280px) {
   .app-shell.inspector-hidden {
     grid-template-areas:
-      "top top"
       "nav workspace";
-    grid-template-rows: 44px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 }
 
 @media (max-width: 720px) {
   .app-shell.inspector-hidden {
     grid-template-areas:
-      "top"
       "workspace"
       "nav";
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto;
+    grid-template-rows: auto auto;
   }
 }
 
@@ -1984,10 +2232,9 @@ body {
   .app-shell,
   .app-shell.inspector-collapsed {
     grid-template-areas:
-      "top top top"
       "nav workspace inspector";
     grid-template-columns: 220px minmax(0, 1fr) 340px;
-    grid-template-rows: 44px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .app-shell.inspector-collapsed {
@@ -1996,10 +2243,9 @@ body {
 
   .app-shell.inspector-hidden {
     grid-template-areas:
-      "top top"
       "nav workspace";
     grid-template-columns: 220px minmax(0, 1fr);
-    grid-template-rows: 44px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .right-panel {
@@ -2031,7 +2277,6 @@ body {
 }
 
 .task-workbench-header,
-.task-workbench-toolbar,
 .task-workbench-window > .inline-error,
 .channel-options {
   flex: 0 0 auto;
@@ -2247,12 +2492,11 @@ textarea {
 @media (max-width: 1120px) {
   .app-shell {
     grid-template-areas:
-      "top"
       "nav"
       "workspace"
       "inspector";
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto auto;
+    grid-template-rows: auto auto auto;
   }
 
   .left-nav {
@@ -2329,32 +2573,11 @@ textarea {
 }
 
 @media (max-width: 720px) {
-  .top-bar,
-  .top-status,
   .workspace-head,
   .channel-header,
   .field-row {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .top-bar {
-    height: auto;
-    padding: 12px;
-  }
-
-  .top-status {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .top-status .icon-button,
-  .top-status .language-switcher {
-    width: 100%;
-  }
-
-  .top-status .language-switcher {
-    justify-content: center;
   }
 
   .readiness-item {
@@ -2763,7 +2986,6 @@ textarea:disabled {
 
 /* Final responsive workbench overrides, kept last because legacy media rules above still exist. */
 @media (max-width: 980px) {
-  .task-workbench-toolbar,
   .task-workbench-main,
   .tasks-tab-layout,
   .channel-options-grid {
@@ -2814,12 +3036,11 @@ textarea:disabled {
   .app-shell,
   .app-shell.inspector-collapsed {
     grid-template-areas:
-      "top"
       "workspace"
       "nav"
       "inspector";
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto auto;
+    grid-template-rows: auto auto auto;
   }
 
   .left-nav {
@@ -2844,6 +3065,26 @@ textarea:disabled {
     width: 100%;
   }
 
+  .channel-teammate-add-row,
+  .channel-teammate-row {
+    grid-template-columns: 1fr;
+  }
+
+  .channel-teammate-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .channel-teammate-row .status-badge,
+  .channel-teammate-actions {
+    margin-left: 0;
+  }
+
+  .channel-teammate-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
   .channel-header p {
     overflow-wrap: anywhere;
   }
@@ -2854,6 +3095,11 @@ textarea:disabled {
 
   .task-filter-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .task-list-panel.activity-tab-panel {
+    height: clamp(520px, calc(100dvh - 180px), 680px);
+    min-height: clamp(520px, calc(100dvh - 180px), 680px);
   }
 
   .activity-filter-chip {
@@ -2873,10 +3119,9 @@ textarea:disabled {
 
   .app-shell.inspector-hidden {
     grid-template-areas:
-      "top"
       "workspace"
       "nav";
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto;
+    grid-template-rows: auto auto;
   }
 }
