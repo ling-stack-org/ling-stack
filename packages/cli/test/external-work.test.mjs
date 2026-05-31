@@ -221,6 +221,245 @@ test("external-work github poll renders human and json output", async () => {
   }
 });
 
+test("external-work linear import and poll render human and json output", async () => {
+  const daemon = await startExternalWorkDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-linear-external-work-"));
+  try {
+    const payloadFile = resolve(cwd, "linear-issue.json");
+    const workflowFile = resolve(cwd, "linear-workflow.md");
+    await writeFile(payloadFile, JSON.stringify(linearIssuePayload()), "utf8");
+    await writeFile(workflowFile, "Review {{ item.identifier }}.\n", "utf8");
+
+    const imported = await runCli(daemon.url, cwd, [
+      "external-work",
+      "linear",
+      "import",
+      "--channel",
+      "channel_1",
+      "--event-type",
+      "issue.created",
+      "--payload-file",
+      payloadFile,
+      "--workflow-path",
+      "WORKFLOW.md",
+    ]);
+    assert.equal(imported.code, 0, imported.stderr);
+    assert.match(imported.stdout, /External work imported: LIN-123/);
+    assert.match(imported.stdout, /Kind: linear_issue/);
+    assert.equal(daemon.requests.at(-1).path, "/external-work/linear/import");
+    assert.deepEqual(daemon.requests.at(-1).body, {
+      channelId: "channel_1",
+      eventType: "issue.created",
+      payload: linearIssuePayload(),
+      workflowPath: "WORKFLOW.md",
+    });
+
+    const jsonImport = await runCli(daemon.url, cwd, [
+      "--json",
+      "external-work",
+      "linear",
+      "import",
+      "--channel",
+      "channel_1",
+      "--event-type",
+      "issue.created",
+      "--payload-file",
+      payloadFile,
+      "--workflow-markdown-file",
+      workflowFile,
+    ]);
+    assert.equal(jsonImport.code, 0, jsonImport.stderr);
+    assert.equal(JSON.parse(jsonImport.stdout).externalWorkItem.kind, "linear_issue");
+    assert.equal(daemon.requests.at(-1).body.workflowMarkdown, "Review {{ item.identifier }}.\n");
+    assert.equal("workflowPath" in daemon.requests.at(-1).body, false);
+
+    const poll = await runCli(daemon.url, cwd, [
+      "external-work",
+      "linear",
+      "poll",
+      "--channel",
+      "channel_1",
+      "--workflow-path",
+      "WORKFLOW.md",
+      "--limit",
+      "5",
+      "--execute-hooks",
+    ]);
+    assert.equal(poll.code, 0, poll.stderr);
+    assert.match(poll.stdout, /External work poll:/);
+    assert.match(poll.stdout, /LIN-123/);
+    assert.equal(daemon.requests.at(-1).path, "/external-work/linear/poll");
+    assert.deepEqual(daemon.requests.at(-1).body, {
+      channelId: "channel_1",
+      workflowPath: "WORKFLOW.md",
+      limit: 5,
+      executeHooks: true,
+    });
+
+    const jsonPoll = await runCli(daemon.url, cwd, [
+      "--json",
+      "external-work",
+      "linear",
+      "poll",
+      "--channel",
+      "channel_1",
+    ]);
+    assert.equal(jsonPoll.code, 0, jsonPoll.stderr);
+    assert.equal(JSON.parse(jsonPoll.stdout).results[0].identifier, "LIN-123");
+
+    const missingChannel = await runCli("http://127.0.0.1:9", cwd, [
+      "external-work",
+      "linear",
+      "import",
+      "--event-type",
+      "issue.created",
+      "--payload-file",
+      payloadFile,
+    ]);
+    assert.equal(missingChannel.code, 2);
+    assert.match(missingChannel.stderr, /--channel/);
+
+    const mutuallyExclusiveWorkflowFlags = await runCli("http://127.0.0.1:9", cwd, [
+      "external-work",
+      "linear",
+      "import",
+      "--channel",
+      "channel_1",
+      "--event-type",
+      "issue.created",
+      "--payload-file",
+      payloadFile,
+      "--workflow-path",
+      "WORKFLOW.md",
+      "--workflow-markdown-file",
+      workflowFile,
+    ]);
+    assert.equal(mutuallyExclusiveWorkflowFlags.code, 2);
+    assert.match(mutuallyExclusiveWorkflowFlags.stderr, /mutually exclusive/);
+
+    const invalidLimit = await runCli("http://127.0.0.1:9", cwd, [
+      "external-work",
+      "linear",
+      "poll",
+      "--channel",
+      "channel_1",
+      "--limit",
+      "101",
+    ]);
+    assert.equal(invalidLimit.code, 2);
+    assert.match(invalidLimit.stderr, /at most 100/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
+test("external-work github background start, list, and stop render human and json output", async () => {
+  const daemon = await startExternalWorkDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-background-"));
+  try {
+    const humanStart = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "background",
+      "start",
+      "--channel",
+      "channel_1",
+      "--workflow-path",
+      "WORKFLOW.md",
+      "--limit",
+      "5",
+      "--execute-hooks",
+      "--no-run-immediately",
+    ]);
+    assert.equal(humanStart.code, 0, humanStart.stderr);
+    assert.match(humanStart.stdout, /External work background scheduler started: external_work_background_1/);
+    assert.match(humanStart.stdout, /Status: running/);
+    assert.match(humanStart.stdout, /Repository: openclaw\/openclaw/);
+    assert.equal(daemon.requests.at(-1).path, "/external-work/github/background/start");
+    assert.deepEqual(daemon.requests.at(-1).body, {
+      channelId: "channel_1",
+      workflowPath: "WORKFLOW.md",
+      limit: 5,
+      executeHooks: true,
+      runImmediately: false,
+    });
+
+    const jsonStart = await runCli(daemon.url, cwd, [
+      "--json",
+      "external-work",
+      "github",
+      "background",
+      "start",
+      "--channel",
+      "channel_1",
+    ]);
+    assert.equal(jsonStart.code, 0, jsonStart.stderr);
+    assert.equal(JSON.parse(jsonStart.stdout).scheduler.id, "external_work_background_1");
+
+    const humanList = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "background",
+      "list",
+    ]);
+    assert.equal(humanList.code, 0, humanList.stderr);
+    assert.match(humanList.stdout, /External work background schedulers:/);
+    assert.match(humanList.stdout, /external_work_background_1/);
+    assert.equal(daemon.requests.at(-1).method, "GET");
+    assert.equal(daemon.requests.at(-1).path, "/external-work/background");
+
+    const jsonList = await runCli(daemon.url, cwd, [
+      "--json",
+      "external-work",
+      "github",
+      "background",
+      "list",
+    ]);
+    assert.equal(jsonList.code, 0, jsonList.stderr);
+    assert.equal(JSON.parse(jsonList.stdout).schedulers[0].id, "external_work_background_1");
+
+    const humanStop = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "background",
+      "stop",
+      "external_work_background_1",
+    ]);
+    assert.equal(humanStop.code, 0, humanStop.stderr);
+    assert.match(humanStop.stdout, /External work background scheduler stopped: external_work_background_1/);
+    assert.match(humanStop.stdout, /Status: stopped/);
+    assert.equal(daemon.requests.at(-1).method, "POST");
+    assert.equal(daemon.requests.at(-1).path, "/external-work/background/external_work_background_1/stop");
+    assert.deepEqual(daemon.requests.at(-1).body, {});
+
+    const missingChannel = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "background",
+      "start",
+    ]);
+    assert.equal(missingChannel.code, 2);
+    assert.match(missingChannel.stderr, /--channel/);
+
+    const invalidLimit = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "background",
+      "start",
+      "--channel",
+      "channel_1",
+      "--limit",
+      "101",
+    ]);
+    assert.equal(invalidLimit.code, 2);
+    assert.match(invalidLimit.stderr, /at most 100/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 test("external-work github ci triage renders human and json output", async () => {
   const daemon = await startExternalWorkDaemon();
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-ci-"));
@@ -501,6 +740,29 @@ test("external-work actions propose, list, show, cancel, and execute render acti
     assert.equal(daemon.requests.at(-1).body.actionKind, "github_label");
     assert.deepEqual(daemon.requests.at(-1).body.payload.labels, ["agent-ready", "needs-review"]);
 
+    const reviewFile = resolve(cwd, "review.md");
+    await writeFile(reviewFile, "Please fix CI before merge.\n", "utf8");
+    const review = await runCli(daemon.url, cwd, [
+      "external-work",
+      "actions",
+      "propose-review",
+      "--external-work",
+      "external_work_1",
+      "--event",
+      "REQUEST_CHANGES",
+      "--body-file",
+      reviewFile,
+    ]);
+    assert.equal(review.code, 0, review.stderr);
+    assert.match(review.stdout, /External work action proposed: external_work_action_1/);
+    assert.equal(daemon.requests.at(-1).body.actionKind, "github_pr_review");
+    assert.equal(daemon.requests.at(-1).body.approvalRequirement, "strict");
+    assert.deepEqual(daemon.requests.at(-1).body.payload, {
+      type: "github_pr_review",
+      event: "REQUEST_CHANGES",
+      body: "Please fix CI before merge.\n",
+    });
+
     const list = await runCli(daemon.url, cwd, [
       "external-work",
       "actions",
@@ -563,6 +825,22 @@ test("external-work actions propose, list, show, cancel, and execute render acti
     ]);
     assert.equal(invalidApproval.code, 2);
     assert.match(invalidApproval.stderr, /approval must be standard or strict/);
+
+    const standardReview = await runCli(daemon.url, cwd, [
+      "external-work",
+      "actions",
+      "propose-review",
+      "--external-work",
+      "external_work_1",
+      "--event",
+      "COMMENT",
+      "--body-file",
+      reviewFile,
+      "--approval",
+      "standard",
+    ]);
+    assert.equal(standardReview.code, 2);
+    assert.match(standardReview.stderr, /github_pr_review actions require --approval strict/);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -625,10 +903,24 @@ async function startExternalWorkDaemon() {
       writeJson(response, 200, externalWorkActionDetailResponse());
       return;
     }
+    if (request.method === "GET" && url.pathname === "/external-work/background") {
+      requests.push({
+        method: request.method,
+        path: url.pathname,
+        cwd: url.searchParams.get("cwd"),
+        query: Object.fromEntries(url.searchParams.entries()),
+      });
+      writeJson(response, 200, externalWorkBackgroundListResponse());
+      return;
+    }
     const isCiRunPath = /^\/external-work\/github\/ci\/triage\/[^/]+\/run$/.test(url.pathname);
-    if (request.method !== "POST" || (!isCiRunPath && ![
+    const isBackgroundStopPath = /^\/external-work\/background\/[^/]+\/stop$/.test(url.pathname);
+    if (request.method !== "POST" || (!isCiRunPath && !isBackgroundStopPath && ![
       "/external-work/github/import",
       "/external-work/github/poll",
+      "/external-work/linear/import",
+      "/external-work/linear/poll",
+      "/external-work/github/background/start",
       "/external-work/github/ci/triage",
       "/external-work/reconcile",
       "/external-work/actions/propose",
@@ -657,6 +949,18 @@ async function startExternalWorkDaemon() {
       writeJson(response, 200, externalWorkPollResponse());
       return;
     }
+    if (url.pathname === "/external-work/linear/poll") {
+      writeJson(response, 200, externalWorkPollResponse("linear"));
+      return;
+    }
+    if (url.pathname === "/external-work/github/background/start") {
+      writeJson(response, 200, externalWorkBackgroundMutationResponse());
+      return;
+    }
+    if (isBackgroundStopPath) {
+      writeJson(response, 200, externalWorkBackgroundMutationResponse("stopped"));
+      return;
+    }
     if (url.pathname === "/external-work/github/ci/triage") {
       writeJson(response, 200, externalWorkCiTriageResponse());
       return;
@@ -666,7 +970,7 @@ async function startExternalWorkDaemon() {
       return;
     }
     if (url.pathname === "/external-work/actions/propose") {
-      writeJson(response, 200, externalWorkActionMutationResponse(body.actionKind === "github_label" ? "github_label" : "github_comment"));
+      writeJson(response, 200, externalWorkActionMutationResponse(body.actionKind));
       return;
     }
     if (url.pathname === "/external-work/actions/external_work_action_1/cancel") {
@@ -677,7 +981,7 @@ async function startExternalWorkDaemon() {
       writeJson(response, 200, externalWorkActionMutationResponse("github_comment", "succeeded"));
       return;
     }
-    writeJson(response, 201, externalWorkImportResponse());
+    writeJson(response, 201, externalWorkImportResponse(url.pathname.includes("/linear/") ? "linear" : "github"));
   });
 
   await new Promise((resolveListen) => {
@@ -735,18 +1039,21 @@ function writeSseRun(response) {
   response.end();
 }
 
-function externalWorkImportResponse() {
+function externalWorkImportResponse(source = "github") {
+  const isLinear = source === "linear";
   return {
     externalWorkItem: {
-      id: "github:pull_request:openclaw/openclaw#86279",
-      sourceKind: "github",
-      kind: "github_pull_request",
-      identifier: "openclaw/openclaw#86279",
-      title: "Add dependency guard",
-      state: "open",
-      labels: ["CI", "Dependencies"],
-      payloadRef: "pull_request.opened:openclaw/openclaw#86279",
-      idempotencyKey: "github:pull_request:openclaw/openclaw:86279:head-sha-1:2026-05-29T20:26:56Z",
+      id: isLinear ? "linear:issue:linear-issue-123" : "github:pull_request:openclaw/openclaw#86279",
+      sourceKind: isLinear ? "linear" : "github",
+      kind: isLinear ? "linear_issue" : "github_pull_request",
+      identifier: isLinear ? "LIN-123" : "openclaw/openclaw#86279",
+      title: isLinear ? "Wire Linear external work" : "Add dependency guard",
+      state: isLinear ? "Todo" : "open",
+      labels: isLinear ? ["external-work", "phase-7"] : ["CI", "Dependencies"],
+      payloadRef: isLinear ? "linear:fixture:LIN-123" : "pull_request.opened:openclaw/openclaw#86279",
+      idempotencyKey: isLinear
+        ? "linear:issue:ling-stack:LIN-123:2026-06-01T00:00:00.000Z"
+        : "github:pull_request:openclaw/openclaw:86279:head-sha-1:2026-05-29T20:26:56Z",
     },
     workflow: {
       id: "workflow_1",
@@ -776,7 +1083,8 @@ function externalWorkImportResponse() {
   };
 }
 
-function externalWorkPollResponse() {
+function externalWorkPollResponse(source = "github") {
+  const isLinear = source === "linear";
   return {
     candidates: 1,
     claimed: 1,
@@ -788,7 +1096,7 @@ function externalWorkPollResponse() {
     results: [
       {
         action: "claimed",
-        identifier: "openclaw/openclaw#86279",
+        identifier: isLinear ? "LIN-123" : "openclaw/openclaw#86279",
         schedulerStatus: "ready",
         workflowId: "workflow_1",
         workflowStepId: "step_1",
@@ -860,6 +1168,44 @@ function externalWorkReconcileResponse() {
         workflowStepId: "step_1",
       },
     ],
+  };
+}
+
+function externalWorkBackgroundScheduler(status = "running") {
+  const scheduler = {
+    id: "external_work_background_1",
+    cwd: "/repo",
+    sourceKind: "github",
+    channelId: "channel_1",
+    workflowPath: "WORKFLOW.md",
+    repository: "openclaw/openclaw",
+    pollIntervalMs: 30000,
+    limit: 5,
+    executeHooks: true,
+    status,
+    startedAt: "2026-06-01T00:00:00.000Z",
+    tickCount: 1,
+  };
+  if (status === "stopped") {
+    scheduler.stoppedAt = "2026-06-01T00:01:00.000Z";
+  } else {
+    scheduler.nextPollAt = "2026-06-01T00:00:30.000Z";
+  }
+  return scheduler;
+}
+
+function externalWorkBackgroundMutationResponse(status = "running") {
+  return {
+    cwd: "/repo",
+    scheduler: externalWorkBackgroundScheduler(status),
+    duplicate: false,
+  };
+}
+
+function externalWorkBackgroundListResponse() {
+  return {
+    cwd: "/repo",
+    schedulers: [externalWorkBackgroundScheduler()],
   };
 }
 
@@ -980,7 +1326,7 @@ function externalWorkAction(actionKind = "github_comment", status = "waiting_for
     actionKind,
     status,
     approvalId: "approval_1",
-    approvalRequirement: "standard",
+    approvalRequirement: actionKind === "github_pr_review" ? "strict" : "standard",
     target: {
       repository: "openclaw/openclaw",
       number: 86279,
@@ -1006,6 +1352,30 @@ function githubPullRequestPayload() {
         ref: "dependency-guard",
         sha: "head-sha-1",
       },
+    },
+  };
+}
+
+function linearIssuePayload() {
+  return {
+    id: "linear-issue-123",
+    identifier: "LIN-123",
+    title: "Wire Linear external work",
+    description: "Import and poll Linear issues through the external work pipeline.",
+    url: "https://linear.app/ling-stack/issue/LIN-123/wire-linear-external-work",
+    priority: 2,
+    branchName: "tx/linear-external-work",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+    state: {
+      name: "Todo",
+      type: "unstarted",
+    },
+    labels: {
+      nodes: [{ name: "external-work" }, { name: "phase-7" }],
+    },
+    project: {
+      name: "Ling Stack",
+      slug: "ling-stack",
     },
   };
 }

@@ -217,6 +217,14 @@ export interface ExternalGitHubImportRequest {
   readonly workflowPath?: string;
 }
 
+export interface ExternalLinearImportRequest {
+  readonly channelId: string;
+  readonly eventType: string;
+  readonly payload: unknown;
+  readonly workflowMarkdown?: string;
+  readonly workflowPath?: string;
+}
+
 export type ExternalWorkSchedulerStatus =
   | "discovered"
   | "claimed"
@@ -275,7 +283,7 @@ export interface ExternalWorkDetailResponse {
   readonly externalWork: ExternalWorkView;
 }
 
-export type ExternalWorkActionKind = "github_comment" | "github_label";
+export type ExternalWorkActionKind = "github_comment" | "github_label" | "github_pr_review";
 
 export type ExternalWorkActionStatus =
   | "proposed"
@@ -311,6 +319,11 @@ export type ExternalWorkActionPayload =
   | {
       readonly type: "github_label";
       readonly labels: readonly string[];
+    }
+  | {
+      readonly type: "github_pr_review";
+      readonly event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+      readonly body: string;
     };
 
 export interface ExternalWorkAction {
@@ -541,6 +554,51 @@ export interface ExternalWorkReconcileResponse {
   readonly retryReady: number;
   readonly terminal: number;
   readonly schedulerStates: readonly ExternalWorkSchedulerState[];
+}
+
+export type ExternalWorkBackgroundSchedulerStatus = "running" | "stopped" | "failed";
+
+export interface ExternalWorkBackgroundScheduler {
+  readonly id: string;
+  readonly cwd: string;
+  readonly sourceKind: "github";
+  readonly channelId: string;
+  readonly workflowPath?: string;
+  readonly repository?: string;
+  readonly pollIntervalMs: number;
+  readonly limit?: number;
+  readonly executeHooks: boolean;
+  readonly status: ExternalWorkBackgroundSchedulerStatus;
+  readonly startedAt: string;
+  readonly stoppedAt?: string;
+  readonly lastPollAt?: string;
+  readonly nextPollAt?: string;
+  readonly lastReconcileAt?: string;
+  readonly tickCount: number;
+  readonly lastErrorCode?: string;
+  readonly lastErrorMessage?: string;
+  readonly lastPoll?: ExternalWorkPollResponse;
+  readonly lastReconcile?: ExternalWorkReconcileResponse;
+}
+
+export interface ExternalWorkGitHubBackgroundStartRequest {
+  readonly channelId: string;
+  readonly workflowPath?: string;
+  readonly limit?: number;
+  readonly executeHooks?: boolean;
+  readonly runImmediately?: boolean;
+}
+
+export interface ExternalWorkBackgroundListResponse {
+  readonly cwd: string;
+  readonly schedulers: readonly ExternalWorkBackgroundScheduler[];
+}
+
+export interface ExternalWorkBackgroundMutationResponse {
+  readonly cwd: string;
+  readonly scheduler: ExternalWorkBackgroundScheduler;
+  readonly duplicate?: boolean;
+  readonly startupReconcile?: ExternalWorkReconcileResponse;
 }
 
 export interface ExternalWorkImportResponse {

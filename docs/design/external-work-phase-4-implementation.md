@@ -18,12 +18,12 @@ The shipped CLI/API path creates local triage records, evidence artifacts, and f
 tasks by default. `startRun: true` remains rejected in Phase 4.0, so no runner starts
 from CI triage.
 
-The roadmap after Phase 4.0 is tracked in
-[External Work Roadmap](external-work-roadmap.md). In short: Phase 4.1 closes the local
-fix path with a disposable failing-PR smoke plus an explicit local fix run bridge; Phase
-4.2 should expose CI triage in Web; Phase 5 should close the GitHub-first operator loop;
-Phase 6 should add background polling/reconciliation; Phase 7 should prove a second
-channel adapter.
+The roadmap after the completed Phase 4.2 Web surface is tracked in
+[External Work Roadmap](external-work-roadmap.md). In short: Phase 5 should close the
+GitHub-first operator loop, starting with the strict PR review action documented in
+[External Work Phase 5 Implementation](external-work-phase-5-implementation.md); Phase
+6 should add background polling/reconciliation; Phase 7 should prove a second channel
+adapter.
 
 Phase 4 must not become an auto-push bot. Reading CI metadata and logs is allowed with a
 GitHub token. Creating Ling records and artifacts is local-only. Starting a local fix run

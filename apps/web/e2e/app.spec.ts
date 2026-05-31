@@ -146,7 +146,8 @@ interface MockExternalWorkAction {
   };
   payload:
     | { type: "github_comment"; body: string }
-    | { type: "github_label"; labels: string[] };
+    | { type: "github_label"; labels: string[] }
+    | { type: "github_pr_review"; event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES"; body: string };
   approvalRequirement: string;
   artifactIds: string[];
   executionAttemptCount: number;
@@ -2810,6 +2811,31 @@ test("external action approval card requires explicit execute after approval", a
   await expect.poll(() => state.externalActionExecuteCalls[action.id] ?? 0).toBe(1);
 });
 
+test("external action approval card shows strict GitHub PR review audit", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  const { action } = addExternalActionApproval(state, {
+    kind: "github_pr_review",
+    reviewEvent: "REQUEST_CHANGES",
+  });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  const externalApproval = page.getByLabel("Approval requests").locator(".approval-row").filter({ hasText: "Approve GitHub PR review" });
+  await expect(externalApproval.getByLabel("External action audit")).toContainText("github_pr_review");
+  await expect(externalApproval.getByLabel("External action audit")).toContainText("REQUEST_CHANGES");
+  await expect(externalApproval.getByLabel("External action audit")).toContainText("Please fix the failing CI before merge.");
+  await expect(externalApproval.getByLabel("External action audit")).toContainText("github_pull_request #42");
+  await expect(externalApproval.getByRole("button", { name: "Execute action" })).toHaveCount(0);
+
+  await externalApproval.getByRole("button", { name: "Approve" }).click();
+  await externalApproval.getByLabel("Decision reason").fill("Strict PR review approved.");
+  await externalApproval.getByRole("button", { name: "Confirm approve" }).click();
+  await expect(externalApproval).toContainText("approved");
+  await expect.poll(() => state.externalActionExecuteCalls[action.id] ?? 0).toBe(0);
+  await expect(externalApproval.getByRole("button", { name: "Execute action" })).toBeVisible();
+});
+
 test("external action approval card can cancel without executing", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   const { action } = addExternalActionApproval(state);
@@ -3275,7 +3301,8 @@ function addExternalActionApproval(
     readonly approvalId?: string;
     readonly status?: string;
     readonly approvalStatus?: string;
-    readonly kind?: "github_comment" | "github_label";
+    readonly kind?: "github_comment" | "github_label" | "github_pr_review";
+    readonly reviewEvent?: "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
     readonly lastErrorCode?: string;
     readonly lastErrorMessage?: string;
   } = {},
@@ -3318,8 +3345,10 @@ function addExternalActionApproval(
     },
     payload: kind === "github_comment"
       ? { type: "github_comment", body: "Looks good from Ling." }
-      : { type: "github_label", labels: ["agent-ready", "needs-review"] },
-    approvalRequirement: "standard",
+      : kind === "github_label"
+        ? { type: "github_label", labels: ["agent-ready", "needs-review"] }
+        : { type: "github_pr_review", event: options.reviewEvent ?? "REQUEST_CHANGES", body: "Please fix the failing CI before merge." },
+    approvalRequirement: kind === "github_pr_review" ? "strict" : "standard",
     artifactIds: [artifact.id],
     executionAttemptCount: actionStatus === "stale_target" ? 1 : 0,
     lastAttemptAt: actionStatus === "stale_target" ? "2026-05-26T00:02:00.000Z" : undefined,
@@ -3334,15 +3363,19 @@ function addExternalActionApproval(
     externalWorkActionId: action.id,
     channelId: action.channelId,
     actionType: "external_send",
-    risk: "medium",
-    title: "Approve GitHub comment",
-    description: "Post a GitHub comment after approval.",
+    risk: kind === "github_pr_review" ? "high" : "medium",
+    title: kind === "github_pr_review" ? "Approve GitHub PR review" : "Approve GitHub comment",
+    description: kind === "github_pr_review" ? "Submit a GitHub PR review after approval." : "Post a GitHub comment after approval.",
     payload: {
       type: "external_action",
       sourceKind: "github",
       actionKind: action.actionKind,
       target: action.target,
-      preview: action.payload.type === "github_comment" ? action.payload.body : action.payload.labels.join(", "),
+      preview: action.payload.type === "github_comment"
+        ? action.payload.body
+        : action.payload.type === "github_label"
+          ? action.payload.labels.join(", ")
+          : `${action.payload.event}: ${action.payload.body}`,
     },
     status: approvalStatus,
     createdAt: "2026-05-26T00:00:00.000Z",

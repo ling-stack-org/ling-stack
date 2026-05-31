@@ -2,8 +2,8 @@
 
 ## Purpose
 
-This document records the external-work roadmap after the completed GitHub Phase 4.0 CI
-triage slice and the current Phase 4.1 local-fix-run bridge slice. It is the compact
+This document records the external-work roadmap after the completed GitHub Phase 4.2 CI
+triage Web surface slice. It is the compact
 planning index for what is already shipped, what remains open, when the GitHub-first loop
 is considered done, when external-work orchestration v1 is considered done, and what
 should happen after v1.
@@ -13,6 +13,9 @@ The source-of-truth design boundaries remain:
 - [External Work Orchestration](external-work-orchestration.md)
 - [GitHub Automation](github-automation.md)
 - [External Work Phase 4 Implementation](external-work-phase-4-implementation.md)
+- [External Work Phase 5 Implementation](external-work-phase-5-implementation.md)
+- [External Work Phase 6 Implementation](external-work-phase-6-implementation.md)
+- [External Work Phase 7 Implementation](external-work-phase-7-implementation.md)
 
 ## Current Baseline
 
@@ -33,11 +36,24 @@ Completed capabilities:
 Still enforced:
 
 - No webhook receiver.
-- No background polling loop.
+- No unmanaged or unregistered background polling loop.
 - No automatic runner start from external work.
 - No GitHub mutation without a durable action, approval, explicit execute call, and
   stale-target revalidation.
 - No automatic push, review decision, merge, release, or issue close.
+
+## Completion Model
+
+There are three different "done" lines:
+
+- GitHub-first closure: GitHub external work can move from discovery to local evidence,
+  approval, and an explicit approved GitHub action. This is Phase 5 plus either accepted
+  manual operation or Phase 6 background operation.
+- External-work orchestration v1: the same model works for GitHub and one non-GitHub
+  source adapter. This is Phase 7.
+- Product GA: v1 is hardened for live operations with smoke suites, security review,
+  recovery docs, policy controls, and audit tooling. GA is not another broad feature
+  phase.
 
 ## Status Ledger
 
@@ -50,20 +66,95 @@ Still enforced:
 | 3 | Shipped | Approval-gated GitHub comments and labels. |
 | 3.2 | Shipped | Web Inbox approval cards and external action audit. |
 | 4.0 | Shipped | Manual read-only CI triage and local fix task creation. |
-| 4.1 | In progress | Local fix run bridge exists; disposable real failing-PR smoke remains open. |
-| 4.2 | In progress | Web CI triage surface exists; full verification and merge remain open. |
-| 5 | Planned | GitHub-first closure loop with strict proposed actions. |
-| 6 | Planned | Background polling or webhook ingestion plus reconciliation. |
-| 7 | Planned | Second channel adapter proving the platform abstraction. |
+| 4.1 | Shipped | Explicit local fix run bridge from CI triage to the normal task/run path. |
+| 4.2 | Shipped | Web Workspace and task Inspector CI triage audit surface. |
+| 5 | Ready for review | Strict PR review action slice; push, merge, and release remain deferred. |
+| 6 | Ready for review | Runtime-registered GitHub background polling and reconciliation; webhook ingestion is deferred. |
+| 7 | Ready for review | Linear read-only manual import and poll as the second channel adapter. |
 
-## Remaining Phases
+## Phase 5 First Slice
+
+The first Phase 5 implementation is a strict GitHub PR review action, not push,
+merge, release, or a broad action framework expansion.
+
+Why this is the right next slice:
+
+- It reuses the durable external action, approval, explicit execute, and stale-target
+  revalidation path that is already shipped for comments and labels.
+- It proves a higher-risk GitHub side effect with strict approval without introducing
+  repository write operations such as push or merge.
+- It completes the operator-facing loop from local evidence to an auditable external
+  action while preserving the existing Web Inbox surface.
+
+The first action is `github_pr_review` for `github_pull_request` external work only.
+The payload is:
+
+```ts
+{
+  type: "github_pr_review";
+  event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+  body: string;
+}
+```
+
+Rules:
+
+- Every PR review action requires `strict` approval; `standard` is rejected.
+- Approval and execution remain separate.
+- Execution performs an immediate PR state and head SHA revalidation.
+- Phase 5 does not add inline review comments, push commits, merge, release, webhook,
+  background polling, or edit-and-approve.
+
+The full implementation plan is in
+[External Work Phase 5 Implementation](external-work-phase-5-implementation.md).
+
+## Phase 6 First Slice
+
+The first Phase 6 implementation is a runtime-registered GitHub background scheduler,
+not a daemon-wide hidden crawler and not a webhook receiver.
+
+Why this is the right next slice:
+
+- The daemon currently knows only about workspaces that a user or client explicitly
+  opens, so background operation should start from an explicit `cwd + channelId +
+  WORKFLOW.md` registration.
+- It reuses the Phase 2 manual poll/reconcile path and existing durable SQLite state
+  instead of creating a second scheduler system.
+- It lets operators list and stop background discovery while preserving the existing
+  approval and external action boundaries.
+
+The planned first-cut surfaces are:
+
+- `POST /external-work/github/background/start?cwd=...`
+- `GET /external-work/background?cwd=...`
+- `POST /external-work/background/:schedulerId/stop?cwd=...`
+- `LingDaemonClient.startGitHubExternalWorkBackground()`
+- `LingDaemonClient.listExternalWorkBackgroundSchedulers()`
+- `LingDaemonClient.stopExternalWorkBackgroundScheduler()`
+- `ling-stack external-work github background start|list|stop`
+
+Rules:
+
+- Registration is explicit per `cwd`, `channelId`, and resolved `workflowPath`.
+- Duplicate registration returns the existing scheduler instead of creating another
+  timer.
+- Startup reconcile runs only when a scheduler is explicitly registered and the workflow
+  config requests it; daemon process startup should not silently call GitHub.
+- Scheduler ticks may read GitHub PRs/issues and create or reuse local records.
+- Scheduler ticks must not start local runners or execute GitHub mutations.
+- Webhook ingestion remains a later option if deployment needs it.
+
+The full implementation plan is in
+[External Work Phase 6 Implementation](external-work-phase-6-implementation.md).
+
+## Completed Phase 4 Closures
 
 ### Phase 4.1: Live Smoke and Local Fix Run Bridge
 
-Goal: prove Phase 4.0 against a disposable real failing PR, then connect CI triage to
-an explicit local fix run without changing the external mutation boundary.
+Goal: prove Phase 4.0 against a disposable real failing PR, then connect CI triage to an
+explicit local fix run without changing the external mutation boundary.
 
-Implemented surface in the current slice:
+Shipped surface:
 
 - `POST /external-work/github/ci/triage/:triageId/run?cwd=...`
 - `LingDaemonClient.startGitHubExternalWorkCiTriageRun()`
@@ -107,6 +198,8 @@ Completion criteria:
 - Failed, stale, duplicate, and task-created triage states are visible without reading
   raw SQLite state.
 
+## Remaining Phases
+
 ### Phase 5: GitHub-First Closure Loop
 
 Goal: make GitHub external work usable end to end while still requiring explicit
@@ -117,9 +210,10 @@ Scope:
 - Connect external work, isolated workspace allocation, teammate task/run execution,
   generated evidence, proposed GitHub actions, approval cards, and explicit action
   execution into one operator flow.
-- Add strict proposed action kinds beyond comments and labels only when they have
-  durable evidence and stale-target revalidation. Candidate actions include PR review
-  decision, push commit, merge, and release readiness or release action.
+- First add `github_pr_review` as a strict PR-only proposed action with durable evidence
+  and stale-target revalidation.
+- Defer push commit, merge, release readiness, and release actions until the PR review
+  path proves the strict approval model.
 - Keep edit-and-approve out of the first loop. Cancel and re-propose instead.
 - Keep no-force-push as the default push boundary.
 
@@ -138,10 +232,10 @@ Goal: move from manual operations to durable background operation.
 
 Scope:
 
-- Add webhook ingestion or scheduled polling, not both in the first cut unless required
-  by deployment constraints.
+- Add runtime-registered scheduled polling first. Webhook ingestion is deferred until a
+  deployment needs a public receiver.
 - Add startup reconciliation for scheduler state, leases, stale workspaces, pending
-  approvals, and external actions.
+  approvals, and external actions when a scheduler is explicitly registered.
 - Preserve rate limits, backoff, source leases, subject leases, workspace leases, and
   approval boundaries.
 - Keep all external mutation paths behind existing proposed action execution.
@@ -159,11 +253,14 @@ code hidden behind generic names.
 
 Scope:
 
-- Add one second source adapter, likely Linear first, with GitLab or Jira as later
-  alternatives if real usage demands them.
+- Add Linear as the second source adapter, with GitLab or Jira as later alternatives
+  only if real usage demands them.
 - Reuse normalized work items, scheduler state, leases, workspace isolation, approvals,
   evidence artifacts, and action audit contracts.
-- Add only the minimal proposed actions needed for the selected channel.
+- Start with read-only Linear issue import and poll. Do not add Linear mutations,
+  background polling, webhook ingestion, or runner startup in the first Phase 7 slice.
+- Keep GitHub as the only source with approval-gated external mutation execution until a
+  later Linear action design justifies the write surface.
 
 Completion criteria:
 
@@ -172,6 +269,9 @@ Completion criteria:
 - Channel-specific behavior lives in adapters and proposed action executors, not in the
   scheduler core.
 - External-work orchestration v1 is complete.
+
+The first Phase 7 implementation plan is in
+[External Work Phase 7 Implementation](external-work-phase-7-implementation.md).
 
 ## After Phase 7: GA Hardening
 
@@ -193,4 +293,5 @@ work should be GA hardening:
   accepted by the product or Phase 6 background operation is complete.
 - External-work orchestration v1 is done when Phase 7 proves the model works for GitHub
   and one second channel adapter.
-- Product GA is not a new feature phase. It is a hardening milestone after v1.
+- Phase 7 is the feature-complete line for external-work orchestration v1, not the end
+  of all work. Product GA is a hardening milestone after v1.

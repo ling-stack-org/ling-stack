@@ -535,13 +535,19 @@ workflow-step state; they do not mark linked task/run records terminal.
 
 Phase 1 adds a read-only GitHub manual import path. Phase 2 adds manual read-only
 GitHub polling and local scheduler reconciliation. Phase 3 adds approval-gated action
-records for GitHub comments and labels. Propose, list, show, and cancel remain local
-only; the explicit execute endpoint is the only path that can call the allowed GitHub
-comment or label mutation APIs after approval and stale-target revalidation. Phase 4
-adds manual GitHub CI triage for existing PR external-work items: it reads failing
-checks, workflow jobs, and bounded redacted logs, then creates local evidence and fix
-tasks by default. Phase 4.1 adds a separate explicit SSE endpoint to start the linked
-local fix task through the normal task/run path; it still does not mutate GitHub.
+records for GitHub comments and labels. Phase 4 adds manual GitHub CI triage for
+existing PR external-work items: it reads failing checks, workflow jobs, and bounded
+redacted logs, then creates local evidence and fix tasks by default. Phase 4.1 adds a
+separate explicit SSE endpoint to start the linked local fix task through the normal
+task/run path; it still does not mutate GitHub. Phase 5 adds strict approval-gated PR
+review actions. Propose, list, show, and cancel remain local only; the explicit execute
+endpoint is the only path that can call allowed GitHub mutation APIs after approval and
+stale-target revalidation. Phase 6 adds explicitly registered GitHub background
+polling and reconciliation; background ticks reuse the read-only poll/reconcile paths
+and still do not start runners or execute GitHub mutations. Phase 7 adds Linear as a
+second read-only source adapter for manual import and poll. Linear operations create or
+reuse local Ling records and evidence only; they do not start runners, propose hidden
+actions, or call Linear mutation APIs.
 Import parses a repository
 `WORKFLOW.md`, normalizes a GitHub PR or issue payload, creates or reuses a
 `ChannelWorkflow` and `ChannelWorkflowStep`, and writes local evidence artifacts. It
@@ -636,6 +642,212 @@ Response:
   "schedulerStates": []
 }
 ```
+
+### Import Linear
+
+```http
+POST /external-work/linear/import?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "channelId": "channel_...",
+  "eventType": "issue.created",
+  "payload": {
+    "id": "linear-issue-123",
+    "identifier": "LIN-123",
+    "title": "Wire Linear external work",
+    "state": { "name": "Todo" },
+    "project": { "slug": "ling-stack" }
+  },
+  "workflowPath": "WORKFLOW.md"
+}
+```
+
+The parsed `WORKFLOW.md` must use `source.kind: linear` and must include
+`source.projectSlug`. `workflowMarkdown` may be supplied instead of `workflowPath` for
+tests and fixtures. The endpoint normalizes a `linear_issue`, creates or reuses the same
+local workflow and workflow-step records used by GitHub external work, and writes the
+normalized item plus rendered prompt artifacts.
+
+Response:
+
+```json
+{
+  "externalWorkItem": {
+    "sourceKind": "linear",
+    "kind": "linear_issue",
+    "identifier": "LIN-123",
+    "idempotencyKey": "linear:issue:ling-stack:LIN-123:2026-06-01T00:00:00.000Z"
+  },
+  "workflow": {},
+  "workflowStep": {},
+  "artifacts": [],
+  "duplicate": false
+}
+```
+
+### Poll Linear
+
+```http
+POST /external-work/linear/poll?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "channelId": "channel_...",
+  "workflowPath": "WORKFLOW.md",
+  "limit": 50,
+  "executeHooks": false
+}
+```
+
+The daemon reads the channel-bound Linear `WORKFLOW.md`, resolves `source.secretRef`
+through the existing secret resolver with the `linear_token` purpose, and calls Linear's
+read-only GraphQL API to list issues. Candidates are filtered by
+`source.projectSlug`. Poll then reuses the existing scheduler-state, source/subject
+lease, isolated workspace, hook evidence, and artifact pipeline.
+
+Phase 7 Linear poll does not add a background scheduler and does not perform Linear
+mutations. Local reconcile can still repair leases, missing workflow/step rows,
+terminal local workflow state, and retry waits, but remote Linear terminal checks are
+deferred.
+
+Response:
+
+```json
+{
+  "candidates": 1,
+  "claimed": 1,
+  "duplicates": 0,
+  "blocked": 0,
+  "retryScheduled": 0,
+  "terminalIgnored": 0,
+  "artifacts": [],
+  "results": [],
+  "schedulerStates": []
+}
+```
+
+### Start GitHub Background Polling
+
+```http
+POST /external-work/github/background/start?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "channelId": "channel_...",
+  "workflowPath": "WORKFLOW.md",
+  "limit": 50,
+  "executeHooks": false,
+  "runImmediately": true
+}
+```
+
+This Phase 6 endpoint registers a process-local background scheduler for one explicit
+`cwd`, channel, and channel-bound workflow path. It does not scan all workspaces and it
+does not install a webhook receiver. Duplicate registration for the same resolved
+`cwd + channelId + workflowPath` returns the existing scheduler with `duplicate: true`
+instead of creating another timer.
+
+`runImmediately` defaults to `true`. When the parsed workflow has
+`scheduler.reconcileOnStartup: true`, registration runs reconcile once before the first
+poll tick. The tick then reuses the same read-only GitHub poll and local reconcile
+services as the manual endpoints. GitHub token resolution follows `source.secretRef`;
+token values are never stored in scheduler state or artifacts.
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "scheduler": {
+    "id": "external_work_background_...",
+    "sourceKind": "github",
+    "channelId": "channel_...",
+    "workflowPath": "WORKFLOW.md",
+    "repository": "owner/repo",
+    "pollIntervalMs": 30000,
+    "limit": 50,
+    "executeHooks": false,
+    "status": "running",
+    "startedAt": "2026-06-01T00:00:00.000Z",
+    "lastPollAt": "2026-06-01T00:00:00.000Z",
+    "nextPollAt": "2026-06-01T00:00:30.000Z",
+    "lastReconcileAt": "2026-06-01T00:00:00.000Z",
+    "tickCount": 1,
+    "lastPoll": {},
+    "lastReconcile": {}
+  },
+  "duplicate": false,
+  "startupReconcile": {}
+}
+```
+
+If a poll tick fails, the scheduler remains inspectable and stores
+`lastErrorCode: "background_tick_failed"` plus a readable `lastErrorMessage`; it should
+schedule the next tick instead of crashing the daemon. Background ticks may read GitHub
+and create or reuse local workflows, scheduler state, leases, workspaces, hooks, and
+artifacts. They must not start local runners, propose hidden mutations, or execute
+external actions.
+
+### List External Work Background Schedulers
+
+```http
+GET /external-work/background?cwd=/path/to/project
+```
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "schedulers": [
+    {
+      "id": "external_work_background_...",
+      "status": "running",
+      "channelId": "channel_...",
+      "repository": "owner/repo",
+      "pollIntervalMs": 30000,
+      "tickCount": 1,
+      "nextPollAt": "2026-06-01T00:00:30.000Z"
+    }
+  ]
+}
+```
+
+This endpoint reads only process-local scheduler registry state. It does not call
+GitHub, reconcile state, run hooks, start runners, or mutate approvals/actions.
+
+### Stop External Work Background Scheduler
+
+```http
+POST /external-work/background/:schedulerId/stop?cwd=/path/to/project
+```
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "scheduler": {
+    "id": "external_work_background_...",
+    "status": "stopped",
+    "stoppedAt": "2026-06-01T00:01:00.000Z"
+  }
+}
+```
+
+Stop clears the process-local timer and removes the duplicate-registration key so the
+same channel/workflow can be started again later. It does not delete durable external
+work, scheduler-state rows, workflows, steps, artifacts, or approvals.
 
 ### Triage GitHub CI
 
@@ -888,6 +1100,25 @@ Request for a label proposal:
 }
 ```
 
+Request for a PR review proposal:
+
+```json
+{
+  "externalWorkId": "external_work_...",
+  "actionKind": "github_pr_review",
+  "approvalRequirement": "strict",
+  "payload": {
+    "type": "github_pr_review",
+    "event": "REQUEST_CHANGES",
+    "body": "Please fix the failing CI before merge."
+  }
+}
+```
+
+`github_pr_review` is allowed only for `github_pull_request` external work. It always
+requires `strict` approval; `standard` is rejected. Supported events are `COMMENT`,
+`APPROVE`, and `REQUEST_CHANGES`. The body must be non-empty.
+
 Response:
 
 ```json
@@ -919,7 +1150,7 @@ Query filters are optional:
 
 - `externalWorkId`
 - `channelId`
-- `actionKind`: `github_comment` or `github_label`
+- `actionKind`: `github_comment`, `github_label`, or `github_pr_review`
 - `status`: `proposed`, `waiting_for_approval`, `approved`, `executing`, `succeeded`,
   `failed`, `cancelled`, `denied`, `expired`, or `stale_target`
 - `limit`: 1-500
@@ -1013,6 +1244,7 @@ Allowed mutation endpoints are limited to:
 
 - `POST /repos/{owner}/{repo}/issues/{number}/comments`
 - `POST /repos/{owner}/{repo}/issues/{number}/labels`
+- `POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews`
 
 Response:
 
@@ -1079,11 +1311,38 @@ await client.importGitHubExternalWork("/path/to/project", {
   workflowPath: "WORKFLOW.md",
 });
 
+await client.importLinearExternalWork("/path/to/project", {
+  channelId: "channel_...",
+  eventType: "issue.created",
+  payload,
+  workflowPath: "WORKFLOW.md",
+});
+
 await client.pollGitHubExternalWork("/path/to/project", {
   channelId: "channel_...",
   workflowPath: "WORKFLOW.md",
   limit: 50,
 });
+
+await client.pollLinearExternalWork("/path/to/project", {
+  channelId: "channel_...",
+  workflowPath: "WORKFLOW.md",
+  limit: 50,
+});
+
+await client.startGitHubExternalWorkBackground("/path/to/project", {
+  channelId: "channel_...",
+  workflowPath: "WORKFLOW.md",
+  limit: 50,
+  runImmediately: true,
+});
+
+await client.listExternalWorkBackgroundSchedulers("/path/to/project");
+
+await client.stopExternalWorkBackgroundScheduler(
+  "/path/to/project",
+  "external_work_background_...",
+);
 
 await client.triageGitHubExternalWorkCi("/path/to/project", {
   externalWorkId: "external_work_...",
@@ -1126,6 +1385,17 @@ await client.proposeExternalWorkAction("/path/to/project", {
   payload: { type: "github_comment", body: "Proposed comment body" },
 });
 
+await client.proposeExternalWorkAction("/path/to/project", {
+  externalWorkId: "external_work_...",
+  actionKind: "github_pr_review",
+  approvalRequirement: "strict",
+  payload: {
+    type: "github_pr_review",
+    event: "REQUEST_CHANGES",
+    body: "Please fix the failing CI before merge.",
+  },
+});
+
 await client.listExternalWorkActions("/path/to/project", {
   externalWorkId: "external_work_...",
   status: "waiting_for_approval",
@@ -1161,6 +1431,27 @@ ling-stack --cwd /path/to/project external-work github poll \
   --workflow-path WORKFLOW.md \
   --limit 50
 
+ling-stack --cwd /path/to/project external-work github background start \
+  --channel channel_... \
+  --workflow-path WORKFLOW.md \
+  --limit 50
+
+ling-stack --cwd /path/to/project external-work github background list
+
+ling-stack --cwd /path/to/project external-work github background stop \
+  external_work_background_...
+
+ling-stack --cwd /path/to/project external-work linear import \
+  --channel channel_... \
+  --event-type issue.created \
+  --payload-file issue.json \
+  --workflow-path WORKFLOW.md
+
+ling-stack --cwd /path/to/project external-work linear poll \
+  --channel channel_... \
+  --workflow-path WORKFLOW.md \
+  --limit 50
+
 ling-stack --cwd /path/to/project external-work github ci triage \
   --external-work external_work_... \
   --workflow-path WORKFLOW.md \
@@ -1186,6 +1477,11 @@ ling-stack --cwd /path/to/project external-work actions propose-labels \
   --label agent-ready \
   --label needs-review
 
+ling-stack --cwd /path/to/project external-work actions propose-review \
+  --external-work external_work_... \
+  --event REQUEST_CHANGES \
+  --body-file review.md
+
 ling-stack --cwd /path/to/project external-work actions list \
   --external-work external_work_... \
   --status waiting_for_approval
@@ -1208,10 +1504,13 @@ manual import tests. CI triage creates local fix tasks by default; use
 `--no-create-task` to write only triage records and artifacts. `external-work github ci
 run` is the explicit Phase 4.1 bridge from a triage record to the normal local runner.
 The CLI and SDK only call local daemon endpoints. Action proposal creates local proposed
-action and approval records only. Import, poll, CI triage, list/show, action
-proposal/cancel, and reconcile do not start a runner. Only `external-work github ci run`
-starts a local runner. Only `external-work actions execute` can mutate GitHub, and only
-after approval and revalidation.
+action and approval records only. Import, poll, background start/list/stop, CI triage,
+list/show, action proposal/cancel, and reconcile do not start a runner. Only
+`external-work github ci run` starts a local runner. Only `external-work actions execute`
+can mutate GitHub, and only after approval and revalidation. PR review actions are
+strict approval actions; the Web and CLI do not support edit-and-approve, so users
+cancel and re-propose if the review event or body is wrong. Linear import and poll are
+read-only Phase 7 surfaces and have no action execution path.
 
 For a copy-pasteable temp workspace smoke, use
 `examples/external-work/github/README.md`. That smoke copies the example `WORKFLOW.md`

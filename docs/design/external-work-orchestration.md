@@ -504,7 +504,7 @@ Required mitigations:
 
 ## Implementation Phases
 
-The remaining roadmap after Phase 4.0 is tracked in
+The remaining roadmap after Phase 4.2 is tracked in
 [External Work Roadmap](external-work-roadmap.md). This section keeps the architecture
 source of truth aligned with that roadmap.
 
@@ -593,27 +593,46 @@ Implementation plan: [External Work Phase 4 Implementation](external-work-phase-
 - Connect external work, isolated workspace allocation, teammate runs, evidence,
   proposed GitHub actions, approval cards, and explicit execution into one operator
   flow.
-- Add strict proposed action kinds beyond comments and labels only when they have
-  durable evidence and stale-target revalidation. Candidate actions include PR review
-  decision, push commit, merge, release readiness, and release.
+- First add a strict `github_pr_review` proposed action for `github_pull_request`
+  external work only. The action supports `COMMENT`, `APPROVE`, and
+  `REQUEST_CHANGES`, requires a non-empty body, rejects `standard` approval, and
+  revalidates PR state plus expected head SHA immediately before execution.
+- Defer push commit, merge, release readiness, and release actions until the PR review
+  path proves the strict approval model.
 - Keep edit-and-approve out of the first loop. Cancel and re-propose instead.
 - Keep no-force-push as the default push boundary.
+- Track the implementation details in
+  [External Work Phase 5 Implementation](external-work-phase-5-implementation.md).
 
 ### Phase 6: Background Polling and Reconciliation
 
-- Add webhook ingestion or scheduled polling after the manual paths are stable.
-- Add startup reconciliation for scheduler state, leases, stale workspaces, pending
-  approvals, and external actions.
+- Add runtime-registered scheduled GitHub polling after the manual paths are stable.
+  The first cut registers background operation explicitly by `cwd`, `channelId`, and
+  `WORKFLOW.md`; it does not scan every workspace and does not add webhook ingestion.
+- Add startup reconciliation when the scheduler is explicitly registered, covering
+  scheduler state, leases, stale workspaces, pending approvals, and external actions.
 - Preserve rate limits, backoff, source leases, subject leases, workspace leases, and
   approval boundaries.
-- Keep all external mutations behind proposed action execution.
+- Keep all external mutations behind proposed action execution. Background ticks may
+  read GitHub and create/reuse local records, but they must not start runners or execute
+  GitHub mutations.
+- Track the implementation details in
+  [External Work Phase 6 Implementation](external-work-phase-6-implementation.md).
 
 ### Phase 7: Second Channel Adapter
 
 - Add `linear` source adapter using the same normalized work item, scheduler, workspace,
   approval, and evidence contracts.
-- Support ticket comments and state transitions only through proposed actions.
+- First support read-only Linear issue manual import and poll with
+  `source.projectSlug`, `linear_issue` normalization, shared scheduler state, shared
+  workspace isolation, and shared evidence artifacts.
+- Defer Linear comments, labels, assignments, and state transitions. When they are added,
+  they must use proposed actions, approval, explicit execute, and stale-target
+  revalidation instead of adapter-side mutation.
+- Keep Linear background polling and webhook ingestion out of the first Phase 7 slice.
 - Treat GitLab or Jira as later alternatives only if real usage requires them.
+- Track the implementation details in
+  [External Work Phase 7 Implementation](external-work-phase-7-implementation.md).
 
 ### GA Hardening
 

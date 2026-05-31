@@ -385,6 +385,7 @@ function ExternalActionAuditPanel({
   const actionStatus = action?.status ?? t("detail unavailable");
   const preview = action ? externalActionPayloadPreview(action.payload) : readDataString(approval.payload, "preview") || formatUnknownPreview(readDataField(approval.payload, "payload"), 220);
   const labels = action?.payload.type === "github_label" ? action.payload.labels : [];
+  const reviewEvent = action?.payload.type === "github_pr_review" ? action.payload.event : undefined;
   const artifacts = actionView?.artifacts ?? [];
   const canExecute = Boolean(action && action.status === "approved" && onExecuteExternalAction);
   const canCancel = Boolean(action && ["proposed", "waiting_for_approval", "approved"].includes(action.status) && onCancelExternalAction);
@@ -402,6 +403,7 @@ function ExternalActionAuditPanel({
       <div className="external-action-meta">
         <span>{sourceKind}</span>
         <span>{actionKind}</span>
+        {reviewEvent ? <span>{reviewEvent}</span> : null}
         <span>{repository}</span>
         <span>{subjectKind} #{subjectNumber}</span>
         <span>{t("expected {state}", { state: expectedState })}</span>
@@ -500,6 +502,9 @@ function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalReque
 function externalActionPayloadPreview(payload: ExternalWorkActionView["action"]["payload"]): string {
   if (payload.type === "github_comment") {
     return formatUnknownPreview(payload.body, 320);
+  }
+  if (payload.type === "github_pr_review") {
+    return `${payload.event}: ${formatUnknownPreview(payload.body, 320)}`;
   }
   return payload.labels.join(", ");
 }

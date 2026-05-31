@@ -50,6 +50,7 @@ export interface GitHubExternalActionAdapter {
   getIssue(input: GitHubSubjectInput): Promise<ExternalWorkItem | undefined>;
   createIssueComment(input: GitHubCreateIssueCommentInput): Promise<GitHubActionResult>;
   addIssueLabels(input: GitHubAddIssueLabelsInput): Promise<GitHubActionResult>;
+  createPullRequestReview(input: GitHubCreatePullRequestReviewInput): Promise<GitHubActionResult>;
 }
 
 export interface GitHubSubjectInput {
@@ -64,6 +65,11 @@ export interface GitHubCreateIssueCommentInput extends GitHubSubjectInput {
 
 export interface GitHubAddIssueLabelsInput extends GitHubSubjectInput {
   readonly labels: readonly string[];
+}
+
+export interface GitHubCreatePullRequestReviewInput extends GitHubSubjectInput {
+  readonly event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+  readonly body: string;
 }
 
 export interface GitHubExternalActionAdapterOptions {
@@ -142,6 +148,15 @@ export function createGitHubExternalActionAdapter(options: GitHubExternalActionA
         body: { labels: input.labels },
       });
     },
+    async createPullRequestReview(input: GitHubCreatePullRequestReviewInput): Promise<GitHubActionResult> {
+      return await githubMutation(fetchImpl, {
+        method: "POST",
+        url: `${apiBaseUrl}${githubRepoPath(input.repository)}/pulls/${input.number}/reviews`,
+        path: `${githubRepoPath(input.repository)}/pulls/${input.number}/reviews`,
+        token: input.token,
+        body: { event: input.event, body: input.body },
+      });
+    },
   };
 }
 
@@ -156,7 +171,8 @@ export function proposeExternalWorkAction(input: {
   if (input.request.actionKind !== payload.type) {
     throw new Error(`actionKind must match payload.type: ${payload.type}`);
   }
-  const approvalRequirement = input.request.approvalRequirement ?? "standard";
+  validateExternalWorkActionForTarget(externalWork, payload, input.request.approvalRequirement);
+  const approvalRequirement = input.request.approvalRequirement ?? (payload.type === "github_pr_review" ? "strict" : "standard");
   const idempotencyKey = createExternalWorkActionIdempotencyKey(externalWork, payload, target);
   const existing = input.store.getExternalWorkActionByIdempotency(externalWork.sourceKind, idempotencyKey);
   if (existing) {
@@ -315,19 +331,7 @@ export async function executeExternalWorkAction(input: {
     if (!executing) {
       throw new Error(`Failed to mark external work action as executing: ${action.id}`);
     }
-    const result = action.payload.type === "github_comment"
-      ? await adapter.createIssueComment({
-        repository: action.target.repository,
-        number: action.target.number,
-        body: action.payload.body,
-        token: input.githubToken,
-      })
-      : await adapter.addIssueLabels({
-        repository: action.target.repository,
-        number: action.target.number,
-        labels: action.payload.labels,
-        token: input.githubToken,
-      });
+    const result = await executeGitHubActionPayload(adapter, action, input.githubToken);
     const artifact = createActionExecutionArtifact(input.store, action, result, input.githubToken, now, attempt);
     const succeeded = input.store.updateExternalWorkAction(action.id, {
       status: "succeeded",
@@ -515,7 +519,65 @@ function normalizeExternalWorkActionPayload(payload: ExternalWorkActionPayload):
     }
     return { type: "github_label", labels };
   }
+  if (payload.type === "github_pr_review") {
+    const event = payload.event;
+    if (event !== "COMMENT" && event !== "APPROVE" && event !== "REQUEST_CHANGES") {
+      throw new Error("github_pr_review payload event must be COMMENT, APPROVE, or REQUEST_CHANGES.");
+    }
+    const body = payload.body.trim();
+    if (!body) {
+      throw new Error("github_pr_review payload body is required.");
+    }
+    return { type: "github_pr_review", event, body };
+  }
   throw new Error(`Unsupported external work action payload type: ${(payload as { readonly type?: string }).type ?? ""}`);
+}
+
+function validateExternalWorkActionForTarget(
+  externalWork: ExternalWorkRecord,
+  payload: ExternalWorkActionPayload,
+  approvalRequirement: "standard" | "strict" | undefined,
+): void {
+  if (payload.type !== "github_pr_review") {
+    return;
+  }
+  if (externalWork.workItemKind !== "github_pull_request") {
+    throw new Error("github_pr_review actions require github_pull_request external work.");
+  }
+  if (approvalRequirement === "standard") {
+    throw new Error("github_pr_review actions require strict approval.");
+  }
+}
+
+async function executeGitHubActionPayload(
+  adapter: GitHubExternalActionAdapter,
+  action: ExternalWorkAction,
+  token: string | undefined,
+): Promise<GitHubActionResult> {
+  switch (action.payload.type) {
+    case "github_comment":
+      return await adapter.createIssueComment({
+        repository: action.target.repository,
+        number: action.target.number,
+        body: action.payload.body,
+        token,
+      });
+    case "github_label":
+      return await adapter.addIssueLabels({
+        repository: action.target.repository,
+        number: action.target.number,
+        labels: action.payload.labels,
+        token,
+      });
+    case "github_pr_review":
+      return await adapter.createPullRequestReview({
+        repository: action.target.repository,
+        number: action.target.number,
+        event: action.payload.event,
+        body: action.payload.body,
+        token,
+      });
+  }
 }
 
 function createExternalWorkActionIdempotencyKey(
@@ -703,9 +765,14 @@ function artifactsForAction(store: RunStore, action: ExternalWorkAction): RunArt
 }
 
 function externalWorkActionTitle(action: ExternalWorkAction): string {
-  return action.actionKind === "github_comment"
-    ? `Approve GitHub comment for ${action.target.repository}#${action.target.number}`
-    : `Approve GitHub labels for ${action.target.repository}#${action.target.number}`;
+  switch (action.actionKind) {
+    case "github_comment":
+      return `Approve GitHub comment for ${action.target.repository}#${action.target.number}`;
+    case "github_label":
+      return `Approve GitHub labels for ${action.target.repository}#${action.target.number}`;
+    case "github_pr_review":
+      return `Approve GitHub PR review for ${action.target.repository}#${action.target.number}`;
+  }
 }
 
 function externalWorkActionDescription(externalWork: ExternalWorkRecord, action: ExternalWorkAction): string {
@@ -722,12 +789,22 @@ function externalWorkActionPreview(action: ExternalWorkAction): string {
       action.payload.body,
     ].join("\n");
   }
+  if (action.payload.type === "github_label") {
+    return [
+      `# ${externalWorkActionTitle(action)}`,
+      "",
+      `Target: ${action.target.repository}#${action.target.number}`,
+      "",
+      `Labels: ${action.payload.labels.join(", ")}`,
+    ].join("\n");
+  }
   return [
     `# ${externalWorkActionTitle(action)}`,
     "",
     `Target: ${action.target.repository}#${action.target.number}`,
+    `Review event: ${action.payload.event}`,
     "",
-    `Labels: ${action.payload.labels.join(", ")}`,
+    action.payload.body,
   ].join("\n");
 }
 

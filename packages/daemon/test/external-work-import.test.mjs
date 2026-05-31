@@ -180,6 +180,162 @@ test("GitHub external work poll imports candidates, deduplicates, and reconciles
   }
 });
 
+test("Linear external work import and poll use the shared local workflow pipeline without runner or mutation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-linear-external-work-"));
+  const runner = new FailingRunner();
+  const linearCalls = [];
+  const daemon = await startDaemonForTest(runner, createLinearFetchMock(linearCalls));
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), linearWorkflowMarkdown(), "utf8");
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Linear",
+      boundPath: cwd,
+      defaultTeammateId: "engineer",
+      allowedTools: ["read"],
+    });
+
+    const imported = await postJson(`${daemon.url}/external-work/linear/import?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      eventType: "issue.created",
+      payload: linearIssuePayload(),
+    });
+    assert.equal(imported.duplicate, false);
+    assert.equal(imported.externalWorkItem.sourceKind, "linear");
+    assert.equal(imported.externalWorkItem.kind, "linear_issue");
+    assert.equal(imported.externalWorkItem.identifier, "LIN-123");
+    assert.match(imported.workflowStep.prompt, /Review LIN-123/);
+    assert.equal(imported.artifacts.length, 2);
+    assert.equal(runner.runs.length, 0);
+
+    const poll = await postJson(`${daemon.url}/external-work/linear/poll?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      workflowPath: "WORKFLOW.md",
+      limit: 5,
+    });
+    assert.equal(poll.candidates, 1);
+    assert.equal(poll.duplicates, 1);
+    assert.equal(poll.schedulerStates[0].schedulerStatus, "ready");
+    assert.equal(linearCalls.length, 1);
+    assert.equal(linearCalls[0].init.method, "POST");
+    assert.match(JSON.parse(linearCalls[0].init.body).query, /issues/);
+    assert.equal(runner.runs.length, 0);
+
+    const list = await getJson(`${daemon.url}/external-work?cwd=${encodeURIComponent(cwd)}&sourceKind=linear&workItemKind=linear_issue`);
+    assert.equal(list.externalWork.length, 1);
+    assert.equal(list.externalWork[0].externalWork.identifier, "LIN-123");
+    assert.equal(list.externalWork[0].schedulerState.schedulerStatus, "ready");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub external work background scheduler registers, ticks, deduplicates, and stops without runner or mutation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-background-"));
+  const runner = new FailingRunner();
+  const githubCalls = [];
+  const daemon = await startDaemonForTest(runner, createGitHubBackgroundFetchMock(githubCalls));
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "GitHub",
+      boundPath: cwd,
+      defaultTeammateId: "engineer",
+      allowedTools: ["read"],
+    });
+
+    const started = await postJson(`${daemon.url}/external-work/github/background/start?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      workflowPath: "WORKFLOW.md",
+      limit: 1,
+    });
+    assert.equal(started.duplicate, false);
+    assert.equal(started.scheduler.status, "running");
+    assert.equal(started.scheduler.channelId, channel.channel.id);
+    assert.equal(started.scheduler.repository, "openclaw/openclaw");
+    assert.equal(started.scheduler.tickCount, 1);
+    assert.equal(started.scheduler.lastPoll.claimed, 1);
+    assert.equal(started.startupReconcile.checked, 0);
+    assert.equal(runner.runs.length, 0);
+    assert.deepEqual(githubCalls.map((call) => `${call.init.method ?? "GET"} ${new URL(call.url).pathname}`), [
+      "GET /repos/openclaw/openclaw/pulls",
+      "GET /repos/openclaw/openclaw/issues",
+      "GET /repos/openclaw/openclaw/pulls/86279",
+    ]);
+
+    const listed = await getJson(`${daemon.url}/external-work/background?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.schedulers.length, 1);
+    assert.equal(listed.schedulers[0].id, started.scheduler.id);
+    assert.equal(listed.schedulers[0].tickCount, 1);
+
+    const githubCallCountAfterFirstTick = githubCalls.length;
+    const duplicate = await postJson(`${daemon.url}/external-work/github/background/start?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      workflowPath: "WORKFLOW.md",
+      limit: 1,
+      runImmediately: false,
+    });
+    assert.equal(duplicate.duplicate, true);
+    assert.equal(duplicate.scheduler.id, started.scheduler.id);
+    assert.equal(githubCalls.length, githubCallCountAfterFirstTick);
+
+    const stopped = await postJson(`${daemon.url}/external-work/background/${encodeURIComponent(started.scheduler.id)}/stop?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(stopped.scheduler.status, "stopped");
+    assert.equal(stopped.scheduler.id, started.scheduler.id);
+
+    const listedAfterStop = await getJson(`${daemon.url}/external-work/background?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listedAfterStop.schedulers.length, 1);
+    assert.equal(listedAfterStop.schedulers[0].status, "stopped");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub external work background scheduler returns readable local errors and stores GitHub poll failures", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-background-errors-"));
+  const runner = new FailingRunner();
+  const daemon = await startDaemonForTest(runner, async () => ({
+    ok: false,
+    status: 403,
+    statusText: "Forbidden",
+    async json() {
+      return { message: "rate limited" };
+    },
+    async text() {
+      return JSON.stringify({ message: "rate limited" });
+    },
+  }));
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "GitHub",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    });
+
+    const missingChannel = await postJsonExpectError(`${daemon.url}/external-work/github/background/start?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: "channel_missing",
+      workflowPath: "WORKFLOW.md",
+    });
+    assert.equal(missingChannel.status, 400);
+    assert.match(missingChannel.body.message, /Channel not found/);
+
+    const githubError = await postJson(`${daemon.url}/external-work/github/background/start?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      workflowPath: "WORKFLOW.md",
+    });
+    assert.equal(githubError.scheduler.status, "running");
+    assert.equal(githubError.scheduler.tickCount, 1);
+    assert.equal(githubError.scheduler.lastErrorCode, "background_tick_failed");
+    assert.match(githubError.scheduler.lastErrorMessage, /GitHub read-only request failed/);
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("external work actions propose, list, show, approve-sync, execute, and cancel with approval gating", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-actions-"));
   const runner = new FailingRunner();
@@ -224,6 +380,23 @@ test("external work actions propose, list, show, approve-sync, execute, and canc
     assert.equal(duplicate.duplicate, true);
     assert.equal(duplicate.action.id, proposed.action.id);
 
+    const invalidReviewEvent = await postJsonExpectError(`${daemon.url}/external-work/actions/propose?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      actionKind: "github_pr_review",
+      payload: { type: "github_pr_review", event: "DISMISS", body: "Invalid event." },
+    });
+    assert.equal(invalidReviewEvent.status, 400);
+    assert.match(invalidReviewEvent.body.message, /payload.event/);
+
+    const standardReview = await postJsonExpectError(`${daemon.url}/external-work/actions/propose?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      actionKind: "github_pr_review",
+      approvalRequirement: "standard",
+      payload: { type: "github_pr_review", event: "COMMENT", body: "Standard should fail." },
+    });
+    assert.equal(standardReview.status, 400);
+    assert.match(standardReview.body.message, /require strict approval/);
+
     const list = await getJson(`${daemon.url}/external-work/actions?cwd=${encodeURIComponent(cwd)}&externalWorkId=${encodeURIComponent(externalWorkId)}&status=waiting_for_approval`);
     assert.equal(list.actions.length, 1);
     assert.equal(list.actions[0].action.id, proposed.action.id);
@@ -262,6 +435,25 @@ test("external work actions propose, list, show, approve-sync, execute, and canc
     assert.equal(cancelled.action.status, "cancelled");
     assert.equal(cancelled.approval.status, "denied");
     assert.equal(cancelled.artifacts.at(-1).title, "External action cancellation");
+
+    const review = await postJson(`${daemon.url}/external-work/actions/propose?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      actionKind: "github_pr_review",
+      payload: { type: "github_pr_review", event: "REQUEST_CHANGES", body: "Please fix the failing CI before merge." },
+    });
+    assert.equal(review.action.approvalRequirement, "strict");
+    assert.equal(review.approval.risk, "high");
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(review.approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "Strict PR review approved.",
+    });
+    const reviewExecuted = await postJson(`${daemon.url}/external-work/actions/${encodeURIComponent(review.action.id)}/execute?cwd=${encodeURIComponent(cwd)}`, {
+      workflowPath: "WORKFLOW.md",
+    });
+    assert.equal(reviewExecuted.action.status, "succeeded");
+    assert.deepEqual(githubCalls.slice(-2).map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+      "GET /repos/openclaw/openclaw/pulls/86279",
+      "POST /repos/openclaw/openclaw/pulls/86279/reviews",
+    ]);
     assert.equal(runner.runs.length, 0);
   } finally {
     await daemon.close();
@@ -666,6 +858,24 @@ Head: {{ item.headSha }}
 `;
 }
 
+function linearWorkflowMarkdown() {
+  return `---
+source:
+  kind: linear
+  projectSlug: ling-stack
+  events:
+    - issue.created
+agent:
+  teammateId: engineer
+---
+
+Review {{ item.identifier }}.
+
+Title: {{ item.title }}
+State: {{ item.state }}
+`;
+}
+
 function githubPullRequestPayload() {
   return {
     repository: {
@@ -697,8 +907,65 @@ function githubPullRequestPayload() {
   };
 }
 
+function linearIssuePayload() {
+  return {
+    id: "linear-issue-123",
+    identifier: "LIN-123",
+    title: "Wire Linear external work",
+    description: "Import and poll Linear issues through the external work pipeline.",
+    url: "https://linear.app/ling-stack/issue/LIN-123/wire-linear-external-work",
+    priority: 2,
+    branchName: "tx/linear-external-work",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+    state: {
+      name: "Todo",
+      type: "unstarted",
+    },
+    labels: {
+      nodes: [{ name: "external-work" }, { name: "phase-7" }],
+    },
+    project: {
+      name: "Ling Stack",
+      slug: "ling-stack",
+    },
+    team: {
+      key: "LIN",
+      name: "Ling",
+    },
+  };
+}
+
 function createGitHubFetchMock() {
   return async (url) => {
+    if (url.includes("/pulls?")) {
+      return jsonResponse([githubPullRequestPayload().pull_request]);
+    }
+    if (url.includes("/issues?")) {
+      return jsonResponse([]);
+    }
+    return jsonResponse({ message: "not found" }, { ok: false, status: 404, statusText: "Not Found" });
+  };
+}
+
+function createLinearFetchMock(calls) {
+  return async (url, init = {}) => {
+    calls.push({ url, init });
+    return jsonResponse({
+      data: {
+        issues: {
+          nodes: [linearIssuePayload()],
+        },
+      },
+    });
+  };
+}
+
+function createGitHubBackgroundFetchMock(calls) {
+  return async (url, init = {}) => {
+    calls.push({ url, init });
+    if (url.includes("/pulls/86279")) {
+      return jsonResponse(githubPullRequestPayload().pull_request);
+    }
     if (url.includes("/pulls?")) {
       return jsonResponse([githubPullRequestPayload().pull_request]);
     }
@@ -712,6 +979,13 @@ function createGitHubFetchMock() {
 function createGitHubActionFetchMock(calls, options = {}) {
   return async (url, init = {}) => {
     calls.push({ url, init });
+    if (url.includes("/pulls/86279/reviews")) {
+      return jsonResponse({
+        id: 7,
+        html_url: "https://github.com/openclaw/openclaw/pull/86279#pullrequestreview-7",
+        state: "CHANGES_REQUESTED",
+      }, { status: 200, statusText: "OK" });
+    }
     if (url.includes("/pulls/86279")) {
       return jsonResponse(options.pullRequest ?? githubPullRequestPayload().pull_request);
     }
