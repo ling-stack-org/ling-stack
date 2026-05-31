@@ -98,12 +98,16 @@ import type {
   WorkflowTransitionEvent,
 } from "./state-machines.js";
 import type {
+  CreateExternalWorkActionInput,
   CreateExternalWorkWorkflowInput,
+  ExternalWorkAction,
   ExternalWorkRecord,
   ExternalWorkSchedulerState,
   ExternalWorkWorkflowResult,
+  ListExternalWorkActionsOptions,
   ListExternalWorkRecordsOptions,
   ListExternalWorkSchedulerStatesOptions,
+  UpdateExternalWorkActionInput,
   UpdateExternalWorkSchedulerStateInput,
   UpsertExternalWorkSchedulerStateInput,
 } from "./external-work-types.js";
@@ -405,6 +409,11 @@ export interface RunStore {
   listExternalWorkRecords(options?: ListExternalWorkRecordsOptions): ExternalWorkRecord[];
   getExternalWorkRecordByIdempotency(sourceKind: ExternalWorkRecord["sourceKind"], idempotencyKey: string): ExternalWorkRecord | undefined;
   updateExternalWorkArtifacts(id: string, artifactIds: readonly string[], now: string): ExternalWorkRecord | undefined;
+  createExternalWorkAction(input: CreateExternalWorkActionInput, now: string): ExternalWorkAction;
+  getExternalWorkAction(id: string): ExternalWorkAction | undefined;
+  getExternalWorkActionByIdempotency(sourceKind: ExternalWorkAction["sourceKind"], idempotencyKey: string): ExternalWorkAction | undefined;
+  listExternalWorkActions(options?: ListExternalWorkActionsOptions): ExternalWorkAction[];
+  updateExternalWorkAction(id: string, input: UpdateExternalWorkActionInput, now: string): ExternalWorkAction | undefined;
   upsertExternalWorkSchedulerState(input: UpsertExternalWorkSchedulerStateInput, now: string): ExternalWorkSchedulerState;
   getExternalWorkSchedulerState(externalWorkId: string): ExternalWorkSchedulerState | undefined;
   findActiveExternalWorkSchedulerState(sourceKey: string, subjectKey: string): ExternalWorkSchedulerState | undefined;

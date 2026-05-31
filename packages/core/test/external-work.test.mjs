@@ -10,6 +10,9 @@ import {
   normalizeGitHubExternalWorkItem,
   parseExternalWorkflowMarkdown,
   pollGitHubExternalWork,
+  proposeExternalWorkAction,
+  cancelExternalWorkAction,
+  syncExternalWorkActionForApproval,
   renderExternalWorkflowPrompt,
 } from "../dist/index.js";
 
@@ -185,6 +188,92 @@ test("sqlite external work import reuses workflow by idempotency and stores evid
     assert.equal(second.duplicate, true);
     assert.equal(second.workflow.id, first.workflow.id);
     assert.equal(second.workflowStep.id, first.workflowStep.id);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite external work actions propose, reuse, approve, and cancel with approval evidence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-external-work-actions-"));
+  const now = "2026-05-30T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "GitHub", boundPath: cwd, defaultTeammateId: "engineer" }, now);
+    const workflow = parseExternalWorkflowMarkdown(workflowMarkdown);
+    const item = normalizeGitHubExternalWorkItem({
+      eventType: "pull_request.opened",
+      payload: githubPullRequestPayload(),
+      repositoryFullName: workflow.config.source.repository,
+    });
+    const renderedPrompt = renderExternalWorkflowPrompt(workflow.promptTemplate, { item });
+    const imported = store.createOrReuseExternalWorkWorkflow({
+      channelId: channel.id,
+      externalWorkItem: item,
+      workflowDefinition: workflow,
+      renderedPrompt,
+    }, now);
+
+    const proposed = proposeExternalWorkAction({
+      store,
+      request: {
+        externalWorkId: imported.externalWork.id,
+        actionKind: "github_comment",
+        payload: { type: "github_comment", body: "Looks ready for review." },
+        approvalRequirement: "strict",
+      },
+      now,
+    });
+    assert.equal(proposed.duplicate, false);
+    assert.equal(proposed.action.status, "waiting_for_approval");
+    assert.equal(proposed.action.actionKind, "github_comment");
+    assert.equal(proposed.action.target.repository, "openclaw/openclaw");
+    assert.equal(proposed.action.target.number, 86279);
+    assert.equal(proposed.action.target.expectedHeadSha, "head-sha-1");
+    assert.equal(proposed.approval.externalWorkActionId, proposed.action.id);
+    assert.equal(proposed.approval.risk, "high");
+    assert.equal(proposed.artifacts.length, 3);
+    assert.equal(store.listApprovalRequests({ externalWorkActionId: proposed.action.id }).length, 1);
+    const preview = await readFile(resolve(store.paths.artifactsDir, proposed.artifacts[2].path), "utf8");
+    assert.match(preview, /Looks ready for review/);
+
+    const duplicate = proposeExternalWorkAction({
+      store,
+      request: {
+        externalWorkId: imported.externalWork.id,
+        actionKind: "github_comment",
+        payload: { type: "github_comment", body: "Looks ready for review." },
+        approvalRequirement: "strict",
+      },
+      now: "2026-05-30T00:01:00.000Z",
+    });
+    assert.equal(duplicate.duplicate, true);
+    assert.equal(duplicate.action.id, proposed.action.id);
+    assert.equal(store.listExternalWorkActions({ externalWorkId: imported.externalWork.id }).length, 1);
+
+    const approved = store.approveApprovalRequest(proposed.approval.id, { resolvedBy: "local-user" }, "2026-05-30T00:02:00.000Z");
+    const synced = syncExternalWorkActionForApproval(store, approved, "2026-05-30T00:02:00.000Z");
+    assert.equal(synced.status, "approved");
+
+    const label = proposeExternalWorkAction({
+      store,
+      request: {
+        externalWorkId: imported.externalWork.id,
+        actionKind: "github_label",
+        payload: { type: "github_label", labels: ["agent-ready", "needs-review"] },
+      },
+      now: "2026-05-30T00:03:00.000Z",
+    });
+    assert.equal(label.action.approvalRequirement, "standard");
+    const cancelled = cancelExternalWorkAction({
+      store,
+      actionId: label.action.id,
+      request: { reason: "No longer needed." },
+      now: "2026-05-30T00:04:00.000Z",
+    });
+    assert.equal(cancelled.action.status, "cancelled");
+    assert.equal(cancelled.approval.status, "denied");
+    assert.equal(cancelled.artifacts.at(-1).title, "External action cancellation");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

@@ -271,6 +271,113 @@ export interface ExternalWorkDetailResponse {
   readonly externalWork: ExternalWorkView;
 }
 
+export type ExternalWorkActionKind = "github_comment" | "github_label";
+
+export type ExternalWorkActionStatus =
+  | "proposed"
+  | "waiting_for_approval"
+  | "approved"
+  | "executing"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "denied"
+  | "expired"
+  | "stale_target";
+
+export type ExternalWorkActionApprovalRequirement = "standard" | "strict";
+
+export interface ExternalWorkActionTarget {
+  readonly sourceKind: ExternalSourceKind;
+  readonly repository: string;
+  readonly subjectKind: "github_pull_request" | "github_issue";
+  readonly number: number;
+  readonly url?: string;
+  readonly expectedState: string;
+  readonly expectedHeadSha?: string;
+  readonly expectedUpdatedAt?: string;
+  readonly expectedLabels: readonly string[];
+}
+
+export type ExternalWorkActionPayload =
+  | {
+      readonly type: "github_comment";
+      readonly body: string;
+    }
+  | {
+      readonly type: "github_label";
+      readonly labels: readonly string[];
+    };
+
+export interface ExternalWorkAction {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly externalWorkId: string;
+  readonly sourceKind: ExternalSourceKind;
+  readonly actionKind: ExternalWorkActionKind;
+  readonly status: ExternalWorkActionStatus;
+  readonly approvalId?: string;
+  readonly idempotencyKey: string;
+  readonly target: ExternalWorkActionTarget;
+  readonly payload: ExternalWorkActionPayload;
+  readonly approvalRequirement: ExternalWorkActionApprovalRequirement;
+  readonly artifactIds: readonly string[];
+  readonly executionAttemptCount: number;
+  readonly lastAttemptAt?: string;
+  readonly nextAttemptAt?: string;
+  readonly lastErrorCode?: string;
+  readonly lastErrorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly executedAt?: string;
+}
+
+export interface ExternalWorkActionView {
+  readonly action: ExternalWorkAction;
+  readonly externalWork?: ExternalWorkRecord;
+  readonly approval?: ApprovalRequest;
+  readonly artifacts: readonly RunArtifact[];
+}
+
+export interface ExternalWorkActionProposeRequest {
+  readonly externalWorkId: string;
+  readonly actionKind: ExternalWorkActionKind;
+  readonly payload: ExternalWorkActionPayload;
+  readonly approvalRequirement?: ExternalWorkActionApprovalRequirement;
+  readonly expiresAt?: string;
+}
+
+export interface ExternalWorkActionCancelRequest {
+  readonly reason?: string;
+}
+
+export interface ExternalWorkActionListRequest {
+  readonly externalWorkId?: string;
+  readonly channelId?: string;
+  readonly status?: ExternalWorkActionStatus;
+  readonly actionKind?: ExternalWorkActionKind;
+  readonly limit?: number;
+}
+
+export interface ExternalWorkActionMutationResponse {
+  readonly cwd: string;
+  readonly action: ExternalWorkAction;
+  readonly approval?: ApprovalRequest;
+  readonly artifacts: readonly RunArtifact[];
+  readonly duplicate?: boolean;
+}
+
+export interface ExternalWorkActionListResponse {
+  readonly cwd: string;
+  readonly actions: readonly ExternalWorkActionView[];
+}
+
+export interface ExternalWorkActionDetailResponse {
+  readonly cwd: string;
+  readonly action: ExternalWorkActionView;
+}
+
 export interface ExternalWorkPollRequest {
   readonly channelId: string;
   readonly workflowPath?: string;
@@ -1194,6 +1301,7 @@ export interface ApprovalRequest {
   readonly runId?: string;
   readonly taskId?: string;
   readonly mediaJobId?: string;
+  readonly externalWorkActionId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
   readonly actionType: ApprovalActionType;
@@ -1483,6 +1591,7 @@ export interface ListApprovalsRequest {
   readonly status?: ApprovalStatus | string;
   readonly runId?: string;
   readonly mediaJobId?: string;
+  readonly externalWorkActionId?: string;
   readonly limit?: number;
 }
 

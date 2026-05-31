@@ -644,6 +644,8 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 
 - Add proposed action records for comments and labels.
 - Link proposed actions to durable approval requests.
+- Land propose/list/show/cancel before mutation execution so operators can inspect local
+  action, approval, and artifact state without any GitHub side effect.
 - Add UI approval cards.
 - Post comments and labels only after approval and immediate stale-target revalidation.
 - Store external API results, stale-target failures, and redacted request/response

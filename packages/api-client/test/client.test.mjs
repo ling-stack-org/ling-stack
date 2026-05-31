@@ -391,6 +391,59 @@ test("lists and shows external work without transforming daemon responses", asyn
   assert.equal(mock.calls[1].url, "http://daemon.test/external-work/external_work_1?cwd=%2Frepo+path");
 });
 
+test("manages external work actions without transforming daemon responses", async () => {
+  const mutationResponse = {
+    cwd: "/repo",
+    action: { id: "external_work_action_1", status: "waiting_for_approval", actionKind: "github_comment" },
+    approval: { id: "approval_1", status: "pending" },
+    artifacts: [],
+    duplicate: false,
+  };
+  const listResponse = {
+    cwd: "/repo",
+    actions: [{ action: mutationResponse.action, approval: mutationResponse.approval, artifacts: [] }],
+  };
+  const detailResponse = {
+    cwd: "/repo",
+    action: listResponse.actions[0],
+  };
+  const cancelResponse = {
+    ...mutationResponse,
+    action: { ...mutationResponse.action, status: "cancelled" },
+  };
+  const mock = createFetchMock([mutationResponse, listResponse, detailResponse, cancelResponse]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  assert.deepEqual(await client.proposeExternalWorkAction("/repo path", {
+    externalWorkId: "external_work_1",
+    actionKind: "github_comment",
+    payload: { type: "github_comment", body: "Ready" },
+  }), mutationResponse);
+  assert.deepEqual(await client.listExternalWorkActions("/repo path", {
+    externalWorkId: "external_work_1",
+    status: "waiting_for_approval",
+    actionKind: "github_comment",
+    limit: 10,
+  }), listResponse);
+  assert.deepEqual(await client.getExternalWorkAction("/repo path", "external_work_action_1"), detailResponse);
+  assert.deepEqual(await client.cancelExternalWorkAction("/repo path", "external_work_action_1", { reason: "No longer needed" }), cancelResponse);
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/external-work/actions/propose?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    externalWorkId: "external_work_1",
+    actionKind: "github_comment",
+    payload: { type: "github_comment", body: "Ready" },
+  });
+  assert.equal(mock.calls[1].method, "GET");
+  assert.equal(mock.calls[1].url, "http://daemon.test/external-work/actions?cwd=%2Frepo+path&externalWorkId=external_work_1&status=waiting_for_approval&actionKind=github_comment&limit=10");
+  assert.equal(mock.calls[2].method, "GET");
+  assert.equal(mock.calls[2].url, "http://daemon.test/external-work/actions/external_work_action_1?cwd=%2Frepo+path");
+  assert.equal(mock.calls[3].method, "POST");
+  assert.equal(mock.calls[3].url, "http://daemon.test/external-work/actions/external_work_action_1/cancel?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[3].body), { reason: "No longer needed" });
+});
+
 test("maps daemon error bodies and workspace path errors", async () => {
   const fetchMessage = async () => jsonResponse({ message: "explicit message" }, { status: 418, statusText: "Teapot" });
   const messageClient = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: fetchMessage });

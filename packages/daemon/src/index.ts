@@ -12,11 +12,15 @@ import {
   DEFAULT_WORKSPACE_ID,
   defaultProviderTemplates,
   getRunSummaryPath,
+  buildExternalWorkActionView,
+  cancelExternalWorkAction,
   normalizeGitHubExternalWorkItem,
   pollGitHubExternalWork,
   parseExternalWorkflowMarkdown,
+  proposeExternalWorkAction,
   reconcileExternalWork,
   renderExternalWorkflowPrompt,
+  syncExternalWorkActionForApproval,
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
   isSupportedSecretRef,
@@ -87,6 +91,11 @@ import {
   type PublicProviderPreset,
   type RunArtifact,
   type ExternalWorkImportResponse,
+  type ExternalWorkActionDetailResponse,
+  type ExternalWorkActionKind,
+  type ExternalWorkActionListResponse,
+  type ExternalWorkActionMutationResponse,
+  type ExternalWorkActionStatus,
   type ExternalWorkItem,
   type ExternalWorkDetailResponse,
   type ExternalWorkListResponse,
@@ -187,6 +196,19 @@ const MAX_EXTRACTED_ARTIFACTS_PER_TOOL = 6;
 const CHANNEL_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const externalSourceKinds = ["github", "linear"] as const satisfies readonly ExternalSourceKind[];
 const externalWorkItemKinds = ["github_pull_request", "github_issue", "linear_issue"] as const satisfies readonly ExternalWorkItemKind[];
+const externalWorkActionKinds = ["github_comment", "github_label"] as const satisfies readonly ExternalWorkActionKind[];
+const externalWorkActionStatuses = [
+  "proposed",
+  "waiting_for_approval",
+  "approved",
+  "executing",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "denied",
+  "expired",
+  "stale_target",
+] as const satisfies readonly ExternalWorkActionStatus[];
 const externalWorkSchedulerStatuses = [
   "discovered",
   "claimed",
@@ -573,6 +595,22 @@ async function routeRequest(
 
   if (url.pathname === "/external-work/reconcile") {
     await handleExternalWorkReconcile(request, response, config, storeRegistry, secretResolver, externalWorkFetch);
+    return;
+  }
+
+  if (url.pathname === "/external-work/actions/propose") {
+    await handleExternalWorkActionPropose(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/external-work/actions") {
+    await handleExternalWorkActionsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  const externalWorkActionRoute = parseExternalWorkActionRoute(url.pathname);
+  if (externalWorkActionRoute) {
+    await handleExternalWorkActionItem(request, response, config, storeRegistry, externalWorkActionRoute);
     return;
   }
 
@@ -3518,6 +3556,132 @@ function buildExternalWorkView(store: RunStore, externalWork: ExternalWorkRecord
   };
 }
 
+async function handleExternalWorkActionPropose(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work action propose` });
+    return;
+  }
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const result = proposeExternalWorkAction({
+      store: storeRegistry.getStore(cwd),
+      request: readExternalWorkActionProposeRequest(body),
+      now: new Date().toISOString(),
+    });
+    const responseBody: ExternalWorkActionMutationResponse = {
+      cwd,
+      action: result.action,
+      ...(result.approval ? { approval: result.approval } : {}),
+      artifacts: result.artifacts,
+      duplicate: result.duplicate,
+    };
+    writeJson(response, 200, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleExternalWorkActionsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work actions list` });
+    return;
+  }
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const actions = store.listExternalWorkActions({
+      externalWorkId: url.searchParams.get("externalWorkId") ?? undefined,
+      channelId: url.searchParams.get("channelId") ?? undefined,
+      status: readOptionalExternalWorkActionStatusQuery(url),
+      actionKind: readOptionalExternalWorkActionKindQuery(url),
+      limit: readOptionalIntegerQuery(url, "limit", 1),
+    });
+    const responseBody: ExternalWorkActionListResponse = {
+      cwd,
+      actions: actions.map((action) => buildExternalWorkActionView(store, action)),
+    };
+    writeJson(response, 200, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleExternalWorkActionItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  route: { readonly actionId: string; readonly action?: "cancel" },
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  const store = storeRegistry.getStore(cwd);
+  if (!route.action && request.method === "GET") {
+    const action = store.getExternalWorkAction(route.actionId);
+    if (!action) {
+      writeJson(response, 404, { error: "external_work_action_not_found", message: `External work action not found: ${route.actionId}` });
+      return;
+    }
+    const responseBody: ExternalWorkActionDetailResponse = {
+      cwd,
+      action: buildExternalWorkActionView(store, action),
+    };
+    writeJson(response, 200, responseBody);
+    return;
+  }
+  if (route.action === "cancel") {
+    if (request.method !== "POST") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work action cancel` });
+      return;
+    }
+    try {
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const result = cancelExternalWorkAction({
+        store,
+        actionId: route.actionId,
+        request: isRecord(body) ? { reason: readOptionalString(body, "reason") } : undefined,
+        now: new Date().toISOString(),
+      });
+      const responseBody: ExternalWorkActionMutationResponse = {
+        cwd,
+        action: result.action,
+        ...(result.approval ? { approval: result.approval } : {}),
+        artifacts: result.artifacts,
+      };
+      writeJson(response, 200, responseBody);
+    } catch (error) {
+      writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+  writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work action detail` });
+}
+
 async function handleExternalGitHubPoll(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3989,6 +4153,7 @@ function handleApprovalsCollection(
     expireStalePendingApprovals(store, {
       runId: url.searchParams.get("runId") ?? undefined,
       mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
+      externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
     });
     writeJson(response, 200, {
       cwd,
@@ -3996,6 +4161,7 @@ function handleApprovalsCollection(
         status: readOptionalApprovalStatusQuery(url),
         runId: url.searchParams.get("runId") ?? undefined,
         mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
+        externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       }),
     });
@@ -4057,6 +4223,7 @@ async function handleApprovalItem(
       return;
     }
     appendApprovalDecisionEvent(store, updated);
+    syncExternalWorkActionForApproval(store, updated, now);
     writeJson(response, 200, { approval: updated });
   } catch (error) {
     writeJson(response, 400, {
@@ -5533,11 +5700,20 @@ function approvalDecisionEventType(approval: ApprovalRequest): Extract<RunEventT
   return "approval_denied";
 }
 
-function expireStalePendingApprovals(store: RunStore, options: { readonly runId?: string; readonly mediaJobId?: string } = {}): void {
+function expireStalePendingApprovals(
+  store: RunStore,
+  options: { readonly runId?: string; readonly mediaJobId?: string; readonly externalWorkActionId?: string } = {},
+): void {
   const now = new Date().toISOString();
   let safety = 0;
   for (;;) {
-    const pending = store.listApprovalRequests({ status: "pending", runId: options.runId, mediaJobId: options.mediaJobId, limit: 500 });
+    const pending = store.listApprovalRequests({
+      status: "pending",
+      runId: options.runId,
+      mediaJobId: options.mediaJobId,
+      externalWorkActionId: options.externalWorkActionId,
+      limit: 500,
+    });
     const expired = pending.filter((approval) => approval.expiresAt && approval.expiresAt <= now);
     if (expired.length === 0) {
       return;
@@ -5569,6 +5745,7 @@ function expireApproval(store: RunStore, approval: ApprovalRequest, now: string)
   );
   if (expired) {
     appendApprovalDecisionEvent(store, expired);
+    syncExternalWorkActionForApproval(store, expired, now);
   }
   return expired;
 }
@@ -6939,6 +7116,17 @@ function parseApprovalRoute(pathname: string): { readonly approvalId: string; re
   }
   if (segments.length === 3 && segments[0] === "approvals" && (segments[2] === "approve" || segments[2] === "deny")) {
     return { approvalId: segments[1], action: segments[2] };
+  }
+  return undefined;
+}
+
+function parseExternalWorkActionRoute(pathname: string): { readonly actionId: string; readonly action?: "cancel" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "external-work" && segments[1] === "actions") {
+    return { actionId: segments[2] };
+  }
+  if (segments.length === 4 && segments[0] === "external-work" && segments[1] === "actions" && segments[3] === "cancel") {
+    return { actionId: segments[2], action: "cancel" };
   }
   return undefined;
 }
@@ -8952,6 +9140,28 @@ function readOptionalExternalWorkItemKindQuery(url: URL): ExternalWorkItemKind |
   return value as ExternalWorkItemKind;
 }
 
+function readOptionalExternalWorkActionKindQuery(url: URL): ExternalWorkActionKind | undefined {
+  const value = url.searchParams.get("actionKind");
+  if (value === null) {
+    return undefined;
+  }
+  if (!externalWorkActionKinds.includes(value as ExternalWorkActionKind)) {
+    throw new Error(`actionKind must be one of: ${externalWorkActionKinds.join(", ")}`);
+  }
+  return value as ExternalWorkActionKind;
+}
+
+function readOptionalExternalWorkActionStatusQuery(url: URL): ExternalWorkActionStatus | undefined {
+  const value = url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (!externalWorkActionStatuses.includes(value as ExternalWorkActionStatus)) {
+    throw new Error(`status must be one of: ${externalWorkActionStatuses.join(", ")}`);
+  }
+  return value as ExternalWorkActionStatus;
+}
+
 function readOptionalExternalWorkSchedulerStatusQuery(url: URL): ExternalWorkSchedulerStatus | undefined {
   const value = url.searchParams.get("schedulerStatus") ?? url.searchParams.get("status");
   if (value === null) {
@@ -8961,6 +9171,47 @@ function readOptionalExternalWorkSchedulerStatusQuery(url: URL): ExternalWorkSch
     throw new Error(`schedulerStatus must be one of: ${externalWorkSchedulerStatuses.join(", ")}`);
   }
   return value as ExternalWorkSchedulerStatus;
+}
+
+function readExternalWorkActionProposeRequest(value: unknown): {
+  readonly externalWorkId: string;
+  readonly actionKind: ExternalWorkActionKind;
+  readonly payload: { readonly type: "github_comment"; readonly body: string } | { readonly type: "github_label"; readonly labels: readonly string[] };
+  readonly approvalRequirement?: "standard" | "strict";
+  readonly expiresAt?: string;
+} {
+  if (!isRecord(value)) {
+    throw new Error("external work action proposal must be a JSON object");
+  }
+  const externalWorkId = readString(value, "externalWorkId");
+  const actionKind = readString(value, "actionKind") as ExternalWorkActionKind;
+  if (!externalWorkActionKinds.includes(actionKind)) {
+    throw new Error(`actionKind must be one of: ${externalWorkActionKinds.join(", ")}`);
+  }
+  const payload = readOptionalObject(value, "payload");
+  if (!payload) {
+    throw new Error("payload must be an object");
+  }
+  const payloadType = readString(payload, "type");
+  const approvalRequirement = readOptionalString(value, "approvalRequirement");
+  if (approvalRequirement !== undefined && approvalRequirement !== "standard" && approvalRequirement !== "strict") {
+    throw new Error("approvalRequirement must be standard or strict");
+  }
+  const parsedPayload = payloadType === "github_comment"
+    ? { type: "github_comment" as const, body: readString(payload, "body") }
+    : payloadType === "github_label"
+      ? { type: "github_label" as const, labels: readOptionalStringArray(payload, "labels") ?? [] }
+      : undefined;
+  if (!parsedPayload) {
+    throw new Error("payload.type must be github_comment or github_label");
+  }
+  return {
+    externalWorkId,
+    actionKind,
+    payload: parsedPayload,
+    approvalRequirement,
+    expiresAt: readOptionalString(value, "expiresAt"),
+  };
 }
 
 function readOptionalSecretPurposeQuery(url: URL): SecretPurpose | null | undefined {

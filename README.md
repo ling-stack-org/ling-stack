@@ -277,12 +277,13 @@ node packages/cli/dist/index.js task create --channel channel_... --title "Inspe
 
 ### 7. Import or poll GitHub external work
 
-GitHub external work orchestration is read-only in Phase 2. Fixture import parses
+GitHub external work orchestration is read-only through Phase 2. Fixture import parses
 `WORKFLOW.md`, normalizes a PR or issue payload, creates or reuses a Ling workflow and
 step, and writes evidence artifacts. Manual poll uses GitHub read-only REST endpoints
 to discover open PR/issue candidates, claim each subject, prepare isolated local
 workspace state, and reconcile durable scheduler state. Neither path starts the runner
-or mutates GitHub.
+or mutates GitHub. Phase 3.0 adds local proposed action records for GitHub comments and
+labels, linked to approval requests, but still does not execute GitHub mutations.
 
 For live poll/reconcile, prefer authenticated GitHub reads. The bundled example
 `WORKFLOW.md` uses `source.secretRef: env:GITHUB_TOKEN`; start or restart the daemon
@@ -306,12 +307,26 @@ node packages/cli/dist/index.js external-work list \
 
 node packages/cli/dist/index.js external-work show external_work_...
 
+node packages/cli/dist/index.js external-work actions propose-comment \
+  --external-work external_work_... \
+  --body-file comment.md \
+  --approval standard
+
+node packages/cli/dist/index.js external-work actions list \
+  --external-work external_work_... \
+  --status waiting_for_approval
+
+node packages/cli/dist/index.js external-work actions show external_work_action_...
+
+node packages/cli/dist/index.js external-work actions cancel external_work_action_... \
+  --reason "No longer needed"
+
 node packages/cli/dist/index.js external-work reconcile \
   --channel channel_... \
   --workflow-path WORKFLOW.md
 ```
 
-Use `--json` for full import, poll, list, show, and reconcile responses. A copy-pasteable temp
+Use `--json` for full import, poll, list, show, action, and reconcile responses. A copy-pasteable temp
 workspace smoke path lives in
 [examples/external-work/github](examples/external-work/github/README.md).
 

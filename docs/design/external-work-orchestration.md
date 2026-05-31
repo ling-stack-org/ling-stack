@@ -539,6 +539,8 @@ Implementation plan: [External Work Phase 3 Implementation](external-work-phase-
   as the broader cross-source concept.
 - Link proposed actions to durable approval requests instead of overloading run or media
   job ownership.
+- Land Phase 3.0 as propose/list/show/cancel only: local action rows, approval rows, and
+  artifacts are durable, but no GitHub mutation executes yet.
 - Add UI approval cards.
 - Execute approved GitHub comments and labels through an explicit daemon action executor.
 - Re-read the GitHub subject immediately before mutation and fail stale targets without

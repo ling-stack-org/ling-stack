@@ -143,14 +143,19 @@ import {
   type RunStatus,
 } from "../run-types.js";
 import {
+  createExternalWorkActionId,
   createExternalWorkId,
+  type CreateExternalWorkActionInput,
   type CreateExternalWorkWorkflowInput,
+  type ExternalWorkAction,
   type ExternalWorkItem,
   type ExternalWorkRecord,
   type ExternalWorkSchedulerState,
   type ExternalWorkWorkflowResult,
+  type ListExternalWorkActionsOptions,
   type ListExternalWorkRecordsOptions,
   type ListExternalWorkSchedulerStatesOptions,
+  type UpdateExternalWorkActionInput,
   type UpdateExternalWorkSchedulerStateInput,
   type UpsertExternalWorkSchedulerStateInput,
 } from "../external-work-types.js";
@@ -226,6 +231,8 @@ const EXTERNAL_WORK_MIGRATION_VERSION = 17;
 const EXTERNAL_WORK_MIGRATION_NAME = "create_external_work_items";
 const EXTERNAL_WORK_SCHEDULER_MIGRATION_VERSION = 18;
 const EXTERNAL_WORK_SCHEDULER_MIGRATION_NAME = "create_external_work_scheduler_state";
+const EXTERNAL_WORK_ACTIONS_MIGRATION_VERSION = 19;
+const EXTERNAL_WORK_ACTIONS_MIGRATION_NAME = "create_external_work_actions";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -2929,6 +2936,171 @@ export class SqliteRunStore implements RunStore {
     return this.getExternalWorkRecord(id);
   }
 
+  createExternalWorkAction(input: CreateExternalWorkActionInput, now: string): ExternalWorkAction {
+    this.assertChannelExists(input.channelId);
+    const externalWork = this.getExternalWorkRecord(input.externalWorkId);
+    if (!externalWork) {
+      throw new Error(`External work item not found: ${input.externalWorkId}`);
+    }
+    if (externalWork.channelId !== input.channelId) {
+      throw new Error(`External work item does not belong to channel: ${input.channelId}`);
+    }
+    const existing = this.getExternalWorkActionByIdempotency(input.sourceKind, input.idempotencyKey);
+    if (existing) {
+      return existing;
+    }
+    const action: ExternalWorkAction = omitUndefined({
+      id: createExternalWorkActionId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      externalWorkId: input.externalWorkId,
+      sourceKind: input.sourceKind,
+      actionKind: input.actionKind,
+      status: input.status,
+      approvalId: input.approvalId,
+      idempotencyKey: input.idempotencyKey,
+      target: input.target,
+      payload: input.payload,
+      approvalRequirement: input.approvalRequirement,
+      artifactIds: [...(input.artifactIds ?? [])],
+      executionAttemptCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    this.database
+      .prepare(`
+        INSERT INTO external_work_actions (
+          id,
+          workspace_id,
+          channel_id,
+          external_work_id,
+          source_kind,
+          action_kind,
+          status,
+          approval_id,
+          idempotency_key,
+          target_json,
+          payload_json,
+          approval_requirement,
+          artifact_ids_json,
+          execution_attempt_count,
+          last_attempt_at,
+          next_attempt_at,
+          last_error_code,
+          last_error_message,
+          created_at,
+          updated_at,
+          executed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        action.id,
+        action.workspaceId,
+        action.channelId,
+        action.externalWorkId,
+        action.sourceKind,
+        action.actionKind,
+        action.status,
+        action.approvalId ?? null,
+        action.idempotencyKey,
+        stringifyJson(action.target),
+        stringifyJson(action.payload),
+        action.approvalRequirement,
+        stringifyJson(action.artifactIds),
+        action.executionAttemptCount,
+        null,
+        null,
+        null,
+        null,
+        action.createdAt,
+        action.updatedAt,
+        null,
+      );
+
+    const created = this.getExternalWorkAction(action.id);
+    if (!created) {
+      throw new Error(`Failed to create external work action: ${action.id}`);
+    }
+    return created;
+  }
+
+  getExternalWorkAction(id: string): ExternalWorkAction | undefined {
+    const row = this.database.prepare(externalWorkActionSelectSql("WHERE id = ?")).get(id);
+    return row ? mapExternalWorkAction(row) : undefined;
+  }
+
+  getExternalWorkActionByIdempotency(sourceKind: ExternalWorkAction["sourceKind"], idempotencyKey: string): ExternalWorkAction | undefined {
+    const row = this.database
+      .prepare(externalWorkActionSelectSql("WHERE workspace_id = ? AND source_kind = ? AND idempotency_key = ?"))
+      .get(DEFAULT_WORKSPACE_ID, sourceKind, idempotencyKey);
+    return row ? mapExternalWorkAction(row) : undefined;
+  }
+
+  listExternalWorkActions(options: ListExternalWorkActionsOptions = {}): ExternalWorkAction[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.externalWorkId) {
+      clauses.push("external_work_id = ?");
+      params.push(options.externalWorkId);
+    }
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.actionKind) {
+      clauses.push("action_kind = ?");
+      params.push(options.actionKind);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${externalWorkActionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapExternalWorkAction);
+  }
+
+  updateExternalWorkAction(id: string, input: UpdateExternalWorkActionInput, now: string): ExternalWorkAction | undefined {
+    const existing = this.getExternalWorkAction(id);
+    if (!existing) {
+      return undefined;
+    }
+    this.database
+      .prepare(`
+        UPDATE external_work_actions
+        SET
+          status = ?,
+          approval_id = ?,
+          artifact_ids_json = ?,
+          execution_attempt_count = ?,
+          last_attempt_at = ?,
+          next_attempt_at = ?,
+          last_error_code = ?,
+          last_error_message = ?,
+          updated_at = ?,
+          executed_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        input.status ?? existing.status,
+        input.approvalId === undefined ? existing.approvalId ?? null : input.approvalId,
+        stringifyJson(input.artifactIds ?? existing.artifactIds),
+        input.executionAttemptCount ?? existing.executionAttemptCount,
+        input.lastAttemptAt === undefined ? existing.lastAttemptAt ?? null : input.lastAttemptAt,
+        input.nextAttemptAt === undefined ? existing.nextAttemptAt ?? null : input.nextAttemptAt,
+        input.lastErrorCode === undefined ? existing.lastErrorCode ?? null : input.lastErrorCode,
+        input.lastErrorMessage === undefined ? existing.lastErrorMessage ?? null : input.lastErrorMessage,
+        now,
+        input.executedAt === undefined ? existing.executedAt ?? null : input.executedAt,
+        id,
+      );
+    return this.getExternalWorkAction(id);
+  }
+
   upsertExternalWorkSchedulerState(input: UpsertExternalWorkSchedulerStateInput, now: string): ExternalWorkSchedulerState {
     this.assertChannelExists(input.channelId);
     if (!this.getExternalWorkRecord(input.externalWorkId)) {
@@ -3429,13 +3601,15 @@ export class SqliteRunStore implements RunStore {
     const runId = normalizeOptionalOwnerId(input.runId);
     const taskId = normalizeOptionalOwnerId(input.taskId);
     const mediaJobId = normalizeOptionalOwnerId(input.mediaJobId);
+    const externalWorkActionId = normalizeOptionalOwnerId(input.externalWorkActionId);
     const hasRunOwner = Boolean(runId && taskId);
     const hasMediaOwner = Boolean(mediaJobId);
+    const hasExternalWorkActionOwner = Boolean(externalWorkActionId);
     if (Boolean(runId) !== Boolean(taskId)) {
       throw new Error("Run approval requests require both runId and taskId.");
     }
-    if (hasRunOwner === hasMediaOwner) {
-      throw new Error("Approval requests require exactly one owner: runId/taskId or mediaJobId.");
+    if ([hasRunOwner, hasMediaOwner, hasExternalWorkActionOwner].filter(Boolean).length !== 1) {
+      throw new Error("Approval requests require exactly one owner: runId/taskId, mediaJobId, or externalWorkActionId.");
     }
     if (runId && !this.getRun(runId)) {
       throw new Error(`Run not found: ${runId}`);
@@ -3443,12 +3617,16 @@ export class SqliteRunStore implements RunStore {
     if (mediaJobId && !this.getMediaJob(mediaJobId)) {
       throw new Error(`Media job not found: ${mediaJobId}`);
     }
+    if (externalWorkActionId && !this.getExternalWorkAction(externalWorkActionId)) {
+      throw new Error(`External work action not found: ${externalWorkActionId}`);
+    }
 
     const approval: ApprovalRequest = {
       id: createApprovalRequestId(),
       runId,
       taskId,
       mediaJobId,
+      externalWorkActionId,
       channelId: input.channelId,
       toolCallId: input.toolCallId,
       actionType: input.actionType,
@@ -3468,6 +3646,7 @@ export class SqliteRunStore implements RunStore {
           run_id,
           task_id,
           media_job_id,
+          external_work_action_id,
           channel_id,
           tool_call_id,
           action_type,
@@ -3481,13 +3660,14 @@ export class SqliteRunStore implements RunStore {
           resolved_at,
           resolved_by,
           decision_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         approval.id,
         approval.runId ?? null,
         approval.taskId ?? null,
         approval.mediaJobId ?? null,
+        approval.externalWorkActionId ?? null,
         approval.channelId ?? null,
         approval.toolCallId ?? null,
         approval.actionType,
@@ -3529,6 +3709,10 @@ export class SqliteRunStore implements RunStore {
     if (options.mediaJobId) {
       clauses.push("media_job_id = ?");
       params.push(options.mediaJobId);
+    }
+    if (options.externalWorkActionId) {
+      clauses.push("external_work_action_id = ?");
+      params.push(options.externalWorkActionId);
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
@@ -4641,6 +4825,143 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(EXTERNAL_WORK_SCHEDULER_MIGRATION_VERSION, EXTERNAL_WORK_SCHEDULER_MIGRATION_NAME);
       }
     }
+
+    const hasExternalWorkActionsMigration = this.hasMigration(EXTERNAL_WORK_ACTIONS_MIGRATION_VERSION);
+    if (
+      !hasExternalWorkActionsMigration ||
+      !this.hasTable("external_work_actions") ||
+      !this.hasColumn("approval_requests", "external_work_action_id")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS external_work_actions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          external_work_id TEXT NOT NULL,
+          source_kind TEXT NOT NULL,
+          action_kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          approval_id TEXT,
+          idempotency_key TEXT NOT NULL,
+          target_json TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          approval_requirement TEXT NOT NULL,
+          artifact_ids_json TEXT NOT NULL,
+          execution_attempt_count INTEGER NOT NULL,
+          last_attempt_at TEXT,
+          next_attempt_at TEXT,
+          last_error_code TEXT,
+          last_error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          executed_at TEXT,
+          FOREIGN KEY(external_work_id) REFERENCES external_work_items(id) ON DELETE CASCADE,
+          FOREIGN KEY(approval_id) REFERENCES approval_requests(id) ON DELETE SET NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_external_work_actions_idempotency
+        ON external_work_actions(workspace_id, source_kind, idempotency_key);
+
+        CREATE INDEX IF NOT EXISTS idx_external_work_actions_external_work_status
+        ON external_work_actions(workspace_id, external_work_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_external_work_actions_approval
+        ON external_work_actions(workspace_id, approval_id);
+
+        CREATE INDEX IF NOT EXISTS idx_external_work_actions_updated
+        ON external_work_actions(workspace_id, updated_at);
+      `);
+
+      if (!this.hasColumn("approval_requests", "external_work_action_id")) {
+        this.database.exec(`
+          DROP TABLE IF EXISTS approval_requests_next;
+
+          CREATE TABLE approval_requests_next (
+            id TEXT PRIMARY KEY,
+            run_id TEXT,
+            task_id TEXT,
+            media_job_id TEXT,
+            external_work_action_id TEXT,
+            channel_id TEXT,
+            tool_call_id TEXT,
+            action_type TEXT NOT NULL,
+            risk TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT,
+            resolved_at TEXT,
+            resolved_by TEXT,
+            decision_reason TEXT,
+            CHECK (
+              (run_id IS NOT NULL AND task_id IS NOT NULL AND media_job_id IS NULL AND external_work_action_id IS NULL)
+              OR (run_id IS NULL AND task_id IS NULL AND media_job_id IS NOT NULL AND external_work_action_id IS NULL)
+              OR (run_id IS NULL AND task_id IS NULL AND media_job_id IS NULL AND external_work_action_id IS NOT NULL)
+            ),
+            FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY(media_job_id) REFERENCES media_jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY(external_work_action_id) REFERENCES external_work_actions(id) ON DELETE CASCADE
+          );
+
+          INSERT INTO approval_requests_next (
+            id,
+            run_id,
+            task_id,
+            media_job_id,
+            external_work_action_id,
+            channel_id,
+            tool_call_id,
+            action_type,
+            risk,
+            title,
+            description,
+            payload_json,
+            status,
+            created_at,
+            expires_at,
+            resolved_at,
+            resolved_by,
+            decision_reason
+          )
+          SELECT
+            id,
+            run_id,
+            task_id,
+            media_job_id,
+            NULL,
+            channel_id,
+            tool_call_id,
+            action_type,
+            risk,
+            title,
+            description,
+            payload_json,
+            status,
+            created_at,
+            expires_at,
+            resolved_at,
+            resolved_by,
+            decision_reason
+          FROM approval_requests;
+
+          DROP TABLE approval_requests;
+          ALTER TABLE approval_requests_next RENAME TO approval_requests;
+
+          CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+          CREATE INDEX IF NOT EXISTS idx_approval_requests_run ON approval_requests(run_id);
+          CREATE INDEX IF NOT EXISTS idx_approval_requests_task ON approval_requests(task_id);
+          CREATE INDEX IF NOT EXISTS idx_approval_requests_media_job ON approval_requests(media_job_id);
+          CREATE INDEX IF NOT EXISTS idx_approval_requests_external_work_action ON approval_requests(external_work_action_id);
+          CREATE INDEX IF NOT EXISTS idx_approval_requests_created_at ON approval_requests(created_at);
+        `);
+      }
+
+      if (!hasExternalWorkActionsMigration) {
+        this.recordMigration(EXTERNAL_WORK_ACTIONS_MIGRATION_VERSION, EXTERNAL_WORK_ACTIONS_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -5302,6 +5623,7 @@ function mapApprovalRequest(row: Record<string, SQLOutputValue>): ApprovalReques
     runId: readNullableString(row, "run_id"),
     taskId: readNullableString(row, "task_id"),
     mediaJobId: readNullableString(row, "media_job_id"),
+    externalWorkActionId: readNullableString(row, "external_work_action_id"),
     channelId: readNullableString(row, "channel_id"),
     toolCallId: readNullableString(row, "tool_call_id"),
     actionType: readString(row, "action_type") as ApprovalRequest["actionType"],
@@ -5399,6 +5721,32 @@ function mapExternalWorkSchedulerState(row: Record<string, SQLOutputValue>): Ext
     lastReconciledAt: readNullableString(row, "last_reconciled_at"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapExternalWorkAction(row: Record<string, SQLOutputValue>): ExternalWorkAction {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    externalWorkId: readString(row, "external_work_id"),
+    sourceKind: readString(row, "source_kind") as ExternalWorkAction["sourceKind"],
+    actionKind: readString(row, "action_kind") as ExternalWorkAction["actionKind"],
+    status: readString(row, "status") as ExternalWorkAction["status"],
+    approvalId: readNullableString(row, "approval_id"),
+    idempotencyKey: readString(row, "idempotency_key"),
+    target: parseJsonObject(readString(row, "target_json")) as unknown as ExternalWorkAction["target"],
+    payload: parseJsonObject(readString(row, "payload_json")) as unknown as ExternalWorkAction["payload"],
+    approvalRequirement: readString(row, "approval_requirement") as ExternalWorkAction["approvalRequirement"],
+    artifactIds: parseJsonStringArray(readString(row, "artifact_ids_json")),
+    executionAttemptCount: readNumber(row, "execution_attempt_count"),
+    lastAttemptAt: readNullableString(row, "last_attempt_at"),
+    nextAttemptAt: readNullableString(row, "next_attempt_at"),
+    lastErrorCode: readNullableString(row, "last_error_code"),
+    lastErrorMessage: readNullableString(row, "last_error_message"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    executedAt: readNullableString(row, "executed_at"),
   });
 }
 
@@ -5889,6 +6237,7 @@ function approvalRequestSelectSql(whereClause: string): string {
       run_id,
       task_id,
       media_job_id,
+      external_work_action_id,
       channel_id,
       tool_call_id,
       action_type,
@@ -5991,6 +6340,35 @@ function externalWorkSchedulerStateSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM external_work_scheduler_state
+    ${whereClause}
+  `;
+}
+
+function externalWorkActionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      external_work_id,
+      source_kind,
+      action_kind,
+      status,
+      approval_id,
+      idempotency_key,
+      target_json,
+      payload_json,
+      approval_requirement,
+      artifact_ids_json,
+      execution_attempt_count,
+      last_attempt_at,
+      next_attempt_at,
+      last_error_code,
+      last_error_message,
+      created_at,
+      updated_at,
+      executed_at
+    FROM external_work_actions
     ${whereClause}
   `;
 }

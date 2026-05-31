@@ -90,6 +90,25 @@ external_work_id="$(node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url
 
 node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work show "$external_work_id"
 
+cat > "$tmpdir/proposed-comment.md" <<'EOF'
+Local smoke proposal only. This creates a Ling approval-gated action record and does not post to GitHub.
+EOF
+
+node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work actions propose-comment \
+  --external-work "$external_work_id" \
+  --body-file "$tmpdir/proposed-comment.md" \
+  --approval standard
+
+action_id="$(node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" --json external-work actions list \
+  --external-work "$external_work_id" \
+  --status waiting_for_approval \
+  | node -e 'let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => console.log(JSON.parse(input).actions[0].action.id));')"
+
+node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work actions show "$action_id"
+
+node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work actions cancel "$action_id" \
+  --reason "Smoke path cleanup"
+
 node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work reconcile \
   --channel "$channel_id" \
   --workflow-path WORKFLOW.md
@@ -99,6 +118,9 @@ node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON
 
 The second poll should return `Duplicates: 1`, and `runs list` should stay empty
 because external work polling never starts a runner.
+
+The action proposal commands create local `external_work_actions`, approval, and artifact
+records only. They do not call GitHub mutation APIs.
 
 `--execute-hooks` is optional on poll. When enabled, only `afterCreate` and `beforeRun`
 run inside `.ling-stack/external-workspaces/github/...` with local evidence artifacts.
