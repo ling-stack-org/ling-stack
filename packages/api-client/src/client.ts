@@ -53,6 +53,8 @@ import type {
   ExternalWorkActionListResponse,
   ExternalWorkActionMutationResponse,
   ExternalWorkActionProposeRequest,
+  ExternalWorkCiTriageRequest,
+  ExternalWorkCiTriageResponse,
   ExternalWorkDetailResponse,
   ExternalWorkListRequest,
   ExternalWorkListResponse,
@@ -645,6 +647,10 @@ export class LingDaemonClient {
 
   async pollGitHubExternalWork(cwd: string, input: ExternalWorkPollRequest): Promise<ExternalWorkPollResponse> {
     return this.post("/external-work/github/poll", { cwd }, input);
+  }
+
+  async triageGitHubExternalWorkCi(cwd: string, input: ExternalWorkCiTriageRequest): Promise<ExternalWorkCiTriageResponse> {
+    return this.post("/external-work/github/ci/triage", { cwd }, input);
   }
 
   async reconcileExternalWork(cwd: string, input: ExternalWorkReconcileRequest = {}): Promise<ExternalWorkReconcileResponse> {

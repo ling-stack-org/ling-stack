@@ -15,6 +15,7 @@ export * from "./secrets.js";
 export * from "./external-work-types.js";
 export * from "./external-work.js";
 export * from "./external-work-actions.js";
+export * from "./external-work-ci-triage.js";
 export * from "./external-work-scheduler.js";
 export * from "./workspace-types.js";
 export * from "./storage/event-log.js";

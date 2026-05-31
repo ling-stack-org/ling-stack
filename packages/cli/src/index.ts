@@ -1620,7 +1620,18 @@ async function handleExternalWorkGitHub(args: readonly string[], options: Global
   if (subcommand === "poll") {
     return await handleExternalWorkGitHubPoll(rest, options);
   }
+  if (subcommand === "ci") {
+    return await handleExternalWorkGitHubCi(rest, options);
+  }
   throw new CliError(2, "unknown_command", `Unknown external-work github command: ${subcommand}`);
+}
+
+async function handleExternalWorkGitHubCi(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "triage", ...rest] = args;
+  if (subcommand === "triage") {
+    return await handleExternalWorkGitHubCiTriage(rest, options);
+  }
+  throw new CliError(2, "unknown_command", `Unknown external-work github ci command: ${subcommand}`);
 }
 
 async function handleExternalWorkActions(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -1842,6 +1853,34 @@ async function handleExternalWorkGitHubPoll(args: readonly string[], options: Gl
     return 0;
   }
   printExternalWorkPoll(response);
+  return 0;
+}
+
+async function handleExternalWorkGitHubCiTriage(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["external-work", "workflow-path", "limit"]),
+    booleanFlags: new Set(["no-create-task"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work github ci triage");
+  const externalWorkId = getFlag(parsed, "external-work");
+  if (!externalWorkId) {
+    throw new CliError(2, "missing_option", "external-work github ci triage requires --external-work <id>.");
+  }
+  const limit = readOptionalIntegerFlag(parsed, "limit");
+  if (limit !== undefined && limit > 25) {
+    throw new CliError(2, "bad_number", "--limit must be at most 25.");
+  }
+  const response = await requestJson(options, "POST", "/external-work/github/ci/triage", { cwd: options.cwd }, removeUndefined({
+    externalWorkId,
+    workflowPath: getFlag(parsed, "workflow-path"),
+    limit,
+    createTask: parsed.booleans.has("no-create-task") ? false : undefined,
+  }));
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkCiTriage(response);
   return 0;
 }
 
@@ -3596,6 +3635,36 @@ function printExternalWorkPoll(response: unknown): void {
   printExternalWorkResults(response);
 }
 
+function printExternalWorkCiTriage(response: unknown): void {
+  console.log("External work CI triage:");
+  console.log(`Triaged: ${readNumber(response, "triaged") ?? 0}`);
+  console.log(`Task created: ${readNumber(response, "taskCreated") ?? 0}`);
+  console.log(`Duplicates: ${readNumber(response, "duplicates") ?? 0}`);
+  console.log(`Blocked: ${readNumber(response, "blocked") ?? 0}`);
+  console.log(`Stale: ${readNumber(response, "stale") ?? 0}`);
+  console.log(`Failed: ${readNumber(response, "failed") ?? 0}`);
+  const records = readArray(response, "records");
+  if (records.length === 0) {
+    console.log("No failing CI records found.");
+    return;
+  }
+  printTable(
+    ["Status", "Check", "Target", "Task", "Artifacts", "Error"],
+    records.map((view) => {
+      const triage = readOptionalRecord(view, "triage");
+      const task = readOptionalRecord(view, "task");
+      return [
+        readString(triage, "status") ?? "",
+        truncate(readString(triage, "checkName") ?? "", 34),
+        `${readString(triage, "repository") ?? ""}#${readNumber(triage, "subjectNumber") ?? ""}`,
+        truncate(readString(task, "id") ?? readString(triage, "taskId") ?? "", 28),
+        String(readArray(view, "artifacts").length),
+        truncate(readString(triage, "lastErrorMessage") ?? "", 48),
+      ];
+    }),
+  );
+}
+
 function printExternalWorkReconcile(response: unknown): void {
   console.log("External work reconcile:");
   console.log(`Expired leases: ${readNumber(response, "expiredLeases") ?? 0}`);
@@ -3963,6 +4032,7 @@ Usage:
   ling-stack [global options] runs cancel <id>
   ling-stack [global options] external-work github import --channel <id> --event-type <event> --payload-file <payload.json>
   ling-stack [global options] external-work github poll --channel <id> [--workflow-path WORKFLOW.md]
+  ling-stack [global options] external-work github ci triage --external-work <id> [--workflow-path WORKFLOW.md]
   ling-stack [global options] external-work list [--channel <id>] [--status ready]
   ling-stack [global options] external-work show <externalWorkId>
   ling-stack [global options] external-work actions propose-comment --external-work <id> --body-file comment.md
@@ -4086,6 +4156,7 @@ function printExternalWorkHelp(): void {
   console.log(`Usage:
   ling-stack external-work github import --channel <channelId> --event-type <eventType> --payload-file <payload.json> [options]
   ling-stack external-work github poll --channel <channelId> [options]
+  ling-stack external-work github ci triage --external-work <externalWorkId> [options]
   ling-stack external-work list [--channel <channelId>] [--status ready|blocked|retry_wait|terminal] [--limit 50]
   ling-stack external-work show <externalWorkId>
   ling-stack external-work actions propose-comment --external-work <id> --body-file comment.md [--approval standard|strict]
@@ -4103,6 +4174,7 @@ Options:
   --workflow-path <path>          WORKFLOW.md path resolved and bounded by the daemon
   --workflow-markdown-file <path> Read workflow markdown from a local file and send it inline
   --limit <n>                     Poll at most n GitHub candidates, max 100
+  --no-create-task                CI triage writes records/artifacts without creating a local fix task
   --execute-hooks                 Run afterCreate/beforeRun hooks inside isolated workspaces
   --status <status>               Filter external-work list by scheduler status
   --source-kind <kind>            Filter external-work list by source kind
@@ -4114,6 +4186,7 @@ Options:
 Behavior:
   Import creates or reuses local Ling workflow records from local fixtures.
   Poll uses read-only GitHub API calls for PR and issue discovery.
+  CI triage reads GitHub checks/actions logs for an existing PR external work item and creates local evidence/tasks.
   List and show read local workflow, scheduler, workspace, and artifact state.
   Action propose/list/show/cancel manages local proposed actions and approvals only.
   Action execute requires an approved action, revalidates the GitHub target, then only

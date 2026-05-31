@@ -8,6 +8,16 @@ read-first: inspect failing GitHub checks and Actions jobs, write local evidence
 artifacts, create or reuse a scoped Ling task, and optionally let the existing task/run
 path perform a local fix under normal channel policy.
 
+Phase 4.0 implements the manual read-only path:
+
+- `POST /external-work/github/ci/triage?cwd=...`
+- `LingDaemonClient.triageGitHubExternalWorkCi()`
+- `ling-stack external-work github ci triage --external-work <id>`
+
+The shipped CLI/API path creates local triage records, evidence artifacts, and fix
+tasks by default. `startRun: true` remains rejected in Phase 4.0, so no runner starts
+from CI triage.
+
 Phase 4 must not become an auto-push bot. Reading CI metadata and logs is allowed with a
 GitHub token. Creating Ling records and artifacts is local-only. Starting a local fix run
 goes through existing channel runtime policy, provider preflight, resource leases, and
@@ -128,8 +138,7 @@ export interface GitHubCiFailure {
 }
 
 export interface ExternalWorkCiTriageRequest {
-  readonly channelId?: string;
-  readonly externalWorkId?: string;
+  readonly externalWorkId: string;
   readonly workflowPath?: string;
   readonly limit?: number;
   readonly createTask?: boolean;
@@ -169,8 +178,8 @@ standalone check events, but that is not required for manual PR CI triage.
 11. Heuristically extract first failing command and reproduction command.
 12. If `createTask !== false`, create or reuse a scoped Ling task linked in the triage
     record.
-13. If `startRun === true`, request a normal task run only through existing task run
-    APIs and channel policy. This should be off by default.
+13. Phase 4.0 rejects `startRun === true`. A later slice may request a normal task run
+    only through existing task run APIs and channel policy. This remains off by default.
 
 Failure parsing should be deliberately conservative. If the parser cannot identify a
 command, it should still create evidence and a task with a clear missing-command note

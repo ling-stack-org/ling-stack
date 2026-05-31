@@ -563,8 +563,13 @@ Implementation plan: [External Work Phase 4 Implementation](external-work-phase-
 - Normalize failing checks and workflow runs for existing GitHub PR external work.
 - Capture check/job metadata, bounded redacted log excerpts, first failing command, and
   reproduction hints as local evidence artifacts.
-- Create scoped Ling tasks from CI failures by default; do not start the runner unless a
-  caller explicitly asks and the normal channel/task run policy allows it.
+- Create scoped Ling tasks from CI failures by default; do not start the runner from
+  the Phase 4.0 CI triage endpoint.
+- Land Phase 4.0 as manual read-only CI triage through the daemon, SDK, and CLI:
+  `POST /external-work/github/ci/triage`,
+  `LingDaemonClient.triageGitHubExternalWorkCi()`, and
+  `ling-stack external-work github ci triage --external-work <id>`.
+- Keep `startRun: true` rejected in Phase 4.0; task runs remain explicit user actions.
 - Keep Phase 4.0 read-first and local-first. Push commits, diagnosis comments, review
   decisions, and merges remain separate external actions.
 - Require strict approval for any future push commit action.

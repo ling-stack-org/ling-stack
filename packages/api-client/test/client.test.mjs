@@ -361,6 +361,46 @@ test("polls and reconciles external work without transforming daemon responses",
   });
 });
 
+test("triages GitHub external work CI without transforming daemon response", async () => {
+  const triageResponse = {
+    cwd: "/repo",
+    triaged: 1,
+    taskCreated: 1,
+    duplicates: 0,
+    blocked: 0,
+    stale: 0,
+    failed: 0,
+    records: [{
+      triage: {
+        id: "external_work_ci_triage_1",
+        externalWorkId: "external_work_1",
+        status: "task_created",
+        checkName: "web e2e",
+      },
+      artifacts: [],
+    }],
+  };
+  const mock = createFetchMock(triageResponse);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  assert.deepEqual(await client.triageGitHubExternalWorkCi("/repo path", {
+    externalWorkId: "external_work_1",
+    workflowPath: "WORKFLOW.md",
+    limit: 5,
+    createTask: true,
+  }), triageResponse);
+
+  assert.equal(mock.calls.length, 1);
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/external-work/github/ci/triage?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    externalWorkId: "external_work_1",
+    workflowPath: "WORKFLOW.md",
+    limit: 5,
+    createTask: true,
+  });
+});
+
 test("lists and shows external work without transforming daemon responses", async () => {
   const listResponse = {
     cwd: "/repo",

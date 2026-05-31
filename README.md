@@ -277,19 +277,23 @@ node packages/cli/dist/index.js channel create --name Engineering --path "$PWD" 
 node packages/cli/dist/index.js task create --channel channel_... --title "Inspect repo" --prompt "List files and summarize this repo."
 ```
 
-### 7. Import or poll GitHub external work
+### 7. Import, poll, or triage GitHub external work
 
-GitHub external work orchestration is read-only through Phase 2. Fixture import parses
+GitHub external work orchestration is read-only for import, poll, reconcile, and CI
+triage. Fixture import parses
 `WORKFLOW.md`, normalizes a PR or issue payload, creates or reuses a Ling workflow and
 step, and writes evidence artifacts. Manual poll uses GitHub read-only REST endpoints
 to discover open PR/issue candidates, claim each subject, prepare isolated local
-workspace state, and reconcile durable scheduler state. Neither path starts the runner
-or mutates GitHub. Phase 3 adds approval-gated action records for GitHub comments and
-labels. Propose/list/show/cancel stay local-only; `actions execute` is the only command
-that can call the approved GitHub comment or label endpoint after stale-target
-revalidation. The Web Inbox now shows GitHub external action approval cards with the
-target snapshot, proposed payload, linked evidence artifacts, and a separate Execute
-action button after approval; approving in Web does not execute the mutation.
+workspace state, and reconcile durable scheduler state. Manual CI triage reads failing
+checks, workflow jobs, and bounded redacted logs for an existing PR external-work item,
+then creates or reuses local triage records, evidence artifacts, and scoped fix tasks.
+These paths do not start the runner or mutate GitHub. Phase 3 adds approval-gated action
+records for GitHub comments and labels. Propose/list/show/cancel stay local-only;
+`actions execute` is the only command that can call the approved GitHub comment or label
+endpoint after stale-target revalidation. The Web Inbox now shows GitHub external action
+approval cards with the target snapshot, proposed payload, linked evidence artifacts,
+and a separate Execute action button after approval; approving in Web does not execute
+the mutation.
 
 For live poll/reconcile, prefer authenticated GitHub reads. The bundled example
 `WORKFLOW.md` uses `source.secretRef: env:GITHUB_TOKEN`; start or restart the daemon
@@ -312,6 +316,11 @@ node packages/cli/dist/index.js external-work list \
   --status ready
 
 node packages/cli/dist/index.js external-work show external_work_...
+
+node packages/cli/dist/index.js external-work github ci triage \
+  --external-work external_work_... \
+  --workflow-path WORKFLOW.md \
+  --limit 5
 
 node packages/cli/dist/index.js external-work actions propose-comment \
   --external-work external_work_... \
@@ -340,8 +349,9 @@ node packages/cli/dist/index.js external-work reconcile \
   --workflow-path WORKFLOW.md
 ```
 
-Use `--json` for full import, poll, list, show, action, and reconcile responses. A
-copy-pasteable fixture smoke path lives in
+Use `--json` for full import, poll, CI triage, list, show, action, and reconcile
+responses. CI triage creates local fix tasks by default; add `--no-create-task` to keep
+only the triage records and artifacts. A copy-pasteable fixture smoke path lives in
 [examples/external-work/github](examples/external-work/github/README.md). A real
 repository smoke with an isolated daemon, live GitHub reads, local action proposal, Web
 approval checks, and a separately gated mutation step lives in

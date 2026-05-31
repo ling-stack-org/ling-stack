@@ -666,8 +666,13 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 - Import failing check metadata, workflow run/job metadata, and bounded redacted logs.
 - Create Ling tasks from CI failures by default, linked to the originating PR external
   work item and evidence artifacts.
-- Allow local fix runs only through the normal channel coordinator, task run endpoint,
-  provider preflight, approval policy, and resource leases.
+- Expose Phase 4.0 as manual read-only CI triage through
+  `POST /external-work/github/ci/triage`,
+  `LingDaemonClient.triageGitHubExternalWorkCi()`, and
+  `ling-stack external-work github ci triage --external-work <id>`.
+- Keep local fix runs as explicit task-run actions outside CI triage in Phase 4.0;
+  future automatic run requests must go through the normal channel coordinator, task
+  run endpoint, provider preflight, approval policy, and resource leases.
 - Keep push commits out of Phase 4.0; add them only as a later strict external action
   with head-SHA revalidation and evidence.
 

@@ -317,6 +317,76 @@ test("external work action execute marks stale target without GitHub mutation", 
   }
 });
 
+test("GitHub CI triage creates local records, artifacts, and tasks without starting runner", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-ci-"));
+  const runner = new FailingRunner();
+  const githubCalls = [];
+  const daemon = await startDaemonForTest(runner, createGitHubCiFetchMock(githubCalls));
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "GitHub",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    });
+    await postJson(`${daemon.url}/external-work/github/import?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      eventType: "pull_request.opened",
+      payload: githubPullRequestPayload(),
+    });
+    const importedList = await getJson(`${daemon.url}/external-work?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+    const externalWorkId = importedList.externalWork[0].externalWork.id;
+
+    const first = await postJson(`${daemon.url}/external-work/github/ci/triage?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      workflowPath: "WORKFLOW.md",
+      limit: 5,
+    });
+    assert.equal(first.triaged, 2);
+    assert.equal(first.taskCreated, 2);
+    assert.equal(first.duplicates, 0);
+    assert.equal(first.records[0].triage.status, "task_created");
+    assert.equal(first.records[0].triage.checkName, "web e2e");
+    assert.ok(first.records[0].task.id);
+    assert.equal(runner.runs.length, 0);
+    assert.deepEqual(githubCalls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+      "GET /repos/openclaw/openclaw/pulls/86279",
+      "GET /repos/openclaw/openclaw/actions/runs",
+      "GET /repos/openclaw/openclaw/actions/runs/99/jobs",
+      "GET /repos/openclaw/openclaw/actions/jobs/123/logs",
+      "GET /repos/openclaw/openclaw/commits/head-sha-1/check-runs",
+    ]);
+
+    const logArtifact = first.records[0].artifacts.find((artifact) => artifact.title === "GitHub CI log excerpt");
+    assert.ok(logArtifact);
+    const log = await getText(`${daemon.url}/artifacts/${encodeURIComponent(logArtifact.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.doesNotMatch(log, /github-token-secret/);
+    assert.match(log, /\[REDACTED\]/);
+
+    const duplicate = await postJson(`${daemon.url}/external-work/github/ci/triage?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      workflowPath: "WORKFLOW.md",
+    });
+    assert.equal(duplicate.triaged, 0);
+    assert.equal(duplicate.taskCreated, 0);
+    assert.equal(duplicate.duplicates, 2);
+    const tasks = await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+    assert.equal(tasks.tasks.length, 2);
+
+    const startRun = await postJsonExpectError(`${daemon.url}/external-work/github/ci/triage?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      workflowPath: "WORKFLOW.md",
+      startRun: true,
+    });
+    assert.equal(startRun.status, 400);
+    assert.match(startRun.body.message, /startRun is not supported/);
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("GitHub external work poll returns readable errors for bad input and GitHub failures", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-poll-errors-"));
   const daemon = await startDaemonForTest(new FailingRunner(), async () => ({
@@ -382,6 +452,13 @@ async function startDaemonForTest(runner, externalWorkFetch) {
 async function getJson(url) {
   const response = await fetch(url);
   return await readJsonResponse(response);
+}
+
+async function getText(url) {
+  const response = await fetch(url);
+  const text = await response.text();
+  assert.ok(response.ok, text);
+  return text;
 }
 
 async function getJsonExpectError(url) {
@@ -510,6 +587,61 @@ function createGitHubActionFetchMock(calls, options = {}) {
   };
 }
 
+function createGitHubCiFetchMock(calls, options = {}) {
+  return async (url, init = {}) => {
+    calls.push({ url, init });
+    if (url.includes("/pulls/86279")) {
+      return jsonResponse(options.pullRequest ?? githubPullRequestPayload().pull_request);
+    }
+    if (url.includes("/actions/runs?")) {
+      return jsonResponse({
+        workflow_runs: [{
+          id: 99,
+          name: "CI",
+          conclusion: "failure",
+          html_url: "https://github.com/openclaw/openclaw/actions/runs/99",
+          updated_at: "2026-05-30T00:00:00Z",
+        }],
+      });
+    }
+    if (url.includes("/actions/runs/99/jobs")) {
+      return jsonResponse({
+        jobs: [{
+          id: 123,
+          name: "web e2e",
+          conclusion: "failure",
+          html_url: "https://github.com/openclaw/openclaw/actions/runs/99/job/123",
+          completed_at: "2026-05-30T00:00:30Z",
+        }],
+      });
+    }
+    if (url.includes("/actions/jobs/123/logs")) {
+      return textResponse([
+        "2026-05-30T00:00:01Z ##[group]Run corepack pnpm --filter @ling-stack/web test:e2e",
+        "Authorization: Bearer github-token-secret",
+        "apps/web/e2e/app.spec.ts:12: expected visible text",
+      ].join("\n"));
+    }
+    if (url.includes("/commits/head-sha-1/check-runs")) {
+      return jsonResponse({
+        check_runs: [{
+          id: 456,
+          name: "lint",
+          conclusion: "failure",
+          html_url: "https://github.com/openclaw/openclaw/runs/456",
+          completed_at: "2026-05-30T00:00:20Z",
+          output: {
+            title: "Lint failed",
+            summary: "Run corepack pnpm lint",
+            text: "packages/core/src/index.ts:1 lint error",
+          },
+        }],
+      });
+    }
+    return jsonResponse({ message: "not found" }, { ok: false, status: 404, statusText: "Not Found" });
+  };
+}
+
 function jsonResponse(body, options = {}) {
   return {
     ok: options.ok ?? true,
@@ -520,6 +652,20 @@ function jsonResponse(body, options = {}) {
     },
     async text() {
       return JSON.stringify(body);
+    },
+  };
+}
+
+function textResponse(body, options = {}) {
+  return {
+    ok: options.ok ?? true,
+    status: options.status ?? 200,
+    statusText: options.statusText ?? "OK",
+    async json() {
+      return JSON.parse(body);
+    },
+    async text() {
+      return body;
     },
   };
 }
