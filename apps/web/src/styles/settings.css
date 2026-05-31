@@ -32,8 +32,42 @@
   color: #9a341f;
 }
 
-.settings-panel {
+.settings-stack {
+  display: grid;
+  gap: 16px;
   max-width: 860px;
+}
+
+.settings-panel {
+  max-width: none;
+}
+
+.interface-preference-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.interface-preference-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #d8ded7;
+  background: #fbfcfa;
+}
+
+.interface-preference-row > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #37433f;
+}
+
+.interface-preference-row strong {
+  font-size: 13px;
 }
 
 .policy-meta {

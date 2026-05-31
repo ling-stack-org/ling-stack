@@ -17,7 +17,11 @@ The AI teammates page now uses the same client direction: a Helio-inspired, macO
 
 The richer channel surface is tracked in [Channel Workspace Design](channel-workspace.md). That document is the source of truth for channel tabs, default AI teammate assignment, member/notification/settings inspector behavior, file/artifact access, and the phased implementation checklist.
 
-Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, `Files`, and `Channel protocol` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions; durable channel messages; no-tools AI discussion replies; user attachments; metadata-only web link previews; and discussion-to-task conversion with `assigneeTeammateId` derived from the first AI mention or channel default teammate.
+Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, `Files`,
+and `Context` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions;
+durable channel messages; no-tools AI discussion replies; user attachments;
+metadata-only web link previews; and discussion-to-task conversion with
+`assigneeTeammateId` derived from the first AI mention or channel default teammate.
 
 Implemented v1.1 behavior: the channel inspector adds `Brief`, `Decisions`, `Handoffs`, and
 `Runtime` modes. Activity now synthesizes channel messages with decision, handoff, and
@@ -25,8 +29,8 @@ context summary records. These protocol records are manual and auditable; they d
 start runs, call AI providers, ingest attachments/links, or mutate task/run state.
 
 Implemented v1.2 behavior: handoff cards can create durable workflow/step records, the
-channel protocol surface lives behind the `Channel protocol` tab beside Activity, Tasks,
-and Files instead of occupying the task detail panel, Runtime shows a Workflow queue with
+channel protocol surface lives behind the `Context` tab beside Activity, Tasks, and
+Files instead of occupying the task detail panel, Runtime shows a Workflow queue with
 context packet metadata, blockers, linked task/run ids, and step controls, Activity
 includes workflow/step items, and Task detail shows the source workflow/step for tasks
 created from a workflow step. Task detail now lives inside the `Tasks` tab instead of
@@ -81,6 +85,31 @@ selector, category and attention filters live behind a filter panel, empty atten
 state no longer occupies a full card, composer AI teammate mentions collapse to the
 default teammate plus picker, and details drawer metadata/triage sections are folded by
 default. v1.10 remains Web-only and does not add backend contracts.
+
+Implemented v1.11 behavior: the channel workspace default surface is simplified for
+work-first use. The workspace route no longer reserves the global right inspector, the
+global top bar is removed, the body no longer duplicates the left sidebar channel
+switcher, Settings and New task live in the channel header, the separate workspace
+toolbar is removed, path/provider/runtime controls move behind channel Settings,
+theme/language controls move to the main Settings section, the protocol tab is labeled
+`Context`, empty attention state is hidden, the separate Activity title bar is removed,
+the Activity composer stays attached to the bottom of the channel panel, and composer
+extras move behind More.
+v1.11 remains Web-only and does not add backend contracts.
+
+Implemented v1.12 behavior: channel Settings now includes a `Channel teammates` manager.
+Channels can start without teammate members or a default teammate; existing workspace
+teammates can be added to the selected channel, removed from that channel without
+deleting the teammate, and set as the selected channel's default teammate. Composer
+mention options prioritize teammates already in the selected channel. v1.12 remains
+Web-only and reuses existing teammate channel membership routes.
+
+Implemented v1.13 behavior: the channel Activity composer removes the explicit More
+tools panel. Mentions are selected from an inline `@` teammate popover, dropped or pasted
+files attach directly through the existing upload path, and URLs in the message body
+create link previews automatically. Discussion messages request an AI reply only when an
+AI teammate is explicitly mentioned. v1.13 remains Web-only and does not add backend
+contracts.
 
 ## Goal
 

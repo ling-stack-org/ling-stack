@@ -155,26 +155,12 @@ a:focus-visible {
 .app-shell {
   display: grid;
   grid-template-areas:
-    "top top top"
     "nav workspace inspector";
   grid-template-columns: 236px minmax(0, 1fr) 360px;
-  grid-template-rows: 56px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-height: 100vh;
 }
 
-.top-bar {
-  grid-area: top;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-panel);
-}
-
-.top-path,
-.top-status,
 .health,
 .provider-pill,
 .panel-title,
@@ -183,23 +169,6 @@ a:focus-visible {
 .persistence-line {
   display: flex;
   align-items: center;
-}
-
-.top-path {
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: 13px;
-  min-width: 0;
-}
-
-.top-path span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.top-status {
-  gap: 10px;
 }
 
 .language-switcher {
