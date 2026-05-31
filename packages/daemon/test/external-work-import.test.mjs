@@ -132,6 +132,18 @@ test("GitHub external work poll imports candidates, deduplicates, and reconciles
     assert.equal(first.schedulerStates[0].schedulerStatus, "ready");
     assert.equal(runner.runs.length, 0);
 
+    const list = await getJson(`${daemon.url}/external-work?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}&status=ready`);
+    assert.equal(list.externalWork.length, 1);
+    assert.equal(list.externalWork[0].externalWork.identifier, "openclaw/openclaw#86279");
+    assert.equal(list.externalWork[0].schedulerState.schedulerStatus, "ready");
+    assert.equal(list.externalWork[0].workflow.status, "ready");
+    assert.equal(list.externalWork[0].workflowStep.status, "queued");
+    assert.equal(list.externalWork[0].artifacts.length, 2);
+
+    const detail = await getJson(`${daemon.url}/external-work/${encodeURIComponent(first.results[0].externalWorkId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.externalWork.externalWork.id, first.results[0].externalWorkId);
+    assert.equal(detail.externalWork.schedulerState.workspaceMode, "per_subject");
+
     const duplicate = await postJson(`${daemon.url}/external-work/github/poll?cwd=${encodeURIComponent(cwd)}`, {
       channelId: channel.channel.id,
       workflowPath: "WORKFLOW.md",
@@ -150,6 +162,18 @@ test("GitHub external work poll imports candidates, deduplicates, and reconciles
     assert.equal(reconciled.checked, 1);
     assert.equal(reconciled.terminal, 1);
     assert.equal(reconciled.schedulerStates[0].schedulerStatus, "terminal");
+
+    const terminalList = await getJson(`${daemon.url}/external-work?cwd=${encodeURIComponent(cwd)}&schedulerStatus=terminal`);
+    assert.equal(terminalList.externalWork.length, 1);
+    assert.equal(terminalList.externalWork[0].schedulerState.schedulerStatus, "terminal");
+
+    const missing = await getJsonExpectError(`${daemon.url}/external-work/external_work_missing?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(missing.status, 404);
+    assert.equal(missing.body.error, "external_work_not_found");
+
+    const invalidStatus = await getJsonExpectError(`${daemon.url}/external-work?cwd=${encodeURIComponent(cwd)}&status=running`);
+    assert.equal(invalidStatus.status, 400);
+    assert.match(invalidStatus.body.message, /schedulerStatus must be one of/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -221,6 +245,16 @@ async function startDaemonForTest(runner, externalWorkFetch) {
 async function getJson(url) {
   const response = await fetch(url);
   return await readJsonResponse(response);
+}
+
+async function getJsonExpectError(url) {
+  const response = await fetch(url);
+  const text = await response.text();
+  assert.equal(response.ok, false, text);
+  return {
+    status: response.status,
+    body: text.trim() ? JSON.parse(text) : {},
+  };
 }
 
 async function postJson(url, body) {

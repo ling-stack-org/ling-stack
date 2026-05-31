@@ -270,6 +270,62 @@ test("external-work reconcile renders human output and validates poll flags", as
   }
 });
 
+test("external-work list and show render local scheduler state", async () => {
+  const daemon = await startExternalWorkDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-list-"));
+  try {
+    const list = await runCli(daemon.url, cwd, [
+      "external-work",
+      "list",
+      "--channel",
+      "channel_1",
+      "--status",
+      "ready",
+      "--work-item-kind",
+      "github_pull_request",
+      "--limit",
+      "25",
+    ]);
+    assert.equal(list.code, 0, list.stderr);
+    assert.match(list.stdout, /External work:/);
+    assert.match(list.stdout, /openclaw\/openclaw#86279/);
+    assert.match(list.stdout, /ready/);
+    assert.equal(daemon.requests[0].method, "GET");
+    assert.equal(daemon.requests[0].path, "/external-work");
+    assert.equal(daemon.requests[0].query.status, "ready");
+    assert.equal(daemon.requests[0].query.workItemKind, "github_pull_request");
+
+    const show = await runCli(daemon.url, cwd, [
+      "external-work",
+      "show",
+      "external_work_1",
+    ]);
+    assert.equal(show.code, 0, show.stderr);
+    assert.match(show.stdout, /External work: external_work_1/);
+    assert.match(show.stdout, /Scheduler: ready/);
+    assert.match(show.stdout, /Artifacts:/);
+
+    const json = await runCli(daemon.url, cwd, [
+      "--json",
+      "external-work",
+      "show",
+      "external_work_1",
+    ]);
+    assert.equal(json.code, 0, json.stderr);
+    assert.equal(JSON.parse(json.stdout).externalWork.externalWork.id, "external_work_1");
+
+    const missingId = await runCli(daemon.url, cwd, [
+      "external-work",
+      "show",
+    ]);
+    assert.equal(missingId.code, 2);
+    assert.match(missingId.stderr, /external-work show/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 function runCli(daemonUrl, cwd, args) {
   return new Promise((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
@@ -286,6 +342,26 @@ async function startExternalWorkDaemon() {
   const requests = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "GET" && url.pathname === "/external-work") {
+      requests.push({
+        method: request.method,
+        path: url.pathname,
+        cwd: url.searchParams.get("cwd"),
+        query: Object.fromEntries(url.searchParams.entries()),
+      });
+      writeJson(response, 200, externalWorkListResponse());
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/external-work/external_work_1") {
+      requests.push({
+        method: request.method,
+        path: url.pathname,
+        cwd: url.searchParams.get("cwd"),
+        query: Object.fromEntries(url.searchParams.entries()),
+      });
+      writeJson(response, 200, externalWorkDetailResponse());
+      return;
+    }
     if (request.method !== "POST" || !["/external-work/github/import", "/external-work/github/poll", "/external-work/reconcile"].includes(url.pathname)) {
       writeJson(response, 404, { error: "not_found" });
       return;
@@ -432,6 +508,59 @@ function externalWorkReconcileResponse() {
         schedulerStatus: "terminal",
         workflowId: "workflow_1",
         workflowStepId: "step_1",
+      },
+    ],
+  };
+}
+
+function externalWorkListResponse() {
+  return {
+    cwd: "/repo",
+    externalWork: [externalWorkView()],
+  };
+}
+
+function externalWorkDetailResponse() {
+  return {
+    cwd: "/repo",
+    externalWork: externalWorkView(),
+  };
+}
+
+function externalWorkView() {
+  return {
+    externalWork: {
+      id: "external_work_1",
+      channelId: "channel_1",
+      workItemKind: "github_pull_request",
+      identifier: "openclaw/openclaw#86279",
+      workflowId: "workflow_1",
+      workflowStepId: "step_1",
+      item: {
+        state: "open",
+      },
+    },
+    workflow: {
+      id: "workflow_1",
+      status: "ready",
+    },
+    workflowStep: {
+      id: "step_1",
+      status: "queued",
+    },
+    schedulerState: {
+      externalWorkId: "external_work_1",
+      schedulerStatus: "ready",
+      workspacePath: "/repo/.ling-stack/external-workspaces/github/hash",
+      lastErrorMessage: "",
+    },
+    artifacts: [
+      {
+        id: "artifact_1",
+        type: "json",
+        path: "external-work/work_1/normalized-item.json",
+        title: "Normalized external work item",
+        createdAt: "2026-05-31T00:00:00.000Z",
       },
     ],
   };

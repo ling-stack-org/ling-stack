@@ -79,6 +79,17 @@ node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON
   --workflow-path WORKFLOW.md \
   --limit 1
 
+node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work list \
+  --channel "$channel_id" \
+  --status ready
+
+external_work_id="$(node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" --json external-work list \
+  --channel "$channel_id" \
+  --status ready \
+  | node -e 'let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => console.log(JSON.parse(input).externalWork[0].externalWork.id));')"
+
+node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work show "$external_work_id"
+
 node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work reconcile \
   --channel "$channel_id" \
   --workflow-path WORKFLOW.md

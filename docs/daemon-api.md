@@ -629,6 +629,66 @@ Response:
 }
 ```
 
+### List External Work
+
+```http
+GET /external-work?cwd=/path/to/project&channelId=channel_...&status=ready&limit=50
+```
+
+Query filters are optional:
+
+- `channelId`
+- `sourceKind`: `github` or `linear`
+- `workItemKind`: `github_pull_request`, `github_issue`, or `linear_issue`
+- `status` or `schedulerStatus`: `discovered`, `claimed`, `workspace_preparing`,
+  `ready`, `blocked`, `retry_wait`, or `terminal`
+- `limit`: 1-500
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "externalWork": [
+    {
+      "externalWork": {},
+      "workflow": {},
+      "workflowStep": {},
+      "schedulerState": {},
+      "artifacts": []
+    }
+  ]
+}
+```
+
+The list endpoint is local-only. It reads existing SQLite records and artifacts; it
+does not call GitHub, run hooks, start runners, or reconcile state.
+
+### Show External Work
+
+```http
+GET /external-work/external_work_...?cwd=/path/to/project
+```
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "externalWork": {
+    "externalWork": {},
+    "workflow": {},
+    "workflowStep": {},
+    "schedulerState": {},
+    "artifacts": []
+  }
+}
+```
+
+Missing workflow or workflow-step records are omitted rather than synthesized so local
+repair tools can see stale mappings directly. Missing external work ids return
+`404 external_work_not_found`.
+
 ### Reconcile External Work
 
 ```http
@@ -665,6 +725,14 @@ await client.pollGitHubExternalWork("/path/to/project", {
   limit: 50,
 });
 
+await client.listExternalWork("/path/to/project", {
+  channelId: "channel_...",
+  schedulerStatus: "ready",
+  limit: 50,
+});
+
+await client.getExternalWork("/path/to/project", "external_work_...");
+
 await client.reconcileExternalWork("/path/to/project", {
   channelId: "channel_...",
   workflowPath: "WORKFLOW.md",
@@ -684,6 +752,12 @@ ling-stack --cwd /path/to/project external-work github poll \
   --channel channel_... \
   --workflow-path WORKFLOW.md \
   --limit 50
+
+ling-stack --cwd /path/to/project external-work list \
+  --channel channel_... \
+  --status ready
+
+ling-stack --cwd /path/to/project external-work show external_work_...
 
 ling-stack --cwd /path/to/project external-work reconcile \
   --channel channel_... \

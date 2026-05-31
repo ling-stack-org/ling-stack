@@ -46,6 +46,9 @@ import type {
   CreateTaskRequest,
   DaemonHealthResponse,
   ExternalGitHubImportRequest,
+  ExternalWorkDetailResponse,
+  ExternalWorkListRequest,
+  ExternalWorkListResponse,
   ExternalWorkPollRequest,
   ExternalWorkPollResponse,
   ExternalWorkImportResponse,
@@ -581,6 +584,21 @@ export class LingDaemonClient {
 
   async importGitHubExternalWork(cwd: string, input: ExternalGitHubImportRequest): Promise<ExternalWorkImportResponse> {
     return this.post("/external-work/github/import", { cwd }, input);
+  }
+
+  async listExternalWork(cwd: string, options: ExternalWorkListRequest = {}): Promise<ExternalWorkListResponse> {
+    return this.get("/external-work", {
+      cwd,
+      channelId: options.channelId,
+      sourceKind: options.sourceKind,
+      workItemKind: options.workItemKind,
+      schedulerStatus: options.schedulerStatus,
+      limit: options.limit,
+    });
+  }
+
+  async getExternalWork(cwd: string, externalWorkId: string): Promise<ExternalWorkDetailResponse> {
+    return this.get(`/external-work/${encodeURIComponent(externalWorkId)}`, { cwd });
   }
 
   async pollGitHubExternalWork(cwd: string, input: ExternalWorkPollRequest): Promise<ExternalWorkPollResponse> {

@@ -361,6 +361,36 @@ test("polls and reconciles external work without transforming daemon responses",
   });
 });
 
+test("lists and shows external work without transforming daemon responses", async () => {
+  const listResponse = {
+    cwd: "/repo",
+    externalWork: [{
+      externalWork: { id: "external_work_1", identifier: "owner/repo#123", workItemKind: "github_pull_request" },
+      schedulerState: { externalWorkId: "external_work_1", schedulerStatus: "ready" },
+      artifacts: [],
+    }],
+  };
+  const detailResponse = {
+    cwd: "/repo",
+    externalWork: listResponse.externalWork[0],
+  };
+  const mock = createFetchMock([listResponse, detailResponse]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  assert.deepEqual(await client.listExternalWork("/repo path", {
+    channelId: "channel_1",
+    workItemKind: "github_pull_request",
+    schedulerStatus: "ready",
+    limit: 25,
+  }), listResponse);
+  assert.deepEqual(await client.getExternalWork("/repo path", "external_work_1"), detailResponse);
+
+  assert.equal(mock.calls[0].method, "GET");
+  assert.equal(mock.calls[0].url, "http://daemon.test/external-work?cwd=%2Frepo+path&channelId=channel_1&workItemKind=github_pull_request&schedulerStatus=ready&limit=25");
+  assert.equal(mock.calls[1].method, "GET");
+  assert.equal(mock.calls[1].url, "http://daemon.test/external-work/external_work_1?cwd=%2Frepo+path");
+});
+
 test("maps daemon error bodies and workspace path errors", async () => {
   const fetchMessage = async () => jsonResponse({ message: "explicit message" }, { status: 418, statusText: "Teapot" });
   const messageClient = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: fetchMessage });

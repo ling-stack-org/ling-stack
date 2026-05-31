@@ -102,6 +102,7 @@ import type {
   ExternalWorkRecord,
   ExternalWorkSchedulerState,
   ExternalWorkWorkflowResult,
+  ListExternalWorkRecordsOptions,
   ListExternalWorkSchedulerStatesOptions,
   UpdateExternalWorkSchedulerStateInput,
   UpsertExternalWorkSchedulerStateInput,
@@ -401,6 +402,7 @@ export interface RunStore {
   updateApprovalPolicy(input: ApprovalPolicyUpdateInput, now: string): ApprovalPolicy;
   createOrReuseExternalWorkWorkflow(input: CreateExternalWorkWorkflowInput, now: string): ExternalWorkWorkflowResult;
   getExternalWorkRecord(id: string): ExternalWorkRecord | undefined;
+  listExternalWorkRecords(options?: ListExternalWorkRecordsOptions): ExternalWorkRecord[];
   getExternalWorkRecordByIdempotency(sourceKind: ExternalWorkRecord["sourceKind"], idempotencyKey: string): ExternalWorkRecord | undefined;
   updateExternalWorkArtifacts(id: string, artifactIds: readonly string[], now: string): ExternalWorkRecord | undefined;
   upsertExternalWorkSchedulerState(input: UpsertExternalWorkSchedulerStateInput, now: string): ExternalWorkSchedulerState;

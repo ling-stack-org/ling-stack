@@ -190,6 +190,40 @@ export interface ListExternalWorkSchedulerStatesOptions {
   readonly limit?: number;
 }
 
+export interface ListExternalWorkRecordsOptions {
+  readonly channelId?: string;
+  readonly sourceKind?: ExternalSourceKind;
+  readonly workItemKind?: ExternalWorkItemKind;
+  readonly schedulerStatus?: ExternalWorkSchedulerStatus;
+  readonly limit?: number;
+}
+
+export interface ExternalWorkView {
+  readonly externalWork: ExternalWorkRecord;
+  readonly workflow?: ChannelWorkflow;
+  readonly workflowStep?: ChannelWorkflowStep;
+  readonly schedulerState?: ExternalWorkSchedulerState;
+  readonly artifacts: readonly RunArtifact[];
+}
+
+export interface ExternalWorkListRequest {
+  readonly channelId?: string;
+  readonly sourceKind?: ExternalSourceKind;
+  readonly workItemKind?: ExternalWorkItemKind;
+  readonly schedulerStatus?: ExternalWorkSchedulerStatus;
+  readonly limit?: number;
+}
+
+export interface ExternalWorkListResponse {
+  readonly cwd: string;
+  readonly externalWork: readonly ExternalWorkView[];
+}
+
+export interface ExternalWorkDetailResponse {
+  readonly cwd: string;
+  readonly externalWork: ExternalWorkView;
+}
+
 export interface CreateExternalWorkWorkflowInput {
   readonly channelId: string;
   readonly externalWorkItem: ExternalWorkItem;

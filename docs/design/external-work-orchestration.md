@@ -526,6 +526,9 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 - Keep the example smoke path authenticated with `env:GITHUB_TOKEN` and isolated on a
   non-default daemon port so poll/reconcile docs remain copy-pasteable on developer
   machines with existing daemons.
+- Expose local-only list/show observability for external work records, workflow/step
+  links, scheduler state, workspace paths, errors, and artifact refs before adding any
+  approval-gated GitHub mutation path.
 
 ### Phase 3: Approval-Gated Comments and Labels
 

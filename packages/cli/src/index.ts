@@ -1557,6 +1557,12 @@ async function handleRunsCancel(args: readonly string[], options: GlobalOptions)
 
 async function handleExternalWork(args: readonly string[], options: GlobalOptions): Promise<number> {
   const [source = "github", ...rest] = args;
+  if (source === "list") {
+    return await handleExternalWorkList(rest, options);
+  }
+  if (source === "show") {
+    return await handleExternalWorkShow(rest, options);
+  }
   if (source === "reconcile") {
     return await handleExternalWorkReconcile(rest, options);
   }
@@ -1564,6 +1570,43 @@ async function handleExternalWork(args: readonly string[], options: GlobalOption
     return await handleExternalWorkGitHub(rest, options);
   }
   throw new CliError(2, "unknown_command", `Unknown external-work source: ${source}`);
+}
+
+async function handleExternalWorkList(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["channel", "status", "source-kind", "work-item-kind", "limit"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work list");
+  const limit = readOptionalIntegerFlag(parsed, "limit");
+  if (limit !== undefined && limit > 500) {
+    throw new CliError(2, "bad_number", "--limit must be at most 500.");
+  }
+  const response = await requestJson(options, "GET", "/external-work", {
+    cwd: options.cwd,
+    channelId: getFlag(parsed, "channel"),
+    status: getFlag(parsed, "status"),
+    sourceKind: getFlag(parsed, "source-kind"),
+    workItemKind: getFlag(parsed, "work-item-kind"),
+    limit,
+  });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkList(response);
+  return 0;
+}
+
+async function handleExternalWorkShow(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const externalWorkId = singlePositional(parsed.positionals, "external-work show <externalWorkId>");
+  const response = await requestJson(options, "GET", `/external-work/${encodeURIComponent(externalWorkId)}`, { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkShow(response);
+  return 0;
 }
 
 async function handleExternalWorkGitHub(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -3216,6 +3259,70 @@ function printExternalWorkImport(response: unknown): void {
   );
 }
 
+function printExternalWorkList(response: unknown): void {
+  const items = readArray(response, "externalWork");
+  console.log("External work:");
+  if (items.length === 0) {
+    console.log("No external work found.");
+    return;
+  }
+  printTable(
+    ["ID", "Identifier", "Kind", "Item State", "Scheduler", "Workflow", "Step", "Workspace", "Error"],
+    items.map((view) => {
+      const externalWork = readOptionalRecord(view, "externalWork");
+      const item = externalWork ? readOptionalRecord(externalWork, "item") : undefined;
+      const workflow = readOptionalRecord(view, "workflow");
+      const workflowStep = readOptionalRecord(view, "workflowStep");
+      const schedulerState = readOptionalRecord(view, "schedulerState");
+      return [
+        truncate(readString(externalWork, "id") ?? "", 30),
+        truncate(readString(externalWork, "identifier") ?? "", 30),
+        readString(externalWork, "workItemKind") ?? "",
+        readString(item, "state") ?? "",
+        readString(schedulerState, "schedulerStatus") ?? "-",
+        truncate(readString(workflow, "id") ?? readString(externalWork, "workflowId") ?? "", 24),
+        truncate(readString(workflowStep, "id") ?? readString(externalWork, "workflowStepId") ?? "", 24),
+        truncate(readString(schedulerState, "workspacePath") ?? "", 36),
+        truncate(readString(schedulerState, "lastErrorMessage") ?? "", 48),
+      ];
+    }),
+  );
+}
+
+function printExternalWorkShow(response: unknown): void {
+  const view = readRequiredRecord(response, "externalWork");
+  const externalWork = readRequiredRecord(view, "externalWork");
+  const item = readOptionalRecord(externalWork, "item");
+  const workflow = readOptionalRecord(view, "workflow");
+  const workflowStep = readOptionalRecord(view, "workflowStep");
+  const schedulerState = readOptionalRecord(view, "schedulerState");
+  const artifacts = readArray(view, "artifacts");
+
+  console.log(`External work: ${readString(externalWork, "id") ?? ""}`);
+  console.log(`Identifier: ${readString(externalWork, "identifier") ?? ""}`);
+  console.log(`Kind: ${readString(externalWork, "workItemKind") ?? ""}`);
+  console.log(`Item state: ${readString(item, "state") ?? ""}`);
+  console.log(`Channel: ${readString(externalWork, "channelId") ?? ""}`);
+  console.log(`Workflow: ${readString(workflow, "id") ?? readString(externalWork, "workflowId") ?? ""} (${readString(workflow, "status") ?? "missing"})`);
+  console.log(`Step: ${readString(workflowStep, "id") ?? readString(externalWork, "workflowStepId") ?? ""} (${readString(workflowStep, "status") ?? "missing"})`);
+  console.log(`Scheduler: ${readString(schedulerState, "schedulerStatus") ?? "none"}`);
+  console.log(`Workspace: ${readString(schedulerState, "workspacePath") ?? ""}`);
+  console.log(`Last error: ${readString(schedulerState, "lastErrorMessage") ?? ""}`);
+  if (artifacts.length === 0) {
+    console.log("Artifacts: none");
+    return;
+  }
+  console.log("Artifacts:");
+  printTable(
+    ["ID", "Title", "Path"],
+    artifacts.map((artifact) => [
+      truncate(readString(artifact, "id") ?? "", 32),
+      truncate(readString(artifact, "title") ?? "", 34),
+      truncate(readString(artifact, "path") ?? "", 72),
+    ]),
+  );
+}
+
 function printExternalWorkPoll(response: unknown): void {
   console.log("External work poll:");
   console.log(`Candidates: ${readNumber(response, "candidates") ?? 0}`);
@@ -3459,6 +3566,11 @@ function readRequiredRecord(value: unknown, key: string): Record<string, unknown
   return field;
 }
 
+function readOptionalRecord(value: unknown, key: string): Record<string, unknown> | undefined {
+  const field = readField(value, key);
+  return isRecord(field) ? field : undefined;
+}
+
 function readString(value: unknown, key: string): string | undefined {
   const field = readField(value, key);
   return typeof field === "string" ? field : undefined;
@@ -3591,6 +3703,8 @@ Usage:
   ling-stack [global options] runs cancel <id>
   ling-stack [global options] external-work github import --channel <id> --event-type <event> --payload-file <payload.json>
   ling-stack [global options] external-work github poll --channel <id> [--workflow-path WORKFLOW.md]
+  ling-stack [global options] external-work list [--channel <id>] [--status ready]
+  ling-stack [global options] external-work show <externalWorkId>
   ling-stack [global options] external-work reconcile [--channel <id>] [--workflow-path WORKFLOW.md]
   ling-stack [global options] approvals list
   ling-stack [global options] approvals show <id>
@@ -3709,6 +3823,8 @@ function printExternalWorkHelp(): void {
   console.log(`Usage:
   ling-stack external-work github import --channel <channelId> --event-type <eventType> --payload-file <payload.json> [options]
   ling-stack external-work github poll --channel <channelId> [options]
+  ling-stack external-work list [--channel <channelId>] [--status ready|blocked|retry_wait|terminal] [--limit 50]
+  ling-stack external-work show <externalWorkId>
   ling-stack external-work reconcile [options]
 
 Options:
@@ -3719,10 +3835,14 @@ Options:
   --workflow-markdown-file <path> Read workflow markdown from a local file and send it inline
   --limit <n>                     Poll at most n GitHub candidates, max 100
   --execute-hooks                 Run afterCreate/beforeRun hooks inside isolated workspaces
+  --status <status>               Filter external-work list by scheduler status
+  --source-kind <kind>            Filter external-work list by source kind
+  --work-item-kind <kind>         Filter external-work list by item kind
 
 Behavior:
   Import creates or reuses local Ling workflow records from local fixtures.
   Poll uses read-only GitHub API calls for PR and issue discovery.
+  List and show read local workflow, scheduler, workspace, and artifact state.
   Reconcile repairs local scheduler state and can optionally check remote terminal state.
   None of these commands start a runner or mutate GitHub.
 `);

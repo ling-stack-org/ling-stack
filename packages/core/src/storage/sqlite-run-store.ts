@@ -149,6 +149,7 @@ import {
   type ExternalWorkRecord,
   type ExternalWorkSchedulerState,
   type ExternalWorkWorkflowResult,
+  type ListExternalWorkRecordsOptions,
   type ListExternalWorkSchedulerStatesOptions,
   type UpdateExternalWorkSchedulerStateInput,
   type UpsertExternalWorkSchedulerStateInput,
@@ -2873,6 +2874,41 @@ export class SqliteRunStore implements RunStore {
   getExternalWorkRecord(id: string): ExternalWorkRecord | undefined {
     const row = this.database.prepare(externalWorkSelectSql("WHERE id = ?")).get(id);
     return row ? mapExternalWorkRecord(row) : undefined;
+  }
+
+  listExternalWorkRecords(options: ListExternalWorkRecordsOptions = {}): ExternalWorkRecord[] {
+    const clauses = ["w.workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.channelId) {
+      clauses.push("w.channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.sourceKind) {
+      clauses.push("w.source_kind = ?");
+      params.push(options.sourceKind);
+    }
+    if (options.workItemKind) {
+      clauses.push("w.work_item_kind = ?");
+      params.push(options.workItemKind);
+    }
+    if (options.schedulerStatus) {
+      clauses.push("s.scheduler_status = ?");
+      params.push(options.schedulerStatus);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`
+        SELECT
+          ${externalWorkSelectColumnsFromAlias("w")}
+        FROM external_work_items w
+        LEFT JOIN external_work_scheduler_state s ON s.external_work_id = w.id
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY w.updated_at DESC, w.id DESC
+        LIMIT ?
+      `)
+      .all(...params)
+      .map(mapExternalWorkRecord);
   }
 
   getExternalWorkRecordByIdempotency(sourceKind: ExternalWorkRecord["sourceKind"], idempotencyKey: string): ExternalWorkRecord | undefined {
@@ -5905,22 +5941,29 @@ function artifactSelectSql(whereClause: string): string {
 function externalWorkSelectSql(whereClause: string): string {
   return `
     SELECT
-      id,
-      workspace_id,
-      channel_id,
-      source_kind,
-      work_item_kind,
-      external_id,
-      identifier,
-      idempotency_key,
-      workflow_id,
-      workflow_step_id,
-      artifact_ids_json,
-      item_json,
-      created_at,
-      updated_at
+      ${externalWorkSelectColumnsFromAlias("")}
     FROM external_work_items
     ${whereClause}
+  `;
+}
+
+function externalWorkSelectColumnsFromAlias(alias: string): string {
+  const prefix = alias ? `${alias}.` : "";
+  return `
+      ${prefix}id,
+      ${prefix}workspace_id,
+      ${prefix}channel_id,
+      ${prefix}source_kind,
+      ${prefix}work_item_kind,
+      ${prefix}external_id,
+      ${prefix}identifier,
+      ${prefix}idempotency_key,
+      ${prefix}workflow_id,
+      ${prefix}workflow_step_id,
+      ${prefix}artifact_ids_json,
+      ${prefix}item_json,
+      ${prefix}created_at,
+      ${prefix}updated_at
   `;
 }
 

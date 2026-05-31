@@ -88,10 +88,17 @@ import {
   type RunArtifact,
   type ExternalWorkImportResponse,
   type ExternalWorkItem,
+  type ExternalWorkDetailResponse,
+  type ExternalWorkListResponse,
+  type ExternalWorkRecord,
+  type ExternalWorkSchedulerStatus,
+  type ExternalWorkView,
   type ExternalWorkPollRequest,
   type ExternalWorkPollResponse,
   type ExternalWorkReconcileRequest,
   type ExternalWorkReconcileResponse,
+  type ExternalSourceKind,
+  type ExternalWorkItemKind,
   type ExternalWorkflowDefinition,
   type RunEventEnvelope,
   type RunEventType,
@@ -178,6 +185,17 @@ const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
 const MAX_EXTRACTED_ARTIFACT_BYTES = 256 * 1024;
 const MAX_EXTRACTED_ARTIFACTS_PER_TOOL = 6;
 const CHANNEL_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+const externalSourceKinds = ["github", "linear"] as const satisfies readonly ExternalSourceKind[];
+const externalWorkItemKinds = ["github_pull_request", "github_issue", "linear_issue"] as const satisfies readonly ExternalWorkItemKind[];
+const externalWorkSchedulerStatuses = [
+  "discovered",
+  "claimed",
+  "workspace_preparing",
+  "ready",
+  "blocked",
+  "retry_wait",
+  "terminal",
+] as const satisfies readonly ExternalWorkSchedulerStatus[];
 const CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES = 40 * 1024 * 1024;
 const CHANNEL_LINK_PREVIEW_TIMEOUT_MS = 5_000;
 const CHANNEL_LINK_PREVIEW_MAX_BYTES = 192 * 1024;
@@ -555,6 +573,17 @@ async function routeRequest(
 
   if (url.pathname === "/external-work/reconcile") {
     await handleExternalWorkReconcile(request, response, config, storeRegistry, secretResolver, externalWorkFetch);
+    return;
+  }
+
+  if (url.pathname === "/external-work") {
+    await handleExternalWorkCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  const externalWorkItemRoute = matchSingleSegmentRoute(url.pathname, "/external-work");
+  if (externalWorkItemRoute) {
+    await handleExternalWorkItem(request, response, config, storeRegistry, externalWorkItemRoute);
     return;
   }
 
@@ -3401,6 +3430,92 @@ async function handleExternalGitHubImport(
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
+}
+
+async function handleExternalWorkCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work list` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const records = store.listExternalWorkRecords({
+      channelId: url.searchParams.get("channelId") ?? undefined,
+      sourceKind: readOptionalExternalSourceKindQuery(url),
+      workItemKind: readOptionalExternalWorkItemKindQuery(url),
+      schedulerStatus: readOptionalExternalWorkSchedulerStatusQuery(url),
+      limit: readOptionalIntegerQuery(url, "limit", 1),
+    });
+    const responseBody: ExternalWorkListResponse = {
+      cwd,
+      externalWork: records.map((record) => buildExternalWorkView(store, record)),
+    };
+    writeJson(response, 200, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleExternalWorkItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  externalWorkId: string,
+): Promise<void> {
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work detail` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const record = store.getExternalWorkRecord(externalWorkId);
+    if (!record) {
+      writeJson(response, 404, { error: "external_work_not_found", message: `External work item not found: ${externalWorkId}` });
+      return;
+    }
+    const responseBody: ExternalWorkDetailResponse = {
+      cwd,
+      externalWork: buildExternalWorkView(store, record),
+    };
+    writeJson(response, 200, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+function buildExternalWorkView(store: RunStore, externalWork: ExternalWorkRecord): ExternalWorkView {
+  const workflow = store.getChannelWorkflow(externalWork.workflowId);
+  const workflowStep = store.getChannelWorkflowStep(externalWork.workflowStepId);
+  const schedulerState = store.getExternalWorkSchedulerState(externalWork.id);
+  return {
+    externalWork,
+    ...(workflow ? { workflow } : {}),
+    ...(workflowStep ? { workflowStep } : {}),
+    ...(schedulerState ? { schedulerState } : {}),
+    artifacts: store.listExternalWorkArtifacts(externalWork.id),
+  };
 }
 
 async function handleExternalGitHubPoll(
@@ -8116,6 +8231,18 @@ function setCorsHeaders(response: ServerResponse): void {
   response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
+function matchSingleSegmentRoute(pathname: string, prefix: string): string | undefined {
+  const routePrefix = `${prefix}/`;
+  if (!pathname.startsWith(routePrefix)) {
+    return undefined;
+  }
+  const segment = pathname.slice(routePrefix.length);
+  if (!segment || segment.includes("/")) {
+    return undefined;
+  }
+  return decodeURIComponent(segment);
+}
+
 function readString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (typeof value !== "string" || value.length === 0) {
@@ -8801,6 +8928,39 @@ function readOptionalMediaJobStatusQuery(url: URL): MediaJobStatus | undefined {
     throw new Error(`status must be one of: ${mediaJobStatuses.join(", ")}`);
   }
   return value as MediaJobStatus;
+}
+
+function readOptionalExternalSourceKindQuery(url: URL): ExternalSourceKind | undefined {
+  const value = url.searchParams.get("sourceKind");
+  if (value === null) {
+    return undefined;
+  }
+  if (!externalSourceKinds.includes(value as ExternalSourceKind)) {
+    throw new Error(`sourceKind must be one of: ${externalSourceKinds.join(", ")}`);
+  }
+  return value as ExternalSourceKind;
+}
+
+function readOptionalExternalWorkItemKindQuery(url: URL): ExternalWorkItemKind | undefined {
+  const value = url.searchParams.get("workItemKind");
+  if (value === null) {
+    return undefined;
+  }
+  if (!externalWorkItemKinds.includes(value as ExternalWorkItemKind)) {
+    throw new Error(`workItemKind must be one of: ${externalWorkItemKinds.join(", ")}`);
+  }
+  return value as ExternalWorkItemKind;
+}
+
+function readOptionalExternalWorkSchedulerStatusQuery(url: URL): ExternalWorkSchedulerStatus | undefined {
+  const value = url.searchParams.get("schedulerStatus") ?? url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (!externalWorkSchedulerStatuses.includes(value as ExternalWorkSchedulerStatus)) {
+    throw new Error(`schedulerStatus must be one of: ${externalWorkSchedulerStatuses.join(", ")}`);
+  }
+  return value as ExternalWorkSchedulerStatus;
 }
 
 function readOptionalSecretPurposeQuery(url: URL): SecretPurpose | null | undefined {

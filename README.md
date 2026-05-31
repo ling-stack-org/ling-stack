@@ -299,12 +299,18 @@ node packages/cli/dist/index.js external-work github poll \
   --workflow-path WORKFLOW.md \
   --limit 50
 
+node packages/cli/dist/index.js external-work list \
+  --channel channel_... \
+  --status ready
+
+node packages/cli/dist/index.js external-work show external_work_...
+
 node packages/cli/dist/index.js external-work reconcile \
   --channel channel_... \
   --workflow-path WORKFLOW.md
 ```
 
-Use `--json` for full import, poll, and reconcile responses. A copy-pasteable temp
+Use `--json` for full import, poll, list, show, and reconcile responses. A copy-pasteable temp
 workspace smoke path lives in
 [examples/external-work/github](examples/external-work/github/README.md).
 
