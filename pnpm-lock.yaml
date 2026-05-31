@@ -77,6 +77,9 @@ importers:
       '@ling-stack/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
 
   packages/daemon:
     dependencies:

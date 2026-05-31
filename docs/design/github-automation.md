@@ -15,6 +15,12 @@ GitHub automation must be useful without becoming an unsafe bot. The default mod
 produce evidence artifacts and suggested actions. Any external side effect must pass
 through Ling Stack policy, approvals, resource leases, and audit logs.
 
+GitHub automation is the first concrete implementation of the broader
+[External Work Orchestration](external-work-orchestration.md) design. It should adopt
+the external scheduler, claim/reconciliation, retry/backoff, workspace isolation, and
+approval-gated action semantics defined there while keeping GitHub-specific event and
+permission details in this document.
+
 ## Position in the Platform
 
 GitHub is not a separate core. It is a combination of:
@@ -29,6 +35,7 @@ GitHub is not a separate core. It is a combination of:
 GitHub webhook or poll
 -> GitHub channel source adapter
 -> normalized channel event
+-> external scheduler claim and reconciliation
 -> channel coordinator
 -> kernel state machines
 -> workflow run
@@ -41,6 +48,11 @@ GitHub webhook or poll
 The kernel remains the source of truth. GitHub cannot mutate tasks, runs, approvals, or
 workflow states directly.
 
+The GitHub source adapter only normalizes GitHub payloads and reads GitHub state. The
+scheduler decides whether the subject should run, the channel coordinator acquires
+leases and starts Ling workflows, and the external action executor performs approved
+GitHub mutations.
+
 ## Goals
 
 - Let Ling Stack review PRs with the same rigor as local code review.
@@ -51,6 +63,9 @@ workflow states directly.
 - Respect GitHub permissions, CODEOWNERS, branch protection, required checks, and repo
   rules.
 - Preserve durable evidence so a later session can understand why an action was taken.
+- Reconcile webhook and polling races without duplicate runs.
+- Isolate per-PR or per-issue workspaces for installs, tests, git operations, and local
+  fixes.
 
 ## Non-Goals
 
@@ -59,6 +74,54 @@ workflow states directly.
 - No direct plugin database access.
 - No distributed multi-node GitHub worker in v0.1.
 - No broad external plugin marketplace before internal registries are stable.
+- No GitHub-specific workflow state path separate from Ling workflows and workflow
+  steps.
+
+## Repository Workflow Contract
+
+GitHub repositories should be able to opt into automation through a Ling `WORKFLOW.md`
+file. The shared schema is defined in
+[External Work Orchestration](external-work-orchestration.md). GitHub-specific source
+config should include the repository, event set, optional label filters, and token
+secret ref.
+
+Minimal GitHub example:
+
+```md
+---
+source:
+  kind: github
+  repository: openclaw/openclaw
+  events:
+    - pull_request.opened
+    - pull_request.synchronize
+    - issue.opened
+scheduler:
+  pollIntervalMs: 30000
+  maxConcurrentWorkItems: 4
+workspace:
+  root: ~/.ling-stack/workspaces/openclaw
+  mode: per_subject
+hooks:
+  afterCreate: |
+    git clone git@github.com:openclaw/openclaw.git .
+  beforeRun: |
+    git fetch origin "$GITHUB_HEAD_REF"
+agent:
+  teammateId: engineer
+  requestedSkillId: review
+actions:
+  defaultExternalMutationApproval: strict
+---
+
+Review {{ item.identifier }} and produce evidence first. Do not post comments,
+request changes, push commits, or merge unless Ling creates and approves a proposed
+GitHub action.
+```
+
+Invalid GitHub workflow config blocks new dispatch for that repository but must not
+crash the daemon. Reload failures keep the last known good effective config and surface
+a visible diagnostics error.
 
 ## Event Model
 
@@ -100,6 +163,10 @@ export interface NormalizedGitHubEvent {
 The `idempotencyKey` should include the GitHub delivery id when available. For polled
 events, it should include repository, subject id, event type, and source update time.
 
+Webhook and poll normalization must produce the same subject identity. If both observe
+the same PR update, the scheduler should return the existing workflow or claim rather
+than starting a second run.
+
 ## Subject Types
 
 ```ts
@@ -138,16 +205,21 @@ export type GitHubAutomationSubject =
 GitHub automations should compile into normal Ling workflow runs.
 
 ```text
-queued
+unclaimed
+-> claimed
+-> workspace_preparing
+-> queued
 -> running
 -> waiting_for_approval
 -> acting
--> posted | applied | skipped | failed | cancelled
+-> posted | applied | skipped | failed | cancelled | superseded
 ```
 
 Rules:
 
 - Duplicate delivery with the same idempotency key returns the existing workflow run.
+- Claims are durable workflow or workflow-step facts, not in-memory-only scheduler
+  state.
 - New PR commits should cancel, supersede, or queue behind older review runs for the same
   PR, depending on policy.
 - A review generated for an old head SHA cannot approve or request changes on a newer
@@ -155,6 +227,97 @@ Rules:
 - A failed external action writes an audit event and preserves the proposed action body.
 - A GitHub automation cannot mark itself successful until the kernel records the terminal
   transition.
+- A GitHub subject that becomes terminal or irrelevant during reconciliation cancels or
+  supersedes non-terminal Ling workflows through normal state transitions.
+
+## Scheduler and Reconciliation
+
+GitHub automation may start from webhook delivery, polling, or manual import. All three
+paths must converge on the same scheduler contract:
+
+1. Normalize the GitHub subject.
+2. Validate `WORKFLOW.md` and source credentials.
+3. Acquire the subject claim lease.
+4. Prepare or reuse the isolated workspace.
+5. Create or reuse a Ling workflow and workflow step with the source idempotency key.
+6. Start a runner only through channel coordinator policy.
+7. Reconcile source state before retry, approval execution, and terminal transition.
+
+Reconciliation runs at daemon startup, on scheduler ticks, after webhook delivery, and
+before approved GitHub mutations.
+
+It must detect:
+
+- PR head SHA changes after review generation.
+- Issues or PRs closed while a workflow is queued or running.
+- Check reruns replacing older failing check data.
+- Running workflows with no active runner after daemon restart.
+- Active leases past expiry.
+- Proposed actions whose target SHA or target state is stale.
+
+Required behavior:
+
+- Stale PR head SHA invalidates comments tied to old diffs, review decisions, pushes,
+  merges, and approvals.
+- Terminal source state cancels or supersedes queued/running workflows.
+- Lost runners become failed or blocked according to Ling recovery policy.
+- Reconciliation never posts to GitHub directly; it only updates Ling state or creates
+  proposed actions.
+
+## Retry and Backoff
+
+GitHub failures should be classified before retry.
+
+Retryable by default:
+
+- GitHub rate limits with retry-after metadata.
+- Network timeouts.
+- Check log fetch timeouts.
+- Provider or runner timeouts before external mutation.
+- Workspace hook dependency installation failures that are not deterministic.
+
+Not retryable without a new source event or user action:
+
+- Missing or invalid GitHub credentials.
+- Permission denied for the requested GitHub scope.
+- Stale PR head SHA.
+- Denied or expired approval.
+- Branch protection blocks merge or review action.
+- A GitHub mutation may have partially succeeded without an idempotent proposed action
+  record.
+
+Backoff should be exponential with jitter and bounded by the repository workflow config.
+Each retry attempt writes timeline evidence with the failure class, attempt number, next
+due time, and whether the retry is automatic or requires human action.
+
+## Workspace Isolation and Hooks
+
+GitHub automation should use one isolated workspace per PR or issue by default:
+
+```text
+.ling-stack/
+  external-work/
+    github/
+      owner_repo/
+        pr_123/
+          repo/
+          logs/
+          artifacts/
+```
+
+Rules:
+
+- Runner cwd is the isolated `repo/` directory.
+- `afterCreate` can clone the repository and install durable toolchain state.
+- `beforeRun` can fetch refs, check out the target SHA, install dependencies, or run
+  preflight checks.
+- `afterRun` can collect logs, summaries, coverage, or screenshots.
+- `beforeRemove` can preserve final evidence before workspace cleanup.
+- Hooks are shell commands, so they require the same local write and shell approval
+  posture as normal runs.
+- Hook output is redacted and stored as evidence.
+- Workspace cleanup never deletes Ling state-transition history, approval records, or
+  copied artifacts.
 
 ## Built-In Workflows
 
@@ -314,6 +477,7 @@ Recommended resource keys:
 | `github_pr:<owner>/<repo>#<number>` | PR review, comment, approve, merge, or push |
 | `github_issue:<owner>/<repo>#<number>` | Issue triage, labels, comments, or close |
 | `bound_path:<realpath>` | Local checkout write or test run |
+| `workflow_step:<id>` | Step start, retry, or handoff |
 | `provider:<providerPresetId>` | Provider concurrency or rate policy |
 
 Read-only review can run in parallel if provider and repo policies allow it. Any action
@@ -357,6 +521,11 @@ The UI should show:
 - Approve, reject, or edit-and-approve.
 
 Approval must be invalidated if the target head SHA changes before execution.
+
+External mutation execution must re-read the current GitHub subject immediately before
+the API call. If the head SHA, issue state, required checks, branch protection, or
+approval target no longer matches the proposed action, the executor records a stale
+target failure and does not call the mutation endpoint.
 
 ## Evidence Artifacts
 
@@ -425,6 +594,7 @@ the model to infer permission failure.
 Failure cases:
 
 - Duplicate webhook delivery.
+- Poll and webhook race claim the same subject.
 - Webhook arrives before local repo is synced.
 - PR head SHA changes after review generation.
 - GitHub token expired or lacks scope.
@@ -432,46 +602,61 @@ Failure cases:
 - CI log unavailable or truncated.
 - User approves after approval expires.
 - External action fails after approval.
+- Workspace hook fails before a run starts.
+- Daemon restarts while a GitHub workflow is blocked on approval.
 
 Required behavior:
 
 - Duplicate events are idempotent.
+- Subject claims use resource leases and source idempotency keys.
 - Stale head SHA blocks external review decisions.
 - Permission failure creates a visible failed external action artifact.
 - Expired approval cannot execute.
 - Retried external action uses the same proposed action id unless the content changes.
 - Recovery reconciles queued/running GitHub workflows at daemon startup.
+- Hook failures are recorded as attempt evidence and classified for retry.
+- Blocked approvals survive daemon restart because they are persisted by Ling, not held
+  only in scheduler memory.
 
 ## Implementation Phases
 
 ### Phase 1: Read-Only Review Artifacts
 
-- Add GitHub channel source type.
+- Add GitHub channel source type and `WORKFLOW.md` parsing for GitHub repositories.
 - Normalize PR and issue events from fixtures or manual imports.
+- Create durable workflow/workflow-step records with source idempotency keys.
 - Generate local PR review and issue triage artifacts.
 - No external posting.
 
-### Phase 2: Approval-Gated Comments and Labels
+### Phase 2: Scheduler Claims, Reconciliation, and Workspaces
+
+- Add GitHub polling for candidate PRs and issues.
+- Add subject claim leases for repo, PR, issue, workflow step, provider, and bound path.
+- Add startup and pre-mutation reconciliation.
+- Add per-subject isolated workspaces and workspace hooks.
+- Capture hook logs and retry/backoff evidence.
+
+### Phase 3: Approval-Gated Comments and Labels
 
 - Add proposed action records.
 - Add UI approval cards.
 - Post comments and labels only after approval.
 - Store external API result.
 
-### Phase 3: CI Triage and Local Fix Tasks
+### Phase 4: CI Triage and Local Fix Tasks
 
 - Import failing check metadata and logs.
 - Create Ling tasks from CI failures.
 - Allow local fix runs through normal channel coordinator and leases.
 - Push commits only after strict approval.
 
-### Phase 4: Review Decisions
+### Phase 5: Review Decisions
 
 - Request changes or approve PRs after strict approval.
 - Verify target head SHA immediately before execution.
 - Respect CODEOWNERS and branch protection.
 
-### Phase 5: Merge and Release
+### Phase 6: Merge and Release
 
 - Merge or release only after strict approval, required checks, and release policy.
 - Store release readiness report and final GitHub result.
@@ -481,10 +666,13 @@ Required behavior:
 Core and daemon:
 
 - Duplicate webhook delivery returns the same workflow run.
+- Poll and webhook race produces one subject claim.
 - PR head SHA change invalidates old approval.
 - Strict actions cannot execute with standard approval.
 - Failed GitHub action persists audit evidence.
 - Daemon startup recovers queued/running GitHub workflows.
+- Workspace hook failure records retry evidence.
+- Terminal GitHub subject state cancels or supersedes active Ling workflow state.
 
 GitHub adapter:
 

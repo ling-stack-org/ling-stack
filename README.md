@@ -21,6 +21,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [AI teammates and skills](docs/design/ai-teammates-and-skills.md)
 - [AI teammate private workspace](docs/design/ai-teammate-private-workspace.md)
 - [Platform architecture](docs/design/platform-architecture.md)
+- [External work orchestration](docs/design/external-work-orchestration.md)
 - [GitHub automation](docs/design/github-automation.md)
 - [Web modularization](docs/design/web-modularization.md)
 - [Contracts / API Client](docs/design/contracts-api-client.md)
@@ -272,7 +273,25 @@ node packages/cli/dist/index.js channel create --name Engineering --path "$PWD" 
 node packages/cli/dist/index.js task create --channel channel_... --title "Inspect repo" --prompt "List files and summarize this repo."
 ```
 
-### 7. Run a task through the Pi runner
+### 7. Import GitHub external work manually
+
+GitHub external work orchestration starts read-only. A local fixture import parses
+`WORKFLOW.md`, normalizes a PR or issue payload, creates or reuses a Ling workflow and
+step, and writes evidence artifacts. It does not start the runner or call GitHub.
+
+```bash
+node packages/cli/dist/index.js external-work github import \
+  --channel channel_... \
+  --event-type pull_request.opened \
+  --payload-file examples/external-work/github/pull-request-opened.json \
+  --workflow-path WORKFLOW.md
+```
+
+Use `--json` for the full `externalWorkItem`, `workflow`, `workflowStep`, `artifacts`,
+and `duplicate` response. A copy-pasteable temp workspace smoke path lives in
+[examples/external-work/github](examples/external-work/github/README.md).
+
+### 8. Run a task through the Pi runner
 
 `POST /runs` returns an SSE stream. See [Daemon API](docs/daemon-api.md) for full request examples.
 

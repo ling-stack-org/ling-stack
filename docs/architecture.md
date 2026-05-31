@@ -173,7 +173,14 @@ The kernel owns state machines, approvals, resource leases, audit logs, policy, 
 The detailed contract lives in [Platform Architecture](design/platform-architecture.md).
 The first accepted architecture decision is [ADR 0001: Platform Kernel and Extension Host](adr/0001-platform-kernel-and-extension-host.md).
 
-GitHub automation should be implemented as a channel source adapter plus approval-gated automation workflows, not as a separate state path. The detailed future design lives in [GitHub Automation Design](design/github-automation.md).
+External tracker work should enter through channel source adapters, scheduler claims,
+resource leases, workflow steps, isolated workspaces, evidence artifacts, and
+approval-gated external actions. The shared design lives in
+[External Work Orchestration](design/external-work-orchestration.md).
+
+GitHub automation should be implemented as the first external work adapter plus
+approval-gated automation workflows, not as a separate state path. The detailed future
+design lives in [GitHub Automation Design](design/github-automation.md).
 
 ## Next Architecture Plans
 
