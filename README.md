@@ -25,6 +25,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [External work orchestration](docs/design/external-work-orchestration.md)
 - [External work Phase 2 implementation](docs/design/external-work-phase-2-implementation.md)
 - [External work Phase 3 implementation](docs/design/external-work-phase-3-implementation.md)
+- [External work Phase 4 implementation](docs/design/external-work-phase-4-implementation.md)
 - [GitHub automation](docs/design/github-automation.md)
 - [Web modularization](docs/design/web-modularization.md)
 - [Contracts / API Client](docs/design/contracts-api-client.md)

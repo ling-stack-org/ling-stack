@@ -558,10 +558,16 @@ Implementation plan: [External Work Phase 3 Implementation](external-work-phase-
 
 ### Phase 4: CI Triage and Local Fix Tasks
 
-- Normalize failing checks and workflow runs.
-- Create scoped Ling tasks from CI failures.
-- Allow local fix runs through normal channel coordinator and leases.
-- Require strict approval for push commits.
+Implementation plan: [External Work Phase 4 Implementation](external-work-phase-4-implementation.md).
+
+- Normalize failing checks and workflow runs for existing GitHub PR external work.
+- Capture check/job metadata, bounded redacted log excerpts, first failing command, and
+  reproduction hints as local evidence artifacts.
+- Create scoped Ling tasks from CI failures by default; do not start the runner unless a
+  caller explicitly asks and the normal channel/task run policy allows it.
+- Keep Phase 4.0 read-first and local-first. Push commits, diagnosis comments, review
+  decisions, and merges remain separate external actions.
+- Require strict approval for any future push commit action.
 
 ### Phase 5: Review Decisions, Merge, and Release
 
