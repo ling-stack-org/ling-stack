@@ -640,10 +640,14 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 
 ### Phase 3: Approval-Gated Comments and Labels
 
-- Add proposed action records.
+- Implementation plan: [External Work Phase 3 Implementation](external-work-phase-3-implementation.md).
+
+- Add proposed action records for comments and labels.
+- Link proposed actions to durable approval requests.
 - Add UI approval cards.
-- Post comments and labels only after approval.
-- Store external API result.
+- Post comments and labels only after approval and immediate stale-target revalidation.
+- Store external API results, stale-target failures, and redacted request/response
+  evidence.
 
 ### Phase 4: CI Triage and Local Fix Tasks
 

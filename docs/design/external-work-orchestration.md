@@ -532,9 +532,17 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 
 ### Phase 3: Approval-Gated Comments and Labels
 
-- Add `ExternalProposedAction` records for comments and labels.
+Implementation plan: [External Work Phase 3 Implementation](external-work-phase-3-implementation.md).
+
+- Add durable proposed action records for comments and labels. The Phase 3 concrete
+  contract is `ExternalWorkAction`, while this document keeps `ExternalProposedAction`
+  as the broader cross-source concept.
+- Link proposed actions to durable approval requests instead of overloading run or media
+  job ownership.
 - Add UI approval cards.
-- Execute approved GitHub comments and labels through the daemon action executor.
+- Execute approved GitHub comments and labels through an explicit daemon action executor.
+- Re-read the GitHub subject immediately before mutation and fail stale targets without
+  calling mutation endpoints.
 - Store external API results and stale-target failures.
 
 ### Phase 4: CI Triage and Local Fix Tasks
