@@ -609,6 +609,10 @@ and writes scheduler state in the same SQLite workspace store. `executeHooks` de
 to `false`; when true, only `afterCreate` and `beforeRun` run inside the isolated
 external workspace with hook evidence artifacts.
 
+For reproducible live polling, prefer `source.secretRef: env:GITHUB_TOKEN` and start
+the daemon with `GITHUB_TOKEN` in its environment. Unauthenticated GitHub reads can hit
+low API rate limits before the smoke path finishes.
+
 Response:
 
 ```json
@@ -692,9 +696,10 @@ start a runner or create external mutation actions.
 
 For a copy-pasteable temp workspace smoke, use
 `examples/external-work/github/README.md`. That smoke copies the example `WORKFLOW.md`
-into a temporary channel bound path, creates a channel, imports the PR or issue fixture,
-runs a read-only poll/reconcile cycle, and reads evidence artifacts through
-`/artifacts/:id/content`.
+into a temporary channel bound path, starts an isolated daemon on a non-default port,
+creates a channel, imports the PR or issue fixture, reads evidence artifacts through
+`/artifacts/:id/content`, runs an authenticated read-only poll/reconcile cycle, and
+confirms the runner list stays empty.
 
 ### Run Persisted Task
 

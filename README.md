@@ -283,6 +283,10 @@ to discover open PR/issue candidates, claim each subject, prepare isolated local
 workspace state, and reconcile durable scheduler state. Neither path starts the runner
 or mutates GitHub.
 
+For live poll/reconcile, prefer authenticated GitHub reads. The bundled example
+`WORKFLOW.md` uses `source.secretRef: env:GITHUB_TOKEN`; start or restart the daemon
+with `GITHUB_TOKEN` in its environment, for example from `gh auth token`.
+
 ```bash
 node packages/cli/dist/index.js external-work github import \
   --channel channel_... \

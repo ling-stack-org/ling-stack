@@ -2,6 +2,7 @@
 source:
   kind: github
   repository: openclaw/openclaw
+  secretRef: env:GITHUB_TOKEN
   events:
     - pull_request.opened
     - pull_request.synchronize
