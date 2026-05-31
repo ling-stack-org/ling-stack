@@ -1018,6 +1018,19 @@ creates a channel, imports the PR or issue fixture, reads evidence artifacts thr
 `/artifacts/:id/content`, runs an authenticated read-only poll/reconcile cycle, and
 confirms the runner list stays empty.
 
+For a real repository smoke, use `docs/external-work-live-smoke.md` or the helper:
+
+```bash
+corepack pnpm build
+export GITHUB_TOKEN="$(gh auth token)"
+node examples/external-work/github/live-readonly-smoke.mjs --repo owner/repo --limit 1
+```
+
+The helper uses live GitHub read endpoints, creates and cancels a local proposed action,
+and verifies no runner starts. It never approves or executes the action, so it never
+calls GitHub mutation APIs. The same doc contains the explicit optional mutation smoke
+for disposable test PRs or issues.
+
 ### Run Persisted Task
 
 ```http

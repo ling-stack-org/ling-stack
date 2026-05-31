@@ -650,6 +650,11 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
   the target and refuses stale PR heads or terminal subjects before any mutation call.
 - Land Web Inbox approval cards and action audit for pending and terminal GitHub
   external actions; approval and execution remain separate UI actions.
+- Keep the Phase 3 live validation path in
+  [External Work Live Smoke](../external-work-live-smoke.md): the default helper polls a
+  real repository, creates local evidence and a proposed action, cancels it, and verifies
+  no runner starts; actual comments or labels require the documented separate approval
+  and execute step on a disposable test target.
 - Post comments and labels only after approval and immediate stale-target revalidation.
 - Store external API results, stale-target failures, and redacted request/response
   evidence.

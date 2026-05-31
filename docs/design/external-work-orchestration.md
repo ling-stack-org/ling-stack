@@ -547,6 +547,10 @@ Implementation plan: [External Work Phase 3 Implementation](external-work-phase-
 - Land Phase 3.2 as Web Inbox approval cards and action audit: show target snapshots,
   proposed payloads, artifacts, status, attempts, and errors; approving remains separate
   from the explicit Execute action control.
+- Keep a real-repository live smoke path before Phase 4:
+  [External Work Live Smoke](../external-work-live-smoke.md). The default helper uses
+  live GitHub reads plus local propose/cancel only; real comments or labels stay behind
+  the separate approval and execute step on disposable test targets.
 - Execute approved GitHub comments and labels through an explicit daemon action executor.
 - Re-read the GitHub subject immediately before mutation and fail stale targets without
   calling mutation endpoints.
