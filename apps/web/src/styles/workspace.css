@@ -895,3 +895,185 @@ pre {
 .compact-empty {
   min-height: 220px;
 }
+
+.ci-triage-panel {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #d8ded7;
+  background: #fbfcfa;
+}
+
+.ci-triage-panel.compact {
+  margin: 10px 0;
+  padding: 9px;
+}
+
+.ci-triage-head,
+.ci-triage-head span,
+.ci-triage-head-actions,
+.ci-triage-row-head,
+.ci-triage-row-head span,
+.ci-triage-meta,
+.ci-triage-actions,
+.ci-triage-field span,
+.ci-triage-empty {
+  display: flex;
+  align-items: center;
+}
+
+.ci-triage-head {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ci-triage-head span {
+  min-width: 0;
+  gap: 6px;
+}
+
+.ci-triage-head strong {
+  color: #17211f;
+  font-size: 13px;
+}
+
+.ci-triage-head small,
+.ci-triage-more {
+  color: #61706b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ci-triage-head-actions {
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.ci-triage-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ci-triage-row {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #e1e6e2;
+  background: #ffffff;
+}
+
+.ci-triage-row.compact {
+  padding: 8px;
+}
+
+.ci-triage-row-head {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ci-triage-row-head span {
+  min-width: 0;
+  gap: 6px;
+}
+
+.ci-triage-row-head strong {
+  overflow: hidden;
+  color: #17211f;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ci-triage-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid #d8ded7;
+  background: #f7faf7;
+  color: #61706b;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ci-triage-status.triaged,
+.ci-triage-status.task_created,
+.ci-triage-status.run_requested {
+  border-color: #a9cfc0;
+  background: #e7f5ef;
+  color: #116149;
+}
+
+.ci-triage-status.blocked,
+.ci-triage-status.stale,
+.ci-triage-status.failed {
+  border-color: #e7b4a8;
+  background: #fff1ed;
+  color: #9a341f;
+}
+
+.ci-triage-meta,
+.ci-triage-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ci-triage-meta span,
+.ci-triage-meta time,
+.ci-triage-actions code {
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid #d8ded7;
+  background: #f7faf7;
+  color: #61706b;
+  font-size: 11px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.ci-triage-failure-grid {
+  display: grid;
+  gap: 7px;
+}
+
+.ci-triage-field {
+  display: grid;
+  gap: 4px;
+}
+
+.ci-triage-field span {
+  gap: 5px;
+  color: #61706b;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ci-triage-field code,
+.ci-triage-field p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #42504c;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ci-triage-field code {
+  padding: 7px;
+  border: 1px solid #e1e6e2;
+  background: #f7faf7;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.ci-triage-artifacts {
+  display: grid;
+  gap: 6px;
+}
+
+.ci-triage-empty {
+  gap: 7px;
+  min-height: 54px;
+  color: #61706b;
+  font-size: 12px;
+}

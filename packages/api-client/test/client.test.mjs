@@ -65,6 +65,8 @@ test("builds URL query parameters for list endpoints", async () => {
   await client.listApprovals("/repo", { status: "pending", runId: "run 1", mediaJobId: "media 1", limit: 7 });
   await client.listStateTransitions("/repo", { entityType: "task", entityId: "task 1", limit: 9 });
   await client.listResourceLeases("/repo", { status: "active", ownerId: "run 1", limit: 11 });
+  await client.listGitHubExternalWorkCiTriage("/repo", { externalWorkId: "external work 1", channelId: "channel 1", status: "task_created", limit: 12 });
+  await client.getGitHubExternalWorkCiTriage("/repo", "triage 1");
   await client.getSecretStatus("keychain:provider 1", "provider_api_key");
 
   assert.equal(mock.calls[0].url, "http://daemon.test/runs?cwd=%2Frepo+path&limit=25");
@@ -81,7 +83,9 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[11].url, "http://daemon.test/approvals?cwd=%2Frepo&status=pending&runId=run+1&mediaJobId=media+1&limit=7");
   assert.equal(mock.calls[12].url, "http://daemon.test/state-transitions?cwd=%2Frepo&entityType=task&entityId=task+1&limit=9");
   assert.equal(mock.calls[13].url, "http://daemon.test/runtime/leases?cwd=%2Frepo&status=active&ownerId=run+1&limit=11");
-  assert.equal(mock.calls[14].url, "http://daemon.test/secrets/status?ref=keychain%3Aprovider+1&purpose=provider_api_key");
+  assert.equal(mock.calls[14].url, "http://daemon.test/external-work/github/ci/triage?cwd=%2Frepo&externalWorkId=external+work+1&channelId=channel+1&status=task_created&limit=12");
+  assert.equal(mock.calls[15].url, "http://daemon.test/external-work/github/ci/triage/triage%201?cwd=%2Frepo");
+  assert.equal(mock.calls[16].url, "http://daemon.test/secrets/status?ref=keychain%3Aprovider+1&purpose=provider_api_key");
 });
 
 test("sends mutation bodies for channel, task, provider, policy, media, and approval requests", async () => {
@@ -398,6 +402,45 @@ test("triages GitHub external work CI without transforming daemon response", asy
     workflowPath: "WORKFLOW.md",
     limit: 5,
     createTask: true,
+  });
+});
+
+test("starts GitHub external work CI triage runs as an SSE request", async () => {
+  const calls = [];
+  const fetch = async (url, init = {}) => {
+    calls.push({
+      url: String(url),
+      method: init.method ?? "GET",
+      headers: init.headers,
+      body: init.body,
+    });
+    return new Response("event: ready\ndata: {\"ok\":true,\"runId\":\"run_1\"}\n\n", {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  };
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch });
+
+  const response = await client.startGitHubExternalWorkCiTriageRun("/repo path", "triage 1", {
+    providerPresetId: "provider_1",
+    skipProviderPreflight: true,
+    tools: ["read"],
+    thinkingLevel: "low",
+  });
+
+  assert.equal(await response.text(), "event: ready\ndata: {\"ok\":true,\"runId\":\"run_1\"}\n\n");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].url, "http://daemon.test/external-work/github/ci/triage/triage%201/run?cwd=%2Frepo+path");
+  assert.deepEqual(calls[0].headers, {
+    Accept: "text/event-stream",
+    "Content-Type": "application/json",
+  });
+  assert.deepEqual(JSON.parse(calls[0].body), {
+    providerPresetId: "provider_1",
+    skipProviderPreflight: true,
+    tools: ["read"],
+    thinkingLevel: "low",
   });
 });
 

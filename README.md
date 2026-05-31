@@ -23,6 +23,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [AI teammate private workspace](docs/design/ai-teammate-private-workspace.md)
 - [Platform architecture](docs/design/platform-architecture.md)
 - [External work orchestration](docs/design/external-work-orchestration.md)
+- [External work roadmap](docs/design/external-work-roadmap.md)
 - [External work Phase 2 implementation](docs/design/external-work-phase-2-implementation.md)
 - [External work Phase 3 implementation](docs/design/external-work-phase-3-implementation.md)
 - [External work Phase 4 implementation](docs/design/external-work-phase-4-implementation.md)
@@ -287,13 +288,17 @@ to discover open PR/issue candidates, claim each subject, prepare isolated local
 workspace state, and reconcile durable scheduler state. Manual CI triage reads failing
 checks, workflow jobs, and bounded redacted logs for an existing PR external-work item,
 then creates or reuses local triage records, evidence artifacts, and scoped fix tasks.
-These paths do not start the runner or mutate GitHub. Phase 3 adds approval-gated action
-records for GitHub comments and labels. Propose/list/show/cancel stay local-only;
-`actions execute` is the only command that can call the approved GitHub comment or label
-endpoint after stale-target revalidation. The Web Inbox now shows GitHub external action
-approval cards with the target snapshot, proposed payload, linked evidence artifacts,
-and a separate Execute action button after approval; approving in Web does not execute
-the mutation.
+Import, poll, reconcile, and CI triage do not start the runner or mutate GitHub. Phase
+4.1 adds a separate explicit local CI fix run bridge for an existing triage record; it
+still does not mutate GitHub. Phase 3 adds approval-gated action records for GitHub
+comments and labels. Propose/list/show/cancel stay local-only; `actions execute` is the
+only command that can call the approved GitHub comment or label endpoint after
+stale-target revalidation. The Web Inbox now shows GitHub external action approval cards
+with the target snapshot, proposed payload, linked evidence artifacts, and a separate
+Execute action button after approval; approving in Web does not execute the mutation.
+The Web Workspace and task Inspector also show local GitHub CI triage records, failed
+check metadata, reproduction hints, linked artifacts, and linked fix task/run ids
+without starting a runner.
 
 For live poll/reconcile, prefer authenticated GitHub reads. The bundled example
 `WORKFLOW.md` uses `source.secretRef: env:GITHUB_TOKEN`; start or restart the daemon
@@ -321,6 +326,10 @@ node packages/cli/dist/index.js external-work github ci triage \
   --external-work external_work_... \
   --workflow-path WORKFLOW.md \
   --limit 5
+
+node packages/cli/dist/index.js external-work github ci run \
+  --triage external_work_ci_triage_... \
+  --provider provider_...
 
 node packages/cli/dist/index.js external-work actions propose-comment \
   --external-work external_work_... \
@@ -351,11 +360,15 @@ node packages/cli/dist/index.js external-work reconcile \
 
 Use `--json` for full import, poll, CI triage, list, show, action, and reconcile
 responses. CI triage creates local fix tasks by default; add `--no-create-task` to keep
-only the triage records and artifacts. A copy-pasteable fixture smoke path lives in
+only the triage records and artifacts. `external-work github ci run` is the explicit
+Phase 4.1 bridge from a triage record to a normal local runner stream; it does not
+mutate GitHub. A copy-pasteable fixture smoke path lives in
 [examples/external-work/github](examples/external-work/github/README.md). A real
 repository smoke with an isolated daemon, live GitHub reads, local action proposal, Web
 approval checks, and a separately gated mutation step lives in
 [External work live smoke](docs/external-work-live-smoke.md).
+The forward plan from Phase 4.1 closure through Phase 7 and GA hardening is tracked in
+[External work roadmap](docs/design/external-work-roadmap.md).
 
 ### 8. Run a task through the Pi runner
 

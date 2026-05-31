@@ -620,6 +620,10 @@ Required behavior:
 
 ## Implementation Phases
 
+The cross-source roadmap after Phase 4.0 is tracked in
+[External Work Roadmap](external-work-roadmap.md). This GitHub-specific section records
+the GitHub side of that roadmap.
+
 ### Phase 1: Read-Only Review Artifacts
 
 - Add GitHub channel source type and `WORKFLOW.md` parsing for GitHub repositories.
@@ -675,17 +679,40 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
   run endpoint, provider preflight, approval policy, and resource leases.
 - Keep push commits out of Phase 4.0; add them only as a later strict external action
   with head-SHA revalidation and evidence.
+- Phase 4.1 consists of a real disposable failing-PR smoke plus an explicit local fix
+  run bridge through existing Ling task/run policy. CI triage must still not start
+  hidden runners or mutate GitHub.
+- The explicit bridge is `POST /external-work/github/ci/triage/:triageId/run` and
+  `ling-stack external-work github ci run --triage <id> --provider <provider>`.
+- Phase 4.2 adds local-only CI triage list/detail APIs and a Web Workspace/Inspector
+  surface for failed checks, logs, artifacts, and linked local fix tasks/runs. Viewing
+  these records does not call GitHub and does not start the local runner.
 
-### Phase 5: Review Decisions
+### Phase 5: GitHub-First Closure Loop
 
-- Request changes or approve PRs after strict approval.
-- Verify target head SHA immediately before execution.
-- Respect CODEOWNERS and branch protection.
+- Connect discovered/imported GitHub work, isolated workspaces, teammate runs, evidence,
+  proposed actions, approval cards, and explicit execution into one auditable operator
+  flow.
+- Add review decisions, push commits, merge, and release actions only as strict proposed
+  actions with durable evidence, target revalidation, CODEOWNERS or branch protection
+  checks where relevant, and no force-push by default.
+- Keep edit-and-approve out of the first loop. Cancel and re-propose instead.
 
-### Phase 6: Merge and Release
+### Phase 6: Background GitHub Operation
 
-- Merge or release only after strict approval, required checks, and release policy.
-- Store release readiness report and final GitHub result.
+- Add webhook ingestion or scheduled polling after manual poll/reconcile/action execution
+  paths are stable.
+- Add startup reconciliation for scheduler state, leases, stale workspaces, pending
+  approvals, and external actions.
+- Keep every GitHub mutation behind proposed action execution.
+
+### Phase 7 and GA
+
+- Phase 7 belongs to the cross-source roadmap: add a second channel adapter such as
+  Linear using the same orchestration contracts.
+- After Phase 7, prefer GA hardening over broad new GitHub feature surface: live smoke
+  suites, permission audits, audit search/export, policy controls, rate-limit tuning,
+  security review, and recovery docs.
 
 ## Test Plan
 

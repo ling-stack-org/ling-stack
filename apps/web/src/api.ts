@@ -50,6 +50,9 @@ import type {
   ExternalWorkActionListRequest,
   ExternalWorkActionListResponse,
   ExternalWorkActionMutationResponse,
+  ExternalWorkCiTriageDetailResponse,
+  ExternalWorkCiTriageListRequest,
+  ExternalWorkCiTriageListResponse,
   MediaJobFormState,
   MediaJobArtifactListResponse,
   MediaJobListResponse,
@@ -533,6 +536,17 @@ export async function executeExternalWorkAction(
   input: ExternalWorkActionExecuteRequest = {},
 ): Promise<ExternalWorkActionMutationResponse> {
   return daemonClient.executeExternalWorkAction(cwd, actionId, input);
+}
+
+export async function listGitHubExternalWorkCiTriage(
+  cwd: string,
+  options: ExternalWorkCiTriageListRequest = {},
+): Promise<ExternalWorkCiTriageListResponse> {
+  return daemonClient.listGitHubExternalWorkCiTriage(cwd, options);
+}
+
+export async function getGitHubExternalWorkCiTriage(cwd: string, triageId: string): Promise<ExternalWorkCiTriageDetailResponse> {
+  return daemonClient.getGitHubExternalWorkCiTriage(cwd, triageId);
 }
 
 export async function getRunEvents(runId: string, cwd?: string): Promise<RunEventsResponse> {

@@ -60,6 +60,60 @@ workspace with the commands in `examples/external-work/github/README.md`.
 
 This validates the Phase 3.2 Web approval card without mutating GitHub.
 
+## Optional CI triage and local fix run smoke
+
+Use this section against a disposable PR with a failing GitHub Actions job. The commands
+read CI metadata and logs, create local evidence, and optionally start a local Ling run.
+They do not push commits or mutate GitHub.
+
+```bash
+tmpdir="/path/from/read-only-smoke"
+export LING_STACK_DAEMON_URL="http://127.0.0.1:17991"
+
+external_work_id="$(node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" --json external-work list \
+  --status ready \
+  --work-item-kind github_pull_request \
+  --limit 1 \
+  | node -e 'let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => console.log(JSON.parse(input).externalWork[0].externalWork.id));')"
+
+node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work github ci triage \
+  --external-work "$external_work_id" \
+  --workflow-path WORKFLOW.md \
+  --limit 5
+```
+
+Verify:
+
+- The output shows one or more triage records when the PR has failing CI.
+- The linked artifacts include normalized CI failure metadata and a bounded redacted log
+  excerpt when GitHub exposes job logs.
+- `runs list` is still empty after triage.
+- Opening the Web Workspace for the same channel shows the CI triage record and linked
+  artifact; the task Inspector filters that view to the selected local fix task.
+
+To explicitly start the local fix run, choose a provider preset that has already passed
+provider preflight:
+
+```bash
+triage_id="$(node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" --json external-work github ci triage \
+  --external-work "$external_work_id" \
+  --workflow-path WORKFLOW.md \
+  --limit 1 \
+  | node -e 'let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => console.log(JSON.parse(input).records[0].triage.id));')"
+
+node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work github ci run \
+  --triage "$triage_id" \
+  --provider provider_...
+```
+
+Verify:
+
+- The command streams a normal local run and prints `Run: run_...`.
+- Repeating the same command returns the same run id instead of starting another runner.
+- The triage record is updated to `run_requested` with the linked `runId` in the next
+  repeated triage response.
+- No GitHub comment, label, review, push, merge, release, or issue close occurs.
+
 ## Optional live mutation smoke
 
 Only use this section against a repository and PR/issue you control. The action will

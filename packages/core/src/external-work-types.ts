@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { RunTool } from "./approval-policy.js";
 import type { ApprovalRequest } from "./approval-types.js";
 import type { RunArtifact, RunSession } from "./run-types.js";
 import type { ChannelWorkflow, ChannelWorkflowStep, Task } from "./workspace-types.js";
@@ -488,6 +489,34 @@ export interface ExternalWorkCiTriageRequest {
   readonly limit?: number;
   readonly createTask?: boolean;
   readonly startRun?: boolean;
+}
+
+export interface ExternalWorkCiTriageRunRequest {
+  readonly providerPresetId: string;
+  readonly skipProviderPreflight?: boolean;
+  readonly idempotencyKey?: string;
+  readonly tools?: readonly RunTool[];
+  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  readonly systemPrompt?: string;
+  readonly appendSystemPrompt?: readonly string[];
+  readonly agentDir?: string;
+}
+
+export interface ExternalWorkCiTriageListRequest {
+  readonly externalWorkId?: string;
+  readonly channelId?: string;
+  readonly status?: ExternalWorkCiTriageStatus;
+  readonly limit?: number;
+}
+
+export interface ExternalWorkCiTriageListResponse {
+  readonly cwd: string;
+  readonly records: readonly ExternalWorkCiTriageView[];
+}
+
+export interface ExternalWorkCiTriageDetailResponse {
+  readonly cwd: string;
+  readonly record: ExternalWorkCiTriageView;
 }
 
 export interface ExternalWorkCiTriageResponse {

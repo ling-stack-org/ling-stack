@@ -363,6 +363,28 @@ test("GitHub CI triage creates local records, artifacts, and tasks without start
     assert.doesNotMatch(log, /github-token-secret/);
     assert.match(log, /\[REDACTED\]/);
 
+    const githubCallCountAfterTriage = githubCalls.length;
+    const listTriage = await getJson(`${daemon.url}/external-work/github/ci/triage?cwd=${encodeURIComponent(cwd)}&externalWorkId=${encodeURIComponent(externalWorkId)}&channelId=${encodeURIComponent(channel.channel.id)}&status=task_created&limit=10`);
+    assert.equal(listTriage.records.length, 2);
+    assert.equal(listTriage.records[0].triage.externalWorkId, externalWorkId);
+    assert.equal(listTriage.records[0].externalWork.id, externalWorkId);
+    assert.ok(listTriage.records[0].task.id);
+    assert.ok(listTriage.records[0].artifacts.length > 0);
+    assert.equal(githubCalls.length, githubCallCountAfterTriage);
+
+    const detailTriage = await getJson(`${daemon.url}/external-work/github/ci/triage/${encodeURIComponent(first.records[0].triage.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detailTriage.record.triage.id, first.records[0].triage.id);
+    assert.equal(detailTriage.record.task.id, first.records[0].task.id);
+    assert.equal(githubCalls.length, githubCallCountAfterTriage);
+
+    const missingTriage = await getJsonExpectError(`${daemon.url}/external-work/github/ci/triage/external_work_ci_triage_missing?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(missingTriage.status, 404);
+    assert.equal(missingTriage.body.error, "ci_triage_not_found");
+
+    const invalidTriageStatus = await getJsonExpectError(`${daemon.url}/external-work/github/ci/triage?cwd=${encodeURIComponent(cwd)}&status=ready`);
+    assert.equal(invalidTriageStatus.status, 400);
+    assert.match(invalidTriageStatus.body.message, /status must be one of/);
+
     const duplicate = await postJson(`${daemon.url}/external-work/github/ci/triage?cwd=${encodeURIComponent(cwd)}`, {
       externalWorkId,
       workflowPath: "WORKFLOW.md",
@@ -381,6 +403,67 @@ test("GitHub CI triage creates local records, artifacts, and tasks without start
     assert.equal(startRun.status, 400);
     assert.match(startRun.body.message, /startRun is not supported/);
     assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub CI triage run bridge starts an explicit local fix run and links it to triage", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-ci-run-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner, createGitHubCiFetchMock([]));
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "GitHub",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    });
+    await postJson(`${daemon.url}/external-work/github/import?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      eventType: "pull_request.opened",
+      payload: githubPullRequestPayload(),
+    });
+    const importedList = await getJson(`${daemon.url}/external-work?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+    const externalWorkId = importedList.externalWork[0].externalWork.id;
+    const triage = await postJson(`${daemon.url}/external-work/github/ci/triage?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      workflowPath: "WORKFLOW.md",
+      limit: 1,
+    });
+    const triageId = triage.records[0].triage.id;
+    const taskId = triage.records[0].triage.taskId;
+
+    const sse = await postSse(`${daemon.url}/external-work/github/ci/triage/${encodeURIComponent(triageId)}/run?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["read"],
+      thinkingLevel: "low",
+    });
+    const runId = readReadyRunId(sse);
+    assert.ok(runId);
+    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.runs[0].task.id, taskId);
+    assert.equal(runner.runs[0].cwd, cwd);
+    assert.deepEqual(runner.runs[0].tools, ["read"]);
+
+    const duplicateSse = await postSse(`${daemon.url}/external-work/github/ci/triage/${encodeURIComponent(triageId)}/run?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+    });
+    assert.equal(readReadyRunId(duplicateSse), runId);
+    assert.equal(runner.runs.length, 1);
+
+    const duplicateTriage = await postJson(`${daemon.url}/external-work/github/ci/triage?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      workflowPath: "WORKFLOW.md",
+      limit: 1,
+    });
+    assert.equal(duplicateTriage.records[0].triage.status, "run_requested");
+    assert.equal(duplicateTriage.records[0].triage.runId, runId);
+    assert.equal(duplicateTriage.records[0].run.id, runId);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -438,6 +521,21 @@ class FailingRunner {
   }
 }
 
+class RecordingRunner {
+  constructor() {
+    this.runs = [];
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    return {
+      taskId: options.task.id,
+      messages: [],
+      events: [],
+    };
+  }
+}
+
 async function startDaemonForTest(runner, externalWorkFetch) {
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner, externalWorkFetch });
   await daemon.start();
@@ -461,6 +559,34 @@ async function getText(url) {
   return text;
 }
 
+async function postSse(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      accept: "text/event-stream",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  assert.ok(response.ok, text);
+  return text;
+}
+
+function readReadyRunId(sseText) {
+  for (const block of sseText.split(/\r?\n\r?\n/)) {
+    if (!block.includes("event: ready")) {
+      continue;
+    }
+    const dataLine = block.split(/\r?\n/).find((line) => line.startsWith("data:"));
+    if (!dataLine) {
+      continue;
+    }
+    return JSON.parse(dataLine.slice("data:".length).trim()).runId;
+  }
+  return undefined;
+}
+
 async function getJsonExpectError(url) {
   const response = await fetch(url);
   const text = await response.text();
@@ -469,6 +595,21 @@ async function getJsonExpectError(url) {
     status: response.status,
     body: text.trim() ? JSON.parse(text) : {},
   };
+}
+
+async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
+  return await postJson(`${baseUrl}/providers?cwd=${encodeURIComponent(cwd)}`, {
+    kind: "glm",
+    displayName: "Static Chat",
+    providerId: "static-chat",
+    model: "static-model",
+    api: "google-generative-ai",
+    capabilities: ["chat"],
+    input: ["text"],
+    authHeader: false,
+    enabled: true,
+    ...overrides,
+  });
 }
 
 async function postJson(url, body) {

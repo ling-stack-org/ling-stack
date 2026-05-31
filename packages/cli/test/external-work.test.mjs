@@ -293,6 +293,70 @@ test("external-work github ci triage renders human and json output", async () =>
   }
 });
 
+test("external-work github ci run streams an explicit local fix run", async () => {
+  const daemon = await startExternalWorkDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-ci-run-"));
+  try {
+    const result = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "ci",
+      "run",
+      "--triage",
+      "external_work_ci_triage_1",
+      "--provider",
+      "provider_1",
+      "--skip-preflight",
+      "--tool",
+      "read",
+      "--thinking",
+      "low",
+    ]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /Run: run_ci_fix_1/);
+    assert.equal(daemon.requests.at(-1).method, "POST");
+    assert.equal(daemon.requests.at(-1).path, "/external-work/github/ci/triage/external_work_ci_triage_1/run");
+    assert.deepEqual(daemon.requests.at(-1).body, {
+      providerPresetId: "provider_1",
+      skipProviderPreflight: true,
+      tools: ["read"],
+      thinkingLevel: "low",
+      appendSystemPrompt: [],
+    });
+
+    const json = await runCli(daemon.url, cwd, [
+      "--json",
+      "external-work",
+      "github",
+      "ci",
+      "run",
+      "--triage",
+      "external_work_ci_triage_1",
+      "--provider",
+      "provider_1",
+      "--skip-preflight",
+    ]);
+    assert.equal(json.code, 0, json.stderr);
+    const lines = json.stdout.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    assert.equal(lines[0].type, "ready");
+    assert.equal(lines[0].runId, "run_ci_fix_1");
+
+    const missingTriage = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "ci",
+      "run",
+      "--provider",
+      "provider_1",
+    ]);
+    assert.equal(missingTriage.code, 2);
+    assert.match(missingTriage.stderr, /--triage/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 test("external-work reconcile renders human output and validates poll flags", async () => {
   const daemon = await startExternalWorkDaemon();
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-reconcile-"));
@@ -561,7 +625,8 @@ async function startExternalWorkDaemon() {
       writeJson(response, 200, externalWorkActionDetailResponse());
       return;
     }
-    if (request.method !== "POST" || ![
+    const isCiRunPath = /^\/external-work\/github\/ci\/triage\/[^/]+\/run$/.test(url.pathname);
+    if (request.method !== "POST" || (!isCiRunPath && ![
       "/external-work/github/import",
       "/external-work/github/poll",
       "/external-work/github/ci/triage",
@@ -569,7 +634,7 @@ async function startExternalWorkDaemon() {
       "/external-work/actions/propose",
       "/external-work/actions/external_work_action_1/cancel",
       "/external-work/actions/external_work_action_1/execute",
-    ].includes(url.pathname)) {
+    ].includes(url.pathname))) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -580,6 +645,10 @@ async function startExternalWorkDaemon() {
       cwd: url.searchParams.get("cwd"),
       body,
     });
+    if (isCiRunPath) {
+      writeSseRun(response);
+      return;
+    }
     if (body.eventType === "push") {
       writeJson(response, 400, { error: "bad_request", message: "Unsupported GitHub event type: push" });
       return;
@@ -646,6 +715,24 @@ function readRequestBody(request) {
 function writeJson(response, statusCode, body) {
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+function writeSseRun(response) {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  response.write(`event: ready\ndata: ${JSON.stringify({ ok: true, runId: "run_ci_fix_1" })}\n\n`);
+  response.write(`event: result\ndata: ${JSON.stringify({
+    id: "event_1",
+    runId: "run_ci_fix_1",
+    seq: 1,
+    ts: "2026-05-31T00:00:00.000Z",
+    type: "result",
+    data: { taskId: "task_1", messageCount: 0, runnerEventCount: 0 },
+  })}\n\n`);
+  response.end();
 }
 
 function externalWorkImportResponse() {

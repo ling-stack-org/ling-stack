@@ -40,6 +40,7 @@ import {
   deleteProvider,
   executeExternalWorkAction,
   getExternalWorkAction,
+  listGitHubExternalWorkCiTriage,
   getDaemonHealth,
   getProviderSecret,
   getApprovalPolicy,
@@ -109,6 +110,7 @@ import type {
   CreateAiTeammateRequest,
   ExternalWorkActionMutationResponse,
   ExternalWorkActionView,
+  ExternalWorkCiTriageView,
   MediaJob,
   MediaJobFormState,
   ProviderCheckResult,
@@ -334,6 +336,8 @@ export function AppShell(): JSX.Element {
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, ApprovalResolution>>({});
   const [externalActionDetails, setExternalActionDetails] = useState<Readonly<Record<string, ExternalWorkActionView>>>({});
   const [externalActionBusy, setExternalActionBusy] = useState<Record<string, ExternalActionBusyState>>({});
+  const [externalWorkCiTriage, setExternalWorkCiTriage] = useState<readonly ExternalWorkCiTriageView[]>([]);
+  const [externalWorkCiTriageLoading, setExternalWorkCiTriageLoading] = useState(false);
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [artifacts, setArtifacts] = useState<readonly RunArtifact[]>([]);
@@ -605,6 +609,7 @@ export function AppShell(): JSX.Element {
       void refreshChannels();
       void refreshRuns();
       void refreshApprovals();
+      void refreshExternalWorkCiTriage();
     }
     if (activeView === "runs") {
       void refreshRuns();
@@ -636,6 +641,7 @@ export function AppShell(): JSX.Element {
       void refreshChannelMessages(selectedChannelId);
       void refreshChannelFiles(selectedChannelId);
       void refreshChannelProtocol(selectedChannelId);
+      void refreshExternalWorkCiTriage(form.cwd.trim(), selectedChannelId);
     } else {
       setTasks([]);
       setChannelMessages([]);
@@ -651,6 +657,7 @@ export function AppShell(): JSX.Element {
       setChannelContextSummaries([]);
       setChannelWorkflows([]);
       setChannelWorkflowSteps([]);
+      setExternalWorkCiTriage([]);
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
@@ -1112,6 +1119,27 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function refreshExternalWorkCiTriage(
+    cwd = form.cwd.trim(),
+    channelId = selectedChannelId,
+  ): Promise<void> {
+    if (!cwd || !channelId) {
+      setExternalWorkCiTriage([]);
+      return;
+    }
+
+    setExternalWorkCiTriageLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await listGitHubExternalWorkCiTriage(cwd, { channelId, limit: 25 });
+      setExternalWorkCiTriage(response.records);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExternalWorkCiTriageLoading(false);
+    }
+  }
+
   async function refreshChannelMessages(channelId = selectedChannelId): Promise<void> {
     if (!form.cwd.trim() || !channelId) {
       setChannelMessages([]);
@@ -1257,6 +1285,7 @@ export function AppShell(): JSX.Element {
       refreshChannelProtocol(channelId),
       refreshRuns(),
       refreshApprovals(),
+      refreshExternalWorkCiTriage(form.cwd.trim(), channelId),
     ]);
     void refreshChannelActivityTransitions();
   }
@@ -2606,6 +2635,8 @@ export function AppShell(): JSX.Element {
             channelStateTransitions={channelStateTransitions}
             channelActivityTransitionsLoading={channelActivityTransitionsLoading}
             channelActivityTransitionError={channelActivityTransitionError}
+            externalWorkCiTriage={externalWorkCiTriage}
+            externalWorkCiTriageLoading={externalWorkCiTriageLoading}
             selectedTaskId={selectedTaskId}
             providers={providers}
             teammateTemplates={aiTeammates.length > 0 ? [] : builtinTeammateTemplates}
@@ -2663,6 +2694,7 @@ export function AppShell(): JSX.Element {
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
             onRunActivityTriageAction={runActivityTriageAction}
             onRefreshChannelActivity={() => void refreshChannelActivity()}
+            onRefreshExternalWorkCiTriage={() => void refreshExternalWorkCiTriage()}
             onRefreshChannelProtocol={() => void refreshChannelProtocol()}
             onRefreshChannelFiles={() => void Promise.all([refreshChannelFiles(), refreshChannelRunArtifacts()])}
             attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
@@ -2896,6 +2928,8 @@ export function AppShell(): JSX.Element {
               selectedApprovalId={selectedApprovalId}
               externalActionDetails={externalActionDetails}
               externalActionBusy={externalActionBusy}
+              externalWorkCiTriage={externalWorkCiTriage}
+              externalWorkCiTriageLoading={externalWorkCiTriageLoading}
               approvalPolicy={approvalPolicy}
               approvalPolicyForm={approvalPolicyForm}
               cwd={form.cwd}
