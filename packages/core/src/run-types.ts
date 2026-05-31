@@ -100,7 +100,11 @@ import type {
 import type {
   CreateExternalWorkWorkflowInput,
   ExternalWorkRecord,
+  ExternalWorkSchedulerState,
   ExternalWorkWorkflowResult,
+  ListExternalWorkSchedulerStatesOptions,
+  UpdateExternalWorkSchedulerStateInput,
+  UpsertExternalWorkSchedulerStateInput,
 } from "./external-work-types.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
@@ -399,6 +403,15 @@ export interface RunStore {
   getExternalWorkRecord(id: string): ExternalWorkRecord | undefined;
   getExternalWorkRecordByIdempotency(sourceKind: ExternalWorkRecord["sourceKind"], idempotencyKey: string): ExternalWorkRecord | undefined;
   updateExternalWorkArtifacts(id: string, artifactIds: readonly string[], now: string): ExternalWorkRecord | undefined;
+  upsertExternalWorkSchedulerState(input: UpsertExternalWorkSchedulerStateInput, now: string): ExternalWorkSchedulerState;
+  getExternalWorkSchedulerState(externalWorkId: string): ExternalWorkSchedulerState | undefined;
+  findActiveExternalWorkSchedulerState(sourceKey: string, subjectKey: string): ExternalWorkSchedulerState | undefined;
+  listExternalWorkSchedulerStates(options?: ListExternalWorkSchedulerStatesOptions): ExternalWorkSchedulerState[];
+  updateExternalWorkSchedulerState(
+    externalWorkId: string,
+    input: UpdateExternalWorkSchedulerStateInput,
+    now: string,
+  ): ExternalWorkSchedulerState | undefined;
   close(): void;
 }
 

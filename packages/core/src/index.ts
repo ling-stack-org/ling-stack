@@ -14,6 +14,7 @@ export * from "./redaction.js";
 export * from "./secrets.js";
 export * from "./external-work-types.js";
 export * from "./external-work.js";
+export * from "./external-work-scheduler.js";
 export * from "./workspace-types.js";
 export * from "./storage/event-log.js";
 export * from "./storage/sqlite-run-store.js";

@@ -213,6 +213,82 @@ export interface ExternalGitHubImportRequest {
   readonly workflowPath?: string;
 }
 
+export type ExternalWorkSchedulerStatus =
+  | "discovered"
+  | "claimed"
+  | "workspace_preparing"
+  | "ready"
+  | "blocked"
+  | "retry_wait"
+  | "terminal";
+
+export interface ExternalWorkSchedulerState {
+  readonly externalWorkId: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly subjectKey: string;
+  readonly sourceKey: string;
+  readonly workflowId: string;
+  readonly workflowStepId: string;
+  readonly schedulerStatus: ExternalWorkSchedulerStatus;
+  readonly attemptCount: number;
+  readonly lastAttemptAt?: string;
+  readonly nextAttemptAt?: string;
+  readonly maxRetryBackoffMs: number;
+  readonly lastErrorCode?: string;
+  readonly lastErrorMessage?: string;
+  readonly workspacePath?: string;
+  readonly workspaceMode?: ExternalWorkspaceMode;
+  readonly hookArtifactIds: readonly string[];
+  readonly lastReconciledAt?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ExternalWorkPollRequest {
+  readonly channelId: string;
+  readonly workflowPath?: string;
+  readonly limit?: number;
+  readonly executeHooks?: boolean;
+}
+
+export interface ExternalWorkPollResultItem {
+  readonly subjectKey?: string;
+  readonly identifier?: string;
+  readonly action: "claimed" | "duplicate" | "blocked" | "retry_scheduled" | "terminal_ignored";
+  readonly externalWorkId?: string;
+  readonly workflowId?: string;
+  readonly workflowStepId?: string;
+  readonly schedulerStatus?: ExternalWorkSchedulerStatus;
+  readonly message?: string;
+}
+
+export interface ExternalWorkPollResponse {
+  readonly candidates: number;
+  readonly claimed: number;
+  readonly duplicates: number;
+  readonly blocked: number;
+  readonly retryScheduled: number;
+  readonly terminalIgnored: number;
+  readonly artifacts: readonly RunArtifact[];
+  readonly results: readonly ExternalWorkPollResultItem[];
+  readonly schedulerStates: readonly ExternalWorkSchedulerState[];
+}
+
+export interface ExternalWorkReconcileRequest {
+  readonly channelId?: string;
+  readonly workflowPath?: string;
+}
+
+export interface ExternalWorkReconcileResponse {
+  readonly expiredLeases: number;
+  readonly checked: number;
+  readonly blocked: number;
+  readonly retryReady: number;
+  readonly terminal: number;
+  readonly schedulerStates: readonly ExternalWorkSchedulerState[];
+}
+
 export interface ExternalWorkImportResponse {
   readonly externalWorkItem: ExternalWorkItem;
   readonly workflow: ChannelWorkflow;
@@ -840,7 +916,16 @@ export interface ChannelWorkflowStepStartResponse {
   readonly blocker?: string;
 }
 
-export type ResourceType = "channel" | "bound_path" | "workspace" | "provider" | "task" | "workflow_step";
+export type ResourceType =
+  | "channel"
+  | "bound_path"
+  | "workspace"
+  | "provider"
+  | "task"
+  | "workflow_step"
+  | "external_source"
+  | "external_subject"
+  | "external_workspace";
 
 export type ResourceLeaseStatus = "active" | "released" | "expired";
 

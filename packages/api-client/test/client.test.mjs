@@ -4,6 +4,7 @@ import { LingDaemonClient, LingDaemonError, daemonBaseUrlFromEnv } from "../dist
 
 function createFetchMock(responseBody = { ok: true }) {
   const calls = [];
+  const responses = Array.isArray(responseBody) ? [...responseBody] : undefined;
   const fetch = async (url, init = {}) => {
     calls.push({
       url: String(url),
@@ -11,7 +12,7 @@ function createFetchMock(responseBody = { ok: true }) {
       headers: init.headers,
       body: init.body,
     });
-    return jsonResponse(responseBody);
+    return jsonResponse(responses ? responses.shift() : responseBody);
   };
   return { calls, fetch };
 }
@@ -306,6 +307,56 @@ test("imports GitHub external work without transforming the daemon response", as
     channelId: "channel 1",
     eventType: "pull_request.opened",
     payload: { pull_request: { number: 123 } },
+    workflowPath: "WORKFLOW.md",
+  });
+});
+
+test("polls and reconciles external work without transforming daemon responses", async () => {
+  const pollResponse = {
+    candidates: 1,
+    claimed: 1,
+    duplicates: 0,
+    blocked: 0,
+    retryScheduled: 0,
+    terminalIgnored: 0,
+    artifacts: [],
+    results: [{ action: "claimed", identifier: "owner/repo#123" }],
+    schedulerStates: [{ externalWorkId: "external_work_1", schedulerStatus: "ready" }],
+  };
+  const reconcileResponse = {
+    expiredLeases: 1,
+    checked: 1,
+    blocked: 0,
+    retryReady: 0,
+    terminal: 1,
+    schedulerStates: [{ externalWorkId: "external_work_1", schedulerStatus: "terminal" }],
+  };
+  const mock = createFetchMock([pollResponse, reconcileResponse]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  assert.deepEqual(await client.pollGitHubExternalWork("/repo", {
+    channelId: "channel_1",
+    workflowPath: "WORKFLOW.md",
+    limit: 25,
+    executeHooks: true,
+  }), pollResponse);
+  assert.deepEqual(await client.reconcileExternalWork("/repo", {
+    channelId: "channel_1",
+    workflowPath: "WORKFLOW.md",
+  }), reconcileResponse);
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/external-work/github/poll?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    channelId: "channel_1",
+    workflowPath: "WORKFLOW.md",
+    limit: 25,
+    executeHooks: true,
+  });
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/external-work/reconcile?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+    channelId: "channel_1",
     workflowPath: "WORKFLOW.md",
   });
 });

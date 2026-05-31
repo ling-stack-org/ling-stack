@@ -531,13 +531,14 @@ Starting a step acquires a `workflow_step` lease. Duplicate starts return
 `409 resource_conflict` while the lease is active. Step `skip` and `cancel` only mutate
 workflow-step state; they do not mark linked task/run records terminal.
 
-## External Work Import
+## External Work
 
-Phase 1 adds a read-only GitHub manual import path. It parses a repository
+Phase 1 adds a read-only GitHub manual import path. Phase 2 adds manual read-only
+GitHub polling and local scheduler reconciliation. Import parses a repository
 `WORKFLOW.md`, normalizes a GitHub PR or issue payload, creates or reuses a
 `ChannelWorkflow` and `ChannelWorkflowStep`, and writes local evidence artifacts. It
-does not start a runner, poll GitHub, receive webhooks, post comments, add labels,
-request reviews, push commits, or merge.
+does not start a runner, receive webhooks, post comments, add labels, request reviews,
+push commits, close issues, or merge. Polling only uses GitHub `GET` endpoints.
 
 ```http
 POST /external-work/github/import?cwd=/path/to/project
@@ -584,6 +585,66 @@ The same source idempotency key returns the existing workflow and step with
 item JSON and rendered workflow prompt markdown, both served through the existing
 artifact endpoints.
 
+### Poll GitHub
+
+```http
+POST /external-work/github/poll?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "channelId": "channel_...",
+  "workflowPath": "WORKFLOW.md",
+  "limit": 50,
+  "executeHooks": false
+}
+```
+
+The daemon reads the channel-bound `WORKFLOW.md`, resolves `source.secretRef` through
+the existing secret resolver when present, calls GitHub read-only PR/issue list
+endpoints, claims source and subject leases, creates or reuses local workflow records,
+and writes scheduler state in the same SQLite workspace store. `executeHooks` defaults
+to `false`; when true, only `afterCreate` and `beforeRun` run inside the isolated
+external workspace with hook evidence artifacts.
+
+Response:
+
+```json
+{
+  "candidates": 1,
+  "claimed": 1,
+  "duplicates": 0,
+  "blocked": 0,
+  "retryScheduled": 0,
+  "terminalIgnored": 0,
+  "artifacts": [],
+  "results": [],
+  "schedulerStates": []
+}
+```
+
+### Reconcile External Work
+
+```http
+POST /external-work/reconcile?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "channelId": "channel_...",
+  "workflowPath": "WORKFLOW.md"
+}
+```
+
+`channelId` and `workflowPath` are optional. Without `workflowPath`, reconcile only
+repairs local state: expired leases, missing workflow/step records, terminal workflow
+steps, and retry rows whose backoff has elapsed. With `workflowPath`, it may also use
+GitHub read-only single-item `GET` requests to detect remote terminal state.
+
 SDK clients can use the same endpoint through:
 
 ```ts
@@ -593,9 +654,20 @@ await client.importGitHubExternalWork("/path/to/project", {
   payload,
   workflowPath: "WORKFLOW.md",
 });
+
+await client.pollGitHubExternalWork("/path/to/project", {
+  channelId: "channel_...",
+  workflowPath: "WORKFLOW.md",
+  limit: 50,
+});
+
+await client.reconcileExternalWork("/path/to/project", {
+  channelId: "channel_...",
+  workflowPath: "WORKFLOW.md",
+});
 ```
 
-The CLI exposes the same read-only manual import for local fixtures:
+The CLI exposes the same read-only surfaces:
 
 ```bash
 ling-stack --cwd /path/to/project external-work github import \
@@ -603,16 +675,26 @@ ling-stack --cwd /path/to/project external-work github import \
   --event-type pull_request.opened \
   --payload-file examples/external-work/github/pull-request-opened.json \
   --workflow-path WORKFLOW.md
+
+ling-stack --cwd /path/to/project external-work github poll \
+  --channel channel_... \
+  --workflow-path WORKFLOW.md \
+  --limit 50
+
+ling-stack --cwd /path/to/project external-work reconcile \
+  --channel channel_... \
+  --workflow-path WORKFLOW.md
 ```
 
 `--workflow-markdown-file <path>` may be used instead of `--workflow-path` for inline
-manual tests. The CLI and SDK only call the local daemon import endpoint; they do not
-call GitHub APIs, start a runner, or create external mutation actions.
+manual import tests. The CLI and SDK only call local daemon endpoints. They do not
+start a runner or create external mutation actions.
 
 For a copy-pasteable temp workspace smoke, use
 `examples/external-work/github/README.md`. That smoke copies the example `WORKFLOW.md`
 into a temporary channel bound path, creates a channel, imports the PR or issue fixture,
-and reads the returned evidence artifacts through `/artifacts/:id/content`.
+runs a read-only poll/reconcile cycle, and reads evidence artifacts through
+`/artifacts/:id/content`.
 
 ### Run Persisted Task
 

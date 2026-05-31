@@ -274,11 +274,14 @@ node packages/cli/dist/index.js channel create --name Engineering --path "$PWD" 
 node packages/cli/dist/index.js task create --channel channel_... --title "Inspect repo" --prompt "List files and summarize this repo."
 ```
 
-### 7. Import GitHub external work manually
+### 7. Import or poll GitHub external work
 
-GitHub external work orchestration starts read-only. A local fixture import parses
+GitHub external work orchestration is read-only in Phase 2. Fixture import parses
 `WORKFLOW.md`, normalizes a PR or issue payload, creates or reuses a Ling workflow and
-step, and writes evidence artifacts. It does not start the runner or call GitHub.
+step, and writes evidence artifacts. Manual poll uses GitHub read-only REST endpoints
+to discover open PR/issue candidates, claim each subject, prepare isolated local
+workspace state, and reconcile durable scheduler state. Neither path starts the runner
+or mutates GitHub.
 
 ```bash
 node packages/cli/dist/index.js external-work github import \
@@ -286,10 +289,19 @@ node packages/cli/dist/index.js external-work github import \
   --event-type pull_request.opened \
   --payload-file examples/external-work/github/pull-request-opened.json \
   --workflow-path WORKFLOW.md
+
+node packages/cli/dist/index.js external-work github poll \
+  --channel channel_... \
+  --workflow-path WORKFLOW.md \
+  --limit 50
+
+node packages/cli/dist/index.js external-work reconcile \
+  --channel channel_... \
+  --workflow-path WORKFLOW.md
 ```
 
-Use `--json` for the full `externalWorkItem`, `workflow`, `workflowStep`, `artifacts`,
-and `duplicate` response. A copy-pasteable temp workspace smoke path lives in
+Use `--json` for full import, poll, and reconcile responses. A copy-pasteable temp
+workspace smoke path lives in
 [examples/external-work/github](examples/external-work/github/README.md).
 
 ### 8. Run a task through the Pi runner

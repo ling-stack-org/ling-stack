@@ -8,6 +8,8 @@ source:
     - issue.opened
 agent:
   teammateId: engineer
+workspace:
+  mode: per_subject
 actions:
   defaultExternalMutationApproval: strict
 ---

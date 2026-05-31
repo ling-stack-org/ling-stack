@@ -1,8 +1,8 @@
-# GitHub External Work Manual Import Example
+# GitHub External Work Example
 
-This example is a read-only Phase 1 smoke path. It imports local GitHub PR or issue
-fixtures into Ling Stack workflow records and evidence artifacts. It does not start a
-runner and does not call GitHub.
+This example covers the read-only Phase 1/2 smoke path. It imports local GitHub PR or
+issue fixtures into Ling Stack workflow records, and it can run one manual GitHub
+read-only poll/reconcile cycle. It does not start a runner and does not mutate GitHub.
 
 ## Files
 
@@ -54,3 +54,20 @@ Use the returned artifact id with the existing artifact endpoint:
 ```bash
 curl "http://127.0.0.1:17891/artifacts/<artifact_id>/content?cwd=$tmpdir"
 ```
+
+For Phase 2 manual polling, configure `source.secretRef` in `WORKFLOW.md` if you want
+authenticated GitHub reads, then run:
+
+```bash
+node packages/cli/dist/index.js --cwd "$tmpdir" external-work github poll \
+  --channel "$channel_id" \
+  --workflow-path WORKFLOW.md \
+  --limit 50
+
+node packages/cli/dist/index.js --cwd "$tmpdir" external-work reconcile \
+  --channel "$channel_id" \
+  --workflow-path WORKFLOW.md
+```
+
+`--execute-hooks` is optional on poll. When enabled, only `afterCreate` and `beforeRun`
+run inside `.ling-stack/external-workspaces/github/...` with local evidence artifacts.

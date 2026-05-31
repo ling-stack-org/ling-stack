@@ -6,8 +6,10 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   createSqliteRunStore,
+  createGitHubExternalWorkAdapter,
   normalizeGitHubExternalWorkItem,
   parseExternalWorkflowMarkdown,
+  pollGitHubExternalWork,
   renderExternalWorkflowPrompt,
 } from "../dist/index.js";
 
@@ -189,6 +191,188 @@ test("sqlite external work import reuses workflow by idempotency and stores evid
   }
 });
 
+test("GitHub read-only adapter loads PRs and standalone issues without double-importing PR-shaped issues", async () => {
+  const calls = [];
+  const adapter = createGitHubExternalWorkAdapter({
+    fetch: async (url, init) => {
+      calls.push({ url, init });
+      if (url.includes("/pulls?")) {
+        return jsonResponse([githubPullRequestPayload().pull_request]);
+      }
+      if (url.includes("/issues?")) {
+        return jsonResponse([
+          githubIssuePayload().issue,
+          { ...githubIssuePayload().issue, number: 43, pull_request: { url: "https://api.github.test/pulls/43" } },
+        ]);
+      }
+      return jsonResponse({ message: "not found" }, { ok: false, status: 404, statusText: "Not Found" });
+    },
+  });
+
+  const items = await adapter.loadCandidates({
+    repository: "openclaw/openclaw",
+    events: ["pull_request.opened", "issue.opened"],
+    activeStates: ["open"],
+    token: "github-token",
+    limit: 10,
+  });
+
+  assert.equal(items.length, 2);
+  assert.deepEqual(items.map((item) => item.kind), ["github_pull_request", "github_issue"]);
+  assert.equal(items[0].identifier, "openclaw/openclaw#86279");
+  assert.equal(items[1].identifier, "openclaw/openclaw#42");
+  assert.match(calls[0].init.headers.Authorization, /Bearer github-token/);
+});
+
+test("GitHub external work poll creates scheduler state and blocks active subject duplicates", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-external-work-poll-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "GitHub", boundPath: cwd, defaultTeammateId: "engineer" }, "2026-05-30T00:00:00.000Z");
+    const workflow = parseExternalWorkflowMarkdown(workflowMarkdown);
+    const fetch = createGitHubPollFetch(() => [githubPullRequestPayload().pull_request], () => []);
+
+    const first = await pollGitHubExternalWork({
+      store,
+      cwd,
+      channelId: channel.id,
+      workflowDefinition: workflow,
+      workflowDirectory: cwd,
+      fetch,
+      now: "2026-05-30T00:00:00.000Z",
+    });
+    assert.equal(first.candidates, 1);
+    assert.equal(first.claimed, 1);
+    assert.equal(first.artifacts.length, 2);
+    assert.equal(first.schedulerStates[0].schedulerStatus, "ready");
+    assert.ok(first.schedulerStates[0].workspacePath.includes(".ling-stack"));
+    assert.equal(store.listChannelWorkflows({ channelId: channel.id }).length, 1);
+
+    const duplicate = await pollGitHubExternalWork({
+      store,
+      cwd,
+      channelId: channel.id,
+      workflowDefinition: workflow,
+      workflowDirectory: cwd,
+      fetch,
+      now: "2026-05-30T00:01:00.000Z",
+    });
+    assert.equal(duplicate.duplicates, 1);
+    assert.equal(store.listChannelWorkflows({ channelId: channel.id }).length, 1);
+
+    const changedHeadFetch = createGitHubPollFetch(() => [{
+      ...githubPullRequestPayload().pull_request,
+      updated_at: "2026-05-30T00:02:00Z",
+      head: { ...githubPullRequestPayload().pull_request.head, sha: "head-sha-2" },
+    }], () => []);
+    const blocked = await pollGitHubExternalWork({
+      store,
+      cwd,
+      channelId: channel.id,
+      workflowDefinition: workflow,
+      workflowDirectory: cwd,
+      fetch: changedHeadFetch,
+      now: "2026-05-30T00:02:00.000Z",
+    });
+    assert.equal(blocked.blocked, 1);
+    assert.match(blocked.results[0].message, /another idempotency key/);
+    assert.equal(store.listChannelWorkflows({ channelId: channel.id }).length, 1);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub external work poll runs workspace hooks as redacted evidence artifacts", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-external-work-hooks-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "GitHub", boundPath: cwd, defaultTeammateId: "engineer" }, "2026-05-30T00:00:00.000Z");
+    const workflow = parseExternalWorkflowMarkdown(`---
+source:
+  kind: github
+  repository: openclaw/openclaw
+  events:
+    - pull_request.opened
+hooks:
+  beforeRun: 'printf "github-token-secret"'
+  timeoutMs: 5000
+---
+
+Review {{ item.identifier }}.
+`);
+    const result = await pollGitHubExternalWork({
+      store,
+      cwd,
+      channelId: channel.id,
+      workflowDefinition: workflow,
+      workflowDirectory: cwd,
+      fetch: createGitHubPollFetch(() => [githubPullRequestPayload().pull_request], () => []),
+      githubToken: "github-token-secret",
+      executeHooks: true,
+      now: "2026-05-30T00:00:00.000Z",
+    });
+
+    assert.equal(result.claimed, 1);
+    const hookArtifact = result.artifacts.find((artifact) => artifact.title === "External work hook: beforeRun");
+    assert.ok(hookArtifact);
+    const content = await readFile(resolve(store.paths.artifactsDir, hookArtifact.path), "utf8");
+    assert.doesNotMatch(content, /github-token-secret/);
+    assert.match(content, /\[REDACTED\]/);
+    assert.deepEqual(store.getExternalWorkSchedulerState(result.schedulerStates[0].externalWorkId).hookArtifactIds, [hookArtifact.id]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub external work poll records failed hook evidence and schedules capped retry", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-external-work-hook-fail-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "GitHub", boundPath: cwd, defaultTeammateId: "engineer" }, "2026-05-30T00:00:00.000Z");
+    const workflow = parseExternalWorkflowMarkdown(`---
+source:
+  kind: github
+  repository: openclaw/openclaw
+  events:
+    - pull_request.opened
+scheduler:
+  maxRetryBackoffMs: 1000
+hooks:
+  beforeRun: 'printf "github-token-secret"; exit 7'
+  timeoutMs: 5000
+---
+
+Review {{ item.identifier }}.
+`);
+    const result = await pollGitHubExternalWork({
+      store,
+      cwd,
+      channelId: channel.id,
+      workflowDefinition: workflow,
+      workflowDirectory: cwd,
+      fetch: createGitHubPollFetch(() => [githubPullRequestPayload().pull_request], () => []),
+      githubToken: "github-token-secret",
+      executeHooks: true,
+      now: "2026-05-30T00:00:00.000Z",
+    });
+
+    assert.equal(result.retryScheduled, 1);
+    assert.equal(result.schedulerStates[0].schedulerStatus, "retry_wait");
+    assert.equal(result.schedulerStates[0].nextAttemptAt, "2026-05-30T00:00:01.000Z");
+    const hookArtifact = result.artifacts.find((artifact) => artifact.title === "External work hook: beforeRun");
+    assert.ok(hookArtifact);
+    assert.deepEqual(result.schedulerStates[0].hookArtifactIds, [hookArtifact.id]);
+    const content = await readFile(resolve(store.paths.artifactsDir, hookArtifact.path), "utf8");
+    assert.doesNotMatch(content, /github-token-secret/);
+    assert.match(content, /exitCode/);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function githubRepository() {
   return {
     name: "openclaw",
@@ -246,4 +430,30 @@ async function readExampleText(fileName) {
 
 async function readExampleJson(fileName) {
   return JSON.parse(await readExampleText(fileName));
+}
+
+function createGitHubPollFetch(pulls, issues) {
+  return async (url) => {
+    if (url.includes("/pulls?")) {
+      return jsonResponse(pulls());
+    }
+    if (url.includes("/issues?")) {
+      return jsonResponse(issues());
+    }
+    return jsonResponse({ message: "not found" }, { ok: false, status: 404, statusText: "Not Found" });
+  };
+}
+
+function jsonResponse(body, options = {}) {
+  return {
+    ok: options.ok ?? true,
+    status: options.status ?? 200,
+    statusText: options.statusText ?? "OK",
+    async json() {
+      return body;
+    },
+    async text() {
+      return JSON.stringify(body);
+    },
+  };
 }

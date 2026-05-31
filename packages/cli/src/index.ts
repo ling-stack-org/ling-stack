@@ -1557,6 +1557,9 @@ async function handleRunsCancel(args: readonly string[], options: GlobalOptions)
 
 async function handleExternalWork(args: readonly string[], options: GlobalOptions): Promise<number> {
   const [source = "github", ...rest] = args;
+  if (source === "reconcile") {
+    return await handleExternalWorkReconcile(rest, options);
+  }
   if (source === "github") {
     return await handleExternalWorkGitHub(rest, options);
   }
@@ -1567,6 +1570,9 @@ async function handleExternalWorkGitHub(args: readonly string[], options: Global
   const [subcommand = "import", ...rest] = args;
   if (subcommand === "import") {
     return await handleExternalWorkGitHubImport(rest, options);
+  }
+  if (subcommand === "poll") {
+    return await handleExternalWorkGitHubPoll(rest, options);
   }
   throw new CliError(2, "unknown_command", `Unknown external-work github command: ${subcommand}`);
 }
@@ -1609,6 +1615,51 @@ async function handleExternalWorkGitHubImport(args: readonly string[], options: 
     return 0;
   }
   printExternalWorkImport(response);
+  return 0;
+}
+
+async function handleExternalWorkGitHubPoll(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["channel", "workflow-path", "limit"]),
+    booleanFlags: new Set(["execute-hooks"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work github poll");
+  const channelId = getFlag(parsed, "channel");
+  if (!channelId) {
+    throw new CliError(2, "missing_option", "external-work github poll requires --channel <channelId>.");
+  }
+  const limit = readOptionalIntegerFlag(parsed, "limit");
+  if (limit !== undefined && limit > 100) {
+    throw new CliError(2, "bad_number", "--limit must be at most 100.");
+  }
+  const response = await requestJson(options, "POST", "/external-work/github/poll", { cwd: options.cwd }, removeUndefined({
+    channelId,
+    workflowPath: getFlag(parsed, "workflow-path"),
+    limit,
+    executeHooks: parsed.booleans.has("execute-hooks") ? true : undefined,
+  }));
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkPoll(response);
+  return 0;
+}
+
+async function handleExternalWorkReconcile(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["channel", "workflow-path"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work reconcile");
+  const response = await requestJson(options, "POST", "/external-work/reconcile", { cwd: options.cwd }, removeUndefined({
+    channelId: getFlag(parsed, "channel"),
+    workflowPath: getFlag(parsed, "workflow-path"),
+  }));
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkReconcile(response);
   return 0;
 }
 
@@ -3165,6 +3216,59 @@ function printExternalWorkImport(response: unknown): void {
   );
 }
 
+function printExternalWorkPoll(response: unknown): void {
+  console.log("External work poll:");
+  console.log(`Candidates: ${readNumber(response, "candidates") ?? 0}`);
+  console.log(`Claimed: ${readNumber(response, "claimed") ?? 0}`);
+  console.log(`Duplicates: ${readNumber(response, "duplicates") ?? 0}`);
+  console.log(`Blocked: ${readNumber(response, "blocked") ?? 0}`);
+  console.log(`Retry scheduled: ${readNumber(response, "retryScheduled") ?? 0}`);
+  console.log(`Terminal ignored: ${readNumber(response, "terminalIgnored") ?? 0}`);
+  const artifacts = readArray(response, "artifacts");
+  console.log(`Artifacts: ${artifacts.length}`);
+  printExternalWorkResults(response);
+}
+
+function printExternalWorkReconcile(response: unknown): void {
+  console.log("External work reconcile:");
+  console.log(`Expired leases: ${readNumber(response, "expiredLeases") ?? 0}`);
+  console.log(`Checked: ${readNumber(response, "checked") ?? 0}`);
+  console.log(`Blocked: ${readNumber(response, "blocked") ?? 0}`);
+  console.log(`Retry ready: ${readNumber(response, "retryReady") ?? 0}`);
+  console.log(`Terminal: ${readNumber(response, "terminal") ?? 0}`);
+  const states = readArray(response, "schedulerStates");
+  if (states.length === 0) {
+    return;
+  }
+  console.log("Scheduler states:");
+  printTable(
+    ["External Work", "Status", "Workflow", "Step"],
+    states.map((state) => [
+      truncate(readString(state, "externalWorkId") ?? "", 32),
+      readString(state, "schedulerStatus") ?? "",
+      truncate(readString(state, "workflowId") ?? "", 32),
+      truncate(readString(state, "workflowStepId") ?? "", 32),
+    ]),
+  );
+}
+
+function printExternalWorkResults(response: unknown): void {
+  const results = readArray(response, "results");
+  if (results.length === 0) {
+    return;
+  }
+  console.log("Results:");
+  printTable(
+    ["Action", "Identifier", "Status", "Message"],
+    results.map((result) => [
+      readString(result, "action") ?? "",
+      truncate(readString(result, "identifier") ?? readString(result, "subjectKey") ?? "", 36),
+      readString(result, "schedulerStatus") ?? "",
+      truncate(readString(result, "message") ?? "", 64),
+    ]),
+  );
+}
+
 function printTable(headers: readonly string[], rows: readonly (readonly string[])[]): void {
   const widths = headers.map((header, index) => {
     const values = rows.map((row) => row[index] ?? "");
@@ -3486,6 +3590,8 @@ Usage:
   ling-stack [global options] runs events <id>
   ling-stack [global options] runs cancel <id>
   ling-stack [global options] external-work github import --channel <id> --event-type <event> --payload-file <payload.json>
+  ling-stack [global options] external-work github poll --channel <id> [--workflow-path WORKFLOW.md]
+  ling-stack [global options] external-work reconcile [--channel <id>] [--workflow-path WORKFLOW.md]
   ling-stack [global options] approvals list
   ling-stack [global options] approvals show <id>
   ling-stack [global options] approvals approve <id>
@@ -3602,6 +3708,8 @@ Options:
 function printExternalWorkHelp(): void {
   console.log(`Usage:
   ling-stack external-work github import --channel <channelId> --event-type <eventType> --payload-file <payload.json> [options]
+  ling-stack external-work github poll --channel <channelId> [options]
+  ling-stack external-work reconcile [options]
 
 Options:
   --channel <id>                  Ling channel id that owns the imported workflow
@@ -3609,10 +3717,14 @@ Options:
   --payload-file <path>           Local GitHub PR or issue payload JSON fixture
   --workflow-path <path>          WORKFLOW.md path resolved and bounded by the daemon
   --workflow-markdown-file <path> Read workflow markdown from a local file and send it inline
+  --limit <n>                     Poll at most n GitHub candidates, max 100
+  --execute-hooks                 Run afterCreate/beforeRun hooks inside isolated workspaces
 
 Behavior:
-  Creates or reuses local Ling workflow records and evidence artifacts only.
-  It does not start a runner or mutate GitHub.
+  Import creates or reuses local Ling workflow records from local fixtures.
+  Poll uses read-only GitHub API calls for PR and issue discovery.
+  Reconcile repairs local scheduler state and can optionally check remote terminal state.
+  None of these commands start a runner or mutate GitHub.
 `);
 }
 

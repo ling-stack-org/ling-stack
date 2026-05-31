@@ -176,6 +176,100 @@ test("external-work github import prints readable daemon errors", async () => {
   }
 });
 
+test("external-work github poll renders human and json output", async () => {
+  const daemon = await startExternalWorkDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-poll-"));
+  try {
+    const human = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "poll",
+      "--channel",
+      "channel_1",
+      "--workflow-path",
+      "WORKFLOW.md",
+      "--limit",
+      "25",
+      "--execute-hooks",
+    ]);
+    assert.equal(human.code, 0, human.stderr);
+    assert.match(human.stdout, /External work poll:/);
+    assert.match(human.stdout, /Candidates: 1/);
+    assert.match(human.stdout, /Claimed: 1/);
+    assert.match(human.stdout, /openclaw\/openclaw#86279/);
+
+    const json = await runCli(daemon.url, cwd, [
+      "--json",
+      "external-work",
+      "github",
+      "poll",
+      "--channel",
+      "channel_1",
+    ]);
+    assert.equal(json.code, 0, json.stderr);
+    assert.equal(JSON.parse(json.stdout).claimed, 1);
+    assert.equal(daemon.requests.at(-1).path, "/external-work/github/poll");
+    assert.deepEqual(daemon.requests[0].body, {
+      channelId: "channel_1",
+      workflowPath: "WORKFLOW.md",
+      limit: 25,
+      executeHooks: true,
+    });
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
+test("external-work reconcile renders human output and validates poll flags", async () => {
+  const daemon = await startExternalWorkDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-reconcile-"));
+  try {
+    const reconcile = await runCli(daemon.url, cwd, [
+      "external-work",
+      "reconcile",
+      "--channel",
+      "channel_1",
+      "--workflow-path",
+      "WORKFLOW.md",
+    ]);
+    assert.equal(reconcile.code, 0, reconcile.stderr);
+    assert.match(reconcile.stdout, /External work reconcile:/);
+    assert.match(reconcile.stdout, /Checked: 1/);
+    assert.match(reconcile.stdout, /Terminal: 1/);
+    assert.equal(daemon.requests[0].path, "/external-work/reconcile");
+    assert.deepEqual(daemon.requests[0].body, {
+      channelId: "channel_1",
+      workflowPath: "WORKFLOW.md",
+    });
+
+    const missingChannel = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "poll",
+      "--limit",
+      "25",
+    ]);
+    assert.equal(missingChannel.code, 2);
+    assert.match(missingChannel.stderr, /--channel/);
+
+    const invalidLimit = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "poll",
+      "--channel",
+      "channel_1",
+      "--limit",
+      "101",
+    ]);
+    assert.equal(invalidLimit.code, 2);
+    assert.match(invalidLimit.stderr, /at most 100/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 function runCli(daemonUrl, cwd, args) {
   return new Promise((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
@@ -192,7 +286,7 @@ async function startExternalWorkDaemon() {
   const requests = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (request.method !== "POST" || url.pathname !== "/external-work/github/import") {
+    if (request.method !== "POST" || !["/external-work/github/import", "/external-work/github/poll", "/external-work/reconcile"].includes(url.pathname)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -205,6 +299,14 @@ async function startExternalWorkDaemon() {
     });
     if (body.eventType === "push") {
       writeJson(response, 400, { error: "bad_request", message: "Unsupported GitHub event type: push" });
+      return;
+    }
+    if (url.pathname === "/external-work/github/poll") {
+      writeJson(response, 200, externalWorkPollResponse());
+      return;
+    }
+    if (url.pathname === "/external-work/reconcile") {
+      writeJson(response, 200, externalWorkReconcileResponse());
       return;
     }
     writeJson(response, 201, externalWorkImportResponse());
@@ -285,6 +387,53 @@ function externalWorkImportResponse() {
       },
     ],
     duplicate: false,
+  };
+}
+
+function externalWorkPollResponse() {
+  return {
+    candidates: 1,
+    claimed: 1,
+    duplicates: 0,
+    blocked: 0,
+    retryScheduled: 0,
+    terminalIgnored: 0,
+    artifacts: [],
+    results: [
+      {
+        action: "claimed",
+        identifier: "openclaw/openclaw#86279",
+        schedulerStatus: "ready",
+        workflowId: "workflow_1",
+        workflowStepId: "step_1",
+      },
+    ],
+    schedulerStates: [
+      {
+        externalWorkId: "external_work_1",
+        schedulerStatus: "ready",
+        workflowId: "workflow_1",
+        workflowStepId: "step_1",
+      },
+    ],
+  };
+}
+
+function externalWorkReconcileResponse() {
+  return {
+    expiredLeases: 1,
+    checked: 1,
+    blocked: 0,
+    retryReady: 0,
+    terminal: 1,
+    schedulerStates: [
+      {
+        externalWorkId: "external_work_1",
+        schedulerStatus: "terminal",
+        workflowId: "workflow_1",
+        workflowStepId: "step_1",
+      },
+    ],
   };
 }
 
