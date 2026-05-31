@@ -109,6 +109,93 @@ test("GitHub external work import returns readable errors for invalid inputs", a
   }
 });
 
+test("GitHub external work poll imports candidates, deduplicates, and reconciles terminal local state", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-poll-"));
+  const runner = new FailingRunner();
+  const daemon = await startDaemonForTest(runner, createGitHubFetchMock());
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "GitHub",
+      boundPath: cwd,
+      defaultTeammateId: "engineer",
+      allowedTools: ["read"],
+    });
+
+    const first = await postJson(`${daemon.url}/external-work/github/poll?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      workflowPath: "WORKFLOW.md",
+    });
+    assert.equal(first.candidates, 1);
+    assert.equal(first.claimed, 1);
+    assert.equal(first.artifacts.length, 2);
+    assert.equal(first.schedulerStates[0].schedulerStatus, "ready");
+    assert.equal(runner.runs.length, 0);
+
+    const duplicate = await postJson(`${daemon.url}/external-work/github/poll?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      workflowPath: "WORKFLOW.md",
+    });
+    assert.equal(duplicate.duplicates, 1);
+
+    const workflows = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(workflows.workflows.length, 1);
+
+    await patchJson(`${daemon.url}/workflow-steps/${encodeURIComponent(first.results[0].workflowStepId)}?cwd=${encodeURIComponent(cwd)}`, {
+      status: "skipped",
+    });
+    const reconciled = await postJson(`${daemon.url}/external-work/reconcile?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+    });
+    assert.equal(reconciled.checked, 1);
+    assert.equal(reconciled.terminal, 1);
+    assert.equal(reconciled.schedulerStates[0].schedulerStatus, "terminal");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub external work poll returns readable errors for bad input and GitHub failures", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-poll-errors-"));
+  const daemon = await startDaemonForTest(new FailingRunner(), async () => ({
+    ok: false,
+    status: 403,
+    statusText: "Forbidden",
+    async json() {
+      return { message: "rate limited" };
+    },
+    async text() {
+      return JSON.stringify({ message: "rate limited" });
+    },
+  }));
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "GitHub",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    });
+
+    const missingChannel = await postJsonExpectError(`${daemon.url}/external-work/github/poll?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: "channel_missing",
+      workflowPath: "WORKFLOW.md",
+    });
+    assert.equal(missingChannel.status, 404);
+    assert.equal(missingChannel.body.error, "channel_not_found");
+
+    const githubError = await postJsonExpectError(`${daemon.url}/external-work/github/poll?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      workflowPath: "WORKFLOW.md",
+    });
+    assert.equal(githubError.status, 400);
+    assert.match(githubError.body.message, /GitHub read-only request failed/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 class FailingRunner {
   constructor() {
     this.runs = [];
@@ -120,8 +207,8 @@ class FailingRunner {
   }
 }
 
-async function startDaemonForTest(runner) {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner });
+async function startDaemonForTest(runner, externalWorkFetch) {
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner, externalWorkFetch });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
@@ -139,6 +226,15 @@ async function getJson(url) {
 async function postJson(url, body) {
   const response = await fetch(url, {
     method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return await readJsonResponse(response);
+}
+
+async function patchJson(url, body) {
+  const response = await fetch(url, {
+    method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -208,6 +304,32 @@ function githubPullRequestPayload() {
         ref: "dependency-guard",
         sha: "head-sha-1",
       },
+    },
+  };
+}
+
+function createGitHubFetchMock() {
+  return async (url) => {
+    if (url.includes("/pulls?")) {
+      return jsonResponse([githubPullRequestPayload().pull_request]);
+    }
+    if (url.includes("/issues?")) {
+      return jsonResponse([]);
+    }
+    return jsonResponse({ message: "not found" }, { ok: false, status: 404, statusText: "Not Found" });
+  };
+}
+
+function jsonResponse(body, options = {}) {
+  return {
+    ok: options.ok ?? true,
+    status: options.status ?? 200,
+    statusText: options.statusText ?? "OK",
+    async json() {
+      return body;
+    },
+    async text() {
+      return JSON.stringify(body);
     },
   };
 }

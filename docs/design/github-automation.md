@@ -633,9 +633,9 @@ Required behavior:
 Implementation plan: [External Work Phase 2 Implementation](external-work-phase-2-implementation.md).
 
 - Add GitHub polling for candidate PRs and issues.
-- Add subject claim leases for repo, PR, issue, workflow step, provider, and bound path.
-- Add startup and pre-mutation reconciliation.
-- Add per-subject isolated workspaces and workspace hooks.
+- Add source, subject, workspace, and bound path claim leases.
+- Add manual reconciliation for local scheduler state and optional remote terminal checks.
+- Add per-subject isolated workspaces and manually enabled workspace hooks.
 - Capture hook logs and retry/backoff evidence.
 
 ### Phase 3: Approval-Gated Comments and Labels

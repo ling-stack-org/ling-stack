@@ -13,7 +13,9 @@ import {
   defaultProviderTemplates,
   getRunSummaryPath,
   normalizeGitHubExternalWorkItem,
+  pollGitHubExternalWork,
   parseExternalWorkflowMarkdown,
+  reconcileExternalWork,
   renderExternalWorkflowPrompt,
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
@@ -86,6 +88,10 @@ import {
   type RunArtifact,
   type ExternalWorkImportResponse,
   type ExternalWorkItem,
+  type ExternalWorkPollRequest,
+  type ExternalWorkPollResponse,
+  type ExternalWorkReconcileRequest,
+  type ExternalWorkReconcileResponse,
   type ExternalWorkflowDefinition,
   type RunEventEnvelope,
   type RunEventType,
@@ -156,6 +162,7 @@ export interface DaemonDependencies {
   readonly storeFactory?: RunStoreFactory;
   readonly extensionRegistry?: LingExtensionRegistry;
   readonly secretResolver?: SecretResolver;
+  readonly externalWorkFetch?: typeof globalThis.fetch;
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -385,11 +392,12 @@ export function createDaemonServer(
   const runner = dependencies.runner ?? createPiRunner();
   const extensionRegistry = dependencies.extensionRegistry ?? createDefaultLingExtensionRegistry();
   const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver();
+  const externalWorkFetch = dependencies.externalWorkFetch;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore);
   const activeRuns = new ActiveRunRegistry();
   const server = createServer(async (request, response) => {
     try {
-      await routeRequest(request, response, resolvedConfig, runner, storeRegistry, activeRuns, secretResolver);
+      await routeRequest(request, response, resolvedConfig, runner, storeRegistry, activeRuns, secretResolver, externalWorkFetch);
     } catch (error) {
       if (!response.headersSent) {
         writeJson(response, 500, {
@@ -479,6 +487,7 @@ async function routeRequest(
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
   secretResolver: SecretResolver,
+  externalWorkFetch?: typeof globalThis.fetch,
 ): Promise<void> {
   setCorsHeaders(response);
 
@@ -536,6 +545,16 @@ async function routeRequest(
 
   if (url.pathname === "/external-work/github/import") {
     await handleExternalGitHubImport(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/external-work/github/poll") {
+    await handleExternalGitHubPoll(request, response, config, storeRegistry, secretResolver, externalWorkFetch);
+    return;
+  }
+
+  if (url.pathname === "/external-work/reconcile") {
+    await handleExternalWorkReconcile(request, response, config, storeRegistry, secretResolver, externalWorkFetch);
     return;
   }
 
@@ -3384,6 +3403,108 @@ async function handleExternalGitHubImport(
   }
 }
 
+async function handleExternalGitHubPoll(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+  externalWorkFetch?: typeof globalThis.fetch,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for GitHub external work poll` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseExternalGitHubPollRequest(body);
+    const channel = store.getChannel(input.channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+      return;
+    }
+    const workflowFile = readExternalWorkflowFile(input, channel, cwd);
+    const workflowDefinition = parseExternalWorkflowMarkdown(workflowFile.markdown);
+    if (workflowDefinition.config.source.kind !== "github") {
+      writeJson(response, 400, { error: "unsupported_source", message: `Unsupported external source kind: ${workflowDefinition.config.source.kind}` });
+      return;
+    }
+    const githubToken = resolveExternalGitHubToken(workflowDefinition, secretResolver);
+    const pollResponse: ExternalWorkPollResponse = await pollGitHubExternalWork({
+      store,
+      cwd,
+      channelId: input.channelId,
+      workflowDefinition,
+      workflowDirectory: workflowFile.directory,
+      githubToken,
+      fetch: externalWorkFetch,
+      limit: input.limit,
+      executeHooks: input.executeHooks === true,
+    });
+    writeJson(response, 200, pollResponse);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleExternalWorkReconcile(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+  externalWorkFetch?: typeof globalThis.fetch,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work reconcile` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseExternalWorkReconcileRequest(body);
+    let workflowDefinition: ExternalWorkflowDefinition | undefined;
+    let githubToken: string | undefined;
+    if (input.workflowPath) {
+      const channel = input.channelId ? store.getChannel(input.channelId) : undefined;
+      if (input.channelId && !channel) {
+        writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+        return;
+      }
+      const workflowFile = readExternalWorkflowFile(input, channel, cwd);
+      workflowDefinition = parseExternalWorkflowMarkdown(workflowFile.markdown);
+      githubToken = resolveExternalGitHubToken(workflowDefinition, secretResolver);
+    }
+    const reconcileResponse: ExternalWorkReconcileResponse = await reconcileExternalWork({
+      store,
+      channelId: input.channelId,
+      workflowDefinition,
+      githubToken,
+      fetch: externalWorkFetch,
+    });
+    writeJson(response, 200, reconcileResponse);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 function parseExternalGitHubImportRequest(value: unknown): ExternalGitHubImportRequest {
   if (!isRecord(value)) {
     throw new Error("Request body must be an object");
@@ -3400,11 +3521,46 @@ function parseExternalGitHubImportRequest(value: unknown): ExternalGitHubImportR
   };
 }
 
-function readExternalWorkflowMarkdown(input: ExternalGitHubImportRequest, channel: Channel, cwd: string): string {
-  if (input.workflowMarkdown !== undefined) {
-    return input.workflowMarkdown;
+function parseExternalGitHubPollRequest(value: unknown): ExternalWorkPollRequest {
+  if (!isRecord(value)) {
+    throw new Error("Request body must be an object");
   }
-  const root = channel.boundPath ?? cwd;
+  const limit = readOptionalNumber(value, "limit");
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 100)) {
+    throw new Error("limit must be an integer between 1 and 100");
+  }
+  return {
+    channelId: readString(value, "channelId"),
+    workflowPath: readOptionalString(value, "workflowPath"),
+    limit,
+    executeHooks: readOptionalBoolean(value, "executeHooks"),
+  };
+}
+
+function parseExternalWorkReconcileRequest(value: unknown): ExternalWorkReconcileRequest {
+  if (!isRecord(value)) {
+    throw new Error("Request body must be an object");
+  }
+  return {
+    channelId: readOptionalString(value, "channelId"),
+    workflowPath: readOptionalString(value, "workflowPath"),
+  };
+}
+
+function readExternalWorkflowMarkdown(input: { readonly workflowMarkdown?: string; readonly workflowPath?: string }, channel: Channel, cwd: string): string {
+  return readExternalWorkflowFile(input, channel, cwd).markdown;
+}
+
+function readExternalWorkflowFile(
+  input: { readonly workflowMarkdown?: string; readonly workflowPath?: string },
+  channel: Channel | undefined,
+  cwd: string,
+): { readonly markdown: string; readonly path?: string; readonly directory: string } {
+  if (input.workflowMarkdown !== undefined) {
+    const root = channel?.boundPath ?? cwd;
+    return { markdown: input.workflowMarkdown, directory: root };
+  }
+  const root = channel?.boundPath ?? cwd;
   const workflowPath = input.workflowPath
     ? isAbsolute(input.workflowPath)
       ? input.workflowPath
@@ -3421,7 +3577,23 @@ function readExternalWorkflowMarkdown(input: ExternalGitHubImportRequest, channe
   if (!isPathInsideRoot(rootRealPath, workflowRealPath)) {
     throw new Error("workflowPath must resolve inside the channel bound path");
   }
-  return readFileSync(workflowRealPath, "utf8");
+  return {
+    markdown: readFileSync(workflowRealPath, "utf8"),
+    path: workflowRealPath,
+    directory: resolvePath(workflowRealPath, ".."),
+  };
+}
+
+function resolveExternalGitHubToken(workflowDefinition: ExternalWorkflowDefinition, secretResolver: SecretResolver): string | undefined {
+  const secretRef = workflowDefinition.config.source.secretRef;
+  if (!secretRef) {
+    return undefined;
+  }
+  const secret = secretResolver.resolve(secretRef, "github_token");
+  if (!secret.configured || !secret.value) {
+    throw new Error(secret.status?.message ?? `GitHub token is not configured: ${secretRef}`);
+  }
+  return secret.value;
 }
 
 function createExternalWorkEvidenceArtifacts(

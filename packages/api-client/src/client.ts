@@ -46,7 +46,11 @@ import type {
   CreateTaskRequest,
   DaemonHealthResponse,
   ExternalGitHubImportRequest,
+  ExternalWorkPollRequest,
+  ExternalWorkPollResponse,
   ExternalWorkImportResponse,
+  ExternalWorkReconcileRequest,
+  ExternalWorkReconcileResponse,
   ListApprovalsRequest,
   ListResourceLeasesRequest,
   ListStateTransitionsRequest,
@@ -577,6 +581,14 @@ export class LingDaemonClient {
 
   async importGitHubExternalWork(cwd: string, input: ExternalGitHubImportRequest): Promise<ExternalWorkImportResponse> {
     return this.post("/external-work/github/import", { cwd }, input);
+  }
+
+  async pollGitHubExternalWork(cwd: string, input: ExternalWorkPollRequest): Promise<ExternalWorkPollResponse> {
+    return this.post("/external-work/github/poll", { cwd }, input);
+  }
+
+  async reconcileExternalWork(cwd: string, input: ExternalWorkReconcileRequest = {}): Promise<ExternalWorkReconcileResponse> {
+    return this.post("/external-work/reconcile", { cwd }, input);
   }
 
   async listStateTransitions(cwd: string, options: ListStateTransitionsRequest = {}): Promise<StateTransitionListResponse> {

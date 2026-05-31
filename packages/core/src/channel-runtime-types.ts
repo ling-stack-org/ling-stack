@@ -20,7 +20,16 @@ export interface ChannelSourceAdapter {
   acknowledge?(eventId: string): Promise<void>;
 }
 
-export type ResourceType = "channel" | "bound_path" | "workspace" | "provider" | "task" | "workflow_step";
+export type ResourceType =
+  | "channel"
+  | "bound_path"
+  | "workspace"
+  | "provider"
+  | "task"
+  | "workflow_step"
+  | "external_source"
+  | "external_subject"
+  | "external_workspace";
 
 export type ResourceLeaseOwnerType = "run" | "workflow_step" | "system";
 

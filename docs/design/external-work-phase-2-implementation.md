@@ -5,7 +5,7 @@
 Phase 2 turns the Phase 1 manual GitHub import foundation into a read-only scheduler
 path. It discovers GitHub PR and issue candidates, claims each subject through Ling's
 existing lease/state-machine boundaries, prepares isolated local workspaces, captures
-hook evidence, and reconciles durable state after daemon restarts.
+hook evidence, and reconciles durable state through an explicit local operator command.
 
 This phase still must not mutate GitHub. It must not post comments, add labels, request
 reviews, push commits, merge, close issues, or execute any external action outside Ling
@@ -16,8 +16,8 @@ policy and approval gates.
 - GitHub read-only polling adapter for pull requests and issues.
 - Durable scheduler state in the existing workspace SQLite store.
 - Subject/resource claims using Ling resource leases.
-- Startup and manual reconciliation for queued, claimed, running, blocked, and stale
-  external work state.
+- Manual reconciliation for queued, claimed, running, blocked, retry, terminal, and
+  stale external work state.
 - Per-subject workspace path allocation and hook execution with local evidence
   artifacts.
 - Manual operator API and CLI smoke path for one poll/reconcile cycle.
@@ -203,7 +203,7 @@ Add CLI commands:
 
 ```bash
 ling-stack external-work github poll --channel <id> [--workflow-path WORKFLOW.md] [--limit 50] [--execute-hooks]
-ling-stack external-work reconcile [--channel <id>]
+ling-stack external-work reconcile [--channel <id>] [--workflow-path WORKFLOW.md]
 ```
 
 Human output should show candidate, claimed, duplicate, blocked, retry, and artifact
@@ -213,9 +213,8 @@ counts. `--json` should print the full response.
 
 Run reconciliation in two places:
 
-- On daemon startup when a workspace has external scheduler state with
-  `reconcileOnStartup: true`.
-- On explicit `POST /external-work/reconcile`.
+- Local recovery when a workspace store is opened, limited to stale run and lease expiry.
+- Explicit `POST /external-work/reconcile` for external scheduler state.
 
 Reconciliation must:
 
@@ -223,10 +222,13 @@ Reconciliation must:
 - Detect scheduler rows whose workflow or workflow step was deleted and mark them
   `blocked`.
 - Detect active scheduler rows whose source item is terminal and mark them `terminal`
-  without deleting evidence.
+  without deleting evidence when `workflowPath` is supplied.
 - Detect `retry_wait` rows whose `next_attempt_at <= now` and make them eligible for
   the next poll.
 - Release workflow-step leases for terminal steps through existing state-machine paths.
+
+Phase 2 does not add a background polling timer. `scheduler.pollIntervalMs` remains part
+of the workflow contract for the later scheduler loop.
 
 ## Implementation Order
 

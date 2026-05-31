@@ -520,8 +520,9 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 - Add GitHub poll adapter for PR and issue candidates.
 - Add claim leases for repo, PR, issue, workflow step, and bound path.
 - Create per-subject isolated workspaces.
-- Run `afterCreate`, `beforeRun`, and `afterRun` hooks with evidence capture.
-- Add startup reconciliation for queued/running workflows.
+- Run `afterCreate` and `beforeRun` hooks with evidence capture when manually enabled.
+- Add manual reconciliation for leases, terminal workflow steps, retry backoff, and optional remote terminal checks.
+- Keep startup reconciliation local-only until a background scheduler loop exists.
 
 ### Phase 3: Approval-Gated Comments and Labels
 
