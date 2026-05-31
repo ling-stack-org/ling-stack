@@ -68,8 +68,9 @@ export function approvalProfileText(profile: SkillApprovalProfile, t: Translate)
   if (profile.mode === "none") {
     return t("No approval");
   }
+  const risk = profile.risk ? t(`risk.${profile.risk}`) : "";
   if (profile.mode === "standard") {
-    return profile.risk ? t("Standard · {risk}", { risk: profile.risk }) : t("Standard");
+    return profile.risk ? t("Standard · {risk}", { risk }) : t("Standard");
   }
-  return profile.risk ? t("Strict · {risk}", { risk: profile.risk }) : t("Strict");
+  return profile.risk ? t("Strict · {risk}", { risk }) : t("Strict");
 }

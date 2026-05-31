@@ -1465,6 +1465,35 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByPlaceholder("Message this channel or @ an AI teammate")).toBeVisible();
 });
 
+test("Chinese mode localizes workspace inspector, runtime policy, and teammate setup labels", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+
+  await expect(page.getByLabel("任务检查器")).toBeVisible();
+  await expect(page.getByLabel("任务检查器")).toContainText("任务上下文");
+  await expect(page.getByText("Task context")).toHaveCount(0);
+  await expect(page.getByText("No task selected")).toHaveCount(0);
+  await expect(page.getByText("active · serial · boundPath lock")).toHaveCount(0);
+  await expect(page.getByText(/已启用 · 串行 · 绑定路径锁/)).toBeVisible();
+  await expect(page.getByText("Daemon ready")).toHaveCount(0);
+  await expect(page.getByText("本地服务已就绪").first()).toBeVisible();
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI 队友" }).click();
+  await expect(page.getByRole("heading", { name: "AI 队友", level: 1 })).toBeVisible();
+  await expect(page.getByText("Role", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Pick a default teammate or start blank")).toHaveCount(0);
+  await expect(page.getByText("标准 · medium")).toHaveCount(0);
+  await page.getByRole("button", { name: "下一步" }).click();
+  await page.getByRole("button", { name: "下一步" }).click();
+  await page.getByRole("button", { name: "下一步" }).click();
+  await expect(page.getByText("Project files")).toHaveCount(0);
+  await expect(page.getByText("Skill pack")).toHaveCount(0);
+  await expect(page.getByText("技能包")).toBeVisible();
+});
+
 test("theme switcher supports system, light, and dark preferences", async ({ page }) => {
   await page.addInitScript(() => {
     if (!sessionStorage.getItem("ling-stack.themeTestInitialized")) {

@@ -106,6 +106,7 @@ export function PageInspector({
   readonly onExecuteExternalAction: (actionId: string) => void;
   readonly onCancelExternalAction: (actionId: string) => void;
 }): JSX.Element {
+  const { t } = useI18n();
   if (activeView === "runs") {
     return (
       <RunInspector
@@ -165,33 +166,33 @@ export function PageInspector({
 
   if (activeView === "teammates") {
     return (
-      <section className="inspector" aria-label="AI teammate context">
+      <section className="inspector" aria-label={t("AI teammate context")}>
         <div className="panel-title">
           <SquareTerminal size={18} />
-          <h2>AI teammate context</h2>
+          <h2>{t("AI teammate context")}</h2>
         </div>
-        <p className="muted">Choose or create a teammate in the main panel. Conversation entry points now live with the teammate workspace instead of the global sidebar.</p>
+        <p className="muted">{t("Choose or create a teammate in the main panel. Conversation entry points now live with the teammate workspace instead of the global sidebar.")}</p>
       </section>
     );
   }
 
   return (
-    <section className="inspector workspace-task-inspector" aria-label="Task inspector">
+    <section className="inspector workspace-task-inspector" aria-label={t("Task inspector")}>
       <div className="panel-title">
         <SquareTerminal size={18} />
-        <h2>Task context</h2>
+        <h2>{t("Task context")}</h2>
       </div>
       {selectedTask ? (
         <div className="meta-list">
-          <MetaRow label="Task" value={selectedTask.title} compact />
-          <MetaRow label="Status" value={selectedTask.status} />
-          <MetaRow label="Run" value={selectedTask.currentRunId ?? "not run"} compact />
-          <MetaRow label="Updated" value={formatDateTime(selectedTask.updatedAt)} compact />
+          <MetaRow label={t("Task")} value={selectedTask.title} compact />
+          <MetaRow label={t("Status")} value={t(selectedTask.status)} />
+          <MetaRow label={t("Run")} value={selectedTask.currentRunId ?? t("not run")} compact />
+          <MetaRow label={t("Updated")} value={formatDateTime(selectedTask.updatedAt)} compact />
         </div>
       ) : (
         <div className="empty-state compact-empty">
           <SquareTerminal />
-          <span>No task selected</span>
+          <span>{t("No task selected")}</span>
         </div>
       )}
       <RunTimeline
@@ -221,9 +222,9 @@ function ProviderContextInspector({
   const { t } = useI18n();
   const checkBelongsHere = Boolean(provider && providerCheck && checkedProviderId === provider.id);
   const visibleCheck = checkBelongsHere ? providerCheck : undefined;
-  const blocker = providerRunPreflightBlocker(provider);
+  const blocker = providerRunPreflightBlocker(provider, t);
   return (
-    <section className="inspector" aria-label="Model Workbench context">
+    <section className="inspector" aria-label={t("Model Workbench context")}>
       <div className="panel-title">
         <PlugZap size={18} />
         <h2>{t("Model Workbench context")}</h2>
@@ -273,7 +274,7 @@ function MediaJobInspector({
   const { t } = useI18n();
   const provider = mediaJob ? providers.find((item) => item.id === mediaJob.providerPresetId) : undefined;
   return (
-    <section className="inspector" aria-label="Media job context">
+    <section className="inspector" aria-label={t("Media job context")}>
       <div className="panel-title">
         <Database size={18} />
         <h2>{t("Media job context")}</h2>
@@ -281,7 +282,7 @@ function MediaJobInspector({
       {mediaJob ? (
         <>
           <div className="meta-list">
-            <MetaRow label={t("Status")} value={mediaJob.status} />
+            <MetaRow label={t("Status")} value={t(mediaJob.status)} />
             <MetaRow label={t("Provider")} value={provider?.displayName ?? mediaJob.providerPresetId} compact />
             <MetaRow label={t("Operation")} value={mediaJob.operation} compact />
             <MetaRow label={t("Artifacts")} value={String(mediaJob.artifactIds.length)} />
@@ -329,7 +330,7 @@ function ApprovalInspector({
   const { t } = useI18n();
   const pendingCount = approvals.filter((item) => effectiveApprovalStatus(item) === "pending").length;
   return (
-    <section className="inspector" aria-label="Approval context">
+    <section className="inspector" aria-label={t("Approval context")}>
       <div className="panel-title">
         <ShieldCheck size={18} />
         <h2>{t("Approval context")}</h2>
@@ -373,7 +374,7 @@ function SettingsInspector({
   const denyCount = decisions.filter((decision) => decision === "deny").length;
   const allowCount = decisions.filter((decision) => decision === "allow").length;
   return (
-    <section className="inspector" aria-label="Settings preview">
+    <section className="inspector" aria-label={t("Settings preview")}>
       <div className="panel-title">
         <Settings size={18} />
         <h2>{t("Settings preview")}</h2>

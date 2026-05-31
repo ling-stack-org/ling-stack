@@ -379,12 +379,16 @@ export function WorkspaceClientView({
   const mediaProviders = providers.filter(isMediaProvider);
   const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId || readyProvider?.id) ?? "";
   const effectiveProvider = providers.find((provider) => provider.id === effectiveProviderId);
-  const providerBlocker = providerRunPreflightBlocker(effectiveProvider);
+  const providerBlocker = providerRunPreflightBlocker(effectiveProvider, t);
   const activeLeaseCount = resourceLeases.filter((lease) => lease.status === "active").length;
   const taskActionPending = activeTaskRunAction !== undefined;
   const selectedChannelRuntimePolicy = effectiveChannelRuntimePolicy(selectedChannel);
   const channelStatusText = selectedChannel
-    ? `${selectedChannel.status} · ${selectedChannelRuntimePolicy.executionMode} · ${selectedChannelRuntimePolicy.writeLockScope} lock`
+    ? t("{status} · {mode} · {lockScope} lock", {
+      status: t(selectedChannel.status),
+      mode: t(selectedChannelRuntimePolicy.executionMode),
+      lockScope: t(selectedChannelRuntimePolicy.writeLockScope),
+    })
     : t("No channel yet");
   const latestRun = activeRunId ? runById.get(activeRunId) : runs[0];
   const filteredTasks = useMemo(
@@ -1200,7 +1204,7 @@ export function WorkspaceClientView({
           {selectedChannel ? (
             <span className={selectedChannel.status === "active" ? "glass-chip ok" : "glass-chip attention"}>
               <Workflow size={14} />
-              {selectedChannel.status}
+              {t(selectedChannel.status)}
             </span>
           ) : null}
           {activeLeaseCount > 0 ? (
@@ -1223,7 +1227,7 @@ export function WorkspaceClientView({
             {channels.length === 0 ? <option value="">{t("No channel yet")}</option> : null}
             {channels.map((channel) => (
               <option key={channel.id} value={channel.id}>
-                {channel.name} / {channel.status}
+                {channel.name} / {t(channel.status)}
               </option>
             ))}
           </select>
@@ -1741,7 +1745,7 @@ export function WorkspaceClientView({
                               <strong>{task.title}</strong>
                               <small>{task.prompt}</small>
                             </span>
-                            <span className={`task-status ${task.status}`}>{task.status}</span>
+                            <span className={`task-status ${task.status}`}>{t(task.status)}</span>
                           </span>
                           <span className="task-card-meta">
                             {task.currentRunId ? <StatusBadge status={linkedRunStatus} /> : <span className="status-badge queued">{t("Not run")}</span>}
@@ -2331,7 +2335,7 @@ function TaskDetailPanel({
   const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
   const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
   const linkedRunSucceeded = linkedRunStatus === "succeeded";
-  const repairHint = buildRunRepairHint(linkedRun, pendingApprovalCount, linkedRunStatus);
+  const repairHint = buildRunRepairHint(linkedRun, pendingApprovalCount, linkedRunStatus, "", t);
   const taskChannel = channels.find((channel) => channel.id === task.channelId);
   const taskChannelPaused = taskChannel?.status !== undefined && taskChannel.status !== "active";
   const blockedByLease = activeLeaseCount > 0 && (!linkedRun || linkedRun.status !== "running");
@@ -2347,7 +2351,7 @@ function TaskDetailPanel({
     <article className="client-task-card task-detail selected" aria-label={t("Task detail")}>
       <div className="task-detail-head">
         <span className="client-task-kicker">{t("Task detail")}</span>
-        <span className={`task-status ${task.status}`}>{task.status}</span>
+        <span className={`task-status ${task.status}`}>{t(task.status)}</span>
       </div>
       <div className="task-detail-copy">
         <h2>{task.title}</h2>
@@ -2677,8 +2681,8 @@ function AttentionQueue({
             >
               <button className="attention-queue-item-open" type="button" onClick={() => onOpenItem(item)}>
                 <span className="attention-queue-item-main">
-                  <strong>{item.title}</strong>
-                  <small>{item.description}</small>
+                  <strong>{t(item.title)}</strong>
+                  <small>{t(item.description)}</small>
                 </span>
                 <span className="attention-queue-item-meta">
                   <small>{t(activityAttentionDisplayLabel(item.attention))}</small>
@@ -2777,8 +2781,8 @@ function ActivityDrilldownDrawer({
       </div>
       <div className="activity-drilldown-title">
         <small>{t(activityKindLabel(drilldown.kind))}</small>
-        <h3>{drilldown.source.title}</h3>
-        <p>{drilldown.source.subtitle}</p>
+        <h3>{t(drilldown.source.title)}</h3>
+        <p>{t(drilldown.source.subtitle)}</p>
       </div>
       <section className="activity-drilldown-section">
         <h4>{t("Source summary")}</h4>
