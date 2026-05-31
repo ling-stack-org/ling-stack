@@ -1962,25 +1962,27 @@ export function AppShell(): JSX.Element {
     try {
       const channel = channels.find((item) => item.id === task.channelId);
       if (!channel) {
-        setErrorMessage("找不到 task 所属 channel");
+        setErrorMessage(t("Task channel not found."));
         return false;
       }
       if (channel.status !== "active") {
-        setErrorMessage(`Channel is ${channel.status}; resume it before starting a new run.`);
+        setErrorMessage(t("Channel is {status}; resume it before starting a new run.", { status: t(channel.status) }));
         return false;
       }
       const providerPresetId = resolveTaskRunProviderPresetId(channel);
       if (!providerPresetId) {
-        setErrorMessage("请先选择 provider preset");
+        setErrorMessage(t("No provider preset is selected for this task run."));
         return false;
       }
       const provider = providers.find((item) => item.id === providerPresetId);
       if (!provider || !canUseProviderForRun(provider)) {
-        setErrorMessage(provider ? `Provider preset is not runnable: ${providerRunBlockerLabel(provider)}` : "找不到 provider preset");
+        setErrorMessage(provider
+          ? t("Provider preset is not runnable: {reason}", { reason: providerRunBlockerLabel(provider, t) })
+          : t("Provider preset not found"));
         return false;
       }
       if (!options.skipPreflight) {
-        const blocker = providerRunPreflightBlocker(provider);
+        const blocker = providerRunPreflightBlocker(provider, t);
         if (blocker) {
           setErrorMessage(blocker);
           return false;
@@ -2005,7 +2007,7 @@ export function AppShell(): JSX.Element {
     const providerPresetId = resolveTaskRunProviderPresetId(channel);
     const provider = providerPresetId ? providers.find((item) => item.id === providerPresetId) : undefined;
     if (!provider) {
-      setErrorMessage(providerPresetId ? "找不到 provider preset" : "请先选择 provider preset");
+      setErrorMessage(providerPresetId ? t("Provider preset not found") : t("No provider preset is selected for this task run."));
       setActiveTaskRunAction(undefined);
       return false;
     }
@@ -2038,7 +2040,7 @@ export function AppShell(): JSX.Element {
 
   async function checkProviderForRun(provider: ProviderPreset): Promise<boolean> {
     if (!canBatchCheckProvider(provider)) {
-      setErrorMessage(`Provider preset is not runnable: ${providerRunBlockerLabel(provider)}`);
+      setErrorMessage(t("Provider preset is not runnable: {reason}", { reason: providerRunBlockerLabel(provider, t) }));
       return false;
     }
 

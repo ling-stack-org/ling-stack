@@ -149,14 +149,14 @@ export function ChannelTaskWorkspace({
     ? displayLinkedRunStatus(selectedTask.currentRunId, selectedTaskRun, activeRunId, latestStatus)
     : "";
   const selectedTaskRunSucceeded = selectedTaskRunStatus === "succeeded";
-  const selectedTaskRepairHint = buildRunRepairHint(selectedTaskRun, 0, selectedTaskRunStatus);
+  const selectedTaskRepairHint = buildRunRepairHint(selectedTaskRun, 0, selectedTaskRunStatus, "", t);
   const effectiveProviderId = (taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId) ?? "";
   const taskReadyProviders = providers.filter(providerPreflightReady);
   const setupChatProviders = providers.filter((provider) => !isMediaProvider(provider) && !providerPreflightReady(provider));
   const mediaProviders = providers.filter(isMediaProvider);
   const effectiveProvider = providers.find((provider) => provider.id === effectiveProviderId);
   const canRunWithEffectiveProvider = Boolean(effectiveProvider && canUseProviderForRun(effectiveProvider));
-  const effectiveProviderPreflightBlocker = providerRunPreflightBlocker(effectiveProvider);
+  const effectiveProviderPreflightBlocker = providerRunPreflightBlocker(effectiveProvider, t);
   const canPreflightRunWithEffectiveProvider = Boolean(effectiveProvider && canRunWithEffectiveProvider && effectiveProviderPreflightBlocker === undefined);
   const selectedTaskRepairRun = selectedTask && repairRun?.taskId === selectedTask.id && repairRun.channelId === selectedTask.channelId
     ? repairRun
@@ -209,7 +209,7 @@ export function ChannelTaskWorkspace({
                 >
                   <span className="channel-row-main">
                     <strong>{channel.name}</strong>
-                    <small>{channel.status} · {runtimePolicy.executionMode} · {t("Execution")}: {channel.boundPath ?? cwd}</small>
+                    <small>{t(channel.status)} · {t(runtimePolicy.executionMode)} · {t("Execution")}: {channel.boundPath ?? cwd}</small>
                   </span>
                   <span className="channel-tools">{channel.allowedTools.join(", ")}</span>
                 </button>
@@ -225,12 +225,12 @@ export function ChannelTaskWorkspace({
                 <Pencil size={16} />
                 <h3>{t("Channel detail")}</h3>
               </span>
-              <span className="event-count">{selectedChannel.allowedTools.length} tools</span>
+              <span className="event-count">{t("{count} tools", { count: selectedChannel.allowedTools.length })}</span>
             </div>
             <div className="channel-detail-meta">
               <MetaRow label={t("Channel id")} value={selectedChannel.id} compact />
-              <MetaRow label={t("Status")} value={selectedChannel.status} compact />
-              <MetaRow label={t("Runtime policy")} value={`${selectedChannelRuntimePolicy.executionMode} · ${selectedChannelRuntimePolicy.writeLockScope}`} compact />
+              <MetaRow label={t("Status")} value={t(selectedChannel.status)} compact />
+              <MetaRow label={t("Runtime policy")} value={`${t(selectedChannelRuntimePolicy.executionMode)} · ${t(selectedChannelRuntimePolicy.writeLockScope)}`} compact />
 	              <MetaRow label={t("Workspace path")} value={cwd} compact />
 	              <MetaRow label={t("Execution path")} value={selectedChannel.boundPath ?? cwd} compact />
 	            </div>
@@ -387,7 +387,7 @@ export function ChannelTaskWorkspace({
 	                : taskReadyProviders.length === 0
 	                  ? t("No ready coding provider. Open Model Workbench, repair secret/base URL/model, then run Check.")
 	                  : effectiveProvider
-	                    ? (effectiveProviderPreflightBlocker ?? `${effectiveProvider.displayName}: ${providerRunBlockerLabel(effectiveProvider)}.`)
+	                    ? (effectiveProviderPreflightBlocker ?? t("{providerName}: {reason}.", { providerName: effectiveProvider.displayName, reason: providerRunBlockerLabel(effectiveProvider, t) }))
 	                    : t("Select a provider preset before running tasks.")}
 	            </span>
             <button className="secondary-button compact-button" type="button" onClick={() => onOpenProviders()}>
@@ -424,7 +424,7 @@ export function ChannelTaskWorkspace({
                 <Pencil size={16} />
 	                <h3>{t("Task detail")}</h3>
               </span>
-              <span className={`task-status ${selectedTask.status}`}>{selectedTask.status}</span>
+              <span className={`task-status ${selectedTask.status}`}>{t(selectedTask.status)}</span>
             </div>
             <div className="task-detail-meta">
 	              <MetaRow label={t("Task id")} value={selectedTask.id} compact />
@@ -477,7 +477,7 @@ export function ChannelTaskWorkspace({
               <select value={taskEditForm.status} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, status: event.target.value as TaskStatus })}>
                 {taskStatuses.map((status) => (
                   <option key={status} value={status}>
-                    {status}
+                    {t(status)}
                   </option>
                 ))}
               </select>
@@ -517,7 +517,7 @@ export function ChannelTaskWorkspace({
                 ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus)
                 : "";
               const linkedRunSucceeded = linkedRunStatus === "succeeded";
-              const repairHint = buildRunRepairHint(linkedRun, 0, linkedRunStatus);
+              const repairHint = buildRunRepairHint(linkedRun, 0, linkedRunStatus, "", t);
               const checkRunLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
               const runLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "run";
               const taskActionsDisabled = isRunning || taskActionPending;
@@ -525,7 +525,7 @@ export function ChannelTaskWorkspace({
                 <article key={task.id} className={task.id === selectedTaskId ? "task-row selected" : "task-row"}>
                   <div className="task-row-head">
                     <strong>{task.title}</strong>
-                    <span className={`task-status ${task.status}`}>{task.status}</span>
+                    <span className={`task-status ${task.status}`}>{t(task.status)}</span>
                   </div>
                   <p>{task.prompt}</p>
                   <div className="provider-meta-line mono">
@@ -660,7 +660,7 @@ function TaskProviderReadiness({
   readonly onOpenProviders: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const blocker = providerRunPreflightBlocker(provider);
+  const blocker = providerRunPreflightBlocker(provider, t);
   const ready = Boolean(provider && !blocker);
   const lastCheck = provider?.lastCheck;
   const checkedAt = lastCheck ? formatDateTime(lastCheck.checkedAt) : t("not checked");

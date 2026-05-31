@@ -122,6 +122,7 @@ export function AiTeammatesPage({
   const selectedChannelNames = selectedChannelIds
     .map((channelId) => channels.find((channel) => channel.id === channelId)?.name)
     .filter((name): name is string => Boolean(name));
+  const previewDisplayName = selectedTemplate && previewName === selectedTemplate.name ? t(previewName) : previewName;
 
   useEffect(() => {
     if (!selectedProviderId || !providerOptions.some((provider) => provider.id === selectedProviderId)) {
@@ -333,7 +334,7 @@ export function AiTeammatesPage({
               <div className="teammate-profile-form">
                 <div className="teammate-avatar-preview">
                   <AvatarInitial label={selectedTemplate ? teammateInitial(selectedTemplate) : teammateInitialFromName(previewName)} tone={selectedTemplate ? roleAvatarTone(selectedTemplate.roleKey) : "gray"} />
-                  <span>{previewName}</span>
+                  <span>{previewDisplayName}</span>
                 </div>
                 <label className="field">
                   <span>{t("Teammate name")}</span>
@@ -408,7 +409,7 @@ export function AiTeammatesPage({
           <div className="teammate-preview-hero">
             <AvatarInitial label={selectedTemplate ? teammateInitial(selectedTemplate) : teammateInitialFromName(previewName)} tone={selectedTemplate ? roleAvatarTone(selectedTemplate.roleKey) : "gray"} />
             <div>
-              <strong>{previewName}</strong>
+              <strong>{previewDisplayName}</strong>
               <small>{selectedProvider ? selectedProvider.model : t("No model selected")}</small>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import type { RunEventEnvelope, RunSession } from "../types.js";
+import type { Translate } from "../i18n.js";
 import {
   formatEventPreview,
   formatUnknownPreview,
@@ -45,16 +46,23 @@ export function buildRunRepairHint(
   pendingApprovalCount: number,
   status: string,
   extraMessage = "",
+  t?: Translate,
 ): RunRepairHint | undefined {
   const effectiveStatus = status || run?.status || "";
   if (pendingApprovalCount > 0 || effectiveStatus === "waiting_for_approval" || run?.status === "waiting_for_approval") {
     return {
       target: "approvals",
-      title: "Approval required",
+      title: translateRunText(t, "Approval required"),
       detail: pendingApprovalCount > 0
-        ? `${pendingApprovalCount} approval${pendingApprovalCount === 1 ? "" : "s"} pending before this run can continue.`
-        : "This run is waiting for an approval decision.",
-      actionLabel: "Approvals",
+        ? translateRunText(
+          t,
+          pendingApprovalCount === 1
+            ? "{count} approval pending before this run can continue."
+            : "{count} approvals pending before this run can continue.",
+          { count: pendingApprovalCount },
+        )
+        : translateRunText(t, "This run is waiting for an approval decision."),
+      actionLabel: translateRunText(t, "Approvals"),
     };
   }
 
@@ -66,17 +74,17 @@ export function buildRunRepairHint(
   if (isProviderRepairMessage(message)) {
     return {
       target: "providers",
-      title: "Provider repair needed",
-      detail: "The failure looks related to provider auth, preflight, endpoint, or model configuration.",
-      actionLabel: "Model Workbench",
+      title: translateRunText(t, "Provider repair needed"),
+      detail: translateRunText(t, "The failure looks related to provider auth, preflight, endpoint, or model configuration."),
+      actionLabel: translateRunText(t, "Model Workbench"),
     };
   }
 
   return {
     target: "run",
-    title: "Inspect run failure",
-    detail: "The failure looks like a runtime or tool issue. Inspect events, fix the workspace or task, then rerun.",
-    actionLabel: "Open run",
+    title: translateRunText(t, "Inspect run failure"),
+    detail: translateRunText(t, "The failure looks like a runtime or tool issue. Inspect events, fix the workspace or task, then rerun."),
+    actionLabel: translateRunText(t, "Open run"),
   };
 }
 
@@ -88,27 +96,28 @@ export function buildRuntimeFailureSummary(
   run: RunSession,
   events: readonly RunEventEnvelope[],
   workspaceCwd: string,
+  t?: Translate,
 ): RuntimeFailureSummary {
   const failureEvent = findRuntimeFailureEvent(events);
   const relatedToolStart = findRelatedToolStart(events, failureEvent);
   const dataSources = [failureEvent?.data, relatedToolStart?.data, run.requestSnapshot].filter((item): item is unknown => item !== undefined);
   const toolName = readFirstDataString(dataSources, ["toolName", "tool", "name", "actionType"])
     || (failureEvent?.type.startsWith("tool_") ? failureEvent.type.replace("tool_", "") : "runtime");
-  const issueText = (failureEvent ? readRunEventIssueText(failureEvent) : "") || run.errorMessage || "No failure message was recorded for this run.";
+  const issueText = (failureEvent ? readRunEventIssueText(failureEvent) : "") || run.errorMessage || translateRunText(t, "No failure message was recorded for this run.");
   const command = readFirstDataString(dataSources, ["command", "cmd", "script", "input"]);
   const cwd = readFirstDataString(dataSources, ["cwd", "workdir", "workingDirectory"]) || run.cwd || workspaceCwd;
   const targetPath = readFirstDataString(dataSources, ["path", "filePath", "targetPath", "target"]);
   const exitCode = readFirstDataScalarString(dataSources, ["exitCode", "exit_code", "statusCode"]);
 
   return {
-    eventLabel: failureEvent ? `#${failureEvent.seq} ${failureEvent.type}` : "run status",
+    eventLabel: failureEvent ? `#${failureEvent.seq} ${failureEvent.type}` : translateRunText(t, "run status"),
     toolName,
     issueText,
     command,
     cwd,
     targetPath,
     exitCode,
-    suggestion: buildRuntimeRepairSuggestion(toolName, command, targetPath),
+    suggestion: buildRuntimeRepairSuggestion(toolName, command, targetPath, t),
   };
 }
 
@@ -146,15 +155,15 @@ export function findRelatedToolStart(
   });
 }
 
-export function buildRuntimeRepairSuggestion(toolName: string, command: string, targetPath: string): string {
+export function buildRuntimeRepairSuggestion(toolName: string, command: string, targetPath: string, t?: Translate): string {
   const normalizedTool = toolName.toLowerCase();
   if (normalizedTool.includes("bash") || command) {
-    return "Check the command, cwd, dependency state, or task prompt. Edit the task if the instruction is wrong, then rerun.";
+    return translateRunText(t, "Check the command, cwd, dependency state, or task prompt. Edit the task if the instruction is wrong, then rerun.");
   }
   if (["edit", "write"].some((tool) => normalizedTool.includes(tool)) || targetPath) {
-    return "Check the target path and intended file change. Edit the task or workspace files, then rerun.";
+    return translateRunText(t, "Check the target path and intended file change. Edit the task or workspace files, then rerun.");
   }
-  return "Inspect the failed event, fix the task or workspace state, then rerun from the same persisted snapshot.";
+  return translateRunText(t, "Inspect the failed event, fix the task or workspace state, then rerun from the same persisted snapshot.");
 }
 
 export function readRunEventIssueText(event: RunEventEnvelope | undefined): string {
@@ -167,7 +176,7 @@ export function readRunEventIssueText(event: RunEventEnvelope | undefined): stri
     || readDataString(event.data, "reason");
 }
 
-export function readRunEvidenceMessage(run: RunSession, terminalEvent: RunEventEnvelope | undefined): string {
+export function readRunEvidenceMessage(run: RunSession, terminalEvent: RunEventEnvelope | undefined, t?: Translate): string {
   const runError = run.errorMessage?.trim();
   if (runError) {
     return runError;
@@ -184,25 +193,29 @@ export function readRunEvidenceMessage(run: RunSession, terminalEvent: RunEventE
   }
 
   if (run.status === "succeeded") {
-    return "Run completed without a result payload.";
+    return translateRunText(t, "Run completed without a result payload.");
   }
   if (run.status === "failed") {
-    return "Run failed without a captured error message.";
+    return translateRunText(t, "Run failed without a captured error message.");
   }
   if (run.status === "cancelled") {
-    return "Run was cancelled.";
+    return translateRunText(t, "Run was cancelled.");
   }
   if (run.status === "waiting_for_approval") {
-    return "Run is waiting for approval.";
+    return translateRunText(t, "Run is waiting for approval.");
   }
   if (run.status === "running") {
-    return "Run is still running.";
+    return translateRunText(t, "Run is still running.");
   }
-  return "Run is queued.";
+  return translateRunText(t, "Run is queued.");
 }
 
-export function buildAssistantOutputPreview(assistantText: string): string {
-  return formatUnknownPreview(assistantText, 260) || "No assistant output captured.";
+export function buildAssistantOutputPreview(assistantText: string, t?: Translate): string {
+  return formatUnknownPreview(assistantText, 260) || translateRunText(t, "No assistant output captured.");
+}
+
+function translateRunText(t: Translate | undefined, key: string, values?: Readonly<Record<string, string | number>>): string {
+  return t ? t(key, values) : key;
 }
 
 export function summarizeToolEvents(toolEvents: readonly RunEventEnvelope[]): { readonly total: number; readonly errorCount: number } {

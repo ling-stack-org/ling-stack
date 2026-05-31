@@ -26,7 +26,7 @@ export function ProviderPresetOptions({
         <optgroup label={t("Needs setup before task runs")}>
           {blockedProviders.map((provider) => (
             <option key={provider.id} value={provider.id} disabled>
-              {provider.displayName} / {provider.model} - {providerRunBlockerLabel(provider)}
+              {provider.displayName} / {provider.model} - {providerRunBlockerLabel(provider, t)}
             </option>
           ))}
         </optgroup>

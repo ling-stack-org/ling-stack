@@ -231,7 +231,7 @@ function RunDetailPanel({
   const workspaceCwd = run ? readDataString(run.requestSnapshot, "workspaceCwd") || run.cwd : "-";
   const providerPresetId = run ? readRunProviderPresetId(run) : "";
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
-  const repairHint = run ? buildRunRepairHint(run, pendingApprovals.length, run.status, readRunEventIssueText(terminalEvent)) : undefined;
+  const repairHint = run ? buildRunRepairHint(run, pendingApprovals.length, run.status, readRunEventIssueText(terminalEvent), t) : undefined;
   const runtimeRepairRun = run && run.status === "failed" && repairHint?.target === "run" ? run : undefined;
   const runLeases = run ? resourceLeases.filter((lease) => lease.ownerId === run.id) : [];
   const relevantTransitions = run
@@ -506,8 +506,8 @@ function RunEvidencePanel({
   const taskLabel = readTaskTitle(run.taskSnapshot) || run.taskId;
   const providerLabel = `${run.providerName}/${run.providerModel}`;
   const terminalLabel = terminalEvent ? `#${terminalEvent.seq} ${terminalEvent.type}` : "-";
-  const evidenceMessage = readRunEvidenceMessage(run, terminalEvent);
-  const assistantPreview = buildAssistantOutputPreview(assistantText);
+  const evidenceMessage = readRunEvidenceMessage(run, terminalEvent, t);
+  const assistantPreview = buildAssistantOutputPreview(assistantText, t);
   const toolSummary = summarizeToolEvents(toolEvents);
   const artifactCwd = readRunWorkspaceCwd(run, run.cwd);
 
@@ -585,46 +585,47 @@ function RuntimeRunRepairPanel({
   readonly onRerun: (run: RunSession) => void;
   readonly onReload: () => void;
 }): JSX.Element {
-  const summary = buildRuntimeFailureSummary(run, events, workspaceCwd);
+  const { t } = useI18n();
+  const summary = buildRuntimeFailureSummary(run, events, workspaceCwd, t);
   const canEditTask = Boolean(run.channelId && run.taskId);
   const canRerun = Boolean(readRunProviderPresetId(run));
 
   return (
-    <div className="runtime-run-repair" aria-label="Runtime run repair">
+    <div className="runtime-run-repair" aria-label={t("Runtime run repair")}>
       <div className="runtime-run-repair-head">
         <span>
           <SquareTerminal size={16} />
-          <strong>Repair runtime/tool failure</strong>
+          <strong>{t("Repair runtime/tool failure")}</strong>
         </span>
         <StatusBadge status={run.status} />
       </div>
       <div className="runtime-run-repair-copy">
         <span>
-          Run <code>{run.id}</code> failed at <code>{summary.eventLabel}</code>.
+          {t("Run {runId} failed at {eventLabel}.", { runId: run.id, eventLabel: summary.eventLabel })}
         </span>
         <small>{summary.issueText}</small>
         <small>{summary.suggestion}</small>
       </div>
       <div className="runtime-run-repair-meta">
-        <MetaRow label="Tool" value={summary.toolName || "-"} compact />
-        <MetaRow label="Event" value={summary.eventLabel} compact />
-        <MetaRow label="Cwd" value={summary.cwd || "-"} compact />
-        <MetaRow label="Exit code" value={summary.exitCode || "-"} compact />
-        {summary.command ? <MetaRow label="Command" value={summary.command} compact /> : null}
-        {summary.targetPath ? <MetaRow label="Target path" value={summary.targetPath} compact /> : null}
+        <MetaRow label={t("Tool")} value={summary.toolName || "-"} compact />
+        <MetaRow label={t("Event")} value={summary.eventLabel} compact />
+        <MetaRow label={t("Cwd")} value={summary.cwd || "-"} compact />
+        <MetaRow label={t("Exit code")} value={summary.exitCode || "-"} compact />
+        {summary.command ? <MetaRow label={t("Command")} value={summary.command} compact /> : null}
+        {summary.targetPath ? <MetaRow label={t("Target path")} value={summary.targetPath} compact /> : null}
       </div>
       <div className="runtime-run-repair-actions">
         <button className="secondary-button compact-button" type="button" onClick={() => onEditTask(run)} disabled={!canEditTask}>
           <Pencil size={14} />
-          Edit task
+          {t("Edit task")}
         </button>
         <button className="primary-button compact-button" type="button" onClick={() => onRerun(run)} disabled={isRunning || !canRerun}>
           {isRunning ? <Loader2 className="spin" size={14} /> : <RotateCcw size={14} />}
-          Rerun snapshot
+          {t("Rerun snapshot")}
         </button>
         <button className="secondary-button compact-button" type="button" onClick={onReload} disabled={isRunning}>
           <RefreshCw size={14} />
-          Reload
+          {t("Reload")}
         </button>
       </div>
     </div>
@@ -638,6 +639,7 @@ function ToolEventDetails({
   readonly event: RunEventEnvelope;
   readonly events: readonly RunEventEnvelope[];
 }): JSX.Element {
+  const { t } = useI18n();
   const isError = readDataBoolean(event.data, "isError");
   const toolName = readDataString(event.data, "toolName") || event.type.replace("tool_", "");
   const relatedToolStart = event.type === "tool_start" ? undefined : findRelatedToolStart(events, event);
@@ -655,18 +657,18 @@ function ToolEventDetails({
         <span>#{event.seq}</span>
         <strong>{toolName}</strong>
         <code>{event.type}</code>
-        <small>{isError ? "error" : formatDateTime(event.ts)}</small>
+        <small>{isError ? t("error") : formatDateTime(event.ts)}</small>
       </summary>
       <div className="tool-event-details">
         {summaryPreview ? <p className="tool-event-preview">{summaryPreview}</p> : null}
         <div className="tool-event-meta">
-          <MetaRow label="Tool call" value={toolCallId || "-"} compact />
-          <MetaRow label="Command" value={command || "-"} compact />
-          <MetaRow label="Cwd" value={cwd || "-"} compact />
-          <MetaRow label="Target path" value={targetPath || "-"} compact />
+          <MetaRow label={t("Tool call")} value={toolCallId || "-"} compact />
+          <MetaRow label={t("Command")} value={command || "-"} compact />
+          <MetaRow label={t("Cwd")} value={cwd || "-"} compact />
+          <MetaRow label={t("Target path")} value={targetPath || "-"} compact />
         </div>
         <details className="json-details compact-json">
-          <summary>Raw tool payload</summary>
+          <summary>{t("Raw tool payload")}</summary>
           <pre>{formatEventData(event.data)}</pre>
         </details>
       </div>

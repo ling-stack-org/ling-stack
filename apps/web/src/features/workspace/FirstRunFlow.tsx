@@ -92,7 +92,7 @@ export function FirstRunFlow({
   const channelHasReadyDefault = Boolean(channelDefaultProvider && providerPreflightReady(channelDefaultProvider));
   const effectiveProviderId = taskRunProviderId || selectedChannel?.defaultProviderPresetId || fallbackProviderId || readyProvider?.id || "";
   const effectiveProvider = providers.find((provider) => provider.id === effectiveProviderId);
-  const runReady = Boolean(selectedTask && effectiveProvider && providerRunPreflightBlocker(effectiveProvider) === undefined);
+  const runReady = Boolean(selectedTask && effectiveProvider && providerRunPreflightBlocker(effectiveProvider, t) === undefined);
   const firstRunComplete = Boolean(readyProvider && selectedChannel && channelHasReadyDefault && selectedTask && runReady);
   const activeRun = activeRunId ? (currentRun?.id === activeRunId ? currentRun : runById.get(activeRunId)) : undefined;
   const selectedTaskRunId = selectedTask?.currentRunId ?? "";
@@ -125,7 +125,7 @@ export function FirstRunFlow({
   }
 
   if (selectedTask && selectedTaskRunId) {
-    const repairHint = buildRunRepairHint(selectedTaskRun, pendingApprovalCount, selectedTaskRunStatus);
+    const repairHint = buildRunRepairHint(selectedTaskRun, pendingApprovalCount, selectedTaskRunStatus, "", t);
     const runSucceeded = selectedTaskRunStatus === "succeeded";
     const needsRepair = selectedTaskRunStatus === "failed" || selectedTaskRunStatus === "waiting_for_approval";
 	    const runStatusClass = runSucceeded ? "ready" : needsRepair ? "attention" : "active";
@@ -137,8 +137,12 @@ export function FirstRunFlow({
     const detail = runSucceeded
       ? t("{taskTitle} finished successfully. Open the run to review the result, events, and artifacts.", { taskTitle: selectedTask.title })
       : repairHint
-      ? `${selectedTask.title} latest run is ${selectedTaskRunStatus}. ${repairHint.detail}`
-      : `${selectedTask.title} latest run is ${selectedTaskRunStatus}.${selectedTaskRun?.errorMessage ? ` ${selectedTaskRun.errorMessage}` : ""}`;
+      ? t("{taskTitle} latest run is {status}. {detail}", { taskTitle: selectedTask.title, status: selectedTaskRunStatus, detail: repairHint.detail })
+      : t("{taskTitle} latest run is {status}.{error}", {
+        taskTitle: selectedTask.title,
+        status: selectedTaskRunStatus,
+        error: selectedTaskRun?.errorMessage ? ` ${selectedTaskRun.errorMessage}` : "",
+      });
     const primaryAction = repairHint?.target ?? "run";
 
     return (
@@ -420,7 +424,7 @@ function buildFirstRunRunStep(
     return {
       id: "run",
       label: t("Run"),
-      detail: providerRunPreflightBlocker(provider) ?? t("Provider is not ready."),
+      detail: providerRunPreflightBlocker(provider, t) ?? t("Provider is not ready."),
       status: "attention",
       actionLabel: t("Check run"),
       onAction: () => onCheckThenRunTask(task),
