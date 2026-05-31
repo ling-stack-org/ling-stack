@@ -1,5 +1,9 @@
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
+export type RunTool = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write";
+
+export type RunThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
 export interface DaemonHealthResponse {
   readonly ok: boolean;
   readonly service?: string;
@@ -454,6 +458,34 @@ export interface ExternalWorkCiTriageRequest {
   readonly limit?: number;
   readonly createTask?: boolean;
   readonly startRun?: boolean;
+}
+
+export interface ExternalWorkCiTriageRunRequest {
+  readonly providerPresetId: string;
+  readonly skipProviderPreflight?: boolean;
+  readonly idempotencyKey?: string;
+  readonly tools?: readonly RunTool[];
+  readonly thinkingLevel?: RunThinkingLevel;
+  readonly systemPrompt?: string;
+  readonly appendSystemPrompt?: readonly string[];
+  readonly agentDir?: string;
+}
+
+export interface ExternalWorkCiTriageListRequest {
+  readonly externalWorkId?: string;
+  readonly channelId?: string;
+  readonly status?: ExternalWorkCiTriageStatus;
+  readonly limit?: number;
+}
+
+export interface ExternalWorkCiTriageListResponse {
+  readonly cwd: string;
+  readonly records: readonly ExternalWorkCiTriageView[];
+}
+
+export interface ExternalWorkCiTriageDetailResponse {
+  readonly cwd: string;
+  readonly record: ExternalWorkCiTriageView;
 }
 
 export interface ExternalWorkCiTriageResponse {

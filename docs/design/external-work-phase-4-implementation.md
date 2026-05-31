@@ -18,6 +18,13 @@ The shipped CLI/API path creates local triage records, evidence artifacts, and f
 tasks by default. `startRun: true` remains rejected in Phase 4.0, so no runner starts
 from CI triage.
 
+The roadmap after Phase 4.0 is tracked in
+[External Work Roadmap](external-work-roadmap.md). In short: Phase 4.1 closes the local
+fix path with a disposable failing-PR smoke plus an explicit local fix run bridge; Phase
+4.2 should expose CI triage in Web; Phase 5 should close the GitHub-first operator loop;
+Phase 6 should add background polling/reconciliation; Phase 7 should prove a second
+channel adapter.
+
 Phase 4 must not become an auto-push bot. Reading CI metadata and logs is allowed with a
 GitHub token. Creating Ling records and artifacts is local-only. Starting a local fix run
 goes through existing channel runtime policy, provider preflight, resource leases, and
@@ -178,8 +185,9 @@ standalone check events, but that is not required for manual PR CI triage.
 11. Heuristically extract first failing command and reproduction command.
 12. If `createTask !== false`, create or reuse a scoped Ling task linked in the triage
     record.
-13. Phase 4.0 rejects `startRun === true`. A later slice may request a normal task run
-    only through existing task run APIs and channel policy. This remains off by default.
+13. Phase 4.0 rejects `startRun === true` on the JSON triage endpoint. Phase 4.1 starts
+    a normal task run only through the separate explicit triage-run SSE endpoint and
+    existing channel policy. This remains off by default.
 
 Failure parsing should be deliberately conservative. If the parser cannot identify a
 command, it should still create evidence and a task with a clear missing-command note
@@ -224,6 +232,7 @@ Daemon:
 
 ```http
 POST /external-work/github/ci/triage?cwd=/path/to/project
+POST /external-work/github/ci/triage/:triageId/run?cwd=/path/to/project
 ```
 
 Request:
@@ -247,6 +256,12 @@ await client.triageGitHubExternalWorkCi("/path/to/project", {
   limit: 5,
   createTask: true,
 });
+
+await client.startGitHubExternalWorkCiTriageRun(
+  "/path/to/project",
+  "external_work_ci_triage_...",
+  { providerPresetId: "provider_..." },
+);
 ```
 
 CLI:
@@ -255,22 +270,50 @@ CLI:
 ling-stack external-work github ci triage \
   --external-work external_work_... \
   --workflow-path WORKFLOW.md \
-  --limit 5 \
-  --create-task
+  --limit 5
+
+ling-stack external-work github ci run \
+  --triage external_work_ci_triage_... \
+  --provider provider_...
 ```
 
 Human output should show counts, failure names, task ids, artifact ids, stale state, and
-whether a run was requested. `--json` should return the daemon response unchanged.
+whether a run was requested. `--json` should return the daemon response unchanged for
+triage and newline-delimited SSE events for the explicit run command.
 
 ## Web Surface
 
-Phase 4.0 does not need a new page. The first Web surface can be a compact external-work
-detail section later:
+Phase 4.2 keeps CI triage inside existing Web surfaces instead of adding a GitHub page.
+The daemon exposes local-only list/detail endpoints:
 
-- CI failures and current triage status.
-- Linked log excerpt and triage summary artifacts.
-- Linked local fix task and optional run.
-- Existing approval cards for any diagnosis comment or future push action.
+- `GET /external-work/github/ci/triage?cwd=...`
+- `GET /external-work/github/ci/triage/:triageId?cwd=...`
+
+The Web Workspace shows channel-level CI triage rows with failed check/workflow/job
+metadata, reproduction hints, linked artifacts, and linked local fix task/run ids. The
+right-side task Inspector filters the same records down to the selected task or its
+current run. These reads do not call GitHub and do not start a runner. Local fix runs
+remain behind the separate explicit Phase 4.1 endpoint and CLI command.
+
+Existing approval cards remain the surface for any diagnosis comment or later GitHub
+mutation proposal.
+
+## Post-4.0 Roadmap Boundary
+
+Phase 4.1 is useful, but it must stay narrow:
+
+- Run a live smoke on a disposable failing PR before expanding the product surface.
+- Use the explicit local fix run bridge only through existing task/run APIs:
+  `POST /external-work/github/ci/triage/:triageId/run`,
+  `LingDaemonClient.startGitHubExternalWorkCiTriageRun()`, and
+  `ling-stack external-work github ci run --triage <id> --provider <provider>`.
+- Keep `startRun` rejected on the JSON triage endpoint and avoid hidden runner startup.
+- Keep push, comments, labels, review decisions, merge, and release outside CI triage.
+
+Phase 4.0 is complete without Phase 4.1. Phase 4.1 is needed only if the product goal is
+to turn CI triage into an operator-controlled local repair loop. Phase 4.1 is complete
+only after both the bridge implementation and the disposable failing-PR smoke are
+recorded.
 
 ## Tests
 
@@ -328,9 +371,9 @@ git diff --check
 3. **Durable triage records:** SQLite table, store methods, idempotency, artifacts, and
    task prompt creation.
 4. **Daemon/API/CLI:** manual triage endpoint, SDK method, CLI command, and tests.
-5. **Local fix run option:** optional `startRun` through existing task run path, still
-   off by default.
-6. **Live smoke docs:** failing-check fixture repo path and reproducible local evidence
-   verification.
+5. **Phase 4.1 live smoke:** failing-check fixture repo path and reproducible local
+   evidence verification against a disposable PR.
+6. **Phase 4.1 local fix run bridge:** explicit run creation through existing task run
+   path, still off by default from CI triage.
 7. **Strict push action design:** separate implementation plan before any GitHub push
    mutation exists.

@@ -53,6 +53,10 @@ import type {
   ExternalWorkActionListResponse,
   ExternalWorkActionMutationResponse,
   ExternalWorkActionProposeRequest,
+  ExternalWorkCiTriageDetailResponse,
+  ExternalWorkCiTriageListRequest,
+  ExternalWorkCiTriageListResponse,
+  ExternalWorkCiTriageRunRequest,
   ExternalWorkCiTriageRequest,
   ExternalWorkCiTriageResponse,
   ExternalWorkDetailResponse,
@@ -651,6 +655,42 @@ export class LingDaemonClient {
 
   async triageGitHubExternalWorkCi(cwd: string, input: ExternalWorkCiTriageRequest): Promise<ExternalWorkCiTriageResponse> {
     return this.post("/external-work/github/ci/triage", { cwd }, input);
+  }
+
+  async listGitHubExternalWorkCiTriage(
+    cwd: string,
+    options: ExternalWorkCiTriageListRequest = {},
+  ): Promise<ExternalWorkCiTriageListResponse> {
+    return this.get("/external-work/github/ci/triage", {
+      cwd,
+      externalWorkId: options.externalWorkId,
+      channelId: options.channelId,
+      status: options.status,
+      limit: options.limit,
+    });
+  }
+
+  async getGitHubExternalWorkCiTriage(cwd: string, triageId: string): Promise<ExternalWorkCiTriageDetailResponse> {
+    return this.get(`/external-work/github/ci/triage/${encodeURIComponent(triageId)}`, { cwd });
+  }
+
+  async startGitHubExternalWorkCiTriageRun(
+    cwd: string,
+    triageId: string,
+    input: ExternalWorkCiTriageRunRequest,
+  ): Promise<Response> {
+    const response = await this.fetchImpl(this.url(`/external-work/github/ci/triage/${encodeURIComponent(triageId)}/run`, { cwd }), {
+      method: "POST",
+      headers: {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
+    }
+    return response;
   }
 
   async reconcileExternalWork(cwd: string, input: ExternalWorkReconcileRequest = {}): Promise<ExternalWorkReconcileResponse> {

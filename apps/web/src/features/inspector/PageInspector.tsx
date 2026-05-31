@@ -21,6 +21,7 @@ import type {
   ApprovalPolicy,
   ApprovalPolicyFormState,
   ApprovalRequest,
+  ExternalWorkCiTriageView,
   ExternalWorkActionView,
   MediaJob,
   ProviderCheckResult,
@@ -33,6 +34,7 @@ import type {
 import type { SelectedEntity, ViewId } from "../../app/view-types.js";
 import { ApprovalCard, type ApprovalResolution } from "../approvals/index.js";
 import type { ExternalActionBusyState } from "../approvals/ApprovalsPage.js";
+import { CiTriageAuditPanel } from "../external-work/CiTriageAuditPanel.js";
 import { RunInspector, RunTimeline } from "../runs/index.js";
 
 export function PageInspector({
@@ -62,6 +64,8 @@ export function PageInspector({
   selectedApprovalId,
   externalActionDetails,
   externalActionBusy,
+  externalWorkCiTriage,
+  externalWorkCiTriageLoading,
   approvalPolicy,
   approvalPolicyForm,
   onLookupRunIdChange,
@@ -97,6 +101,8 @@ export function PageInspector({
   readonly selectedApprovalId: string;
   readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
   readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
+  readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
+  readonly externalWorkCiTriageLoading: boolean;
   readonly approvalPolicy: ApprovalPolicy | undefined;
   readonly approvalPolicyForm: ApprovalPolicyFormState;
   readonly onLookupRunIdChange: (runId: string) => void;
@@ -176,6 +182,14 @@ export function PageInspector({
     );
   }
 
+  const selectedTaskCiTriage = selectedTask
+    ? externalWorkCiTriage.filter((record) =>
+      record.triage.taskId === selectedTask.id ||
+      record.task?.id === selectedTask.id ||
+      (selectedTask.currentRunId ? record.triage.runId === selectedTask.currentRunId || record.run?.id === selectedTask.currentRunId : false),
+    )
+    : [];
+
   return (
     <section className="inspector workspace-task-inspector" aria-label={t("Task inspector")}>
       <div className="panel-title">
@@ -195,6 +209,12 @@ export function PageInspector({
           <span>{t("No task selected")}</span>
         </div>
       )}
+      <CiTriageAuditPanel
+        records={selectedTaskCiTriage}
+        loading={externalWorkCiTriageLoading}
+        compact
+        cwd={cwd}
+      />
       <RunTimeline
         events={events}
         assistantText={assistantText}

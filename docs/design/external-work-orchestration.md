@@ -504,6 +504,10 @@ Required mitigations:
 
 ## Implementation Phases
 
+The remaining roadmap after Phase 4.0 is tracked in
+[External Work Roadmap](external-work-roadmap.md). This section keeps the architecture
+source of truth aligned with that roadmap.
+
 ### Phase 1: GitHub Read-Only Scheduler
 
 - Parse Ling `WORKFLOW.md` for GitHub repository bindings.
@@ -573,19 +577,49 @@ Implementation plan: [External Work Phase 4 Implementation](external-work-phase-
 - Keep Phase 4.0 read-first and local-first. Push commits, diagnosis comments, review
   decisions, and merges remain separate external actions.
 - Require strict approval for any future push commit action.
+- Phase 4.1 consists of a real disposable failing-PR smoke plus an explicit local fix
+  run bridge through existing task/run, provider preflight, policy, and lease paths. CI
+  triage must still not start hidden runners or mutate GitHub.
+- The explicit Phase 4.1 bridge is
+  `POST /external-work/github/ci/triage/:triageId/run` and
+  `ling-stack external-work github ci run --triage <id> --provider <provider>`.
+- Phase 4.2 exposes CI triage records, linked fix tasks/runs, and evidence artifacts
+  in the existing Web Workspace and task Inspector without adding a separate GitHub
+  page. The Web reads local triage state only; it does not poll GitHub or start a fix
+  run.
 
-### Phase 5: Review Decisions, Merge, and Release
+### Phase 5: GitHub-First Closure Loop
 
-- Add strict-approval PR review decisions.
-- Add merge and release proposed actions.
-- Revalidate branch protection, required checks, target SHA, and CODEOWNERS before
-  execution.
+- Connect external work, isolated workspace allocation, teammate runs, evidence,
+  proposed GitHub actions, approval cards, and explicit execution into one operator
+  flow.
+- Add strict proposed action kinds beyond comments and labels only when they have
+  durable evidence and stale-target revalidation. Candidate actions include PR review
+  decision, push commit, merge, release readiness, and release.
+- Keep edit-and-approve out of the first loop. Cancel and re-propose instead.
+- Keep no-force-push as the default push boundary.
 
-### Phase 6: Linear Adapter
+### Phase 6: Background Polling and Reconciliation
+
+- Add webhook ingestion or scheduled polling after the manual paths are stable.
+- Add startup reconciliation for scheduler state, leases, stale workspaces, pending
+  approvals, and external actions.
+- Preserve rate limits, backoff, source leases, subject leases, workspace leases, and
+  approval boundaries.
+- Keep all external mutations behind proposed action execution.
+
+### Phase 7: Second Channel Adapter
 
 - Add `linear` source adapter using the same normalized work item, scheduler, workspace,
   approval, and evidence contracts.
 - Support ticket comments and state transitions only through proposed actions.
+- Treat GitLab or Jira as later alternatives only if real usage requires them.
+
+### GA Hardening
+
+- After Phase 7, prefer hardening over broad new feature surface: live smoke suites,
+  permission audits, audit search/export, admin policy controls, rate-limit tuning,
+  security review, and recovery documentation.
 
 ## Test Plan
 

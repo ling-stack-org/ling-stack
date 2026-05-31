@@ -22,6 +22,7 @@ import {
   reconcileExternalWork,
   renderExternalWorkflowPrompt,
   syncExternalWorkActionForApproval,
+  buildExternalWorkCiTriageView,
   triageGitHubExternalWorkCi,
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
@@ -100,7 +101,11 @@ import {
   type ExternalWorkActionMutationResponse,
   type ExternalWorkActionStatus,
   type ExternalWorkCiTriageRequest,
+  type ExternalWorkCiTriageDetailResponse,
+  type ExternalWorkCiTriageListResponse,
+  type ExternalWorkCiTriageRunRequest,
   type ExternalWorkCiTriageResponse,
+  type ExternalWorkCiTriageStatus,
   type ExternalWorkItem,
   type ExternalWorkDetailResponse,
   type ExternalWorkListResponse,
@@ -223,6 +228,14 @@ const externalWorkSchedulerStatuses = [
   "retry_wait",
   "terminal",
 ] as const satisfies readonly ExternalWorkSchedulerStatus[];
+const externalWorkCiTriageStatuses = [
+  "triaged",
+  "task_created",
+  "run_requested",
+  "blocked",
+  "stale",
+  "failed",
+] as const satisfies readonly ExternalWorkCiTriageStatus[];
 const CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES = 40 * 1024 * 1024;
 const CHANNEL_LINK_PREVIEW_TIMEOUT_MS = 5_000;
 const CHANNEL_LINK_PREVIEW_MAX_BYTES = 192 * 1024;
@@ -234,6 +247,10 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly provider?: PiRunnerProviderConfig;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
+}
+
+interface ExecuteRunRequestOptions {
+  readonly onRunReady?: (runId: string) => void;
 }
 
 interface ChannelMessageRequest {
@@ -603,6 +620,18 @@ async function routeRequest(
     return;
   }
 
+  const externalWorkCiTriageItemRoute = parseExternalWorkCiTriageItemRoute(url.pathname);
+  if (externalWorkCiTriageItemRoute) {
+    await handleExternalWorkCiTriageItem(request, response, config, storeRegistry, externalWorkCiTriageItemRoute.triageId);
+    return;
+  }
+
+  const externalWorkCiTriageRunRoute = parseExternalWorkCiTriageRunRoute(url.pathname);
+  if (externalWorkCiTriageRunRoute) {
+    await handleExternalWorkCiTriageRun(request, response, config, runner, storeRegistry, activeRuns, secretResolver, externalWorkCiTriageRunRoute.triageId);
+    return;
+  }
+
   if (url.pathname === "/external-work/reconcile") {
     await handleExternalWorkReconcile(request, response, config, storeRegistry, secretResolver, externalWorkFetch);
     return;
@@ -887,6 +916,7 @@ async function executeRunRequest(
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
   secretResolver: SecretResolver,
+  options: ExecuteRunRequestOptions = {},
 ): Promise<string | undefined> {
   let store: RunStore | undefined;
   let run: RunSession | undefined;
@@ -950,6 +980,11 @@ async function executeRunRequest(
       }
     }
     if (error instanceof DuplicateRunRequestError) {
+      try {
+        options.onRunReady?.(error.runId);
+      } catch {
+        // The run itself is already known; auxiliary link updates must not corrupt SSE.
+      }
       writeSseHead(response);
       writeSse(response, "ready", { ok: true, runId: error.runId, duplicate: true });
       response.end();
@@ -970,6 +1005,11 @@ async function executeRunRequest(
 
   writeSseHead(response);
   writeSse(response, "ready", { ok: true, runId: run.id });
+  try {
+    options.onRunReady?.(run.id);
+  } catch {
+    // The run itself is already known; auxiliary link updates must not corrupt SSE.
+  }
 
   const abortController = new AbortController();
   let clientClosed = false;
@@ -3802,6 +3842,33 @@ async function handleExternalGitHubCiTriage(
   secretResolver: SecretResolver,
   externalWorkFetch?: typeof globalThis.fetch,
 ): Promise<void> {
+  if (request.method === "GET") {
+    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+    const cwd = url.searchParams.get("cwd");
+    if (!cwd) {
+      writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+      return;
+    }
+
+    try {
+      const store = storeRegistry.getStore(cwd);
+      const records = store.listExternalWorkCiTriage({
+        externalWorkId: url.searchParams.get("externalWorkId") ?? undefined,
+        channelId: url.searchParams.get("channelId") ?? undefined,
+        status: readOptionalExternalWorkCiTriageStatusQuery(url),
+        limit: readOptionalIntegerQuery(url, "limit", 1),
+      });
+      const responseBody: ExternalWorkCiTriageListResponse = {
+        cwd,
+        records: records.map((record) => buildExternalWorkCiTriageView(store, record)),
+      };
+      writeJson(response, 200, responseBody);
+    } catch (error) {
+      writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for GitHub CI triage` });
     return;
@@ -3847,6 +3914,127 @@ async function handleExternalGitHubCiTriage(
       startRun: input.startRun,
     });
     writeJson(response, 200, triageResponse);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleExternalWorkCiTriageItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  triageId: string,
+): Promise<void> {
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for CI triage detail` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const record = store.getExternalWorkCiTriage(triageId);
+    if (!record) {
+      writeJson(response, 404, { error: "ci_triage_not_found", message: `External work CI triage record not found: ${triageId}` });
+      return;
+    }
+    const responseBody: ExternalWorkCiTriageDetailResponse = {
+      cwd,
+      record: buildExternalWorkCiTriageView(store, record),
+    };
+    writeJson(response, 200, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleExternalWorkCiTriageRun(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
+  secretResolver: SecretResolver,
+  triageId: string,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for CI triage run` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseExternalWorkCiTriageRunRequest(body);
+    const store = storeRegistry.getStore(cwd);
+    const triage = store.getExternalWorkCiTriage(triageId);
+    if (!triage) {
+      writeJson(response, 404, { error: "ci_triage_not_found", message: `External work CI triage record not found: ${triageId}` });
+      return;
+    }
+    if (triage.status === "stale") {
+      writeJson(response, 409, { error: "ci_triage_stale", message: `CI triage target is stale: ${triageId}` });
+      return;
+    }
+    if (!triage.taskId) {
+      writeJson(response, 409, { error: "ci_triage_task_missing", message: `CI triage record has no local fix task: ${triageId}` });
+      return;
+    }
+    const task = store.getTask(triage.taskId);
+    if (!task) {
+      writeJson(response, 404, { error: "task_not_found", message: `Task not found: ${triage.taskId}` });
+      return;
+    }
+    const channel = store.getChannel(task.channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${task.channelId}` });
+      return;
+    }
+
+    await executeRunRequest(
+      {
+        workspaceCwd: cwd,
+        cwd: channel.boundPath ?? cwd,
+        providerPresetId: input.providerPresetId,
+        skipProviderPreflight: input.skipProviderPreflight ?? false,
+        idempotencyKey: input.idempotencyKey ?? `external_work_ci_triage_run:${triage.id}:${triage.taskId}:${triage.headSha}`,
+        task: {
+          id: task.id,
+          title: task.title,
+          prompt: task.prompt,
+          channelId: task.channelId,
+        },
+        tools: input.tools ?? channel.allowedTools,
+        thinkingLevel: input.thinkingLevel,
+        systemPrompt: input.systemPrompt,
+        appendSystemPrompt: input.appendSystemPrompt,
+        agentDir: input.agentDir,
+      },
+      response,
+      runner,
+      storeRegistry,
+      activeRuns,
+      secretResolver,
+      {
+        onRunReady: (runId) => {
+          store.updateExternalWorkCiTriage(triage.id, { status: "run_requested", runId }, new Date().toISOString());
+        },
+      },
+    );
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
@@ -3947,6 +4135,22 @@ function parseExternalGitHubCiTriageRequest(value: unknown): ExternalWorkCiTriag
     limit,
     createTask: readOptionalBoolean(value, "createTask"),
     startRun: readOptionalBoolean(value, "startRun"),
+  };
+}
+
+function parseExternalWorkCiTriageRunRequest(value: unknown): ExternalWorkCiTriageRunRequest {
+  if (!isRecord(value)) {
+    throw new Error("Request body must be an object");
+  }
+  return {
+    providerPresetId: readString(value, "providerPresetId"),
+    skipProviderPreflight: readOptionalBoolean(value, "skipProviderPreflight"),
+    idempotencyKey: readOptionalString(value, "idempotencyKey"),
+    tools: readOptionalRunTools(value, "tools"),
+    thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
+    systemPrompt: readOptionalString(value, "systemPrompt"),
+    appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
+    agentDir: readOptionalString(value, "agentDir"),
   };
 }
 
@@ -7282,6 +7486,35 @@ function parseExternalWorkActionRoute(pathname: string): { readonly actionId: st
   return undefined;
 }
 
+function parseExternalWorkCiTriageItemRoute(pathname: string): { readonly triageId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (
+    segments.length === 5 &&
+    segments[0] === "external-work" &&
+    segments[1] === "github" &&
+    segments[2] === "ci" &&
+    segments[3] === "triage"
+  ) {
+    return { triageId: segments[4] };
+  }
+  return undefined;
+}
+
+function parseExternalWorkCiTriageRunRoute(pathname: string): { readonly triageId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (
+    segments.length === 6 &&
+    segments[0] === "external-work" &&
+    segments[1] === "github" &&
+    segments[2] === "ci" &&
+    segments[3] === "triage" &&
+    segments[5] === "run"
+  ) {
+    return { triageId: segments[4] };
+  }
+  return undefined;
+}
+
 function parseApprovalPolicyUpdateInput(value: unknown): ApprovalPolicyUpdateInput {
   if (!isRecord(value)) {
     throw new Error("Approval policy update must be a JSON object");
@@ -9322,6 +9555,17 @@ function readOptionalExternalWorkSchedulerStatusQuery(url: URL): ExternalWorkSch
     throw new Error(`schedulerStatus must be one of: ${externalWorkSchedulerStatuses.join(", ")}`);
   }
   return value as ExternalWorkSchedulerStatus;
+}
+
+function readOptionalExternalWorkCiTriageStatusQuery(url: URL): ExternalWorkCiTriageStatus | undefined {
+  const value = url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (!externalWorkCiTriageStatuses.includes(value as ExternalWorkCiTriageStatus)) {
+    throw new Error(`status must be one of: ${externalWorkCiTriageStatuses.join(", ")}`);
+  }
+  return value as ExternalWorkCiTriageStatus;
 }
 
 function readExternalWorkActionProposeRequest(value: unknown): {

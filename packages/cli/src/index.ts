@@ -1631,6 +1631,9 @@ async function handleExternalWorkGitHubCi(args: readonly string[], options: Glob
   if (subcommand === "triage") {
     return await handleExternalWorkGitHubCiTriage(rest, options);
   }
+  if (subcommand === "run") {
+    return await handleExternalWorkGitHubCiRun(rest, options);
+  }
   throw new CliError(2, "unknown_command", `Unknown external-work github ci command: ${subcommand}`);
 }
 
@@ -1882,6 +1885,51 @@ async function handleExternalWorkGitHubCiTriage(args: readonly string[], options
   }
   printExternalWorkCiTriage(response);
   return 0;
+}
+
+async function handleExternalWorkGitHubCiRun(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["triage", "provider", "thinking", "system-prompt", "agent-dir", "idempotency-key"]),
+    repeatableFlags: new Set(["tool", "append-system-prompt"]),
+    booleanFlags: new Set(["skip-preflight"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work github ci run");
+  const triageId = getFlag(parsed, "triage");
+  if (!triageId) {
+    throw new CliError(2, "missing_option", "external-work github ci run requires --triage <externalWorkCiTriageId>.");
+  }
+  const providerPresetId = getFlag(parsed, "provider");
+  if (!providerPresetId) {
+    throw new CliError(2, "missing_provider", "external-work github ci run requires --provider <providerPresetId>.");
+  }
+  const thinkingLevel = getFlag(parsed, "thinking") ?? "medium";
+  if (!VALID_THINKING_LEVELS.has(thinkingLevel)) {
+    throw new CliError(2, "bad_thinking_level", `--thinking must be one of: ${[...VALID_THINKING_LEVELS].join(", ")}`);
+  }
+  const skipProviderPreflight = parsed.booleans.has("skip-preflight");
+  if (!skipProviderPreflight) {
+    await assertProviderRunPreflight(options, providerPresetId);
+  }
+  const body = removeUndefined({
+    providerPresetId,
+    skipProviderPreflight: skipProviderPreflight ? true : undefined,
+    idempotencyKey: getFlag(parsed, "idempotency-key"),
+    tools: getFlagValues(parsed, "tool").length > 0 ? readTools(parsed) : undefined,
+    thinkingLevel,
+    systemPrompt: getFlag(parsed, "system-prompt"),
+    appendSystemPrompt: getFlagValues(parsed, "append-system-prompt"),
+    agentDir: getFlag(parsed, "agent-dir"),
+  });
+  const printer = new RunPrinter(options);
+  await streamRun(
+    options,
+    body,
+    printer,
+    `/external-work/github/ci/triage/${encodeURIComponent(triageId)}/run`,
+    { cwd: options.cwd },
+  );
+  printer.finish();
+  return printer.exitCode();
 }
 
 async function handleExternalWorkReconcile(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -2253,8 +2301,14 @@ async function requestJson(
   return await parseJsonResponse(response);
 }
 
-async function streamRun(options: GlobalOptions, body: unknown, printer: RunPrinter): Promise<void> {
-  const url = buildUrl(options.daemonUrl, "/runs");
+async function streamRun(
+  options: GlobalOptions,
+  body: unknown,
+  printer: RunPrinter,
+  path = "/runs",
+  query: Record<string, QueryValue> = {},
+): Promise<void> {
+  const url = buildUrl(options.daemonUrl, path, query);
   let response: Response;
   try {
     response = await fetch(url, {
@@ -4157,6 +4211,7 @@ function printExternalWorkHelp(): void {
   ling-stack external-work github import --channel <channelId> --event-type <eventType> --payload-file <payload.json> [options]
   ling-stack external-work github poll --channel <channelId> [options]
   ling-stack external-work github ci triage --external-work <externalWorkId> [options]
+  ling-stack external-work github ci run --triage <externalWorkCiTriageId> --provider <providerPresetId> [options]
   ling-stack external-work list [--channel <channelId>] [--status ready|blocked|retry_wait|terminal] [--limit 50]
   ling-stack external-work show <externalWorkId>
   ling-stack external-work actions propose-comment --external-work <id> --body-file comment.md [--approval standard|strict]
@@ -4175,6 +4230,8 @@ Options:
   --workflow-markdown-file <path> Read workflow markdown from a local file and send it inline
   --limit <n>                     Poll at most n GitHub candidates, max 100
   --no-create-task                CI triage writes records/artifacts without creating a local fix task
+  --provider <id>                 Provider preset for an explicit local CI fix run
+  --skip-preflight                Skip provider last-check gate for debugging local CI fix runs
   --execute-hooks                 Run afterCreate/beforeRun hooks inside isolated workspaces
   --status <status>               Filter external-work list by scheduler status
   --source-kind <kind>            Filter external-work list by source kind
@@ -4187,12 +4244,14 @@ Behavior:
   Import creates or reuses local Ling workflow records from local fixtures.
   Poll uses read-only GitHub API calls for PR and issue discovery.
   CI triage reads GitHub checks/actions logs for an existing PR external work item and creates local evidence/tasks.
+  CI run starts an explicit local fix run for a triage record through the normal task/run path.
   List and show read local workflow, scheduler, workspace, and artifact state.
   Action propose/list/show/cancel manages local proposed actions and approvals only.
   Action execute requires an approved action, revalidates the GitHub target, then only
   calls the approved GitHub comment or label endpoint.
   Reconcile repairs local scheduler state and can optionally check remote terminal state.
-  None of these commands start a runner; only action execute can mutate GitHub.
+  Import, poll, triage, list, show, action propose/cancel, and reconcile do not start a runner.
+  Only ci run starts a local runner. Only action execute can mutate GitHub.
 `);
 }
 

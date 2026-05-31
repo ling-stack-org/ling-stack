@@ -90,6 +90,7 @@ import type {
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
+  ExternalWorkCiTriageView,
   ProviderPreset,
   ResourceLease,
   RunArtifact,
@@ -100,6 +101,7 @@ import type {
   TaskRunActionState,
   UpdateChannelBriefRequest,
 } from "../../types.js";
+import { CiTriageAuditPanel } from "../external-work/CiTriageAuditPanel.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
@@ -185,6 +187,8 @@ export function WorkspaceClientView({
   channelStateTransitions,
   channelActivityTransitionsLoading,
   channelActivityTransitionError,
+  externalWorkCiTriage,
+  externalWorkCiTriageLoading,
   selectedTaskId,
   providers,
   teammateTemplates,
@@ -236,6 +240,7 @@ export function WorkspaceClientView({
   onCreateTaskFromContextSummary,
   onRunActivityTriageAction,
   onRefreshChannelActivity,
+  onRefreshExternalWorkCiTriage,
   onRefreshChannelProtocol,
   onRefreshChannelFiles,
   attachmentContentUrl,
@@ -269,6 +274,8 @@ export function WorkspaceClientView({
   readonly channelStateTransitions: readonly StateTransitionEvent[];
   readonly channelActivityTransitionsLoading: boolean;
   readonly channelActivityTransitionError: string;
+  readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
+  readonly externalWorkCiTriageLoading: boolean;
   readonly selectedTaskId: string;
   readonly providers: readonly ProviderPreset[];
   readonly teammateTemplates: readonly AiTeammateTemplate[];
@@ -326,6 +333,7 @@ export function WorkspaceClientView({
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onRunActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
   readonly onRefreshChannelActivity: () => void;
+  readonly onRefreshExternalWorkCiTriage: () => void;
   readonly onRefreshChannelProtocol: () => void;
   readonly onRefreshChannelFiles: () => void;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
@@ -799,7 +807,7 @@ export function WorkspaceClientView({
       ? channelProtocolLoading
       : activeTab === "files"
         ? channelFilesLoading || channelRunArtifactsLoading
-        : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || channelsLoading;
+        : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || externalWorkCiTriageLoading || channelsLoading;
 
   function refreshActiveTab(): void {
     if (activeTab === "tasks") {
@@ -1337,6 +1345,15 @@ export function WorkspaceClientView({
                 onExpandedChange={setAttentionQueueExpanded}
                 onOpenItem={openAttentionQueueItem}
                 onOpenItemDetails={openAttentionQueueItemDetails}
+              />
+              <CiTriageAuditPanel
+                records={externalWorkCiTriage}
+                loading={externalWorkCiTriageLoading}
+                maxRecords={4}
+                cwd={cwd}
+                onRefresh={onRefreshExternalWorkCiTriage}
+                onSelectTask={openTaskFromActivity}
+                onOpenRun={onOpenRun}
               />
               <div className="message-feed" aria-label={t("Channel message feed")}>
               {channelMessagesLoading || channelProtocolLoading ? (

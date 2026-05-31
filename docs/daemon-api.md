@@ -540,7 +540,8 @@ only; the explicit execute endpoint is the only path that can call the allowed G
 comment or label mutation APIs after approval and stale-target revalidation. Phase 4
 adds manual GitHub CI triage for existing PR external-work items: it reads failing
 checks, workflow jobs, and bounded redacted logs, then creates local evidence and fix
-tasks by default.
+tasks by default. Phase 4.1 adds a separate explicit SSE endpoint to start the linked
+local fix task through the normal task/run path; it still does not mutate GitHub.
 Import parses a repository
 `WORKFLOW.md`, normalizes a GitHub PR or issue payload, creates or reuses a
 `ChannelWorkflow` and `ChannelWorkflowStep`, and writes local evidence artifacts. It
@@ -663,9 +664,9 @@ artifacts; logs are bounded and redacted before artifact write.
 
 `createTask` defaults to `true`. Created tasks are local Ling tasks in the same channel
 and include an explicit instruction not to push, comment, review, merge, or otherwise
-mutate GitHub without a separate approval-gated external action. `startRun` is accepted
-in the contract for a later slice but Phase 4.0 rejects `true`; the endpoint does not
-start the runner.
+mutate GitHub without a separate approval-gated external action. `startRun` remains
+rejected on this JSON triage endpoint; Phase 4.1 starts local fix runs through the
+separate explicit SSE endpoint below.
 
 Response:
 
@@ -699,6 +700,100 @@ Response:
 Repeating the same failing check/job for the same PR head SHA returns existing triage
 records as `duplicates` and does not create a second task. Stale PR heads create a
 `stale` local triage record and do not read old CI.
+
+### List GitHub CI Triage
+
+```http
+GET /external-work/github/ci/triage?cwd=/path/to/project&channelId=channel_...&status=task_created&limit=25
+```
+
+This Phase 4.2 endpoint is local-only. It reads persisted CI triage records and joins
+the linked external work item, local fix task, optional run, and artifacts. It does not
+read GitHub and does not start a runner.
+
+Query parameters:
+
+- `externalWorkId`: optional external-work id filter.
+- `channelId`: optional channel filter.
+- `status`: optional triage status filter: `triaged`, `task_created`, `run_requested`,
+  `blocked`, `stale`, or `failed`.
+- `limit`: optional positive integer, defaulting to the daemon limit.
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "records": [
+    {
+      "triage": {
+        "id": "external_work_ci_triage_...",
+        "status": "task_created",
+        "repository": "owner/repo",
+        "subjectNumber": 123,
+        "checkName": "web e2e"
+      },
+      "externalWork": {},
+      "task": {},
+      "run": {},
+      "artifacts": []
+    }
+  ]
+}
+```
+
+### Show GitHub CI Triage
+
+```http
+GET /external-work/github/ci/triage/:triageId?cwd=/path/to/project
+```
+
+This endpoint returns one local CI triage view with the same shape as list. Missing
+records return `404 ci_triage_not_found`. It is also local-only: no GitHub reads and no
+runner startup.
+
+### Start GitHub CI Fix Run
+
+```http
+POST /external-work/github/ci/triage/:triageId/run?cwd=/path/to/project
+```
+
+This Phase 4.1 endpoint starts a local fix run for one existing CI triage record. It
+does not read or mutate GitHub. The record must already have a local task, and stale
+triage records are rejected. The daemon uses the same run startup path as normal task
+runs: provider resolution, provider preflight unless skipped, task status CAS,
+resource leases, approval policy, and SSE runner streaming.
+
+Request:
+
+```json
+{
+  "providerPresetId": "provider_...",
+  "skipProviderPreflight": false,
+  "idempotencyKey": "optional-custom-key",
+  "tools": ["read", "grep", "bash", "edit"],
+  "thinkingLevel": "medium",
+  "systemPrompt": "optional override",
+  "appendSystemPrompt": ["optional extra instruction"],
+  "agentDir": ".ling-stack/agents/default"
+}
+```
+
+Response:
+
+The response is `text/event-stream`, matching `POST /runs`. The first event is:
+
+```text
+event: ready
+data: {"ok":true,"runId":"run_..."}
+```
+
+When the run is accepted or deduplicated, the triage record is updated to
+`status: "run_requested"` with `runId`. Repeating the same request uses a deterministic
+default idempotency key for the triage record, task, and head SHA, so it returns the
+existing run instead of starting another runner. Use this endpoint only after triage has
+created the local task; it does not push commits, comment, label, review, merge, or
+release.
 
 ### List External Work
 
@@ -997,6 +1092,26 @@ await client.triageGitHubExternalWorkCi("/path/to/project", {
   createTask: true,
 });
 
+await client.listGitHubExternalWorkCiTriage("/path/to/project", {
+  channelId: "channel_...",
+  status: "task_created",
+  limit: 25,
+});
+
+await client.getGitHubExternalWorkCiTriage(
+  "/path/to/project",
+  "external_work_ci_triage_...",
+);
+
+const runStream = await client.startGitHubExternalWorkCiTriageRun(
+  "/path/to/project",
+  "external_work_ci_triage_...",
+  {
+    providerPresetId: "provider_...",
+    tools: ["read", "grep", "bash", "edit"],
+  },
+);
+
 await client.listExternalWork("/path/to/project", {
   channelId: "channel_...",
   schedulerStatus: "ready",
@@ -1051,6 +1166,10 @@ ling-stack --cwd /path/to/project external-work github ci triage \
   --workflow-path WORKFLOW.md \
   --limit 5
 
+ling-stack --cwd /path/to/project external-work github ci run \
+  --triage external_work_ci_triage_... \
+  --provider provider_...
+
 ling-stack --cwd /path/to/project external-work list \
   --channel channel_... \
   --status ready
@@ -1086,10 +1205,12 @@ ling-stack --cwd /path/to/project external-work reconcile \
 
 `--workflow-markdown-file <path>` may be used instead of `--workflow-path` for inline
 manual import tests. CI triage creates local fix tasks by default; use
-`--no-create-task` to write only triage records and artifacts. The CLI and SDK only call
-local daemon endpoints. Action proposal creates local proposed action and approval
-records only. Import, poll, CI triage, list/show, action proposal/cancel, and reconcile
-do not start a runner. Only `external-work actions execute` can mutate GitHub, and only
+`--no-create-task` to write only triage records and artifacts. `external-work github ci
+run` is the explicit Phase 4.1 bridge from a triage record to the normal local runner.
+The CLI and SDK only call local daemon endpoints. Action proposal creates local proposed
+action and approval records only. Import, poll, CI triage, list/show, action
+proposal/cancel, and reconcile do not start a runner. Only `external-work github ci run`
+starts a local runner. Only `external-work actions execute` can mutate GitHub, and only
 after approval and revalidation.
 
 For a copy-pasteable temp workspace smoke, use

@@ -45,6 +45,8 @@ interface MockState {
   externalWorkActions: MockExternalWorkAction[];
   artifactsByExternalAction: Record<string, MockArtifact[]>;
   externalActionExecuteCalls: Record<string, number>;
+  externalWorkCiTriage: MockExternalWorkCiTriageView[];
+  ciTriageRunCalls: Record<string, number>;
   mediaJobs: MockMediaJob[];
   resourceLeases: unknown[];
   stateTransitions: unknown[];
@@ -155,6 +157,44 @@ interface MockExternalWorkAction {
   createdAt: string;
   updatedAt: string;
   executedAt?: string;
+}
+
+interface MockExternalWorkCiTriageRecord {
+  id: string;
+  workspaceId: string;
+  channelId: string;
+  externalWorkId: string;
+  sourceKind: string;
+  repository: string;
+  subjectKind: string;
+  subjectNumber: number;
+  headSha: string;
+  failureKey: string;
+  status: string;
+  checkName: string;
+  workflowName?: string;
+  jobName?: string;
+  conclusion: string;
+  htmlUrl?: string;
+  firstFailingCommand?: string;
+  reproductionCommand?: string;
+  suspectedSourcePath?: string;
+  taskId?: string;
+  runId?: string;
+  artifactIds: string[];
+  failure: Record<string, unknown>;
+  lastErrorCode?: string;
+  lastErrorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface MockExternalWorkCiTriageView {
+  triage: MockExternalWorkCiTriageRecord;
+  externalWork?: Record<string, unknown>;
+  task?: unknown;
+  run?: MockRun;
+  artifacts: MockArtifact[];
 }
 
 interface MockMediaJob {
@@ -2800,6 +2840,37 @@ test("external action approval card shows stale target audit as read-only", asyn
   await expect(externalApproval.getByRole("button", { name: "Cancel proposal" })).toHaveCount(0);
 });
 
+test("workspace surfaces GitHub CI triage records without starting runs", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  const linkedTriage = addExternalWorkCiTriage(state);
+  addExternalWorkCiTriage(state, {
+    id: "ci_triage_stale",
+    status: "stale",
+    taskId: "task_other",
+    runId: "run_other",
+    checkName: "integration-tests",
+    lastErrorMessage: "PR head moved before the fix task was reviewed.",
+  });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const workspaceTriage = page.locator(".task-list-panel .ci-triage-panel").first();
+  await expect(workspaceTriage).toContainText("GitHub CI triage");
+  await expect(workspaceTriage).toContainText("unit-tests");
+  await expect(workspaceTriage).toContainText("tianxiaochannel-oss88/ling-stack");
+  await expect(workspaceTriage).toContainText("PR #42");
+  await expect(workspaceTriage).toContainText("corepack pnpm test");
+  await expect(workspaceTriage).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
+  await expect(workspaceTriage).toContainText("CI failure log");
+  await expect(workspaceTriage).toContainText("stale");
+
+  const inspector = page.getByLabel("Task inspector");
+  await expect(inspector.locator(".ci-triage-panel")).toContainText("unit-tests");
+  await expect(inspector.locator(".ci-triage-panel")).not.toContainText("integration-tests");
+  await expect(workspaceTriage.getByRole("button", { name: "Open run" }).first()).toBeVisible();
+  await expect.poll(() => state.ciTriageRunCalls[linkedTriage.triage.id] ?? 0).toBe(0);
+});
+
 test("run detail renders artifact rows from the daemon API", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.artifactsByRun.run_failed = [
@@ -3187,6 +3258,8 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     externalWorkActions: [],
     artifactsByExternalAction: {},
     externalActionExecuteCalls: {},
+    externalWorkCiTriage: [],
+    ciTriageRunCalls: {},
     mediaJobs: [],
     resourceLeases: [],
     stateTransitions: [],
@@ -3281,6 +3354,95 @@ function addExternalActionApproval(
   state.artifactsByExternalAction[action.id] = [artifact];
   state.approvals.unshift(approval);
   return { action, approval };
+}
+
+function addExternalWorkCiTriage(
+  state: MockState,
+  options: {
+    readonly id?: string;
+    readonly status?: string;
+    readonly taskId?: string;
+    readonly runId?: string;
+    readonly checkName?: string;
+    readonly firstFailingCommand?: string;
+    readonly reproductionCommand?: string;
+    readonly suspectedSourcePath?: string;
+    readonly lastErrorMessage?: string;
+  } = {},
+): MockExternalWorkCiTriageView {
+  const triageId = options.id ?? `ci_triage_${state.externalWorkCiTriage.length + 1}`;
+  const artifact: MockArtifact = {
+    id: `artifact_${triageId}_log`,
+    externalWorkId: "external_work_pr_42",
+    type: "markdown",
+    path: `external-work/external_work_pr_42/ci/${triageId}/failure-log.md`,
+    title: "CI failure log",
+    contentType: "text/markdown; charset=utf-8",
+    sizeBytes: 256,
+    createdAt: "2026-05-27T00:01:00.000Z",
+  };
+  const taskId = options.taskId ?? "task_inspect";
+  const runId = options.runId ?? "run_failed";
+  const triage: MockExternalWorkCiTriageRecord = {
+    id: triageId,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    externalWorkId: "external_work_pr_42",
+    sourceKind: "github",
+    repository: "tianxiaochannel-oss88/ling-stack",
+    subjectKind: "github_pull_request",
+    subjectNumber: 42,
+    headSha: "abcdef1234567890",
+    failureKey: `github:tianxiaochannel-oss88/ling-stack:42:${triageId}`,
+    status: options.status ?? "task_created",
+    checkName: options.checkName ?? "unit-tests",
+    workflowName: "CI",
+    jobName: "test",
+    conclusion: "failure",
+    htmlUrl: "https://github.com/tianxiaochannel-oss88/ling-stack/actions/runs/42",
+    firstFailingCommand: options.firstFailingCommand ?? "corepack pnpm test",
+    reproductionCommand: options.reproductionCommand ?? "corepack pnpm --filter @ling-stack/web test:e2e",
+    suspectedSourcePath: options.suspectedSourcePath ?? "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+    taskId,
+    runId,
+    artifactIds: [artifact.id],
+    failure: {
+      repository: "tianxiaochannel-oss88/ling-stack",
+      subjectKind: "github_pull_request",
+      subjectNumber: 42,
+      headSha: "abcdef1234567890",
+      checkName: options.checkName ?? "unit-tests",
+      workflowName: "CI",
+      jobName: "test",
+      conclusion: "failure",
+      htmlUrl: "https://github.com/tianxiaochannel-oss88/ling-stack/actions/runs/42",
+      failureKey: `github:tianxiaochannel-oss88/ling-stack:42:${triageId}`,
+      firstFailingCommand: options.firstFailingCommand ?? "corepack pnpm test",
+      reproductionCommand: options.reproductionCommand ?? "corepack pnpm --filter @ling-stack/web test:e2e",
+      suspectedSourcePath: options.suspectedSourcePath ?? "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+      logExcerptArtifactId: artifact.id,
+      logErrorMessage: options.lastErrorMessage,
+    },
+    lastErrorCode: options.lastErrorMessage ? "triage_error" : undefined,
+    lastErrorMessage: options.lastErrorMessage,
+    createdAt: "2026-05-27T00:00:00.000Z",
+    updatedAt: "2026-05-27T00:01:00.000Z",
+  };
+  const view: MockExternalWorkCiTriageView = {
+    triage,
+    externalWork: {
+      id: triage.externalWorkId,
+      channelId: triage.channelId,
+      sourceKind: "github",
+      workItemKind: "github_pull_request",
+      identifier: "PR #42",
+    },
+    task: state.tasks.find((task) => isRecord(task) && task.id === taskId),
+    run: state.runs.find((run) => run.id === runId),
+    artifacts: [artifact],
+  };
+  state.externalWorkCiTriage.unshift(view);
+  return view;
 }
 
 function createEmptyMockBrief(channelId: string): Record<string, unknown> {
@@ -4779,6 +4941,36 @@ async function handleDaemonRoute(
       (!runId || approval.runId === runId) && (!mediaJobId || approval.mediaJobId === mediaJobId)
     );
     await route.fulfill({ json: { cwd, approvals } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/external-work/github/ci/triage") {
+    const externalWorkId = url.searchParams.get("externalWorkId");
+    const channelId = url.searchParams.get("channelId");
+    const status = url.searchParams.get("status");
+    const limit = Number(url.searchParams.get("limit") ?? "50");
+    const records = state.externalWorkCiTriage
+      .filter((record) => !externalWorkId || record.triage.externalWorkId === externalWorkId)
+      .filter((record) => !channelId || record.triage.channelId === channelId)
+      .filter((record) => !status || record.triage.status === status)
+      .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 50);
+    await route.fulfill({ json: { cwd, records } });
+    return;
+  }
+  const ciTriageRunMatch = /^\/external-work\/github\/ci\/triage\/([^/]+)\/run$/.exec(path);
+  if (request.method() === "POST" && ciTriageRunMatch) {
+    const triageId = decodeURIComponent(ciTriageRunMatch[1]);
+    state.ciTriageRunCalls[triageId] = (state.ciTriageRunCalls[triageId] ?? 0) + 1;
+    await route.fulfill({ status: 400, json: { error: "unexpected_ci_run", message: "CI fix runs are not started by this Web smoke." } });
+    return;
+  }
+  const ciTriageDetailMatch = /^\/external-work\/github\/ci\/triage\/([^/]+)$/.exec(path);
+  if (request.method() === "GET" && ciTriageDetailMatch) {
+    const triageId = decodeURIComponent(ciTriageDetailMatch[1]);
+    const record = state.externalWorkCiTriage.find((item) => item.triage.id === triageId);
+    await route.fulfill({
+      status: record ? 200 : 404,
+      json: record ? { cwd, record } : { error: "ci_triage_not_found" },
+    });
     return;
   }
   if (request.method() === "GET" && path === "/external-work/actions") {
