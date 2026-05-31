@@ -523,6 +523,9 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 - Run `afterCreate` and `beforeRun` hooks with evidence capture when manually enabled.
 - Add manual reconciliation for leases, terminal workflow steps, retry backoff, and optional remote terminal checks.
 - Keep startup reconciliation local-only until a background scheduler loop exists.
+- Keep the example smoke path authenticated with `env:GITHUB_TOKEN` and isolated on a
+  non-default daemon port so poll/reconcile docs remain copy-pasteable on developer
+  machines with existing daemons.
 
 ### Phase 3: Approval-Gated Comments and Labels
 
