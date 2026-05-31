@@ -537,7 +537,10 @@ Phase 1 adds a read-only GitHub manual import path. Phase 2 adds manual read-onl
 GitHub polling and local scheduler reconciliation. Phase 3 adds approval-gated action
 records for GitHub comments and labels. Propose, list, show, and cancel remain local
 only; the explicit execute endpoint is the only path that can call the allowed GitHub
-comment or label mutation APIs after approval and stale-target revalidation.
+comment or label mutation APIs after approval and stale-target revalidation. Phase 4
+adds manual GitHub CI triage for existing PR external-work items: it reads failing
+checks, workflow jobs, and bounded redacted logs, then creates local evidence and fix
+tasks by default.
 Import parses a repository
 `WORKFLOW.md`, normalizes a GitHub PR or issue payload, creates or reuses a
 `ChannelWorkflow` and `ChannelWorkflowStep`, and writes local evidence artifacts. It
@@ -632,6 +635,70 @@ Response:
   "schedulerStates": []
 }
 ```
+
+### Triage GitHub CI
+
+```http
+POST /external-work/github/ci/triage?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "externalWorkId": "external_work_...",
+  "workflowPath": "WORKFLOW.md",
+  "limit": 5,
+  "createTask": true,
+  "startRun": false
+}
+```
+
+The target must be an existing `github_pull_request` external-work record. The daemon
+loads the record's channel, reads the channel-bound `WORKFLOW.md`, resolves
+`source.secretRef` as `github_token` when present, re-reads the current PR, and refuses
+stale head SHAs before inspecting CI. It uses only GitHub `GET` endpoints for check
+runs, workflow runs, workflow jobs, and job logs. Tokens are never stored in SQLite or
+artifacts; logs are bounded and redacted before artifact write.
+
+`createTask` defaults to `true`. Created tasks are local Ling tasks in the same channel
+and include an explicit instruction not to push, comment, review, merge, or otherwise
+mutate GitHub without a separate approval-gated external action. `startRun` is accepted
+in the contract for a later slice but Phase 4.0 rejects `true`; the endpoint does not
+start the runner.
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "triaged": 1,
+  "taskCreated": 1,
+  "duplicates": 0,
+  "blocked": 0,
+  "stale": 0,
+  "failed": 0,
+  "records": [
+    {
+      "triage": {
+        "id": "external_work_ci_triage_...",
+        "status": "task_created",
+        "checkName": "web e2e",
+        "repository": "owner/repo",
+        "subjectNumber": 123,
+        "headSha": "head-sha"
+      },
+      "externalWork": {},
+      "task": {},
+      "artifacts": []
+    }
+  ]
+}
+```
+
+Repeating the same failing check/job for the same PR head SHA returns existing triage
+records as `duplicates` and does not create a second task. Stale PR heads create a
+`stale` local triage record and do not read old CI.
 
 ### List External Work
 
@@ -923,6 +990,13 @@ await client.pollGitHubExternalWork("/path/to/project", {
   limit: 50,
 });
 
+await client.triageGitHubExternalWorkCi("/path/to/project", {
+  externalWorkId: "external_work_...",
+  workflowPath: "WORKFLOW.md",
+  limit: 5,
+  createTask: true,
+});
+
 await client.listExternalWork("/path/to/project", {
   channelId: "channel_...",
   schedulerStatus: "ready",
@@ -972,6 +1046,11 @@ ling-stack --cwd /path/to/project external-work github poll \
   --workflow-path WORKFLOW.md \
   --limit 50
 
+ling-stack --cwd /path/to/project external-work github ci triage \
+  --external-work external_work_... \
+  --workflow-path WORKFLOW.md \
+  --limit 5
+
 ling-stack --cwd /path/to/project external-work list \
   --channel channel_... \
   --status ready
@@ -1006,10 +1085,12 @@ ling-stack --cwd /path/to/project external-work reconcile \
 ```
 
 `--workflow-markdown-file <path>` may be used instead of `--workflow-path` for inline
-manual import tests. The CLI and SDK only call local daemon endpoints. Action proposal
-creates local proposed action and approval records only. None of these commands start a
-runner. Only `external-work actions execute` can mutate GitHub, and only after approval
-and revalidation.
+manual import tests. CI triage creates local fix tasks by default; use
+`--no-create-task` to write only triage records and artifacts. The CLI and SDK only call
+local daemon endpoints. Action proposal creates local proposed action and approval
+records only. Import, poll, CI triage, list/show, action proposal/cancel, and reconcile
+do not start a runner. Only `external-work actions execute` can mutate GitHub, and only
+after approval and revalidation.
 
 For a copy-pasteable temp workspace smoke, use
 `examples/external-work/github/README.md`. That smoke copies the example `WORKFLOW.md`

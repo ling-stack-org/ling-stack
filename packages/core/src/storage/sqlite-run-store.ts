@@ -144,18 +144,23 @@ import {
 } from "../run-types.js";
 import {
   createExternalWorkActionId,
+  createExternalWorkCiTriageId,
   createExternalWorkId,
   type CreateExternalWorkActionInput,
+  type CreateExternalWorkCiTriageInput,
   type CreateExternalWorkWorkflowInput,
   type ExternalWorkAction,
+  type ExternalWorkCiTriageRecord,
   type ExternalWorkItem,
   type ExternalWorkRecord,
   type ExternalWorkSchedulerState,
   type ExternalWorkWorkflowResult,
   type ListExternalWorkActionsOptions,
+  type ListExternalWorkCiTriageOptions,
   type ListExternalWorkRecordsOptions,
   type ListExternalWorkSchedulerStatesOptions,
   type UpdateExternalWorkActionInput,
+  type UpdateExternalWorkCiTriageInput,
   type UpdateExternalWorkSchedulerStateInput,
   type UpsertExternalWorkSchedulerStateInput,
 } from "../external-work-types.js";
@@ -233,6 +238,8 @@ const EXTERNAL_WORK_SCHEDULER_MIGRATION_VERSION = 18;
 const EXTERNAL_WORK_SCHEDULER_MIGRATION_NAME = "create_external_work_scheduler_state";
 const EXTERNAL_WORK_ACTIONS_MIGRATION_VERSION = 19;
 const EXTERNAL_WORK_ACTIONS_MIGRATION_NAME = "create_external_work_actions";
+const EXTERNAL_WORK_CI_TRIAGE_MIGRATION_VERSION = 20;
+const EXTERNAL_WORK_CI_TRIAGE_MIGRATION_NAME = "create_external_work_ci_triage";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -3101,6 +3108,200 @@ export class SqliteRunStore implements RunStore {
     return this.getExternalWorkAction(id);
   }
 
+  createExternalWorkCiTriage(input: CreateExternalWorkCiTriageInput, now: string): ExternalWorkCiTriageRecord {
+    this.assertChannelExists(input.channelId);
+    const externalWork = this.getExternalWorkRecord(input.externalWorkId);
+    if (!externalWork) {
+      throw new Error(`External work item not found: ${input.externalWorkId}`);
+    }
+    if (externalWork.channelId !== input.channelId) {
+      throw new Error(`External work item does not belong to channel: ${input.channelId}`);
+    }
+    const existing = this.getExternalWorkCiTriageByFailureKey(input.sourceKind, input.failureKey);
+    if (existing) {
+      return existing;
+    }
+
+    const record: ExternalWorkCiTriageRecord = omitUndefined({
+      id: createExternalWorkCiTriageId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      externalWorkId: input.externalWorkId,
+      sourceKind: input.sourceKind,
+      repository: input.repository,
+      subjectKind: input.subjectKind,
+      subjectNumber: input.subjectNumber,
+      headSha: input.headSha,
+      failureKey: input.failureKey,
+      status: input.status,
+      checkName: input.checkName,
+      workflowName: input.workflowName,
+      jobName: input.jobName,
+      conclusion: input.conclusion,
+      htmlUrl: input.htmlUrl,
+      firstFailingCommand: input.firstFailingCommand,
+      reproductionCommand: input.reproductionCommand,
+      suspectedSourcePath: input.suspectedSourcePath,
+      taskId: input.taskId,
+      runId: input.runId,
+      artifactIds: [...(input.artifactIds ?? [])],
+      failure: input.failure,
+      lastErrorCode: input.lastErrorCode,
+      lastErrorMessage: input.lastErrorMessage,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    this.database
+      .prepare(`
+        INSERT INTO external_work_ci_triage (
+          id,
+          workspace_id,
+          channel_id,
+          external_work_id,
+          source_kind,
+          repository,
+          subject_kind,
+          subject_number,
+          head_sha,
+          failure_key,
+          status,
+          check_name,
+          workflow_name,
+          job_name,
+          conclusion,
+          html_url,
+          first_failing_command,
+          reproduction_command,
+          suspected_source_path,
+          task_id,
+          run_id,
+          artifact_ids_json,
+          failure_json,
+          last_error_code,
+          last_error_message,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        record.id,
+        record.workspaceId,
+        record.channelId,
+        record.externalWorkId,
+        record.sourceKind,
+        record.repository,
+        record.subjectKind,
+        record.subjectNumber,
+        record.headSha,
+        record.failureKey,
+        record.status,
+        record.checkName,
+        record.workflowName ?? null,
+        record.jobName ?? null,
+        record.conclusion,
+        record.htmlUrl ?? null,
+        record.firstFailingCommand ?? null,
+        record.reproductionCommand ?? null,
+        record.suspectedSourcePath ?? null,
+        record.taskId ?? null,
+        record.runId ?? null,
+        stringifyJson(record.artifactIds),
+        stringifyJson(record.failure),
+        record.lastErrorCode ?? null,
+        record.lastErrorMessage ?? null,
+        record.createdAt,
+        record.updatedAt,
+      );
+
+    const created = this.getExternalWorkCiTriage(record.id);
+    if (!created) {
+      throw new Error(`Failed to create external work CI triage: ${record.id}`);
+    }
+    return created;
+  }
+
+  getExternalWorkCiTriage(id: string): ExternalWorkCiTriageRecord | undefined {
+    const row = this.database.prepare(externalWorkCiTriageSelectSql("WHERE id = ?")).get(id);
+    return row ? mapExternalWorkCiTriage(row) : undefined;
+  }
+
+  getExternalWorkCiTriageByFailureKey(
+    sourceKind: ExternalWorkCiTriageRecord["sourceKind"],
+    failureKey: string,
+  ): ExternalWorkCiTriageRecord | undefined {
+    const row = this.database
+      .prepare(externalWorkCiTriageSelectSql("WHERE workspace_id = ? AND source_kind = ? AND failure_key = ?"))
+      .get(DEFAULT_WORKSPACE_ID, sourceKind, failureKey);
+    return row ? mapExternalWorkCiTriage(row) : undefined;
+  }
+
+  listExternalWorkCiTriage(options: ListExternalWorkCiTriageOptions = {}): ExternalWorkCiTriageRecord[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.externalWorkId) {
+      clauses.push("external_work_id = ?");
+      params.push(options.externalWorkId);
+    }
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${externalWorkCiTriageSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapExternalWorkCiTriage);
+  }
+
+  updateExternalWorkCiTriage(
+    id: string,
+    input: UpdateExternalWorkCiTriageInput,
+    now: string,
+  ): ExternalWorkCiTriageRecord | undefined {
+    const existing = this.getExternalWorkCiTriage(id);
+    if (!existing) {
+      return undefined;
+    }
+    this.database
+      .prepare(`
+        UPDATE external_work_ci_triage
+        SET
+          status = ?,
+          first_failing_command = ?,
+          reproduction_command = ?,
+          suspected_source_path = ?,
+          task_id = ?,
+          run_id = ?,
+          artifact_ids_json = ?,
+          failure_json = ?,
+          last_error_code = ?,
+          last_error_message = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        input.status ?? existing.status,
+        nullableUpdate(input.firstFailingCommand, existing.firstFailingCommand) ?? null,
+        nullableUpdate(input.reproductionCommand, existing.reproductionCommand) ?? null,
+        nullableUpdate(input.suspectedSourcePath, existing.suspectedSourcePath) ?? null,
+        nullableUpdate(input.taskId, existing.taskId) ?? null,
+        nullableUpdate(input.runId, existing.runId) ?? null,
+        stringifyJson(input.artifactIds ?? existing.artifactIds),
+        stringifyJson(input.failure ?? existing.failure),
+        nullableUpdate(input.lastErrorCode, existing.lastErrorCode) ?? null,
+        nullableUpdate(input.lastErrorMessage, existing.lastErrorMessage) ?? null,
+        now,
+        id,
+      );
+    return this.getExternalWorkCiTriage(id);
+  }
+
   upsertExternalWorkSchedulerState(input: UpsertExternalWorkSchedulerStateInput, now: string): ExternalWorkSchedulerState {
     this.assertChannelExists(input.channelId);
     if (!this.getExternalWorkRecord(input.externalWorkId)) {
@@ -4962,6 +5163,60 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(EXTERNAL_WORK_ACTIONS_MIGRATION_VERSION, EXTERNAL_WORK_ACTIONS_MIGRATION_NAME);
       }
     }
+
+    const hasExternalWorkCiTriageMigration = this.hasMigration(EXTERNAL_WORK_CI_TRIAGE_MIGRATION_VERSION);
+    if (!hasExternalWorkCiTriageMigration || !this.hasTable("external_work_ci_triage")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS external_work_ci_triage (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          external_work_id TEXT NOT NULL,
+          source_kind TEXT NOT NULL,
+          repository TEXT NOT NULL,
+          subject_kind TEXT NOT NULL,
+          subject_number INTEGER NOT NULL,
+          head_sha TEXT NOT NULL,
+          failure_key TEXT NOT NULL,
+          status TEXT NOT NULL,
+          check_name TEXT NOT NULL,
+          workflow_name TEXT,
+          job_name TEXT,
+          conclusion TEXT NOT NULL,
+          html_url TEXT,
+          first_failing_command TEXT,
+          reproduction_command TEXT,
+          suspected_source_path TEXT,
+          task_id TEXT,
+          run_id TEXT,
+          artifact_ids_json TEXT NOT NULL,
+          failure_json TEXT NOT NULL,
+          last_error_code TEXT,
+          last_error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(external_work_id) REFERENCES external_work_items(id) ON DELETE CASCADE,
+          FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+          FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_external_work_ci_triage_failure
+        ON external_work_ci_triage(workspace_id, source_kind, failure_key);
+
+        CREATE INDEX IF NOT EXISTS idx_external_work_ci_triage_external_work_status
+        ON external_work_ci_triage(workspace_id, external_work_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_external_work_ci_triage_channel_updated
+        ON external_work_ci_triage(workspace_id, channel_id, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_external_work_ci_triage_head
+        ON external_work_ci_triage(workspace_id, head_sha);
+      `);
+
+      if (!hasExternalWorkCiTriageMigration) {
+        this.recordMigration(EXTERNAL_WORK_CI_TRIAGE_MIGRATION_VERSION, EXTERNAL_WORK_CI_TRIAGE_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -5750,6 +6005,38 @@ function mapExternalWorkAction(row: Record<string, SQLOutputValue>): ExternalWor
   });
 }
 
+function mapExternalWorkCiTriage(row: Record<string, SQLOutputValue>): ExternalWorkCiTriageRecord {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    externalWorkId: readString(row, "external_work_id"),
+    sourceKind: readString(row, "source_kind") as ExternalWorkCiTriageRecord["sourceKind"],
+    repository: readString(row, "repository"),
+    subjectKind: readString(row, "subject_kind") as ExternalWorkCiTriageRecord["subjectKind"],
+    subjectNumber: readNumber(row, "subject_number"),
+    headSha: readString(row, "head_sha"),
+    failureKey: readString(row, "failure_key"),
+    status: readString(row, "status") as ExternalWorkCiTriageRecord["status"],
+    checkName: readString(row, "check_name"),
+    workflowName: readNullableString(row, "workflow_name"),
+    jobName: readNullableString(row, "job_name"),
+    conclusion: readString(row, "conclusion") as ExternalWorkCiTriageRecord["conclusion"],
+    htmlUrl: readNullableString(row, "html_url"),
+    firstFailingCommand: readNullableString(row, "first_failing_command"),
+    reproductionCommand: readNullableString(row, "reproduction_command"),
+    suspectedSourcePath: readNullableString(row, "suspected_source_path"),
+    taskId: readNullableString(row, "task_id"),
+    runId: readNullableString(row, "run_id"),
+    artifactIds: parseJsonStringArray(readString(row, "artifact_ids_json")),
+    failure: parseJsonObject(readString(row, "failure_json")) as unknown as ExternalWorkCiTriageRecord["failure"],
+    lastErrorCode: readNullableString(row, "last_error_code"),
+    lastErrorMessage: readNullableString(row, "last_error_message"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
 function mapMediaJob(row: Record<string, SQLOutputValue>): MediaJob {
   return omitUndefined({
     id: readString(row, "id"),
@@ -6369,6 +6656,41 @@ function externalWorkActionSelectSql(whereClause: string): string {
       updated_at,
       executed_at
     FROM external_work_actions
+    ${whereClause}
+  `;
+}
+
+function externalWorkCiTriageSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      external_work_id,
+      source_kind,
+      repository,
+      subject_kind,
+      subject_number,
+      head_sha,
+      failure_key,
+      status,
+      check_name,
+      workflow_name,
+      job_name,
+      conclusion,
+      html_url,
+      first_failing_command,
+      reproduction_command,
+      suspected_source_path,
+      task_id,
+      run_id,
+      artifact_ids_json,
+      failure_json,
+      last_error_code,
+      last_error_message,
+      created_at,
+      updated_at
+    FROM external_work_ci_triage
     ${whereClause}
   `;
 }

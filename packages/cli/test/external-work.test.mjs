@@ -221,6 +221,78 @@ test("external-work github poll renders human and json output", async () => {
   }
 });
 
+test("external-work github ci triage renders human and json output", async () => {
+  const daemon = await startExternalWorkDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-ci-"));
+  try {
+    const human = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "ci",
+      "triage",
+      "--external-work",
+      "external_work_1",
+      "--workflow-path",
+      "WORKFLOW.md",
+      "--limit",
+      "5",
+    ]);
+    assert.equal(human.code, 0, human.stderr);
+    assert.match(human.stdout, /External work CI triage:/);
+    assert.match(human.stdout, /Triaged: 1/);
+    assert.match(human.stdout, /Task created: 1/);
+    assert.match(human.stdout, /web e2e/);
+
+    const json = await runCli(daemon.url, cwd, [
+      "--json",
+      "external-work",
+      "github",
+      "ci",
+      "triage",
+      "--external-work",
+      "external_work_1",
+      "--no-create-task",
+    ]);
+    assert.equal(json.code, 0, json.stderr);
+    assert.equal(JSON.parse(json.stdout).records[0].triage.checkName, "web e2e");
+    assert.equal(daemon.requests.at(-1).path, "/external-work/github/ci/triage");
+    assert.deepEqual(daemon.requests[0].body, {
+      externalWorkId: "external_work_1",
+      workflowPath: "WORKFLOW.md",
+      limit: 5,
+    });
+    assert.deepEqual(daemon.requests.at(-1).body, {
+      externalWorkId: "external_work_1",
+      createTask: false,
+    });
+
+    const missingExternalWork = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "ci",
+      "triage",
+    ]);
+    assert.equal(missingExternalWork.code, 2);
+    assert.match(missingExternalWork.stderr, /--external-work/);
+
+    const invalidLimit = await runCli(daemon.url, cwd, [
+      "external-work",
+      "github",
+      "ci",
+      "triage",
+      "--external-work",
+      "external_work_1",
+      "--limit",
+      "26",
+    ]);
+    assert.equal(invalidLimit.code, 2);
+    assert.match(invalidLimit.stderr, /at most 25/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 test("external-work reconcile renders human output and validates poll flags", async () => {
   const daemon = await startExternalWorkDaemon();
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-reconcile-"));
@@ -492,6 +564,7 @@ async function startExternalWorkDaemon() {
     if (request.method !== "POST" || ![
       "/external-work/github/import",
       "/external-work/github/poll",
+      "/external-work/github/ci/triage",
       "/external-work/reconcile",
       "/external-work/actions/propose",
       "/external-work/actions/external_work_action_1/cancel",
@@ -513,6 +586,10 @@ async function startExternalWorkDaemon() {
     }
     if (url.pathname === "/external-work/github/poll") {
       writeJson(response, 200, externalWorkPollResponse());
+      return;
+    }
+    if (url.pathname === "/external-work/github/ci/triage") {
+      writeJson(response, 200, externalWorkCiTriageResponse());
       return;
     }
     if (url.pathname === "/external-work/reconcile") {
@@ -636,6 +713,46 @@ function externalWorkPollResponse() {
         schedulerStatus: "ready",
         workflowId: "workflow_1",
         workflowStepId: "step_1",
+      },
+    ],
+  };
+}
+
+function externalWorkCiTriageResponse() {
+  return {
+    cwd: "/repo",
+    triaged: 1,
+    taskCreated: 1,
+    duplicates: 0,
+    blocked: 0,
+    stale: 0,
+    failed: 0,
+    records: [
+      {
+        triage: {
+          id: "external_work_ci_triage_1",
+          externalWorkId: "external_work_1",
+          repository: "openclaw/openclaw",
+          subjectNumber: 86279,
+          status: "task_created",
+          checkName: "web e2e",
+          taskId: "task_1",
+          artifactIds: ["artifact_ci_1"],
+        },
+        task: {
+          id: "task_1",
+          status: "todo",
+          title: "Fix failing CI: web e2e",
+        },
+        artifacts: [
+          {
+            id: "artifact_ci_1",
+            type: "log",
+            path: "external-work/work_1/ci-triage/log-excerpt.txt",
+            title: "GitHub CI log excerpt",
+            createdAt: "2026-05-31T00:00:00.000Z",
+          },
+        ],
       },
     ],
   };

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ApprovalRequest } from "./approval-types.js";
-import type { RunArtifact } from "./run-types.js";
-import type { ChannelWorkflow, ChannelWorkflowStep } from "./workspace-types.js";
+import type { RunArtifact, RunSession } from "./run-types.js";
+import type { ChannelWorkflow, ChannelWorkflowStep, Task } from "./workspace-types.js";
 
 export type ExternalSourceKind = "github" | "linear";
 
@@ -370,6 +370,137 @@ export interface ExternalWorkActionDetailResponse {
   readonly action: ExternalWorkActionView;
 }
 
+export type ExternalWorkCiTriageStatus =
+  | "triaged"
+  | "task_created"
+  | "run_requested"
+  | "blocked"
+  | "stale"
+  | "failed";
+
+export type GitHubCiFailureConclusion = "failure" | "cancelled" | "timed_out" | "action_required" | string;
+
+export interface GitHubCiFailure {
+  readonly repository: string;
+  readonly subjectKind: "github_pull_request";
+  readonly subjectNumber: number;
+  readonly headSha: string;
+  readonly checkName: string;
+  readonly workflowName?: string;
+  readonly jobName?: string;
+  readonly conclusion: GitHubCiFailureConclusion;
+  readonly htmlUrl?: string;
+  readonly failureKey: string;
+  readonly firstFailingCommand?: string;
+  readonly reproductionCommand?: string;
+  readonly suspectedSourcePath?: string;
+  readonly logExcerptArtifactId?: string;
+  readonly logErrorMessage?: string;
+}
+
+export interface ExternalWorkCiTriageRecord {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly externalWorkId: string;
+  readonly sourceKind: ExternalSourceKind;
+  readonly repository: string;
+  readonly subjectKind: "github_pull_request";
+  readonly subjectNumber: number;
+  readonly headSha: string;
+  readonly failureKey: string;
+  readonly status: ExternalWorkCiTriageStatus;
+  readonly checkName: string;
+  readonly workflowName?: string;
+  readonly jobName?: string;
+  readonly conclusion: GitHubCiFailureConclusion;
+  readonly htmlUrl?: string;
+  readonly firstFailingCommand?: string;
+  readonly reproductionCommand?: string;
+  readonly suspectedSourcePath?: string;
+  readonly taskId?: string;
+  readonly runId?: string;
+  readonly artifactIds: readonly string[];
+  readonly failure: GitHubCiFailure;
+  readonly lastErrorCode?: string;
+  readonly lastErrorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateExternalWorkCiTriageInput {
+  readonly channelId: string;
+  readonly externalWorkId: string;
+  readonly sourceKind: ExternalSourceKind;
+  readonly repository: string;
+  readonly subjectKind: "github_pull_request";
+  readonly subjectNumber: number;
+  readonly headSha: string;
+  readonly failureKey: string;
+  readonly status: ExternalWorkCiTriageStatus;
+  readonly checkName: string;
+  readonly workflowName?: string;
+  readonly jobName?: string;
+  readonly conclusion: GitHubCiFailureConclusion;
+  readonly htmlUrl?: string;
+  readonly firstFailingCommand?: string;
+  readonly reproductionCommand?: string;
+  readonly suspectedSourcePath?: string;
+  readonly taskId?: string;
+  readonly runId?: string;
+  readonly artifactIds?: readonly string[];
+  readonly failure: GitHubCiFailure;
+  readonly lastErrorCode?: string;
+  readonly lastErrorMessage?: string;
+}
+
+export interface UpdateExternalWorkCiTriageInput {
+  readonly status?: ExternalWorkCiTriageStatus;
+  readonly firstFailingCommand?: string | null;
+  readonly reproductionCommand?: string | null;
+  readonly suspectedSourcePath?: string | null;
+  readonly taskId?: string | null;
+  readonly runId?: string | null;
+  readonly artifactIds?: readonly string[];
+  readonly failure?: GitHubCiFailure;
+  readonly lastErrorCode?: string | null;
+  readonly lastErrorMessage?: string | null;
+}
+
+export interface ListExternalWorkCiTriageOptions {
+  readonly externalWorkId?: string;
+  readonly channelId?: string;
+  readonly status?: ExternalWorkCiTriageStatus;
+  readonly limit?: number;
+}
+
+export interface ExternalWorkCiTriageView {
+  readonly triage: ExternalWorkCiTriageRecord;
+  readonly externalWork?: ExternalWorkRecord;
+  readonly task?: Task;
+  readonly run?: RunSession;
+  readonly artifacts: readonly RunArtifact[];
+}
+
+export interface ExternalWorkCiTriageRequest {
+  readonly externalWorkId: string;
+  readonly workflowPath?: string;
+  readonly limit?: number;
+  readonly createTask?: boolean;
+  readonly startRun?: boolean;
+}
+
+export interface ExternalWorkCiTriageResponse {
+  readonly cwd: string;
+  readonly triaged: number;
+  readonly taskCreated: number;
+  readonly duplicates: number;
+  readonly blocked: number;
+  readonly stale: number;
+  readonly failed: number;
+  readonly records: readonly ExternalWorkCiTriageView[];
+}
+
 export interface CreateExternalWorkWorkflowInput {
   readonly channelId: string;
   readonly externalWorkItem: ExternalWorkItem;
@@ -466,4 +597,8 @@ export function createExternalWorkId(): string {
 
 export function createExternalWorkActionId(): string {
   return `external_work_action_${randomUUID()}`;
+}
+
+export function createExternalWorkCiTriageId(): string {
+  return `external_work_ci_triage_${randomUUID()}`;
 }

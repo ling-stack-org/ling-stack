@@ -99,15 +99,19 @@ import type {
 } from "./state-machines.js";
 import type {
   CreateExternalWorkActionInput,
+  CreateExternalWorkCiTriageInput,
   CreateExternalWorkWorkflowInput,
   ExternalWorkAction,
+  ExternalWorkCiTriageRecord,
   ExternalWorkRecord,
   ExternalWorkSchedulerState,
   ExternalWorkWorkflowResult,
   ListExternalWorkActionsOptions,
+  ListExternalWorkCiTriageOptions,
   ListExternalWorkRecordsOptions,
   ListExternalWorkSchedulerStatesOptions,
   UpdateExternalWorkActionInput,
+  UpdateExternalWorkCiTriageInput,
   UpdateExternalWorkSchedulerStateInput,
   UpsertExternalWorkSchedulerStateInput,
 } from "./external-work-types.js";
@@ -414,6 +418,11 @@ export interface RunStore {
   getExternalWorkActionByIdempotency(sourceKind: ExternalWorkAction["sourceKind"], idempotencyKey: string): ExternalWorkAction | undefined;
   listExternalWorkActions(options?: ListExternalWorkActionsOptions): ExternalWorkAction[];
   updateExternalWorkAction(id: string, input: UpdateExternalWorkActionInput, now: string): ExternalWorkAction | undefined;
+  createExternalWorkCiTriage(input: CreateExternalWorkCiTriageInput, now: string): ExternalWorkCiTriageRecord;
+  getExternalWorkCiTriage(id: string): ExternalWorkCiTriageRecord | undefined;
+  getExternalWorkCiTriageByFailureKey(sourceKind: ExternalWorkCiTriageRecord["sourceKind"], failureKey: string): ExternalWorkCiTriageRecord | undefined;
+  listExternalWorkCiTriage(options?: ListExternalWorkCiTriageOptions): ExternalWorkCiTriageRecord[];
+  updateExternalWorkCiTriage(id: string, input: UpdateExternalWorkCiTriageInput, now: string): ExternalWorkCiTriageRecord | undefined;
   upsertExternalWorkSchedulerState(input: UpsertExternalWorkSchedulerStateInput, now: string): ExternalWorkSchedulerState;
   getExternalWorkSchedulerState(externalWorkId: string): ExternalWorkSchedulerState | undefined;
   findActiveExternalWorkSchedulerState(sourceKey: string, subjectKey: string): ExternalWorkSchedulerState | undefined;

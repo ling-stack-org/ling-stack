@@ -22,6 +22,7 @@ import {
   reconcileExternalWork,
   renderExternalWorkflowPrompt,
   syncExternalWorkActionForApproval,
+  triageGitHubExternalWorkCi,
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
   isSupportedSecretRef,
@@ -98,6 +99,8 @@ import {
   type ExternalWorkActionListResponse,
   type ExternalWorkActionMutationResponse,
   type ExternalWorkActionStatus,
+  type ExternalWorkCiTriageRequest,
+  type ExternalWorkCiTriageResponse,
   type ExternalWorkItem,
   type ExternalWorkDetailResponse,
   type ExternalWorkListResponse,
@@ -592,6 +595,11 @@ async function routeRequest(
 
   if (url.pathname === "/external-work/github/poll") {
     await handleExternalGitHubPoll(request, response, config, storeRegistry, secretResolver, externalWorkFetch);
+    return;
+  }
+
+  if (url.pathname === "/external-work/github/ci/triage") {
+    await handleExternalGitHubCiTriage(request, response, config, storeRegistry, secretResolver, externalWorkFetch);
     return;
   }
 
@@ -3786,6 +3794,64 @@ async function handleExternalGitHubPoll(
   }
 }
 
+async function handleExternalGitHubCiTriage(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+  externalWorkFetch?: typeof globalThis.fetch,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for GitHub CI triage` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseExternalGitHubCiTriageRequest(body);
+    const externalWork = store.getExternalWorkRecord(input.externalWorkId);
+    if (!externalWork) {
+      writeJson(response, 404, { error: "external_work_not_found", message: `External work item not found: ${input.externalWorkId}` });
+      return;
+    }
+    const channel = store.getChannel(externalWork.channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${externalWork.channelId}` });
+      return;
+    }
+    const workflowFile = readExternalWorkflowFile(input, channel, cwd);
+    const workflowDefinition = parseExternalWorkflowMarkdown(workflowFile.markdown);
+    if (workflowDefinition.config.source.kind !== "github") {
+      writeJson(response, 400, { error: "unsupported_source", message: `Unsupported external source kind: ${workflowDefinition.config.source.kind}` });
+      return;
+    }
+    const githubToken = resolveExternalGitHubToken(workflowDefinition, secretResolver);
+    const triageResponse: ExternalWorkCiTriageResponse = await triageGitHubExternalWorkCi({
+      store,
+      cwd,
+      externalWorkId: input.externalWorkId,
+      workflowDefinition,
+      githubToken,
+      fetch: externalWorkFetch,
+      limit: input.limit,
+      createTask: input.createTask,
+      startRun: input.startRun,
+    });
+    writeJson(response, 200, triageResponse);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 async function handleExternalWorkReconcile(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3864,6 +3930,23 @@ function parseExternalGitHubPollRequest(value: unknown): ExternalWorkPollRequest
     workflowPath: readOptionalString(value, "workflowPath"),
     limit,
     executeHooks: readOptionalBoolean(value, "executeHooks"),
+  };
+}
+
+function parseExternalGitHubCiTriageRequest(value: unknown): ExternalWorkCiTriageRequest {
+  if (!isRecord(value)) {
+    throw new Error("Request body must be an object");
+  }
+  const limit = readOptionalNumber(value, "limit");
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 25)) {
+    throw new Error("limit must be an integer between 1 and 25");
+  }
+  return {
+    externalWorkId: readString(value, "externalWorkId"),
+    workflowPath: readOptionalString(value, "workflowPath"),
+    limit,
+    createTask: readOptionalBoolean(value, "createTask"),
+    startRun: readOptionalBoolean(value, "startRun"),
   };
 }
 

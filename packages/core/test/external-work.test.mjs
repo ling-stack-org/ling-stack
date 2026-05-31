@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   createSqliteRunStore,
+  createGitHubCiTriageAdapter,
   createGitHubExternalActionAdapter,
   createGitHubExternalWorkAdapter,
   executeExternalWorkAction,
@@ -13,6 +14,7 @@ import {
   parseExternalWorkflowMarkdown,
   pollGitHubExternalWork,
   proposeExternalWorkAction,
+  triageGitHubExternalWorkCi,
   cancelExternalWorkAction,
   syncExternalWorkActionForApproval,
   renderExternalWorkflowPrompt,
@@ -657,6 +659,176 @@ Review {{ item.identifier }}.
   }
 });
 
+test("GitHub CI triage adapter reads PR checks, workflow jobs, and redacted logs", async () => {
+  const calls = [];
+  const adapter = createGitHubCiTriageAdapter({ fetch: createGitHubCiFetch(calls) });
+
+  const current = await adapter.getPullRequest({
+    repository: "openclaw/openclaw",
+    number: 86279,
+    token: "github-token-secret",
+  });
+  assert.equal(current.identifier, "openclaw/openclaw#86279");
+  assert.equal(current.headSha, "head-sha-1");
+
+  const failures = await adapter.listFailures({
+    repository: "openclaw/openclaw",
+    subjectNumber: 86279,
+    headSha: "head-sha-1",
+    token: "github-token-secret",
+    limit: 5,
+  });
+
+  assert.deepEqual(failures.map((failure) => failure.checkName), ["web e2e", "lint"]);
+  assert.equal(failures[0].workflowName, "CI");
+  assert.equal(failures[0].jobName, "web e2e");
+  assert.equal(failures[0].firstFailingCommand, "corepack pnpm --filter @ling-stack/web test:e2e");
+  assert.equal(failures[0].suspectedSourcePath, "apps/web/e2e/app.spec.ts");
+  assert.doesNotMatch(failures[0].logExcerpt, /github-token-secret/);
+  assert.match(failures[0].logExcerpt, /\[REDACTED\]/);
+  assert.match(failures[0].failureKey, /workflow_job:123:failure/);
+  assert.match(failures[1].failureKey, /check_run:456:failure/);
+  assert.deepEqual(calls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+    "GET /repos/openclaw/openclaw/pulls/86279",
+    "GET /repos/openclaw/openclaw/actions/runs",
+    "GET /repos/openclaw/openclaw/actions/runs/99/jobs",
+    "GET /repos/openclaw/openclaw/actions/jobs/123/logs",
+    "GET /repos/openclaw/openclaw/commits/head-sha-1/check-runs",
+  ]);
+  assert.match(calls[0].init.headers.Authorization, /Bearer github-token-secret/);
+});
+
+test("GitHub CI triage creates durable records, artifacts, tasks, and reuses duplicates", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ci-triage-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const imported = createImportedPullRequestWork(store, cwd, "2026-05-30T00:00:00.000Z");
+    const workflow = parseExternalWorkflowMarkdown(workflowMarkdown);
+    const fetch = createGitHubCiFetch([]);
+
+    const first = await triageGitHubExternalWorkCi({
+      store,
+      cwd,
+      externalWorkId: imported.externalWork.id,
+      workflowDefinition: workflow,
+      githubToken: "github-token-secret",
+      fetch,
+      now: "2026-05-30T00:01:00.000Z",
+    });
+
+    assert.equal(first.triaged, 2);
+    assert.equal(first.taskCreated, 2);
+    assert.equal(first.duplicates, 0);
+    assert.deepEqual(first.records.map((view) => view.triage.status), ["task_created", "task_created"]);
+    assert.equal(store.listExternalWorkCiTriage({ externalWorkId: imported.externalWork.id }).length, 2);
+    assert.equal(store.listTasks({ channelId: imported.externalWork.channelId }).length, 2);
+    assert.ok(first.records[0].task);
+    assert.ok(first.records[0].artifacts.length >= 4);
+    assert.match(first.records[0].task.prompt, /Do not push commits, comment on GitHub/);
+
+    const logArtifact = first.records[0].artifacts.find((artifact) => artifact.title === "GitHub CI log excerpt");
+    assert.ok(logArtifact);
+    const log = await readFile(resolve(store.paths.artifactsDir, logArtifact.path), "utf8");
+    assert.doesNotMatch(log, /github-token-secret/);
+    assert.match(log, /\[REDACTED\]/);
+    assert.match(log, /corepack pnpm --filter @ling-stack\/web test:e2e/);
+
+    const duplicate = await triageGitHubExternalWorkCi({
+      store,
+      cwd,
+      externalWorkId: imported.externalWork.id,
+      workflowDefinition: workflow,
+      fetch,
+      now: "2026-05-30T00:02:00.000Z",
+    });
+    assert.equal(duplicate.triaged, 0);
+    assert.equal(duplicate.taskCreated, 0);
+    assert.equal(duplicate.duplicates, 2);
+    assert.equal(store.listTasks({ channelId: imported.externalWork.channelId }).length, 2);
+    assert.deepEqual(
+      duplicate.records.map((view) => view.triage.id).sort(),
+      first.records.map((view) => view.triage.id).sort(),
+    );
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub CI triage can add tasks later for existing no-task triage records", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ci-triage-late-task-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const imported = createImportedPullRequestWork(store, cwd, "2026-05-30T00:00:00.000Z");
+    const workflow = parseExternalWorkflowMarkdown(workflowMarkdown);
+    const fetch = createGitHubCiFetch([]);
+
+    const recordsOnly = await triageGitHubExternalWorkCi({
+      store,
+      cwd,
+      externalWorkId: imported.externalWork.id,
+      workflowDefinition: workflow,
+      fetch,
+      createTask: false,
+      now: "2026-05-30T00:01:00.000Z",
+    });
+    assert.equal(recordsOnly.triaged, 2);
+    assert.equal(recordsOnly.taskCreated, 0);
+    assert.equal(store.listTasks({ channelId: imported.externalWork.channelId }).length, 0);
+
+    const withTasks = await triageGitHubExternalWorkCi({
+      store,
+      cwd,
+      externalWorkId: imported.externalWork.id,
+      workflowDefinition: workflow,
+      fetch,
+      now: "2026-05-30T00:02:00.000Z",
+    });
+    assert.equal(withTasks.triaged, 0);
+    assert.equal(withTasks.duplicates, 2);
+    assert.equal(withTasks.taskCreated, 2);
+    assert.equal(store.listTasks({ channelId: imported.externalWork.channelId }).length, 2);
+    assert.deepEqual(withTasks.records.map((view) => view.triage.status), ["task_created", "task_created"]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub CI triage marks stale PR head without reading CI or creating tasks", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ci-triage-stale-"));
+  const store = createSqliteRunStore(cwd);
+  const calls = [];
+  try {
+    const imported = createImportedPullRequestWork(store, cwd, "2026-05-30T00:00:00.000Z");
+    const workflow = parseExternalWorkflowMarkdown(workflowMarkdown);
+    const stale = await triageGitHubExternalWorkCi({
+      store,
+      cwd,
+      externalWorkId: imported.externalWork.id,
+      workflowDefinition: workflow,
+      fetch: createGitHubCiFetch(calls, {
+        pullRequest: {
+          ...githubPullRequestPayload().pull_request,
+          head: { ...githubPullRequestPayload().pull_request.head, sha: "head-sha-2" },
+        },
+      }),
+      now: "2026-05-30T00:01:00.000Z",
+    });
+
+    assert.equal(stale.stale, 1);
+    assert.equal(stale.records[0].triage.status, "stale");
+    assert.match(stale.records[0].triage.lastErrorMessage, /no longer matches/);
+    assert.equal(store.listTasks({ channelId: imported.externalWork.channelId }).length, 0);
+    assert.deepEqual(calls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+      "GET /repos/openclaw/openclaw/pulls/86279",
+    ]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function githubRepository() {
   return {
     name: "openclaw",
@@ -793,6 +965,62 @@ function createGitHubPollFetch(pulls, issues) {
   };
 }
 
+function createGitHubCiFetch(calls, options = {}) {
+  return async (url, init = {}) => {
+    calls.push({ url, init });
+    if (url.includes("/pulls/86279")) {
+      return jsonResponse(options.pullRequest ?? githubPullRequestPayload().pull_request);
+    }
+    if (url.includes("/actions/runs?")) {
+      return jsonResponse({
+        workflow_runs: [{
+          id: 99,
+          name: "CI",
+          display_title: "CI",
+          conclusion: "failure",
+          html_url: "https://github.com/openclaw/openclaw/actions/runs/99",
+          updated_at: "2026-05-30T00:00:00Z",
+        }],
+      });
+    }
+    if (url.includes("/actions/runs/99/jobs")) {
+      return jsonResponse({
+        jobs: [{
+          id: 123,
+          name: "web e2e",
+          conclusion: "failure",
+          html_url: "https://github.com/openclaw/openclaw/actions/runs/99/job/123",
+          completed_at: "2026-05-30T00:00:30Z",
+        }],
+      });
+    }
+    if (url.includes("/actions/jobs/123/logs")) {
+      return textResponse([
+        "2026-05-30T00:00:01Z ##[group]Run corepack pnpm --filter @ling-stack/web test:e2e",
+        "github-token-secret",
+        "apps/web/e2e/app.spec.ts:12: expected visible text",
+      ].join("\n"));
+    }
+    if (url.includes("/commits/head-sha-1/check-runs")) {
+      return jsonResponse({
+        check_runs: [{
+          id: 456,
+          name: "lint",
+          conclusion: "failure",
+          html_url: "https://github.com/openclaw/openclaw/runs/456",
+          completed_at: "2026-05-30T00:00:20Z",
+          output: {
+            title: "Lint failed",
+            summary: "Run corepack pnpm lint",
+            text: "packages/core/src/index.ts:1 lint error",
+          },
+        }],
+      });
+    }
+    return jsonResponse({ message: "not found" }, { ok: false, status: 404, statusText: "Not Found" });
+  };
+}
+
 function jsonResponse(body, options = {}) {
   return {
     ok: options.ok ?? true,
@@ -803,6 +1031,20 @@ function jsonResponse(body, options = {}) {
     },
     async text() {
       return JSON.stringify(body);
+    },
+  };
+}
+
+function textResponse(body, options = {}) {
+  return {
+    ok: options.ok ?? true,
+    status: options.status ?? 200,
+    statusText: options.statusText ?? "OK",
+    async json() {
+      return JSON.parse(body);
+    },
+    async text() {
+      return body;
     },
   };
 }
