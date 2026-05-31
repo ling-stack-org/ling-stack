@@ -534,7 +534,9 @@ workflow-step state; they do not mark linked task/run records terminal.
 ## External Work
 
 Phase 1 adds a read-only GitHub manual import path. Phase 2 adds manual read-only
-GitHub polling and local scheduler reconciliation. Import parses a repository
+GitHub polling and local scheduler reconciliation. Phase 3.0 adds local proposed action
+records for GitHub comments and labels, but still does not execute GitHub mutations.
+Import parses a repository
 `WORKFLOW.md`, normalizes a GitHub PR or issue payload, creates or reuses a
 `ChannelWorkflow` and `ChannelWorkflowStep`, and writes local evidence artifacts. It
 does not start a runner, receive webhooks, post comments, add labels, request reviews,
@@ -689,6 +691,134 @@ Missing workflow or workflow-step records are omitted rather than synthesized so
 repair tools can see stale mappings directly. Missing external work ids return
 `404 external_work_not_found`.
 
+### Propose External Work Action
+
+```http
+POST /external-work/actions/propose?cwd=/path/to/project
+```
+
+Request for a comment proposal:
+
+```json
+{
+  "externalWorkId": "external_work_...",
+  "actionKind": "github_comment",
+  "approvalRequirement": "standard",
+  "payload": {
+    "type": "github_comment",
+    "body": "Proposed comment body"
+  }
+}
+```
+
+Request for a label proposal:
+
+```json
+{
+  "externalWorkId": "external_work_...",
+  "actionKind": "github_label",
+  "payload": {
+    "type": "github_label",
+    "labels": ["agent-ready", "needs-review"]
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "action": {
+    "id": "external_work_action_...",
+    "status": "waiting_for_approval",
+    "approvalId": "approval_..."
+  },
+  "approval": {},
+  "artifacts": [],
+  "duplicate": false
+}
+```
+
+The daemon writes a target snapshot, proposed payload, and approval preview as local
+artifacts owned by the external work item and linked from the action. The same action
+idempotency key returns the existing action with `duplicate: true`. Phase 3.0 does not
+provide an execute endpoint and never calls GitHub mutation APIs.
+
+### List External Work Actions
+
+```http
+GET /external-work/actions?cwd=/path/to/project&externalWorkId=external_work_...&status=waiting_for_approval
+```
+
+Query filters are optional:
+
+- `externalWorkId`
+- `channelId`
+- `actionKind`: `github_comment` or `github_label`
+- `status`: `proposed`, `waiting_for_approval`, `approved`, `executing`, `succeeded`,
+  `failed`, `cancelled`, `denied`, `expired`, or `stale_target`
+- `limit`: 1-500
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "actions": [
+    {
+      "action": {},
+      "externalWork": {},
+      "approval": {},
+      "artifacts": []
+    }
+  ]
+}
+```
+
+The list endpoint is local-only. It does not call GitHub, start runners, execute hooks,
+or mutate approval decisions.
+
+### Show External Work Action
+
+```http
+GET /external-work/actions/external_work_action_...?cwd=/path/to/project
+```
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "action": {
+    "action": {},
+    "externalWork": {},
+    "approval": {},
+    "artifacts": []
+  }
+}
+```
+
+Missing action ids return `404 external_work_action_not_found`.
+
+### Cancel External Work Action
+
+```http
+POST /external-work/actions/external_work_action_.../cancel?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "reason": "No longer needed"
+}
+```
+
+Only `proposed`, `waiting_for_approval`, and `approved` actions can be cancelled. A
+pending approval is denied with the cancellation reason, the action is marked
+`cancelled`, and a local cancellation artifact is linked. Cancel never calls GitHub.
+
 ### Reconcile External Work
 
 ```http
@@ -733,6 +863,23 @@ await client.listExternalWork("/path/to/project", {
 
 await client.getExternalWork("/path/to/project", "external_work_...");
 
+await client.proposeExternalWorkAction("/path/to/project", {
+  externalWorkId: "external_work_...",
+  actionKind: "github_comment",
+  payload: { type: "github_comment", body: "Proposed comment body" },
+});
+
+await client.listExternalWorkActions("/path/to/project", {
+  externalWorkId: "external_work_...",
+  status: "waiting_for_approval",
+});
+
+await client.getExternalWorkAction("/path/to/project", "external_work_action_...");
+
+await client.cancelExternalWorkAction("/path/to/project", "external_work_action_...", {
+  reason: "No longer needed",
+});
+
 await client.reconcileExternalWork("/path/to/project", {
   channelId: "channel_...",
   workflowPath: "WORKFLOW.md",
@@ -759,14 +906,34 @@ ling-stack --cwd /path/to/project external-work list \
 
 ling-stack --cwd /path/to/project external-work show external_work_...
 
+ling-stack --cwd /path/to/project external-work actions propose-comment \
+  --external-work external_work_... \
+  --body-file comment.md \
+  --approval standard
+
+ling-stack --cwd /path/to/project external-work actions propose-labels \
+  --external-work external_work_... \
+  --label agent-ready \
+  --label needs-review
+
+ling-stack --cwd /path/to/project external-work actions list \
+  --external-work external_work_... \
+  --status waiting_for_approval
+
+ling-stack --cwd /path/to/project external-work actions show external_work_action_...
+
+ling-stack --cwd /path/to/project external-work actions cancel external_work_action_... \
+  --reason "No longer needed"
+
 ling-stack --cwd /path/to/project external-work reconcile \
   --channel channel_... \
   --workflow-path WORKFLOW.md
 ```
 
 `--workflow-markdown-file <path>` may be used instead of `--workflow-path` for inline
-manual import tests. The CLI and SDK only call local daemon endpoints. They do not
-start a runner or create external mutation actions.
+manual import tests. The CLI and SDK only call local daemon endpoints. Action proposal
+creates local proposed action and approval records only. These commands do not start a
+runner or execute GitHub mutations.
 
 For a copy-pasteable temp workspace smoke, use
 `examples/external-work/github/README.md`. That smoke copies the example `WORKFLOW.md`

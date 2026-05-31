@@ -326,6 +326,99 @@ test("external-work list and show render local scheduler state", async () => {
   }
 });
 
+test("external-work actions propose, list, show, cancel render local proposed actions", async () => {
+  const daemon = await startExternalWorkDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-actions-"));
+  try {
+    const bodyFile = resolve(cwd, "comment.md");
+    await writeFile(bodyFile, "Ready for review.\n", "utf8");
+    const proposed = await runCli(daemon.url, cwd, [
+      "external-work",
+      "actions",
+      "propose-comment",
+      "--external-work",
+      "external_work_1",
+      "--body-file",
+      bodyFile,
+      "--approval",
+      "strict",
+    ]);
+    assert.equal(proposed.code, 0, proposed.stderr);
+    assert.match(proposed.stdout, /External work action proposed: external_work_action_1/);
+    assert.match(proposed.stdout, /waiting_for_approval/);
+    assert.equal(daemon.requests.at(-1).path, "/external-work/actions/propose");
+    assert.equal(daemon.requests.at(-1).body.actionKind, "github_comment");
+    assert.equal(daemon.requests.at(-1).body.payload.body, "Ready for review.\n");
+
+    const labels = await runCli(daemon.url, cwd, [
+      "external-work",
+      "actions",
+      "propose-labels",
+      "--external-work",
+      "external_work_1",
+      "--label",
+      "agent-ready",
+      "--label",
+      "needs-review",
+    ]);
+    assert.equal(labels.code, 0, labels.stderr);
+    assert.equal(daemon.requests.at(-1).body.actionKind, "github_label");
+    assert.deepEqual(daemon.requests.at(-1).body.payload.labels, ["agent-ready", "needs-review"]);
+
+    const list = await runCli(daemon.url, cwd, [
+      "external-work",
+      "actions",
+      "list",
+      "--external-work",
+      "external_work_1",
+      "--status",
+      "waiting_for_approval",
+    ]);
+    assert.equal(list.code, 0, list.stderr);
+    assert.match(list.stdout, /External work actions:/);
+    assert.match(list.stdout, /external_work_action_1/);
+
+    const show = await runCli(daemon.url, cwd, [
+      "external-work",
+      "actions",
+      "show",
+      "external_work_action_1",
+    ]);
+    assert.equal(show.code, 0, show.stderr);
+    assert.match(show.stdout, /External work action: external_work_action_1/);
+    assert.match(show.stdout, /Approval: approval_1/);
+
+    const cancel = await runCli(daemon.url, cwd, [
+      "external-work",
+      "actions",
+      "cancel",
+      "external_work_action_1",
+      "--reason",
+      "No longer needed.",
+    ]);
+    assert.equal(cancel.code, 0, cancel.stderr);
+    assert.match(cancel.stdout, /External work action cancelled: external_work_action_1/);
+    assert.match(cancel.stdout, /cancelled/);
+
+    const invalidApproval = await runCli(daemon.url, cwd, [
+      "external-work",
+      "actions",
+      "propose-comment",
+      "--external-work",
+      "external_work_1",
+      "--body-file",
+      bodyFile,
+      "--approval",
+      "fast",
+    ]);
+    assert.equal(invalidApproval.code, 2);
+    assert.match(invalidApproval.stderr, /approval must be standard or strict/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 function runCli(daemonUrl, cwd, args) {
   return new Promise((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
@@ -362,7 +455,33 @@ async function startExternalWorkDaemon() {
       writeJson(response, 200, externalWorkDetailResponse());
       return;
     }
-    if (request.method !== "POST" || !["/external-work/github/import", "/external-work/github/poll", "/external-work/reconcile"].includes(url.pathname)) {
+    if (request.method === "GET" && url.pathname === "/external-work/actions") {
+      requests.push({
+        method: request.method,
+        path: url.pathname,
+        cwd: url.searchParams.get("cwd"),
+        query: Object.fromEntries(url.searchParams.entries()),
+      });
+      writeJson(response, 200, externalWorkActionsListResponse());
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/external-work/actions/external_work_action_1") {
+      requests.push({
+        method: request.method,
+        path: url.pathname,
+        cwd: url.searchParams.get("cwd"),
+        query: Object.fromEntries(url.searchParams.entries()),
+      });
+      writeJson(response, 200, externalWorkActionDetailResponse());
+      return;
+    }
+    if (request.method !== "POST" || ![
+      "/external-work/github/import",
+      "/external-work/github/poll",
+      "/external-work/reconcile",
+      "/external-work/actions/propose",
+      "/external-work/actions/external_work_action_1/cancel",
+    ].includes(url.pathname)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -383,6 +502,14 @@ async function startExternalWorkDaemon() {
     }
     if (url.pathname === "/external-work/reconcile") {
       writeJson(response, 200, externalWorkReconcileResponse());
+      return;
+    }
+    if (url.pathname === "/external-work/actions/propose") {
+      writeJson(response, 200, externalWorkActionMutationResponse(body.actionKind === "github_label" ? "github_label" : "github_comment"));
+      return;
+    }
+    if (url.pathname === "/external-work/actions/external_work_action_1/cancel") {
+      writeJson(response, 200, externalWorkActionMutationResponse("github_comment", "cancelled"));
       return;
     }
     writeJson(response, 201, externalWorkImportResponse());
@@ -563,6 +690,79 @@ function externalWorkView() {
         createdAt: "2026-05-31T00:00:00.000Z",
       },
     ],
+  };
+}
+
+function externalWorkActionMutationResponse(actionKind = "github_comment", status = "waiting_for_approval") {
+  return {
+    cwd: "/repo",
+    action: externalWorkAction(actionKind, status),
+    approval: {
+      id: "approval_1",
+      externalWorkActionId: "external_work_action_1",
+      status: status === "cancelled" ? "denied" : "pending",
+    },
+    artifacts: [
+      {
+        id: "artifact_action_1",
+        type: "json",
+        path: "external-work/work_1/actions/action_1/payload.json",
+        title: "External action proposed payload",
+        createdAt: "2026-05-31T00:00:00.000Z",
+      },
+    ],
+    duplicate: false,
+  };
+}
+
+function externalWorkActionsListResponse() {
+  return {
+    cwd: "/repo",
+    actions: [externalWorkActionView()],
+  };
+}
+
+function externalWorkActionDetailResponse() {
+  return {
+    cwd: "/repo",
+    action: externalWorkActionView(),
+  };
+}
+
+function externalWorkActionView() {
+  return {
+    action: externalWorkAction(),
+    externalWork: externalWorkView().externalWork,
+    approval: {
+      id: "approval_1",
+      externalWorkActionId: "external_work_action_1",
+      status: "pending",
+    },
+    artifacts: [
+      {
+        id: "artifact_action_1",
+        type: "json",
+        path: "external-work/work_1/actions/action_1/payload.json",
+        title: "External action proposed payload",
+        createdAt: "2026-05-31T00:00:00.000Z",
+      },
+    ],
+  };
+}
+
+function externalWorkAction(actionKind = "github_comment", status = "waiting_for_approval") {
+  return {
+    id: "external_work_action_1",
+    externalWorkId: "external_work_1",
+    actionKind,
+    status,
+    approvalId: "approval_1",
+    approvalRequirement: "standard",
+    target: {
+      repository: "openclaw/openclaw",
+      number: 86279,
+    },
+    artifactIds: ["artifact_action_1"],
   };
 }
 

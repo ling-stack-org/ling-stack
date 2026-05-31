@@ -68,6 +68,13 @@ export type ApprovalPayload =
       readonly type: "provider_change";
       readonly providerPresetId: string;
       readonly changedFields: readonly string[];
+    }
+  | {
+      readonly type: "external_action";
+      readonly sourceKind: "github" | "linear";
+      readonly actionKind: string;
+      readonly target: unknown;
+      readonly preview: string;
     };
 
 export interface ApprovalRequest {
@@ -75,6 +82,7 @@ export interface ApprovalRequest {
   readonly runId?: string;
   readonly taskId?: string;
   readonly mediaJobId?: string;
+  readonly externalWorkActionId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
   readonly actionType: ApprovalActionType;
@@ -94,6 +102,7 @@ export interface CreateApprovalRequestInput {
   readonly runId?: string;
   readonly taskId?: string;
   readonly mediaJobId?: string;
+  readonly externalWorkActionId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
   readonly actionType: ApprovalActionType;
@@ -113,6 +122,7 @@ export interface ListApprovalRequestsOptions {
   readonly status?: ApprovalStatus;
   readonly runId?: string;
   readonly mediaJobId?: string;
+  readonly externalWorkActionId?: string;
   readonly limit?: number;
 }
 

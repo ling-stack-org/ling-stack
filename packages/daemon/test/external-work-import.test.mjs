@@ -180,6 +180,83 @@ test("GitHub external work poll imports candidates, deduplicates, and reconciles
   }
 });
 
+test("external work actions propose, list, show, approve-sync, and cancel without GitHub mutation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-actions-"));
+  const runner = new FailingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "GitHub",
+      boundPath: cwd,
+      defaultTeammateId: "engineer",
+      allowedTools: ["read"],
+    });
+    const imported = await postJson(`${daemon.url}/external-work/github/import?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      eventType: "pull_request.opened",
+      payload: githubPullRequestPayload(),
+    });
+    const importedList = await getJson(`${daemon.url}/external-work?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+    const externalWorkId = importedList.externalWork[0].externalWork.id;
+    assert.equal(imported.workflow.id, importedList.externalWork[0].workflow.id);
+
+    const proposed = await postJson(`${daemon.url}/external-work/actions/propose?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      actionKind: "github_comment",
+      approvalRequirement: "strict",
+      payload: { type: "github_comment", body: "Ready for maintainer review." },
+    });
+    assert.equal(proposed.duplicate, false);
+    assert.equal(proposed.action.status, "waiting_for_approval");
+    assert.equal(proposed.action.target.repository, "openclaw/openclaw");
+    assert.equal(proposed.action.target.expectedHeadSha, "head-sha-1");
+    assert.equal(proposed.approval.externalWorkActionId, proposed.action.id);
+    assert.equal(proposed.artifacts.length, 3);
+
+    const duplicate = await postJson(`${daemon.url}/external-work/actions/propose?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      actionKind: "github_comment",
+      approvalRequirement: "strict",
+      payload: { type: "github_comment", body: "Ready for maintainer review." },
+    });
+    assert.equal(duplicate.duplicate, true);
+    assert.equal(duplicate.action.id, proposed.action.id);
+
+    const list = await getJson(`${daemon.url}/external-work/actions?cwd=${encodeURIComponent(cwd)}&externalWorkId=${encodeURIComponent(externalWorkId)}&status=waiting_for_approval`);
+    assert.equal(list.actions.length, 1);
+    assert.equal(list.actions[0].action.id, proposed.action.id);
+    assert.equal(list.actions[0].approval.status, "pending");
+
+    const detail = await getJson(`${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.action.action.id, proposed.action.id);
+    assert.equal(detail.action.artifacts.length, 3);
+
+    const approved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(proposed.approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "Looks safe.",
+    });
+    assert.equal(approved.approval.status, "approved");
+    const approvedDetail = await getJson(`${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(approvedDetail.action.action.status, "approved");
+
+    const label = await postJson(`${daemon.url}/external-work/actions/propose?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      actionKind: "github_label",
+      payload: { type: "github_label", labels: ["agent-ready"] },
+    });
+    const cancelled = await postJson(`${daemon.url}/external-work/actions/${encodeURIComponent(label.action.id)}/cancel?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "No longer needed.",
+    });
+    assert.equal(cancelled.action.status, "cancelled");
+    assert.equal(cancelled.approval.status, "denied");
+    assert.equal(cancelled.artifacts.at(-1).title, "External action cancellation");
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("GitHub external work poll returns readable errors for bad input and GitHub failures", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-poll-errors-"));
   const daemon = await startDaemonForTest(new FailingRunner(), async () => ({

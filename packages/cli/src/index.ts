@@ -1563,6 +1563,9 @@ async function handleExternalWork(args: readonly string[], options: GlobalOption
   if (source === "show") {
     return await handleExternalWorkShow(rest, options);
   }
+  if (source === "actions") {
+    return await handleExternalWorkActions(rest, options);
+  }
   if (source === "reconcile") {
     return await handleExternalWorkReconcile(rest, options);
   }
@@ -1618,6 +1621,140 @@ async function handleExternalWorkGitHub(args: readonly string[], options: Global
     return await handleExternalWorkGitHubPoll(rest, options);
   }
   throw new CliError(2, "unknown_command", `Unknown external-work github command: ${subcommand}`);
+}
+
+async function handleExternalWorkActions(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "list", ...rest] = args;
+  if (subcommand === "propose-comment") {
+    return await handleExternalWorkActionProposeComment(rest, options);
+  }
+  if (subcommand === "propose-labels") {
+    return await handleExternalWorkActionProposeLabels(rest, options);
+  }
+  if (subcommand === "list") {
+    return await handleExternalWorkActionsList(rest, options);
+  }
+  if (subcommand === "show") {
+    return await handleExternalWorkActionShow(rest, options);
+  }
+  if (subcommand === "cancel") {
+    return await handleExternalWorkActionCancel(rest, options);
+  }
+  throw new CliError(2, "unknown_command", `Unknown external-work actions command: ${subcommand}`);
+}
+
+async function handleExternalWorkActionProposeComment(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["external-work", "body-file", "approval"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work actions propose-comment");
+  const externalWorkId = getFlag(parsed, "external-work");
+  if (!externalWorkId) {
+    throw new CliError(2, "missing_option", "external-work actions propose-comment requires --external-work <id>.");
+  }
+  const bodyFile = getFlag(parsed, "body-file");
+  if (!bodyFile) {
+    throw new CliError(2, "missing_option", "external-work actions propose-comment requires --body-file <comment.md>.");
+  }
+  const response = await requestJson(options, "POST", "/external-work/actions/propose", { cwd: options.cwd }, removeUndefined({
+    externalWorkId,
+    actionKind: "github_comment",
+    approvalRequirement: readApprovalRequirementFlag(parsed),
+    payload: {
+      type: "github_comment",
+      body: await readUtf8File(bodyFile, "comment body file"),
+    },
+  }));
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkActionMutation(response, "External work action proposed");
+  return 0;
+}
+
+async function handleExternalWorkActionProposeLabels(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["external-work", "approval"]),
+    repeatableFlags: new Set(["label"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work actions propose-labels");
+  const externalWorkId = getFlag(parsed, "external-work");
+  if (!externalWorkId) {
+    throw new CliError(2, "missing_option", "external-work actions propose-labels requires --external-work <id>.");
+  }
+  const labels = getFlagValues(parsed, "label").map((label) => label.trim()).filter(Boolean);
+  if (labels.length === 0) {
+    throw new CliError(2, "missing_option", "external-work actions propose-labels requires at least one --label <name>.");
+  }
+  const response = await requestJson(options, "POST", "/external-work/actions/propose", { cwd: options.cwd }, removeUndefined({
+    externalWorkId,
+    actionKind: "github_label",
+    approvalRequirement: readApprovalRequirementFlag(parsed),
+    payload: {
+      type: "github_label",
+      labels,
+    },
+  }));
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkActionMutation(response, "External work action proposed");
+  return 0;
+}
+
+async function handleExternalWorkActionsList(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["external-work", "channel", "status", "action-kind", "limit"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work actions list");
+  const limit = readOptionalIntegerFlag(parsed, "limit");
+  if (limit !== undefined && limit > 500) {
+    throw new CliError(2, "bad_number", "--limit must be at most 500.");
+  }
+  const response = await requestJson(options, "GET", "/external-work/actions", {
+    cwd: options.cwd,
+    externalWorkId: getFlag(parsed, "external-work"),
+    channelId: getFlag(parsed, "channel"),
+    status: getFlag(parsed, "status"),
+    actionKind: getFlag(parsed, "action-kind"),
+    limit,
+  });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkActionsList(response);
+  return 0;
+}
+
+async function handleExternalWorkActionShow(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  const actionId = singlePositional(parsed.positionals, "external-work actions show <actionId>");
+  const response = await requestJson(options, "GET", `/external-work/actions/${encodeURIComponent(actionId)}`, { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkActionShow(response);
+  return 0;
+}
+
+async function handleExternalWorkActionCancel(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["reason"]),
+  });
+  const actionId = singlePositional(parsed.positionals, "external-work actions cancel <actionId>");
+  const response = await requestJson(options, "POST", `/external-work/actions/${encodeURIComponent(actionId)}/cancel`, { cwd: options.cwd }, removeUndefined({
+    reason: getFlag(parsed, "reason"),
+  }));
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkActionMutation(response, "External work action cancelled");
+  return 0;
 }
 
 async function handleExternalWorkGitHubImport(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -2523,6 +2660,17 @@ function readOptionalIntegerFlag(parsed: ParsedCommandArgs, key: string): number
   return value;
 }
 
+function readApprovalRequirementFlag(parsed: ParsedCommandArgs): "standard" | "strict" | undefined {
+  const value = getFlag(parsed, "approval");
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "standard" && value !== "strict") {
+    throw new CliError(2, "bad_option", "--approval must be standard or strict.");
+  }
+  return value;
+}
+
 function readEnabledFlag(parsed: ParsedCommandArgs, fallback?: boolean): boolean | undefined {
   const enabled = getFlag(parsed, "enabled");
   const disabled = parsed.booleans.has("disabled");
@@ -3159,6 +3307,10 @@ function printRunsList(response: unknown): void {
 }
 
 function approvalOwnerLabel(approval: unknown): string {
+  const externalWorkActionId = readString(approval, "externalWorkActionId");
+  if (externalWorkActionId) {
+    return `external-action:${externalWorkActionId}`;
+  }
   const mediaJobId = readString(approval, "mediaJobId");
   if (mediaJobId) {
     return `media:${mediaJobId}`;
@@ -3321,6 +3473,91 @@ function printExternalWorkShow(response: unknown): void {
       truncate(readString(artifact, "path") ?? "", 72),
     ]),
   );
+}
+
+function printExternalWorkActionMutation(response: unknown, title: string): void {
+  const action = readRequiredRecord(response, "action");
+  const approval = readOptionalRecord(response, "approval");
+  const artifacts = readArray(response, "artifacts");
+  console.log(`${title}: ${readString(action, "id") ?? ""}`);
+  console.log(`Duplicate: ${readBoolean(response, "duplicate") ?? false}`);
+  console.log(`Kind: ${readString(action, "actionKind") ?? ""}`);
+  console.log(`Status: ${readString(action, "status") ?? ""}`);
+  console.log(`External work: ${readString(action, "externalWorkId") ?? ""}`);
+  console.log(`Target: ${externalWorkActionTargetLabel(action)}`);
+  console.log(`Approval: ${readString(approval, "id") ?? readString(action, "approvalId") ?? "none"}`);
+  if (artifacts.length === 0) {
+    console.log("Artifacts: none");
+    return;
+  }
+  console.log("Artifacts:");
+  printTable(
+    ["ID", "Title", "Path"],
+    artifacts.map((artifact) => [
+      truncate(readString(artifact, "id") ?? "", 32),
+      truncate(readString(artifact, "title") ?? "", 34),
+      truncate(readString(artifact, "path") ?? "", 72),
+    ]),
+  );
+}
+
+function printExternalWorkActionsList(response: unknown): void {
+  const actions = readArray(response, "actions");
+  console.log("External work actions:");
+  if (actions.length === 0) {
+    console.log("No external work actions found.");
+    return;
+  }
+  printTable(
+    ["ID", "Kind", "Status", "Target", "External Work", "Approval", "Artifacts"],
+    actions.map((view) => {
+      const action = readOptionalRecord(view, "action");
+      return [
+        truncate(readString(action, "id") ?? "", 32),
+        readString(action, "actionKind") ?? "",
+        readString(action, "status") ?? "",
+        truncate(externalWorkActionTargetLabel(action), 36),
+        truncate(readString(action, "externalWorkId") ?? "", 30),
+        truncate(readString(action, "approvalId") ?? "", 28),
+        String(readArray(view, "artifacts").length),
+      ];
+    }),
+  );
+}
+
+function printExternalWorkActionShow(response: unknown): void {
+  const view = readRequiredRecord(response, "action");
+  const action = readRequiredRecord(view, "action");
+  const approval = readOptionalRecord(view, "approval");
+  const artifacts = readArray(view, "artifacts");
+  console.log(`External work action: ${readString(action, "id") ?? ""}`);
+  console.log(`Kind: ${readString(action, "actionKind") ?? ""}`);
+  console.log(`Status: ${readString(action, "status") ?? ""}`);
+  console.log(`External work: ${readString(action, "externalWorkId") ?? ""}`);
+  console.log(`Target: ${externalWorkActionTargetLabel(action)}`);
+  console.log(`Approval requirement: ${readString(action, "approvalRequirement") ?? ""}`);
+  console.log(`Approval: ${readString(approval, "id") ?? readString(action, "approvalId") ?? "none"} (${readString(approval, "status") ?? ""})`);
+  console.log(`Last error: ${readString(action, "lastErrorMessage") ?? ""}`);
+  if (artifacts.length === 0) {
+    console.log("Artifacts: none");
+    return;
+  }
+  console.log("Artifacts:");
+  printTable(
+    ["ID", "Title", "Path"],
+    artifacts.map((artifact) => [
+      truncate(readString(artifact, "id") ?? "", 32),
+      truncate(readString(artifact, "title") ?? "", 34),
+      truncate(readString(artifact, "path") ?? "", 72),
+    ]),
+  );
+}
+
+function externalWorkActionTargetLabel(action: unknown): string {
+  const target = readOptionalRecord(action, "target");
+  const repository = readString(target, "repository") ?? "";
+  const number = readNumber(target, "number");
+  return number === undefined ? repository : `${repository}#${number}`;
 }
 
 function printExternalWorkPoll(response: unknown): void {
@@ -3705,6 +3942,8 @@ Usage:
   ling-stack [global options] external-work github poll --channel <id> [--workflow-path WORKFLOW.md]
   ling-stack [global options] external-work list [--channel <id>] [--status ready]
   ling-stack [global options] external-work show <externalWorkId>
+  ling-stack [global options] external-work actions propose-comment --external-work <id> --body-file comment.md
+  ling-stack [global options] external-work actions propose-labels --external-work <id> --label name
   ling-stack [global options] external-work reconcile [--channel <id>] [--workflow-path WORKFLOW.md]
   ling-stack [global options] approvals list
   ling-stack [global options] approvals show <id>
@@ -3825,6 +4064,11 @@ function printExternalWorkHelp(): void {
   ling-stack external-work github poll --channel <channelId> [options]
   ling-stack external-work list [--channel <channelId>] [--status ready|blocked|retry_wait|terminal] [--limit 50]
   ling-stack external-work show <externalWorkId>
+  ling-stack external-work actions propose-comment --external-work <id> --body-file comment.md [--approval standard|strict]
+  ling-stack external-work actions propose-labels --external-work <id> --label name [--label other] [--approval standard|strict]
+  ling-stack external-work actions list [--external-work <id>] [--status waiting_for_approval]
+  ling-stack external-work actions show <actionId>
+  ling-stack external-work actions cancel <actionId> [--reason "..."]
   ling-stack external-work reconcile [options]
 
 Options:
@@ -3838,11 +4082,15 @@ Options:
   --status <status>               Filter external-work list by scheduler status
   --source-kind <kind>            Filter external-work list by source kind
   --work-item-kind <kind>         Filter external-work list by item kind
+  --approval <standard|strict>    Approval requirement for a proposed external action
+  --body-file <path>              Markdown body for a proposed GitHub comment
+  --label <name>                  Label to propose adding; repeatable
 
 Behavior:
   Import creates or reuses local Ling workflow records from local fixtures.
   Poll uses read-only GitHub API calls for PR and issue discovery.
   List and show read local workflow, scheduler, workspace, and artifact state.
+  Action propose/list/show/cancel manages local proposed actions and approvals only.
   Reconcile repairs local scheduler state and can optionally check remote terminal state.
   None of these commands start a runner or mutate GitHub.
 `);

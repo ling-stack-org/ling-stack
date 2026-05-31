@@ -46,6 +46,12 @@ import type {
   CreateTaskRequest,
   DaemonHealthResponse,
   ExternalGitHubImportRequest,
+  ExternalWorkActionCancelRequest,
+  ExternalWorkActionDetailResponse,
+  ExternalWorkActionListRequest,
+  ExternalWorkActionListResponse,
+  ExternalWorkActionMutationResponse,
+  ExternalWorkActionProposeRequest,
   ExternalWorkDetailResponse,
   ExternalWorkListRequest,
   ExternalWorkListResponse,
@@ -599,6 +605,33 @@ export class LingDaemonClient {
 
   async getExternalWork(cwd: string, externalWorkId: string): Promise<ExternalWorkDetailResponse> {
     return this.get(`/external-work/${encodeURIComponent(externalWorkId)}`, { cwd });
+  }
+
+  async proposeExternalWorkAction(cwd: string, input: ExternalWorkActionProposeRequest): Promise<ExternalWorkActionMutationResponse> {
+    return this.post("/external-work/actions/propose", { cwd }, input);
+  }
+
+  async listExternalWorkActions(cwd: string, options: ExternalWorkActionListRequest = {}): Promise<ExternalWorkActionListResponse> {
+    return this.get("/external-work/actions", {
+      cwd,
+      externalWorkId: options.externalWorkId,
+      channelId: options.channelId,
+      status: options.status,
+      actionKind: options.actionKind,
+      limit: options.limit,
+    });
+  }
+
+  async getExternalWorkAction(cwd: string, actionId: string): Promise<ExternalWorkActionDetailResponse> {
+    return this.get(`/external-work/actions/${encodeURIComponent(actionId)}`, { cwd });
+  }
+
+  async cancelExternalWorkAction(
+    cwd: string,
+    actionId: string,
+    input: ExternalWorkActionCancelRequest = {},
+  ): Promise<ExternalWorkActionMutationResponse> {
+    return this.post(`/external-work/actions/${encodeURIComponent(actionId)}/cancel`, { cwd }, input);
   }
 
   async pollGitHubExternalWork(cwd: string, input: ExternalWorkPollRequest): Promise<ExternalWorkPollResponse> {
