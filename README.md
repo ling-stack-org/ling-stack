@@ -15,6 +15,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Daemon API](docs/daemon-api.md)
 - [Provider adapters](docs/provider-adapters.md)
 - [Seedream live smoke](docs/seedream-live-smoke.md)
+- [External work live smoke](docs/external-work-live-smoke.md)
 - [Provider presets](docs/design/provider-presets.md)
 - [Approval policy](docs/design/approval-policy.md)
 - [Channel workspace](docs/design/channel-workspace.md)
@@ -338,9 +339,12 @@ node packages/cli/dist/index.js external-work reconcile \
   --workflow-path WORKFLOW.md
 ```
 
-Use `--json` for full import, poll, list, show, action, and reconcile responses. A copy-pasteable temp
-workspace smoke path lives in
-[examples/external-work/github](examples/external-work/github/README.md).
+Use `--json` for full import, poll, list, show, action, and reconcile responses. A
+copy-pasteable fixture smoke path lives in
+[examples/external-work/github](examples/external-work/github/README.md). A real
+repository smoke with an isolated daemon, live GitHub reads, local action proposal, Web
+approval checks, and a separately gated mutation step lives in
+[External work live smoke](docs/external-work-live-smoke.md).
 
 ### 8. Run a task through the Pi runner
 

@@ -331,6 +331,13 @@ approval endpoints; `Execute action` appears only after the action status become
 `approved` and calls the explicit execute endpoint. Web cancel uses the existing cancel
 endpoint. Edit-and-approve remains out of scope; users cancel and propose a fresh action.
 
+Phase 3 live validation is tracked in
+[External Work Live Smoke](../external-work-live-smoke.md). The default helper starts an
+isolated daemon, polls a real repository through read-only GitHub endpoints, creates
+local external-work records, proposes then cancels a local action, reconciles state, and
+verifies no runner starts. Real comments or labels are a separate optional smoke step
+against a disposable target and still require approval plus explicit execute.
+
 ## Tests
 
 Core:
@@ -398,3 +405,5 @@ git diff --check
 - Stale, denied, expired, cancelled, or duplicate actions do not mutate GitHub.
 - Successful mutations persist redacted request/response evidence and final action
   status.
+- The live smoke helper proves the real GitHub read path and local approval/action audit
+  path without mutating GitHub or starting the runner.

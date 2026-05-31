@@ -5,6 +5,8 @@ PR or issue fixtures into Ling Stack workflow records, can run one manual GitHub
 read-only poll/reconcile cycle, and can create local approval-gated proposed actions.
 It does not start a runner. The default smoke does not mutate GitHub; mutation is only
 available through the explicit `external-work actions execute` command after approval.
+For a real repository smoke with live GitHub reads and Web approval-card checks, see
+[`docs/external-work-live-smoke.md`](../../../docs/external-work-live-smoke.md).
 
 ## Files
 
@@ -128,9 +130,10 @@ The action proposal commands create local `external_work_actions`, approval, and
 records only. They do not call GitHub mutation APIs. The smoke cancels the proposed
 action by default so it remains safe against the bundled public fixtures.
 
-Optional live mutation smoke, only after changing `WORKFLOW.md` and the payload fixture
-to a repository and PR/issue you control. Skip the cleanup cancel command above, then
-run:
+Optional live mutation smoke is documented in
+[`docs/external-work-live-smoke.md`](../../../docs/external-work-live-smoke.md). Only use
+it after changing `WORKFLOW.md` and the payload fixture to a repository and PR/issue you
+control. Skip the cleanup cancel command above, then run:
 
 ```bash
 node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" approvals approve "$approval_id" \
