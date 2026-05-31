@@ -44,6 +44,12 @@ import type {
   CreateChannelWorkflowStepRequest,
   CreateMediaJobRequest,
   DaemonHealthResponse,
+  ExternalWorkActionCancelRequest,
+  ExternalWorkActionDetailResponse,
+  ExternalWorkActionExecuteRequest,
+  ExternalWorkActionListRequest,
+  ExternalWorkActionListResponse,
+  ExternalWorkActionMutationResponse,
   MediaJobFormState,
   MediaJobArtifactListResponse,
   MediaJobListResponse,
@@ -500,6 +506,33 @@ export async function approveApproval(cwd: string, approvalId: string, reason?: 
 
 export async function denyApproval(cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
   return resolveApproval(cwd, approvalId, "deny", reason);
+}
+
+export async function listExternalWorkActions(
+  cwd: string,
+  options: ExternalWorkActionListRequest = {},
+): Promise<ExternalWorkActionListResponse> {
+  return daemonClient.listExternalWorkActions(cwd, options);
+}
+
+export async function getExternalWorkAction(cwd: string, actionId: string): Promise<ExternalWorkActionDetailResponse> {
+  return daemonClient.getExternalWorkAction(cwd, actionId);
+}
+
+export async function cancelExternalWorkAction(
+  cwd: string,
+  actionId: string,
+  input: ExternalWorkActionCancelRequest = {},
+): Promise<ExternalWorkActionMutationResponse> {
+  return daemonClient.cancelExternalWorkAction(cwd, actionId, input);
+}
+
+export async function executeExternalWorkAction(
+  cwd: string,
+  actionId: string,
+  input: ExternalWorkActionExecuteRequest = {},
+): Promise<ExternalWorkActionMutationResponse> {
+  return daemonClient.executeExternalWorkAction(cwd, actionId, input);
 }
 
 export async function getRunEvents(runId: string, cwd?: string): Promise<RunEventsResponse> {

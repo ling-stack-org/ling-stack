@@ -873,6 +873,20 @@ URLs when present. GitHub permission, validation, rate-limit, unavailable, and n
 failures mark the action `failed`, persist normalized error evidence, and do not expose
 authorization headers or token values.
 
+### Web External Action Approval Cards
+
+The Web Inbox consumes the existing approval and external action endpoints; it does not
+add a separate mutation path. For approvals with `externalWorkActionId`, Web loads
+`GET /external-work/actions/:id`, shows the target snapshot, comment body or label set,
+action status, last error, and linked artifacts, then uses the normal approval endpoints
+for Approve/Deny.
+
+Approval and execution stay separate. After a user approves an external action, Web
+refreshes the action detail and only shows `Execute action` when the action status is
+`approved`. Clicking that button calls `POST /external-work/actions/:id/execute`.
+Cancelling from Web calls `POST /external-work/actions/:id/cancel`. Web does not support
+edit-and-approve in this phase; users cancel and create a fresh proposal instead.
+
 ### Reconcile External Work
 
 ```http

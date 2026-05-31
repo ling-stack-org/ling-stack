@@ -17,6 +17,7 @@ import {
   buildRunRequest,
   buildTaskRunRequest,
   cancelRun,
+  cancelExternalWorkAction,
   checkProvider,
   checkProviderDraft,
   channelAttachmentContentUrl,
@@ -37,6 +38,8 @@ import {
   deleteChannel,
   deleteTask,
   deleteProvider,
+  executeExternalWorkAction,
+  getExternalWorkAction,
   getDaemonHealth,
   getProviderSecret,
   getApprovalPolicy,
@@ -104,6 +107,8 @@ import type {
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
   CreateAiTeammateRequest,
+  ExternalWorkActionMutationResponse,
+  ExternalWorkActionView,
   MediaJob,
   MediaJobFormState,
   ProviderCheckResult,
@@ -194,6 +199,8 @@ import { StatusBadge } from "../shared/components/index.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
+
+type ExternalActionBusyState = "execute" | "cancel";
 
 const defaultForm: RunFormState = {
   cwd: "",
@@ -325,6 +332,8 @@ export function AppShell(): JSX.Element {
   const [approvals, setApprovals] = useState<readonly ApprovalRequest[]>([]);
   const [approvalsLoading, setApprovalsLoading] = useState(false);
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, ApprovalResolution>>({});
+  const [externalActionDetails, setExternalActionDetails] = useState<Readonly<Record<string, ExternalWorkActionView>>>({});
+  const [externalActionBusy, setExternalActionBusy] = useState<Record<string, ExternalActionBusyState>>({});
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [artifacts, setArtifacts] = useState<readonly RunArtifact[]>([]);
@@ -2074,10 +2083,95 @@ export function AppShell(): JSX.Element {
       setErrorMessage("");
       const response = await listApprovals(cwd.trim(), { runId });
       setApprovals((current) => (runId ? mergeApprovalsForRun(current, response.approvals, runId) : response.approvals));
+      await refreshExternalActionDetails(cwd.trim(), response.approvals);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setApprovalsLoading(false);
+    }
+  }
+
+  async function refreshExternalActionDetails(cwd: string, sourceApprovals: readonly ApprovalRequest[]): Promise<void> {
+    const actionIds = [...new Set(sourceApprovals.map((approval) => approval.externalWorkActionId).filter(Boolean))] as string[];
+    if (actionIds.length === 0) {
+      return;
+    }
+
+    const loaded = await Promise.all(
+      actionIds.map(async (actionId) => {
+        try {
+          const response = await getExternalWorkAction(cwd, actionId);
+          return response.action;
+        } catch {
+          return undefined;
+        }
+      }),
+    );
+    const nextEntries = loaded.filter((item): item is ExternalWorkActionView => Boolean(item));
+    if (nextEntries.length === 0) {
+      return;
+    }
+    setExternalActionDetails((current) => ({
+      ...current,
+      ...Object.fromEntries(nextEntries.map((item) => [item.action.id, item])),
+    }));
+  }
+
+  function applyExternalActionMutation(response: ExternalWorkActionMutationResponse): void {
+    setExternalActionDetails((current) => {
+      const existing = current[response.action.id];
+      return {
+        ...current,
+        [response.action.id]: {
+          action: response.action,
+          externalWork: existing?.externalWork,
+          approval: response.approval ?? existing?.approval,
+          artifacts: response.artifacts,
+        },
+      };
+    });
+    const approval = response.approval;
+    if (approval) {
+      setApprovals((current) => upsertApproval(current, approval));
+      setSelectedApprovalId(approval.id);
+    }
+  }
+
+  async function executeExternalAction(actionId: string): Promise<void> {
+    const cwd = form.cwd.trim();
+    if (!cwd || externalActionBusy[actionId]) {
+      return;
+    }
+
+    setExternalActionBusy((current) => ({ ...current, [actionId]: "execute" }));
+    try {
+      setErrorMessage("");
+      const response = await executeExternalWorkAction(cwd, actionId);
+      applyExternalActionMutation(response);
+      await refreshApprovals(cwd);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExternalActionBusy((current) => removeRecordKey(current, actionId));
+    }
+  }
+
+  async function cancelExternalAction(actionId: string, reason?: string): Promise<void> {
+    const cwd = form.cwd.trim();
+    if (!cwd || externalActionBusy[actionId]) {
+      return;
+    }
+
+    setExternalActionBusy((current) => ({ ...current, [actionId]: "cancel" }));
+    try {
+      setErrorMessage("");
+      const response = await cancelExternalWorkAction(cwd, actionId, { reason });
+      applyExternalActionMutation(response);
+      await refreshApprovals(cwd);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExternalActionBusy((current) => removeRecordKey(current, actionId));
     }
   }
 
@@ -2139,8 +2233,12 @@ export function AppShell(): JSX.Element {
 
       const resolvedRunId = response.approval.runId || approvalBeforeResolution?.runId;
       const resolvedMediaJobId = response.approval.mediaJobId || approvalBeforeResolution?.mediaJobId;
+      const resolvedExternalActionId = response.approval.externalWorkActionId || approvalBeforeResolution?.externalWorkActionId;
       const workspaceCwd = form.cwd.trim();
       await refreshApprovals(workspaceCwd, resolvedRunId);
+      if (resolvedExternalActionId) {
+        await refreshExternalActionDetails(workspaceCwd, [response.approval]);
+      }
       if (resolvedRunId && (resolvedRunId === activeRunId || resolvedRunId === lookupRunId || resolvedRunId === approvalRepairRunId)) {
         await Promise.all([loadRun(resolvedRunId, workspaceCwd), refreshRuns(workspaceCwd)]);
         window.setTimeout(() => {
@@ -2734,6 +2832,8 @@ export function AppShell(): JSX.Element {
                 repairRunId={approvalRepairRunId}
                 repairRun={approvalRepairRun}
                 selectedApprovalId={selectedApprovalId}
+                externalActionDetails={externalActionDetails}
+                externalActionBusy={externalActionBusy}
                 isLoading={approvalsLoading}
                 resolvingApprovals={resolvingApprovals}
                 errorMessage={errorMessage}
@@ -2748,6 +2848,8 @@ export function AppShell(): JSX.Element {
                   void loadRun(runId, form.cwd.trim());
                 }}
                 onResolve={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+                onExecuteExternalAction={(actionId) => void executeExternalAction(actionId)}
+                onCancelExternalAction={(actionId) => void cancelExternalAction(actionId, "Cancelled from Web Inbox")}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onClearRepair={() => setApprovalRepairRunId("")}
               />
@@ -2790,6 +2892,8 @@ export function AppShell(): JSX.Element {
               mediaJobArtifacts={mediaJobArtifacts}
               approvals={approvals}
               selectedApprovalId={selectedApprovalId}
+              externalActionDetails={externalActionDetails}
+              externalActionBusy={externalActionBusy}
               approvalPolicy={approvalPolicy}
               approvalPolicyForm={approvalPolicyForm}
               cwd={form.cwd}
@@ -2797,6 +2901,8 @@ export function AppShell(): JSX.Element {
               onLoadRun={() => void loadRun()}
               onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
               onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+              onExecuteExternalAction={(actionId) => void executeExternalAction(actionId)}
+              onCancelExternalAction={(actionId) => void cancelExternalAction(actionId, "Cancelled from Web Inspector")}
             />
           ) : null}
         </aside>

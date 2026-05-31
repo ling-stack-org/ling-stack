@@ -21,6 +21,7 @@ import type {
   ApprovalPolicy,
   ApprovalPolicyFormState,
   ApprovalRequest,
+  ExternalWorkActionView,
   MediaJob,
   ProviderCheckResult,
   ProviderPreset,
@@ -31,6 +32,7 @@ import type {
 } from "../../types.js";
 import type { SelectedEntity, ViewId } from "../../app/view-types.js";
 import { ApprovalCard, type ApprovalResolution } from "../approvals/index.js";
+import type { ExternalActionBusyState } from "../approvals/ApprovalsPage.js";
 import { RunInspector, RunTimeline } from "../runs/index.js";
 
 export function PageInspector({
@@ -58,12 +60,16 @@ export function PageInspector({
   cwd,
   approvals,
   selectedApprovalId,
+  externalActionDetails,
+  externalActionBusy,
   approvalPolicy,
   approvalPolicyForm,
   onLookupRunIdChange,
   onLoadRun,
   onRefreshApprovals,
   onResolveApproval,
+  onExecuteExternalAction,
+  onCancelExternalAction,
 }: {
   readonly activeView: ViewId;
   readonly selectedEntity: SelectedEntity;
@@ -89,12 +95,16 @@ export function PageInspector({
   readonly cwd: string;
   readonly approvals: readonly ApprovalRequest[];
   readonly selectedApprovalId: string;
+  readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
+  readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
   readonly approvalPolicy: ApprovalPolicy | undefined;
   readonly approvalPolicyForm: ApprovalPolicyFormState;
   readonly onLookupRunIdChange: (runId: string) => void;
   readonly onLoadRun: () => void;
   readonly onRefreshApprovals: () => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onExecuteExternalAction: (actionId: string) => void;
+  readonly onCancelExternalAction: (actionId: string) => void;
 }): JSX.Element {
   if (activeView === "runs") {
     return (
@@ -139,7 +149,12 @@ export function PageInspector({
         approval={approvals.find((item) => item.id === approvalId) ?? approvals[0]}
         approvals={approvals}
         resolvingApprovals={resolvingApprovals}
+        externalActionDetails={externalActionDetails}
+        externalActionBusy={externalActionBusy}
+        cwd={cwd}
         onResolveApproval={onResolveApproval}
+        onExecuteExternalAction={onExecuteExternalAction}
+        onCancelExternalAction={onCancelExternalAction}
       />
     );
   }
@@ -294,12 +309,22 @@ function ApprovalInspector({
   approval,
   approvals,
   resolvingApprovals,
+  externalActionDetails,
+  externalActionBusy,
+  cwd,
   onResolveApproval,
+  onExecuteExternalAction,
+  onCancelExternalAction,
 }: {
   readonly approval: ApprovalRequest | undefined;
   readonly approvals: readonly ApprovalRequest[];
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
+  readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
+  readonly cwd: string;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onExecuteExternalAction: (actionId: string) => void;
+  readonly onCancelExternalAction: (actionId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const pendingCount = approvals.filter((item) => effectiveApprovalStatus(item) === "pending").length;
@@ -317,8 +342,13 @@ function ApprovalInspector({
         <ApprovalCard
           approval={approval}
           compact
+          externalAction={approval.externalWorkActionId ? externalActionDetails[approval.externalWorkActionId] : undefined}
+          externalActionBusy={approval.externalWorkActionId ? externalActionBusy[approval.externalWorkActionId] : undefined}
+          cwd={cwd}
           resolvingDecision={resolvingApprovals[approval.id]}
           onResolve={onResolveApproval}
+          onExecuteExternalAction={onExecuteExternalAction}
+          onCancelExternalAction={onCancelExternalAction}
         />
       ) : (
         <div className="empty-state compact-empty">

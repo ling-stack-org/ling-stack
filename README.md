@@ -285,7 +285,9 @@ workspace state, and reconcile durable scheduler state. Neither path starts the 
 or mutates GitHub. Phase 3 adds approval-gated action records for GitHub comments and
 labels. Propose/list/show/cancel stay local-only; `actions execute` is the only command
 that can call the approved GitHub comment or label endpoint after stale-target
-revalidation.
+revalidation. The Web Inbox now shows GitHub external action approval cards with the
+target snapshot, proposed payload, linked evidence artifacts, and a separate Execute
+action button after approval; approving in Web does not execute the mutation.
 
 For live poll/reconcile, prefer authenticated GitHub reads. The bundled example
 `WORKFLOW.md` uses `source.secretRef: env:GITHUB_TOKEN`; start or restart the daemon

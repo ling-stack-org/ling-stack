@@ -142,9 +142,23 @@
   color: #116149;
 }
 
+.approval-state.succeeded {
+  border-color: var(--success-border, #a9cfc0);
+  background: var(--success-soft, #e7f5ef);
+  color: var(--success, #116149);
+}
+
+.approval-state.executing {
+  border-color: var(--accent-border, #b7c7ee);
+  background: var(--accent-soft, #edf3ff);
+  color: var(--accent, #1d4ed8);
+}
+
 .approval-state.denied,
 .approval-state.expired,
 .approval-state.cancelled,
+.approval-state.failed,
+.approval-state.stale_target,
 .approval-risk.high,
 .approval-risk.critical {
   border-color: #e7b4a8;
@@ -169,6 +183,135 @@
 .approval-payload-summary p {
   margin: 0;
   line-height: 1.45;
+}
+
+.external-action-audit {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border, #d8ded7);
+  background: var(--surface-panel-strong, #ffffff);
+}
+
+.external-action-audit.compact {
+  padding: 9px;
+}
+
+.external-action-audit-head,
+.external-action-audit-head span,
+.external-action-meta,
+.external-action-controls,
+.external-action-target-link,
+.external-action-error,
+.external-action-labels {
+  display: flex;
+  align-items: center;
+}
+
+.external-action-audit-head {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.external-action-audit-head span {
+  min-width: 0;
+  gap: 6px;
+}
+
+.external-action-audit-head strong {
+  color: var(--text-strong, #17211f);
+  font-size: 13px;
+}
+
+.external-action-meta {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.external-action-meta span,
+.external-action-meta time {
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid var(--border, #d8ded7);
+  background: var(--surface-panel, #fbfcfa);
+  color: var(--text-muted, #61706b);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.external-action-target-link {
+  gap: 6px;
+  min-width: 0;
+  color: var(--accent, #2563eb);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.external-action-target-link:hover {
+  text-decoration: underline;
+}
+
+.external-action-preview {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border, #d8ded7);
+  background: var(--surface-panel, #fbfcfa);
+}
+
+.external-action-preview strong {
+  color: var(--text-strong, #17211f);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.external-action-preview p,
+.external-action-missing {
+  margin: 0;
+  color: var(--text-muted, #4f5e59);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.external-action-labels {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.external-action-labels span {
+  padding: 3px 7px;
+  border: 1px solid var(--accent-border, #b7c7ee);
+  background: var(--accent-soft, #edf3ff);
+  color: var(--accent, #1d4ed8);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.external-action-error {
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger-border, #e7b4a8);
+  background: var(--danger-soft, #fff1ed);
+  color: var(--danger, #9a341f);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.external-action-artifacts {
+  display: grid;
+  gap: 6px;
+}
+
+.external-action-controls {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.approval-row.compact .external-action-controls {
+  justify-content: flex-start;
 }
 
 .approval-decision-panel {
