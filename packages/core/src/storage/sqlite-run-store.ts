@@ -143,6 +143,13 @@ import {
   type RunStatus,
 } from "../run-types.js";
 import {
+  createExternalWorkId,
+  type CreateExternalWorkWorkflowInput,
+  type ExternalWorkItem,
+  type ExternalWorkRecord,
+  type ExternalWorkWorkflowResult,
+} from "../external-work-types.js";
+import {
   createResourceLeaseId,
   createStateTransitionEventId,
   type CreateResourceLeaseInput,
@@ -210,6 +217,8 @@ const CHANNEL_WORKFLOW_MIGRATION_VERSION = 15;
 const CHANNEL_WORKFLOW_MIGRATION_NAME = "create_channel_handoff_workflows";
 const AI_TEAMMATE_WORKSPACE_MIGRATION_VERSION = 16;
 const AI_TEAMMATE_WORKSPACE_MIGRATION_NAME = "create_ai_teammate_private_workspace";
+const EXTERNAL_WORK_MIGRATION_VERSION = 17;
+const EXTERNAL_WORK_MIGRATION_NAME = "create_external_work_items";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -444,8 +453,10 @@ export class SqliteRunStore implements RunStore {
   createArtifact(input: CreateRunArtifactInput): RunArtifact {
     const runId = normalizeOptionalOwnerId(input.runId);
     const mediaJobId = normalizeOptionalOwnerId(input.mediaJobId);
-    if (Boolean(runId) === Boolean(mediaJobId)) {
-      throw new Error("Artifact must belong to exactly one run or media job.");
+    const externalWorkId = normalizeOptionalOwnerId(input.externalWorkId);
+    const ownerCount = [runId, mediaJobId, externalWorkId].filter(Boolean).length;
+    if (ownerCount !== 1) {
+      throw new Error("Artifact must belong to exactly one run, media job, or external work item.");
     }
     if (runId && !this.getRun(runId)) {
       throw new Error(`Run session not found: ${runId}`);
@@ -453,11 +464,15 @@ export class SqliteRunStore implements RunStore {
     if (mediaJobId && !this.getMediaJob(mediaJobId)) {
       throw new Error(`Media job not found: ${mediaJobId}`);
     }
+    if (externalWorkId && !this.getExternalWorkRecord(externalWorkId)) {
+      throw new Error(`External work item not found: ${externalWorkId}`);
+    }
 
     const artifact: RunArtifact = omitUndefined({
       id: input.id ?? createArtifactId(),
       runId,
       mediaJobId,
+      externalWorkId,
       type: input.type,
       path: input.path,
       title: input.title,
@@ -472,18 +487,20 @@ export class SqliteRunStore implements RunStore {
           id,
           run_id,
           media_job_id,
+          external_work_id,
           type,
           path,
           title,
           content_type,
           size_bytes,
           created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         artifact.id,
         artifact.runId ?? null,
         artifact.mediaJobId ?? null,
+        artifact.externalWorkId ?? null,
         artifact.type,
         artifact.path,
         artifact.title ?? null,
@@ -515,6 +532,13 @@ export class SqliteRunStore implements RunStore {
     return this.database
       .prepare(`${artifactSelectSql("WHERE media_job_id = ?")} ORDER BY created_at ASC, id ASC`)
       .all(mediaJobId)
+      .map(mapArtifact);
+  }
+
+  listExternalWorkArtifacts(externalWorkId: string): RunArtifact[] {
+    return this.database
+      .prepare(`${artifactSelectSql("WHERE external_work_id = ?")} ORDER BY created_at ASC, id ASC`)
+      .all(externalWorkId)
       .map(mapArtifact);
   }
 
@@ -2732,6 +2756,137 @@ export class SqliteRunStore implements RunStore {
     return result;
   }
 
+  createOrReuseExternalWorkWorkflow(input: CreateExternalWorkWorkflowInput, now: string): ExternalWorkWorkflowResult {
+    this.assertChannelExists(input.channelId);
+    const existing = this.getExternalWorkRecordByIdempotency(input.externalWorkItem.sourceKind, input.externalWorkItem.idempotencyKey);
+    if (existing) {
+      const workflow = this.getChannelWorkflow(existing.workflowId);
+      const workflowStep = this.getChannelWorkflowStep(existing.workflowStepId);
+      if (!workflow || !workflowStep) {
+        throw new Error(`External work mapping points to missing workflow state: ${existing.id}`);
+      }
+      return {
+        externalWork: existing,
+        workflow,
+        workflowStep,
+        duplicate: true,
+      };
+    }
+
+    const channel = this.getChannel(input.channelId);
+    if (!channel) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+    const participantId = input.toParticipantId ?? channel.defaultTeammateId ?? input.workflowDefinition.config.agent.teammateId ?? "engineer";
+    const participantLabel = input.toParticipantLabel ?? labelForParticipant(participantId);
+    const workflow = this.createChannelWorkflow(
+      {
+        channelId: input.channelId,
+        title: `External work: ${input.externalWorkItem.identifier}`,
+        objective: `Handle ${input.externalWorkItem.kind} ${input.externalWorkItem.identifier}: ${input.externalWorkItem.title}`,
+        status: "ready",
+        createdBy: `${input.externalWorkItem.sourceKind}:external-work`,
+      },
+      now,
+    );
+    const workflowStep = this.createChannelWorkflowStep(
+      {
+        workflowId: workflow.id,
+        title: `Review ${input.externalWorkItem.identifier}`,
+        prompt: input.renderedPrompt,
+        toParticipantId: participantId,
+        toParticipantLabel: participantLabel,
+      },
+      now,
+    );
+    const record: ExternalWorkRecord = {
+      id: createExternalWorkId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      sourceKind: input.externalWorkItem.sourceKind,
+      workItemKind: input.externalWorkItem.kind,
+      externalId: input.externalWorkItem.id,
+      identifier: input.externalWorkItem.identifier,
+      idempotencyKey: input.externalWorkItem.idempotencyKey,
+      workflowId: workflow.id,
+      workflowStepId: workflowStep.id,
+      artifactIds: [],
+      item: input.externalWorkItem,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO external_work_items (
+          id,
+          workspace_id,
+          channel_id,
+          source_kind,
+          work_item_kind,
+          external_id,
+          identifier,
+          idempotency_key,
+          workflow_id,
+          workflow_step_id,
+          artifact_ids_json,
+          item_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        record.id,
+        record.workspaceId,
+        record.channelId,
+        record.sourceKind,
+        record.workItemKind,
+        record.externalId,
+        record.identifier,
+        record.idempotencyKey,
+        record.workflowId,
+        record.workflowStepId,
+        stringifyJson(record.artifactIds),
+        stringifyJson(record.item),
+        record.createdAt,
+        record.updatedAt,
+      );
+
+    const created = this.getExternalWorkRecord(record.id);
+    if (!created) {
+      throw new Error(`Failed to create external work item: ${record.id}`);
+    }
+    return {
+      externalWork: created,
+      workflow,
+      workflowStep,
+      duplicate: false,
+    };
+  }
+
+  getExternalWorkRecord(id: string): ExternalWorkRecord | undefined {
+    const row = this.database.prepare(externalWorkSelectSql("WHERE id = ?")).get(id);
+    return row ? mapExternalWorkRecord(row) : undefined;
+  }
+
+  getExternalWorkRecordByIdempotency(sourceKind: ExternalWorkRecord["sourceKind"], idempotencyKey: string): ExternalWorkRecord | undefined {
+    const row = this.database
+      .prepare(externalWorkSelectSql("WHERE workspace_id = ? AND source_kind = ? AND idempotency_key = ?"))
+      .get(DEFAULT_WORKSPACE_ID, sourceKind, idempotencyKey);
+    return row ? mapExternalWorkRecord(row) : undefined;
+  }
+
+  updateExternalWorkArtifacts(id: string, artifactIds: readonly string[], now: string): ExternalWorkRecord | undefined {
+    const existing = this.getExternalWorkRecord(id);
+    if (!existing) {
+      return undefined;
+    }
+    this.database
+      .prepare("UPDATE external_work_items SET artifact_ids_json = ?, updated_at = ? WHERE id = ?")
+      .run(stringifyJson([...artifactIds]), now, id);
+    return this.getExternalWorkRecord(id);
+  }
+
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {
     const preset: ProviderPreset = {
       id: createProviderPresetId(),
@@ -4127,6 +4282,102 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(AI_TEAMMATE_WORKSPACE_MIGRATION_VERSION, AI_TEAMMATE_WORKSPACE_MIGRATION_NAME);
       }
     }
+
+    const hasExternalWorkMigration = this.hasMigration(EXTERNAL_WORK_MIGRATION_VERSION);
+    if (
+      !hasExternalWorkMigration ||
+      !this.hasTable("external_work_items") ||
+      !this.hasColumn("artifacts", "external_work_id")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS external_work_items (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          source_kind TEXT NOT NULL,
+          work_item_kind TEXT NOT NULL,
+          external_id TEXT NOT NULL,
+          identifier TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL,
+          workflow_id TEXT NOT NULL,
+          workflow_step_id TEXT NOT NULL,
+          artifact_ids_json TEXT NOT NULL,
+          item_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_external_work_idempotency
+        ON external_work_items(workspace_id, source_kind, idempotency_key);
+
+        CREATE INDEX IF NOT EXISTS idx_external_work_channel_created
+        ON external_work_items(channel_id, created_at);
+      `);
+
+      if (!this.hasColumn("artifacts", "external_work_id")) {
+        this.database.exec(`
+          DROP TABLE IF EXISTS artifacts_next;
+
+          CREATE TABLE artifacts_next (
+            id TEXT PRIMARY KEY,
+            run_id TEXT,
+            media_job_id TEXT,
+            external_work_id TEXT,
+            type TEXT NOT NULL,
+            path TEXT NOT NULL,
+            title TEXT,
+            content_type TEXT,
+            size_bytes INTEGER,
+            created_at TEXT NOT NULL,
+            CHECK (
+              (run_id IS NOT NULL AND media_job_id IS NULL AND external_work_id IS NULL)
+              OR (run_id IS NULL AND media_job_id IS NOT NULL AND external_work_id IS NULL)
+              OR (run_id IS NULL AND media_job_id IS NULL AND external_work_id IS NOT NULL)
+            ),
+            FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY(media_job_id) REFERENCES media_jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY(external_work_id) REFERENCES external_work_items(id) ON DELETE CASCADE
+          );
+
+          INSERT INTO artifacts_next (
+            id,
+            run_id,
+            media_job_id,
+            external_work_id,
+            type,
+            path,
+            title,
+            content_type,
+            size_bytes,
+            created_at
+          )
+          SELECT
+            id,
+            run_id,
+            media_job_id,
+            NULL,
+            type,
+            path,
+            title,
+            content_type,
+            size_bytes,
+            created_at
+          FROM artifacts;
+
+          DROP TABLE artifacts;
+          ALTER TABLE artifacts_next RENAME TO artifacts;
+
+          CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
+          CREATE INDEX IF NOT EXISTS idx_artifacts_media_job ON artifacts(media_job_id);
+          CREATE INDEX IF NOT EXISTS idx_artifacts_external_work ON artifacts(external_work_id);
+          CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at);
+        `);
+      }
+
+      if (!hasExternalWorkMigration) {
+        this.recordMigration(EXTERNAL_WORK_MIGRATION_VERSION, EXTERNAL_WORK_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -4822,11 +5073,19 @@ function normalizeOptionalOwnerId(value: string | undefined): string | undefined
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function labelForParticipant(participantId: string): string {
+  if (participantId === "engineer" || participantId === "teammate_builtin_engineer") {
+    return "Engineer";
+  }
+  return participantId;
+}
+
 function mapArtifact(row: Record<string, SQLOutputValue>): RunArtifact {
   return omitUndefined({
     id: readString(row, "id"),
     runId: readNullableString(row, "run_id"),
     mediaJobId: readNullableString(row, "media_job_id"),
+    externalWorkId: readNullableString(row, "external_work_id"),
     type: readString(row, "type") as ArtifactType,
     path: readString(row, "path"),
     title: readNullableString(row, "title"),
@@ -4834,6 +5093,25 @@ function mapArtifact(row: Record<string, SQLOutputValue>): RunArtifact {
     sizeBytes: readNullableNumber(row, "size_bytes"),
     createdAt: readString(row, "created_at"),
   });
+}
+
+function mapExternalWorkRecord(row: Record<string, SQLOutputValue>): ExternalWorkRecord {
+  return {
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    sourceKind: readString(row, "source_kind") as ExternalWorkRecord["sourceKind"],
+    workItemKind: readString(row, "work_item_kind") as ExternalWorkRecord["workItemKind"],
+    externalId: readString(row, "external_id"),
+    identifier: readString(row, "identifier"),
+    idempotencyKey: readString(row, "idempotency_key"),
+    workflowId: readString(row, "workflow_id"),
+    workflowStepId: readString(row, "workflow_step_id"),
+    artifactIds: parseJsonStringArray(readString(row, "artifact_ids_json")),
+    item: parseJsonObject(readString(row, "item_json")) as unknown as ExternalWorkItem,
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  };
 }
 
 function mapMediaJob(row: Record<string, SQLOutputValue>): MediaJob {
@@ -5360,6 +5638,7 @@ function artifactSelectSql(whereClause: string): string {
       id,
       run_id,
       media_job_id,
+      external_work_id,
       type,
       path,
       title,
@@ -5367,6 +5646,28 @@ function artifactSelectSql(whereClause: string): string {
       size_bytes,
       created_at
     FROM artifacts
+    ${whereClause}
+  `;
+}
+
+function externalWorkSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      source_kind,
+      work_item_kind,
+      external_id,
+      identifier,
+      idempotency_key,
+      workflow_id,
+      workflow_step_id,
+      artifact_ids_json,
+      item_json,
+      created_at,
+      updated_at
+    FROM external_work_items
     ${whereClause}
   `;
 }

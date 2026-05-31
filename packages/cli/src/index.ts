@@ -409,6 +409,8 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleApprovals(rest, parsed.options);
     case "runs":
       return await handleRuns(rest, parsed.options);
+    case "external-work":
+      return await handleExternalWork(rest, parsed.options);
     case "ui":
       return await handleUi(rest, parsed.options);
     default:
@@ -1553,6 +1555,63 @@ async function handleRunsCancel(args: readonly string[], options: GlobalOptions)
   return 0;
 }
 
+async function handleExternalWork(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [source = "github", ...rest] = args;
+  if (source === "github") {
+    return await handleExternalWorkGitHub(rest, options);
+  }
+  throw new CliError(2, "unknown_command", `Unknown external-work source: ${source}`);
+}
+
+async function handleExternalWorkGitHub(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "import", ...rest] = args;
+  if (subcommand === "import") {
+    return await handleExternalWorkGitHubImport(rest, options);
+  }
+  throw new CliError(2, "unknown_command", `Unknown external-work github command: ${subcommand}`);
+}
+
+async function handleExternalWorkGitHubImport(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["channel", "event-type", "payload-file", "workflow-path", "workflow-markdown-file"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work github import");
+  const channelId = getFlag(parsed, "channel");
+  if (!channelId) {
+    throw new CliError(2, "missing_option", "external-work github import requires --channel <channelId>.");
+  }
+  const eventType = getFlag(parsed, "event-type");
+  if (!eventType) {
+    throw new CliError(2, "missing_option", "external-work github import requires --event-type <eventType>.");
+  }
+  const payloadFile = getFlag(parsed, "payload-file");
+  if (!payloadFile) {
+    throw new CliError(2, "missing_option", "external-work github import requires --payload-file <payload.json>.");
+  }
+  const workflowPath = getFlag(parsed, "workflow-path");
+  const workflowMarkdownFile = getFlag(parsed, "workflow-markdown-file");
+  if (workflowPath && workflowMarkdownFile) {
+    throw new CliError(2, "bad_usage", "--workflow-path and --workflow-markdown-file are mutually exclusive.");
+  }
+
+  const payload = await readJsonFile(payloadFile, "payload file");
+  const workflowMarkdown = workflowMarkdownFile ? await readUtf8File(workflowMarkdownFile, "workflow markdown file") : undefined;
+  const response = await requestJson(options, "POST", "/external-work/github/import", { cwd: options.cwd }, removeUndefined({
+    channelId,
+    eventType,
+    payload,
+    workflowPath,
+    workflowMarkdown,
+  }));
+
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkImport(response);
+  return 0;
+}
+
 async function initWorkspace(cwd: string, withProviderTemplates: boolean): Promise<InitResult> {
   const paths = resolveRuntimePaths(cwd);
   const logsDir = join(paths.rootDir, "logs");
@@ -2007,6 +2066,23 @@ async function readPrompt(parsed: ParsedCommandArgs, options: { readonly include
     promptParts.push(parsed.positionals.join(" "));
   }
   return promptParts.join("\n\n").trim();
+}
+
+async function readJsonFile(filePath: string, label: string): Promise<unknown> {
+  const text = await readUtf8File(filePath, label);
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new CliError(2, "invalid_json", `Invalid JSON in ${label} ${filePath}: ${errorMessage(error)}`);
+  }
+}
+
+async function readUtf8File(filePath: string, label: string): Promise<string> {
+  try {
+    return await readFile(resolve(filePath), "utf8");
+  } catch (error) {
+    throw new CliError(2, "file_read_error", `Cannot read ${label} ${filePath}: ${errorMessage(error)}`);
+  }
 }
 
 function readTools(parsed: ParsedCommandArgs): readonly string[] {
@@ -3062,6 +3138,33 @@ function printRunEvents(response: unknown): void {
   }
 }
 
+function printExternalWorkImport(response: unknown): void {
+  const item = readRequiredRecord(response, "externalWorkItem");
+  const workflow = readRequiredRecord(response, "workflow");
+  const workflowStep = readRequiredRecord(response, "workflowStep");
+  const artifacts = readArray(response, "artifacts");
+
+  console.log(`External work imported: ${readString(item, "identifier") ?? ""}`);
+  console.log(`Duplicate: ${readBoolean(response, "duplicate") ?? false}`);
+  console.log(`Kind: ${readString(item, "kind") ?? ""}`);
+  console.log(`State: ${readString(item, "state") ?? ""}`);
+  console.log(`Workflow: ${readString(workflow, "id") ?? ""} (${readString(workflow, "status") ?? ""})`);
+  console.log(`Step: ${readString(workflowStep, "id") ?? ""} (${readString(workflowStep, "status") ?? ""})`);
+  if (artifacts.length === 0) {
+    console.log("Artifacts: none");
+    return;
+  }
+  console.log("Artifacts:");
+  printTable(
+    ["ID", "Title", "Path"],
+    artifacts.map((artifact) => [
+      truncate(readString(artifact, "id") ?? "", 32),
+      truncate(readString(artifact, "title") ?? "", 34),
+      truncate(readString(artifact, "path") ?? "", 72),
+    ]),
+  );
+}
+
 function printTable(headers: readonly string[], rows: readonly (readonly string[])[]): void {
   const widths = headers.map((header, index) => {
     const values = rows.map((row) => row[index] ?? "");
@@ -3334,6 +3437,10 @@ function printCommandHelp(command: string, subcommand?: string): void {
     printRunsHelp();
     return;
   }
+  if (command === "external-work") {
+    printExternalWorkHelp();
+    return;
+  }
   if (command === "daemon") {
     printDaemonHelp(subcommand);
     return;
@@ -3378,6 +3485,7 @@ Usage:
   ling-stack [global options] runs show <id>
   ling-stack [global options] runs events <id>
   ling-stack [global options] runs cancel <id>
+  ling-stack [global options] external-work github import --channel <id> --event-type <event> --payload-file <payload.json>
   ling-stack [global options] approvals list
   ling-stack [global options] approvals show <id>
   ling-stack [global options] approvals approve <id>
@@ -3488,6 +3596,23 @@ Options:
   --append-system-prompt <txt> Repeatable appended system prompt
   --agent-dir <path>           Pi agent directory
   --skip-preflight             Skip provider last-check gate for debugging
+`);
+}
+
+function printExternalWorkHelp(): void {
+  console.log(`Usage:
+  ling-stack external-work github import --channel <channelId> --event-type <eventType> --payload-file <payload.json> [options]
+
+Options:
+  --channel <id>                  Ling channel id that owns the imported workflow
+  --event-type <event>            GitHub event type, for example pull_request.opened or issue.opened
+  --payload-file <path>           Local GitHub PR or issue payload JSON fixture
+  --workflow-path <path>          WORKFLOW.md path resolved and bounded by the daemon
+  --workflow-markdown-file <path> Read workflow markdown from a local file and send it inline
+
+Behavior:
+  Creates or reuses local Ling workflow records and evidence artifacts only.
+  It does not start a runner or mutate GitHub.
 `);
 }
 

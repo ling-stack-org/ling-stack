@@ -1,0 +1,25 @@
+{
+  "repository": {
+    "id": 10001,
+    "name": "openclaw",
+    "full_name": "openclaw/openclaw",
+    "default_branch": "main",
+    "html_url": "https://github.com/openclaw/openclaw",
+    "owner": {
+      "login": "openclaw"
+    }
+  },
+  "issue": {
+    "id": 42001,
+    "number": 42,
+    "title": "Dashboard fails to load",
+    "body": "The local dashboard returns HTTP 500 after the workspace starts.",
+    "html_url": "https://github.com/openclaw/openclaw/issues/42",
+    "state": "open",
+    "labels": [
+      "bug",
+      "web"
+    ],
+    "updated_at": "2026-05-29T19:00:00Z"
+  }
+}

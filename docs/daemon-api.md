@@ -531,6 +531,89 @@ Starting a step acquires a `workflow_step` lease. Duplicate starts return
 `409 resource_conflict` while the lease is active. Step `skip` and `cancel` only mutate
 workflow-step state; they do not mark linked task/run records terminal.
 
+## External Work Import
+
+Phase 1 adds a read-only GitHub manual import path. It parses a repository
+`WORKFLOW.md`, normalizes a GitHub PR or issue payload, creates or reuses a
+`ChannelWorkflow` and `ChannelWorkflowStep`, and writes local evidence artifacts. It
+does not start a runner, poll GitHub, receive webhooks, post comments, add labels,
+request reviews, push commits, or merge.
+
+```http
+POST /external-work/github/import?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "channelId": "channel_...",
+  "eventType": "pull_request.opened",
+  "payload": {
+    "repository": { "full_name": "owner/repo" },
+    "pull_request": { "number": 123, "title": "Fix bug" }
+  },
+  "workflowPath": "WORKFLOW.md"
+}
+```
+
+`workflowMarkdown` may be supplied instead of `workflowPath` for tests and manual
+imports. If neither is supplied, the daemon reads `WORKFLOW.md` from the channel
+`boundPath`. `workflowPath` may be absolute or relative, but it must resolve inside the
+channel `boundPath`.
+
+Response:
+
+```json
+{
+  "externalWorkItem": {
+    "sourceKind": "github",
+    "kind": "github_pull_request",
+    "identifier": "owner/repo#123",
+    "idempotencyKey": "github:pull_request:owner/repo:123:head-sha:updated-at"
+  },
+  "workflow": {},
+  "workflowStep": {},
+  "artifacts": [],
+  "duplicate": false
+}
+```
+
+The same source idempotency key returns the existing workflow and step with
+`duplicate: true`. Evidence artifacts currently include the normalized external work
+item JSON and rendered workflow prompt markdown, both served through the existing
+artifact endpoints.
+
+SDK clients can use the same endpoint through:
+
+```ts
+await client.importGitHubExternalWork("/path/to/project", {
+  channelId: "channel_...",
+  eventType: "pull_request.opened",
+  payload,
+  workflowPath: "WORKFLOW.md",
+});
+```
+
+The CLI exposes the same read-only manual import for local fixtures:
+
+```bash
+ling-stack --cwd /path/to/project external-work github import \
+  --channel channel_... \
+  --event-type pull_request.opened \
+  --payload-file examples/external-work/github/pull-request-opened.json \
+  --workflow-path WORKFLOW.md
+```
+
+`--workflow-markdown-file <path>` may be used instead of `--workflow-path` for inline
+manual tests. The CLI and SDK only call the local daemon import endpoint; they do not
+call GitHub APIs, start a runner, or create external mutation actions.
+
+For a copy-pasteable temp workspace smoke, use
+`examples/external-work/github/README.md`. That smoke copies the example `WORKFLOW.md`
+into a temporary channel bound path, creates a channel, imports the PR or issue fixture,
+and reads the returned evidence artifacts through `/artifacts/:id/content`.
+
 ### Run Persisted Task
 
 ```http

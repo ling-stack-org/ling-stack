@@ -97,6 +97,11 @@ import type {
   WorkflowStepTransitionEvent,
   WorkflowTransitionEvent,
 } from "./state-machines.js";
+import type {
+  CreateExternalWorkWorkflowInput,
+  ExternalWorkRecord,
+  ExternalWorkWorkflowResult,
+} from "./external-work-types.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
@@ -195,6 +200,7 @@ export interface RunArtifact {
   readonly id: string;
   readonly runId?: string;
   readonly mediaJobId?: string;
+  readonly externalWorkId?: string;
   readonly type: ArtifactType;
   readonly path: string;
   readonly title?: string;
@@ -207,6 +213,7 @@ export interface CreateRunArtifactInput {
   readonly id?: string;
   readonly runId?: string;
   readonly mediaJobId?: string;
+  readonly externalWorkId?: string;
   readonly type: ArtifactType;
   readonly path: string;
   readonly title?: string;
@@ -233,6 +240,7 @@ export interface RunStore {
   getArtifact(artifactId: string): RunArtifact | undefined;
   listArtifacts(runId: string): RunArtifact[];
   listMediaJobArtifacts(mediaJobId: string): RunArtifact[];
+  listExternalWorkArtifacts(externalWorkId: string): RunArtifact[];
   recoverStaleRuns(now: string): number;
   listStateTransitionEvents(options?: ListStateTransitionEventsOptions): StateTransitionEvent[];
   recordStateTransitionEvent(input: CreateStateTransitionEventInput): StateTransitionEvent;
@@ -387,6 +395,10 @@ export interface RunStore {
   expireApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   getApprovalPolicy(): ApprovalPolicy;
   updateApprovalPolicy(input: ApprovalPolicyUpdateInput, now: string): ApprovalPolicy;
+  createOrReuseExternalWorkWorkflow(input: CreateExternalWorkWorkflowInput, now: string): ExternalWorkWorkflowResult;
+  getExternalWorkRecord(id: string): ExternalWorkRecord | undefined;
+  getExternalWorkRecordByIdempotency(sourceKind: ExternalWorkRecord["sourceKind"], idempotencyKey: string): ExternalWorkRecord | undefined;
+  updateExternalWorkArtifacts(id: string, artifactIds: readonly string[], now: string): ExternalWorkRecord | undefined;
   close(): void;
 }
 

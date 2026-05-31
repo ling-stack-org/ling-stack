@@ -45,6 +45,8 @@ import type {
   CreateMediaJobRequest,
   CreateTaskRequest,
   DaemonHealthResponse,
+  ExternalGitHubImportRequest,
+  ExternalWorkImportResponse,
   ListApprovalsRequest,
   ListResourceLeasesRequest,
   ListStateTransitionsRequest,
@@ -571,6 +573,10 @@ export class LingDaemonClient {
 
   async listMediaJobArtifacts(mediaJobId: string, cwd?: string): Promise<MediaJobArtifactListResponse> {
     return this.get(`/media-jobs/${encodeURIComponent(mediaJobId)}/artifacts`, { cwd });
+  }
+
+  async importGitHubExternalWork(cwd: string, input: ExternalGitHubImportRequest): Promise<ExternalWorkImportResponse> {
+    return this.post("/external-work/github/import", { cwd }, input);
   }
 
   async listStateTransitions(cwd: string, options: ListStateTransitionsRequest = {}): Promise<StateTransitionListResponse> {

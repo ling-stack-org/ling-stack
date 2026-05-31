@@ -1,0 +1,37 @@
+{
+  "repository": {
+    "id": 10001,
+    "name": "openclaw",
+    "full_name": "openclaw/openclaw",
+    "default_branch": "main",
+    "html_url": "https://github.com/openclaw/openclaw",
+    "owner": {
+      "login": "openclaw"
+    }
+  },
+  "pull_request": {
+    "id": 86279001,
+    "number": 86279,
+    "title": "Add dependency guard",
+    "body": "Protect generated dependency files from stale tool output.",
+    "html_url": "https://github.com/openclaw/openclaw/pull/86279",
+    "state": "open",
+    "labels": [
+      {
+        "name": "CI"
+      },
+      {
+        "name": "Dependencies"
+      }
+    ],
+    "updated_at": "2026-05-29T20:26:56Z",
+    "base": {
+      "ref": "main",
+      "sha": "base-sha-1"
+    },
+    "head": {
+      "ref": "dependency-guard",
+      "sha": "head-sha-1"
+    }
+  }
+}

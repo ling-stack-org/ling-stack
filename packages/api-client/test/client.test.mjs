@@ -270,6 +270,46 @@ test("uses expected routes for delete, cancel, check, and artifact URLs", async 
   assert.equal(client.attachmentContentUrl("attachment 1", "/repo"), "http://daemon.test/attachments/attachment%201/content?cwd=%2Frepo");
 });
 
+test("imports GitHub external work without transforming the daemon response", async () => {
+  const importResponse = {
+    externalWorkItem: {
+      id: "github:pull_request:owner/repo#123",
+      sourceKind: "github",
+      kind: "github_pull_request",
+      identifier: "owner/repo#123",
+      title: "Fix bug",
+      state: "open",
+      labels: ["bug"],
+      payloadRef: "pull_request.opened:owner/repo#123",
+      idempotencyKey: "github:pull_request:owner/repo:123:head-sha:updated-at",
+    },
+    workflow: { id: "workflow_1", status: "ready" },
+    workflowStep: { id: "step_1", status: "queued" },
+    artifacts: [{ id: "artifact_1", type: "json", path: "external-work/item.json", createdAt: "2026-05-31T00:00:00.000Z" }],
+    duplicate: false,
+  };
+  const mock = createFetchMock(importResponse);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  const response = await client.importGitHubExternalWork("/repo path", {
+    channelId: "channel 1",
+    eventType: "pull_request.opened",
+    payload: { pull_request: { number: 123 } },
+    workflowPath: "WORKFLOW.md",
+  });
+
+  assert.deepEqual(response, importResponse);
+  assert.equal(mock.calls.length, 1);
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/external-work/github/import?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    channelId: "channel 1",
+    eventType: "pull_request.opened",
+    payload: { pull_request: { number: 123 } },
+    workflowPath: "WORKFLOW.md",
+  });
+});
+
 test("maps daemon error bodies and workspace path errors", async () => {
   const fetchMessage = async () => jsonResponse({ message: "explicit message" }, { status: 418, statusText: "Teapot" });
   const messageClient = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: fetchMessage });

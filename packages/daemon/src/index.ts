@@ -12,6 +12,9 @@ import {
   DEFAULT_WORKSPACE_ID,
   defaultProviderTemplates,
   getRunSummaryPath,
+  normalizeGitHubExternalWorkItem,
+  parseExternalWorkflowMarkdown,
+  renderExternalWorkflowPrompt,
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
   isSupportedSecretRef,
@@ -81,6 +84,9 @@ import {
   type ProviderPresetUpdateInput,
   type PublicProviderPreset,
   type RunArtifact,
+  type ExternalWorkImportResponse,
+  type ExternalWorkItem,
+  type ExternalWorkflowDefinition,
   type RunEventEnvelope,
   type RunEventType,
   type RunTool,
@@ -347,6 +353,14 @@ interface ChannelWorkflowStepStartRequest {
   readonly skipProviderPreflight?: boolean;
 }
 
+interface ExternalGitHubImportRequest {
+  readonly channelId: string;
+  readonly eventType: string;
+  readonly payload: unknown;
+  readonly workflowMarkdown?: string;
+  readonly workflowPath?: string;
+}
+
 interface PreparedRunConcurrency {
   readonly channel?: Channel;
   readonly taskExists: boolean;
@@ -517,6 +531,11 @@ async function routeRequest(
 
   if (url.pathname === "/media-jobs") {
     await handleMediaJobsCollection(request, response, config, storeRegistry, secretResolver);
+    return;
+  }
+
+  if (url.pathname === "/external-work/github/import") {
+    await handleExternalGitHubImport(request, response, config, storeRegistry);
     return;
   }
 
@@ -3294,6 +3313,153 @@ async function handleMediaJobsCollection(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+async function handleExternalGitHubImport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for GitHub external work import` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseExternalGitHubImportRequest(body);
+    const channel = store.getChannel(input.channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+      return;
+    }
+
+    const workflowMarkdown = readExternalWorkflowMarkdown(input, channel, cwd);
+    const workflowDefinition = parseExternalWorkflowMarkdown(workflowMarkdown);
+    if (workflowDefinition.config.source.kind !== "github") {
+      writeJson(response, 400, { error: "unsupported_source", message: `Unsupported external source kind: ${workflowDefinition.config.source.kind}` });
+      return;
+    }
+    const externalWorkItem = normalizeGitHubExternalWorkItem({
+      eventType: input.eventType,
+      payload: input.payload,
+      repositoryFullName: workflowDefinition.config.source.repository,
+    });
+    const renderedPrompt = renderExternalWorkflowPrompt(workflowDefinition.promptTemplate, { item: externalWorkItem });
+    const now = new Date().toISOString();
+    const imported = store.createOrReuseExternalWorkWorkflow(
+      {
+        channelId: channel.id,
+        externalWorkItem,
+        workflowDefinition,
+        renderedPrompt,
+      },
+      now,
+    );
+    const artifacts = imported.duplicate
+      ? store.listExternalWorkArtifacts(imported.externalWork.id)
+      : createExternalWorkEvidenceArtifacts(store, imported.externalWork.id, externalWorkItem, renderedPrompt, now);
+    if (!imported.duplicate) {
+      store.updateExternalWorkArtifacts(imported.externalWork.id, artifacts.map((artifact) => artifact.id), new Date().toISOString());
+    }
+    const responseBody: ExternalWorkImportResponse = {
+      externalWorkItem,
+      workflow: imported.workflow,
+      workflowStep: imported.workflowStep,
+      artifacts,
+      duplicate: imported.duplicate,
+    };
+    writeJson(response, imported.duplicate ? 200 : 201, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+function parseExternalGitHubImportRequest(value: unknown): ExternalGitHubImportRequest {
+  if (!isRecord(value)) {
+    throw new Error("Request body must be an object");
+  }
+  if (value.payload === undefined) {
+    throw new Error("payload is required");
+  }
+  return {
+    channelId: readString(value, "channelId"),
+    eventType: readString(value, "eventType"),
+    payload: value.payload,
+    workflowMarkdown: readOptionalString(value, "workflowMarkdown"),
+    workflowPath: readOptionalString(value, "workflowPath"),
+  };
+}
+
+function readExternalWorkflowMarkdown(input: ExternalGitHubImportRequest, channel: Channel, cwd: string): string {
+  if (input.workflowMarkdown !== undefined) {
+    return input.workflowMarkdown;
+  }
+  const root = channel.boundPath ?? cwd;
+  const workflowPath = input.workflowPath
+    ? isAbsolute(input.workflowPath)
+      ? input.workflowPath
+      : resolvePath(root, input.workflowPath)
+    : resolvePath(root, "WORKFLOW.md");
+  let rootRealPath: string;
+  let workflowRealPath: string;
+  try {
+    rootRealPath = realpathSync(root);
+    workflowRealPath = realpathSync(workflowPath);
+  } catch (error) {
+    throw new Error(`Workflow file cannot be read: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!isPathInsideRoot(rootRealPath, workflowRealPath)) {
+    throw new Error("workflowPath must resolve inside the channel bound path");
+  }
+  return readFileSync(workflowRealPath, "utf8");
+}
+
+function createExternalWorkEvidenceArtifacts(
+  store: RunStore,
+  externalWorkId: string,
+  externalWorkItem: ExternalWorkItem,
+  renderedPrompt: string,
+  createdAt: string,
+): RunArtifact[] {
+  const artifactDir = resolvePath(store.paths.artifactsDir, "external-work", externalWorkId);
+  mkdirSync(artifactDir, { recursive: true });
+  const itemJson = `${JSON.stringify(externalWorkItem, null, 2)}\n`;
+  const itemPath = resolvePath(artifactDir, "normalized-item.json");
+  writeFileSync(itemPath, itemJson, "utf8");
+  const promptText = `${renderedPrompt.trim()}\n`;
+  const promptPath = resolvePath(artifactDir, "rendered-prompt.md");
+  writeFileSync(promptPath, promptText, "utf8");
+
+  return [
+    store.createArtifact({
+      externalWorkId,
+      type: "json",
+      path: normalizeArtifactPath(relative(store.paths.artifactsDir, itemPath)),
+      title: "Normalized external work item",
+      contentType: "application/json; charset=utf-8",
+      sizeBytes: Buffer.byteLength(itemJson, "utf8"),
+      createdAt,
+    }),
+    store.createArtifact({
+      externalWorkId,
+      type: "markdown",
+      path: normalizeArtifactPath(relative(store.paths.artifactsDir, promptPath)),
+      title: "Rendered workflow prompt",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: Buffer.byteLength(promptText, "utf8"),
+      createdAt,
+    }),
+  ];
 }
 
 function handleMediaJobItem(
