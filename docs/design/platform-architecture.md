@@ -491,7 +491,9 @@ resource lease, and test plan lives in [GitHub Automation Design](github-automat
 
 ### Event Sources
 
-The GitHub channel source normalizes webhook or polled events:
+The GitHub channel source normalizes webhook or polled events. The Phase 4 CI triage
+implementation plan is tracked in
+[External Work Phase 4 Implementation](external-work-phase-4-implementation.md).
 
 ```text
 pull_request.opened

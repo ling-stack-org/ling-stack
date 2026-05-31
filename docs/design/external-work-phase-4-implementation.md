@@ -1,0 +1,327 @@
+# External Work Phase 4 Implementation Plan
+
+## Summary
+
+Phase 4 adds GitHub CI triage and local fix task creation on top of the completed
+GitHub PR/issue external-work path. The first implementation should stay manual and
+read-first: inspect failing GitHub checks and Actions jobs, write local evidence
+artifacts, create or reuse a scoped Ling task, and optionally let the existing task/run
+path perform a local fix under normal channel policy.
+
+Phase 4 must not become an auto-push bot. Reading CI metadata and logs is allowed with a
+GitHub token. Creating Ling records and artifacts is local-only. Starting a local fix run
+goes through existing channel runtime policy, provider preflight, resource leases, and
+approval policy. Pushing commits, posting diagnosis comments, requesting review changes,
+or merging remains an approval-gated external action and should not be part of the first
+CI triage implementation.
+
+## Goals
+
+- Turn a failing PR check into a durable, inspectable Ling triage record.
+- Capture enough evidence to reproduce the failure locally: check name, workflow/job,
+  failure conclusion, URLs, head SHA, key log excerpt, first likely failing command, and
+  suggested reproduction command.
+- Create a scoped Ling task such as `Fix failing CI: web e2e on owner/repo#123`.
+- Reuse existing channel, task, artifact, approval, lease, and run machinery instead of
+  adding a second scheduler database.
+- Keep idempotency stable across repeated manual triage calls for the same PR head SHA
+  and CI failure.
+
+## Non-Goals
+
+- No webhook receiver.
+- No background CI poll loop.
+- No automatic runner start by default.
+- No automatic push, force-push, branch creation, merge, PR review decision, issue close,
+  or release action.
+- No Linear CI concept.
+- No full log indexing or long-term log warehouse.
+- No attempt to parse every test framework perfectly in Phase 4.
+
+## GitHub API Boundary
+
+Use GitHub REST through an injected `fetch`, following the existing external-work adapter
+style. The first adapter should only perform `GET` requests.
+
+Read-only endpoints:
+
+- `GET /repos/{owner}/{repo}/commits/{ref}/check-runs` to list check runs for the PR
+  head SHA.
+- `GET /repos/{owner}/{repo}/actions/runs?head_sha={sha}` to list workflow runs for the
+  PR head SHA.
+- `GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs` to list jobs for a failing
+  workflow run.
+- `GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs` to download one failing job log
+  with byte limits and redaction.
+- Optional later: check-run annotations for richer file/line mapping.
+
+Token handling follows Phase 2 and Phase 3:
+
+- `source.secretRef` resolves through the daemon `SecretResolver`.
+- Token values are passed only to the current adapter call.
+- Tokens and authorization headers are never stored in SQLite or artifacts.
+- Logs are redacted before artifact write.
+
+Reference docs:
+
+- [REST API endpoints for checks](https://docs.github.com/en/rest/reference/checks)
+- [REST API endpoints for workflow runs](https://docs.github.com/rest/actions/workflow-runs/)
+- [REST API endpoints for workflow jobs](https://docs.github.com/en/rest/actions/workflow-jobs?apiVersion=2022-11-28)
+
+## Data Model
+
+Keep durable state in the existing workspace SQLite store.
+
+Add `external_work_ci_triage`:
+
+- `id`, `workspace_id`, `channel_id`, `external_work_id`.
+- `source_kind`: initially `github`.
+- `repository`, `subject_kind`, `subject_number`, `head_sha`.
+- `failure_key`: stable idempotency key for repository, PR number, head SHA, run/check id,
+  job id when available, conclusion, and updated timestamp.
+- `status`: `triaged`, `task_created`, `run_requested`, `blocked`, `stale`, `failed`.
+- `check_name`, `workflow_name`, `job_name`, `conclusion`, `html_url`.
+- `first_failing_command`, `reproduction_command`, `suspected_source_path`.
+- `task_id`, `run_id`.
+- `artifact_ids_json`: normalized CI item, log excerpt, triage summary, task prompt.
+- `last_error_code`, `last_error_message`.
+- `created_at`, `updated_at`.
+
+Indexes:
+
+- `(workspace_id, source_kind, failure_key)` unique.
+- `(workspace_id, external_work_id, status)`.
+- `(workspace_id, channel_id, updated_at)`.
+- `(workspace_id, head_sha)`.
+
+Do not add a separate CI scheduler database. This table is a local evidence and
+idempotency index for the existing external-work record.
+
+## Contracts
+
+Add contract/core DTOs:
+
+```ts
+export type ExternalWorkCiTriageStatus =
+  | "triaged"
+  | "task_created"
+  | "run_requested"
+  | "blocked"
+  | "stale"
+  | "failed";
+
+export interface GitHubCiFailure {
+  readonly repository: string;
+  readonly subjectKind: "github_pull_request";
+  readonly subjectNumber: number;
+  readonly headSha: string;
+  readonly checkName: string;
+  readonly workflowName?: string;
+  readonly jobName?: string;
+  readonly conclusion: "failure" | "cancelled" | "timed_out" | "action_required" | string;
+  readonly htmlUrl?: string;
+  readonly failureKey: string;
+  readonly firstFailingCommand?: string;
+  readonly reproductionCommand?: string;
+  readonly suspectedSourcePath?: string;
+  readonly logExcerptArtifactId?: string;
+}
+
+export interface ExternalWorkCiTriageRequest {
+  readonly channelId?: string;
+  readonly externalWorkId?: string;
+  readonly workflowPath?: string;
+  readonly limit?: number;
+  readonly createTask?: boolean;
+  readonly startRun?: boolean;
+}
+
+export interface ExternalWorkCiTriageResponse {
+  readonly cwd: string;
+  readonly triaged: number;
+  readonly taskCreated: number;
+  readonly duplicates: number;
+  readonly blocked: number;
+  readonly stale: number;
+  readonly failed: number;
+  readonly records: readonly ExternalWorkCiTriageView[];
+}
+```
+
+Phase 4.0 should target PR-owned CI only through an existing `externalWorkId`. A later
+webhook/polling phase may promote `github_check` into `ExternalWorkItemKind` for
+standalone check events, but that is not required for manual PR CI triage.
+
+## Service Flow
+
+`triageGitHubCiForExternalWork()`:
+
+1. Load the external work record and require `github_pull_request`.
+2. Parse the channel-bound `WORKFLOW.md` and resolve `source.secretRef`.
+3. Re-read the current PR through the existing read-only adapter.
+4. If the stored PR head SHA is stale, mark triage `stale` and do not inspect old CI.
+5. Acquire `external_subject` lease for `github_pr:<repo>#<number>`.
+6. List check runs and workflow runs for the current head SHA.
+7. Keep only failing or action-required conclusions.
+8. For each selected failure, compute `failureKey` and reuse existing records.
+9. Fetch bounded job logs for GitHub Actions failures when available.
+10. Redact and store normalized CI item, log excerpt, and triage summary artifacts.
+11. Heuristically extract first failing command and reproduction command.
+12. If `createTask !== false`, create or reuse a scoped Ling task linked in the triage
+    record.
+13. If `startRun === true`, request a normal task run only through existing task run
+    APIs and channel policy. This should be off by default.
+
+Failure parsing should be deliberately conservative. If the parser cannot identify a
+command, it should still create evidence and a task with a clear missing-command note
+instead of guessing.
+
+## Local Fix Task
+
+The generated task prompt should include:
+
+- Repository and PR identifier.
+- Head SHA and expected PR state.
+- Check/workflow/job names.
+- Failing command or missing-command note.
+- Log excerpt artifact ids.
+- Reproduction command when available.
+- Instruction to gather local evidence first.
+- Explicit prohibition on pushing commits or commenting on GitHub unless a separate
+  approval-gated external action is created and approved.
+
+The task should be created in the same channel as the external work item. If the channel
+has no default provider or teammate, use the same fallback behavior as existing task
+creation and external-work workflow creation.
+
+## Future Push Fix Action
+
+Push commits should be a later strict-action slice, not Phase 4.0. The design target is
+a durable external action kind such as `github_push_commit` with:
+
+- Exact repository, branch, expected head SHA, and commit/diff summary.
+- Local git evidence artifact: status, diffstat, commit id, test evidence.
+- Strict approval requirement.
+- Revalidation of PR head SHA immediately before push.
+- No force-push in the initial version.
+- Failed or rejected GitHub push recorded as external action evidence.
+
+Until that exists, local fix tasks may produce patches or commits locally, but publishing
+them must remain outside the automated external-work executor.
+
+## Daemon, SDK, and CLI
+
+Daemon:
+
+```http
+POST /external-work/github/ci/triage?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "externalWorkId": "external_work_...",
+  "workflowPath": "WORKFLOW.md",
+  "limit": 5,
+  "createTask": true,
+  "startRun": false
+}
+```
+
+SDK:
+
+```ts
+await client.triageGitHubExternalWorkCi("/path/to/project", {
+  externalWorkId: "external_work_...",
+  workflowPath: "WORKFLOW.md",
+  limit: 5,
+  createTask: true,
+});
+```
+
+CLI:
+
+```bash
+ling-stack external-work github ci triage \
+  --external-work external_work_... \
+  --workflow-path WORKFLOW.md \
+  --limit 5 \
+  --create-task
+```
+
+Human output should show counts, failure names, task ids, artifact ids, stale state, and
+whether a run was requested. `--json` should return the daemon response unchanged.
+
+## Web Surface
+
+Phase 4.0 does not need a new page. The first Web surface can be a compact external-work
+detail section later:
+
+- CI failures and current triage status.
+- Linked log excerpt and triage summary artifacts.
+- Linked local fix task and optional run.
+- Existing approval cards for any diagnosis comment or future push action.
+
+## Tests
+
+Core:
+
+- GitHub CI adapter lists check runs and workflow runs for a head SHA using injected
+  fetch.
+- Failing GitHub Actions job logs are bounded, redacted, and saved as artifacts.
+- Failure keys are stable and duplicate triage returns the existing record/task.
+- Stale PR head SHA blocks CI triage for old external work.
+- Missing logs still produce a triage record with readable error evidence.
+- Task prompt includes evidence ids and external mutation prohibition.
+
+Daemon:
+
+- `POST /external-work/github/ci/triage` creates triage records, artifacts, and local
+  tasks from mock GitHub responses.
+- Duplicate triage does not create a second task.
+- Invalid channel, missing external work, non-PR work item, invalid workflow path,
+  missing token, GitHub HTTP error, and stale target return readable errors.
+- Default triage does not start a runner.
+
+API client and CLI:
+
+- SDK uses the expected route, query, and body without transforming the response.
+- CLI validates flags, renders human output, supports `--json`, and exposes daemon 400
+  errors clearly.
+
+Live smoke:
+
+- Use a disposable PR with a failing GitHub Actions workflow.
+- Poll/import the PR external work.
+- Run CI triage.
+- Verify artifacts and local task are created.
+- Verify no runner starts by default and no GitHub mutation is called.
+
+Verification:
+
+```bash
+corepack pnpm --filter @ling-stack/contracts typecheck
+corepack pnpm --filter @ling-stack/core test
+corepack pnpm --filter @ling-stack/daemon test
+corepack pnpm --filter @ling-stack/api-client test
+corepack pnpm --filter @ling-stack/cli test
+corepack pnpm typecheck
+git diff --check
+```
+
+## Implementation Slices
+
+1. **Docs and contracts:** land this plan, contracts, and route/CLI shape without
+   behavior.
+2. **Core adapter and parser:** GitHub read-only CI adapter, log redaction, failure
+   extraction, and unit tests.
+3. **Durable triage records:** SQLite table, store methods, idempotency, artifacts, and
+   task prompt creation.
+4. **Daemon/API/CLI:** manual triage endpoint, SDK method, CLI command, and tests.
+5. **Local fix run option:** optional `startRun` through existing task run path, still
+   off by default.
+6. **Live smoke docs:** failing-check fixture repo path and reproducible local evidence
+   verification.
+7. **Strict push action design:** separate implementation plan before any GitHub push
+   mutation exists.

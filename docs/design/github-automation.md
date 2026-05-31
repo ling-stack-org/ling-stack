@@ -661,10 +661,15 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 
 ### Phase 4: CI Triage and Local Fix Tasks
 
-- Import failing check metadata and logs.
-- Create Ling tasks from CI failures.
-- Allow local fix runs through normal channel coordinator and leases.
-- Push commits only after strict approval.
+- Implementation plan: [External Work Phase 4 Implementation](external-work-phase-4-implementation.md).
+
+- Import failing check metadata, workflow run/job metadata, and bounded redacted logs.
+- Create Ling tasks from CI failures by default, linked to the originating PR external
+  work item and evidence artifacts.
+- Allow local fix runs only through the normal channel coordinator, task run endpoint,
+  provider preflight, approval policy, and resource leases.
+- Keep push commits out of Phase 4.0; add them only as a later strict external action
+  with head-SHA revalidation and evidence.
 
 ### Phase 5: Review Decisions
 
