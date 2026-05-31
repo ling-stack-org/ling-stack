@@ -22,6 +22,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [AI teammate private workspace](docs/design/ai-teammate-private-workspace.md)
 - [Platform architecture](docs/design/platform-architecture.md)
 - [External work orchestration](docs/design/external-work-orchestration.md)
+- [External work Phase 2 implementation](docs/design/external-work-phase-2-implementation.md)
 - [GitHub automation](docs/design/github-automation.md)
 - [Web modularization](docs/design/web-modularization.md)
 - [Contracts / API Client](docs/design/contracts-api-client.md)

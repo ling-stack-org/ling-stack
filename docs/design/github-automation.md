@@ -630,6 +630,8 @@ Required behavior:
 
 ### Phase 2: Scheduler Claims, Reconciliation, and Workspaces
 
+Implementation plan: [External Work Phase 2 Implementation](external-work-phase-2-implementation.md).
+
 - Add GitHub polling for candidate PRs and issues.
 - Add subject claim leases for repo, PR, issue, workflow step, provider, and bound path.
 - Add startup and pre-mutation reconciliation.
