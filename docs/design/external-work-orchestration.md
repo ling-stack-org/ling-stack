@@ -515,6 +515,8 @@ Required mitigations:
 
 ### Phase 2: GitHub Polling, Claims, and Workspaces
 
+Implementation plan: [External Work Phase 2 Implementation](external-work-phase-2-implementation.md).
+
 - Add GitHub poll adapter for PR and issue candidates.
 - Add claim leases for repo, PR, issue, workflow step, and bound path.
 - Create per-subject isolated workspaces.
