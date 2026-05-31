@@ -534,8 +534,10 @@ workflow-step state; they do not mark linked task/run records terminal.
 ## External Work
 
 Phase 1 adds a read-only GitHub manual import path. Phase 2 adds manual read-only
-GitHub polling and local scheduler reconciliation. Phase 3.0 adds local proposed action
-records for GitHub comments and labels, but still does not execute GitHub mutations.
+GitHub polling and local scheduler reconciliation. Phase 3 adds approval-gated action
+records for GitHub comments and labels. Propose, list, show, and cancel remain local
+only; the explicit execute endpoint is the only path that can call the allowed GitHub
+comment or label mutation APIs after approval and stale-target revalidation.
 Import parses a repository
 `WORKFLOW.md`, normalizes a GitHub PR or issue payload, creates or reuses a
 `ChannelWorkflow` and `ChannelWorkflowStep`, and writes local evidence artifacts. It
@@ -742,8 +744,8 @@ Response:
 
 The daemon writes a target snapshot, proposed payload, and approval preview as local
 artifacts owned by the external work item and linked from the action. The same action
-idempotency key returns the existing action with `duplicate: true`. Phase 3.0 does not
-provide an execute endpoint and never calls GitHub mutation APIs.
+idempotency key returns the existing action with `duplicate: true`. Propose never calls
+GitHub mutation APIs.
 
 ### List External Work Actions
 
@@ -819,6 +821,58 @@ Only `proposed`, `waiting_for_approval`, and `approved` actions can be cancelled
 pending approval is denied with the cancellation reason, the action is marked
 `cancelled`, and a local cancellation artifact is linked. Cancel never calls GitHub.
 
+### Execute External Work Action
+
+```http
+POST /external-work/actions/external_work_action_.../execute?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "workflowPath": "WORKFLOW.md"
+}
+```
+
+`workflowPath` is optional and defaults to `WORKFLOW.md` inside the action channel's
+bound path. The daemon parses the workflow to resolve `source.secretRef` through the
+existing secret resolver. The resolved GitHub token is passed to the adapter only for
+the current request; it is not stored in SQLite or written to artifacts.
+
+Execute requires the linked approval to be `approved` and the action status to be
+`approved`. Denied, expired, cancelled, stale, failed, executing, and already-succeeded
+actions are rejected before any GitHub call. When eligible, the daemon acquires the
+`external_subject` lease, re-reads the current GitHub PR or issue with a read-only
+`GET`, and compares the durable target snapshot. A stale state or PR head SHA marks the
+action `stale_target`, writes a stale-target evidence artifact, and skips mutation.
+
+Allowed mutation endpoints are limited to:
+
+- `POST /repos/{owner}/{repo}/issues/{number}/comments`
+- `POST /repos/{owner}/{repo}/issues/{number}/labels`
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "action": {
+    "id": "external_work_action_...",
+    "status": "succeeded",
+    "executionAttemptCount": 1,
+    "executedAt": "2026-05-31T00:00:00.000Z"
+  },
+  "approval": {},
+  "artifacts": []
+}
+```
+
+Successful execution writes redacted request/response evidence, including GitHub result
+URLs when present. GitHub permission, validation, rate-limit, unavailable, and network
+failures mark the action `failed`, persist normalized error evidence, and do not expose
+authorization headers or token values.
+
 ### Reconcile External Work
 
 ```http
@@ -880,13 +934,17 @@ await client.cancelExternalWorkAction("/path/to/project", "external_work_action_
   reason: "No longer needed",
 });
 
+await client.executeExternalWorkAction("/path/to/project", "external_work_action_...", {
+  workflowPath: "WORKFLOW.md",
+});
+
 await client.reconcileExternalWork("/path/to/project", {
   channelId: "channel_...",
   workflowPath: "WORKFLOW.md",
 });
 ```
 
-The CLI exposes the same read-only surfaces:
+The CLI exposes the same external-work surfaces:
 
 ```bash
 ling-stack --cwd /path/to/project external-work github import \
@@ -925,6 +983,9 @@ ling-stack --cwd /path/to/project external-work actions show external_work_actio
 ling-stack --cwd /path/to/project external-work actions cancel external_work_action_... \
   --reason "No longer needed"
 
+ling-stack --cwd /path/to/project external-work actions execute external_work_action_... \
+  --workflow-path WORKFLOW.md
+
 ling-stack --cwd /path/to/project external-work reconcile \
   --channel channel_... \
   --workflow-path WORKFLOW.md
@@ -932,8 +993,9 @@ ling-stack --cwd /path/to/project external-work reconcile \
 
 `--workflow-markdown-file <path>` may be used instead of `--workflow-path` for inline
 manual import tests. The CLI and SDK only call local daemon endpoints. Action proposal
-creates local proposed action and approval records only. These commands do not start a
-runner or execute GitHub mutations.
+creates local proposed action and approval records only. None of these commands start a
+runner. Only `external-work actions execute` can mutate GitHub, and only after approval
+and revalidation.
 
 For a copy-pasteable temp workspace smoke, use
 `examples/external-work/github/README.md`. That smoke copies the example `WORKFLOW.md`

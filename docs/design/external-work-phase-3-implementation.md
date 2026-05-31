@@ -318,6 +318,11 @@ the fresh external work state.
 If the implementation needs to be split, land steps 1-6 as Phase 3.0 with no GitHub
 mutation execution, then land steps 7-9 as Phase 3.1.
 
+Phase 3.0 landed the local-only action proposal surfaces. Phase 3.1 lands the explicit
+execution slice: approved comment and label actions can execute only through
+`POST /external-work/actions/:id/execute`, after subject lease acquisition and GitHub
+target revalidation. The adapter remains limited to issue comments and issue labels.
+
 ## Tests
 
 Core:

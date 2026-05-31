@@ -326,7 +326,7 @@ test("external-work list and show render local scheduler state", async () => {
   }
 });
 
-test("external-work actions propose, list, show, cancel render local proposed actions", async () => {
+test("external-work actions propose, list, show, cancel, and execute render action output", async () => {
   const daemon = await startExternalWorkDaemon();
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-actions-"));
   try {
@@ -399,6 +399,20 @@ test("external-work actions propose, list, show, cancel render local proposed ac
     assert.equal(cancel.code, 0, cancel.stderr);
     assert.match(cancel.stdout, /External work action cancelled: external_work_action_1/);
     assert.match(cancel.stdout, /cancelled/);
+
+    const execute = await runCli(daemon.url, cwd, [
+      "external-work",
+      "actions",
+      "execute",
+      "external_work_action_1",
+      "--workflow-path",
+      "WORKFLOW.md",
+    ]);
+    assert.equal(execute.code, 0, execute.stderr);
+    assert.match(execute.stdout, /External work action executed: external_work_action_1/);
+    assert.match(execute.stdout, /succeeded/);
+    assert.equal(daemon.requests.at(-1).path, "/external-work/actions/external_work_action_1/execute");
+    assert.deepEqual(daemon.requests.at(-1).body, { workflowPath: "WORKFLOW.md" });
 
     const invalidApproval = await runCli(daemon.url, cwd, [
       "external-work",
@@ -481,6 +495,7 @@ async function startExternalWorkDaemon() {
       "/external-work/reconcile",
       "/external-work/actions/propose",
       "/external-work/actions/external_work_action_1/cancel",
+      "/external-work/actions/external_work_action_1/execute",
     ].includes(url.pathname)) {
       writeJson(response, 404, { error: "not_found" });
       return;
@@ -510,6 +525,10 @@ async function startExternalWorkDaemon() {
     }
     if (url.pathname === "/external-work/actions/external_work_action_1/cancel") {
       writeJson(response, 200, externalWorkActionMutationResponse("github_comment", "cancelled"));
+      return;
+    }
+    if (url.pathname === "/external-work/actions/external_work_action_1/execute") {
+      writeJson(response, 200, externalWorkActionMutationResponse("github_comment", "succeeded"));
       return;
     }
     writeJson(response, 201, externalWorkImportResponse());

@@ -48,6 +48,7 @@ import type {
   ExternalGitHubImportRequest,
   ExternalWorkActionCancelRequest,
   ExternalWorkActionDetailResponse,
+  ExternalWorkActionExecuteRequest,
   ExternalWorkActionListRequest,
   ExternalWorkActionListResponse,
   ExternalWorkActionMutationResponse,
@@ -632,6 +633,14 @@ export class LingDaemonClient {
     input: ExternalWorkActionCancelRequest = {},
   ): Promise<ExternalWorkActionMutationResponse> {
     return this.post(`/external-work/actions/${encodeURIComponent(actionId)}/cancel`, { cwd }, input);
+  }
+
+  async executeExternalWorkAction(
+    cwd: string,
+    actionId: string,
+    input: ExternalWorkActionExecuteRequest = {},
+  ): Promise<ExternalWorkActionMutationResponse> {
+    return this.post(`/external-work/actions/${encodeURIComponent(actionId)}/execute`, { cwd }, input);
   }
 
   async pollGitHubExternalWork(cwd: string, input: ExternalWorkPollRequest): Promise<ExternalWorkPollResponse> {
