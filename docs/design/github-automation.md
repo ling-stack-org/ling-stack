@@ -648,7 +648,8 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
   action, approval, and artifact state without any GitHub side effect.
 - Land explicit execute for approved comment/label actions only; execution revalidates
   the target and refuses stale PR heads or terminal subjects before any mutation call.
-- Add UI approval cards.
+- Land Web Inbox approval cards and action audit for pending and terminal GitHub
+  external actions; approval and execution remain separate UI actions.
 - Post comments and labels only after approval and immediate stale-target revalidation.
 - Store external API results, stale-target failures, and redacted request/response
   evidence.
@@ -693,7 +694,10 @@ GitHub adapter:
 UI:
 
 - Pending proposed actions display exact target, body, and required approval.
-- Approve/reject flows update timeline.
+- Approve/reject flows update the Inbox card and linked action status without executing
+  the external mutation.
+- Approved actions require a separate `Execute action` click before Web calls the
+  explicit execute endpoint.
 - Stale head SHA disables approval execution.
 - Evidence artifacts are reachable from workflow detail.
 

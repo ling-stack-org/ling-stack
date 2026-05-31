@@ -42,6 +42,9 @@ interface MockState {
   approvals: MockApproval[];
   approvalPolicy: MockApprovalPolicy;
   lastApprovalPolicyPatch?: Record<string, unknown>;
+  externalWorkActions: MockExternalWorkAction[];
+  artifactsByExternalAction: Record<string, MockArtifact[]>;
+  externalActionExecuteCalls: Record<string, number>;
   mediaJobs: MockMediaJob[];
   resourceLeases: unknown[];
   stateTransitions: unknown[];
@@ -82,6 +85,8 @@ interface MockApproval {
   runId?: string;
   taskId?: string;
   mediaJobId?: string;
+  externalWorkActionId?: string;
+  channelId?: string;
   actionType: string;
   risk: string;
   title: string;
@@ -107,12 +112,49 @@ interface MockArtifact {
   id: string;
   runId?: string;
   mediaJobId?: string;
+  externalWorkId?: string;
   type: string;
   path: string;
   title?: string;
   contentType?: string;
   sizeBytes?: number;
   createdAt: string;
+}
+
+interface MockExternalWorkAction {
+  id: string;
+  workspaceId: string;
+  channelId: string;
+  externalWorkId: string;
+  sourceKind: string;
+  actionKind: string;
+  status: string;
+  approvalId?: string;
+  idempotencyKey: string;
+  target: {
+    sourceKind: string;
+    repository: string;
+    subjectKind: string;
+    number: number;
+    url?: string;
+    expectedState: string;
+    expectedHeadSha?: string;
+    expectedUpdatedAt?: string;
+    expectedLabels: string[];
+  };
+  payload:
+    | { type: "github_comment"; body: string }
+    | { type: "github_label"; labels: string[] };
+  approvalRequirement: string;
+  artifactIds: string[];
+  executionAttemptCount: number;
+  lastAttemptAt?: string;
+  nextAttemptAt?: string;
+  lastErrorCode?: string;
+  lastErrorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  executedAt?: string;
 }
 
 interface MockMediaJob {
@@ -2673,6 +2715,62 @@ test("approval inbox resolves pending approvals and refreshes state", async ({ p
   await expect.poll(() => state.approvals[0]?.status).toBe("denied");
 });
 
+test("external action approval card requires explicit execute after approval", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  const { action } = addExternalActionApproval(state);
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  const externalApproval = page.getByLabel("Approval requests").locator(".approval-row").filter({ hasText: "Approve GitHub comment" });
+  await expect(externalApproval.getByLabel("External action audit")).toContainText("github_comment");
+  await expect(externalApproval.getByLabel("External action audit")).toContainText("tianxiaochannel-oss88/ling-stack");
+  await expect(externalApproval.getByLabel("External action audit")).toContainText("github_pull_request #42");
+  await expect(externalApproval.getByLabel("External action audit")).toContainText("Looks good from Ling.");
+  await expect(externalApproval.getByLabel("External action artifacts")).toContainText("Approval preview");
+  await expect(externalApproval.getByRole("button", { name: "Execute action" })).toHaveCount(0);
+
+  await externalApproval.getByRole("button", { name: "Approve" }).click();
+  await expect(externalApproval).toContainText("approved");
+  await expect.poll(() => state.externalActionExecuteCalls[action.id] ?? 0).toBe(0);
+  await expect(externalApproval.getByRole("button", { name: "Execute action" })).toBeVisible();
+
+  await externalApproval.getByRole("button", { name: "Execute action" }).click();
+  await expect(externalApproval).toContainText("succeeded");
+  await expect(externalApproval.getByLabel("External action artifacts")).toContainText("GitHub action execution result");
+  await expect.poll(() => state.externalActionExecuteCalls[action.id] ?? 0).toBe(1);
+});
+
+test("external action approval card can cancel without executing", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  const { action } = addExternalActionApproval(state);
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  const externalApproval = page.getByLabel("Approval requests").locator(".approval-row").filter({ hasText: "Approve GitHub comment" });
+  await expect(externalApproval.getByRole("button", { name: "Execute action" })).toHaveCount(0);
+
+  await externalApproval.getByRole("button", { name: "Cancel proposal" }).click();
+  await expect(externalApproval).toContainText("cancelled");
+  await expect(externalApproval).toContainText("Action cancelled");
+  await expect.poll(() => state.externalActionExecuteCalls[action.id] ?? 0).toBe(0);
+});
+
+test("external action approval card shows stale target audit as read-only", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  addExternalActionApproval(state, { status: "stale_target", approvalStatus: "approved" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
+  const externalApproval = page.getByLabel("Approval requests").locator(".approval-row").filter({ hasText: "Approve GitHub comment" });
+  await expect(externalApproval.getByLabel("External action audit")).toContainText("stale_target");
+  await expect(externalApproval.getByLabel("External action audit")).toContainText("PR head SHA changed before execution.");
+  await expect(externalApproval.getByRole("button", { name: "Execute action" })).toHaveCount(0);
+  await expect(externalApproval.getByRole("button", { name: "Cancel proposal" })).toHaveCount(0);
+});
+
 test("run detail renders artifact rows from the daemon API", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.artifactsByRun.run_failed = [
@@ -3057,12 +3155,103 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
       createdAt: "2026-05-22T00:00:00.000Z",
       updatedAt: "2026-05-22T00:00:00.000Z",
     },
+    externalWorkActions: [],
+    artifactsByExternalAction: {},
+    externalActionExecuteCalls: {},
     mediaJobs: [],
     resourceLeases: [],
     stateTransitions: [],
     artifactsByRun: {},
     artifactsByMediaJob: {},
   };
+}
+
+function addExternalActionApproval(
+  state: MockState,
+  options: {
+    readonly actionId?: string;
+    readonly approvalId?: string;
+    readonly status?: string;
+    readonly approvalStatus?: string;
+    readonly kind?: "github_comment" | "github_label";
+    readonly lastErrorCode?: string;
+    readonly lastErrorMessage?: string;
+  } = {},
+): { readonly action: MockExternalWorkAction; readonly approval: MockApproval } {
+  const actionId = options.actionId ?? `external_work_action_${state.externalWorkActions.length + 1}`;
+  const approvalId = options.approvalId ?? `approval_${actionId}`;
+  const kind = options.kind ?? "github_comment";
+  const actionStatus = options.status ?? "waiting_for_approval";
+  const approvalStatus = options.approvalStatus ?? (actionStatus === "waiting_for_approval" ? "pending" : actionStatus === "approved" || actionStatus === "succeeded" || actionStatus === "stale_target" ? "approved" : "denied");
+  const artifact: MockArtifact = {
+    id: `artifact_${actionId}_preview`,
+    externalWorkId: "external_work_pr_42",
+    type: "markdown",
+    path: `external-work/external_work_pr_42/actions/${actionId}/approval-preview.md`,
+    title: "Approval preview",
+    contentType: "text/markdown; charset=utf-8",
+    sizeBytes: 128,
+    createdAt: "2026-05-26T00:01:00.000Z",
+  };
+  const action: MockExternalWorkAction = {
+    id: actionId,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    externalWorkId: "external_work_pr_42",
+    sourceKind: "github",
+    actionKind: kind,
+    status: actionStatus,
+    approvalId,
+    idempotencyKey: `github:${actionId}`,
+    target: {
+      sourceKind: "github",
+      repository: "tianxiaochannel-oss88/ling-stack",
+      subjectKind: "github_pull_request",
+      number: 42,
+      url: "https://github.com/tianxiaochannel-oss88/ling-stack/pull/42",
+      expectedState: "open",
+      expectedHeadSha: "abcdef1234567890",
+      expectedUpdatedAt: "2026-05-26T00:00:00.000Z",
+      expectedLabels: ["needs-review"],
+    },
+    payload: kind === "github_comment"
+      ? { type: "github_comment", body: "Looks good from Ling." }
+      : { type: "github_label", labels: ["agent-ready", "needs-review"] },
+    approvalRequirement: "standard",
+    artifactIds: [artifact.id],
+    executionAttemptCount: actionStatus === "stale_target" ? 1 : 0,
+    lastAttemptAt: actionStatus === "stale_target" ? "2026-05-26T00:02:00.000Z" : undefined,
+    lastErrorCode: options.lastErrorCode ?? (actionStatus === "stale_target" ? "stale_target" : undefined),
+    lastErrorMessage: options.lastErrorMessage ?? (actionStatus === "stale_target" ? "PR head SHA changed before execution." : undefined),
+    createdAt: "2026-05-26T00:00:00.000Z",
+    updatedAt: "2026-05-26T00:01:00.000Z",
+    executedAt: actionStatus === "succeeded" ? "2026-05-26T00:03:00.000Z" : undefined,
+  };
+  const approval: MockApproval = {
+    id: approvalId,
+    externalWorkActionId: action.id,
+    channelId: action.channelId,
+    actionType: "external_send",
+    risk: "medium",
+    title: "Approve GitHub comment",
+    description: "Post a GitHub comment after approval.",
+    payload: {
+      type: "external_action",
+      sourceKind: "github",
+      actionKind: action.actionKind,
+      target: action.target,
+      preview: action.payload.type === "github_comment" ? action.payload.body : action.payload.labels.join(", "),
+    },
+    status: approvalStatus,
+    createdAt: "2026-05-26T00:00:00.000Z",
+    expiresAt: approvalStatus === "pending" ? "2099-01-01T00:01:00.000Z" : undefined,
+    resolvedAt: approvalStatus === "pending" ? undefined : "2026-05-26T00:01:30.000Z",
+    resolvedBy: approvalStatus === "pending" ? undefined : "local-user",
+  };
+  state.externalWorkActions.unshift(action);
+  state.artifactsByExternalAction[action.id] = [artifact];
+  state.approvals.unshift(approval);
+  return { action, approval };
 }
 
 function createEmptyMockBrief(channelId: string): Record<string, unknown> {
@@ -3465,6 +3654,14 @@ function buildProviderCheckResult(provider: Record<string, unknown>): Record<str
     return { ok: false, code: "auth_failed", message: "Invalid API key.", checkedAt };
   }
   return { ok: true, code: "ready", message: "Provider is reachable and accepted the configured model.", checkedAt };
+}
+
+function buildMockExternalActionView(state: MockState, action: MockExternalWorkAction): Record<string, unknown> {
+  return {
+    action,
+    approval: action.approvalId ? state.approvals.find((approval) => approval.id === action.approvalId) : undefined,
+    artifacts: state.artifactsByExternalAction[action.id] ?? [],
+  };
 }
 
 async function mockDaemon(
@@ -4555,6 +4752,91 @@ async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, approvals } });
     return;
   }
+  if (request.method() === "GET" && path === "/external-work/actions") {
+    const externalWorkId = url.searchParams.get("externalWorkId");
+    const channelId = url.searchParams.get("channelId");
+    const status = url.searchParams.get("status");
+    const actions = state.externalWorkActions
+      .filter((action) => !externalWorkId || action.externalWorkId === externalWorkId)
+      .filter((action) => !channelId || action.channelId === channelId)
+      .filter((action) => !status || action.status === status)
+      .map((action) => buildMockExternalActionView(state, action));
+    await route.fulfill({ json: { cwd, actions } });
+    return;
+  }
+
+  const externalActionMatch = /^\/external-work\/actions\/([^/]+)$/.exec(path);
+  if (request.method() === "GET" && externalActionMatch) {
+    const action = state.externalWorkActions.find((item) => item.id === decodeURIComponent(externalActionMatch[1]));
+    await route.fulfill({
+      status: action ? 200 : 404,
+      json: action ? { cwd, action: buildMockExternalActionView(state, action) } : { error: "external_work_action_not_found" },
+    });
+    return;
+  }
+
+  const externalActionCancelMatch = /^\/external-work\/actions\/([^/]+)\/cancel$/.exec(path);
+  if (request.method() === "POST" && externalActionCancelMatch) {
+    const action = state.externalWorkActions.find((item) => item.id === decodeURIComponent(externalActionCancelMatch[1]));
+    if (!action || !["proposed", "waiting_for_approval", "approved"].includes(action.status)) {
+      await route.fulfill({ status: 400, json: { error: "external_action_not_cancellable", message: "External action cannot be cancelled." } });
+      return;
+    }
+    action.status = "cancelled";
+    action.updatedAt = "2026-05-26T00:02:00.000Z";
+    const artifact: MockArtifact = {
+      id: `artifact_${action.id}_cancelled`,
+      externalWorkId: action.externalWorkId,
+      type: "json",
+      path: `external-work/${action.externalWorkId}/actions/${action.id}/cancelled.json`,
+      title: "Action cancelled",
+      contentType: "application/json; charset=utf-8",
+      sizeBytes: 96,
+      createdAt: action.updatedAt,
+    };
+    action.artifactIds = [...action.artifactIds, artifact.id];
+    state.artifactsByExternalAction[action.id] = [...(state.artifactsByExternalAction[action.id] ?? []), artifact];
+    const approval = action.approvalId ? state.approvals.find((item) => item.id === action.approvalId) : undefined;
+    if (approval && approval.status === "pending") {
+      approval.status = "denied";
+      approval.resolvedAt = action.updatedAt;
+      approval.resolvedBy = "local-user";
+      approval.decisionReason = "Cancelled from Web";
+    }
+    await route.fulfill({ json: { cwd, action, approval, artifacts: state.artifactsByExternalAction[action.id] ?? [] } });
+    return;
+  }
+
+  const externalActionExecuteMatch = /^\/external-work\/actions\/([^/]+)\/execute$/.exec(path);
+  if (request.method() === "POST" && externalActionExecuteMatch) {
+    const action = state.externalWorkActions.find((item) => item.id === decodeURIComponent(externalActionExecuteMatch[1]));
+    if (!action || action.status !== "approved") {
+      await route.fulfill({ status: 400, json: { error: "external_action_not_executable", message: "External action is not approved." } });
+      return;
+    }
+    state.externalActionExecuteCalls[action.id] = (state.externalActionExecuteCalls[action.id] ?? 0) + 1;
+    action.status = "succeeded";
+    action.executionAttemptCount += 1;
+    action.lastAttemptAt = "2026-05-26T00:03:00.000Z";
+    action.executedAt = "2026-05-26T00:03:00.000Z";
+    action.updatedAt = action.executedAt;
+    const artifact: MockArtifact = {
+      id: `artifact_${action.id}_execution`,
+      externalWorkId: action.externalWorkId,
+      type: "json",
+      path: `external-work/${action.externalWorkId}/actions/${action.id}/execution-result.json`,
+      title: "GitHub action execution result",
+      contentType: "application/json; charset=utf-8",
+      sizeBytes: 192,
+      createdAt: action.executedAt,
+    };
+    action.artifactIds = [...action.artifactIds, artifact.id];
+    state.artifactsByExternalAction[action.id] = [...(state.artifactsByExternalAction[action.id] ?? []), artifact];
+    const approval = action.approvalId ? state.approvals.find((item) => item.id === action.approvalId) : undefined;
+    await route.fulfill({ json: { cwd, action, approval, artifacts: state.artifactsByExternalAction[action.id] ?? [] } });
+    return;
+  }
+
   if (request.method() === "GET" && path === "/approval-policy") {
     await route.fulfill({ json: { cwd, policy: state.approvalPolicy } });
     return;
@@ -4738,6 +5020,13 @@ async function handleDaemonRoute(
     approval.resolvedAt = "2026-05-22T00:02:00.000Z";
     approval.resolvedBy = "local-user";
     approval.decisionReason = "Resolved from Playwright";
+    if (approval.externalWorkActionId) {
+      const action = state.externalWorkActions.find((item) => item.id === approval.externalWorkActionId);
+      if (action && (action.status === "waiting_for_approval" || action.status === "proposed")) {
+        action.status = approval.status === "approved" ? "approved" : "denied";
+        action.updatedAt = approval.resolvedAt;
+      }
+    }
     await route.fulfill({ json: { approval } });
     return;
   }

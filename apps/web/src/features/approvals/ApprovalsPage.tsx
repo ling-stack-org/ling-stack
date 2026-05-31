@@ -2,10 +2,14 @@ import { useState } from "react";
 import {
   CheckCircle2,
   CircleAlert,
+  ExternalLink,
+  FileText,
   History,
   Loader2,
   RefreshCw,
+  Send,
   ShieldCheck,
+  Tags,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
@@ -14,11 +18,14 @@ import {
   effectiveApprovalStatus,
   highestApprovalRisk,
 } from "../../lib/approvals.js";
-import { formatEventData, readDataString } from "../../lib/data.js";
+import { formatEventData, formatUnknownPreview, readDataField, readDataString } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { readTaskTitle } from "../../lib/run-evidence.js";
-import type { ApprovalRequest, RunSession } from "../../types.js";
+import { ArtifactRow } from "../../shared/components/index.js";
+import type { ApprovalRequest, ExternalWorkActionView, RunSession } from "../../types.js";
 import type { ApprovalResolution } from "./types.js";
+
+export type ExternalActionBusyState = "execute" | "cancel";
 
 export function ApprovalsPage({
   cwd,
@@ -26,6 +33,8 @@ export function ApprovalsPage({
   repairRunId,
   repairRun,
   selectedApprovalId,
+  externalActionDetails,
+  externalActionBusy,
   isLoading,
   resolvingApprovals,
   errorMessage,
@@ -34,6 +43,8 @@ export function ApprovalsPage({
   onSelectApproval,
   onRefreshRepair,
   onResolve,
+  onExecuteExternalAction,
+  onCancelExternalAction,
   onOpenRun,
   onClearRepair,
 }: {
@@ -42,6 +53,8 @@ export function ApprovalsPage({
   readonly repairRunId: string;
   readonly repairRun: RunSession | undefined;
   readonly selectedApprovalId: string;
+  readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
+  readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
   readonly isLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly errorMessage: string;
@@ -50,6 +63,8 @@ export function ApprovalsPage({
   readonly onSelectApproval: (approvalId: string) => void;
   readonly onRefreshRepair: (runId: string) => void;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onExecuteExternalAction: (actionId: string) => void;
+  readonly onCancelExternalAction: (actionId: string) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onClearRepair: () => void;
 }): JSX.Element {
@@ -111,9 +126,14 @@ export function ApprovalsPage({
               key={approval.id}
               approval={approval}
               selected={approval.id === selectedApprovalId}
+              externalAction={approval.externalWorkActionId ? externalActionDetails[approval.externalWorkActionId] : undefined}
+              externalActionBusy={approval.externalWorkActionId ? externalActionBusy[approval.externalWorkActionId] : undefined}
+              cwd={cwd}
               resolvingDecision={resolvingApprovals[approval.id]}
               onSelect={onSelectApproval}
               onResolve={onResolve}
+              onExecuteExternalAction={onExecuteExternalAction}
+              onCancelExternalAction={onCancelExternalAction}
             />
           ))
         )}
@@ -186,16 +206,26 @@ export function ApprovalCard({
   approval,
   compact = false,
   selected = false,
+  externalAction,
+  externalActionBusy,
+  cwd,
   resolvingDecision,
   onSelect,
   onResolve,
+  onExecuteExternalAction,
+  onCancelExternalAction,
 }: {
   readonly approval: ApprovalRequest;
   readonly compact?: boolean;
   readonly selected?: boolean;
+  readonly externalAction?: ExternalWorkActionView;
+  readonly externalActionBusy?: ExternalActionBusyState;
+  readonly cwd?: string;
   readonly resolvingDecision?: ApprovalResolution;
   readonly onSelect?: (approvalId: string) => void;
   readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onExecuteExternalAction?: (actionId: string) => void;
+  readonly onCancelExternalAction?: (actionId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [decisionReason, setDecisionReason] = useState("");
@@ -251,6 +281,15 @@ export function ApprovalCard({
         </div>
         {approval.decisionReason ? <p className="approval-decision-reason">{approval.decisionReason}</p> : null}
         <ApprovalPayloadSummary approval={approval} />
+        <ExternalActionAuditPanel
+          approval={approval}
+          actionView={externalAction}
+          busyState={externalActionBusy}
+          cwd={cwd}
+          compact={compact}
+          onExecuteExternalAction={onExecuteExternalAction}
+          onCancelExternalAction={onCancelExternalAction}
+        />
         <pre>{formatEventData(approval.payload)}</pre>
       </div>
       {effectiveStatus === "pending" ? (
@@ -306,8 +345,138 @@ export function ApprovalCard({
   );
 }
 
+function ExternalActionAuditPanel({
+  approval,
+  actionView,
+  busyState,
+  cwd,
+  compact,
+  onExecuteExternalAction,
+  onCancelExternalAction,
+}: {
+  readonly approval: ApprovalRequest;
+  readonly actionView?: ExternalWorkActionView;
+  readonly busyState?: ExternalActionBusyState;
+  readonly cwd?: string;
+  readonly compact?: boolean;
+  readonly onExecuteExternalAction?: (actionId: string) => void;
+  readonly onCancelExternalAction?: (actionId: string) => void;
+}): JSX.Element | null {
+  const { t } = useI18n();
+  const payloadType = readDataString(approval.payload, "type");
+  const hasExternalActionPayload = payloadType === "external_action";
+  const action = actionView?.action;
+  if (!action && !hasExternalActionPayload && !approval.externalWorkActionId) {
+    return null;
+  }
+
+  const target = action?.target;
+  const fallbackTarget = readDataField(approval.payload, "target");
+  const targetRecord = isRecord(fallbackTarget) ? fallbackTarget : {};
+  const repository = target?.repository ?? readRecordScalar(targetRecord, "repository") ?? "-";
+  const subjectKind = target?.subjectKind ?? readRecordScalar(targetRecord, "subjectKind") ?? "-";
+  const subjectNumber = target?.number !== undefined ? String(target.number) : readRecordScalar(targetRecord, "number") ?? "-";
+  const targetUrl = target?.url ?? readRecordScalar(targetRecord, "url");
+  const expectedState = target?.expectedState ?? readRecordScalar(targetRecord, "expectedState") ?? "-";
+  const expectedHeadSha = target?.expectedHeadSha ?? readRecordScalar(targetRecord, "expectedHeadSha") ?? "";
+  const expectedUpdatedAt = target?.expectedUpdatedAt ?? readRecordScalar(targetRecord, "expectedUpdatedAt") ?? "";
+  const actionKind = action?.actionKind || readDataString(approval.payload, "actionKind") || "-";
+  const sourceKind = action?.sourceKind || readDataString(approval.payload, "sourceKind") || "-";
+  const actionStatus = action?.status ?? t("detail unavailable");
+  const preview = action ? externalActionPayloadPreview(action.payload) : readDataString(approval.payload, "preview") || formatUnknownPreview(readDataField(approval.payload, "payload"), 220);
+  const labels = action?.payload.type === "github_label" ? action.payload.labels : [];
+  const artifacts = actionView?.artifacts ?? [];
+  const canExecute = Boolean(action && action.status === "approved" && onExecuteExternalAction);
+  const canCancel = Boolean(action && ["proposed", "waiting_for_approval", "approved"].includes(action.status) && onCancelExternalAction);
+  const isBusy = Boolean(busyState);
+
+  return (
+    <div className={compact ? "external-action-audit compact" : "external-action-audit"} aria-label={t("External action audit")}>
+      <div className="external-action-audit-head">
+        <span>
+          {action?.payload.type === "github_label" ? <Tags size={14} /> : <FileText size={14} />}
+          <strong>{t("External action")}</strong>
+        </span>
+        <span className={`approval-state ${action?.status ?? "pending"}`}>{actionStatus}</span>
+      </div>
+      <div className="external-action-meta">
+        <span>{sourceKind}</span>
+        <span>{actionKind}</span>
+        <span>{repository}</span>
+        <span>{subjectKind} #{subjectNumber}</span>
+        <span>{t("expected {state}", { state: expectedState })}</span>
+        {expectedHeadSha ? <span>{t("head {sha}", { sha: shortSha(expectedHeadSha) })}</span> : null}
+        {expectedUpdatedAt ? <time>{t("updated {time}", { time: formatDateTime(expectedUpdatedAt) })}</time> : null}
+        {action ? <span>{t("{count} attempts", { count: action.executionAttemptCount })}</span> : null}
+      </div>
+      {targetUrl ? (
+        <a className="external-action-target-link" href={targetUrl} target="_blank" rel="noreferrer">
+          <ExternalLink size={13} />
+          {targetUrl}
+        </a>
+      ) : null}
+      {preview ? (
+        <div className="external-action-preview">
+          <strong>{t("Payload preview")}</strong>
+          {labels.length > 0 ? (
+            <div className="external-action-labels">
+              {labels.map((label) => <span key={label}>{label}</span>)}
+            </div>
+          ) : (
+            <p>{preview}</p>
+          )}
+        </div>
+      ) : null}
+      {action?.lastErrorMessage ? (
+        <div className="external-action-error">
+          <CircleAlert size={14} />
+          <span>{action.lastErrorCode ? `${action.lastErrorCode}: ${action.lastErrorMessage}` : action.lastErrorMessage}</span>
+        </div>
+      ) : null}
+      {artifacts.length > 0 ? (
+        <div className="external-action-artifacts" aria-label={t("External action artifacts")}>
+          {artifacts.map((artifact) => <ArtifactRow key={artifact.id} artifact={artifact} cwd={cwd} />)}
+        </div>
+      ) : null}
+      {action ? (
+        <div className="external-action-controls">
+          {canExecute ? (
+            <button className="primary-button compact-button" type="button" disabled={isBusy} onClick={() => onExecuteExternalAction?.(action.id)}>
+              {busyState === "execute" ? <Loader2 className="spin" size={14} /> : <Send size={14} />}
+              {busyState === "execute" ? t("Executing") : t("Execute action")}
+            </button>
+          ) : null}
+          {canCancel ? (
+            <button className="secondary-button compact-button danger" type="button" disabled={isBusy} onClick={() => onCancelExternalAction?.(action.id)}>
+              {busyState === "cancel" ? <Loader2 className="spin" size={14} /> : <CircleAlert size={14} />}
+              {busyState === "cancel" ? t("Cancelling") : t("Cancel proposal")}
+            </button>
+          ) : null}
+        </div>
+      ) : approval.externalWorkActionId ? (
+        <p className="external-action-missing">{t("Action detail could not be loaded. Showing approval preview only.")}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalRequest }): JSX.Element | null {
   const { t } = useI18n();
+
+  if (approval.actionType === "external_send" && readDataString(approval.payload, "type") === "external_action") {
+    const sourceKind = readDataString(approval.payload, "sourceKind") || "-";
+    const actionKind = readDataString(approval.payload, "actionKind") || "-";
+    const preview = readDataString(approval.payload, "preview");
+    const target = readDataField(approval.payload, "target");
+    return (
+      <div className="approval-payload-summary" aria-label="External action approval summary">
+        <span>{t("source {sourceKind}", { sourceKind })}</span>
+        <span>{t("action {actionKind}", { actionKind })}</span>
+        {target ? <span>{t("target {target}", { target: formatUnknownPreview(target, 120) })}</span> : null}
+        {preview ? <p>{preview}</p> : null}
+      </div>
+    );
+  }
 
   if (approval.actionType !== "media_cost" || readDataString(approval.payload, "type") !== "media_cost") {
     return null;
@@ -326,4 +495,30 @@ function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalReque
       {promptPreview ? <p>{promptPreview}</p> : null}
     </div>
   );
+}
+
+function externalActionPayloadPreview(payload: ExternalWorkActionView["action"]["payload"]): string {
+  if (payload.type === "github_comment") {
+    return formatUnknownPreview(payload.body, 320);
+  }
+  return payload.labels.join(", ");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readRecordScalar(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (typeof value === "string" && value) {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return undefined;
+}
+
+function shortSha(value: string): string {
+  return value.length > 12 ? value.slice(0, 12) : value;
 }

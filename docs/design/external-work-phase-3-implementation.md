@@ -323,6 +323,14 @@ execution slice: approved comment and label actions can execute only through
 `POST /external-work/actions/:id/execute`, after subject lease acquisition and GitHub
 target revalidation. The adapter remains limited to issue comments and issue labels.
 
+Phase 3.2 lands the first Web surface in the existing Inbox. Approval cards that own an
+`externalWorkActionId` load the external action detail, show the exact target snapshot,
+comment body or label set, linked evidence artifacts, status, attempts, and failure
+reason, and keep approval separate from execution. Approve/Deny still use the generic
+approval endpoints; `Execute action` appears only after the action status becomes
+`approved` and calls the explicit execute endpoint. Web cancel uses the existing cancel
+endpoint. Edit-and-approve remains out of scope; users cancel and propose a fresh action.
+
 ## Tests
 
 Core:
@@ -354,6 +362,16 @@ API client and CLI:
 - CLI propose-labels supports repeated `--label`.
 - CLI list/show/cancel/execute render human output and support `--json`.
 - Missing ids, missing payload files, invalid labels, and daemon 400 errors are readable.
+
+Web:
+
+- Inbox cards for `externalWorkActionId` approvals show the target, payload preview,
+  action status, linked artifacts, and stale or failed error reason.
+- Approving an external action updates the card to `approved` without executing GitHub
+  mutation.
+- `Execute action` is visible only for approved actions and calls the explicit execute
+  endpoint.
+- Cancelled, stale, failed, and succeeded actions render read-only audit state.
 
 Verification:
 
