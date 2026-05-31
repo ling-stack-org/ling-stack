@@ -352,6 +352,10 @@ export interface ExternalWorkActionCancelRequest {
   readonly reason?: string;
 }
 
+export interface ExternalWorkActionExecuteRequest {
+  readonly workflowPath?: string;
+}
+
 export interface ExternalWorkActionListRequest {
   readonly externalWorkId?: string;
   readonly channelId?: string;

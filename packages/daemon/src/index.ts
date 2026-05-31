@@ -14,6 +14,7 @@ import {
   getRunSummaryPath,
   buildExternalWorkActionView,
   cancelExternalWorkAction,
+  executeExternalWorkAction,
   normalizeGitHubExternalWorkItem,
   pollGitHubExternalWork,
   parseExternalWorkflowMarkdown,
@@ -92,6 +93,7 @@ import {
   type RunArtifact,
   type ExternalWorkImportResponse,
   type ExternalWorkActionDetailResponse,
+  type ExternalWorkActionExecuteRequest,
   type ExternalWorkActionKind,
   type ExternalWorkActionListResponse,
   type ExternalWorkActionMutationResponse,
@@ -610,7 +612,7 @@ async function routeRequest(
 
   const externalWorkActionRoute = parseExternalWorkActionRoute(url.pathname);
   if (externalWorkActionRoute) {
-    await handleExternalWorkActionItem(request, response, config, storeRegistry, externalWorkActionRoute);
+    await handleExternalWorkActionItem(request, response, config, storeRegistry, secretResolver, externalWorkFetch, externalWorkActionRoute);
     return;
   }
 
@@ -3632,7 +3634,9 @@ async function handleExternalWorkActionItem(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
-  route: { readonly actionId: string; readonly action?: "cancel" },
+  secretResolver: SecretResolver,
+  externalWorkFetch: typeof globalThis.fetch | undefined,
+  route: { readonly actionId: string; readonly action?: "cancel" | "execute" },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -3666,6 +3670,53 @@ async function handleExternalWorkActionItem(
         actionId: route.actionId,
         request: isRecord(body) ? { reason: readOptionalString(body, "reason") } : undefined,
         now: new Date().toISOString(),
+      });
+      const responseBody: ExternalWorkActionMutationResponse = {
+        cwd,
+        action: result.action,
+        ...(result.approval ? { approval: result.approval } : {}),
+        artifacts: result.artifacts,
+      };
+      writeJson(response, 200, responseBody);
+    } catch (error) {
+      writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+  if (route.action === "execute") {
+    if (request.method !== "POST") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work action execute` });
+      return;
+    }
+    try {
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const input = parseExternalWorkActionExecuteRequest(body);
+      const action = store.getExternalWorkAction(route.actionId);
+      if (!action) {
+        writeJson(response, 404, { error: "external_work_action_not_found", message: `External work action not found: ${route.actionId}` });
+        return;
+      }
+      const channel = store.getChannel(action.channelId);
+      if (!channel) {
+        writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${action.channelId}` });
+        return;
+      }
+      const workflowFile = readExternalWorkflowFile(input, channel, cwd);
+      const workflowDefinition = parseExternalWorkflowMarkdown(workflowFile.markdown);
+      if (workflowDefinition.config.source.kind !== "github") {
+        writeJson(response, 400, { error: "unsupported_source", message: `Unsupported external source kind: ${workflowDefinition.config.source.kind}` });
+        return;
+      }
+      if (workflowDefinition.config.source.repository && workflowDefinition.config.source.repository !== action.target.repository) {
+        writeJson(response, 400, { error: "repository_mismatch", message: `WORKFLOW.md source.repository does not match action target: ${workflowDefinition.config.source.repository} !== ${action.target.repository}` });
+        return;
+      }
+      const githubToken = resolveExternalGitHubToken(workflowDefinition, secretResolver);
+      const result = await executeExternalWorkAction({
+        store,
+        actionId: route.actionId,
+        githubToken,
+        fetch: externalWorkFetch,
       });
       const responseBody: ExternalWorkActionMutationResponse = {
         cwd,
@@ -3822,6 +3873,18 @@ function parseExternalWorkReconcileRequest(value: unknown): ExternalWorkReconcil
   }
   return {
     channelId: readOptionalString(value, "channelId"),
+    workflowPath: readOptionalString(value, "workflowPath"),
+  };
+}
+
+function parseExternalWorkActionExecuteRequest(value: unknown): ExternalWorkActionExecuteRequest {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error("Request body must be an object");
+  }
+  return {
     workflowPath: readOptionalString(value, "workflowPath"),
   };
 }
@@ -7120,13 +7183,18 @@ function parseApprovalRoute(pathname: string): { readonly approvalId: string; re
   return undefined;
 }
 
-function parseExternalWorkActionRoute(pathname: string): { readonly actionId: string; readonly action?: "cancel" } | undefined {
+function parseExternalWorkActionRoute(pathname: string): { readonly actionId: string; readonly action?: "cancel" | "execute" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 3 && segments[0] === "external-work" && segments[1] === "actions") {
     return { actionId: segments[2] };
   }
-  if (segments.length === 4 && segments[0] === "external-work" && segments[1] === "actions" && segments[3] === "cancel") {
-    return { actionId: segments[2], action: "cancel" };
+  if (
+    segments.length === 4 &&
+    segments[0] === "external-work" &&
+    segments[1] === "actions" &&
+    (segments[3] === "cancel" || segments[3] === "execute")
+  ) {
+    return { actionId: segments[2], action: segments[3] };
   }
   return undefined;
 }

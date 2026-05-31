@@ -6,7 +6,9 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   createSqliteRunStore,
+  createGitHubExternalActionAdapter,
   createGitHubExternalWorkAdapter,
+  executeExternalWorkAction,
   normalizeGitHubExternalWorkItem,
   parseExternalWorkflowMarkdown,
   pollGitHubExternalWork,
@@ -280,6 +282,195 @@ test("sqlite external work actions propose, reuse, approve, and cancel with appr
   }
 });
 
+test("GitHub external action execution requires approval, revalidates, mutates only allowed endpoints, and redacts token evidence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-external-work-action-execute-"));
+  const now = "2026-05-30T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  const calls = [];
+  try {
+    const imported = createImportedPullRequestWork(store, cwd, now);
+    const proposed = proposeExternalWorkAction({
+      store,
+      request: {
+        externalWorkId: imported.externalWork.id,
+        actionKind: "github_comment",
+        payload: { type: "github_comment", body: "Ready for maintainer review." },
+      },
+      now,
+    });
+
+    await assert.rejects(
+      () => executeExternalWorkAction({
+        store,
+        actionId: proposed.action.id,
+        githubToken: "github-token-secret",
+        fetch: createGitHubActionFetch(calls),
+        now: "2026-05-30T00:01:00.000Z",
+      }),
+      /not approved/,
+    );
+    assert.equal(calls.length, 0);
+
+    const approved = store.approveApprovalRequest(proposed.approval.id, { resolvedBy: "local-user" }, "2026-05-30T00:02:00.000Z");
+    syncExternalWorkActionForApproval(store, approved, "2026-05-30T00:02:00.000Z");
+    const executed = await executeExternalWorkAction({
+      store,
+      actionId: proposed.action.id,
+      githubToken: "github-token-secret",
+      fetch: createGitHubActionFetch(calls),
+      now: "2026-05-30T00:03:00.000Z",
+    });
+
+    assert.equal(executed.action.status, "succeeded");
+    assert.equal(executed.action.executionAttemptCount, 1);
+    assert.equal(executed.action.executedAt, "2026-05-30T00:03:00.000Z");
+    assert.deepEqual(calls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+      "GET /repos/openclaw/openclaw/pulls/86279",
+      "POST /repos/openclaw/openclaw/issues/86279/comments",
+    ]);
+    assert.doesNotMatch(JSON.stringify(executed.artifacts), /github-token-secret/);
+    const executionArtifact = executed.artifacts.find((artifact) => artifact.title === "External action execution result");
+    assert.ok(executionArtifact);
+    const executionEvidence = await readFile(resolve(store.paths.artifactsDir, executionArtifact.path), "utf8");
+    assert.doesNotMatch(executionEvidence, /github-token-secret/);
+    assert.match(executionEvidence, /\[REDACTED\]/);
+    assert.match(executionEvidence, /https:\/\/github\.com\/openclaw\/openclaw\/pull\/86279#issuecomment-1/);
+
+    const label = proposeExternalWorkAction({
+      store,
+      request: {
+        externalWorkId: imported.externalWork.id,
+        actionKind: "github_label",
+        payload: { type: "github_label", labels: ["agent-ready"] },
+      },
+      now: "2026-05-30T00:04:00.000Z",
+    });
+    const labelApproved = store.approveApprovalRequest(label.approval.id, { resolvedBy: "local-user" }, "2026-05-30T00:05:00.000Z");
+    syncExternalWorkActionForApproval(store, labelApproved, "2026-05-30T00:05:00.000Z");
+    const labelExecuted = await executeExternalWorkAction({
+      store,
+      actionId: label.action.id,
+      fetch: createGitHubActionFetch(calls),
+      now: "2026-05-30T00:06:00.000Z",
+    });
+    assert.equal(labelExecuted.action.status, "succeeded");
+    assert.equal(calls.at(-1).init.method, "POST");
+    assert.equal(new URL(calls.at(-1).url).pathname, "/repos/openclaw/openclaw/issues/86279/labels");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub external action execution marks stale target before mutation when PR head changes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-external-work-action-stale-"));
+  const now = "2026-05-30T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  const calls = [];
+  try {
+    const imported = createImportedPullRequestWork(store, cwd, now);
+    const proposed = proposeExternalWorkAction({
+      store,
+      request: {
+        externalWorkId: imported.externalWork.id,
+        actionKind: "github_comment",
+        payload: { type: "github_comment", body: "Ready for maintainer review." },
+      },
+      now,
+    });
+    const approved = store.approveApprovalRequest(proposed.approval.id, { resolvedBy: "local-user" }, "2026-05-30T00:01:00.000Z");
+    syncExternalWorkActionForApproval(store, approved, "2026-05-30T00:01:00.000Z");
+
+    const stale = await executeExternalWorkAction({
+      store,
+      actionId: proposed.action.id,
+      fetch: createGitHubActionFetch(calls, {
+        pullRequest: {
+          ...githubPullRequestPayload().pull_request,
+          head: { ...githubPullRequestPayload().pull_request.head, sha: "head-sha-2" },
+        },
+      }),
+      now: "2026-05-30T00:02:00.000Z",
+    });
+
+    assert.equal(stale.action.status, "stale_target");
+    assert.match(stale.action.lastErrorMessage, /head SHA changed/);
+    assert.deepEqual(calls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+      "GET /repos/openclaw/openclaw/pulls/86279",
+    ]);
+    const staleArtifact = stale.artifacts.find((artifact) => artifact.title === "External action stale target");
+    assert.ok(staleArtifact);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub external action execution marks stale target before mutation when issue state or update time changes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-external-work-action-issue-stale-"));
+  const now = "2026-05-30T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  const calls = [];
+  try {
+    const imported = createImportedIssueWork(store, cwd, now);
+    const proposed = proposeExternalWorkAction({
+      store,
+      request: {
+        externalWorkId: imported.externalWork.id,
+        actionKind: "github_label",
+        payload: { type: "github_label", labels: ["needs-triage"] },
+      },
+      now,
+    });
+    const approved = store.approveApprovalRequest(proposed.approval.id, { resolvedBy: "local-user" }, "2026-05-30T00:01:00.000Z");
+    syncExternalWorkActionForApproval(store, approved, "2026-05-30T00:01:00.000Z");
+
+    const stale = await executeExternalWorkAction({
+      store,
+      actionId: proposed.action.id,
+      fetch: createGitHubActionFetch(calls, {
+        issue: {
+          ...githubIssuePayload().issue,
+          state: "closed",
+          updated_at: "2026-05-30T00:02:00Z",
+        },
+      }),
+      now: "2026-05-30T00:02:00.000Z",
+    });
+
+    assert.equal(stale.action.status, "stale_target");
+    assert.match(stale.action.lastErrorMessage, /state changed/);
+    assert.deepEqual(calls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+      "GET /repos/openclaw/openclaw/issues/42",
+    ]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GitHub external action adapter calls only issue comment and issue label mutation endpoints", async () => {
+  const calls = [];
+  const adapter = createGitHubExternalActionAdapter({ fetch: createGitHubActionFetch(calls) });
+  await adapter.createIssueComment({
+    repository: "openclaw/openclaw",
+    number: 86279,
+    body: "Ready",
+    token: "github-token-secret",
+  });
+  await adapter.addIssueLabels({
+    repository: "openclaw/openclaw",
+    number: 86279,
+    labels: ["agent-ready"],
+    token: "github-token-secret",
+  });
+
+  assert.deepEqual(calls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+    "POST /repos/openclaw/openclaw/issues/86279/comments",
+    "POST /repos/openclaw/openclaw/issues/86279/labels",
+  ]);
+});
+
 test("GitHub read-only adapter loads PRs and standalone issues without double-importing PR-shaped issues", async () => {
   const calls = [];
   const adapter = createGitHubExternalWorkAdapter({
@@ -474,6 +665,71 @@ function githubRepository() {
     owner: {
       login: "openclaw",
     },
+  };
+}
+
+function createImportedPullRequestWork(store, cwd, now) {
+  const channel = store.createChannel({ name: "GitHub", boundPath: cwd, defaultTeammateId: "engineer" }, now);
+  const workflow = parseExternalWorkflowMarkdown(workflowMarkdown);
+  const item = normalizeGitHubExternalWorkItem({
+    eventType: "pull_request.opened",
+    payload: githubPullRequestPayload(),
+    repositoryFullName: workflow.config.source.repository,
+  });
+  const renderedPrompt = renderExternalWorkflowPrompt(workflow.promptTemplate, { item });
+  return store.createOrReuseExternalWorkWorkflow({
+    channelId: channel.id,
+    externalWorkItem: item,
+    workflowDefinition: workflow,
+    renderedPrompt,
+  }, now);
+}
+
+function createImportedIssueWork(store, cwd, now) {
+  const channel = store.createChannel({ name: "GitHub", boundPath: cwd, defaultTeammateId: "engineer" }, now);
+  const workflow = parseExternalWorkflowMarkdown(`---
+source:
+  kind: github
+  repository: openclaw/openclaw
+---
+
+Review {{ item.identifier }}.
+
+Title: {{ item.title }}
+`);
+  const item = normalizeGitHubExternalWorkItem({
+    eventType: "issue.opened",
+    payload: githubIssuePayload(),
+    repositoryFullName: workflow.config.source.repository,
+  });
+  const renderedPrompt = renderExternalWorkflowPrompt(workflow.promptTemplate, { item });
+  return store.createOrReuseExternalWorkWorkflow({
+    channelId: channel.id,
+    externalWorkItem: item,
+    workflowDefinition: workflow,
+    renderedPrompt,
+  }, now);
+}
+
+function createGitHubActionFetch(calls, options = {}) {
+  return async (url, init = {}) => {
+    calls.push({ url, init });
+    if (url.includes("/pulls/86279")) {
+      return jsonResponse(options.pullRequest ?? githubPullRequestPayload().pull_request);
+    }
+    if (url.match(/\/issues\/42$/)) {
+      return jsonResponse(options.issue ?? githubIssuePayload().issue);
+    }
+    if (url.includes("/issues/86279/comments")) {
+      return jsonResponse({
+        id: 1,
+        html_url: "https://github.com/openclaw/openclaw/pull/86279#issuecomment-1",
+      }, { status: 201, statusText: "Created" });
+    }
+    if (url.includes("/issues/86279/labels")) {
+      return jsonResponse([{ name: "agent-ready", url: "https://api.github.test/labels/agent-ready" }], { status: 200, statusText: "OK" });
+    }
+    return jsonResponse({ message: "not found" }, { ok: false, status: 404, statusText: "Not Found" });
   };
 }
 

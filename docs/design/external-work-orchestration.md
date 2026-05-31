@@ -541,6 +541,9 @@ Implementation plan: [External Work Phase 3 Implementation](external-work-phase-
   job ownership.
 - Land Phase 3.0 as propose/list/show/cancel only: local action rows, approval rows, and
   artifacts are durable, but no GitHub mutation executes yet.
+- Land Phase 3.1 as explicit `actions execute`: approved comment/label actions acquire
+  the subject lease, re-read the GitHub target, fail stale targets without mutation, and
+  only then call the allowed comment or label endpoint.
 - Add UI approval cards.
 - Execute approved GitHub comments and labels through an explicit daemon action executor.
 - Re-read the GitHub subject immediately before mutation and fail stale targets without

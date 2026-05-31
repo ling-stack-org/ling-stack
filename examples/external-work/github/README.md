@@ -1,8 +1,10 @@
 # GitHub External Work Example
 
-This example covers the read-only Phase 1/2 smoke path. It imports local GitHub PR or
-issue fixtures into Ling Stack workflow records, and it can run one manual GitHub
-read-only poll/reconcile cycle. It does not start a runner and does not mutate GitHub.
+This example covers the GitHub-first external work smoke path. It imports local GitHub
+PR or issue fixtures into Ling Stack workflow records, can run one manual GitHub
+read-only poll/reconcile cycle, and can create local approval-gated proposed actions.
+It does not start a runner. The default smoke does not mutate GitHub; mutation is only
+available through the explicit `external-work actions execute` command after approval.
 
 ## Files
 
@@ -106,6 +108,9 @@ action_id="$(node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING
 
 node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work actions show "$action_id"
 
+approval_id="$(node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" --json external-work actions show "$action_id" \
+  | node -e 'let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => console.log(JSON.parse(input).action.approval.id));')"
+
 node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work actions cancel "$action_id" \
   --reason "Smoke path cleanup"
 
@@ -120,7 +125,25 @@ The second poll should return `Duplicates: 1`, and `runs list` should stay empty
 because external work polling never starts a runner.
 
 The action proposal commands create local `external_work_actions`, approval, and artifact
-records only. They do not call GitHub mutation APIs.
+records only. They do not call GitHub mutation APIs. The smoke cancels the proposed
+action by default so it remains safe against the bundled public fixtures.
+
+Optional live mutation smoke, only after changing `WORKFLOW.md` and the payload fixture
+to a repository and PR/issue you control. Skip the cleanup cancel command above, then
+run:
+
+```bash
+node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" approvals approve "$approval_id" \
+  --reason "Live mutation smoke"
+
+node packages/cli/dist/index.js --cwd "$tmpdir" --daemon-url "$LING_STACK_DAEMON_URL" external-work actions execute "$action_id" \
+  --workflow-path WORKFLOW.md
+```
+
+`execute` re-reads the current GitHub target before mutation. If the PR head SHA or
+target state is stale, it marks the action `stale_target` and does not post. If the
+target is current and the approval is valid, it calls only the GitHub issue comment or
+issue label endpoint and writes redacted execution evidence artifacts.
 
 `--execute-hooks` is optional on poll. When enabled, only `afterCreate` and `beforeRun`
 run inside `.ling-stack/external-workspaces/github/...` with local evidence artifacts.

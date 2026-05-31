@@ -282,8 +282,10 @@ GitHub external work orchestration is read-only through Phase 2. Fixture import 
 step, and writes evidence artifacts. Manual poll uses GitHub read-only REST endpoints
 to discover open PR/issue candidates, claim each subject, prepare isolated local
 workspace state, and reconcile durable scheduler state. Neither path starts the runner
-or mutates GitHub. Phase 3.0 adds local proposed action records for GitHub comments and
-labels, linked to approval requests, but still does not execute GitHub mutations.
+or mutates GitHub. Phase 3 adds approval-gated action records for GitHub comments and
+labels. Propose/list/show/cancel stay local-only; `actions execute` is the only command
+that can call the approved GitHub comment or label endpoint after stale-target
+revalidation.
 
 For live poll/reconcile, prefer authenticated GitHub reads. The bundled example
 `WORKFLOW.md` uses `source.secretRef: env:GITHUB_TOKEN`; start or restart the daemon
@@ -318,8 +320,16 @@ node packages/cli/dist/index.js external-work actions list \
 
 node packages/cli/dist/index.js external-work actions show external_work_action_...
 
+# Either cancel a pending action locally:
 node packages/cli/dist/index.js external-work actions cancel external_work_action_... \
   --reason "No longer needed"
+
+# Or approve and execute it:
+node packages/cli/dist/index.js approvals approve approval_... \
+  --reason "Approved comment or label execution"
+
+node packages/cli/dist/index.js external-work actions execute external_work_action_... \
+  --workflow-path WORKFLOW.md
 
 node packages/cli/dist/index.js external-work reconcile \
   --channel channel_... \

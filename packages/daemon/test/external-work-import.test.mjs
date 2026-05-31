@@ -180,10 +180,11 @@ test("GitHub external work poll imports candidates, deduplicates, and reconciles
   }
 });
 
-test("external work actions propose, list, show, approve-sync, and cancel without GitHub mutation", async () => {
+test("external work actions propose, list, show, approve-sync, execute, and cancel with approval gating", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-actions-"));
   const runner = new FailingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const githubCalls = [];
+  const daemon = await startDaemonForTest(runner, createGitHubActionFetchMock(githubCalls));
   try {
     await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
     const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -239,6 +240,17 @@ test("external work actions propose, list, show, approve-sync, and cancel withou
     const approvedDetail = await getJson(`${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(approvedDetail.action.action.status, "approved");
 
+    const executed = await postJson(`${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}/execute?cwd=${encodeURIComponent(cwd)}`, {
+      workflowPath: "WORKFLOW.md",
+    });
+    assert.equal(executed.action.status, "succeeded");
+    assert.equal(executed.action.executionAttemptCount, 1);
+    assert.equal(executed.artifacts.at(-1).title, "External action execution result");
+    assert.deepEqual(githubCalls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+      "GET /repos/openclaw/openclaw/pulls/86279",
+      "POST /repos/openclaw/openclaw/issues/86279/comments",
+    ]);
+
     const label = await postJson(`${daemon.url}/external-work/actions/propose?cwd=${encodeURIComponent(cwd)}`, {
       externalWorkId,
       actionKind: "github_label",
@@ -250,6 +262,54 @@ test("external work actions propose, list, show, approve-sync, and cancel withou
     assert.equal(cancelled.action.status, "cancelled");
     assert.equal(cancelled.approval.status, "denied");
     assert.equal(cancelled.artifacts.at(-1).title, "External action cancellation");
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("external work action execute marks stale target without GitHub mutation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-action-stale-"));
+  const runner = new FailingRunner();
+  const githubCalls = [];
+  const daemon = await startDaemonForTest(runner, createGitHubActionFetchMock(githubCalls, {
+    pullRequest: {
+      ...githubPullRequestPayload().pull_request,
+      head: { ...githubPullRequestPayload().pull_request.head, sha: "head-sha-2" },
+    },
+  }));
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "GitHub",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    });
+    await postJson(`${daemon.url}/external-work/github/import?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      eventType: "pull_request.opened",
+      payload: githubPullRequestPayload(),
+    });
+    const importedList = await getJson(`${daemon.url}/external-work?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+    const externalWorkId = importedList.externalWork[0].externalWork.id;
+    const proposed = await postJson(`${daemon.url}/external-work/actions/propose?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      actionKind: "github_comment",
+      payload: { type: "github_comment", body: "Ready for review." },
+    });
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(proposed.approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "Looks safe.",
+    });
+
+    const stale = await postJson(`${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}/execute?cwd=${encodeURIComponent(cwd)}`, {
+      workflowPath: "WORKFLOW.md",
+    });
+    assert.equal(stale.action.status, "stale_target");
+    assert.match(stale.action.lastErrorMessage, /head SHA changed/);
+    assert.deepEqual(githubCalls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`), [
+      "GET /repos/openclaw/openclaw/pulls/86279",
+    ]);
     assert.equal(runner.runs.length, 0);
   } finally {
     await daemon.close();
@@ -426,6 +486,25 @@ function createGitHubFetchMock() {
     }
     if (url.includes("/issues?")) {
       return jsonResponse([]);
+    }
+    return jsonResponse({ message: "not found" }, { ok: false, status: 404, statusText: "Not Found" });
+  };
+}
+
+function createGitHubActionFetchMock(calls, options = {}) {
+  return async (url, init = {}) => {
+    calls.push({ url, init });
+    if (url.includes("/pulls/86279")) {
+      return jsonResponse(options.pullRequest ?? githubPullRequestPayload().pull_request);
+    }
+    if (url.includes("/issues/86279/comments")) {
+      return jsonResponse({
+        id: 1,
+        html_url: "https://github.com/openclaw/openclaw/pull/86279#issuecomment-1",
+      }, { status: 201, statusText: "Created" });
+    }
+    if (url.includes("/issues/86279/labels")) {
+      return jsonResponse([{ name: "agent-ready", url: "https://api.github.test/labels/agent-ready" }]);
     }
     return jsonResponse({ message: "not found" }, { ok: false, status: 404, statusText: "Not Found" });
   };

@@ -1640,6 +1640,9 @@ async function handleExternalWorkActions(args: readonly string[], options: Globa
   if (subcommand === "cancel") {
     return await handleExternalWorkActionCancel(rest, options);
   }
+  if (subcommand === "execute") {
+    return await handleExternalWorkActionExecute(rest, options);
+  }
   throw new CliError(2, "unknown_command", `Unknown external-work actions command: ${subcommand}`);
 }
 
@@ -1754,6 +1757,22 @@ async function handleExternalWorkActionCancel(args: readonly string[], options: 
     return 0;
   }
   printExternalWorkActionMutation(response, "External work action cancelled");
+  return 0;
+}
+
+async function handleExternalWorkActionExecute(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["workflow-path"]),
+  });
+  const actionId = singlePositional(parsed.positionals, "external-work actions execute <actionId>");
+  const response = await requestJson(options, "POST", `/external-work/actions/${encodeURIComponent(actionId)}/execute`, { cwd: options.cwd }, removeUndefined({
+    workflowPath: getFlag(parsed, "workflow-path"),
+  }));
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkActionMutation(response, "External work action executed");
   return 0;
 }
 
@@ -3486,6 +3505,10 @@ function printExternalWorkActionMutation(response: unknown, title: string): void
   console.log(`External work: ${readString(action, "externalWorkId") ?? ""}`);
   console.log(`Target: ${externalWorkActionTargetLabel(action)}`);
   console.log(`Approval: ${readString(approval, "id") ?? readString(action, "approvalId") ?? "none"}`);
+  const lastError = readString(action, "lastErrorMessage");
+  if (lastError) {
+    console.log(`Last error: ${lastError}`);
+  }
   if (artifacts.length === 0) {
     console.log("Artifacts: none");
     return;
@@ -3945,6 +3968,7 @@ Usage:
   ling-stack [global options] external-work actions propose-comment --external-work <id> --body-file comment.md
   ling-stack [global options] external-work actions propose-labels --external-work <id> --label name
   ling-stack [global options] external-work reconcile [--channel <id>] [--workflow-path WORKFLOW.md]
+  ling-stack [global options] external-work actions execute <actionId> [--workflow-path WORKFLOW.md]
   ling-stack [global options] approvals list
   ling-stack [global options] approvals show <id>
   ling-stack [global options] approvals approve <id>
@@ -4069,6 +4093,7 @@ function printExternalWorkHelp(): void {
   ling-stack external-work actions list [--external-work <id>] [--status waiting_for_approval]
   ling-stack external-work actions show <actionId>
   ling-stack external-work actions cancel <actionId> [--reason "..."]
+  ling-stack external-work actions execute <actionId> [--workflow-path WORKFLOW.md]
   ling-stack external-work reconcile [options]
 
 Options:
@@ -4091,8 +4116,10 @@ Behavior:
   Poll uses read-only GitHub API calls for PR and issue discovery.
   List and show read local workflow, scheduler, workspace, and artifact state.
   Action propose/list/show/cancel manages local proposed actions and approvals only.
+  Action execute requires an approved action, revalidates the GitHub target, then only
+  calls the approved GitHub comment or label endpoint.
   Reconcile repairs local scheduler state and can optionally check remote terminal state.
-  None of these commands start a runner or mutate GitHub.
+  None of these commands start a runner; only action execute can mutate GitHub.
 `);
 }
 

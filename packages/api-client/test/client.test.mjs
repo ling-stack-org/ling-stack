@@ -411,7 +411,11 @@ test("manages external work actions without transforming daemon responses", asyn
     ...mutationResponse,
     action: { ...mutationResponse.action, status: "cancelled" },
   };
-  const mock = createFetchMock([mutationResponse, listResponse, detailResponse, cancelResponse]);
+  const executeResponse = {
+    ...mutationResponse,
+    action: { ...mutationResponse.action, status: "succeeded" },
+  };
+  const mock = createFetchMock([mutationResponse, listResponse, detailResponse, cancelResponse, executeResponse]);
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
 
   assert.deepEqual(await client.proposeExternalWorkAction("/repo path", {
@@ -427,6 +431,7 @@ test("manages external work actions without transforming daemon responses", asyn
   }), listResponse);
   assert.deepEqual(await client.getExternalWorkAction("/repo path", "external_work_action_1"), detailResponse);
   assert.deepEqual(await client.cancelExternalWorkAction("/repo path", "external_work_action_1", { reason: "No longer needed" }), cancelResponse);
+  assert.deepEqual(await client.executeExternalWorkAction("/repo path", "external_work_action_1", { workflowPath: "WORKFLOW.md" }), executeResponse);
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/external-work/actions/propose?cwd=%2Frepo+path");
@@ -442,6 +447,9 @@ test("manages external work actions without transforming daemon responses", asyn
   assert.equal(mock.calls[3].method, "POST");
   assert.equal(mock.calls[3].url, "http://daemon.test/external-work/actions/external_work_action_1/cancel?cwd=%2Frepo+path");
   assert.deepEqual(JSON.parse(mock.calls[3].body), { reason: "No longer needed" });
+  assert.equal(mock.calls[4].method, "POST");
+  assert.equal(mock.calls[4].url, "http://daemon.test/external-work/actions/external_work_action_1/execute?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[4].body), { workflowPath: "WORKFLOW.md" });
 });
 
 test("maps daemon error bodies and workspace path errors", async () => {
