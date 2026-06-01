@@ -59,7 +59,12 @@ import type {
   ExternalWorkPollResponse,
   ExternalWorkReconcileRequest,
   ExternalWorkReconcileResponse,
+  ExternalWorkSecretConfigureRequest,
+  ExternalWorkSecretDeleteRequest,
+  ExternalWorkSecretMutationResponse,
   ExternalWorkStatusResponse,
+  ExternalWorkWorkflowConfigureRequest,
+  ExternalWorkWorkflowMutationResponse,
   MediaJobFormState,
   MediaJobArtifactListResponse,
   MediaJobListResponse,
@@ -550,6 +555,27 @@ export async function getExternalWorkStatus(
   input: { readonly channelId: string; readonly workflowPath?: string },
 ): Promise<ExternalWorkStatusResponse> {
   return daemonClient.getExternalWorkStatus(cwd, input);
+}
+
+export async function configureExternalWorkSecret(
+  cwd: string,
+  input: ExternalWorkSecretConfigureRequest,
+): Promise<ExternalWorkSecretMutationResponse> {
+  return daemonClient.configureExternalWorkSecret(cwd, input);
+}
+
+export async function deleteExternalWorkSecret(
+  cwd: string,
+  input: ExternalWorkSecretDeleteRequest,
+): Promise<ExternalWorkSecretMutationResponse> {
+  return daemonClient.deleteExternalWorkSecret(cwd, input);
+}
+
+export async function configureExternalWorkWorkflow(
+  cwd: string,
+  input: ExternalWorkWorkflowConfigureRequest,
+): Promise<ExternalWorkWorkflowMutationResponse> {
+  return daemonClient.configureExternalWorkWorkflow(cwd, input);
 }
 
 export async function pollGitHubExternalWork(cwd: string, input: ExternalWorkPollRequest): Promise<ExternalWorkPollResponse> {

@@ -315,9 +315,15 @@ scheduler-state, workspace, hook, and artifact paths, and do not propose or exec
 Linear mutations. Linear workflows use `source.kind: linear`, `source.projectSlug`, and
 an optional `source.secretRef: env:LINEAR_TOKEN`.
 
-For live poll/reconcile, prefer authenticated GitHub reads. The bundled example
-`WORKFLOW.md` uses `source.secretRef: env:GITHUB_TOKEN`; start or restart the daemon
-with `GITHUB_TOKEN` in its environment, for example from `gh auth token`.
+For live poll/reconcile, prefer authenticated GitHub reads. The user-facing setup path
+is Web Settings -> External Work: if `WORKFLOW.md` is missing or invalid, paste a GitHub
+URL or enter `owner/repo`, then click `Create WORKFLOW.md` / `Repair WORKFLOW.md`; after
+that, paste a GitHub token into `Save GitHub token`. The daemon writes only the local workflow file, stores
+the token in macOS Keychain, and records only a `source.secretRef:
+keychain:LING_STACK_GITHUB_..._TOKEN` reference in `WORKFLOW.md`. The token value is not
+stored in browser state, SQLite, artifacts, or logs. Headless CLI/dev workflows can still
+use `source.secretRef: env:GITHUB_TOKEN` and start or restart the daemon with
+`GITHUB_TOKEN` in its environment, for example from `gh auth token`.
 
 ```bash
 node packages/cli/dist/index.js external-work github import \
@@ -416,8 +422,11 @@ plus the Phase 5, Phase 6, Phase 7, and GA hardening implementation plans:
 readiness slice is [External work GA hardening](docs/design/external-work-ga-hardening.md).
 The setup entry point for "where do I connect this to a real repo" is the Web Settings
 External Work panel. It reads local `WORKFLOW.md` status, source target, token readiness,
-record counts, and background scheduler state without calling GitHub or Linear. The same
-read-only check is available from the CLI:
+record counts, and background scheduler state without calling GitHub or Linear. If the
+workflow is missing or invalid, Settings can create a minimal local `WORKFLOW.md` from a
+GitHub repository or Linear project slug before the token field is enabled. It also
+provides the explicit token setup/remove controls for Keychain-backed GitHub/Linear
+tokens. The same read-only check is available from the CLI:
 
 ```bash
 ling-stack external-work status --channel channel_... --workflow-path WORKFLOW.md

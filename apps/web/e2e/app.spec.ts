@@ -52,6 +52,11 @@ interface MockState {
   externalWorkReconcileCalls: number;
   externalWorkBackgroundStartCalls: number;
   externalWorkBackgroundStopCalls: number;
+  externalWorkSecretConfigureCalls: number;
+  externalWorkSecretDeleteCalls: number;
+  lastExternalWorkSecretConfigure?: Record<string, unknown>;
+  externalWorkWorkflowConfigureCalls: number;
+  lastExternalWorkWorkflowConfigure?: Record<string, unknown>;
   mediaJobs: MockMediaJob[];
   resourceLeases: unknown[];
   stateTransitions: unknown[];
@@ -2211,6 +2216,7 @@ test("settings external work status shows setup and explicit controls", async ({
   await expect(panel).toContainText("not_configured");
   await expect.poll(() => state.externalWorkPollCalls.github ?? 0).toBe(0);
   await expect.poll(() => state.externalWorkBackgroundStartCalls).toBe(0);
+  await expect.poll(() => state.externalWorkWorkflowConfigureCalls).toBe(0);
   await expect.poll(() => state.externalActionExecuteCalls.external_work_action_1 ?? 0).toBe(0);
 
   await panel.getByRole("button", { name: "Poll once" }).click();
@@ -2231,6 +2237,39 @@ test("settings external work status shows setup and explicit controls", async ({
   await expect(page.getByLabel("Settings preview")).toContainText("openclaw/openclaw");
 });
 
+test("settings external work token setup saves to daemon and clears the input", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.externalWorkStatus = createExternalWorkStatus({ secretStatus: "missing" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  const panel = page.locator(".external-work-settings-panel");
+  await expect(panel).toContainText("External token");
+  await expect(panel).toContainText("env:GITHUB_TOKEN");
+  await expect.poll(() => state.externalWorkSecretConfigureCalls).toBe(0);
+  await expect.poll(() => state.externalWorkSecretDeleteCalls).toBe(0);
+
+  const tokenInput = panel.getByLabel("Token");
+  await tokenInput.fill("test-github-token");
+  await panel.getByRole("button", { name: "Save GitHub token" }).click();
+
+  await expect.poll(() => state.externalWorkSecretConfigureCalls).toBe(1);
+  await expect.poll(() => state.lastExternalWorkSecretConfigure?.channelId).toBe("channel_engineering");
+  await expect.poll(() => state.lastExternalWorkSecretConfigure?.tokenLength).toBe("test-github-token".length);
+  await expect(tokenInput).toHaveValue("");
+  await expect(panel).toContainText("keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN");
+  await expect(panel).toContainText("configured");
+
+  await panel.getByRole("button", { name: "Remove token" }).click();
+  await expect.poll(() => state.externalWorkSecretDeleteCalls).toBe(1);
+  await expect(panel).toContainText("missing");
+  await expect(panel).toContainText("Secret is not configured: keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN");
+});
+
 test("settings external work status renders invalid, missing, and Linear states", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -2249,12 +2288,23 @@ test("settings external work status renders invalid, missing, and Linear states"
   await expect(panel).toContainText("invalid");
   await expect(panel).toContainText("source.kind is required");
   await expect(panel).toContainText("Secret is not configured");
+  await expect(panel).toContainText("Create WORKFLOW.md");
   await expect(panel.getByRole("button", { name: "Poll once" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Save GitHub token" })).toBeDisabled();
+  await panel.getByRole("button", { name: "Repair WORKFLOW.md" }).click();
+  await expect.poll(() => state.externalWorkWorkflowConfigureCalls).toBe(1);
+  await expect.poll(() => state.lastExternalWorkWorkflowConfigure?.repository).toBe("openclaw/openclaw");
+  await expect(panel.getByLabel("Token")).toBeEnabled();
 
   state.externalWorkStatus = createExternalWorkStatus({ workflowExists: false, workflowValid: false, sourceKind: "unknown", workflowError: "WORKFLOW.md was not found" });
   await panel.getByRole("button", { name: "Refresh" }).click();
   await expect(panel).toContainText("missing");
   await expect(panel).toContainText("WORKFLOW.md was not found");
+  await panel.getByLabel("Repository").fill("https://github.com/owner/repo");
+  await panel.getByRole("button", { name: "Create WORKFLOW.md" }).click();
+  await expect.poll(() => state.externalWorkWorkflowConfigureCalls).toBe(2);
+  await expect.poll(() => state.lastExternalWorkWorkflowConfigure?.repository).toBe("owner/repo");
+  await expect(panel.getByLabel("Token")).toBeEnabled();
 
   state.externalWorkStatus = createExternalWorkStatus({ sourceKind: "linear" });
   await panel.getByRole("button", { name: "Refresh" }).click();
@@ -3466,6 +3516,9 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     externalWorkReconcileCalls: 0,
     externalWorkBackgroundStartCalls: 0,
     externalWorkBackgroundStopCalls: 0,
+    externalWorkSecretConfigureCalls: 0,
+    externalWorkSecretDeleteCalls: 0,
+    externalWorkWorkflowConfigureCalls: 0,
     mediaJobs: [],
     resourceLeases: [],
     stateTransitions: [],
@@ -3479,6 +3532,7 @@ function createExternalWorkStatus(overrides: {
   readonly workflowExists?: boolean;
   readonly workflowValid?: boolean;
   readonly workflowError?: string;
+  readonly secretRef?: string;
   readonly secretStatus?: string;
   readonly backgroundStatus?: string;
 } = {}): Record<string, unknown> {
@@ -3486,6 +3540,7 @@ function createExternalWorkStatus(overrides: {
   const workflowExists = overrides.workflowExists ?? true;
   const workflowValid = overrides.workflowValid ?? true;
   const backgroundStatus = overrides.backgroundStatus ?? "not_configured";
+  const secretRef = overrides.secretRef ?? (sourceKind === "github" ? "env:GITHUB_TOKEN" : "env:LINEAR_TOKEN");
   return {
     cwd,
     channel: {
@@ -3501,16 +3556,16 @@ function createExternalWorkStatus(overrides: {
       sourceKind,
       ...(sourceKind === "github" ? { repository: "openclaw/openclaw" } : {}),
       ...(sourceKind === "linear" ? { projectSlug: "ling-stack" } : {}),
-      events: sourceKind === "linear" ? ["issue.created"] : sourceKind === "github" ? ["pull_request.opened", "issues.opened"] : [],
-      ...(sourceKind === "unknown" ? {} : { secretRef: sourceKind === "github" ? "env:GITHUB_TOKEN" : "env:LINEAR_TOKEN" }),
+      events: sourceKind === "linear" ? ["issue.created"] : sourceKind === "github" ? ["pull_request.opened", "issue.opened"] : [],
+      ...(sourceKind === "unknown" ? {} : { secretRef }),
     },
     secret: sourceKind === "unknown"
       ? { status: "not_required" }
       : {
-          ref: sourceKind === "github" ? "env:GITHUB_TOKEN" : "env:LINEAR_TOKEN",
+          ref: secretRef,
           purpose: sourceKind === "github" ? "github_token" : "linear_token",
           status: overrides.secretStatus ?? "configured",
-          ...(overrides.secretStatus === "missing" ? { message: `Secret is not configured: ${sourceKind === "github" ? "env:GITHUB_TOKEN" : "env:LINEAR_TOKEN"}` } : {}),
+          ...(overrides.secretStatus === "missing" ? { message: `Secret is not configured: ${secretRef}` } : {}),
         },
     records: {
       externalWork: { total: 2, ready: 1, blocked: 1, retryWait: 0, terminal: 0 },
@@ -5216,6 +5271,119 @@ async function handleDaemonRoute(
     await route.fulfill({ json: state.externalWorkStatus });
     return;
   }
+  if (request.method() === "POST" && path === "/external-work/workflow/configure") {
+    let body: unknown = {};
+    try {
+      body = request.postDataJSON();
+    } catch {
+      body = {};
+    }
+    const sourceKind = isRecord(body) && body.sourceKind === "linear" ? "linear" : "github";
+    const repository = isRecord(body) && typeof body.repository === "string" ? body.repository : "openclaw/openclaw";
+    const projectSlug = isRecord(body) && typeof body.projectSlug === "string" ? body.projectSlug : "ling-stack";
+    state.externalWorkWorkflowConfigureCalls += 1;
+    state.lastExternalWorkWorkflowConfigure = {
+      channelId: isRecord(body) ? body.channelId : undefined,
+      sourceKind,
+      repository,
+      projectSlug,
+    };
+    state.externalWorkStatus = {
+      ...state.externalWorkStatus,
+      workflow: {
+        path: `${cwd}/WORKFLOW.md`,
+        exists: true,
+        valid: true,
+        sourceKind,
+        ...(sourceKind === "linear" ? { projectSlug } : { repository }),
+        events: sourceKind === "linear" ? ["issue.created"] : ["pull_request.opened", "pull_request.synchronize", "issue.opened"],
+      },
+      secret: {
+        status: "not_required",
+      },
+      background: sourceKind === "linear"
+        ? { supported: false, running: false, status: "unsupported" }
+        : { supported: true, running: false, status: "not_configured" },
+    };
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId: readNestedString(state.externalWorkStatus, ["channel", "id"]) ?? "channel_engineering",
+        sourceKind,
+        workflow: state.externalWorkStatus.workflow,
+        workflowCreated: true,
+        workflowUpdated: true,
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/external-work/secrets/configure") {
+    let body: unknown = {};
+    try {
+      body = request.postDataJSON();
+    } catch {
+      body = {};
+    }
+    const sourceKind = readNestedString(state.externalWorkStatus, ["workflow", "sourceKind"]) === "linear" ? "linear" : "github";
+    const secretRef = sourceKind === "linear"
+      ? "keychain:LING_STACK_LINEAR_LING_STACK_TOKEN"
+      : "keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN";
+    state.externalWorkSecretConfigureCalls += 1;
+    state.lastExternalWorkSecretConfigure = {
+      channelId: isRecord(body) ? body.channelId : undefined,
+      tokenLength: isRecord(body) && typeof body.token === "string" ? body.token.length : 0,
+    };
+    state.externalWorkStatus = {
+      ...state.externalWorkStatus,
+      workflow: {
+        ...(isRecord(state.externalWorkStatus.workflow) ? state.externalWorkStatus.workflow : {}),
+        secretRef,
+      },
+      secret: {
+        ref: secretRef,
+        purpose: sourceKind === "linear" ? "linear_token" : "github_token",
+        status: "configured",
+      },
+    };
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId: readNestedString(state.externalWorkStatus, ["channel", "id"]) ?? "channel_engineering",
+        sourceKind,
+        secretRef,
+        secret: state.externalWorkStatus.secret,
+        workflow: state.externalWorkStatus.workflow,
+        workflowUpdated: true,
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/external-work/secrets/delete") {
+    const sourceKind = readNestedString(state.externalWorkStatus, ["workflow", "sourceKind"]) === "linear" ? "linear" : "github";
+    const secretRef = readNestedString(state.externalWorkStatus, ["secret", "ref"]) ?? readNestedString(state.externalWorkStatus, ["workflow", "secretRef"]) ?? "keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN";
+    state.externalWorkSecretDeleteCalls += 1;
+    state.externalWorkStatus = {
+      ...state.externalWorkStatus,
+      secret: {
+        ref: secretRef,
+        purpose: sourceKind === "linear" ? "linear_token" : "github_token",
+        status: "missing",
+        message: `Secret is not configured: ${secretRef}`,
+      },
+    };
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId: readNestedString(state.externalWorkStatus, ["channel", "id"]) ?? "channel_engineering",
+        sourceKind,
+        secretRef,
+        secret: state.externalWorkStatus.secret,
+        workflow: state.externalWorkStatus.workflow,
+        workflowUpdated: false,
+      },
+    });
+    return;
+  }
   if (request.method() === "POST" && (path === "/external-work/github/poll" || path === "/external-work/linear/poll")) {
     const source = path.includes("/linear/") ? "linear" : "github";
     state.externalWorkPollCalls[source] = (state.externalWorkPollCalls[source] ?? 0) + 1;
@@ -5634,4 +5802,15 @@ function getOrCreateMockTeammateThread(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readNestedString(value: unknown, path: readonly string[]): string | undefined {
+  let current = value;
+  for (const key of path) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+    current = current[key];
+  }
+  return typeof current === "string" ? current : undefined;
 }

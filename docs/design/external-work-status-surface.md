@@ -6,10 +6,10 @@ External Work orchestration v1 is feature-complete, and UX.1 closes the main
 discoverability gap: operators can now see whether the selected channel is connected to
 a GitHub repository or Linear project from Web Settings and the CLI.
 
-This document defines the shipped status and setup surface: a local-only status API, an
-API client and CLI wrapper, and a Web Settings panel that shows the configured source,
-workflow health, token status, scheduler status, local record counts, and safe next
-actions.
+This document defines the shipped status and setup surface: a local-only status API,
+explicit Keychain token setup endpoints, an API client and CLI wrapper, and a Web
+Settings panel that shows the configured source, workflow health, token status,
+scheduler status, local record counts, and safe next actions.
 
 The goal is not to create a separate GitHub product area. The primary entry is the
 existing Settings experience, with a compact read-only summary in the Workspace
@@ -26,6 +26,17 @@ UX.1 is shipped:
 - Web Settings shows the External Work panel and explicit Poll once, Reconcile, Start
   background, Stop background, View records, and View CI triage controls.
 - Workspace Inspector shows the compact status summary and links users back to Settings.
+
+UX.2 is shipped:
+
+- Web Settings can save a GitHub or Linear token to macOS Keychain for a valid
+  `WORKFLOW.md`.
+- The daemon writes only `source.secretRef: keychain:...` to `WORKFLOW.md`; it never
+  writes the token value to workflow files, SQLite, artifacts, or logs.
+- Web Settings can remove a `keychain:` external token while leaving the workflow ref in
+  place so the missing-token state remains explainable.
+- API client methods expose `configureExternalWorkSecret()` and
+  `deleteExternalWorkSecret()` for trusted UI surfaces.
 
 The shipped surface remains local-first: loading Settings does not call GitHub or
 Linear, run hooks, start background polling, start a runner, create actions, or execute
@@ -73,7 +84,7 @@ find where to set it up or verify that it is attached to a real source.
 - No Linear mutation action.
 - No webhook receiver.
 - No hidden scheduler auto-start.
-- No token storage in SQLite, artifacts, logs, Web payloads, or CLI output.
+- No token storage in SQLite, artifacts, logs, browser storage, or CLI output.
 - No edit-and-approve workflow.
 - No replacement for `WORKFLOW.md` as the repository-owned contract.
 - No automatic local runner start from the Settings panel.
@@ -90,7 +101,7 @@ Minimum GitHub workflow fields:
 source:
   kind: github
   repository: owner/repo
-  secretRef: env:GITHUB_TOKEN
+  secretRef: keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN
 events:
   - pull_request.opened
   - issues.opened
@@ -102,10 +113,14 @@ Minimum Linear workflow fields:
 source:
   kind: linear
   projectSlug: ling-stack
-  secretRef: env:LINEAR_TOKEN
+  secretRef: keychain:LING_STACK_LINEAR_LING_STACK_TOKEN
 events:
   - issue.created
 ```
+
+`env:GITHUB_TOKEN` and `env:LINEAR_TOKEN` remain supported for headless development.
+The Web setup path uses `keychain:` refs only because browser-driven setup must not ask
+users to export environment variables or restart the daemon.
 
 If the workflow is absent or invalid, Web makes that obvious and provides the
 expected file location under the channel bound path. The first implementation can show
@@ -204,6 +219,24 @@ For Linear, `background.supported` is `false` until Linear background polling is
 designed and implemented. Linear status still shows workflow health, token status,
 and local record counts.
 
+The local Keychain mutation endpoints are:
+
+```http
+POST /external-work/secrets/configure?cwd=/path/to/project
+POST /external-work/secrets/delete?cwd=/path/to/project
+```
+
+`configure` requires `channelId` and `token`, validates the channel-bound workflow, saves
+the token under a `keychain:` ref, and updates `source.secretRef` unless
+`updateWorkflow: false` is supplied. If no ref is supplied, the daemon derives one from
+the source target:
+
+- GitHub: `keychain:LING_STACK_GITHUB_<OWNER>_<REPO>_TOKEN`
+- Linear: `keychain:LING_STACK_LINEAR_<PROJECT>_TOKEN`
+
+`delete` removes only `keychain:` refs. It does not edit `WORKFLOW.md`, which lets the
+status panel show the now-missing configured ref.
+
 ## Web Surface
 
 ### Primary Entry: Settings
@@ -225,6 +258,13 @@ Required states:
 
 Primary controls:
 
+- `Create WORKFLOW.md` / `Repair WORKFLOW.md`: for missing or invalid workflows, writes
+  a minimal local channel-bound `WORKFLOW.md` from a GitHub URL or `owner/repo`, or a
+  Linear project slug. This is an explicit local file write and does not call external
+  providers.
+- `Save GitHub token` / `Save Linear token`: sends the pasted token once to the daemon,
+  which stores it in Keychain and updates `WORKFLOW.md` with a `keychain:` ref.
+- `Remove token`: deletes the configured `keychain:` ref from Keychain.
 - `Poll once`: calls the existing source-specific poll endpoint for valid GitHub or
   Linear workflows.
 - `Reconcile`: calls the existing local reconcile endpoint.
@@ -233,8 +273,9 @@ Primary controls:
 - `View records`: navigates to the existing Workspace or list surface for external work.
 - `View CI triage`: navigates to the existing Workspace or Inspector CI triage surface.
 
-The panel should not run any operation on load. Status refresh is a local read. Poll,
-reconcile, start, and stop must be explicit button clicks.
+The panel should not run any operation on load. Status refresh is a local read. Workflow
+creation/repair, poll, reconcile, start, stop, token save, and token removal must be
+explicit button clicks.
 
 ### Secondary Entry: Workspace Inspector
 
@@ -261,6 +302,16 @@ getExternalWorkStatus(
   cwd: string,
   input: { channelId: string; workflowPath?: string },
 ): Promise<ExternalWorkStatusResponse>
+
+configureExternalWorkSecret(
+  cwd: string,
+  input: ExternalWorkSecretConfigureRequest,
+): Promise<ExternalWorkSecretMutationResponse>
+
+deleteExternalWorkSecret(
+  cwd: string,
+  input: ExternalWorkSecretDeleteRequest,
+): Promise<ExternalWorkSecretMutationResponse>
 ```
 
 CLI command:
@@ -294,10 +345,12 @@ The status surface is intentionally local-first:
 - Loading the Settings panel does not create actions or approvals.
 - Loading the Settings panel does not execute approved actions.
 - Token values are never returned, rendered, logged, or written to artifacts.
+- Token values entered in Web are sent only in the explicit `configure` request and the
+  password input is cleared after submit.
 
-The only mutating controls in this surface are local scheduler operations and existing
-read-only poll/reconcile operations. GitHub mutations remain limited to the existing
-Inbox approval plus explicit `Execute action` flow.
+The only mutating controls in this surface are local Keychain setup/removal, local
+scheduler operations, and existing read-only poll/reconcile operations. GitHub mutations
+remain limited to the existing Inbox approval plus explicit `Execute action` flow.
 
 ## Implementation Slices
 
@@ -325,6 +378,23 @@ Inbox approval plus explicit `Execute action` flow.
 - Link to Settings for setup and control actions.
 - Keep existing CI triage and approval audit panels unchanged.
 
+### Slice 4: Web Token Setup
+
+- Add daemon Keychain-backed configure/delete endpoints for external work secrets.
+- Add API client helpers.
+- Add password input, Save token, and Remove token controls to the Settings External
+  Work panel.
+- Clear the token input after submit and refresh status.
+
+### Slice 5: Web Workflow Bootstrap
+
+- Add a local-only daemon endpoint and API client helper for creating or repairing a
+  minimal channel-bound `WORKFLOW.md`.
+- Add Settings controls for GitHub URL/`owner/repo` and Linear project slug when
+  workflow status is missing or invalid.
+- Keep the token input disabled until workflow setup succeeds, avoiding the first-run
+  dead end without storing tokens in browser state.
+
 ## Test Plan
 
 Core and daemon:
@@ -336,6 +406,11 @@ Core and daemon:
 - Linear workflow returns source kind, project slug, events, secret ref, and Linear token
   status metadata.
 - Token status never includes a resolved secret value.
+- Workflow setup creates or repairs a missing/invalid local `WORKFLOW.md`, rejects
+  out-of-bound paths, and does not call external providers.
+- Configure external-work secret saves only a Keychain ref to `WORKFLOW.md`, never the
+  token value.
+- Delete external-work secret reports `missing` without editing the workflow ref.
 - Background running/stopped status is reflected from the local registry.
 - External work, CI triage, and action counts are correct.
 - Out-of-bound `workflowPath` is rejected.
@@ -343,6 +418,8 @@ Core and daemon:
 API client and CLI:
 
 - SDK method builds `GET /external-work/status?cwd=...&channelId=...` correctly.
+- SDK secret configure/delete methods use the expected POST endpoints and preserve the
+  daemon response.
 - CLI `--json` prints the raw response.
 - CLI human output includes workflow health, source target, token status, counts, and
   next command.
@@ -354,6 +431,12 @@ Web:
   token-missing, background-running, and background-stopped states.
 - Settings load does not call poll, background start, runner, or action execute
   endpoints.
+- Settings load does not call workflow configure or secret configure/delete endpoints.
+- Missing/invalid workflow states show Create/Repair `WORKFLOW.md`; after success, the
+  token input becomes enabled.
+- Token save calls `POST /external-work/secrets/configure`, clears the input, and
+  refreshes status.
+- Token removal calls `POST /external-work/secrets/delete` and refreshes status.
 - Poll once calls the source-specific poll endpoint only after a click.
 - Reconcile calls the existing reconcile endpoint only after a click.
 - Start/Stop background buttons call the existing GitHub background endpoints only

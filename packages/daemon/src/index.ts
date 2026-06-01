@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { execFileSync } from "node:child_process";
 import { lookup } from "node:dns/promises";
 import { mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
@@ -21,10 +22,12 @@ import {
   pollGitHubExternalWork,
   pollLinearExternalWork,
   parseExternalWorkflowMarkdown,
+  parseSecretRef,
   proposeExternalWorkAction,
   reconcileExternalWork,
   renderExternalWorkflowPrompt,
   syncExternalWorkActionForApproval,
+  updateExternalWorkflowSecretRef,
   buildExternalWorkCiTriageView,
   triageGitHubExternalWorkCi,
   listBuiltinSkillPackExtensions,
@@ -123,7 +126,12 @@ import {
   type ExternalWorkPollResponse,
   type ExternalWorkReconcileRequest,
   type ExternalWorkReconcileResponse,
+  type ExternalWorkSecretConfigureRequest,
+  type ExternalWorkSecretDeleteRequest,
+  type ExternalWorkSecretMutationResponse,
   type ExternalWorkStatusResponse,
+  type ExternalWorkWorkflowConfigureRequest,
+  type ExternalWorkWorkflowMutationResponse,
   type ExternalSourceKind,
   type ExternalWorkItemKind,
   type ExternalWorkflowDefinition,
@@ -196,7 +204,13 @@ export interface DaemonDependencies {
   readonly storeFactory?: RunStoreFactory;
   readonly extensionRegistry?: LingExtensionRegistry;
   readonly secretResolver?: SecretResolver;
+  readonly externalSecretStore?: ExternalSecretStore;
   readonly externalWorkFetch?: typeof globalThis.fetch;
+}
+
+export interface ExternalSecretStore extends SecretResolver {
+  setSecret(ref: string, value: string, purpose?: SecretPurpose): SecretStatus;
+  deleteSecret(ref: string, purpose?: SecretPurpose): SecretStatus;
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -469,14 +483,15 @@ export function createDaemonServer(
   const resolvedConfig = resolveConfig(config);
   const runner = dependencies.runner ?? createPiRunner();
   const extensionRegistry = dependencies.extensionRegistry ?? createDefaultLingExtensionRegistry();
-  const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver();
+  const externalSecretStore = dependencies.externalSecretStore ?? createSystemKeychainSecretStore();
+  const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
   const externalWorkFetch = dependencies.externalWorkFetch;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore);
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
   const server = createServer(async (request, response) => {
     try {
-      await routeRequest(request, response, resolvedConfig, runner, storeRegistry, activeRuns, secretResolver, externalWorkFetch, backgroundSchedulers);
+      await routeRequest(request, response, resolvedConfig, runner, storeRegistry, activeRuns, secretResolver, externalSecretStore, externalWorkFetch, backgroundSchedulers);
     } catch (error) {
       if (!response.headersSent) {
         writeJson(response, 500, {
@@ -550,6 +565,171 @@ export function getLocalChannelSourceExtension(): ChannelSourceExtensionMetadata
   };
 }
 
+function createSystemKeychainSecretStore(): ExternalSecretStore {
+  const service = "ling-stack";
+  const unavailable = (ref: string, message = "Keychain secret store is unavailable in this runtime."): SecretStatus => ({
+    ref,
+    kind: "keychain",
+    configured: false,
+    errorCode: "secret_store_unavailable",
+    message,
+  });
+
+  return {
+    status(ref: string): SecretStatus {
+      let parsed: ReturnType<typeof parseSecretRef>;
+      try {
+        parsed = parseSecretRef(ref);
+      } catch (error) {
+        return {
+          ref,
+          kind: "keychain",
+          configured: false,
+          errorCode: "invalid_secret_ref",
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+      if (parsed.kind !== "keychain") {
+        return {
+          ref,
+          kind: parsed.kind,
+          configured: false,
+          errorCode: "invalid_secret_ref",
+          message: "External work Web secret setup only supports keychain: refs.",
+        };
+      }
+      if (process.platform !== "darwin") {
+        return unavailable(ref);
+      }
+      try {
+        execFileSync("/usr/bin/security", ["find-generic-password", "-s", service, "-a", parsed.name], {
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+        return { ref, kind: "keychain", configured: true };
+      } catch (error) {
+        const message = readProcessErrorMessage(error);
+        if (message.includes("could not be found") || message.includes("The specified item could not be found")) {
+          return {
+            ref,
+            kind: "keychain",
+            configured: false,
+            errorCode: "secret_missing",
+            message: `Secret is not configured: ${ref}`,
+          };
+        }
+        return unavailable(ref, message || "Keychain secret status could not be read.");
+      }
+    },
+    resolve(ref: string): ResolvedSecret {
+      const status = this.status(ref);
+      if (!status.configured) {
+        return { ref, configured: false, status };
+      }
+      const parsed = parseSecretRef(ref);
+      try {
+        const value = execFileSync("/usr/bin/security", ["find-generic-password", "-s", service, "-a", parsed.name, "-w"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }).trim();
+        return { ref, configured: Boolean(value), value, status };
+      } catch (error) {
+        const message = readProcessErrorMessage(error);
+        return {
+          ref,
+          configured: false,
+          status: {
+            ref,
+            kind: "keychain",
+            configured: false,
+            errorCode: "secret_access_denied",
+            message: message || "Keychain secret could not be read.",
+          },
+        };
+      }
+    },
+    setSecret(ref: string, value: string): SecretStatus {
+      const parsed = parseSecretRef(ref);
+      if (parsed.kind !== "keychain") {
+        return {
+          ref,
+          kind: parsed.kind,
+          configured: false,
+          errorCode: "invalid_secret_ref",
+          message: "External work Web secret setup only supports keychain: refs.",
+        };
+      }
+      if (process.platform !== "darwin") {
+        return unavailable(ref);
+      }
+      try {
+        execFileSync("/usr/bin/security", ["add-generic-password", "-U", "-s", service, "-a", parsed.name, "-w", value], {
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+        return { ref, kind: "keychain", configured: true };
+      } catch (error) {
+        return {
+          ref,
+          kind: "keychain",
+          configured: false,
+          errorCode: "secret_access_denied",
+          message: readProcessErrorMessage(error) || "Keychain secret could not be saved.",
+        };
+      }
+    },
+    deleteSecret(ref: string): SecretStatus {
+      const parsed = parseSecretRef(ref);
+      if (parsed.kind !== "keychain") {
+        return {
+          ref,
+          kind: parsed.kind,
+          configured: false,
+          errorCode: "invalid_secret_ref",
+          message: "External work Web secret setup only supports keychain: refs.",
+        };
+      }
+      if (process.platform !== "darwin") {
+        return unavailable(ref);
+      }
+      try {
+        execFileSync("/usr/bin/security", ["delete-generic-password", "-s", service, "-a", parsed.name], {
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+      } catch (error) {
+        const message = readProcessErrorMessage(error);
+        if (!message.includes("could not be found") && !message.includes("The specified item could not be found")) {
+          return {
+            ref,
+            kind: "keychain",
+            configured: false,
+            errorCode: "secret_access_denied",
+            message: message || "Keychain secret could not be deleted.",
+          };
+        }
+      }
+      return {
+        ref,
+        kind: "keychain",
+        configured: false,
+        errorCode: "secret_missing",
+        message: `Secret is not configured: ${ref}`,
+      };
+    },
+  };
+}
+
+function readProcessErrorMessage(error: unknown): string {
+  if (error && typeof error === "object") {
+    const stderr = "stderr" in error ? (error as { readonly stderr?: unknown }).stderr : undefined;
+    if (Buffer.isBuffer(stderr)) {
+      return stderr.toString("utf8").trim();
+    }
+    if (typeof stderr === "string") {
+      return stderr.trim();
+    }
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function startDaemon(
   config: DaemonConfig = defaultDaemonConfig,
   dependencies: DaemonDependencies = {},
@@ -567,6 +747,7 @@ async function routeRequest(
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
   secretResolver: SecretResolver,
+  externalSecretStore: ExternalSecretStore,
   externalWorkFetch?: typeof globalThis.fetch,
   backgroundSchedulers?: ExternalWorkBackgroundSchedulerRegistry,
 ): Promise<void> {
@@ -636,6 +817,21 @@ async function routeRequest(
 
   if (url.pathname === "/external-work/status") {
     await handleExternalWorkStatus(request, response, config, storeRegistry, secretResolver, backgroundSchedulers);
+    return;
+  }
+
+  if (url.pathname === "/external-work/workflow/configure") {
+    await handleExternalWorkWorkflowConfigure(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/external-work/secrets/configure") {
+    await handleExternalWorkSecretConfigure(request, response, config, storeRegistry, secretResolver, externalSecretStore);
+    return;
+  }
+
+  if (url.pathname === "/external-work/secrets/delete") {
+    await handleExternalWorkSecretDelete(request, response, config, storeRegistry, secretResolver, externalSecretStore);
     return;
   }
 
@@ -3773,17 +3969,7 @@ async function handleExternalWorkStatus(
         name: channel.name,
         ...(channel.boundPath ? { boundPath: channel.boundPath } : {}),
       },
-      workflow: {
-        path: workflowFile.path,
-        exists: workflowFile.exists,
-        valid: Boolean(workflowFile.exists && workflowDefinition && !workflowFile.error),
-        sourceKind,
-        events: workflowDefinition?.config.source.events ?? [],
-        ...(workflowFile.error || parsed.error ? { error: workflowFile.error ?? parsed.error } : {}),
-        ...(workflowDefinition?.config.source.repository ? { repository: workflowDefinition.config.source.repository } : {}),
-        ...(workflowDefinition?.config.source.projectSlug ? { projectSlug: workflowDefinition.config.source.projectSlug } : {}),
-        ...(secretRef ? { secretRef } : {}),
-      },
+      workflow: buildExternalWorkStatusWorkflowSummary(workflowFile, parsed),
       secret,
       records: buildExternalWorkStatusCounts(store, channel.id),
       background: buildExternalWorkStatusBackground(backgroundScheduler, sourceKind),
@@ -3801,6 +3987,418 @@ async function handleExternalWorkStatus(
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
+}
+
+async function handleExternalWorkWorkflowConfigure(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work workflow setup` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+    const input = readExternalWorkWorkflowConfigureRequest(body);
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(input.channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+      return;
+    }
+
+    const targetPath = resolveExternalWorkflowWritablePath(channel, cwd, input.workflowPath);
+    const existingFile = readExternalWorkflowStatusFile(channel, cwd, input.workflowPath);
+    const existingParsed = parseExternalWorkflowStatus(existingFile.markdown);
+    const workflowCreated = !existingFile.exists;
+    let workflowUpdated = false;
+
+    if (!existingFile.exists || !existingParsed.workflowDefinition) {
+      writeFileSync(targetPath, buildMinimalExternalWorkflowMarkdown(input), "utf8");
+      workflowUpdated = true;
+    }
+
+    const workflowFile = readExternalWorkflowStatusFile(channel, cwd, input.workflowPath);
+    const parsed = parseExternalWorkflowStatus(workflowFile.markdown);
+    if (!parsed.workflowDefinition) {
+      throw new Error(parsed.error ?? "Generated WORKFLOW.md is invalid.");
+    }
+    const responseBody: ExternalWorkWorkflowMutationResponse = {
+      cwd,
+      channelId: channel.id,
+      sourceKind: parsed.workflowDefinition.config.source.kind,
+      workflow: buildExternalWorkStatusWorkflowSummary(workflowFile, parsed),
+      workflowCreated,
+      workflowUpdated,
+    };
+    writeJson(response, 200, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleExternalWorkSecretConfigure(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+  externalSecretStore: ExternalSecretStore,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work secret setup` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+    const input = readExternalWorkSecretConfigureRequest(body);
+    const prepared = prepareExternalWorkSecretMutation(storeRegistry, cwd, input.channelId, input.workflowPath);
+    const token = input.token.trim();
+    if (!token) {
+      throw new Error("token is required.");
+    }
+    const secretRef = normalizeExternalWorkSecretRef(input.secretRef ?? prepared.workflowDefinition.config.source.secretRef, prepared.workflowDefinition);
+    const setStatus = externalSecretStore.setSecret(secretRef, token, externalWorkSecretPurpose(prepared.workflowDefinition.config.source.kind));
+    if (!setStatus.configured) {
+      throw new Error(setStatus.message ?? `Could not save secret: ${secretRef}`);
+    }
+
+    const workflowUpdated = updateExternalWorkWorkflowSecretRefIfNeeded(prepared.workflowFile.path, prepared.workflowFile.markdown, secretRef, input.updateWorkflow !== false);
+    const workflowFile = readExternalWorkflowStatusFile(prepared.channel, cwd, input.workflowPath);
+    const parsed = parseExternalWorkflowStatus(workflowFile.markdown);
+    const workflowDefinition = parsed.workflowDefinition ?? prepared.workflowDefinition;
+    const responseBody: ExternalWorkSecretMutationResponse = {
+      cwd,
+      channelId: prepared.channel.id,
+      sourceKind: workflowDefinition.config.source.kind,
+      secretRef,
+      secret: buildExternalWorkStatusSecret(secretResolver, secretRef, externalWorkSecretPurpose(workflowDefinition.config.source.kind)),
+      workflow: buildExternalWorkStatusWorkflowSummary(workflowFile, parsed, secretRef),
+      workflowUpdated,
+    };
+    writeJson(response, 200, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function handleExternalWorkSecretDelete(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+  externalSecretStore: ExternalSecretStore,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work secret deletion` });
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+    const input = readExternalWorkSecretDeleteRequest(body);
+    const prepared = prepareExternalWorkSecretMutation(storeRegistry, cwd, input.channelId, input.workflowPath);
+    const sourceKind = prepared.workflowDefinition.config.source.kind;
+    const secretRef = input.secretRef ?? prepared.workflowDefinition.config.source.secretRef;
+    if (!secretRef) {
+      throw new Error("WORKFLOW.md source.secretRef is required to remove a configured token.");
+    }
+    const parsedRef = parseSecretRef(secretRef);
+    if (parsedRef.kind !== "keychain") {
+      throw new Error("Only keychain: external work secrets can be removed from Web Settings.");
+    }
+    externalSecretStore.deleteSecret(secretRef, externalWorkSecretPurpose(sourceKind));
+    const workflowFile = readExternalWorkflowStatusFile(prepared.channel, cwd, input.workflowPath);
+    const parsed = parseExternalWorkflowStatus(workflowFile.markdown);
+    const responseBody: ExternalWorkSecretMutationResponse = {
+      cwd,
+      channelId: prepared.channel.id,
+      sourceKind,
+      secretRef,
+      secret: buildExternalWorkStatusSecret(secretResolver, secretRef, externalWorkSecretPurpose(sourceKind)),
+      workflow: buildExternalWorkStatusWorkflowSummary(workflowFile, parsed, secretRef),
+      workflowUpdated: false,
+    };
+    writeJson(response, 200, responseBody);
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+function prepareExternalWorkSecretMutation(
+  storeRegistry: RunStoreRegistry,
+  cwd: string,
+  channelId: string,
+  workflowPath: string | undefined,
+): {
+  readonly channel: Channel;
+  readonly workflowFile: { readonly path: string; readonly exists: boolean; readonly markdown: string; readonly error?: string };
+  readonly workflowDefinition: ExternalWorkflowDefinition;
+} {
+  const store = storeRegistry.getStore(cwd);
+  const channel = store.getChannel(channelId);
+  if (!channel) {
+    throw new Error(`Channel not found: ${channelId}`);
+  }
+  const workflowFile = readExternalWorkflowStatusFile(channel, cwd, workflowPath);
+  if (!workflowFile.exists || !workflowFile.markdown) {
+    throw new Error(workflowFile.error ?? "WORKFLOW.md was not found");
+  }
+  const workflowDefinition = parseExternalWorkflowMarkdown(workflowFile.markdown);
+  return {
+    channel,
+    workflowFile: {
+      path: workflowFile.path,
+      exists: true,
+      markdown: workflowFile.markdown,
+      ...(workflowFile.error ? { error: workflowFile.error } : {}),
+    },
+    workflowDefinition,
+  };
+}
+
+function readExternalWorkSecretConfigureRequest(body: unknown): ExternalWorkSecretConfigureRequest {
+  if (!isRecord(body)) {
+    throw new Error("external work secret setup request must be a JSON object");
+  }
+  const value = body;
+  const channelId = readStringAllowEmpty(value, "channelId").trim();
+  if (!channelId) {
+    throw new Error("channelId is required.");
+  }
+  return {
+    channelId,
+    workflowPath: readOptionalString(value, "workflowPath"),
+    token: readStringAllowEmpty(value, "token"),
+    secretRef: readOptionalString(value, "secretRef"),
+    updateWorkflow: readOptionalBoolean(value, "updateWorkflow"),
+  };
+}
+
+function readExternalWorkSecretDeleteRequest(body: unknown): ExternalWorkSecretDeleteRequest {
+  if (!isRecord(body)) {
+    throw new Error("external work secret delete request must be a JSON object");
+  }
+  const value = body;
+  const channelId = readStringAllowEmpty(value, "channelId").trim();
+  if (!channelId) {
+    throw new Error("channelId is required.");
+  }
+  return {
+    channelId,
+    workflowPath: readOptionalString(value, "workflowPath"),
+    secretRef: readOptionalString(value, "secretRef"),
+  };
+}
+
+function readExternalWorkWorkflowConfigureRequest(body: unknown): ExternalWorkWorkflowConfigureRequest {
+  if (!isRecord(body)) {
+    throw new Error("external work workflow setup request must be a JSON object");
+  }
+  const value = body;
+  const channelId = readStringAllowEmpty(value, "channelId").trim();
+  if (!channelId) {
+    throw new Error("channelId is required.");
+  }
+  const sourceKind = readExternalSourceKind(value, "sourceKind");
+  const rawRepository = readOptionalString(value, "repository");
+  const repository = rawRepository !== undefined ? normalizeGitHubRepositoryInput(rawRepository) : undefined;
+  const projectSlug = readOptionalString(value, "projectSlug")?.trim();
+  if (sourceKind === "github") {
+    if (!repository) {
+      throw new Error("repository is required for GitHub external work and must use owner/repo or GitHub URL format.");
+    }
+  } else if (!projectSlug) {
+    throw new Error("projectSlug is required for Linear external work.");
+  } else if (!/^[A-Za-z0-9_.-]+$/.test(projectSlug)) {
+    throw new Error("projectSlug may only contain letters, numbers, dots, underscores, and dashes.");
+  }
+  return {
+    channelId,
+    workflowPath: readOptionalString(value, "workflowPath"),
+    sourceKind,
+    ...(repository ? { repository } : {}),
+    ...(projectSlug ? { projectSlug } : {}),
+  };
+}
+
+function readExternalSourceKind(record: Record<string, unknown>, key: string): ExternalSourceKind {
+  const value = readStringAllowEmpty(record, key).trim();
+  if (!externalSourceKinds.includes(value as ExternalSourceKind)) {
+    throw new Error(`${key} must be one of: ${externalSourceKinds.join(", ")}`);
+  }
+  return value as ExternalSourceKind;
+}
+
+function normalizeGitHubRepositoryInput(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  let candidate = trimmed;
+  if (/^https?:\/\//i.test(candidate)) {
+    let url: URL;
+    try {
+      url = new URL(candidate);
+    } catch {
+      return undefined;
+    }
+    if (url.hostname !== "github.com") {
+      return undefined;
+    }
+    const [owner, repo] = url.pathname.split("/").filter(Boolean);
+    candidate = owner && repo ? `${owner}/${repo}` : "";
+  } else if (candidate.startsWith("git@github.com:")) {
+    candidate = candidate.slice("git@github.com:".length);
+  } else if (candidate.startsWith("github.com/")) {
+    candidate = candidate.slice("github.com/".length);
+  }
+
+  candidate = candidate.replace(/\.git$/i, "").replace(/\/+$/g, "");
+  const [owner, repo, ...extra] = candidate.split("/");
+  if (!owner || !repo || extra.length > 0) {
+    return undefined;
+  }
+  if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
+    return undefined;
+  }
+  return `${owner}/${repo}`;
+}
+
+function resolveExternalWorkflowWritablePath(channel: Channel, cwd: string, workflowPathInput: string | undefined): string {
+  const root = channel.boundPath ?? cwd;
+  const rootRealPath = realpathSync(root);
+  const workflowPath = workflowPathInput
+    ? isAbsolute(workflowPathInput)
+      ? workflowPathInput
+      : resolvePath(rootRealPath, workflowPathInput)
+    : resolvePath(rootRealPath, "WORKFLOW.md");
+
+  if (!isPathInsideRoot(rootRealPath, workflowPath)) {
+    throw new Error("workflowPath must resolve inside the channel bound path");
+  }
+  const existing = statFileIfPresent(workflowPath);
+  if (existing) {
+    if (!existing.isFile()) {
+      throw new Error("Workflow path is not a file");
+    }
+    const workflowRealPath = realpathSync(workflowPath);
+    if (!isPathInsideRoot(rootRealPath, workflowRealPath)) {
+      throw new Error("workflowPath must resolve inside the channel bound path");
+    }
+    return workflowRealPath;
+  }
+
+  const parentPath = resolvePath(workflowPath, "..");
+  mkdirSync(parentPath, { recursive: true });
+  const parentRealPath = realpathSync(parentPath);
+  if (!isPathInsideRoot(rootRealPath, parentRealPath)) {
+    throw new Error("workflowPath must resolve inside the channel bound path");
+  }
+  return workflowPath;
+}
+
+function buildMinimalExternalWorkflowMarkdown(input: ExternalWorkWorkflowConfigureRequest): string {
+  const sourceBlock = input.sourceKind === "github"
+    ? [
+        "source:",
+        "  kind: github",
+        `  repository: ${input.repository}`,
+        "  events:",
+        "    - pull_request.opened",
+        "    - pull_request.synchronize",
+        "    - issue.opened",
+      ]
+    : [
+        "source:",
+        "  kind: linear",
+        `  projectSlug: ${input.projectSlug}`,
+        "  events:",
+        "    - issue.created",
+      ];
+  return [
+    "---",
+    ...sourceBlock,
+    "scheduler:",
+    "  reconcileOnStartup: false",
+    "agent:",
+    "  teammateId: engineer",
+    "---",
+    "",
+    "Review {{ item.kind }} {{ item.identifier }}.",
+    "",
+    "Title: {{ item.title }}",
+    "State: {{ item.state }}",
+    "",
+    "Summarize the requested work, identify required code, test, and docs changes, and propose a safe implementation plan.",
+    "Do not perform external mutations unless a separate approval-gated action is explicitly requested.",
+    "",
+  ].join("\n");
+}
+
+function normalizeExternalWorkSecretRef(secretRef: string | undefined, workflowDefinition: ExternalWorkflowDefinition): string {
+  if (secretRef) {
+    const parsed = parseSecretRef(secretRef);
+    if (parsed.kind !== "keychain") {
+      throw new Error("Web token setup requires a keychain: secretRef.");
+    }
+    return secretRef;
+  }
+  return `keychain:${defaultExternalWorkSecretName(workflowDefinition)}`;
+}
+
+function defaultExternalWorkSecretName(workflowDefinition: ExternalWorkflowDefinition): string {
+  const source = workflowDefinition.config.source;
+  const target = source.kind === "github" ? source.repository : source.projectSlug;
+  const suffix = (target ?? "default")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase()
+    .slice(0, 80) || "DEFAULT";
+  return `LING_STACK_${source.kind.toUpperCase()}_${suffix}_TOKEN`;
+}
+
+function externalWorkSecretPurpose(sourceKind: ExternalSourceKind): "github_token" | "linear_token" {
+  return sourceKind === "github" ? "github_token" : "linear_token";
+}
+
+function updateExternalWorkWorkflowSecretRefIfNeeded(path: string, markdown: string, secretRef: string, shouldUpdate: boolean): boolean {
+  if (!shouldUpdate) {
+    return false;
+  }
+  const current = parseExternalWorkflowMarkdown(markdown).config.source.secretRef;
+  if (current === secretRef) {
+    return false;
+  }
+  writeFileSync(path, updateExternalWorkflowSecretRef(markdown, secretRef), "utf8");
+  return true;
 }
 
 function readExternalWorkflowStatusFile(
@@ -3863,6 +4461,27 @@ function parseExternalWorkflowStatus(markdown: string | undefined): {
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function buildExternalWorkStatusWorkflowSummary(
+  workflowFile: { readonly path: string; readonly exists: boolean; readonly markdown?: string; readonly error?: string },
+  parsed: { readonly workflowDefinition?: ExternalWorkflowDefinition; readonly error?: string },
+  secretRefOverride?: string,
+): ExternalWorkStatusResponse["workflow"] {
+  const workflowDefinition = parsed.workflowDefinition;
+  const source = workflowDefinition?.config.source;
+  const secretRef = secretRefOverride ?? source?.secretRef;
+  return {
+    path: workflowFile.path,
+    exists: workflowFile.exists,
+    valid: Boolean(workflowFile.exists && workflowDefinition && !workflowFile.error),
+    sourceKind: source?.kind ?? "unknown",
+    events: source?.events ?? [],
+    ...(workflowFile.error || parsed.error ? { error: workflowFile.error ?? parsed.error } : {}),
+    ...(source?.repository ? { repository: source.repository } : {}),
+    ...(source?.projectSlug ? { projectSlug: source.projectSlug } : {}),
+    ...(secretRef ? { secretRef } : {}),
+  };
 }
 
 function buildExternalWorkStatusSecret(

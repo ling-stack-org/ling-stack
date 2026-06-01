@@ -163,6 +163,11 @@ Rules:
 - `linear` is a later adapter and must reuse the same normalized work-item contract.
 - Secrets are referenced by `secretRef` or provider-specific defaults. Raw tokens must
   not be stored in `WORKFLOW.md`, logs, artifacts, or renderer state.
+- Web Settings can create or repair a minimal local `WORKFLOW.md` for a pasted GitHub
+  URL, GitHub `owner/repo`, or Linear project slug before token setup. This writes only
+  the channel-bound file and does not call external providers.
+- Web Settings token setup writes only `keychain:` refs into `WORKFLOW.md`; `env:` refs
+  remain supported for headless development and CLI smoke flows.
 - Event and state names are source-specific at the adapter boundary, then normalized
   before entering the scheduler.
 
@@ -642,6 +647,11 @@ Implementation plan: [External Work Phase 4 Implementation](external-work-phase-
 - UX.1 adds the Web-visible status/setup surface before GA hardening so operators can
   see workflow health, source target, token status, local record counts, and background
   scheduler state without guessing from CLI commands.
+- UX.2 adds the missing Web token setup path: operators can paste a GitHub or Linear
+  token in Settings, store it in macOS Keychain, and keep only a `keychain:` `secretRef`
+  in `WORKFLOW.md`.
+- UX.3 removes the first-run Settings dead end: missing/invalid workflows can be created
+  or repaired locally from the browser before token paste is enabled.
 - Track that product surface in
   [External Work Status Surface](external-work-status-surface.md).
 - Track the GA hardening details in

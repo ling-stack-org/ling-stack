@@ -94,6 +94,60 @@
   font-weight: 700;
 }
 
+.external-work-secret-box,
+.external-work-workflow-box {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #d8ded7;
+  background: #fbfcfa;
+}
+
+.external-work-secret-box > div:first-child,
+.external-work-workflow-box > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.external-work-secret-box strong,
+.external-work-workflow-box strong {
+  color: #25312d;
+  font-size: 13px;
+}
+
+.external-work-secret-box small,
+.external-work-workflow-box small {
+  color: #63736d;
+  font-size: 12px;
+}
+
+.external-work-secret-form,
+.external-work-workflow-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.external-work-workflow-form {
+  grid-template-columns: 128px minmax(220px, 1fr) auto;
+}
+
+.external-work-secret-form .field,
+.external-work-workflow-form .field {
+  margin: 0;
+}
+
+.external-work-secret-form button,
+.external-work-workflow-form button {
+  min-height: 38px;
+}
+
+.danger-ghost-button {
+  color: #9a341f;
+}
+
 .inline-warning {
   display: flex;
   align-items: flex-start;
@@ -145,4 +199,17 @@
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   font-weight: 800;
+}
+
+@media (max-width: 760px) {
+  .external-work-status-grid,
+  .policy-meta,
+  .policy-tool-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .external-work-secret-form,
+  .external-work-workflow-form {
+    grid-template-columns: 1fr;
+  }
 }

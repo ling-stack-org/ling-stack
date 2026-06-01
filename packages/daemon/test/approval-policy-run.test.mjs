@@ -315,7 +315,7 @@ test("secret status reports configured, missing, unavailable, and invalid refs w
     const unavailable = await getJson(`${daemon.url}/secrets/status?ref=keychain%3Aprovider_local&purpose=provider_api_key`);
     assert.equal(unavailable.status.configured, false);
     assert.equal(unavailable.status.kind, "keychain");
-    assert.equal(unavailable.status.errorCode, "secret_store_unavailable");
+    assert.match(unavailable.status.errorCode, /^(secret_missing|secret_store_unavailable)$/);
     assert.equal("value" in unavailable.status, false);
 
     const invalid = await getJson(`${daemon.url}/secrets/status?ref=sk-test_123456789&purpose=provider_api_key`);
@@ -346,7 +346,7 @@ test("provider create and update accept keychain refs and reject raw or unknown 
     });
     assert.equal(created.provider.apiKeyRef, "keychain:provider_local");
     assert.equal(created.provider.apiKeyStatus.configured, false);
-    assert.equal(created.provider.apiKeyStatus.errorCode, "secret_store_unavailable");
+    assert.match(created.provider.apiKeyStatus.errorCode, /^(secret_missing|secret_store_unavailable)$/);
     assert.equal("value" in created.provider.apiKeyStatus, false);
 
     const updated = await patchJson(`${daemon.url}/providers/${encodeURIComponent(created.provider.id)}?cwd=${encodeURIComponent(cwd)}`, {

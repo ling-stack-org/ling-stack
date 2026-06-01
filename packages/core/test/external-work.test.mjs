@@ -21,6 +21,7 @@ import {
   cancelExternalWorkAction,
   syncExternalWorkActionForApproval,
   renderExternalWorkflowPrompt,
+  updateExternalWorkflowSecretRef,
 } from "../dist/index.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -100,6 +101,19 @@ test("external WORKFLOW.md parser rejects missing source, unsupported source, mi
   assert.throws(
     () => renderExternalWorkflowPrompt(workflow.promptTemplate, { item }),
     /Unknown workflow prompt variable: item\.missing/,
+  );
+});
+
+test("external WORKFLOW.md secret ref updater writes only source.secretRef", () => {
+  const updated = updateExternalWorkflowSecretRef(workflowMarkdown, "keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN");
+  assert.match(updated, /secretRef: keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN/);
+  assert.match(updated, /Review \{\{ item.identifier \}\}/);
+  const workflow = parseExternalWorkflowMarkdown(updated);
+  assert.equal(workflow.config.source.secretRef, "keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN");
+
+  assert.throws(
+    () => updateExternalWorkflowSecretRef("Body only", "keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN"),
+    /front matter is required/,
   );
 });
 

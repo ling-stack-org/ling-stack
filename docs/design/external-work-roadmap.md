@@ -51,7 +51,10 @@ Product entry point:
 - Setup and connection status are visible from the Web Settings External Work panel and
   `ling-stack external-work status`. Both surfaces read local `WORKFLOW.md`, channel,
   secret status, local record counts, and background scheduler state without implicit
-  GitHub or Linear calls. The shipped behavior is tracked in
+  GitHub or Linear calls. Web Settings also provides the browser-friendly setup path:
+  create or repair a minimal local `WORKFLOW.md`, paste a GitHub or Linear token, save
+  it to macOS Keychain, and persist only the `keychain:` `secretRef` in `WORKFLOW.md`.
+  The shipped behavior is tracked in
   [External Work Status Surface](external-work-status-surface.md).
 
 ## Completion Model
@@ -84,6 +87,8 @@ There are three different "done" lines:
 | 6 | Shipped | Runtime-registered GitHub background polling and reconciliation; webhook ingestion is deferred. |
 | 7 | Shipped | Linear read-only manual import and poll as the second channel adapter. |
 | UX.1 | Shipped | Web Settings status surface for workflow health, source target, token status, counts, and background controls. |
+| UX.2 | Shipped | Web Settings Keychain token setup/removal for GitHub and Linear external work. |
+| UX.3 | Shipped | Web Settings local WORKFLOW.md create/repair path before token setup. |
 | GA.1 | Planned | Live smoke suites and permission/token-scope audit. |
 | GA.2 | Planned | Recovery docs and audit export. |
 | GA.3 | Planned | Admin policy controls for sources, actions, hooks, and background operation. |
