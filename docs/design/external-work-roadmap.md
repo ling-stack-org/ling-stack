@@ -2,11 +2,10 @@
 
 ## Purpose
 
-This document records the external-work roadmap after the completed GitHub Phase 4.2 CI
-triage Web surface slice. It is the compact
-planning index for what is already shipped, what remains open, when the GitHub-first loop
-is considered done, when external-work orchestration v1 is considered done, and what
-should happen after v1.
+This document records the external-work roadmap after the completed Phase 7 second
+source adapter slice. It is the compact planning index for what is already shipped, what
+remains open, when the GitHub-first loop is considered done, when external-work
+orchestration v1 is considered done, and what should happen after v1.
 
 The source-of-truth design boundaries remain:
 
@@ -16,6 +15,8 @@ The source-of-truth design boundaries remain:
 - [External Work Phase 5 Implementation](external-work-phase-5-implementation.md)
 - [External Work Phase 6 Implementation](external-work-phase-6-implementation.md)
 - [External Work Phase 7 Implementation](external-work-phase-7-implementation.md)
+- [External Work Status Surface](external-work-status-surface.md)
+- [External Work GA Hardening](external-work-ga-hardening.md)
 
 ## Current Baseline
 
@@ -32,6 +33,9 @@ Completed capabilities:
 - Explicit local CI fix run bridge from an existing triage record through the normal
   task/run SSE path.
 - Local-only CI triage list/detail APIs and Web Workspace/Inspector audit panels.
+- Strict GitHub PR review actions.
+- Runtime-registered GitHub background polling and reconciliation.
+- Linear read-only issue import and poll as a second source adapter.
 
 Still enforced:
 
@@ -41,6 +45,14 @@ Still enforced:
 - No GitHub mutation without a durable action, approval, explicit execute call, and
   stale-target revalidation.
 - No automatic push, review decision, merge, release, or issue close.
+
+Product entry point:
+
+- Setup and connection status are visible from the Web Settings External Work panel and
+  `ling-stack external-work status`. Both surfaces read local `WORKFLOW.md`, channel,
+  secret status, local record counts, and background scheduler state without implicit
+  GitHub or Linear calls. The shipped behavior is tracked in
+  [External Work Status Surface](external-work-status-surface.md).
 
 ## Completion Model
 
@@ -68,9 +80,14 @@ There are three different "done" lines:
 | 4.0 | Shipped | Manual read-only CI triage and local fix task creation. |
 | 4.1 | Shipped | Explicit local fix run bridge from CI triage to the normal task/run path. |
 | 4.2 | Shipped | Web Workspace and task Inspector CI triage audit surface. |
-| 5 | Ready for review | Strict PR review action slice; push, merge, and release remain deferred. |
-| 6 | Ready for review | Runtime-registered GitHub background polling and reconciliation; webhook ingestion is deferred. |
-| 7 | Ready for review | Linear read-only manual import and poll as the second channel adapter. |
+| 5 | Shipped | Strict PR review action slice; push, merge, and release remain deferred. |
+| 6 | Shipped | Runtime-registered GitHub background polling and reconciliation; webhook ingestion is deferred. |
+| 7 | Shipped | Linear read-only manual import and poll as the second channel adapter. |
+| UX.1 | Shipped | Web Settings status surface for workflow health, source target, token status, counts, and background controls. |
+| GA.1 | Planned | Live smoke suites and permission/token-scope audit. |
+| GA.2 | Planned | Recovery docs and audit export. |
+| GA.3 | Planned | Admin policy controls for sources, actions, hooks, and background operation. |
+| GA.4 | Planned | Security review, redaction review, and GA release checklist. |
 
 ## Phase 5 First Slice
 
@@ -286,6 +303,11 @@ work should be GA hardening:
 - Rate-limit and retry tuning.
 - Security review for workspace isolation, redaction, and external action execution.
 - Operational docs for backup, recovery, and incident triage.
+
+The GA hardening plan is in
+[External Work GA Hardening](external-work-ga-hardening.md). The recommended first
+implementation slice is GA.1: real GitHub and Linear smoke suites plus permission and
+token-scope documentation.
 
 ## Done Definitions
 

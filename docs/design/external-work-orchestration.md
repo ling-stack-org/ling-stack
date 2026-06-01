@@ -639,6 +639,13 @@ Implementation plan: [External Work Phase 4 Implementation](external-work-phase-
 - After Phase 7, prefer hardening over broad new feature surface: live smoke suites,
   permission audits, audit search/export, admin policy controls, rate-limit tuning,
   security review, and recovery documentation.
+- UX.1 adds the Web-visible status/setup surface before GA hardening so operators can
+  see workflow health, source target, token status, local record counts, and background
+  scheduler state without guessing from CLI commands.
+- Track that product surface in
+  [External Work Status Surface](external-work-status-surface.md).
+- Track the GA hardening details in
+  [External Work GA Hardening](external-work-ga-hardening.md).
 
 ## Test Plan
 

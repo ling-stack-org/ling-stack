@@ -648,6 +648,101 @@ export interface ExternalWorkBackgroundMutationResponse {
   readonly startupReconcile?: ExternalWorkReconcileResponse;
 }
 
+export type ExternalWorkWorkflowStatusSourceKind = ExternalSourceKind | "unknown";
+
+export type ExternalWorkSecretStatusKind =
+  | "configured"
+  | "missing"
+  | "unavailable"
+  | "invalid"
+  | "not_required";
+
+export type ExternalWorkStatusBackgroundStatus =
+  | "not_configured"
+  | "running"
+  | "stopped"
+  | "failed"
+  | "unsupported";
+
+export interface ExternalWorkStatusChannelSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly boundPath?: string;
+}
+
+export interface ExternalWorkStatusWorkflowSummary {
+  readonly path: string;
+  readonly exists: boolean;
+  readonly valid: boolean;
+  readonly error?: string;
+  readonly sourceKind: ExternalWorkWorkflowStatusSourceKind;
+  readonly repository?: string;
+  readonly projectSlug?: string;
+  readonly events: readonly string[];
+  readonly secretRef?: string;
+}
+
+export interface ExternalWorkStatusSecretSummary {
+  readonly ref?: string;
+  readonly purpose?: "github_token" | "linear_token";
+  readonly status: ExternalWorkSecretStatusKind;
+  readonly message?: string;
+}
+
+export interface ExternalWorkStatusCounts {
+  readonly externalWork: {
+    readonly total: number;
+    readonly ready: number;
+    readonly blocked: number;
+    readonly retryWait: number;
+    readonly terminal: number;
+  };
+  readonly ciTriage: {
+    readonly total: number;
+    readonly triaged: number;
+    readonly taskCreated: number;
+    readonly runRequested: number;
+    readonly blocked: number;
+    readonly stale: number;
+    readonly failed: number;
+  };
+  readonly actions: {
+    readonly total: number;
+    readonly waitingForApproval: number;
+    readonly approved: number;
+    readonly failed: number;
+    readonly succeeded: number;
+    readonly cancelled: number;
+    readonly staleTarget: number;
+  };
+}
+
+export interface ExternalWorkStatusBackgroundSummary {
+  readonly supported: boolean;
+  readonly running: boolean;
+  readonly schedulerId?: string;
+  readonly status: ExternalWorkStatusBackgroundStatus;
+  readonly lastTickAt?: string;
+  readonly nextPollAt?: string;
+  readonly lastError?: string;
+}
+
+export interface ExternalWorkStatusLastErrors {
+  readonly poll?: string;
+  readonly reconcile?: string;
+  readonly background?: string;
+}
+
+export interface ExternalWorkStatusResponse {
+  readonly cwd: string;
+  readonly channel: ExternalWorkStatusChannelSummary;
+  readonly workflow: ExternalWorkStatusWorkflowSummary;
+  readonly secret: ExternalWorkStatusSecretSummary;
+  readonly records: ExternalWorkStatusCounts;
+  readonly background: ExternalWorkStatusBackgroundSummary;
+  readonly lastErrors: ExternalWorkStatusLastErrors;
+}
+
 export interface ExternalWorkLoadCandidatesInput {
   readonly repository: string;
   readonly events: readonly string[];

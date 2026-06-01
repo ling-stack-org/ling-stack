@@ -1455,7 +1455,7 @@ export function WorkspaceClientView({
           </div>
           <p>{channelStatusText}{selectedChannel?.boundPath ? ` · ${selectedChannel.boundPath}` : ""}</p>
         </div>
-        <div className="channel-header-actions">
+        <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
           {daemonHealthy !== true ? (
             <span className="glass-chip attention">
               <Activity size={14} />

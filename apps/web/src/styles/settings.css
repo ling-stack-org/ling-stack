@@ -70,6 +70,46 @@
   font-size: 13px;
 }
 
+.external-work-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.external-work-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.external-work-counts span {
+  min-height: 28px;
+  padding: 6px 9px;
+  border: 1px solid #d8ded7;
+  background: #fbfcfa;
+  color: #4f5e59;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inline-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #e2d4bc;
+  background: #fffaf0;
+  color: #7c4a03;
+  font-size: 13px;
+}
+
+.action-row.wrap {
+  flex-wrap: wrap;
+}
+
 .policy-meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

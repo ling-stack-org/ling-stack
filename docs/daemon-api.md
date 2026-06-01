@@ -554,6 +554,77 @@ Import parses a repository
 does not start a runner, receive webhooks, post comments, add labels, request reviews,
 push commits, close issues, or merge. Polling only uses GitHub `GET` endpoints.
 
+Setup/status surface: Web Settings and CLI use the local-only status endpoint to show
+workflow file health, source target, status-only token readiness, local external-work
+counts, CI triage counts, action counts, and background scheduler state without calling
+GitHub, Linear, hooks, runners, or mutation APIs. The design is in
+[External Work Status Surface](design/external-work-status-surface.md).
+
+### Show External Work Status
+
+```http
+GET /external-work/status?cwd=/path/to/project&channelId=channel_...&workflowPath=WORKFLOW.md
+```
+
+`channelId` is required. `workflowPath` is optional and defaults to `WORKFLOW.md` under
+the channel bound path. If supplied, it must resolve inside the channel bound path.
+Missing or invalid workflow files return `200` with `workflow.exists`, `workflow.valid`,
+and `workflow.error` set so Settings can still render setup guidance. Missing channels
+return `404`; missing `channelId` or out-of-bounds paths return `400`.
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "channel": {
+    "id": "channel_...",
+    "name": "Engineering",
+    "boundPath": "/path/to/project"
+  },
+  "workflow": {
+    "path": "/path/to/project/WORKFLOW.md",
+    "exists": true,
+    "valid": true,
+    "sourceKind": "github",
+    "repository": "owner/repo",
+    "events": ["pull_request.opened"],
+    "secretRef": "env:GITHUB_TOKEN"
+  },
+  "secret": {
+    "ref": "env:GITHUB_TOKEN",
+    "purpose": "github_token",
+    "status": "configured"
+  },
+  "records": {
+    "externalWork": { "total": 0, "ready": 0, "blocked": 0, "retryWait": 0, "terminal": 0 },
+    "ciTriage": { "total": 0, "triaged": 0, "taskCreated": 0, "runRequested": 0, "blocked": 0, "stale": 0, "failed": 0 },
+    "actions": { "total": 0, "waitingForApproval": 0, "approved": 0, "failed": 0, "succeeded": 0, "cancelled": 0, "staleTarget": 0 }
+  },
+  "background": {
+    "supported": true,
+    "running": false,
+    "status": "not_configured"
+  },
+  "lastErrors": {}
+}
+```
+
+SDK clients can use:
+
+```ts
+await client.getExternalWorkStatus("/path/to/project", {
+  channelId: "channel_...",
+  workflowPath: "WORKFLOW.md",
+});
+```
+
+CLI:
+
+```bash
+ling-stack external-work status --channel channel_... --workflow-path WORKFLOW.md
+```
+
 ```http
 POST /external-work/github/import?cwd=/path/to/project
 ```

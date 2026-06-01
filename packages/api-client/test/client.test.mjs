@@ -88,6 +88,16 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[16].url, "http://daemon.test/secrets/status?ref=keychain%3Aprovider+1&purpose=provider_api_key");
 });
 
+test("gets external work status with channel and workflow path", async () => {
+  const mock = createFetchMock({ cwd: "/repo", workflow: { valid: true } });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  await client.getExternalWorkStatus("/repo", { channelId: "channel 1", workflowPath: "WORKFLOW.md" });
+
+  assert.equal(mock.calls[0].method, "GET");
+  assert.equal(mock.calls[0].url, "http://daemon.test/external-work/status?cwd=%2Frepo&channelId=channel+1&workflowPath=WORKFLOW.md");
+});
+
 test("sends mutation bodies for channel, task, provider, policy, media, and approval requests", async () => {
   const mock = createFetchMock({ channel: { id: "ch_1" } });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });

@@ -730,6 +730,13 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 - After Phase 7, prefer GA hardening over broad new GitHub feature surface: live smoke
   suites, permission audits, audit search/export, policy controls, rate-limit tuning,
   security review, and recovery docs.
+- UX.1 adds the Web-visible external-work status surface before GA hardening so GitHub
+  operators can see repository connection, workflow validity, token status, local record
+  counts, and background scheduler state from Settings.
+- Track the status/setup surface in
+  [External Work Status Surface](external-work-status-surface.md).
+- Track the cross-source hardening details in
+  [External Work GA Hardening](external-work-ga-hardening.md).
 
 ## Test Plan
 

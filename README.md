@@ -30,6 +30,8 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [External work Phase 5 implementation](docs/design/external-work-phase-5-implementation.md)
 - [External work Phase 6 implementation](docs/design/external-work-phase-6-implementation.md)
 - [External work Phase 7 implementation](docs/design/external-work-phase-7-implementation.md)
+- [External work status surface](docs/design/external-work-status-surface.md)
+- [External work GA hardening](docs/design/external-work-ga-hardening.md)
 - [GitHub automation](docs/design/github-automation.md)
 - [Web modularization](docs/design/web-modularization.md)
 - [Contracts / API Client](docs/design/contracts-api-client.md)
@@ -407,10 +409,22 @@ approval checks, and a separately gated mutation step lives in
 [External work live smoke](docs/external-work-live-smoke.md).
 The forward plan from the Phase 5 strict PR review action slice through Phase 7 and GA
 hardening is tracked in [External work roadmap](docs/design/external-work-roadmap.md)
-plus the Phase 5, Phase 6, and Phase 7 implementation plans:
+plus the Phase 5, Phase 6, Phase 7, and GA hardening implementation plans:
 [Phase 5](docs/design/external-work-phase-5-implementation.md),
 [Phase 6](docs/design/external-work-phase-6-implementation.md), and
-[Phase 7](docs/design/external-work-phase-7-implementation.md).
+[Phase 7](docs/design/external-work-phase-7-implementation.md). The next production
+readiness slice is [External work GA hardening](docs/design/external-work-ga-hardening.md).
+The setup entry point for "where do I connect this to a real repo" is the Web Settings
+External Work panel. It reads local `WORKFLOW.md` status, source target, token readiness,
+record counts, and background scheduler state without calling GitHub or Linear. The same
+read-only check is available from the CLI:
+
+```bash
+ling-stack external-work status --channel channel_... --workflow-path WORKFLOW.md
+```
+
+Design details are tracked in
+[External work status surface](docs/design/external-work-status-surface.md).
 
 ### 8. Run a task through the Pi runner
 

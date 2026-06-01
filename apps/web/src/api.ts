@@ -53,6 +53,13 @@ import type {
   ExternalWorkCiTriageDetailResponse,
   ExternalWorkCiTriageListRequest,
   ExternalWorkCiTriageListResponse,
+  ExternalWorkGitHubBackgroundStartRequest,
+  ExternalWorkBackgroundMutationResponse,
+  ExternalWorkPollRequest,
+  ExternalWorkPollResponse,
+  ExternalWorkReconcileRequest,
+  ExternalWorkReconcileResponse,
+  ExternalWorkStatusResponse,
   MediaJobFormState,
   MediaJobArtifactListResponse,
   MediaJobListResponse,
@@ -536,6 +543,42 @@ export async function executeExternalWorkAction(
   input: ExternalWorkActionExecuteRequest = {},
 ): Promise<ExternalWorkActionMutationResponse> {
   return daemonClient.executeExternalWorkAction(cwd, actionId, input);
+}
+
+export async function getExternalWorkStatus(
+  cwd: string,
+  input: { readonly channelId: string; readonly workflowPath?: string },
+): Promise<ExternalWorkStatusResponse> {
+  return daemonClient.getExternalWorkStatus(cwd, input);
+}
+
+export async function pollGitHubExternalWork(cwd: string, input: ExternalWorkPollRequest): Promise<ExternalWorkPollResponse> {
+  return daemonClient.pollGitHubExternalWork(cwd, input);
+}
+
+export async function pollLinearExternalWork(cwd: string, input: ExternalWorkPollRequest): Promise<ExternalWorkPollResponse> {
+  return daemonClient.pollLinearExternalWork(cwd, input);
+}
+
+export async function reconcileExternalWork(
+  cwd: string,
+  input: ExternalWorkReconcileRequest = {},
+): Promise<ExternalWorkReconcileResponse> {
+  return daemonClient.reconcileExternalWork(cwd, input);
+}
+
+export async function startGitHubExternalWorkBackground(
+  cwd: string,
+  input: ExternalWorkGitHubBackgroundStartRequest,
+): Promise<ExternalWorkBackgroundMutationResponse> {
+  return daemonClient.startGitHubExternalWorkBackground(cwd, input);
+}
+
+export async function stopExternalWorkBackground(
+  cwd: string,
+  schedulerId: string,
+): Promise<ExternalWorkBackgroundMutationResponse> {
+  return daemonClient.stopExternalWorkBackgroundScheduler(cwd, schedulerId);
 }
 
 export async function listGitHubExternalWorkCiTriage(

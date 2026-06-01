@@ -109,6 +109,81 @@ test("GitHub external work import returns readable errors for invalid inputs", a
   }
 });
 
+test("External work status reports local workflow, token, counts, and background without provider calls", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-status-"));
+  const outside = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-status-outside-"));
+  const fetchCalls = [];
+  const daemon = await startDaemonForTest(new FailingRunner(), async (url, init) => {
+    fetchCalls.push({ url: String(url), init });
+    throw new Error("status endpoint must not call external providers");
+  }, { secretResolver: missingSecretResolver() });
+  try {
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    });
+
+    const missingWorkflow = await getJson(`${daemon.url}/external-work/status?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+    assert.equal(missingWorkflow.workflow.exists, false);
+    assert.equal(missingWorkflow.workflow.valid, false);
+    assert.equal(missingWorkflow.workflow.sourceKind, "unknown");
+    assert.equal(fetchCalls.length, 0);
+
+    await writeFile(resolve(cwd, "WORKFLOW.md"), "Body only", "utf8");
+    const invalidWorkflow = await getJson(`${daemon.url}/external-work/status?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+    assert.equal(invalidWorkflow.workflow.exists, true);
+    assert.equal(invalidWorkflow.workflow.valid, false);
+    assert.match(invalidWorkflow.workflow.error, /source\.kind is required/);
+
+    await writeFile(resolve(cwd, "WORKFLOW.md"), statusWorkflowMarkdown(), "utf8");
+    await postJson(`${daemon.url}/external-work/github/import?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      eventType: "pull_request.opened",
+      payload: githubPullRequestPayload(),
+    });
+    const githubStatus = await getJson(`${daemon.url}/external-work/status?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}&workflowPath=WORKFLOW.md`);
+    assert.equal(githubStatus.workflow.valid, true);
+    assert.equal(githubStatus.workflow.sourceKind, "github");
+    assert.equal(githubStatus.workflow.repository, "openclaw/openclaw");
+    assert.equal(githubStatus.secret.status, "missing");
+    assert.equal(githubStatus.secret.ref, "env:GITHUB_TOKEN");
+    assert.equal(githubStatus.records.externalWork.total, 1);
+    assert.equal(githubStatus.background.status, "not_configured");
+
+    await writeFile(resolve(cwd, "WORKFLOW.md"), statusWorkflowMarkdown(false), "utf8");
+    const started = await postJson(`${daemon.url}/external-work/github/background/start?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      workflowPath: "WORKFLOW.md",
+      runImmediately: false,
+    });
+    assert.equal(started.scheduler.status, "running");
+    const backgroundStatus = await getJson(`${daemon.url}/external-work/status?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+    assert.equal(backgroundStatus.background.status, "running");
+    assert.equal(backgroundStatus.background.schedulerId, started.scheduler.id);
+
+    await writeFile(resolve(cwd, "WORKFLOW.md"), linearStatusWorkflowMarkdown(), "utf8");
+    const linearStatus = await getJson(`${daemon.url}/external-work/status?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+    assert.equal(linearStatus.workflow.sourceKind, "linear");
+    assert.equal(linearStatus.workflow.projectSlug, "ling-stack");
+    assert.equal(linearStatus.background.status, "unsupported");
+
+    await writeFile(resolve(outside, "WORKFLOW.md"), statusWorkflowMarkdown(), "utf8");
+    const outsidePath = await getJsonExpectError(`${daemon.url}/external-work/status?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}&workflowPath=${encodeURIComponent(resolve(outside, "WORKFLOW.md"))}`);
+    assert.equal(outsidePath.status, 400);
+    assert.match(outsidePath.body.message, /inside the channel bound path/);
+
+    const missingChannel = await getJsonExpectError(`${daemon.url}/external-work/status?cwd=${encodeURIComponent(cwd)}&channelId=channel_missing`);
+    assert.equal(missingChannel.status, 404);
+    assert.equal(missingChannel.body.error, "channel_not_found");
+    assert.equal(fetchCalls.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("GitHub external work poll imports candidates, deduplicates, and reconciles terminal local state", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-poll-"));
   const runner = new FailingRunner();
@@ -728,8 +803,8 @@ class RecordingRunner {
   }
 }
 
-async function startDaemonForTest(runner, externalWorkFetch) {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner, externalWorkFetch });
+async function startDaemonForTest(runner, externalWorkFetch, dependencies = {}) {
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner, externalWorkFetch, ...dependencies });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
@@ -858,6 +933,24 @@ Head: {{ item.headSha }}
 `;
 }
 
+function statusWorkflowMarkdown(withSecret = true) {
+  return `---
+source:
+  kind: github
+  repository: openclaw/openclaw
+${withSecret ? "  secretRef: env:GITHUB_TOKEN\n" : ""}scheduler:
+  reconcileOnStartup: false
+agent:
+  teammateId: engineer
+---
+
+Review {{ item.identifier }}.
+
+Title: {{ item.title }}
+Head: {{ item.headSha }}
+`;
+}
+
 function linearWorkflowMarkdown() {
   return `---
 source:
@@ -874,6 +967,46 @@ Review {{ item.identifier }}.
 Title: {{ item.title }}
 State: {{ item.state }}
 `;
+}
+
+function linearStatusWorkflowMarkdown() {
+  return `---
+source:
+  kind: linear
+  projectSlug: ling-stack
+  secretRef: env:LINEAR_TOKEN
+  events:
+    - issue.created
+agent:
+  teammateId: engineer
+---
+
+Review {{ item.identifier }}.
+
+Title: {{ item.title }}
+State: {{ item.state }}
+`;
+}
+
+function missingSecretResolver() {
+  return {
+    status(ref) {
+      return {
+        ref,
+        kind: "env",
+        configured: false,
+        errorCode: "secret_missing",
+        message: `Secret is not configured: ${ref}`,
+      };
+    },
+    resolve(ref) {
+      return {
+        ref,
+        configured: false,
+        status: this.status(ref),
+      };
+    },
+  };
 }
 
 function githubPullRequestPayload() {
