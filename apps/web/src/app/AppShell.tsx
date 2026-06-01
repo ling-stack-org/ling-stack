@@ -1762,6 +1762,10 @@ export function AppShell(): JSX.Element {
     }
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
     const firstAiMention = input.mentions.find((mention) => mention.kind === "ai-teammate");
+    const providerPresetId = resolveChannelMessageProviderPresetId(
+      selectedChannel,
+      firstAiMention?.id || selectedChannel?.defaultTeammateId,
+    );
     try {
       setErrorMessage("");
       const response = await createChannelMessage(form.cwd.trim(), selectedChannelId, {
@@ -1770,7 +1774,7 @@ export function AppShell(): JSX.Element {
         attachmentIds: input.attachmentIds,
         linkPreviewIds: input.linkPreviewIds,
         requestAiReply: input.requestAiReply,
-        providerPresetId: taskRunProviderId || selectedChannel?.defaultProviderPresetId || form.providerPresetId || undefined,
+        providerPresetId: providerPresetId || undefined,
         teammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,
       });
       setChannelMessages((current) => [
@@ -2263,6 +2267,18 @@ export function AppShell(): JSX.Element {
 
   function resolveTaskRunProviderPresetId(channel: Channel | undefined): string {
     return taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId || providers.find(providerPreflightReady)?.id || "";
+  }
+
+  function resolveChannelMessageProviderPresetId(channel: Channel | undefined, teammateId: string | undefined): string {
+    const teammateProviderPresetId = findAiTeammateByReference(teammateId)?.providerPresetId;
+    return teammateProviderPresetId || taskRunProviderId || channel?.defaultProviderPresetId || form.providerPresetId || providers.find(providerPreflightReady)?.id || "";
+  }
+
+  function findAiTeammateByReference(teammateId: string | undefined): AiTeammate | undefined {
+    if (!teammateId) {
+      return undefined;
+    }
+    return aiTeammates.find((teammate) => teammate.id === teammateId || teammate.templateId === teammateId);
   }
 
   async function runPersistedTask(

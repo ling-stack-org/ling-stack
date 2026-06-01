@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import {
   approvalToolDecisions,
   approvalStatuses,
+  createBuiltinAiTeammateId,
   createRunId,
   createSqliteRunStore,
   defaultApprovalToolDecisions,
@@ -5999,8 +6000,27 @@ async function createAiChannelReply(input: {
     input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
     input.channel.defaultTeammateId ??
     "ai-teammate";
-  const providerPresetId = input.providerPresetId ?? input.channel.defaultProviderPresetId;
+  const teammate = resolveAiTeammateReference(input.store, teammateId);
+  const canonicalTeammateId = teammate?.id ?? teammateId;
+  const providerPresetId = input.providerPresetId ?? teammate?.providerPresetId ?? input.channel.defaultProviderPresetId;
   const now = new Date().toISOString();
+
+  if (teammate && teammate.status !== "active") {
+    return input.store.createChannelMessage(
+      {
+        channelId: input.channel.id,
+        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: canonicalTeammateId,
+        body: `AI teammate is ${teammate.status}.`,
+        status: "blocked",
+        errorMessage: `Teammate status is ${teammate.status}.`,
+      },
+      now,
+    );
+  }
 
   if (!providerPresetId) {
     return input.store.createChannelMessage(
@@ -6010,7 +6030,7 @@ async function createAiChannelReply(input: {
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
-        authorId: teammateId,
+        authorId: canonicalTeammateId,
         body: "AI teammate is not configured for this channel.",
         status: "blocked",
         errorMessage: "No provider preset is selected for this channel discussion.",
@@ -6076,7 +6096,7 @@ async function createAiChannelReply(input: {
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
-        authorId: teammateId,
+        authorId: canonicalTeammateId,
         body: replyText,
       },
       new Date().toISOString(),
@@ -6090,7 +6110,7 @@ async function createAiChannelReply(input: {
         kind: "ai_reply",
         intent: "discuss",
         authorType: "ai-teammate",
-        authorId: teammateId,
+        authorId: canonicalTeammateId,
         body: `AI teammate is blocked: ${message}`,
         status: "blocked",
         errorMessage: message,
@@ -6098,6 +6118,10 @@ async function createAiChannelReply(input: {
       new Date().toISOString(),
     );
   }
+}
+
+function resolveAiTeammateReference(store: RunStore, teammateId: string): AiTeammate | undefined {
+  return store.getAiTeammate(teammateId) ?? store.getAiTeammate(createBuiltinAiTeammateId(teammateId));
 }
 
 async function createAiTeammateDirectReply(input: {

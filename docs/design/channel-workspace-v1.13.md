@@ -33,6 +33,11 @@ Typing `@` opens a small suggestion popover above the textarea. Selecting a team
 inserts `@Name` into the text and adds a pending mention chip. Discussion messages request
 an AI reply only when an AI teammate is selected as a mention.
 
+When a mentioned teammate has its own provider preset, the message routes through that
+provider. Otherwise the composer uses the same effective provider shown in the channel
+header: explicit run provider, channel default provider, workspace selected provider, then
+the first preflight-ready chat provider.
+
 Dropping files onto the textarea, pasting files from the clipboard, or using the compact
 file icon all call the existing attachment upload path. The pending attachment chip stays
 visible until sent or removed.
@@ -52,10 +57,12 @@ v1.13 reuses the existing client and daemon contracts:
 - `POST /channels/:id/attachments`,
 - `POST /channels/:id/link-previews`,
 - `POST /channels/:id/messages`,
-- `mentions`, `attachmentIds`, `linkPreviewIds`, and `requestAiReply` message fields.
+- `mentions`, `attachmentIds`, `linkPreviewIds`, `requestAiReply`, and
+  `providerPresetId` message fields.
 
-No backend behavior changes are required. The client only changes when those existing
-calls are triggered.
+The daemon still enforces provider preflight. The client is responsible for sending the
+visible effective provider when the user has not explicitly bound one to the channel or
+teammate.
 
 ## Acceptance Criteria
 
