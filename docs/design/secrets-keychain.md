@@ -21,14 +21,18 @@ Implemented in v0.1:
 - `env:` and `keychain:` refs are valid; raw keys, empty names, and unknown schemes are rejected,
 - daemon provider check, run startup, live media transport, and public provider mapping resolve through the injected resolver,
 - daemon exposes read-only `GET /secrets/status`,
+- daemon exposes external-work-specific workflow bootstrap plus Keychain setup/delete
+  endpoints for channel-bound `WORKFLOW.md` files,
 - contracts and API client expose secret status DTOs and `getSecretStatus()`,
 - Web and CLI accept/display `keychain:` refs without exposing values,
+- Web Settings can save/remove GitHub and Linear external-work tokens through the daemon
+  without storing token values in browser storage,
 - run events, run snapshots, provider snapshots, and generated artifacts redact resolved secret values.
 
 Not implemented in v0.1:
 
-- macOS Keychain write/delete UI,
-- renderer APIs that set or delete secrets,
+- generic provider Keychain write/delete UI,
+- generic renderer APIs that set or delete arbitrary secrets,
 - external plugin access to raw secret values.
 
 ## Goals
@@ -81,6 +85,7 @@ export interface SecretRef {
 export type SecretPurpose =
   | "provider_api_key"
   | "github_token"
+  | "linear_token"
   | "webhook_secret"
   | "custom_header"
   | "automation_token";
@@ -116,7 +121,8 @@ export interface SecretResolver {
 
 `keychain:` resolver:
 
-- is injected by Desktop or another trusted host,
+- is injected by Desktop or provided by the daemon's macOS `/usr/bin/security`
+  integration for external-work setup,
 - returns `secret_store_unavailable` when daemon is running without keychain support,
 - returns configured/missing status without value to API clients,
 - returns value only inside trusted daemon execution paths.
@@ -128,7 +134,7 @@ The daemon should use `SecretResolver` for:
 - provider checks,
 - run startup,
 - live media transport,
-- future GitHub token use,
+- GitHub and Linear token use,
 - future webhook secret verification,
 - future automation external actions.
 
@@ -163,10 +169,24 @@ Response:
 
 No endpoint returns raw secret values.
 
+External-work setup endpoints are intentionally narrower than a generic secret API:
+
+```http
+POST /external-work/secrets/configure?cwd=/path/to/project
+POST /external-work/secrets/delete?cwd=/path/to/project
+```
+
+Secret setup/removal requires a valid channel-bound `WORKFLOW.md`, accepts only
+`keychain:` refs for Web setup/removal, and persists only the `source.secretRef` string
+to `WORKFLOW.md`. If `WORKFLOW.md` is missing or invalid, Web Settings first uses the
+local-only workflow bootstrap endpoint to create or repair the file without handling any
+token value.
+
 ## Desktop Boundary
 
-Desktop main process owns OS keychain writes and deletes. Renderer gets only a preload
-facade:
+Trusted host code owns OS keychain writes and deletes. In the local daemon, the macOS
+implementation shells out to `/usr/bin/security` with service `ling-stack`; non-macOS
+runtimes report `secret_store_unavailable`. Renderer gets only a narrow facade:
 
 ```ts
 export interface DesktopSecretApi {
@@ -197,6 +217,13 @@ GitHub connections should store metadata and token refs:
 GitHub automation resolves `tokenRef` only when executing a concrete GitHub API action.
 If permission is insufficient, the GitHub adapter records an explicit permission failure
 instead of asking the model to infer it.
+
+The shipped external-work Settings setup uses deterministic refs:
+
+```text
+keychain:LING_STACK_GITHUB_<OWNER>_<REPO>_TOKEN
+keychain:LING_STACK_LINEAR_<PROJECT>_TOKEN
+```
 
 ## Redaction
 
@@ -239,6 +266,7 @@ Required tests:
 ## Assumptions
 
 - `env:` remains the default for development.
-- OS keychain write/delete should be implemented before serious desktop or GitHub token work.
+- OS keychain write/delete is implemented for external-work token setup; generic provider
+  secret editing can still be added later.
 - No cloud secret sync exists in v0.1.
 - Plugins and skills never receive raw secret values directly.

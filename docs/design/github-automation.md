@@ -84,6 +84,10 @@ file. The shared schema is defined in
 [External Work Orchestration](external-work-orchestration.md). GitHub-specific source
 config should include the repository, event set, optional label filters, and token
 secret ref.
+For browser-based setup, Web Settings can first create or repair a minimal local
+`WORKFLOW.md` from a pasted GitHub URL or `owner/repo`, then store the token in macOS
+Keychain and update the workflow with a `keychain:LING_STACK_GITHUB_<OWNER>_<REPO>_TOKEN`
+ref. `env:GITHUB_TOKEN` remains valid for headless CLI/dev flows.
 
 Minimal GitHub example:
 
@@ -733,6 +737,10 @@ Implementation plan: [External Work Phase 2 Implementation](external-work-phase-
 - UX.1 adds the Web-visible external-work status surface before GA hardening so GitHub
   operators can see repository connection, workflow validity, token status, local record
   counts, and background scheduler state from Settings.
+- UX.2 adds the Settings token setup path so operators no longer need to export
+  `GITHUB_TOKEN` manually for browser-driven setup; only the Keychain ref is persisted.
+- UX.3 adds Settings workflow bootstrap so the token field is reachable even when
+  `WORKFLOW.md` is missing or currently invalid.
 - Track the status/setup surface in
   [External Work Status Surface](external-work-status-surface.md).
 - Track the cross-source hardening details in

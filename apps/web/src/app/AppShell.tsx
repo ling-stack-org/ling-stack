@@ -17,6 +17,8 @@ import {
   checkProvider,
   checkProviderDraft,
   channelAttachmentContentUrl,
+  configureExternalWorkWorkflow,
+  configureExternalWorkSecret,
   createChannel,
   createChannelContextSummary,
   createChannelDecision,
@@ -32,6 +34,7 @@ import {
   denyApproval,
   deleteChannelAttachment,
   deleteChannel,
+  deleteExternalWorkSecret,
   deleteTask,
   deleteProvider,
   executeExternalWorkAction,
@@ -348,6 +351,8 @@ export function AppShell(): JSX.Element {
   const [externalWorkStatus, setExternalWorkStatus] = useState<ExternalWorkStatusResponse | undefined>();
   const [externalWorkStatusLoading, setExternalWorkStatusLoading] = useState(false);
   const [externalWorkStatusAction, setExternalWorkStatusAction] = useState<"poll" | "reconcile" | "start" | "stop" | undefined>();
+  const [externalWorkSecretAction, setExternalWorkSecretAction] = useState<"configure" | "delete" | undefined>();
+  const [externalWorkWorkflowAction, setExternalWorkWorkflowAction] = useState<"configure" | undefined>();
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [artifacts, setArtifacts] = useState<readonly RunArtifact[]>([]);
@@ -1301,6 +1306,36 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function configureExternalWorkWorkflowAction(input: {
+    readonly sourceKind: "github" | "linear";
+    readonly repository?: string;
+    readonly projectSlug?: string;
+  }): Promise<void> {
+    const cwd = form.cwd.trim();
+    const channelId = selectedChannelId;
+    if (!cwd || !channelId) {
+      setErrorMessage("Select a channel before creating WORKFLOW.md.");
+      return;
+    }
+
+    setExternalWorkWorkflowAction("configure");
+    try {
+      setErrorMessage("");
+      await configureExternalWorkWorkflow(cwd, {
+        channelId,
+        sourceKind: input.sourceKind,
+        repository: input.repository,
+        projectSlug: input.projectSlug,
+      });
+      await refreshExternalWorkStatus(cwd, channelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      await refreshExternalWorkStatus(cwd, channelId);
+    } finally {
+      setExternalWorkWorkflowAction(undefined);
+    }
+  }
+
   async function runExternalWorkStatusAction(action: "poll" | "reconcile" | "start" | "stop"): Promise<void> {
     const cwd = form.cwd.trim();
     const channelId = selectedChannelId;
@@ -1338,6 +1373,53 @@ export function AppShell(): JSX.Element {
       await refreshExternalWorkStatus(cwd, channelId);
     } finally {
       setExternalWorkStatusAction(undefined);
+    }
+  }
+
+  async function configureExternalWorkSecretAction(token: string): Promise<void> {
+    const cwd = form.cwd.trim();
+    const channelId = selectedChannelId;
+    if (!cwd || !channelId) {
+      setErrorMessage("Select a channel before configuring an external work token.");
+      return;
+    }
+
+    setExternalWorkSecretAction("configure");
+    try {
+      setErrorMessage("");
+      await configureExternalWorkSecret(cwd, { channelId, token });
+      await refreshExternalWorkStatus(cwd, channelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      await refreshExternalWorkStatus(cwd, channelId);
+    } finally {
+      setExternalWorkSecretAction(undefined);
+    }
+  }
+
+  async function deleteExternalWorkSecretAction(): Promise<void> {
+    const cwd = form.cwd.trim();
+    const channelId = selectedChannelId;
+    const secretRef = externalWorkStatus?.secret.ref ?? externalWorkStatus?.workflow.secretRef;
+    if (!cwd || !channelId) {
+      setErrorMessage("Select a channel before removing an external work token.");
+      return;
+    }
+    if (!secretRef?.startsWith("keychain:")) {
+      setErrorMessage("Only keychain external work tokens can be removed from Settings.");
+      return;
+    }
+
+    setExternalWorkSecretAction("delete");
+    try {
+      setErrorMessage("");
+      await deleteExternalWorkSecret(cwd, { channelId, secretRef });
+      await refreshExternalWorkStatus(cwd, channelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      await refreshExternalWorkStatus(cwd, channelId);
+    } finally {
+      setExternalWorkSecretAction(undefined);
     }
   }
 
@@ -3063,6 +3145,8 @@ export function AppShell(): JSX.Element {
                 isLoading={approvalPolicyLoading}
                 externalWorkStatusLoading={externalWorkStatusLoading}
                 externalWorkStatusAction={externalWorkStatusAction}
+                externalWorkSecretAction={externalWorkSecretAction}
+                externalWorkWorkflowAction={externalWorkWorkflowAction}
                 errorMessage={errorMessage}
                 onCwdChange={updateWorkspaceCwd}
                 onFormChange={setApprovalPolicyForm}
@@ -3070,6 +3154,9 @@ export function AppShell(): JSX.Element {
                 onSave={() => void saveApprovalPolicy()}
                 onRefreshExternalWork={() => void refreshExternalWorkStatus()}
                 onExternalWorkAction={(action) => void runExternalWorkStatusAction(action)}
+                onConfigureExternalWorkWorkflow={(input) => configureExternalWorkWorkflowAction(input)}
+                onConfigureExternalWorkSecret={(token) => configureExternalWorkSecretAction(token)}
+                onDeleteExternalWorkSecret={() => deleteExternalWorkSecretAction()}
                 onOpenExternalWorkRecords={() => {
                   if (selectedChannelId) {
                     setActiveView("workspace");

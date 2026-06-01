@@ -743,6 +743,47 @@ export interface ExternalWorkStatusResponse {
   readonly lastErrors: ExternalWorkStatusLastErrors;
 }
 
+export interface ExternalWorkSecretConfigureRequest {
+  readonly channelId: string;
+  readonly workflowPath?: string;
+  readonly token: string;
+  readonly secretRef?: string;
+  readonly updateWorkflow?: boolean;
+}
+
+export interface ExternalWorkSecretDeleteRequest {
+  readonly channelId: string;
+  readonly workflowPath?: string;
+  readonly secretRef?: string;
+}
+
+export interface ExternalWorkSecretMutationResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly sourceKind: ExternalSourceKind;
+  readonly secretRef: string;
+  readonly secret: ExternalWorkStatusSecretSummary;
+  readonly workflow: ExternalWorkStatusWorkflowSummary;
+  readonly workflowUpdated: boolean;
+}
+
+export interface ExternalWorkWorkflowConfigureRequest {
+  readonly channelId: string;
+  readonly workflowPath?: string;
+  readonly sourceKind: ExternalSourceKind;
+  readonly repository?: string;
+  readonly projectSlug?: string;
+}
+
+export interface ExternalWorkWorkflowMutationResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly sourceKind: ExternalSourceKind;
+  readonly workflow: ExternalWorkStatusWorkflowSummary;
+  readonly workflowCreated: boolean;
+  readonly workflowUpdated: boolean;
+}
+
 export interface ExternalWorkLoadCandidatesInput {
   readonly repository: string;
   readonly events: readonly string[];

@@ -37,6 +37,27 @@ export function parseExternalWorkflowMarkdown(markdown: string): ExternalWorkflo
   };
 }
 
+export function updateExternalWorkflowSecretRef(markdown: string, secretRef: string): string {
+  const { frontMatter, body } = splitMarkdownFrontMatter(markdown);
+  if (!frontMatter.trim()) {
+    throw new ExternalWorkflowValidationError("WORKFLOW.md front matter is required to update source.secretRef.");
+  }
+  const document = parseDocument(frontMatter);
+  if (document.errors.length > 0) {
+    throw new ExternalWorkflowValidationError(`WORKFLOW.md front matter parse error: ${document.errors[0].message}`);
+  }
+  const value = document.toJSON();
+  if (!isRecord(value)) {
+    throw new ExternalWorkflowValidationError("WORKFLOW.md front matter must be an object.");
+  }
+  const source = readOptionalRecord(value.source, "source");
+  if (!source) {
+    throw new ExternalWorkflowValidationError("WORKFLOW.md source.kind is required.");
+  }
+  document.setIn(["source", "secretRef"], secretRef);
+  return `---\n${document.toString().trimEnd()}\n---\n${body.startsWith("\n") ? body : `\n${body}`}`;
+}
+
 export function renderExternalWorkflowPrompt(template: string, input: { readonly item: ExternalWorkItem }): string {
   return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, expression: string) => {
     const path = expression.trim();

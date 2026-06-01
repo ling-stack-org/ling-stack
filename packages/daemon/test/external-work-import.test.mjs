@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
@@ -181,6 +181,135 @@ test("External work status reports local workflow, token, counts, and background
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("External work workflow setup creates or repairs local WORKFLOW.md without provider calls", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-workflow-"));
+  const outside = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-workflow-outside-"));
+  const fetchCalls = [];
+  const daemon = await startDaemonForTest(new FailingRunner(), async (url, init) => {
+    fetchCalls.push({ url: String(url), init });
+    throw new Error("workflow setup endpoint must not call external providers");
+  });
+  try {
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    });
+
+    const created = await postJson(`${daemon.url}/external-work/workflow/configure?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      sourceKind: "github",
+      repository: "https://github.com/openclaw/openclaw",
+    });
+    assert.equal(created.workflowCreated, true);
+    assert.equal(created.workflowUpdated, true);
+    assert.equal(created.workflow.valid, true);
+    assert.equal(created.workflow.repository, "openclaw/openclaw");
+    assert.deepEqual(created.workflow.events, ["pull_request.opened", "pull_request.synchronize", "issue.opened"]);
+
+    const workflowText = await readFile(resolve(cwd, "WORKFLOW.md"), "utf8");
+    assert.match(workflowText, /repository: openclaw\/openclaw/);
+    assert.doesNotMatch(workflowText, /test-github-token/);
+
+    const duplicate = await postJson(`${daemon.url}/external-work/workflow/configure?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      sourceKind: "github",
+      repository: "openclaw/openclaw",
+    });
+    assert.equal(duplicate.workflowCreated, false);
+    assert.equal(duplicate.workflowUpdated, false);
+
+    await writeFile(resolve(cwd, "WORKFLOW.md"), "Body only", "utf8");
+    const repaired = await postJson(`${daemon.url}/external-work/workflow/configure?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      sourceKind: "linear",
+      projectSlug: "ling-stack",
+    });
+    assert.equal(repaired.workflowCreated, false);
+    assert.equal(repaired.workflowUpdated, true);
+    assert.equal(repaired.workflow.valid, true);
+    assert.equal(repaired.workflow.sourceKind, "linear");
+    assert.equal(repaired.workflow.projectSlug, "ling-stack");
+
+    await writeFile(resolve(outside, "WORKFLOW.md"), statusWorkflowMarkdown(), "utf8");
+    const outsidePath = await postJsonExpectError(`${daemon.url}/external-work/workflow/configure?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      sourceKind: "github",
+      repository: "openclaw/openclaw",
+      workflowPath: resolve(outside, "WORKFLOW.md"),
+    });
+    assert.equal(outsidePath.status, 400);
+    assert.match(outsidePath.body.message, /inside the channel bound path/);
+
+    const missingChannel = await postJsonExpectError(`${daemon.url}/external-work/workflow/configure?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: "channel_missing",
+      sourceKind: "github",
+      repository: "openclaw/openclaw",
+    });
+    assert.equal(missingChannel.status, 404);
+    assert.equal(missingChannel.body.error, "channel_not_found");
+    assert.equal(fetchCalls.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("External work secret setup saves keychain refs, updates workflow, and never calls providers", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-secret-"));
+  const fetchCalls = [];
+  const externalSecretStore = createMemoryExternalSecretStore();
+  const daemon = await startDaemonForTest(new FailingRunner(), async (url, init) => {
+    fetchCalls.push({ url: String(url), init });
+    throw new Error("secret setup endpoint must not call external providers");
+  }, { externalSecretStore });
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), statusWorkflowMarkdown(false), "utf8");
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read"],
+    });
+
+    const configured = await postJson(`${daemon.url}/external-work/secrets/configure?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      token: "test-github-token",
+    });
+    assert.equal(configured.sourceKind, "github");
+    assert.equal(configured.secretRef, "keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN");
+    assert.equal(configured.secret.status, "configured");
+    assert.equal(configured.workflowUpdated, true);
+    assert.equal(externalSecretStore.resolve(configured.secretRef, "github_token").value, "test-github-token");
+
+    const workflowText = await readFile(resolve(cwd, "WORKFLOW.md"), "utf8");
+    assert.match(workflowText, /secretRef: keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN/);
+    assert.doesNotMatch(workflowText, /test-github-token/);
+
+    const status = await getJson(`${daemon.url}/external-work/status?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+    assert.equal(status.secret.status, "configured");
+    assert.equal(status.secret.ref, "keychain:LING_STACK_GITHUB_OPENCLAW_OPENCLAW_TOKEN");
+
+    const removed = await postJson(`${daemon.url}/external-work/secrets/delete?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+    });
+    assert.equal(removed.secret.status, "missing");
+    assert.equal(removed.workflowUpdated, false);
+
+    const envRef = await postJsonExpectError(`${daemon.url}/external-work/secrets/configure?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      token: "second-test-github-token",
+      secretRef: "env:GITHUB_TOKEN",
+    });
+    assert.equal(envRef.status, 400);
+    assert.match(envRef.body.message, /keychain/);
+    assert.equal(fetchCalls.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
   }
 });
 
@@ -1005,6 +1134,51 @@ function missingSecretResolver() {
         configured: false,
         status: this.status(ref),
       };
+    },
+  };
+}
+
+function createMemoryExternalSecretStore() {
+  const values = new Map();
+  return {
+    status(ref) {
+      if (!ref.startsWith("keychain:")) {
+        return {
+          ref,
+          kind: ref.split(":", 1)[0] || "env",
+          configured: false,
+          errorCode: "invalid_secret_ref",
+          message: "Only keychain refs are supported by this test store.",
+        };
+      }
+      const configured = values.has(ref);
+      return {
+        ref,
+        kind: "keychain",
+        configured,
+        errorCode: configured ? undefined : "secret_missing",
+        message: configured ? undefined : `Secret is not configured: ${ref}`,
+      };
+    },
+    resolve(ref) {
+      const status = this.status(ref);
+      return {
+        ref,
+        configured: status.configured,
+        value: status.configured ? values.get(ref) : undefined,
+        status,
+      };
+    },
+    setSecret(ref, value) {
+      if (!ref.startsWith("keychain:")) {
+        return this.status(ref);
+      }
+      values.set(ref, value);
+      return this.status(ref);
+    },
+    deleteSecret(ref) {
+      values.delete(ref);
+      return this.status(ref);
     },
   };
 }

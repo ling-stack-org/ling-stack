@@ -98,6 +98,105 @@ test("gets external work status with channel and workflow path", async () => {
   assert.equal(mock.calls[0].url, "http://daemon.test/external-work/status?cwd=%2Frepo&channelId=channel+1&workflowPath=WORKFLOW.md");
 });
 
+test("configures and deletes external work secrets without transforming daemon responses", async () => {
+  const configureResponse = {
+    cwd: "/repo",
+    channelId: "channel_1",
+    sourceKind: "github",
+    secretRef: "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+    secret: {
+      ref: "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+      purpose: "github_token",
+      status: "configured",
+    },
+    workflow: {
+      path: "/repo/WORKFLOW.md",
+      exists: true,
+      valid: true,
+      sourceKind: "github",
+      repository: "owner/repo",
+      events: ["pull_request.opened"],
+      secretRef: "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+    },
+    workflowUpdated: true,
+  };
+  const deleteResponse = {
+    ...configureResponse,
+    secret: {
+      ref: "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+      purpose: "github_token",
+      status: "missing",
+    },
+    workflowUpdated: false,
+  };
+  const mock = createFetchMock([configureResponse, deleteResponse]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  assert.deepEqual(await client.configureExternalWorkSecret("/repo path", {
+    channelId: "channel 1",
+    workflowPath: "WORKFLOW.md",
+    token: "test-github-token",
+    secretRef: "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+  }), configureResponse);
+  assert.deepEqual(await client.deleteExternalWorkSecret("/repo path", {
+    channelId: "channel 1",
+    workflowPath: "WORKFLOW.md",
+    secretRef: "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+  }), deleteResponse);
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/external-work/secrets/configure?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    channelId: "channel 1",
+    workflowPath: "WORKFLOW.md",
+    token: "test-github-token",
+    secretRef: "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+  });
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/external-work/secrets/delete?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+    channelId: "channel 1",
+    workflowPath: "WORKFLOW.md",
+    secretRef: "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+  });
+});
+
+test("configures external work workflow without transforming daemon responses", async () => {
+  const response = {
+    cwd: "/repo",
+    channelId: "channel_1",
+    sourceKind: "github",
+    workflow: {
+      path: "/repo/WORKFLOW.md",
+      exists: true,
+      valid: true,
+      sourceKind: "github",
+      repository: "owner/repo",
+      events: ["pull_request.opened", "pull_request.synchronize", "issue.opened"],
+    },
+    workflowCreated: true,
+    workflowUpdated: true,
+  };
+  const mock = createFetchMock(response);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  assert.deepEqual(await client.configureExternalWorkWorkflow("/repo path", {
+    channelId: "channel 1",
+    workflowPath: "WORKFLOW.md",
+    sourceKind: "github",
+    repository: "owner/repo",
+  }), response);
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/external-work/workflow/configure?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    channelId: "channel 1",
+    workflowPath: "WORKFLOW.md",
+    sourceKind: "github",
+    repository: "owner/repo",
+  });
+});
+
 test("sends mutation bodies for channel, task, provider, policy, media, and approval requests", async () => {
   const mock = createFetchMock({ channel: { id: "ch_1" } });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });

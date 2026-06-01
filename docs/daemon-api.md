@@ -559,6 +559,11 @@ workflow file health, source target, status-only token readiness, local external
 counts, CI triage counts, action counts, and background scheduler state without calling
 GitHub, Linear, hooks, runners, or mutation APIs. The design is in
 [External Work Status Surface](design/external-work-status-surface.md).
+Web Settings also exposes explicit local workflow setup plus Keychain token setup and
+removal. Workflow setup writes or repairs a minimal channel-bound `WORKFLOW.md` from a
+user-entered GitHub repository or Linear project slug; token setup only writes/deletes
+local Keychain entries and may update `WORKFLOW.md` to point at a `keychain:` ref. None
+of these setup endpoints call GitHub or Linear.
 
 ### Show External Work Status
 
@@ -623,6 +628,158 @@ CLI:
 
 ```bash
 ling-stack external-work status --channel channel_... --workflow-path WORKFLOW.md
+```
+
+### Configure External Work Workflow
+
+```http
+POST /external-work/workflow/configure?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "channelId": "channel_...",
+  "workflowPath": "WORKFLOW.md",
+  "sourceKind": "github",
+  "repository": "owner/repo"
+}
+```
+
+For GitHub, `repository` accepts either `owner/repo` or a GitHub URL such as
+`https://github.com/owner/repo`; the daemon stores the normalized `owner/repo` value in
+`WORKFLOW.md`. For Linear, send `"sourceKind": "linear"` and `projectSlug` instead of
+`repository`. `workflowPath` defaults to `WORKFLOW.md` under the channel bound path and
+must stay inside that bound path. If the file is missing or invalid, the daemon writes a
+minimal local workflow with safe default events and prompt text. If the existing
+workflow is already valid, the endpoint is a no-op and returns the current workflow
+summary.
+
+This endpoint is local-only: it writes `WORKFLOW.md` but does not call GitHub, Linear,
+hooks, runners, polling, reconciliation, or mutation APIs.
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "channelId": "channel_...",
+  "sourceKind": "github",
+  "workflow": {
+    "path": "/path/to/project/WORKFLOW.md",
+    "exists": true,
+    "valid": true,
+    "sourceKind": "github",
+    "repository": "owner/repo",
+    "events": ["pull_request.opened", "pull_request.synchronize", "issue.opened"]
+  },
+  "workflowCreated": true,
+  "workflowUpdated": true
+}
+```
+
+SDK:
+
+```ts
+await client.configureExternalWorkWorkflow("/path/to/project", {
+  channelId: "channel_...",
+  sourceKind: "github",
+  repository: "owner/repo",
+});
+```
+
+### Configure External Work Secret
+
+```http
+POST /external-work/secrets/configure?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "channelId": "channel_...",
+  "workflowPath": "WORKFLOW.md",
+  "token": "<github-token>",
+  "secretRef": "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+  "updateWorkflow": true
+}
+```
+
+`channelId` and `token` are required. `workflowPath` defaults to `WORKFLOW.md` under
+the channel bound path and must stay inside that bound path. `secretRef` is optional; if
+omitted, the daemon derives a stable `keychain:LING_STACK_GITHUB_<OWNER>_<REPO>_TOKEN`
+or `keychain:LING_STACK_LINEAR_<PROJECT>_TOKEN` ref from the workflow source. Web setup
+accepts only `keychain:` refs. `env:` remains supported for manual status/polling, but
+cannot be written or removed from Web Settings.
+
+When `updateWorkflow` is not `false`, the daemon updates only `source.secretRef` in the
+workflow front matter. The token value is sent once to the daemon, saved in macOS
+Keychain, and never returned in the response.
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "channelId": "channel_...",
+  "sourceKind": "github",
+  "secretRef": "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+  "secret": {
+    "ref": "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
+    "purpose": "github_token",
+    "status": "configured"
+  },
+  "workflow": {
+    "path": "/path/to/project/WORKFLOW.md",
+    "exists": true,
+    "valid": true,
+    "sourceKind": "github",
+    "repository": "owner/repo",
+    "events": ["pull_request.opened"],
+    "secretRef": "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN"
+  },
+  "workflowUpdated": true
+}
+```
+
+SDK:
+
+```ts
+await client.configureExternalWorkSecret("/path/to/project", {
+  channelId: "channel_...",
+  token: "<github-token>",
+});
+```
+
+### Delete External Work Secret
+
+```http
+POST /external-work/secrets/delete?cwd=/path/to/project
+```
+
+Request:
+
+```json
+{
+  "channelId": "channel_...",
+  "workflowPath": "WORKFLOW.md",
+  "secretRef": "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN"
+}
+```
+
+`secretRef` is optional and defaults to the current workflow `source.secretRef`. Only
+`keychain:` refs can be removed through this endpoint. The daemon deletes the local
+Keychain item and leaves `WORKFLOW.md` unchanged so the UI can still show which ref is
+missing.
+
+SDK:
+
+```ts
+await client.deleteExternalWorkSecret("/path/to/project", {
+  channelId: "channel_...",
+});
 ```
 
 ```http
@@ -2277,7 +2434,7 @@ The check validates base URL format, required secret refs, enabled state, and su
 GET /secrets/status?ref=env%3AOPENAI_API_KEY&purpose=provider_api_key
 ```
 
-`purpose` is optional. Supported values are `provider_api_key`, `github_token`, `webhook_secret`, `custom_header`, and `automation_token`.
+`purpose` is optional. Supported values are `provider_api_key`, `github_token`, `linear_token`, `webhook_secret`, `custom_header`, and `automation_token`.
 
 Response:
 

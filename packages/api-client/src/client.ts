@@ -71,7 +71,12 @@ import type {
   ExternalWorkImportResponse,
   ExternalWorkReconcileRequest,
   ExternalWorkReconcileResponse,
+  ExternalWorkSecretConfigureRequest,
+  ExternalWorkSecretDeleteRequest,
+  ExternalWorkSecretMutationResponse,
   ExternalWorkStatusResponse,
+  ExternalWorkWorkflowConfigureRequest,
+  ExternalWorkWorkflowMutationResponse,
   ListApprovalsRequest,
   ListResourceLeasesRequest,
   ListStateTransitionsRequest,
@@ -632,6 +637,27 @@ export class LingDaemonClient {
       channelId: input.channelId,
       workflowPath: input.workflowPath,
     });
+  }
+
+  async configureExternalWorkSecret(
+    cwd: string,
+    input: ExternalWorkSecretConfigureRequest,
+  ): Promise<ExternalWorkSecretMutationResponse> {
+    return this.post("/external-work/secrets/configure", { cwd }, input);
+  }
+
+  async deleteExternalWorkSecret(
+    cwd: string,
+    input: ExternalWorkSecretDeleteRequest,
+  ): Promise<ExternalWorkSecretMutationResponse> {
+    return this.post("/external-work/secrets/delete", { cwd }, input);
+  }
+
+  async configureExternalWorkWorkflow(
+    cwd: string,
+    input: ExternalWorkWorkflowConfigureRequest,
+  ): Promise<ExternalWorkWorkflowMutationResponse> {
+    return this.post("/external-work/workflow/configure", { cwd }, input);
   }
 
   async proposeExternalWorkAction(cwd: string, input: ExternalWorkActionProposeRequest): Promise<ExternalWorkActionMutationResponse> {
