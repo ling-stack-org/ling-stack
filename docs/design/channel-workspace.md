@@ -22,6 +22,11 @@ Related docs:
 - [Channel Workspace v1.10 Activity Layout Cleanup](channel-workspace-v1.10.md)
 - [Channel Workspace v1.11 Surface Simplification](channel-workspace-v1.11.md)
 - [Channel Workspace v1.12 Teammate Management](channel-workspace-v1.12.md)
+- [Channel Workspace v1.13 Smart Composer](channel-workspace-v1.13.md)
+- [Channel Workspace v1.14 Activity Message Boundary](channel-workspace-v1.14.md)
+- [Channel Workspace v1.15 Helio-Style Chat and Topics](channel-workspace-v1.15.md)
+- [Channel Workspace v1.16 Channel Settings Panels](channel-workspace-v1.16.md)
+- [Channel Workspace v1.17 Teammate Dock and Hover Topic Actions](channel-workspace-v1.17.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
@@ -494,8 +499,9 @@ Rules:
 - A link never grants network browsing permission beyond preview metadata.
 - Discuss mode is read-only by default. File edits, shell commands, external sends, and
   deploy actions require converting the discussion into a task/run.
-- AI replies should include a direct `Create task from this` or `Draft acceptance
-  criteria` action when the discussion produces executable work.
+- AI replies should stay readable by default. When discussion produces executable work,
+  the explicit path is composer `Task` mode, an event details triage action, or a
+  context-summary action rather than inline conversion buttons on every message.
 
 Recommended mention UX:
 
@@ -1342,7 +1348,7 @@ open channel
 -> user sends message
 -> channel stores the user message
 -> selected/default AI teammate replies with clarification, risks, and next steps
--> user clicks Create task from this when ready
+-> user switches composer to Task mode or uses an event/context-summary action when ready
 ```
 
 Execution boundary:
@@ -1352,18 +1358,18 @@ Execution boundary:
 - If the user asks the AI teammate to inspect files, run commands, edit files, or create
   artifacts, the UI should convert that request into a task/run flow.
 
-### Convert Discussion to Task
+### Promote Discussion to Task
 
 ```text
-select message or thread
--> click Create task from this
--> task composer opens with summarized prompt and acceptance criteria
+copy or restate the actionable discussion in Task mode
+-> task composer owns title, prompt, assignee, and provider selection
 -> assignee defaults to mentioned AI teammate or channel default teammate
 -> user confirms Create task or Create and run
 ```
 
-The converted task should preserve a link back to the source message/thread when the
-message model exists.
+Plain discussion messages should not show inline conversion buttons by default. If a
+future selected-message task flow returns, it should be behind selection or details UI
+and should preserve a link back to the source message/thread.
 
 ### Send Attachment
 
@@ -1526,7 +1532,9 @@ Current MVP implementation status:
 - Discuss mode can request a no-tools, text-only AI reply and persists blocker replies,
 - channel attachments are stored under `.ling-stack/attachments` with a 25MB/file allow-list policy,
 - link previews are fetched by the daemon with SSRF protections and metadata-only storage,
-- Web now exposes `Activity`, `Tasks`, `Files`, and `Context` tabs plus discussion-to-task conversion,
+- Web now exposes `Activity`, `Tasks`, `Files`, and `Context` tabs; ordinary discussion
+  messages stay plain while tasks are created through Task mode, task detail, context
+  summaries, or event details,
 - v1.1 now persists Channel Brief, Decision Log, Handoff, and Context Summary records,
   with Activity and inspector views synthesizing those protocol items,
 - v1.2 now lets handoffs create explicit, user-started workflow/step records with
@@ -1535,8 +1543,8 @@ Current MVP implementation status:
 - task detail now lives in the `Tasks` tab instead of a persistent split pane beside
   channel Activity,
 - v1.3 now implements the chat experience polish slice: sticky Activity composer,
-  independent message scrolling, clearer send/AI/asset states, task-conversion
-  feedback, and English/Chinese channel copy cleanup,
+  independent message scrolling, clearer send/AI/asset states, and English/Chinese
+  channel copy cleanup,
 - v1.4 now aggregates run artifacts, summary paths, and event log paths in the
   channel `Files` tab without adding artifact ingestion or backend routes,
 - v1.5 now derives task, run, approval, state-transition, workflow, and
@@ -1561,8 +1569,24 @@ Current MVP implementation status:
 - v1.12 now adds channel teammate membership management behind channel Settings, allowing
   existing workspace teammates to be added to or removed from a channel and set as the
   selected channel's default teammate without adding backend contracts,
+- v1.13 now removes the Activity composer `More` panel by making mentions, dropped or
+  pasted files, and pasted URLs inline input behavior,
+- v1.14 now separates ordinary chat bubbles from work/protocol/runtime cards: plain
+  discussion and AI reply messages show no inline conversion/action buttons, while
+  non-chat events keep relevant actions and use a colored left-edge category cue,
+- v1.15 now makes the channel surface chat-first: primary tabs are `Chat` and `Files`,
+  `Tasks` and `Context` are secondary channel views, Activity operations are folded
+  into `Chat tools`, and plain chat messages can open a `threadId`-backed topic reply
+  panel,
+- v1.16 now reorganizes channel Settings into `Members`, `Notifications`, and
+  `Channel management` cards. Adding a teammate is an explicit select-then-add action,
+  and notification preferences persist in browser-local storage by `cwd + channelId`,
+- v1.17 now moves channel AI teammate membership management out of Settings into a
+  dedicated header dock, and changes ordinary user/AI chat message chrome plus the topic
+  reply affordance into hover/focus-only bubble UI with a right-edge icon tooltip,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
-  builder, Channel Brief AI generation, and notification persistence remain future slices.
+  builder, Channel Brief AI generation, and server-side notification persistence remain
+  future slices.
 
 ### Phase 1: Channel Contract and Design Shell
 
@@ -1584,9 +1608,10 @@ Current MVP implementation status:
 - [x] Add mention picker that lists AI teammates first.
 - [x] Route Discuss mode to the mentioned teammate or channel default teammate.
 - [x] Keep Discuss mode no-tools unless converted into a task.
-- [x] Add `Create task from this` action for selected user messages.
+- [x] Add an explicit task creation path from channel discussion context.
 - [x] Decide first implementation: durable SQLite messages.
-- [x] Add e2e coverage for `@Engineer` mention and discussion-to-task conversion.
+- [x] Add e2e coverage for `@Engineer` mention and task creation from the channel
+  composer.
 
 ### Phase 3: Multi-Agent Protocol MVP
 
@@ -1697,11 +1722,11 @@ Current MVP implementation status:
 - [x] Add clear sending, failed-send retry, and AI reply pending/blocker states.
 - [x] Keep pending attachments and URL previews inside the composer without switching
   tabs.
-- [x] Show confirmation after creating a task from a message, with an action that opens
-  the task in the `Tasks` tab.
+- [x] Keep task creation connected to the `Tasks` tab without keeping conversion buttons
+  on every chat message.
 - [x] Audit touched channel strings for English/Chinese i18n coverage.
-- [x] Add e2e coverage for composer visibility, tab boundaries, task conversion
-  feedback, asset preview states, and language switching.
+- [x] Add e2e coverage for composer visibility, tab boundaries, task creation, asset
+  preview states, and language switching.
 
 ### Phase 14: Activity Filters and Search
 
@@ -1811,6 +1836,55 @@ Current MVP implementation status:
   `Preview link` action.
 - [x] Request an AI discussion reply only when an AI teammate is explicitly mentioned.
 
+### Phase 22: Activity Message Boundary Simplification
+
+- [x] Define v1.14 Activity Message Boundary plan in
+  `docs/design/channel-workspace-v1.14.md`.
+- [x] Render ordinary user and AI discussion as plain chat bubbles without inline
+  task/protocol/details buttons.
+- [x] Keep task, run, approval, protocol, workflow, and state-transition activity cards
+  actionable.
+- [x] Add category-specific left-edge tones for work, approval, protocol, runtime, and
+  system events.
+- [x] Update e2e coverage so task creation uses composer `Task` mode and protocol
+  mutations use event details or context-summary actions.
+
+### Phase 23: Helio-Style Chat and Topic Replies
+
+- [x] Define v1.15 Helio-Style Chat and Topics plan in
+  `docs/design/channel-workspace-v1.15.md`.
+- [x] Rename the default channel view from `Activity` to `Chat`.
+- [x] Keep `Chat` and `Files` as primary tabs, with `Tasks` and `Context` available as
+  secondary channel views.
+- [x] Fold Activity search, saved views, filters, attention queue, and CI triage behind
+  `Chat tools`.
+- [x] Add a compact reply affordance to plain chat and AI reply messages.
+- [x] Add a right-side topic reply panel that reads and writes existing
+  `ChannelMessage.threadId` data.
+- [x] Add e2e coverage for sending a topic reply through the channel message API.
+
+### Phase 24: Channel Settings Panels
+
+- [x] Define v1.16 Channel Settings Panels in
+  `docs/design/channel-workspace-v1.16.md`.
+- [x] Split channel Settings into member, notification, and management cards.
+- [x] Change teammate addition from select-immediate-add to select-then-`Add to channel`.
+- [x] Keep member default and remove actions on the channel roster.
+- [x] Add browser-local notification preference controls scoped by `cwd + channelId`.
+- [x] Keep provider, path, default teammate, runtime policy, and channel creation in
+  `Channel management`.
+
+### Phase 25: Teammate Dock and Hover Topic Actions
+
+- [x] Define v1.17 Teammate Dock and Hover Topic Actions in
+  `docs/design/channel-workspace-v1.17.md`.
+- [x] Move channel teammate management behind a dedicated channel header action instead
+  of channel Settings.
+- [x] Keep channel Settings focused on notifications and channel/runtime management.
+- [x] Hide ordinary chat bubble chrome and the topic reply affordance until hover or
+  keyboard focus.
+- [x] Show a right-edge icon bubble and icon tooltip before opening the topic reply panel.
+
 ## Validation Plan
 
 Run these before landing channel UI changes:
@@ -1832,7 +1906,10 @@ Focused e2e scenarios:
 - channel composer does not expose a `More` panel in the default Activity path,
 - dropped or pasted files attach from the composer without expanding secondary controls,
 - Discuss mode can produce an AI teammate reply without creating a task,
-- `Create task from this` preserves the source discussion in the task prompt or link,
+- ordinary discussion messages do not expose inline task, decision, handoff, context, or
+  details buttons,
+- creating a task from composer `Task` mode preserves the typed prompt and
+  channel/default teammate assignment,
 - channel roster shows active/default AI teammates and their blocked/running/waiting state,
 - Channel Brief records objective, scope, acceptance criteria, decisions, and open risks,
 - handoff and review gate activity is visible before a task is accepted as done,
@@ -1847,7 +1924,8 @@ Focused e2e scenarios:
 - Files tab shows artifacts for a run linked to the channel,
 - Activity composer remains visible after the message list grows,
 - message feed scrolls independently from the channel header and tabs,
-- creating a task from a message confirms the task and can open it in `Tasks`,
+- task, run, approval, protocol, workflow, and state-transition cards remain actionable
+  and visually distinguishable from plain chat,
 - channel English/Chinese language switching keeps tabs and composer controls readable,
 - notification mode changes do not mutate daemon state in MVP,
 - right inspector does not overlap or hide the task composer on desktop and mobile.

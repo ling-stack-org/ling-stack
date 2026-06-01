@@ -1748,6 +1748,7 @@ export function AppShell(): JSX.Element {
   }
 
   async function sendChannelMessage(input: {
+    readonly threadId?: string;
     readonly body: string;
     readonly mentions: readonly { readonly id: string; readonly label: string; readonly kind: "ai-teammate" | "local-user" | "channel" }[];
     readonly attachmentIds: readonly string[];
@@ -1767,6 +1768,7 @@ export function AppShell(): JSX.Element {
     try {
       setErrorMessage("");
       const response = await createChannelMessage(form.cwd.trim(), selectedChannelId, {
+        threadId: input.threadId,
         body: input.body,
         mentions: input.mentions,
         attachmentIds: input.attachmentIds,
@@ -1840,35 +1842,6 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function createTaskFromChannelMessage(message: ChannelMessage): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    const firstAiMention = message.mentions.find((mention) => mention.kind === "ai-teammate");
-    try {
-      setErrorMessage("");
-      const response = await createTask(form.cwd.trim(), selectedChannelId, {
-        title: titleFromPrompt(message.body),
-        prompt: message.body,
-        assigneeTeammateId: firstAiMention?.id || selectedChannel?.defaultTeammateId,
-      });
-      setSelectedTaskId(response.task.id);
-      await createChannelMessage(form.cwd.trim(), selectedChannelId, {
-        body: `Created task: ${response.task.title}`,
-        kind: "task_link",
-        intent: "task",
-        authorType: "system",
-        linkedTaskId: response.task.id,
-      });
-      await Promise.all([refreshTasks(selectedChannelId), refreshChannelMessages(selectedChannelId)]);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
   async function saveChannelBrief(input: UpdateChannelBriefRequest): Promise<void> {
     if (!selectedChannelId) {
       setErrorMessage("请先选择 channel");
@@ -1878,27 +1851,6 @@ export function AppShell(): JSX.Element {
       setErrorMessage("");
       const response = await updateChannelBrief(form.cwd.trim(), selectedChannelId, input);
       setChannelBrief(response.brief);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function recordDecisionFromMessage(message: ChannelMessage): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-    try {
-      setErrorMessage("");
-      const response = await createChannelDecision(form.cwd.trim(), selectedChannelId, {
-        sourceMessageId: message.id,
-        title: titleFromPrompt(message.body),
-        decision: message.body,
-        rationale: "Recorded from channel discussion.",
-        alternatives: [],
-        createdBy: "local-user",
-      });
-      setChannelDecisions((current) => [response.decision, ...current]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -1930,32 +1882,6 @@ export function AppShell(): JSX.Element {
       setErrorMessage("");
       const response = await updateChannelDecision(form.cwd.trim(), decision.id, { status: "rejected" });
       setChannelDecisions((current) => current.map((item) => item.id === response.decision.id ? response.decision : item));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function createHandoffFromMessage(message: ChannelMessage): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    const teammateId = selectedChannel?.defaultTeammateId ?? "engineer";
-    try {
-      setErrorMessage("");
-      const response = await createChannelHandoff(form.cwd.trim(), selectedChannelId, {
-        sourceMessageId: message.id,
-        fromParticipantId: "local-user",
-        fromParticipantLabel: "Tian",
-        toParticipantId: teammateId,
-        toParticipantLabel: teammateId,
-        reason: titleFromPrompt(message.body),
-        requiredInput: message.body,
-        expectedOutput: "Reply with the next concrete step.",
-        createdBy: "local-user",
-      });
-      setChannelHandoffs((current) => [response.handoff, ...current]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -2081,39 +2007,6 @@ export function AppShell(): JSX.Element {
         setChannelWorkflows((current) => current.map((item) => item.id === response.workflow?.id ? response.workflow : item));
       }
       await refreshChannelProtocol(step.channelId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function createTaskWithContextFromMessage(message: ChannelMessage): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    const activeDecisionIds = channelDecisions.filter((decision) => decision.status === "active").map((decision) => decision.id);
-    try {
-      setErrorMessage("");
-      const summaryResponse = await createChannelContextSummary(form.cwd.trim(), selectedChannelId, {
-        targetType: "thread",
-        targetId: message.threadId ?? message.id,
-        sourceMessageIds: [message.id],
-        decisionIds: activeDecisionIds,
-        summary: message.body,
-        acceptanceCriteria: [],
-        openQuestions: [],
-        authorType: "local-user",
-        authorId: "local-user",
-      });
-      setChannelContextSummaries((current) => [summaryResponse.contextSummary, ...current]);
-      const taskResponse = await createTask(form.cwd.trim(), selectedChannelId, {
-        title: titleFromPrompt(message.body),
-        prompt: buildContextTaskPrompt(summaryResponse.contextSummary, channelDecisions),
-        assigneeTeammateId: selectedChannel?.defaultTeammateId,
-      });
-      setSelectedTaskId(taskResponse.task.id);
-      await refreshTasks(selectedChannelId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -2987,18 +2880,14 @@ export function AppShell(): JSX.Element {
             onUploadAttachments={(files) => uploadChannelFiles(files)}
             onCreateLinkPreview={(url) => addChannelLinkPreview(url)}
             onDeleteAttachment={(attachmentId) => void removeChannelAttachment(attachmentId)}
-            onCreateTaskFromMessage={createTaskFromChannelMessage}
             onSaveBrief={(input) => void saveChannelBrief(input)}
-            onRecordDecisionFromMessage={(message) => void recordDecisionFromMessage(message)}
             onSupersedeDecision={(decision) => void supersedeChannelDecision(decision)}
             onRejectDecision={(decision) => void rejectChannelDecision(decision)}
-            onCreateHandoffFromMessage={(message) => void createHandoffFromMessage(message)}
             onCreateHandoffFromTask={(task) => void createHandoffFromTask(task)}
             onUpdateHandoffStatus={(handoff, status) => void updateHandoffStatusValue(handoff, status)}
             onStartWorkflowFromHandoff={(handoff) => void startWorkflowFromHandoff(handoff)}
             onStartWorkflowStep={(step, mode) => void startWorkflowStepAction(step, mode)}
             onUpdateWorkflowStepStatus={(step, status) => void updateWorkflowStepStatus(step, status)}
-            onCreateTaskWithContextFromMessage={(message) => void createTaskWithContextFromMessage(message)}
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
             onRunActivityTriageAction={runActivityTriageAction}
             onRefreshChannelActivity={() => void refreshChannelActivity()}

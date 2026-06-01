@@ -20,8 +20,9 @@ The richer channel surface is tracked in [Channel Workspace Design](channel-work
 Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, `Files`,
 and `Context` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions;
 durable channel messages; no-tools AI discussion replies; user attachments;
-metadata-only web link previews; and discussion-to-task conversion with
-`assigneeTeammateId` derived from the first AI mention or channel default teammate.
+metadata-only web link previews; ordinary discussion messages without inline conversion
+controls; and task creation through composer `Task` mode with `assigneeTeammateId`
+derived from the first AI mention or channel default teammate.
 
 Implemented v1.1 behavior: the channel inspector adds `Brief`, `Decisions`, `Handoffs`, and
 `Runtime` modes. Activity now synthesizes channel messages with decision, handoff, and
@@ -39,11 +40,10 @@ occupying the default channel chat view. `Start step` creates a task for review,
 
 Implemented v1.3 behavior: the channel Activity tab now behaves like a focused chat
 workspace with an independently scrollable message feed, sticky in-tab composer,
-explicit send/AI reply/attachment/link-preview states, task-conversion feedback that can
-open the created task in `Tasks`, and complete English/Chinese coverage for touched
-channel strings. v1.3 remains a Web experience polish slice and does not add automatic
-multi-agent loops, file/webpage body ingestion, notification persistence, or a custom
-workflow builder.
+explicit send/AI reply/attachment/link-preview states, and complete English/Chinese
+coverage for touched channel strings. v1.3 remains a Web experience polish slice and
+does not add automatic multi-agent loops, file/webpage body ingestion, notification
+persistence, or a custom workflow builder.
 
 Implemented v1.4 behavior: the channel `Files` tab now separates user uploads, shared
 links, and run artifacts. It shows selected-channel run artifacts, summary paths, and
@@ -110,6 +110,30 @@ files attach directly through the existing upload path, and URLs in the message 
 create link previews automatically. Discussion messages request an AI reply only when an
 AI teammate is explicitly mentioned. v1.13 remains Web-only and does not add backend
 contracts.
+
+Implemented v1.14 behavior: the channel Activity feed separates plain discussion from
+work events. Ordinary user messages and AI replies show no inline task, handoff,
+decision, context, workflow, or details buttons. Task, run, approval, protocol, workflow,
+and state-transition cards keep their actions and use a colored left-edge cue. v1.14
+remains Web-only and does not add backend contracts.
+
+Implemented v1.15 behavior: the channel workspace now treats the default surface as
+`Chat` rather than `Activity`. `Chat` and `Files` are the primary tabs, `Tasks` and
+`Context` remain secondary channel views, Activity operations are folded behind
+`Chat tools`, and ordinary chat messages can open a `threadId`-backed topic reply panel.
+v1.15 remains Web-only and reuses the existing channel message contract.
+
+Implemented v1.16 behavior: channel Settings is grouped into `Members`,
+`Notifications`, and `Channel management`. Teammates are added through an explicit
+select-then-add action, member rows keep default/remove controls, and notification level
+preferences persist locally by workspace path and channel id. v1.16 remains Web-only and
+does not add daemon contracts.
+
+Implemented v1.17 behavior: channel AI teammate management moves out of Settings into a
+dedicated channel header dock, while ordinary user/AI chat message chrome and topic
+replies move to hover/focus-only bubble UI with a right-edge icon and `Reply in topic`
+tooltip. v1.17 remains Web-only and reuses the existing teammate membership and channel
+message contracts.
 
 ## Goal
 
