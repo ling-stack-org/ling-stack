@@ -2284,6 +2284,7 @@ test("settings approval policy loads, edits, and saves tool decisions and write 
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Approval policy/ }).click();
   const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Approval policy" });
   await expect(page.getByRole("heading", { name: "Approval policy" })).toBeVisible();
   await expect(settingsPanel).not.toContainText("workspace_default");
@@ -2339,7 +2340,8 @@ test("settings external work status shows setup and explicit controls", async ({
   await expect.poll(() => state.externalWorkBackgroundStopCalls).toBe(1);
   await expect(panel).toContainText("stopped");
 
-  await expect(page.getByLabel("Settings preview")).toContainText("openclaw/openclaw");
+  await expect(page.getByRole("complementary", { name: "Inspector" })).toHaveCount(0);
+  await expect(panel).toContainText("openclaw/openclaw");
 });
 
 test("settings external work token setup saves to daemon and clears the input", async ({ page }) => {

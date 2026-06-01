@@ -2777,7 +2777,7 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  const showInspector = activeView !== "providers" && activeView !== "teammates";
+  const showInspector = !["providers", "teammates", "runs", "approvals", "media", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
