@@ -29,6 +29,8 @@ import type {
   ExternalWorkStatusResponse,
 } from "../../types.js";
 
+type SettingsSection = "external-work" | "interface" | "approval-policy";
+
 export function SettingsPage({
   policy,
   form,
@@ -78,6 +80,7 @@ export function SettingsPage({
 }): JSX.Element {
   const { t } = useI18n();
   const [externalWorkToken, setExternalWorkToken] = useState("");
+  const [activeSection, setActiveSection] = useState<SettingsSection>("external-work");
   const [workflowSourceKind, setWorkflowSourceKind] = useState<"github" | "linear">("github");
   const [workflowRepository, setWorkflowRepository] = useState("");
   const [workflowProjectSlug, setWorkflowProjectSlug] = useState("");
@@ -111,7 +114,45 @@ export function SettingsPage({
   ]);
 
   return (
-    <div className="settings-stack">
+    <div className="settings-layout">
+      <nav className="settings-section-nav" aria-label={t("Settings sections")}>
+        <button
+          className={activeSection === "external-work" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("external-work")}
+        >
+          <span className="settings-section-icon"><GitBranch size={16} /></span>
+          <span>
+            <strong>{t("External work")}</strong>
+            <small>{workflowStatusLabel(externalWorkStatus)}</small>
+          </span>
+        </button>
+        <button
+          className={activeSection === "interface" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("interface")}
+        >
+          <span className="settings-section-icon"><Palette size={16} /></span>
+          <span>
+            <strong>{t("Interface preferences")}</strong>
+            <small>{t("Theme and language")}</small>
+          </span>
+        </button>
+        <button
+          className={activeSection === "approval-policy" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("approval-policy")}
+        >
+          <span className="settings-section-icon"><ShieldCheck size={16} /></span>
+          <span>
+            <strong>{t("Approval policy")}</strong>
+            <small>{t("Tool permissions")}</small>
+          </span>
+        </button>
+      </nav>
+
+      <div className="settings-content-stack">
+      {activeSection === "interface" ? (
       <section className="panel settings-panel interface-settings-panel" aria-labelledby="interface-settings-title">
         <div className="panel-title">
           <Palette size={18} />
@@ -134,7 +175,9 @@ export function SettingsPage({
           </div>
         </div>
       </section>
+      ) : null}
 
+      {activeSection === "external-work" ? (
       <section className="panel settings-panel external-work-settings-panel" aria-labelledby="external-work-settings-title">
         <div className="panel-title split">
           <span>
@@ -352,7 +395,9 @@ export function SettingsPage({
           </>
         )}
       </section>
+      ) : null}
 
+      {activeSection === "approval-policy" ? (
       <section className="panel settings-panel" aria-labelledby="settings-title">
       <div className="panel-title split">
         <span>
@@ -418,6 +463,8 @@ export function SettingsPage({
         </button>
       </div>
       </section>
+      ) : null}
+      </div>
     </div>
   );
 }
