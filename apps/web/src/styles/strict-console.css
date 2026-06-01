@@ -56,6 +56,8 @@
 }
 
 .channel-tabs,
+.channel-utility-tab,
+.channel-notification-option,
 .activity-view-select,
 .activity-search-field,
 .activity-filter-toggle,
@@ -87,6 +89,8 @@
 }
 
 .channel-tab.active,
+.channel-utility-tab.active,
+.channel-notification-option.active,
 .segmented-control button.active,
 .activity-filter-toggle.active,
 .activity-filter-toggle:hover,
