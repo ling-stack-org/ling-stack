@@ -1,9 +1,6 @@
 import {
-  CheckCircle2,
-  CircleAlert,
   Database,
   FileText,
-  PlugZap,
   Settings,
   ShieldCheck,
   SquareTerminal,
@@ -11,11 +8,6 @@ import {
 import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import {
-  providerNeedsSecret,
-  providerPreflightReady,
-  providerRunPreflightBlocker,
-} from "../../lib/providers.js";
 import { ArtifactRow, MetaRow, StatusBadge } from "../../shared/components/index.js";
 import type {
   ApprovalPolicy,
@@ -130,14 +122,12 @@ export function PageInspector({
   }
 
   if (activeView === "providers") {
-    const providerId = selectedEntity.type === "provider" ? selectedEntity.id : editingProviderId || selectedProviderId;
-    return (
-      <ProviderContextInspector
-        provider={providers.find((provider) => provider.id === providerId) ?? providers[0]}
-        providerCheck={providerCheck}
-        checkedProviderId={checkedProviderId}
-      />
-    );
+    void selectedEntity;
+    void editingProviderId;
+    void selectedProviderId;
+    void providerCheck;
+    void checkedProviderId;
+    return <section className="inspector empty-inspector" aria-label={t("Model Workbench")} />;
   }
 
   if (activeView === "media") {
@@ -203,7 +193,6 @@ export function PageInspector({
         <div className="meta-list">
           <MetaRow label={t("Task")} value={selectedTask.title} compact />
           <MetaRow label={t("Status")} value={t(selectedTask.status)} />
-          <MetaRow label={t("Run")} value={selectedTask.currentRunId ?? t("not run")} compact />
           <MetaRow label={t("Updated")} value={formatDateTime(selectedTask.updatedAt)} compact />
         </div>
       ) : (
@@ -233,56 +222,6 @@ export function PageInspector({
   );
 }
 
-function ProviderContextInspector({
-  provider,
-  providerCheck,
-  checkedProviderId,
-}: {
-  readonly provider: ProviderPreset | undefined;
-  readonly providerCheck: ProviderCheckResult | undefined;
-  readonly checkedProviderId: string;
-}): JSX.Element {
-  const { t } = useI18n();
-  const checkBelongsHere = Boolean(provider && providerCheck && checkedProviderId === provider.id);
-  const visibleCheck = checkBelongsHere ? providerCheck : undefined;
-  const blocker = providerRunPreflightBlocker(provider, t);
-  return (
-    <section className="inspector" aria-label={t("Model Workbench context")}>
-      <div className="panel-title">
-        <PlugZap size={18} />
-        <h2>{t("Model Workbench context")}</h2>
-      </div>
-      {provider ? (
-        <>
-          <div className="meta-list">
-            <MetaRow label={t("Provider")} value={provider.displayName} />
-            <MetaRow label={t("Model")} value={provider.model} compact />
-            <MetaRow label={t("API")} value={provider.api} compact />
-            <MetaRow label={t("Secret")} value={providerNeedsSecret(provider) ? (provider.apiKeyConfigured ? t("key ready") : t("API key missing")) : t("no key required")} />
-          </div>
-          <div className={blocker ? "provider-run-notice" : "provider-run-notice ok"}>
-            {blocker ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />}
-            <span>{blocker ?? t("This provider can run coding tasks after selection.")}</span>
-          </div>
-          {visibleCheck ? (
-            <div className={visibleCheck.ok ? "check-result ok" : "check-result bad"}>
-              {visibleCheck.ok ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
-              <span>{visibleCheck.message}</span>
-            </div>
-          ) : providerPreflightReady(provider) ? (
-            <p className="muted">{t("Last check is ready. Edit URL, model, or key and Save to validate again.")}</p>
-          ) : null}
-        </>
-      ) : (
-        <div className="empty-state compact-empty">
-          <PlugZap />
-          <span>{t("No model presets")}</span>
-        </div>
-      )}
-    </section>
-  );
-}
-
 function MediaJobInspector({
   mediaJob,
   providers,
@@ -306,7 +245,7 @@ function MediaJobInspector({
         <>
           <div className="meta-list">
             <MetaRow label={t("Status")} value={t(mediaJob.status)} />
-            <MetaRow label={t("Provider")} value={provider?.displayName ?? mediaJob.providerPresetId} compact />
+            <MetaRow label={t("Provider")} value={provider?.displayName ?? t("Unknown provider")} compact />
             <MetaRow label={t("Operation")} value={mediaJob.operation} compact />
             <MetaRow label={t("Artifacts")} value={String(mediaJob.artifactIds.length)} />
           </div>
@@ -385,7 +324,6 @@ function ApprovalInspector({
 }
 
 function SettingsInspector({
-  policy,
   form,
   externalWorkStatus,
 }: {
@@ -405,11 +343,9 @@ function SettingsInspector({
         <h2>{t("Settings preview")}</h2>
       </div>
       <div className="meta-list">
-        <MetaRow label={t("Workspace")} value={policy?.workspaceId ?? "-"} compact />
         <MetaRow label={t("Allow")} value={String(allowCount)} />
         <MetaRow label={t("Ask")} value={String(askCount)} />
         <MetaRow label={t("Deny")} value={String(denyCount)} />
-        <MetaRow label={t("Write paths")} value={String(form.allowedWritePathsText.split("\n").filter((line) => line.trim()).length)} />
       </div>
       <div className="provider-run-notice neutral">
         <FileText size={16} />

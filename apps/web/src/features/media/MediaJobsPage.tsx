@@ -30,7 +30,6 @@ export function MediaJobsPage({
   isLoading,
   runningJobId,
   errorMessage,
-  onCwdChange,
   onFormChange,
   onRefresh,
   onCreate,
@@ -47,7 +46,6 @@ export function MediaJobsPage({
   readonly isLoading: boolean;
   readonly runningJobId: string;
   readonly errorMessage: string;
-  readonly onCwdChange: (cwd: string) => void;
   readonly onFormChange: (form: MediaJobFormState) => void;
   readonly onRefresh: () => void;
   readonly onCreate: () => void;
@@ -76,11 +74,6 @@ export function MediaJobsPage({
           </button>
         </div>
 
-        <label className="field wide runs-cwd">
-          <span>{t("Workspace path")}</span>
-          <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
-        </label>
-
         {errorMessage ? (
           <div className="inline-error">
             <CircleAlert size={17} />
@@ -92,7 +85,6 @@ export function MediaJobsPage({
           <MetaRow label={t("Media providers")} value={String(mediaProviders.length)} compact />
           <MetaRow label={t("Enabled")} value={String(enabledMediaProviders.length)} compact />
           <MetaRow label={t("Queued jobs")} value={String(jobs.filter((job) => job.status === "queued").length)} compact />
-          <MetaRow label={t("Artifacts linked")} value={String(jobs.reduce((count, job) => count + job.artifactIds.length, 0))} compact />
         </div>
 
         <div className="media-job-list">
@@ -143,7 +135,7 @@ export function MediaJobsPage({
                   </div>
                   <p>{job.prompt}</p>
                   <div className="provider-meta-line">
-                    <span>{provider?.displayName ?? job.providerPresetId}</span>
+                    <span>{provider?.displayName ?? t("Unknown provider")}</span>
                     <span>{t("{count} artifacts", { count: job.artifactIds.length })}</span>
                     <time>{formatDateTime(job.createdAt)}</time>
                   </div>
@@ -221,10 +213,13 @@ export function MediaJobsPage({
           <textarea value={form.prompt} rows={6} onChange={(event) => onFormChange({ ...form, prompt: event.target.value })} />
         </label>
 
-        <label className="field wide">
-          <span>{t("Input JSON")}</span>
-          <textarea value={form.inputText} rows={6} onChange={(event) => onFormChange({ ...form, inputText: event.target.value })} />
-        </label>
+        <details className="advanced-settings">
+          <summary>{t("Advanced input")}</summary>
+          <label className="field wide">
+            <span>{t("Input JSON")}</span>
+            <textarea value={form.inputText} rows={6} onChange={(event) => onFormChange({ ...form, inputText: event.target.value })} />
+          </label>
+        </details>
 
         <button className="primary-button" type="button" onClick={onCreate} disabled={isLoading || !canCreate}>
           {isLoading ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}

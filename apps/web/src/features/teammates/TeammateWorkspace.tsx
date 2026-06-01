@@ -593,7 +593,7 @@ export function TeammateWorkspace({
               <article key={task.id} className="teammate-data-row">
                 <span>
                   <strong>{task.title}</strong>
-                  <small>{task.currentRunId ?? task.prompt}</small>
+                  <small>{task.prompt}</small>
                 </span>
                 <StatusBadge status={task.status} />
               </article>

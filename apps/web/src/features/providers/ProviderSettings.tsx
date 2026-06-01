@@ -78,7 +78,6 @@ export function ProviderSettings({
   selectedTemplateId,
   repairRun,
   isRunning,
-  onCwdChange,
   onFormChange,
   onTemplateSelect,
   onNew,
@@ -110,7 +109,6 @@ export function ProviderSettings({
   readonly selectedTemplateId: string;
   readonly repairRun: RunSession | undefined;
   readonly isRunning: boolean;
-  readonly onCwdChange: (cwd: string) => void;
   readonly onFormChange: (form: ProviderFormState) => void;
   readonly onTemplateSelect: (template: ProviderTemplate) => void;
   readonly onNew: () => void;
@@ -330,11 +328,6 @@ export function ProviderSettings({
             </button>
           </div>
         </div>
-
-        <label className="field wide runs-cwd">
-          <span>{t("Workspace path")}</span>
-          <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
-        </label>
 
         <div className="provider-toolbar" aria-label={t("Model preset filters")}>
           <label className="provider-search-field">

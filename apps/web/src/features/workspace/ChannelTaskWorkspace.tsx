@@ -15,7 +15,6 @@ import {
   Workflow,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { effectiveChannelRuntimePolicy } from "../../lib/channels.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { buildRunRepairHint, displayLinkedRunStatus, readTaskTitle } from "../../lib/run-evidence.js";
 import { allTools, riskyTools, taskStatuses } from "../../lib/tools.js";
@@ -67,7 +66,6 @@ export function ChannelTaskWorkspace({
   runById,
   repairRun,
   errorMessage,
-  onCwdChange,
   onChannelFormChange,
   onChannelEditFormChange,
   onTaskFormChange,
@@ -114,7 +112,6 @@ export function ChannelTaskWorkspace({
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly repairRun: RunSession | undefined;
   readonly errorMessage: string;
-  readonly onCwdChange: (cwd: string) => void;
   readonly onChannelFormChange: (form: ChannelFormState) => void;
   readonly onChannelEditFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
@@ -142,7 +139,6 @@ export function ChannelTaskWorkspace({
 }): JSX.Element {
   const { t } = useI18n();
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-  const selectedChannelRuntimePolicy = effectiveChannelRuntimePolicy(selectedChannel);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
   const selectedTaskRun = selectedTask?.currentRunId ? runById.get(selectedTask.currentRunId) : undefined;
   const selectedTaskRunStatus = selectedTask?.currentRunId
@@ -179,11 +175,6 @@ export function ChannelTaskWorkspace({
           </button>
         </div>
 
-        <label className="field wide">
-          <span>{t("Workspace path")}</span>
-          <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
-        </label>
-
         {errorMessage ? (
           <div className="inline-error">
             <CircleAlert size={17} />
@@ -199,7 +190,6 @@ export function ChannelTaskWorkspace({
             </div>
           ) : (
             channels.map((channel) => {
-              const runtimePolicy = effectiveChannelRuntimePolicy(channel);
               return (
                 <button
                   key={channel.id}
@@ -209,9 +199,9 @@ export function ChannelTaskWorkspace({
                 >
                   <span className="channel-row-main">
                     <strong>{channel.name}</strong>
-                    <small>{t(channel.status)} · {t(runtimePolicy.executionMode)} · {t("Execution")}: {channel.boundPath ?? cwd}</small>
+                    <small>{t(channel.status)}</small>
                   </span>
-                  <span className="channel-tools">{channel.allowedTools.join(", ")}</span>
+                  <span className="channel-tools">{t("{count} tools", { count: channel.allowedTools.length })}</span>
                 </button>
               );
             })
@@ -228,60 +218,53 @@ export function ChannelTaskWorkspace({
               <span className="event-count">{t("{count} tools", { count: selectedChannel.allowedTools.length })}</span>
             </div>
             <div className="channel-detail-meta">
-              <MetaRow label={t("Channel id")} value={selectedChannel.id} compact />
               <MetaRow label={t("Status")} value={t(selectedChannel.status)} compact />
-              <MetaRow label={t("Runtime policy")} value={`${t(selectedChannelRuntimePolicy.executionMode)} · ${t(selectedChannelRuntimePolicy.writeLockScope)}`} compact />
-	              <MetaRow label={t("Workspace path")} value={cwd} compact />
-	              <MetaRow label={t("Execution path")} value={selectedChannel.boundPath ?? cwd} compact />
+              <MetaRow label={t("Default provider")} value={providers.find((provider) => provider.id === selectedChannel.defaultProviderPresetId)?.displayName ?? t("None")} compact />
 	            </div>
 	            <label className="field wide">
 	              <span>{t("Name")}</span>
               <input value={channelEditForm.name} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, name: event.target.value })} />
             </label>
-	            <label className="field wide">
-	              <span>{t("Execution path")}</span>
-              <input
-                value={channelEditForm.boundPath}
-                onChange={(event) => onChannelEditFormChange({ ...channelEditForm, boundPath: event.target.value })}
-              />
-            </label>
-            <ChannelRuntimePolicyFields form={channelEditForm} onChange={onChannelEditFormChange} />
-	            <label className="field wide">
-	              <span>{t("Default provider")}</span>
-              <select
-                value={channelEditForm.defaultProviderPresetId}
-                onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
-              >
-	                <option value="">{t("None")}</option>
-                <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-              </select>
-            </label>
-            {mediaProviders.length > 0 ? (
-              <div className="provider-run-notice neutral">
-                <Database size={16} />
-                <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
-              </div>
-            ) : null}
-            <div className="tool-grid compact-tools" aria-label="Channel detail allowed tools">
-              {allTools.map((tool) => (
-                <label
-                  key={tool}
-                  className={`${channelEditForm.allowedTools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}${riskyTools.includes(tool) ? " requires-approval" : ""}`}
+            <details className="advanced-settings">
+              <summary>{t("Advanced settings")}</summary>
+              <ChannelRuntimePolicyFields form={channelEditForm} onChange={onChannelEditFormChange} />
+	              <label className="field wide">
+	                <span>{t("Default provider")}</span>
+                <select
+                  value={channelEditForm.defaultProviderPresetId}
+                  onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
                 >
-                  <input
-                    type="checkbox"
-                    checked={channelEditForm.allowedTools.includes(tool)}
-                    onChange={(event) => {
-                      const allowedTools = event.target.checked
-                        ? [...channelEditForm.allowedTools, tool]
-                        : channelEditForm.allowedTools.filter((item) => item !== tool);
-                      onChannelEditFormChange({ ...channelEditForm, allowedTools });
-                    }}
-                  />
-                  <span>{tool}</span>
-                </label>
-              ))}
-            </div>
+	                  <option value="">{t("None")}</option>
+                  <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
+                </select>
+              </label>
+              {mediaProviders.length > 0 ? (
+                <div className="provider-run-notice neutral">
+                  <Database size={16} />
+                  <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
+                </div>
+              ) : null}
+              <div className="tool-grid compact-tools" aria-label="Channel detail allowed tools">
+                {allTools.map((tool) => (
+                  <label
+                    key={tool}
+                    className={`${channelEditForm.allowedTools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}${riskyTools.includes(tool) ? " requires-approval" : ""}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={channelEditForm.allowedTools.includes(tool)}
+                      onChange={(event) => {
+                        const allowedTools = event.target.checked
+                          ? [...channelEditForm.allowedTools, tool]
+                          : channelEditForm.allowedTools.filter((item) => item !== tool);
+                        onChannelEditFormChange({ ...channelEditForm, allowedTools });
+                      }}
+                    />
+                    <span>{tool}</span>
+                  </label>
+                ))}
+              </div>
+            </details>
 	            <button className="primary-button full" type="button" onClick={() => onSaveChannelEdit(selectedChannel.id)}>
 	              <Save size={16} />
 	              {t("Save channel")}
@@ -298,47 +281,46 @@ export function ChannelTaskWorkspace({
 	            <span>{t("Name")}</span>
             <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} />
           </label>
-          <label className="field wide">
-	            <span>{t("Execution path")}</span>
-            <input value={channelForm.boundPath} onChange={(event) => onChannelFormChange({ ...channelForm, boundPath: event.target.value })} />
-          </label>
-          <ChannelRuntimePolicyFields form={channelForm} onChange={onChannelFormChange} />
-          <label className="field wide">
-	            <span>{t("Default provider")}</span>
-            <select
-              value={channelForm.defaultProviderPresetId}
-              onChange={(event) => onChannelFormChange({ ...channelForm, defaultProviderPresetId: event.target.value })}
-            >
-	              <option value="">{t("None")}</option>
-              <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-            </select>
-          </label>
-          {mediaProviders.length > 0 ? (
-            <div className="provider-run-notice neutral">
-              <Database size={16} />
-              <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
-            </div>
-          ) : null}
-          <div className="tool-grid compact-tools" aria-label="Channel allowed tools">
-            {allTools.map((tool) => (
-              <label
-                key={tool}
-                className={`${channelForm.allowedTools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}${riskyTools.includes(tool) ? " requires-approval" : ""}`}
+          <details className="advanced-settings">
+            <summary>{t("Advanced settings")}</summary>
+            <ChannelRuntimePolicyFields form={channelForm} onChange={onChannelFormChange} />
+            <label className="field wide">
+	              <span>{t("Default provider")}</span>
+              <select
+                value={channelForm.defaultProviderPresetId}
+                onChange={(event) => onChannelFormChange({ ...channelForm, defaultProviderPresetId: event.target.value })}
               >
-                <input
-                  type="checkbox"
-                  checked={channelForm.allowedTools.includes(tool)}
-                  onChange={(event) => {
-                    const allowedTools = event.target.checked
-                      ? [...channelForm.allowedTools, tool]
-                      : channelForm.allowedTools.filter((item) => item !== tool);
-                    onChannelFormChange({ ...channelForm, allowedTools });
-                  }}
-                />
-                <span>{tool}</span>
-              </label>
-            ))}
-          </div>
+	                <option value="">{t("None")}</option>
+                <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
+              </select>
+            </label>
+            {mediaProviders.length > 0 ? (
+              <div className="provider-run-notice neutral">
+                <Database size={16} />
+                <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
+              </div>
+            ) : null}
+            <div className="tool-grid compact-tools" aria-label="Channel allowed tools">
+              {allTools.map((tool) => (
+                <label
+                  key={tool}
+                  className={`${channelForm.allowedTools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}${riskyTools.includes(tool) ? " requires-approval" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={channelForm.allowedTools.includes(tool)}
+                    onChange={(event) => {
+                      const allowedTools = event.target.checked
+                        ? [...channelForm.allowedTools, tool]
+                        : channelForm.allowedTools.filter((item) => item !== tool);
+                      onChannelFormChange({ ...channelForm, allowedTools });
+                    }}
+                  />
+                  <span>{tool}</span>
+                </label>
+              ))}
+            </div>
+          </details>
 	          <button className="primary-button full" type="button" onClick={onCreateChannel}>
 	            <Plus size={16} />
 	            {t("Create channel")}
@@ -426,17 +408,12 @@ export function ChannelTaskWorkspace({
               </span>
               <span className={`task-status ${selectedTask.status}`}>{t(selectedTask.status)}</span>
             </div>
-            <div className="task-detail-meta">
-	              <MetaRow label={t("Task id")} value={selectedTask.id} compact />
-	              <MetaRow label={t("Channel")} value={selectedTask.channelId} compact />
-	              <MetaRow label={t("Current run")} value={selectedTask.currentRunId ?? "-"} compact />
-            </div>
             {selectedTask.currentRunId ? (
               <div className={selectedTaskRunSucceeded ? "task-run-link succeeded" : "task-run-link"}>
                 <StatusBadge status={selectedTaskRunStatus} />
                 <span className="task-run-summary">
                   {selectedTaskRunSucceeded ? <strong>{t("Task complete")}</strong> : null}
-                  <code>{selectedTask.currentRunId}</code>
+                  <span>{t("Latest run")}</span>
                 </span>
                 <button className={selectedTaskRunSucceeded ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(selectedTask.currentRunId ?? "")}>
 	                  {selectedTaskRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
@@ -494,7 +471,7 @@ export function ChannelTaskWorkspace({
               </button>
               <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(selectedTask)} disabled={isRunning || taskActionPending || !canRunWithEffectiveProvider}>
                 {selectedCheckLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                {t("Check run")}
+                {t("Check & run")}
               </button>
               <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || taskActionPending || !canPreflightRunWithEffectiveProvider}>
                 {selectedRunLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
@@ -528,8 +505,7 @@ export function ChannelTaskWorkspace({
                     <span className={`task-status ${task.status}`}>{t(task.status)}</span>
                   </div>
                   <p>{task.prompt}</p>
-                  <div className="provider-meta-line mono">
-                    <span>{task.id}</span>
+                  <div className="provider-meta-line">
                     <time>{formatDateTime(task.updatedAt)}</time>
                   </div>
                   {task.currentRunId ? (
@@ -537,7 +513,7 @@ export function ChannelTaskWorkspace({
                       <StatusBadge status={linkedRunStatus} />
                       <span className="task-run-summary">
                         {linkedRunSucceeded ? <strong>{t("Task complete")}</strong> : null}
-                        <code>{task.currentRunId}</code>
+                        <span>{t("Latest run")}</span>
                       </span>
                       <button className={linkedRunSucceeded ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
 	                        {linkedRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
@@ -562,7 +538,7 @@ export function ChannelTaskWorkspace({
                     </button>
                     <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={taskActionsDisabled || !canRunWithEffectiveProvider}>
                       {checkRunLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-	                      {t("Check run")}
+	                      {t("Check & run")}
                     </button>
                     <button className="secondary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={taskActionsDisabled || !canPreflightRunWithEffectiveProvider}>
                       {runLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
@@ -610,8 +586,9 @@ function TaskRepairHandoffPanel({
   readonly onOpenRun: (runId: string) => void;
   readonly onClear: () => void;
 }): JSX.Element {
+  const { t } = useI18n();
   const snapshotTitle = readTaskTitle(run.taskSnapshot) || run.taskId;
-  const failedReason = run.errorMessage || "This run failed before completing.";
+  const failedReason = run.errorMessage || t("This run failed before completing.");
   const taskActionPending = activeTaskRunAction !== undefined;
   const runLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "run";
   const checkRunLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
@@ -621,31 +598,29 @@ function TaskRepairHandoffPanel({
       <div className="task-repair-handoff-head">
         <span>
           <SquareTerminal size={16} />
-          <strong>Run updated task</strong>
+          <strong>{t("Run updated task")}</strong>
         </span>
         <button className="secondary-button compact-button" type="button" onClick={onClear}>
-          Clear
+          {t("Clear")}
         </button>
       </div>
       <div className="task-repair-handoff-copy">
-        <span>
-          Editing <code>{task.id}</code> to repair failed run <code>{run.id}</code>.
-        </span>
-        <small>Failed snapshot: {snapshotTitle}. {failedReason}</small>
-        <small>Rerun snapshot replays the old request. Save + run updated task uses the current task editor values.</small>
+        <span>{t("Edit this task to repair the failed run.")}</span>
+        <small>{t("Failed snapshot: {title}. {reason}", { title: snapshotTitle, reason: failedReason })}</small>
+        <small>{t("Save and run uses the current task editor values.")}</small>
       </div>
       <div className="task-repair-handoff-actions">
         <button className="primary-button compact-button" type="button" onClick={() => onRunUpdatedTask(task)} disabled={isRunning || taskActionPending || !canRun}>
           {runLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-          Save + run updated task
+          {t("Save and run")}
         </button>
         <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunUpdatedTask(task)} disabled={isRunning || taskActionPending || !canCheckRun}>
           {checkRunLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-          Save + check run
+          {t("Save and check")}
         </button>
         <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(run.id)}>
           <History size={14} />
-          Open failed run
+          {t("Open failed run")}
         </button>
       </div>
     </div>

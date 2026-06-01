@@ -30,7 +30,6 @@ import type {
 } from "../../types.js";
 
 export function SettingsPage({
-  cwd,
   policy,
   form,
   selectedChannel,
@@ -41,7 +40,6 @@ export function SettingsPage({
   externalWorkSecretAction,
   externalWorkWorkflowAction,
   errorMessage,
-  onCwdChange,
   onFormChange,
   onRefresh,
   onSave,
@@ -53,7 +51,6 @@ export function SettingsPage({
   onOpenExternalWorkRecords,
   onOpenExternalWorkTriage,
 }: {
-  readonly cwd: string;
   readonly policy: ApprovalPolicy | undefined;
   readonly form: ApprovalPolicyFormState;
   readonly selectedChannel: Channel | undefined;
@@ -64,7 +61,6 @@ export function SettingsPage({
   readonly externalWorkSecretAction: "configure" | "delete" | undefined;
   readonly externalWorkWorkflowAction: "configure" | undefined;
   readonly errorMessage: string;
-  readonly onCwdChange: (cwd: string) => void;
   readonly onFormChange: (form: ApprovalPolicyFormState) => void;
   readonly onRefresh: () => void;
   readonly onSave: () => void;
@@ -369,11 +365,6 @@ export function SettingsPage({
         </button>
       </div>
 
-      <label className="field wide runs-cwd">
-        <span>{t("Workspace path")}</span>
-        <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
-      </label>
-
       {errorMessage ? (
         <div className="inline-error">
           <CircleAlert size={17} />
@@ -382,7 +373,6 @@ export function SettingsPage({
       ) : null}
 
       <div className="policy-meta">
-        <MetaRow label={t("Workspace")} value={policy?.workspaceId ?? "-"} compact />
         <MetaRow label={t("Updated")} value={policy ? formatDateTime(policy.updatedAt) : "-"} compact />
       </div>
 
@@ -410,13 +400,16 @@ export function SettingsPage({
         ))}
       </div>
 
-      <label className="field wide">
-        <span>{t("Allowed write paths")}</span>
-        <textarea
-          value={form.allowedWritePathsText}
-          onChange={(event) => onFormChange({ ...form, allowedWritePathsText: event.target.value })}
-        />
-      </label>
+      <details className="advanced-settings">
+        <summary>{t("Advanced settings")}</summary>
+        <label className="field wide">
+          <span>{t("Allowed write paths")}</span>
+          <textarea
+            value={form.allowedWritePathsText}
+            onChange={(event) => onFormChange({ ...form, allowedWritePathsText: event.target.value })}
+          />
+        </label>
+      </details>
 
       <div className="action-row">
         <button className="primary-button" type="button" onClick={onSave} disabled={isLoading}>

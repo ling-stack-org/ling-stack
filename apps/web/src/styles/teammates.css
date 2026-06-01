@@ -4,6 +4,25 @@
   min-height: calc(100vh - 134px);
 }
 
+.workspace.workspace-teammates-surface {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: calc(100vh - 52px);
+  min-height: 0;
+  overflow: hidden;
+  padding: 20px 20px 30px;
+}
+
+.workspace-teammates-surface .workspace-head {
+  margin-bottom: 14px;
+}
+
+.workspace-teammates-surface .teammates-page {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
 .teammate-command-strip,
 .teammate-template-panel,
 .teammate-detail-panel,
@@ -60,6 +79,7 @@
 }
 
 .teammate-wizard {
+  position: relative;
   display: grid;
   grid-template-columns: 188px minmax(0, 1fr) 290px;
   grid-template-areas:
@@ -74,6 +94,363 @@
     linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(238, 241, 238, 0.52));
   box-shadow: 0 18px 48px rgba(31, 37, 40, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(26px);
+}
+
+.teammate-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  align-items: stretch;
+  justify-items: end;
+  padding: 18px;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: color-mix(in srgb, var(--app-bg) 38%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: provider-sheet-backdrop-in 140ms ease-out;
+}
+
+.teammate-wizard.teammate-sheet {
+  width: min(820px, calc(100vw - 36px));
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel-strong);
+  animation: provider-sheet-slide-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.teammate-create-sheet {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(620px, calc(100vw - 36px));
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel-strong);
+  box-shadow: var(--shadow-xl);
+  animation: provider-sheet-slide-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.teammate-create-header,
+.teammate-create-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+}
+
+.teammate-create-header {
+  align-items: flex-start;
+  background: linear-gradient(to bottom, var(--surface-panel-strong) 72%, color-mix(in srgb, var(--surface-panel-strong) 0%, transparent));
+}
+
+.teammate-create-summary {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.teammate-create-summary .avatar-initial {
+  width: 42px;
+  height: 42px;
+  font-size: 14px;
+}
+
+.teammate-create-summary h2,
+.teammate-create-summary p {
+  margin: 0;
+}
+
+.teammate-create-summary h2 {
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 1.22;
+}
+
+.teammate-create-summary p {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-create-body {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 14px 14px;
+}
+
+.teammate-create-section {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+}
+
+.teammate-create-section-title,
+.teammate-create-advanced summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.teammate-create-section-title span,
+.teammate-create-advanced summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.teammate-create-section-title small,
+.teammate-create-advanced summary small {
+  max-width: 240px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.teammate-create-list {
+  display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 4px 2px 2px;
+}
+
+.teammate-create-list.compact {
+  max-height: 220px;
+}
+
+.teammate-provider-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel-strong);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.teammate-provider-row:hover,
+.teammate-provider-row.selected {
+  border-color: var(--accent-border);
+  background:
+    linear-gradient(90deg, var(--accent-soft), transparent 34%),
+    var(--surface-panel-strong);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 1px 0 var(--hairline);
+}
+
+.teammate-provider-row span:last-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.teammate-provider-row strong,
+.teammate-provider-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-provider-row strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.teammate-provider-row small {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.teammate-create-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.teammate-create-fields textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.teammate-create-advanced {
+  padding: 0;
+}
+
+.teammate-create-advanced summary {
+  cursor: pointer;
+  padding: 12px;
+}
+
+.teammate-create-advanced[open] summary {
+  padding-bottom: 8px;
+}
+
+.teammate-create-advanced-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+
+.teammate-create-advanced-body section {
+  display: grid;
+  gap: 8px;
+}
+
+.teammate-create-advanced-body h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.teammate-memory-list.compact .teammate-toggle {
+  min-height: 42px;
+}
+
+.teammate-create-actions {
+  justify-content: flex-end;
+  background: linear-gradient(to top, var(--surface-panel-strong) 72%, color-mix(in srgb, var(--surface-panel-strong) 0%, transparent));
+}
+
+.teammate-detail-sheet {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(560px, calc(100vw - 36px));
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel-strong);
+  box-shadow: var(--shadow-xl);
+  animation: provider-sheet-slide-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.teammate-detail-sheet-header,
+.teammate-detail-sheet-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+}
+
+.teammate-detail-sheet-header {
+  align-items: flex-start;
+  background: linear-gradient(to bottom, var(--surface-panel-strong) 72%, color-mix(in srgb, var(--surface-panel-strong) 0%, transparent));
+}
+
+.teammate-detail-sheet-actions {
+  justify-content: flex-end;
+  background: linear-gradient(to top, var(--surface-panel-strong) 72%, color-mix(in srgb, var(--surface-panel-strong) 0%, transparent));
+}
+
+.teammate-detail-sheet-body {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 14px 14px;
+}
+
+.teammate-readable-copy {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.teammate-use-list {
+  display: grid;
+  gap: 8px;
+}
+
+.teammate-use-list span {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.teammate-advanced-detail {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+}
+
+.teammate-advanced-detail summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.teammate-advanced-detail[open] {
+  padding-bottom: 12px;
+}
+
+.teammate-advanced-detail[open] summary {
+  color: var(--text-primary);
+}
+
+.teammate-advanced-detail .teammate-meta-grid,
+.teammate-advanced-detail .teammate-section,
+.teammate-advanced-detail .teammate-workflow-panel {
+  margin: 0 12px 10px;
+}
+
+.teammate-sheet-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+}
+
+.teammate-sheet .teammate-wizard-stage,
+.teammate-sheet .teammate-live-preview,
+.teammate-sheet .teammate-step-rail {
+  min-height: 0;
+  overflow: auto;
 }
 
 .teammate-step-rail {
@@ -472,9 +849,15 @@
 
 .teammate-management-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 0.7fr) minmax(280px, 0.8fr) minmax(360px, 1fr);
+  grid-template-columns: minmax(300px, 0.9fr) minmax(340px, 1fr);
   gap: 12px;
   align-items: start;
+}
+
+.workspace-teammates-surface .teammate-management-grid {
+  min-height: 0;
+  height: 100%;
+  align-items: stretch;
 }
 
 .teammate-template-panel,
@@ -484,11 +867,63 @@
   padding: 14px;
 }
 
+.teammate-add-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.teammate-template-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-teammates-surface .teammate-add-panel > .panel-title,
+.workspace-teammates-surface .teammate-template-panel > .panel-title {
+  min-height: 44px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-teammates-surface .teammate-add-panel > .panel-title > span,
+.workspace-teammates-surface .teammate-template-panel > .panel-title > span {
+  min-width: 0;
+}
+
 .teammate-template-list,
 .teammate-skill-list,
 .teammate-draft-list {
   display: grid;
+  align-content: start;
+  align-items: start;
+  grid-auto-rows: max-content;
   gap: 8px;
+}
+
+.teammate-template-list {
+  max-height: clamp(220px, 34vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 4px 2px 2px;
+}
+
+.teammate-draft-list {
+  grid-template-columns: 1fr;
+  max-height: clamp(280px, 42vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 4px 2px 2px;
+}
+
+.workspace-teammates-surface .teammate-template-list,
+.workspace-teammates-surface .teammate-draft-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 
 .teammate-template-row,
@@ -508,7 +943,8 @@
 }
 
 .teammate-template-row:hover,
-.teammate-template-row.selected {
+.teammate-template-row.selected,
+.teammate-draft-row:hover {
   border-color: rgba(22, 140, 120, 0.28);
   background: rgba(240, 252, 248, 0.72);
 }
@@ -708,7 +1144,11 @@
 
 .teammate-draft-row {
   grid-template-columns: 32px minmax(0, 1fr) auto;
-  min-height: 58px;
+  align-items: center;
+  min-height: 62px;
+  padding: 9px;
+  background: rgba(255, 255, 255, 0.46);
+  box-shadow: none;
 }
 
 .teammate-draft-row.hidden-row {
@@ -718,7 +1158,12 @@
 .teammate-row-actions {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 6px;
+  width: auto;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .teammate-row-actions .icon-button.active {
@@ -1115,5 +1560,31 @@
 
   .teammate-workspace-meta {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1500px) and (min-width: 901px) {
+  .workspace-teammates-surface .teammate-management-grid {
+    grid-template-columns: minmax(300px, 0.9fr) minmax(340px, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .workspace.workspace-teammates-surface {
+    height: auto;
+    min-height: calc(100vh - 52px);
+    overflow: auto;
+    padding-bottom: 24px;
+  }
+
+  .workspace-teammates-surface .teammates-page,
+  .workspace-teammates-surface .teammate-management-grid {
+    height: auto;
+    overflow: visible;
+  }
+
+  .workspace-teammates-surface .teammate-template-list,
+  .workspace-teammates-surface .teammate-draft-list {
+    max-height: clamp(260px, 48vh, 520px);
   }
 }
