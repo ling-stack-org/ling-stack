@@ -197,7 +197,7 @@ export function FirstRunFlow({
         <div className="first-run-actions">
           <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(selectedTask)} disabled={isRunning || taskActionPending}>
 	            {selectedTaskCheckLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-	            {t("Check run")}
+	            {t("Check & run")}
 	          </button>
           <button className="primary-button compact-button" type="button" onClick={() => onRunTask(selectedTask)} disabled={isRunning || taskActionPending}>
 	            {selectedTaskRunLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
@@ -426,7 +426,7 @@ function buildFirstRunRunStep(
       label: t("Run"),
       detail: providerRunPreflightBlocker(provider, t) ?? t("Provider is not ready."),
       status: "attention",
-      actionLabel: t("Check run"),
+      actionLabel: t("Check & run"),
       onAction: () => onCheckThenRunTask(task),
       disabled: taskBusy || !canUseProviderForRun(provider),
       checkLoading,
@@ -437,7 +437,7 @@ function buildFirstRunRunStep(
     label: t("Run"),
     detail: t("Task and provider are ready."),
     status: "ready",
-    actionLabel: t("Check run"),
+    actionLabel: t("Check & run"),
     onAction: () => onCheckThenRunTask(task),
     secondaryActionLabel: t("Run"),
     onSecondaryAction: () => onRunTask(task),

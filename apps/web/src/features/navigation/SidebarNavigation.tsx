@@ -9,9 +9,7 @@ import {
   Plus,
   Settings,
   ShieldCheck,
-  SquareTerminal,
   Users,
-  Workflow,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
@@ -30,7 +28,6 @@ export function SidebarNavigation({
   teammates,
   approvals,
   onOpenView,
-  onOpenTasks,
   onSelectChannel,
   onSelectTeammate,
 }: {
@@ -39,7 +36,6 @@ export function SidebarNavigation({
   readonly teammates: readonly AiTeammate[];
   readonly approvals: readonly ApprovalRequest[];
   readonly onOpenView: (view: ViewId) => void;
-  readonly onOpenTasks: () => void;
   readonly onSelectChannel: (channelId: string) => void;
   readonly onSelectTeammate: (teammateId: string) => void;
 }): JSX.Element {
@@ -60,8 +56,6 @@ export function SidebarNavigation({
       </div>
 
       <nav className="primary-nav">
-        <NavItem icon={<Workflow />} label={t("Workspace")} active={activeSidebarTarget === "workspace"} onClick={() => onOpenView("workspace")} />
-        <NavItem icon={<SquareTerminal />} label={t("Tasks")} active={activeSidebarTarget === "tasks"} onClick={onOpenTasks} />
         <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeSidebarTarget === "providers"} onClick={() => onOpenView("providers")} />
         <NavItem icon={<History />} label={t("Runs")} active={activeSidebarTarget === "runs"} onClick={() => onOpenView("runs")} />
         <NavItem icon={<Inbox />} label={t("Inbox")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
@@ -72,7 +66,7 @@ export function SidebarNavigation({
 
       <SidebarSection title={t("Channels")} actionLabel={channels.length === 0 ? t("Create") : undefined}>
         {channels.length === 0 ? (
-          <button className="sidebar-row muted-row" type="button" onClick={() => onOpenView("workspace")}>
+          <button className="sidebar-row muted-row" type="button" onClick={() => onOpenView("providers")}>
             <Hash size={14} />
             <span>{t("No channel yet")}</span>
           </button>

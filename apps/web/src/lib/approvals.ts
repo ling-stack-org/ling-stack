@@ -107,11 +107,11 @@ export function mergeApprovalsForRun(
 
 export function approvalOwnerLabels(approval: ApprovalRequest): readonly string[] {
   if (approval.mediaJobId) {
-    return [`media job ${approval.mediaJobId}`];
+    return ["media job"];
   }
   return [
-    approval.taskId ? `task ${approval.taskId}` : "",
-    approval.runId ? `run ${approval.runId}` : "",
+    approval.taskId ? "task" : "",
+    approval.runId ? "run" : "",
   ].filter(Boolean);
 }
 

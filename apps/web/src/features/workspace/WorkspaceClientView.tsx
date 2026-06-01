@@ -63,7 +63,6 @@ import {
   type ChannelAttentionQueueTarget,
 } from "../../lib/channel-activity-views.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
-import { effectiveChannelRuntimePolicy } from "../../lib/channels.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
 import { buildRunRepairHint, displayLinkedRunStatus, readRunWorkspaceCwd } from "../../lib/run-evidence.js";
 import { defaultTools, riskyTools } from "../../lib/tools.js";
@@ -222,7 +221,6 @@ export function WorkspaceClientView({
   activeTaskRunAction,
   runningWorkflowStepId,
   errorMessage,
-  onCwdChange,
   onChannelFormChange,
   onTaskFormChange,
   onProviderSelect,
@@ -315,7 +313,6 @@ export function WorkspaceClientView({
   readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly runningWorkflowStepId: string;
   readonly errorMessage: string;
-  readonly onCwdChange: (cwd: string) => void;
   readonly onChannelFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
   readonly onProviderSelect: (providerId: string) => void;
@@ -413,12 +410,9 @@ export function WorkspaceClientView({
   const providerBlocker = providerRunPreflightBlocker(effectiveProvider, t);
   const activeLeaseCount = resourceLeases.filter((lease) => lease.status === "active").length;
   const taskActionPending = activeTaskRunAction !== undefined;
-  const selectedChannelRuntimePolicy = effectiveChannelRuntimePolicy(selectedChannel);
   const channelStatusText = selectedChannel
-    ? t("{status} · {mode} · {lockScope} lock", {
+    ? t("{status} channel", {
       status: t(selectedChannel.status),
-      mode: t(selectedChannelRuntimePolicy.executionMode),
-      lockScope: t(selectedChannelRuntimePolicy.writeLockScope),
     })
     : t("No channel yet");
   const latestRun = activeRunId ? runById.get(activeRunId) : runs[0];
@@ -1453,7 +1447,7 @@ export function WorkspaceClientView({
             <Hash size={21} />
             <h1>{selectedChannel?.name ?? "Engineering"}</h1>
           </div>
-          <p>{channelStatusText}{selectedChannel?.boundPath ? ` · ${selectedChannel.boundPath}` : ""}</p>
+          <p>{channelStatusText}</p>
         </div>
         <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
           {daemonHealthy !== true ? (
@@ -1518,10 +1512,6 @@ export function WorkspaceClientView({
         <section className="workbench-settings-panel channel-options" aria-label={t("Advanced channel settings")}>
           {channelTeammateManager}
           <div className="channel-options-grid">
-            <label className="field wide">
-              <span>{t("Workspace path")}</span>
-              <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
-            </label>
             <label className="field wide">
               <span>{t("Run provider")}</span>
               <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providersLoading || providers.length === 0}>
@@ -1667,7 +1657,7 @@ export function WorkspaceClientView({
                   avatar={<AvatarInitial label="L" tone="orange" />}
                   author="Ling Stack"
                   time={t("Now")}
-                  body={selectedChannel ? t("Default workspace is ready. This channel is bound to {path}.", { path: selectedChannel.boundPath ?? cwd }) : t("Create a default channel to start the workspace loop.")}
+                  body={selectedChannel ? t("Default workspace is ready.") : t("Create a default channel to start the workspace loop.")}
                 />
               ) : filteredActivityItems.length === 0 ? (
                 <div className="client-empty-state">
@@ -2067,7 +2057,7 @@ export function WorkspaceClientView({
                           </span>
                           <span className="task-card-meta">
                             {task.currentRunId ? <StatusBadge status={linkedRunStatus} /> : <span className="status-badge queued">{t("Not run")}</span>}
-                            <small>{task.currentRunId ?? formatDateTime(task.updatedAt)}</small>
+                            <small>{formatDateTime(task.updatedAt)}</small>
                           </span>
                         </button>
                       );
@@ -2652,7 +2642,7 @@ function TaskDetailPanel({
           <StatusBadge status={linkedRunStatus} />
           <span className="task-run-summary">
             {linkedRunSucceeded ? <strong>{t("Task complete")}</strong> : null}
-            <code>{task.currentRunId}</code>
+            <span>{t("Latest run")}</span>
           </span>
           <button className={linkedRunSucceeded ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
             {linkedRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
@@ -2713,7 +2703,7 @@ function TaskDetailPanel({
         </button>
         <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={taskActionsDisabled || !effectiveProvider || !canUseProviderForRun(effectiveProvider)}>
           {checkRunLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-          {t("Check run")}
+          {t("Check & run")}
         </button>
         <button className="primary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={taskActionsDisabled || Boolean(providerBlocker) || taskChannelPaused}>
           {runLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
@@ -3580,16 +3570,19 @@ function ChannelFiles({
                   <div className="run-artifact-head">
                     <span>
                       <strong>{task?.title ?? run.taskId}</strong>
-                      <small>{run.id} · {run.status} · {formatDateTime(run.updatedAt)}</small>
+                      <small>{run.status} · {formatDateTime(run.updatedAt)}</small>
                     </span>
                     <StatusBadge status={run.status} />
                   </div>
-                  <div className="session-file-list compact">
-                    <span>{t("Event log")}</span>
-                    <code>{run.eventLogPath}</code>
-                    <span>{t("Summary")}</span>
-                    <code>{run.summaryPath ?? "-"}</code>
-                  </div>
+                  <details className="json-details compact-json">
+                    <summary>{t("Debug details")}</summary>
+                    <div className="session-file-list compact">
+                      <span>{t("Event log")}</span>
+                      <code>{run.eventLogPath}</code>
+                      <span>{t("Summary")}</span>
+                      <code>{run.summaryPath ?? "-"}</code>
+                    </div>
+                  </details>
                   {artifactError ? (
                     <div className="artifact-empty-state error">
                       <span>{t("Could not load artifacts")}</span>

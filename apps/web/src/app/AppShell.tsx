@@ -336,7 +336,10 @@ export function AppShell(): JSX.Element {
   const [mediaJobArtifacts, setMediaJobArtifacts] = useState<Record<string, readonly RunArtifact[]>>({});
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
   const [runningMediaJobId, setRunningMediaJobId] = useState("");
-  const [mediaJobForm, setMediaJobForm] = useState<MediaJobFormState>(defaultMediaJobForm);
+  const [mediaJobForm, setMediaJobForm] = useState<MediaJobFormState>(() => ({
+    ...defaultMediaJobForm,
+    prompt: t(defaultMediaJobForm.prompt),
+  }));
   const [taskRepairRunId, setTaskRepairRunId] = useState("");
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
   const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
@@ -381,7 +384,7 @@ export function AppShell(): JSX.Element {
   async function addAiTeammate(input: LocalTeammateCreateInput): Promise<void> {
     const cwd = form.cwd.trim();
     if (!cwd) {
-      setErrorMessage("请输入 workspace path");
+      setErrorMessage("本地工作区未就绪");
       return;
     }
     const template = input.templateId ? builtinTeammateTemplates.find((item) => item.id === input.templateId) : undefined;
@@ -467,7 +470,7 @@ export function AppShell(): JSX.Element {
   async function updateAiTeammateSettings(teammateId: string, input: UpdateAiTeammateRequest): Promise<void> {
     const cwd = form.cwd.trim();
     if (!cwd) {
-      setErrorMessage("请输入 workspace path");
+      setErrorMessage("本地工作区未就绪");
       return;
     }
     setAiTeammatesLoading(true);
@@ -598,11 +601,6 @@ export function AppShell(): JSX.Element {
     }
     setActiveView(view);
     setActiveSidebarTarget(view);
-  }
-
-  function openTasksView(): void {
-    setActiveView("workspace");
-    setActiveSidebarTarget("tasks");
   }
 
   function selectWorkspaceChannel(channelId: string): void {
@@ -1135,7 +1133,7 @@ export function AppShell(): JSX.Element {
 
   async function saveMediaJob(): Promise<void> {
     if (!form.cwd.trim()) {
-      setErrorMessage("请输入 workspace path");
+      setErrorMessage("本地工作区未就绪");
       return;
     }
     if (!mediaJobForm.providerPresetId) {
@@ -1167,7 +1165,7 @@ export function AppShell(): JSX.Element {
   async function executeMediaJob(jobId: string): Promise<void> {
     const cwd = form.cwd.trim();
     if (!cwd) {
-      setErrorMessage("请输入 workspace path");
+      setErrorMessage("本地工作区未就绪");
       return;
     }
 
@@ -1618,7 +1616,7 @@ export function AppShell(): JSX.Element {
 
   async function saveChannel(): Promise<void> {
     if (!form.cwd.trim()) {
-      setErrorMessage("请输入 workspace path");
+      setErrorMessage("本地工作区未就绪");
       return;
     }
     if (!channelForm.name.trim()) {
@@ -1645,7 +1643,7 @@ export function AppShell(): JSX.Element {
 
   async function saveDefaultChannel(): Promise<void> {
     if (!form.cwd.trim()) {
-      setErrorMessage("请输入 workspace path");
+      setErrorMessage("本地工作区未就绪");
       return;
     }
 
@@ -1683,7 +1681,7 @@ export function AppShell(): JSX.Element {
 
   async function saveChannelEdit(channelId: string): Promise<void> {
     if (!form.cwd.trim()) {
-      setErrorMessage("请输入 workspace path");
+      setErrorMessage("本地工作区未就绪");
       return;
     }
     if (!channelEditForm.name.trim()) {
@@ -2026,7 +2024,7 @@ export function AppShell(): JSX.Element {
   async function startWorkflowStepAction(step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode): Promise<void> {
     const workspaceCwd = form.cwd.trim();
     if (!workspaceCwd) {
-      setErrorMessage("请输入 workspace path");
+      setErrorMessage("本地工作区未就绪");
       return;
     }
     const workflow = channelWorkflows.find((item) => item.id === step.workflowId);
@@ -2526,7 +2524,7 @@ export function AppShell(): JSX.Element {
 
   async function saveApprovalPolicy(): Promise<void> {
     if (!form.cwd.trim()) {
-      setErrorMessage("请输入 workspace path");
+      setErrorMessage("本地工作区未就绪");
       return;
     }
 
@@ -2591,7 +2589,7 @@ export function AppShell(): JSX.Element {
   async function saveProviderWithPreflight(): Promise<{ readonly ok: boolean; readonly errorMessage?: string }> {
     const workspaceCwd = form.cwd.trim();
     if (!workspaceCwd) {
-      return { ok: false, errorMessage: "请输入 workspace path" };
+      return { ok: false, errorMessage: "本地工作区未就绪" };
     }
 
     const nextProviderForm = { ...providerForm, enabled: true };
@@ -2886,7 +2884,7 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  const showInspector = activeView !== "providers";
+  const showInspector = activeView !== "providers" && activeView !== "teammates";
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
@@ -2904,11 +2902,18 @@ export function AppShell(): JSX.Element {
         teammates={aiTeammates}
         approvals={approvals}
         onOpenView={openPlainView}
-        onOpenTasks={openTasksView}
         onSelectChannel={selectWorkspaceChannel}
         onSelectTeammate={selectAiTeammate}
       />
-      <section className={activeView === "workspace" ? "workspace workspace-client-surface" : "workspace"}>
+      <section
+        className={
+          activeView === "workspace"
+            ? "workspace workspace-client-surface"
+            : activeView === "teammates" && !selectedAiTeammate
+              ? "workspace workspace-teammates-surface"
+              : "workspace"
+        }
+      >
         {activeView === "workspace" ? (
           <WorkspaceClientView
             cwd={form.cwd}
@@ -2961,7 +2966,6 @@ export function AppShell(): JSX.Element {
             activeTaskRunAction={activeTaskRunAction}
             runningWorkflowStepId={runningWorkflowStepId}
             errorMessage={errorMessage}
-            onCwdChange={updateWorkspaceCwd}
             onChannelFormChange={setChannelForm}
             onTaskFormChange={setTaskForm}
             onProviderSelect={(providerId) => {
@@ -3065,14 +3069,6 @@ export function AppShell(): JSX.Element {
                 isLoading={runsLoading}
                 isRunning={isRunning}
                 errorMessage={errorMessage}
-                onCwdChange={(cwd) => {
-                  updateWorkspaceCwd(cwd);
-                  setRun(undefined);
-                  setEvents([]);
-                  setArtifacts([]);
-                  setActiveRunId("");
-                  setLookupRunId("");
-                }}
                 onRefresh={() => void refreshRuns()}
                 onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
                 onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
@@ -3101,7 +3097,6 @@ export function AppShell(): JSX.Element {
                 selectedTemplateId={selectedProviderTemplateId}
                 repairRun={providerRepairRun}
                 isRunning={isRunning}
-                onCwdChange={updateWorkspaceCwd}
                 onFormChange={setProviderForm}
                 onTemplateSelect={(template) => {
                   setProviderRepairRunId("");
@@ -3143,7 +3138,6 @@ export function AppShell(): JSX.Element {
                 isLoading={mediaJobsLoading}
                 runningJobId={runningMediaJobId}
                 errorMessage={errorMessage}
-                onCwdChange={updateWorkspaceCwd}
                 onFormChange={setMediaJobForm}
                 onRefresh={() => void refreshMediaJobs()}
                 onCreate={() => void saveMediaJob()}
@@ -3153,7 +3147,6 @@ export function AppShell(): JSX.Element {
               />
             ) : activeView === "settings" ? (
               <SettingsPage
-                cwd={form.cwd}
                 policy={approvalPolicy}
                 form={approvalPolicyForm}
                 selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
@@ -3164,7 +3157,6 @@ export function AppShell(): JSX.Element {
                 externalWorkSecretAction={externalWorkSecretAction}
                 externalWorkWorkflowAction={externalWorkWorkflowAction}
                 errorMessage={errorMessage}
-                onCwdChange={updateWorkspaceCwd}
                 onFormChange={setApprovalPolicyForm}
                 onRefresh={() => void refreshApprovalPolicy()}
                 onSave={() => void saveApprovalPolicy()}
@@ -3198,10 +3190,6 @@ export function AppShell(): JSX.Element {
                 isLoading={approvalsLoading}
                 resolvingApprovals={resolvingApprovals}
                 errorMessage={errorMessage}
-                onCwdChange={(cwd) => {
-                  setApprovalRepairRunId("");
-                  updateWorkspaceCwd(cwd);
-                }}
                 onRefresh={() => void refreshApprovals()}
                 onSelectApproval={setSelectedApprovalId}
                 onRefreshRepair={(runId) => {

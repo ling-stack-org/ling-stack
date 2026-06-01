@@ -71,7 +71,6 @@ export function RunHistory({
   isLoading,
   isRunning,
   errorMessage,
-  onCwdChange,
   onRefresh,
   onRefreshSelected,
   onRefreshApprovals,
@@ -97,7 +96,6 @@ export function RunHistory({
   readonly isLoading: boolean;
   readonly isRunning: boolean;
   readonly errorMessage: string;
-  readonly onCwdChange: (cwd: string) => void;
   readonly onRefresh: () => void;
   readonly onRefreshSelected: () => void;
   readonly onRefreshApprovals: () => void;
@@ -124,11 +122,6 @@ export function RunHistory({
           </button>
         </div>
 
-        <label className="field wide runs-cwd">
-          <span>{t("Workspace path")}</span>
-          <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
-        </label>
-
         {errorMessage ? (
           <div className="inline-error">
             <CircleAlert size={17} />
@@ -153,7 +146,7 @@ export function RunHistory({
                 <span className={`status-dot ${item.status}`} />
                 <span className="run-list-main">
                   <strong>{readTaskTitle(item.taskSnapshot) || item.taskId}</strong>
-                  <small>{item.id}</small>
+                  <small>{`${item.providerName}/${item.providerModel}`}</small>
                 </span>
                 <span className="run-list-meta">
                   <StatusBadge status={item.status} />
@@ -269,17 +262,10 @@ function RunDetailPanel({
         <div className="run-detail-content">
           <div className="run-detail-summary">
             <MetaRow label={t("Status")} value={run.status} compact />
-            <MetaRow label={t("Workspace cwd")} value={workspaceCwd} compact />
-            <MetaRow label={t("Execution cwd")} value={run.cwd} compact />
             <MetaRow label={t("Provider")} value={`${run.providerName}/${run.providerModel}`} compact />
-            <MetaRow label={t("Provider preset")} value={providerPresetId || "-"} compact />
-            <MetaRow label={t("Task")} value={run.taskId} compact />
-            <MetaRow label={t("Channel")} value={run.channelId ?? "-"} compact />
             <MetaRow label={t("Created")} value={formatDateTime(run.createdAt)} compact />
             <MetaRow label={t("Ended")} value={run.endedAt ? formatDateTime(run.endedAt) : "-"} compact />
           </div>
-
-          <RuntimeAuditBlock leases={runLeases} transitions={relevantTransitions} />
 
           {repairHint ? (
             <RunRepairHintBanner
@@ -359,51 +345,6 @@ function RunDetailPanel({
             </div>
           ) : null}
 
-          <div className="run-detail-section">
-            <div className="panel-title tight">
-              <Bot size={16} />
-              <h3>{t("Task snapshot")}</h3>
-            </div>
-            <strong>{readTaskTitle(run.taskSnapshot) || run.taskId}</strong>
-            <p>{readTaskPrompt(run.taskSnapshot) || t("No prompt snapshot.")}</p>
-          </div>
-
-          <div className="run-detail-section">
-            <div className="panel-title tight split">
-              <span>
-                <SquareTerminal size={16} />
-                <h3>{t("Tool activity")}</h3>
-              </span>
-              <span className="event-count">{t("{count} tool events", { count: toolEvents.length })}</span>
-            </div>
-            {toolEvents.length === 0 ? (
-              <p className="muted">{t("No tool activity recorded.")}</p>
-            ) : (
-              <div className="tool-event-list">
-                {toolEvents.map((event) => (
-                  <ToolEventDetails key={event.id} event={event} events={events} />
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="run-detail-section">
-            <div className="panel-title tight split">
-              <span>
-                <Database size={16} />
-                <h3>{t("Event timeline")}</h3>
-              </span>
-              <span className="event-count">{t("{count} events", { count: events.length })}</span>
-            </div>
-            {events.length === 0 ? (
-              <p className="muted">{t("No events loaded.")}</p>
-            ) : (
-              <div className="event-list run-detail-events">
-                {events.map((event) => <EventRow key={event.id} event={event} />)}
-              </div>
-            )}
-          </div>
-
           <RunEvidencePanel
             run={run}
             terminalEvent={terminalEvent}
@@ -413,26 +354,92 @@ function RunDetailPanel({
             artifacts={artifacts}
           />
 
-          <div className="run-detail-section">
-            <div className="panel-title tight">
+          <details className="run-detail-section json-details debug-details">
+            <summary>
               <Database size={16} />
-              <h3>Debug snapshots</h3>
+              <span>{t("Debug details")}</span>
+            </summary>
+            <div className="run-detail-section">
+              <div className="panel-title tight">
+                <Bot size={16} />
+                <h3>{t("Task snapshot")}</h3>
+              </div>
+              <strong>{readTaskTitle(run.taskSnapshot) || run.taskId}</strong>
+              <p>{readTaskPrompt(run.taskSnapshot) || t("No prompt snapshot.")}</p>
             </div>
-            <details className="json-details">
-              <summary>Request snapshot</summary>
-              <pre>{formatEventData(run.requestSnapshot)}</pre>
-            </details>
-            <details className="json-details">
-              <summary>Provider snapshot</summary>
-              <pre>{formatEventData(run.providerSnapshot)}</pre>
-            </details>
-            {terminalEvent ? (
+            <RuntimeAuditBlock leases={runLeases} transitions={relevantTransitions} />
+            <div className="run-detail-section">
+              <div className="panel-title tight split">
+                <span>
+                  <SquareTerminal size={16} />
+                  <h3>{t("Tool activity")}</h3>
+                </span>
+                <span className="event-count">{t("{count} tool events", { count: toolEvents.length })}</span>
+              </div>
+              {toolEvents.length === 0 ? (
+                <p className="muted">{t("No tool activity recorded.")}</p>
+              ) : (
+                <div className="tool-event-list">
+                  {toolEvents.map((event) => (
+                    <ToolEventDetails key={event.id} event={event} events={events} />
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="run-detail-section">
+              <div className="panel-title tight split">
+                <span>
+                  <Database size={16} />
+                  <h3>{t("Event timeline")}</h3>
+                </span>
+                <span className="event-count">{t("{count} events", { count: events.length })}</span>
+              </div>
+              {events.length === 0 ? (
+                <p className="muted">{t("No events loaded.")}</p>
+              ) : (
+                <div className="event-list run-detail-events">
+                  {events.map((event) => <EventRow key={event.id} event={event} />)}
+                </div>
+              )}
+            </div>
+            <div className="run-detail-section">
+              <div className="panel-title tight">
+                <Database size={16} />
+                <h3>{t("Session files")}</h3>
+              </div>
+              <div className="session-file-list">
+                <span>{t("Event log")}</span>
+                <code>{run.eventLogPath}</code>
+                <span>{t("Summary")}</span>
+                <code>{run.summaryPath ?? "-"}</code>
+              </div>
+            </div>
+            <div className="run-detail-section">
+              <div className="panel-title tight">
+                <Database size={16} />
+                <h3>{t("Debug snapshots")}</h3>
+              </div>
+              <div className="run-evidence-grid">
+                <MetaRow label={t("Provider preset")} value={providerPresetId || "-"} compact />
+                <MetaRow label={t("Task")} value={run.taskId} compact />
+                <MetaRow label={t("Channel")} value={run.channelId ?? "-"} compact />
+              </div>
               <details className="json-details">
-                <summary>Terminal event</summary>
-                <pre>{formatEventData(terminalEvent.data)}</pre>
+                <summary>{t("Request snapshot")}</summary>
+                <pre>{formatEventData(run.requestSnapshot)}</pre>
               </details>
-            ) : null}
-          </div>
+              <details className="json-details">
+                <summary>{t("Provider snapshot")}</summary>
+                <pre>{formatEventData(run.providerSnapshot)}</pre>
+              </details>
+              {terminalEvent ? (
+                <details className="json-details">
+                  <summary>{t("Terminal event")}</summary>
+                  <pre>{formatEventData(terminalEvent.data)}</pre>
+                </details>
+              ) : null}
+            </div>
+          </details>
         </div>
       )}
     </section>
@@ -540,16 +547,6 @@ function RunEvidencePanel({
       </div>
 
       <div className="run-evidence-block">
-        <strong>{t("Session files")}</strong>
-        <div className="session-file-list">
-          <span>{t("Event log")}</span>
-          <code>{run.eventLogPath}</code>
-          <span>{t("Summary")}</span>
-          <code>{run.summaryPath ?? "-"}</code>
-        </div>
-      </div>
-
-      <div className="run-evidence-block">
         <strong>{t("Artifacts")}</strong>
         {artifacts.length === 0 ? (
           <div className="artifact-empty-state">
@@ -609,7 +606,6 @@ function RuntimeRunRepairPanel({
       <div className="runtime-run-repair-meta">
         <MetaRow label={t("Tool")} value={summary.toolName || "-"} compact />
         <MetaRow label={t("Event")} value={summary.eventLabel} compact />
-        <MetaRow label={t("Cwd")} value={summary.cwd || "-"} compact />
         <MetaRow label={t("Exit code")} value={summary.exitCode || "-"} compact />
         {summary.command ? <MetaRow label={t("Command")} value={summary.command} compact /> : null}
         {summary.targetPath ? <MetaRow label={t("Target path")} value={summary.targetPath} compact /> : null}
@@ -645,7 +641,6 @@ function ToolEventDetails({
   const relatedToolStart = event.type === "tool_start" ? undefined : findRelatedToolStart(events, event);
   const toolCallId = readDeepDataScalarString(event.data, ["toolCallId"]) || readDeepDataScalarString(relatedToolStart?.data, ["toolCallId"]);
   const command = readDeepDataScalarString(event.data, ["command", "cmd", "script"]) || readDeepDataScalarString(relatedToolStart?.data, ["command", "cmd", "script"]);
-  const cwd = readDeepDataScalarString(event.data, ["cwd", "workdir", "workingDirectory"]) || readDeepDataScalarString(relatedToolStart?.data, ["cwd", "workdir", "workingDirectory"]);
   const targetPath = readDeepDataScalarString(event.data, ["path", "filePath", "targetPath", "target"])
     || readDeepDataScalarString(relatedToolStart?.data, ["path", "filePath", "targetPath", "target"]);
   const outputPreview = readDeepDataPreview(event.data, ["message", "error", "detail", "reason", "result", "partialResult", "output", "stdout", "stderr"]);
@@ -664,7 +659,6 @@ function ToolEventDetails({
         <div className="tool-event-meta">
           <MetaRow label={t("Tool call")} value={toolCallId || "-"} compact />
           <MetaRow label={t("Command")} value={command || "-"} compact />
-          <MetaRow label={t("Cwd")} value={cwd || "-"} compact />
           <MetaRow label={t("Target path")} value={targetPath || "-"} compact />
         </div>
         <details className="json-details compact-json">

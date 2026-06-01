@@ -207,8 +207,6 @@ function buildSourcePacket(input: {
       ]),
       relatedObjects: compactFields([
         field("Task", item.task?.title ?? item.record.taskId),
-        field("Event log", item.record.eventLogPath),
-        field("Summary path", item.record.summaryPath),
       ]),
     };
   }

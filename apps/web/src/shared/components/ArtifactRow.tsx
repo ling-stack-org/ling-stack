@@ -8,7 +8,7 @@ export function ArtifactRow({ artifact, cwd }: { readonly artifact: RunArtifact;
   const { t } = useI18n();
   const contentUrl = artifactContentUrl(artifact.id, cwd);
   const isImage = isImageArtifact(artifact);
-  const title = artifact.title || artifact.path;
+  const title = artifact.title || artifactDownloadName(artifact);
   const downloadName = artifactDownloadName(artifact);
 
   if (!isImage) {
@@ -17,7 +17,7 @@ export function ArtifactRow({ artifact, cwd }: { readonly artifact: RunArtifact;
         <span className="artifact-type">{artifact.type}</span>
         <span className="artifact-main">
           <strong>{title}</strong>
-          <code>{artifact.path}</code>
+          <small>{downloadName}</small>
         </span>
         <small>{formatArtifactSize(artifact.sizeBytes)}</small>
       </a>
@@ -32,7 +32,7 @@ export function ArtifactRow({ artifact, cwd }: { readonly artifact: RunArtifact;
       </span>
       <a className="artifact-main artifact-main-link" href={contentUrl} target="_blank" rel="noreferrer">
         <strong>{title}</strong>
-        <code>{artifact.path}</code>
+        <small>{downloadName}</small>
       </a>
       <small>{formatArtifactSize(artifact.sizeBytes)}</small>
       <span className="artifact-actions">

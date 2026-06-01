@@ -38,7 +38,6 @@ export function ApprovalsPage({
   isLoading,
   resolvingApprovals,
   errorMessage,
-  onCwdChange,
   onRefresh,
   onSelectApproval,
   onRefreshRepair,
@@ -58,7 +57,6 @@ export function ApprovalsPage({
   readonly isLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly errorMessage: string;
-  readonly onCwdChange: (cwd: string) => void;
   readonly onRefresh: () => void;
   readonly onSelectApproval: (approvalId: string) => void;
   readonly onRefreshRepair: (runId: string) => void;
@@ -89,11 +87,6 @@ export function ApprovalsPage({
           {t("Refresh")}
         </button>
       </div>
-
-      <label className="field wide runs-cwd">
-        <span>{t("Workspace path")}</span>
-        <input value={cwd} onChange={(event) => onCwdChange(event.target.value)} />
-      </label>
 
       {errorMessage ? (
         <div className="inline-error">
@@ -290,7 +283,10 @@ export function ApprovalCard({
           onExecuteExternalAction={onExecuteExternalAction}
           onCancelExternalAction={onCancelExternalAction}
         />
-        <pre>{formatEventData(approval.payload)}</pre>
+        <details className="json-details compact-json">
+          <summary>{t("Audit details")}</summary>
+          <pre>{formatEventData(approval.payload)}</pre>
+        </details>
       </div>
       {effectiveStatus === "pending" ? (
         <div className="approval-decision-panel">
@@ -400,35 +396,38 @@ function ExternalActionAuditPanel({
         </span>
         <span className={`approval-state ${action?.status ?? "pending"}`}>{actionStatus}</span>
       </div>
-      <div className="external-action-meta">
-        <span>{sourceKind}</span>
-        <span>{actionKind}</span>
-        {reviewEvent ? <span>{reviewEvent}</span> : null}
-        <span>{repository}</span>
-        <span>{subjectKind} #{subjectNumber}</span>
-        <span>{t("expected {state}", { state: expectedState })}</span>
-        {expectedHeadSha ? <span>{t("head {sha}", { sha: shortSha(expectedHeadSha) })}</span> : null}
-        {expectedUpdatedAt ? <time>{t("updated {time}", { time: formatDateTime(expectedUpdatedAt) })}</time> : null}
-        {action ? <span>{t("{count} attempts", { count: action.executionAttemptCount })}</span> : null}
-      </div>
-      {targetUrl ? (
-        <a className="external-action-target-link" href={targetUrl} target="_blank" rel="noreferrer">
-          <ExternalLink size={13} />
-          {targetUrl}
-        </a>
-      ) : null}
-      {preview ? (
-        <div className="external-action-preview">
-          <strong>{t("Payload preview")}</strong>
-          {labels.length > 0 ? (
-            <div className="external-action-labels">
-              {labels.map((label) => <span key={label}>{label}</span>)}
-            </div>
-          ) : (
-            <p>{preview}</p>
-          )}
+      <details className="json-details compact-json">
+        <summary>{t("Audit details")}</summary>
+        <div className="external-action-meta">
+          <span>{sourceKind}</span>
+          <span>{actionKind}</span>
+          {reviewEvent ? <span>{reviewEvent}</span> : null}
+          <span>{repository}</span>
+          <span>{subjectKind} #{subjectNumber}</span>
+          <span>{t("expected {state}", { state: expectedState })}</span>
+          {expectedHeadSha ? <span>{t("head {sha}", { sha: shortSha(expectedHeadSha) })}</span> : null}
+          {expectedUpdatedAt ? <time>{t("updated {time}", { time: formatDateTime(expectedUpdatedAt) })}</time> : null}
+          {action ? <span>{t("{count} attempts", { count: action.executionAttemptCount })}</span> : null}
         </div>
-      ) : null}
+        {targetUrl ? (
+          <a className="external-action-target-link" href={targetUrl} target="_blank" rel="noreferrer">
+            <ExternalLink size={13} />
+            {targetUrl}
+          </a>
+        ) : null}
+        {preview ? (
+          <div className="external-action-preview">
+            <strong>{t("Payload preview")}</strong>
+            {labels.length > 0 ? (
+              <div className="external-action-labels">
+                {labels.map((label) => <span key={label}>{label}</span>)}
+              </div>
+            ) : (
+              <p>{preview}</p>
+            )}
+          </div>
+        ) : null}
+      </details>
       {action?.lastErrorMessage ? (
         <div className="external-action-error">
           <CircleAlert size={14} />
@@ -484,14 +483,12 @@ function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalReque
     return null;
   }
 
-  const providerPresetId = readDataString(approval.payload, "providerPresetId") || "-";
   const model = readDataString(approval.payload, "model") || "-";
   const operation = readDataString(approval.payload, "operation") || "-";
   const promptPreview = readDataString(approval.payload, "promptPreview");
 
   return (
     <div className="approval-payload-summary" aria-label="Media cost approval summary">
-      <span>{t("provider {providerPresetId}", { providerPresetId })}</span>
       <span>{t("model {model}", { model })}</span>
       <span>{t("operation {operation}", { operation })}</span>
       {promptPreview ? <p>{promptPreview}</p> : null}

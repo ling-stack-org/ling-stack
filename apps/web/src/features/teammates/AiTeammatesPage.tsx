@@ -2,8 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   Brain,
-  ChevronLeft,
-  ChevronRight,
   EyeOff,
   FileText,
   Folder,
@@ -17,6 +15,7 @@ import {
   UserPlus,
   Users,
   Workflow,
+  X,
 } from "lucide-react";
 import type {
   AiTeammateTemplate,
@@ -45,15 +44,7 @@ import type {
   LocalTeammateCreateInput,
   LocalTeammateDraft,
   TeammateTemplateFilter,
-  TeammateWizardStepId,
 } from "./types.js";
-
-const teammateWizardSteps: readonly { readonly id: TeammateWizardStepId; readonly label: string; readonly detail: string }[] = [
-  { id: "template", label: "Role", detail: "Pick a default teammate or start blank" },
-  { id: "model", label: "Model", detail: "Bind a provider preset for this teammate" },
-  { id: "profile", label: "Profile", detail: "Name, avatar, and working brief" },
-  { id: "placement", label: "Scope", detail: "Channels, memory, and files" },
-];
 
 const teammateTemplateFilters: readonly { readonly id: TeammateTemplateFilter; readonly label: string }[] = [
   { id: "all", label: "All" },
@@ -101,24 +92,20 @@ export function AiTeammatesPage({
   const providerOptions = useMemo(() => providers.filter((provider) => !isMediaProvider(provider)), [providers]);
   const [selectedTemplateId, setSelectedTemplateId] = useState(() => templates[0]?.id ?? "");
   const [templateFilter, setTemplateFilter] = useState<TeammateTemplateFilter>("all");
-  const [activeStep, setActiveStep] = useState<TeammateWizardStepId>("template");
-  const [draftName, setDraftName] = useState(() => templates[0]?.name ?? t("Custom teammate"));
-  const [draftDescription, setDraftDescription] = useState(() => templates[0]?.summary ?? "");
+  const [draftName, setDraftName] = useState(() => templates[0] ? t(templates[0].name) : t("Custom teammate"));
+  const [draftDescription, setDraftDescription] = useState(() => templates[0] ? t(templates[0].summary) : "");
   const [selectedProviderId, setSelectedProviderId] = useState(() => providerOptions.find(providerPreflightReady)?.id ?? providerOptions[0]?.id ?? "");
   const [selectedChannelIds, setSelectedChannelIds] = useState<readonly string[]>(() => channels[0] ? [channels[0].id] : []);
   const [selectedMemorySources, setSelectedMemorySources] = useState<readonly string[]>(["project-files", "agents-md", "skill-pack"]);
+  const [isCreateOpen, setCreateOpen] = useState(false);
+  const [detailTemplateId, setDetailTemplateId] = useState<string>("");
   const wizardRef = useRef<HTMLElement | null>(null);
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
+  const detailTemplate = templates.find((template) => template.id === detailTemplateId);
   const selectedProvider = providerOptions.find((provider) => provider.id === selectedProviderId);
-  const activeStepIndex = teammateWizardSteps.findIndex((step) => step.id === activeStep);
   const previewName = draftName.trim() || selectedTemplate?.name || t("Custom teammate");
   const previewDescription = draftDescription.trim() || selectedTemplate?.summary || t("Describe this teammate with a short working brief.");
   const filteredTemplates = templates.filter((template) => teammateTemplateMatchesFilter(template, templateFilter));
-  const selectedSkills = selectedTemplate
-    ? selectedTemplate.defaultSkillIds
-        .map((skillId) => skillById.get(skillId))
-        .filter((skill): skill is SkillDefinition => Boolean(skill))
-    : [];
   const selectedChannelNames = selectedChannelIds
     .map((channelId) => channels.find((channel) => channel.id === channelId)?.name)
     .filter((name): name is string => Boolean(name));
@@ -138,19 +125,14 @@ export function AiTeammatesPage({
 
   function selectTemplate(template: AiTeammateTemplate): void {
     setSelectedTemplateId(template.id);
-    setDraftName(template.name);
-    setDraftDescription(template.summary);
+    setDraftName(t(template.name));
+    setDraftDescription(t(template.summary));
   }
 
   function selectBlankTemplate(): void {
     setSelectedTemplateId("");
     setDraftName(t("Custom teammate"));
     setDraftDescription(t("Describe this teammate with a short working brief."));
-  }
-
-  function moveStep(direction: -1 | 1): void {
-    const nextIndex = Math.min(Math.max(activeStepIndex + direction, 0), teammateWizardSteps.length - 1);
-    setActiveStep(teammateWizardSteps[nextIndex].id);
   }
 
   function toggleChannel(channelId: string): void {
@@ -175,13 +157,21 @@ export function AiTeammatesPage({
       channelIds: selectedChannelIds,
       memorySources: selectedMemorySources,
     });
+    setCreateOpen(false);
   }
 
   function focusCreateFlow(): void {
-    setActiveStep("template");
-    globalThis.requestAnimationFrame(() => {
-      wizardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    setCreateOpen(true);
+  }
+
+  function openTemplateDetail(template: AiTeammateTemplate): void {
+    setDetailTemplateId(template.id);
+  }
+
+  function createFromTemplate(template: AiTeammateTemplate): void {
+    selectTemplate(template);
+    setDetailTemplateId("");
+    setCreateOpen(true);
   }
 
   if (!skillPack || templates.length === 0) {
@@ -195,258 +185,190 @@ export function AiTeammatesPage({
 
   return (
     <div className="teammates-page">
-      <section className="teammate-command-strip" aria-label={t("AI Teammates")}>
-        <div>
-          <span className="teammate-pack-label">{skillPack.name}</span>
-          <strong>{t("Build an AI teammate")}</strong>
-          <small>{t("{count} templates · {skillCount} skills · model per teammate", { count: templates.length, skillCount: skills.length })}</small>
-        </div>
-        <div className="teammate-command-actions">
-          <button className="primary-button" type="button" onClick={focusCreateFlow}>
-            <UserPlus size={15} />
-            {t("Add teammate")}
-          </button>
-          <button className="secondary-button" type="button" onClick={onOpenProviders}>
-            <PlugZap size={15} />
-            {t("Model Workbench")}
-          </button>
-        </div>
-      </section>
-
-      <section className="teammate-wizard" aria-label={t("Create AI teammate")} ref={wizardRef}>
-        <aside className="teammate-step-rail" aria-label={t("Teammate setup steps")}>
-          {teammateWizardSteps.map((step, index) => (
-            <button
-              key={step.id}
-              className={step.id === activeStep ? "teammate-step active" : index < activeStepIndex ? "teammate-step done" : "teammate-step"}
-              type="button"
-              onClick={() => setActiveStep(step.id)}
-            >
-              <span>{index + 1}</span>
-              <strong>{t(step.label)}</strong>
-              <small>{t(step.detail)}</small>
-            </button>
-          ))}
-        </aside>
-
-        <section className="teammate-wizard-stage">
-          {activeStep === "template" ? (
-            <>
-              <div className="teammate-stage-title">
-                <span><UserPlus size={16} />{t("Choose a role")}</span>
-                <small>{t("Default roles come from gstack-default; blank stays custom.")}</small>
-              </div>
-              <div className="teammate-filter-tabs" role="tablist" aria-label={t("Role filters")}>
-                {teammateTemplateFilters.map((filter) => (
-                  <button
-                    key={filter.id}
-                    className={filter.id === templateFilter ? "active" : ""}
-                    type="button"
-                    onClick={() => setTemplateFilter(filter.id)}
-                  >
-                    {t(filter.label)}
-                  </button>
-                ))}
-              </div>
-              <div className="teammate-template-cards" aria-label={t("Teammate template chooser")}>
-                {filteredTemplates.map((template) => (
-                  <button
-                    key={template.id}
-                    className={template.id === selectedTemplate?.id ? "teammate-template-card selected" : "teammate-template-card"}
-                    type="button"
-                    aria-pressed={template.id === selectedTemplate?.id}
-                    onClick={() => selectTemplate(template)}
-                  >
-                    <AvatarInitial label={teammateInitial(template)} tone={roleAvatarTone(template.roleKey)} />
-                    <span>
-                      <strong>{t(template.name)}</strong>
-                      <small>{roleLabel(template.roleKey, t)}</small>
-                    </span>
-                    <p>{t(template.summary)}</p>
-                    <footer>
-                      <small>{t("{count} skills", { count: template.defaultSkillIds.length })}</small>
-                      <ApprovalProfileBadge profile={template.approvalProfile} compact />
-                    </footer>
-                  </button>
-                ))}
-                <button
-                  className={!selectedTemplateId ? "teammate-template-card custom-card selected" : "teammate-template-card custom-card"}
-                  type="button"
-                  aria-pressed={!selectedTemplateId}
-                  onClick={selectBlankTemplate}
-                >
-                  <AvatarInitial label="AI" tone="gray" />
-                  <span>
-                    <strong>{t("Start from blank")}</strong>
-                    <small>{t("Custom")}</small>
-                  </span>
-                  <p>{t("Use a short description now, then bind skills and memory later.")}</p>
-                  <footer>
-                    <small>{t("0 skills")}</small>
-                    <span className="approval-profile-badge none compact">{t("No approval")}</span>
-                  </footer>
-                </button>
-              </div>
-            </>
-          ) : null}
-
-          {activeStep === "model" ? (
-            <>
-              <div className="teammate-stage-title">
-                <span><Sparkles size={16} />{t("Choose a model")}</span>
-                <small>{t("Each teammate can bind a different provider preset.")}</small>
-              </div>
-              {providerOptions.length === 0 ? (
-                <div className="client-empty-state teammate-empty">
-                  <PlugZap size={20} />
-                  <span>{t("No model presets")}</span>
-                  <button className="secondary-button" type="button" onClick={onOpenProviders}>{t("Open Model Workbench")}</button>
+      {isCreateOpen ? (
+        <div className="teammate-sheet-backdrop" role="presentation">
+          <section className="teammate-create-sheet" aria-label={t("Create AI teammate")} ref={wizardRef} role="dialog" aria-modal="true">
+            <header className="teammate-create-header">
+              <div className="teammate-create-summary">
+                <AvatarInitial label={selectedTemplate ? teammateInitial(selectedTemplate) : teammateInitialFromName(previewName)} tone={selectedTemplate ? roleAvatarTone(selectedTemplate.roleKey) : "gray"} />
+                <div>
+                  <span className="teammate-pack-label">{selectedTemplate ? roleLabel(selectedTemplate.roleKey, t) : t("Custom")}</span>
+                  <h2>{t("Add teammate")}</h2>
+                  <p>
+                    {previewDisplayName}
+                    {" · "}
+                    {selectedProvider ? selectedProvider.displayName : t("No model selected")}
+                    {" · "}
+                    {selectedChannelNames.length ? selectedChannelNames.join(", ") : t("No channel")}
+                  </p>
                 </div>
-              ) : (
-                <div className="teammate-provider-grid" aria-label={t("Model choices")}>
-                  {providerOptions.map((provider) => (
+              </div>
+              <button className="icon-button" type="button" onClick={() => setCreateOpen(false)} aria-label={t("Close teammate creator")}>
+                <X size={16} />
+              </button>
+            </header>
+
+            <div className="teammate-create-body">
+              <section className="teammate-create-section">
+                <div className="teammate-create-section-title">
+                  <span><UserPlus size={15} />{t("Choose a role")}</span>
+                  <small>{t("Pick a default role or start blank.")}</small>
+                </div>
+                <div className="teammate-filter-tabs" role="tablist" aria-label={t("Role filters")}>
+                  {teammateTemplateFilters.map((filter) => (
                     <button
-                      key={provider.id}
-                      className={provider.id === selectedProviderId ? "teammate-provider-card selected" : "teammate-provider-card"}
+                      key={filter.id}
+                      className={filter.id === templateFilter ? "active" : ""}
                       type="button"
-                      aria-pressed={provider.id === selectedProviderId}
-                      onClick={() => setSelectedProviderId(provider.id)}
+                      onClick={() => setTemplateFilter(filter.id)}
                     >
-                      <span className={providerPreflightReady(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
-                        {providerPreflightReady(provider) ? t("preflight ready") : t("needs check")}
-                      </span>
-                      <strong>{provider.displayName}</strong>
-                      <small>{provider.model}</small>
-                      <p>{provider.kind} · {provider.capabilities.join(", ")}</p>
+                      {t(filter.label)}
                     </button>
                   ))}
                 </div>
-              )}
-            </>
-          ) : null}
-
-          {activeStep === "profile" ? (
-            <>
-              <div className="teammate-stage-title">
-                <span><Bot size={16} />{t("Profile")}</span>
-                <small>{t("Avatar, name, and a compact working brief.")}</small>
-              </div>
-              <div className="teammate-profile-form">
-                <div className="teammate-avatar-preview">
-                  <AvatarInitial label={selectedTemplate ? teammateInitial(selectedTemplate) : teammateInitialFromName(previewName)} tone={selectedTemplate ? roleAvatarTone(selectedTemplate.roleKey) : "gray"} />
-                  <span>{previewDisplayName}</span>
+                <div className="teammate-create-list" aria-label={t("Teammate template chooser")}>
+                  {filteredTemplates.map((template) => (
+                    <button
+                      key={template.id}
+                      className={template.id === selectedTemplate?.id ? "teammate-template-row selected" : "teammate-template-row"}
+                      type="button"
+                      aria-pressed={template.id === selectedTemplate?.id}
+                      onClick={() => selectTemplate(template)}
+                    >
+                      <AvatarInitial label={teammateInitial(template)} tone={roleAvatarTone(template.roleKey)} />
+                      <span>
+                        <strong>{t(template.name)}</strong>
+                        <small>{t(template.summary)}</small>
+                      </span>
+                      <small className="template-skill-count">{t("{count} skills", { count: template.defaultSkillIds.length })}</small>
+                    </button>
+                  ))}
+                  <button
+                    className={!selectedTemplateId ? "teammate-template-row selected" : "teammate-template-row"}
+                    type="button"
+                    aria-pressed={!selectedTemplateId}
+                    onClick={selectBlankTemplate}
+                  >
+                    <AvatarInitial label="AI" tone="gray" />
+                    <span>
+                      <strong>{t("Start from blank")}</strong>
+                      <small>{t("Use a short description now, then bind skills and memory later.")}</small>
+                    </span>
+                    <small className="template-skill-count">{t("Custom")}</small>
+                  </button>
                 </div>
-                <label className="field">
-                  <span>{t("Teammate name")}</span>
-                  <input value={draftName} onChange={(event) => setDraftName(event.target.value)} />
-                </label>
-                <label className="field">
-                  <span>{t("Description")}</span>
-                  <textarea value={draftDescription} onChange={(event) => setDraftDescription(event.target.value)} />
-                </label>
-              </div>
-              <div className="teammate-section compact">
-                <h3>{t("System prompt")}</h3>
-                <p className="teammate-prompt-preview">{selectedTemplate ? selectedTemplate.systemPrompt : t("Custom teammate prompt will be generated from the role description and selected skills.")}</p>
-              </div>
-            </>
-          ) : null}
+              </section>
 
-          {activeStep === "placement" ? (
-            <>
-              <div className="teammate-stage-title">
-                <span><Folder size={16} />{t("Channels and memory")}</span>
-                <small>{t("Keep channel defaults, files, and memory scoped per teammate.")}</small>
-              </div>
-              <div className="teammate-scope-grid">
-                <section>
-                  <h3>{t("Join channels")}</h3>
-                  <div className="teammate-chip-grid" aria-label={t("Channel choices")}>
-                    {channels.length === 0 ? (
-                      <span className="teammate-muted-note">{t("No channels yet")}</span>
-                    ) : (
-                      channels.map((channel) => (
-                        <button
-                          key={channel.id}
-                          className={selectedChannelIds.includes(channel.id) ? "teammate-chip selected" : "teammate-chip"}
-                          type="button"
-                          aria-pressed={selectedChannelIds.includes(channel.id)}
-                          onClick={() => toggleChannel(channel.id)}
-                        >
-                          <Hash size={13} />
-                          {channel.name}
-                        </button>
-                      ))
-                    )}
+              <section className="teammate-create-section">
+                <div className="teammate-create-section-title">
+                  <span><Sparkles size={15} />{t("Choose a model")}</span>
+                  <small>{t("Bind a provider preset for this teammate.")}</small>
+                </div>
+                {providerOptions.length === 0 ? (
+                  <div className="client-empty-state teammate-empty">
+                    <PlugZap size={20} />
+                    <span>{t("No model presets")}</span>
+                    <button className="secondary-button" type="button" onClick={onOpenProviders}>{t("Open Model Workbench")}</button>
                   </div>
-                </section>
-                <section>
-                  <h3>{t("Memory and files")}</h3>
-                  <div className="teammate-memory-list">
-                    {teammateMemorySources.map((source) => (
-                      <label key={source.id} className="teammate-toggle">
-                        <input
-                          type="checkbox"
-                          checked={selectedMemorySources.includes(source.id)}
-                          onChange={() => toggleMemorySource(source.id)}
-                        />
-                        <FileText size={15} />
-                        <span>
-                          <strong>{t(source.label)}</strong>
-                          <small>{t(source.detail)}</small>
+                ) : (
+                  <div className="teammate-create-list compact" aria-label={t("Model choices")}>
+                    {providerOptions.map((provider) => (
+                      <button
+                        key={provider.id}
+                        className={provider.id === selectedProviderId ? "teammate-provider-row selected" : "teammate-provider-row"}
+                        type="button"
+                        aria-pressed={provider.id === selectedProviderId}
+                        onClick={() => setSelectedProviderId(provider.id)}
+                      >
+                        <span className={providerPreflightReady(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
+                          {providerPreflightReady(provider) ? t("ready") : t("needs check")}
                         </span>
-                      </label>
+                        <span>
+                          <strong>{provider.displayName}</strong>
+                          <small>{provider.model}</small>
+                        </span>
+                      </button>
                     ))}
                   </div>
-                </section>
-              </div>
-            </>
-          ) : null}
-        </section>
+                )}
+              </section>
 
-        <aside className="teammate-live-preview" aria-label={t("Teammate preview")}>
-          <span className="teammate-pack-label">{selectedTemplate ? roleLabel(selectedTemplate.roleKey, t) : t("Custom")}</span>
-          <div className="teammate-preview-hero">
-            <AvatarInitial label={selectedTemplate ? teammateInitial(selectedTemplate) : teammateInitialFromName(previewName)} tone={selectedTemplate ? roleAvatarTone(selectedTemplate.roleKey) : "gray"} />
-            <div>
-              <strong>{previewDisplayName}</strong>
-              <small>{selectedProvider ? selectedProvider.model : t("No model selected")}</small>
-            </div>
-          </div>
-          <p>{t(previewDescription)}</p>
-          <div className="teammate-preview-meta">
-            <MetaRow label={t("Provider")} value={selectedProvider ? selectedProvider.displayName : t("None")} compact />
-            <MetaRow label={t("Channels")} value={selectedChannelNames.length ? selectedChannelNames.join(", ") : t("None")} compact />
-            <MetaRow label={t("Memory")} value={`${selectedMemorySources.length}`} compact />
-            <MetaRow label={t("Approval")} value={selectedTemplate ? approvalProfileText(selectedTemplate.approvalProfile, t) : t("No approval")} compact />
-          </div>
-          {selectedSkills.length > 0 ? (
-            <div className="teammate-preview-skills">
-              {selectedSkills.map((skill) => (
-                <span key={skill.id}>{t(skill.name)}</span>
-              ))}
-            </div>
-          ) : null}
-        </aside>
+              <section className="teammate-create-section">
+                <div className="teammate-create-section-title">
+                  <span><Bot size={15} />{t("Basic information")}</span>
+                  <small>{t("Name and a short working brief.")}</small>
+                </div>
+                <div className="teammate-create-fields">
+                  <label className="field">
+                    <span>{t("Teammate name")}</span>
+                    <input value={draftName} onChange={(event) => setDraftName(event.target.value)} />
+                  </label>
+                  <label className="field">
+                    <span>{t("Description")}</span>
+                    <textarea value={draftDescription} onChange={(event) => setDraftDescription(event.target.value)} />
+                  </label>
+                </div>
+              </section>
 
-        <footer className="teammate-wizard-actions">
-          <button className="secondary-button" type="button" onClick={() => moveStep(-1)} disabled={activeStepIndex === 0}>
-            <ChevronLeft size={15} />
-            {t("Back")}
-          </button>
-          {activeStepIndex < teammateWizardSteps.length - 1 ? (
-            <button className="primary-button" type="button" onClick={() => moveStep(1)}>
-              {t("Next")}
-              <ChevronRight size={15} />
-            </button>
-          ) : (
-            <button className="primary-button" type="button" onClick={createTeammateDraft} disabled={!previewName.trim()}>
-              <Plus size={15} />
-              {t("Create teammate")}
-            </button>
-          )}
-        </footer>
-      </section>
+              <details className="teammate-create-section teammate-create-advanced">
+                <summary>
+                  <span><Folder size={15} />{t("Advanced settings")}</span>
+                  <small>{t("Channels and memory")}</small>
+                </summary>
+                <div className="teammate-create-advanced-body">
+                  <section>
+                    <h3>{t("Join channels")}</h3>
+                    <div className="teammate-chip-grid" aria-label={t("Channel choices")}>
+                      {channels.length === 0 ? (
+                        <span className="teammate-muted-note">{t("No channels yet")}</span>
+                      ) : (
+                        channels.map((channel) => (
+                          <button
+                            key={channel.id}
+                            className={selectedChannelIds.includes(channel.id) ? "teammate-chip selected" : "teammate-chip"}
+                            type="button"
+                            aria-pressed={selectedChannelIds.includes(channel.id)}
+                            onClick={() => toggleChannel(channel.id)}
+                          >
+                            <Hash size={13} />
+                            {channel.name}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </section>
+                  <section>
+                    <h3>{t("Memory")}</h3>
+                    <div className="teammate-memory-list compact">
+                      {teammateMemorySources.map((source) => (
+                        <label key={source.id} className="teammate-toggle">
+                          <input
+                            type="checkbox"
+                            checked={selectedMemorySources.includes(source.id)}
+                            onChange={() => toggleMemorySource(source.id)}
+                          />
+                          <FileText size={15} />
+                          <span>
+                            <strong>{t(source.label)}</strong>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+              </details>
+            </div>
+
+            <footer className="teammate-create-actions">
+              <button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>{t("Cancel")}</button>
+              <button className="primary-button" type="button" onClick={createTeammateDraft} disabled={!previewName.trim() || providerOptions.length === 0}>
+                <Plus size={15} />
+                {t("Create teammate")}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
 
       <div className="teammate-management-grid">
         <section className="teammate-add-panel" aria-label={t("Workspace teammates")}>
@@ -500,18 +422,19 @@ export function AiTeammatesPage({
               <Brain size={16} />
               <h2>{t("Default roles")}</h2>
             </span>
+            <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
+              <UserPlus size={14} />
+              {t("Add teammate")}
+            </button>
           </div>
           <div className="teammate-template-list">
             {templates.map((template) => (
               <button
                 key={template.id}
-                className={template.id === selectedTemplate?.id ? "teammate-template-row selected" : "teammate-template-row"}
+                className={template.id === detailTemplate?.id ? "teammate-template-row selected" : "teammate-template-row"}
                 type="button"
-                aria-pressed={template.id === selectedTemplate?.id}
-                onClick={() => {
-                  selectTemplate(template);
-                  setActiveStep("template");
-                }}
+                aria-pressed={template.id === detailTemplate?.id}
+                onClick={() => openTemplateDetail(template)}
               >
                 <AvatarInitial label={teammateInitial(template)} tone={roleAvatarTone(template.roleKey)} />
                 <span>
@@ -523,54 +446,179 @@ export function AiTeammatesPage({
             ))}
           </div>
         </section>
-
-        <section className="teammate-detail-panel" aria-label={t("Teammate detail")}>
-          {selectedTemplate ? (
-            <>
-              <div className="teammate-detail-hero">
-                <AvatarInitial label={teammateInitial(selectedTemplate)} tone={roleAvatarTone(selectedTemplate.roleKey)} />
-                <div>
-                  <h2>{t(selectedTemplate.name)}</h2>
-                  <p>{t(selectedTemplate.summary)}</p>
-                </div>
-                <ApprovalProfileBadge profile={selectedTemplate.approvalProfile} />
-              </div>
-
-              <div className="teammate-meta-grid">
-                <MetaRow label={t("Role")} value={roleLabel(selectedTemplate.roleKey, t)} />
-                <MetaRow label={t("Approval")} value={approvalProfileText(selectedTemplate.approvalProfile, t)} />
-                <MetaRow label={t("Provider capabilities")} value={selectedTemplate.requiredProviderCapabilities.join(", ")} />
-                <MetaRow label={t("Allowed tools")} value={selectedTemplate.allowedTools.join(", ")} />
-              </div>
-
-              <div className="teammate-section">
-                <h3>{t("Default skills")}</h3>
-                <div className="teammate-skill-list">
-                  {selectedSkills.map((skill) => (
-                    <article key={skill.id} className="teammate-skill-row">
-                      <span className={`phase-token ${skill.workflowPhase}`}>{workflowPhaseLabel(skill.workflowPhase, t)}</span>
-                      <div>
-                        <strong>{t(skill.name)}</strong>
-                        <small>{t(skill.summary)}</small>
-                      </div>
-                      <ApprovalProfileBadge profile={skill.approvalProfile} compact />
-                    </article>
-                  ))}
-                </div>
-              </div>
-
-              <div className="teammate-section">
-                <h3>{t("System prompt")}</h3>
-                <p className="teammate-prompt-preview">{selectedTemplate.systemPrompt}</p>
-              </div>
-            </>
-          ) : null}
-        </section>
       </div>
 
-      {workflow ? <WorkflowTemplatePanel workflow={workflow} templates={templates} skillById={skillById} /> : null}
+      {detailTemplate ? (
+        <TemplateDetailSheet
+          template={detailTemplate}
+          skills={detailTemplate.defaultSkillIds.map((skillId) => skillById.get(skillId)).filter((skill): skill is SkillDefinition => Boolean(skill))}
+          workflow={workflow}
+          templates={templates}
+          skillById={skillById}
+          onClose={() => setDetailTemplateId("")}
+          onCreate={() => createFromTemplate(detailTemplate)}
+        />
+      ) : null}
     </div>
   );
+}
+
+function TemplateDetailSheet({
+  template,
+  skills,
+  workflow,
+  templates,
+  skillById,
+  onClose,
+  onCreate,
+}: {
+  readonly template: AiTeammateTemplate;
+  readonly skills: readonly SkillDefinition[];
+  readonly workflow: SkillPack["workflowTemplates"][number] | undefined;
+  readonly templates: readonly AiTeammateTemplate[];
+  readonly skillById: ReadonlyMap<string, SkillDefinition>;
+  readonly onClose: () => void;
+  readonly onCreate: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="teammate-sheet-backdrop" role="presentation">
+      <section className="teammate-detail-sheet" aria-label={t("Role detail")} role="dialog" aria-modal="true">
+        <header className="teammate-detail-sheet-header">
+          <div className="teammate-detail-hero">
+            <AvatarInitial label={teammateInitial(template)} tone={roleAvatarTone(template.roleKey)} />
+            <div>
+              <span className="teammate-pack-label">{roleLabel(template.roleKey, t)}</span>
+              <h2>{t(template.name)}</h2>
+              <p>{t(template.summary)}</p>
+            </div>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close role detail")}>
+            <X size={16} />
+          </button>
+        </header>
+
+        <div className="teammate-detail-sheet-body">
+          <section className="teammate-section">
+            <h3>{t("What this teammate does")}</h3>
+            <p className="teammate-readable-copy">{teammateRoleDescription(template, t)}</p>
+          </section>
+
+          <section className="teammate-section">
+            <h3>{t("Best for")}</h3>
+            <div className="teammate-use-list">
+              {teammateRoleUseCases(template, t).map((item) => (
+                <span key={item}>{item}</span>
+              ))}
+            </div>
+          </section>
+
+          <section className="teammate-section">
+            <h3>{t("Default skills")}</h3>
+            <div className="teammate-skill-list">
+              {skills.map((skill) => (
+                <article key={skill.id} className="teammate-skill-row">
+                  <span className={`phase-token ${skill.workflowPhase}`}>{workflowPhaseLabel(skill.workflowPhase, t)}</span>
+                  <div>
+                    <strong>{t(skill.name)}</strong>
+                    <small>{t(skill.summary)}</small>
+                  </div>
+                  <ApprovalProfileBadge profile={skill.approvalProfile} compact />
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="teammate-section">
+            <h3>{t("Safety")}</h3>
+            <p className="teammate-readable-copy">
+              {template.allowedTools.every((tool) => ["read", "grep", "find", "ls"].includes(tool))
+                ? t("This role can only read and search project context by default.")
+                : t("This role may use configured tools according to its approval profile.")}
+            </p>
+            <ApprovalProfileBadge profile={template.approvalProfile} />
+          </section>
+
+          <details className="teammate-advanced-detail">
+            <summary>{t("Advanced details")}</summary>
+            <div className="teammate-meta-grid">
+              <MetaRow label={t("Provider capabilities")} value={template.requiredProviderCapabilities.join(", ")} />
+              <MetaRow label={t("Allowed tools")} value={template.allowedTools.join(", ")} />
+            </div>
+            <div className="teammate-section">
+              <h3>{t("System prompt")}</h3>
+              <p className="teammate-prompt-preview">{template.systemPrompt}</p>
+            </div>
+            {workflow ? <WorkflowTemplatePanel workflow={workflow} templates={templates} skillById={skillById} /> : null}
+          </details>
+        </div>
+
+        <footer className="teammate-detail-sheet-actions">
+          <button className="secondary-button" type="button" onClick={onClose}>{t("Close")}</button>
+          <button className="primary-button" type="button" onClick={onCreate}>
+            <UserPlus size={15} />
+            {t("Use this role")}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function teammateRoleDescription(template: AiTeammateTemplate, t: (key: string, values?: Record<string, string | number>) => string): string {
+  if (template.roleKey === "product") {
+    return t("Clarifies the problem, audience, scope, tradeoffs, and acceptance criteria before execution.");
+  }
+  if (template.roleKey === "engineer") {
+    return t("Turns scoped tasks into implementation steps, code changes, and verification notes.");
+  }
+  if (template.roleKey === "architect") {
+    return t("Reviews system boundaries, data flow, architecture risk, and validation strategy.");
+  }
+  if (template.roleKey === "designer") {
+    return t("Reviews user experience, layout, interaction details, and visual hierarchy.");
+  }
+  if (template.roleKey === "qa") {
+    return t("Checks behavior, regression risk, edge cases, and user-visible quality.");
+  }
+  if (template.roleKey === "security") {
+    return t("Reviews trust boundaries, secrets, approvals, and risky execution paths.");
+  }
+  if (template.roleKey === "docs") {
+    return t("Keeps product, API, and workflow documentation aligned with shipped behavior.");
+  }
+  if (template.roleKey === "release") {
+    return t("Prepares release checks, publication steps, and launch readiness.");
+  }
+  return t(template.summary);
+}
+
+function teammateRoleUseCases(template: AiTeammateTemplate, t: (key: string, values?: Record<string, string | number>) => string): string[] {
+  if (template.roleKey === "product") {
+    return [t("When a feature idea is still fuzzy"), t("When scope and priority need decisions"), t("Before turning an idea into engineering work")];
+  }
+  if (template.roleKey === "engineer") {
+    return [t("When a task is ready to implement"), t("When code changes need verification"), t("When an execution plan needs concrete steps")];
+  }
+  if (template.roleKey === "architect") {
+    return [t("When system design needs review"), t("When data flow or ownership is unclear"), t("Before touching shared architecture")];
+  }
+  if (template.roleKey === "designer") {
+    return [t("When a screen feels hard to use"), t("When layout hierarchy needs cleanup"), t("Before shipping user-facing UI")];
+  }
+  if (template.roleKey === "qa") {
+    return [t("When behavior needs regression testing"), t("When edge cases need coverage"), t("Before marking work complete")];
+  }
+  if (template.roleKey === "security") {
+    return [t("When secrets or approvals are involved"), t("When tool access needs review"), t("Before enabling risky actions")];
+  }
+  if (template.roleKey === "docs") {
+    return [t("When docs need to match the product"), t("When handoff notes need cleanup"), t("Before publishing workflow changes")];
+  }
+  if (template.roleKey === "release") {
+    return [t("When preparing a release"), t("When launch steps need review"), t("Before announcing shipped work")];
+  }
+  return [t("When this role matches the current work"), t("When you want a focused teammate"), t("Before assigning a scoped task")];
 }
 
 function ApprovalProfileBadge({ profile, compact = false }: { readonly profile: SkillApprovalProfile; readonly compact?: boolean }): JSX.Element {
