@@ -2925,6 +2925,36 @@ export class SqliteRunStore implements RunStore {
       .map(mapExternalWorkRecord);
   }
 
+  countExternalWorkRecords(options: Omit<ListExternalWorkRecordsOptions, "limit"> = {}): number {
+    const clauses = ["w.workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.channelId) {
+      clauses.push("w.channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.sourceKind) {
+      clauses.push("w.source_kind = ?");
+      params.push(options.sourceKind);
+    }
+    if (options.workItemKind) {
+      clauses.push("w.work_item_kind = ?");
+      params.push(options.workItemKind);
+    }
+    if (options.schedulerStatus) {
+      clauses.push("s.scheduler_status = ?");
+      params.push(options.schedulerStatus);
+    }
+    const row = this.database
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM external_work_items w
+        LEFT JOIN external_work_scheduler_state s ON s.external_work_id = w.id
+        WHERE ${clauses.join(" AND ")}
+      `)
+      .get(...params) as { readonly count?: number } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
   getExternalWorkRecordByIdempotency(sourceKind: ExternalWorkRecord["sourceKind"], idempotencyKey: string): ExternalWorkRecord | undefined {
     const row = this.database
       .prepare(externalWorkSelectSql("WHERE workspace_id = ? AND source_kind = ? AND idempotency_key = ?"))
@@ -3069,6 +3099,31 @@ export class SqliteRunStore implements RunStore {
       .prepare(`${externalWorkActionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
       .all(...params)
       .map(mapExternalWorkAction);
+  }
+
+  countExternalWorkActions(options: Omit<ListExternalWorkActionsOptions, "limit"> = {}): number {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.externalWorkId) {
+      clauses.push("external_work_id = ?");
+      params.push(options.externalWorkId);
+    }
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.actionKind) {
+      clauses.push("action_kind = ?");
+      params.push(options.actionKind);
+    }
+    const row = this.database
+      .prepare(`SELECT COUNT(*) AS count FROM external_work_actions WHERE ${clauses.join(" AND ")}`)
+      .get(...params) as { readonly count?: number } | undefined;
+    return Number(row?.count ?? 0);
   }
 
   updateExternalWorkAction(id: string, input: UpdateExternalWorkActionInput, now: string): ExternalWorkAction | undefined {
@@ -3257,6 +3312,27 @@ export class SqliteRunStore implements RunStore {
       .prepare(`${externalWorkCiTriageSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
       .all(...params)
       .map(mapExternalWorkCiTriage);
+  }
+
+  countExternalWorkCiTriage(options: Omit<ListExternalWorkCiTriageOptions, "limit"> = {}): number {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.externalWorkId) {
+      clauses.push("external_work_id = ?");
+      params.push(options.externalWorkId);
+    }
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const row = this.database
+      .prepare(`SELECT COUNT(*) AS count FROM external_work_ci_triage WHERE ${clauses.join(" AND ")}`)
+      .get(...params) as { readonly count?: number } | undefined;
+    return Number(row?.count ?? 0);
   }
 
   updateExternalWorkCiTriage(

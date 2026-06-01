@@ -1557,6 +1557,9 @@ async function handleRunsCancel(args: readonly string[], options: GlobalOptions)
 
 async function handleExternalWork(args: readonly string[], options: GlobalOptions): Promise<number> {
   const [source = "github", ...rest] = args;
+  if (source === "status") {
+    return await handleExternalWorkStatus(rest, options);
+  }
   if (source === "list") {
     return await handleExternalWorkList(rest, options);
   }
@@ -1576,6 +1579,28 @@ async function handleExternalWork(args: readonly string[], options: GlobalOption
     return await handleExternalWorkLinear(rest, options);
   }
   throw new CliError(2, "unknown_command", `Unknown external-work source: ${source}`);
+}
+
+async function handleExternalWorkStatus(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["channel", "workflow-path"]),
+  });
+  assertNoPositionals(parsed.positionals, "external-work status");
+  const channelId = getFlag(parsed, "channel");
+  if (!channelId) {
+    throw new CliError(2, "missing_option", "external-work status requires --channel <channelId>.");
+  }
+  const response = await requestJson(options, "GET", "/external-work/status", {
+    cwd: options.cwd,
+    channelId,
+    workflowPath: getFlag(parsed, "workflow-path"),
+  });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printExternalWorkStatus(response);
+  return 0;
 }
 
 async function handleExternalWorkList(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -3884,6 +3909,66 @@ function printExternalWorkPoll(response: unknown): void {
   printExternalWorkResults(response);
 }
 
+function printExternalWorkStatus(response: unknown): void {
+  const channel = readRequiredRecord(response, "channel");
+  const workflow = readRequiredRecord(response, "workflow");
+  const secret = readRequiredRecord(response, "secret");
+  const records = readRequiredRecord(response, "records");
+  const externalWork = readRequiredRecord(records, "externalWork");
+  const ciTriage = readRequiredRecord(records, "ciTriage");
+  const actions = readRequiredRecord(records, "actions");
+  const background = readRequiredRecord(response, "background");
+  const sourceKind = readString(workflow, "sourceKind") ?? "unknown";
+  const repository = readString(workflow, "repository");
+  const projectSlug = readString(workflow, "projectSlug");
+  const workflowValid = readBoolean(workflow, "valid") ?? false;
+  const backgroundStatus = readString(background, "status") ?? "not_configured";
+  console.log("External work status:");
+  console.log(`Channel: ${readString(channel, "name") ?? ""} (${readString(channel, "id") ?? ""})`);
+  console.log(`Bound path: ${readString(channel, "boundPath") ?? "not set"}`);
+  console.log(`Workflow: ${readString(workflow, "path") ?? ""}`);
+  console.log(`Workflow exists: ${readBoolean(workflow, "exists") ?? false}`);
+  console.log(`Workflow valid: ${workflowValid}`);
+  const workflowError = readString(workflow, "error");
+  if (workflowError) {
+    console.log(`Workflow error: ${workflowError}`);
+  }
+  console.log(`Source: ${sourceKind}`);
+  console.log(`Target: ${repository ?? projectSlug ?? "not configured"}`);
+  console.log(`Events: ${readArray(workflow, "events").join(", ") || "none"}`);
+  console.log(`Secret: ${readString(secret, "status") ?? "not_required"}${readString(secret, "ref") ? ` (${readString(secret, "ref")})` : ""}`);
+  const secretMessage = readString(secret, "message");
+  if (secretMessage) {
+    console.log(`Secret message: ${secretMessage}`);
+  }
+  console.log(`External work: ${readNumber(externalWork, "total") ?? 0} total, ${readNumber(externalWork, "ready") ?? 0} ready, ${readNumber(externalWork, "blocked") ?? 0} blocked`);
+  console.log(`CI triage: ${readNumber(ciTriage, "total") ?? 0} total, ${readNumber(ciTriage, "taskCreated") ?? 0} task created, ${readNumber(ciTriage, "failed") ?? 0} failed`);
+  console.log(`Actions: ${readNumber(actions, "total") ?? 0} total, ${readNumber(actions, "waitingForApproval") ?? 0} waiting, ${readNumber(actions, "approved") ?? 0} approved`);
+  console.log(`Background: ${backgroundStatus}${readString(background, "schedulerId") ? ` (${readString(background, "schedulerId")})` : ""}`);
+  const nextPollAt = readString(background, "nextPollAt");
+  if (nextPollAt) {
+    console.log(`Next poll: ${nextPollAt}`);
+  }
+  const lastError = readString(background, "lastError");
+  if (lastError) {
+    console.log(`Background error: ${lastError}`);
+  }
+  console.log(`Next: ${externalWorkStatusNextCommand(sourceKind, workflowValid, backgroundStatus)}`);
+}
+
+function externalWorkStatusNextCommand(sourceKind: string, workflowValid: boolean, backgroundStatus: string): string {
+  if (!workflowValid) {
+    return "Fix WORKFLOW.md, then rerun external-work status.";
+  }
+  if (sourceKind === "github" && backgroundStatus !== "running") {
+    return "Run external-work github poll --channel <id>, or start background polling.";
+  }
+  if (sourceKind === "linear") {
+    return "Run external-work linear poll --channel <id>.";
+  }
+  return "Inspect records with external-work list, or reconcile local state.";
+}
+
 function printExternalWorkBackgroundMutation(response: unknown, title: string): void {
   const scheduler = readRequiredRecord(response, "scheduler");
   console.log(`${title}: ${readString(scheduler, "id") ?? ""}`);
@@ -4323,6 +4408,7 @@ Usage:
   ling-stack [global options] external-work github background list
   ling-stack [global options] external-work github background stop <schedulerId>
   ling-stack [global options] external-work github ci triage --external-work <id> [--workflow-path WORKFLOW.md]
+  ling-stack [global options] external-work status --channel <id> [--workflow-path WORKFLOW.md]
   ling-stack [global options] external-work list [--channel <id>] [--status ready]
   ling-stack [global options] external-work show <externalWorkId>
   ling-stack [global options] external-work actions propose-comment --external-work <id> --body-file comment.md
@@ -4452,6 +4538,7 @@ function printExternalWorkHelp(): void {
   ling-stack external-work github background stop <schedulerId>
   ling-stack external-work github ci triage --external-work <externalWorkId> [options]
   ling-stack external-work github ci run --triage <externalWorkCiTriageId> --provider <providerPresetId> [options]
+  ling-stack external-work status --channel <channelId> [--workflow-path WORKFLOW.md]
   ling-stack external-work list [--channel <channelId>] [--status ready|blocked|retry_wait|terminal] [--limit 50]
   ling-stack external-work show <externalWorkId>
   ling-stack external-work actions propose-comment --external-work <id> --body-file comment.md [--approval standard|strict]

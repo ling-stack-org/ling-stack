@@ -23,6 +23,7 @@ import type {
   ApprovalRequest,
   ExternalWorkCiTriageView,
   ExternalWorkActionView,
+  ExternalWorkStatusResponse,
   MediaJob,
   ProviderCheckResult,
   ProviderPreset,
@@ -66,6 +67,7 @@ export function PageInspector({
   externalActionBusy,
   externalWorkCiTriage,
   externalWorkCiTriageLoading,
+  externalWorkStatus,
   approvalPolicy,
   approvalPolicyForm,
   onLookupRunIdChange,
@@ -103,6 +105,7 @@ export function PageInspector({
   readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
   readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
   readonly externalWorkCiTriageLoading: boolean;
+  readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
   readonly approvalPolicy: ApprovalPolicy | undefined;
   readonly approvalPolicyForm: ApprovalPolicyFormState;
   readonly onLookupRunIdChange: (runId: string) => void;
@@ -167,7 +170,7 @@ export function PageInspector({
   }
 
   if (activeView === "settings") {
-    return <SettingsInspector policy={approvalPolicy} form={approvalPolicyForm} />;
+    return <SettingsInspector policy={approvalPolicy} form={approvalPolicyForm} externalWorkStatus={externalWorkStatus} />;
   }
 
   if (activeView === "teammates") {
@@ -384,9 +387,11 @@ function ApprovalInspector({
 function SettingsInspector({
   policy,
   form,
+  externalWorkStatus,
 }: {
   readonly policy: ApprovalPolicy | undefined;
   readonly form: ApprovalPolicyFormState;
+  readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
 }): JSX.Element {
   const { t } = useI18n();
   const decisions = Object.values(form.toolDecisions);
@@ -409,6 +414,14 @@ function SettingsInspector({
       <div className="provider-run-notice neutral">
         <FileText size={16} />
         <span>{t("This preview follows the approval policy form. Save policy to apply it to future runs.")}</span>
+      </div>
+      <div className="meta-list">
+        <MetaRow label={t("External work")} value={externalWorkStatus ? externalWorkStatus.workflow.sourceKind : t("not loaded")} compact />
+        <MetaRow label={t("Target")} value={externalWorkStatus?.workflow.repository ?? externalWorkStatus?.workflow.projectSlug ?? "-"} compact />
+        <MetaRow label={t("Workflow")} value={externalWorkStatus?.workflow.valid ? t("valid") : externalWorkStatus?.workflow.exists === false ? t("missing") : t("invalid")} compact />
+        <MetaRow label={t("Token")} value={externalWorkStatus?.secret.status ?? "not_required"} compact />
+        <MetaRow label={t("Background")} value={externalWorkStatus?.background.status ?? "not_configured"} compact />
+        <MetaRow label={t("Records")} value={String(externalWorkStatus?.records.externalWork.total ?? 0)} compact />
       </div>
     </section>
   );

@@ -71,6 +71,7 @@ import type {
   ExternalWorkImportResponse,
   ExternalWorkReconcileRequest,
   ExternalWorkReconcileResponse,
+  ExternalWorkStatusResponse,
   ListApprovalsRequest,
   ListResourceLeasesRequest,
   ListStateTransitionsRequest,
@@ -620,6 +621,17 @@ export class LingDaemonClient {
 
   async getExternalWork(cwd: string, externalWorkId: string): Promise<ExternalWorkDetailResponse> {
     return this.get(`/external-work/${encodeURIComponent(externalWorkId)}`, { cwd });
+  }
+
+  async getExternalWorkStatus(
+    cwd: string,
+    input: { readonly channelId: string; readonly workflowPath?: string },
+  ): Promise<ExternalWorkStatusResponse> {
+    return this.get("/external-work/status", {
+      cwd,
+      channelId: input.channelId,
+      workflowPath: input.workflowPath,
+    });
   }
 
   async proposeExternalWorkAction(cwd: string, input: ExternalWorkActionProposeRequest): Promise<ExternalWorkActionMutationResponse> {

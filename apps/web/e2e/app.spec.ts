@@ -47,6 +47,11 @@ interface MockState {
   externalActionExecuteCalls: Record<string, number>;
   externalWorkCiTriage: MockExternalWorkCiTriageView[];
   ciTriageRunCalls: Record<string, number>;
+  externalWorkStatus: Record<string, unknown>;
+  externalWorkPollCalls: Record<string, number>;
+  externalWorkReconcileCalls: number;
+  externalWorkBackgroundStartCalls: number;
+  externalWorkBackgroundStopCalls: number;
   mediaJobs: MockMediaJob[];
   resourceLeases: unknown[];
   stateTransitions: unknown[];
@@ -246,7 +251,8 @@ test("workspace task list scrolls internally without growing the page", async ({
   await openChannelTasksTab(page);
 
   await expect(page.locator(".workbench-task-list .client-task-card")).toHaveCount(24);
-  await expect(page.locator(".channel-options > summary")).toContainText("Advanced channel settings");
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByLabel("Advanced channel settings")).toBeVisible();
   const metrics = await page.evaluate(() => {
     const taskList = document.querySelector(".workbench-task-list");
     return {
@@ -582,7 +588,7 @@ test("channel URL preview blocked state stays in Activity and still allows sendi
   await expect(page.locator(".channel-tab.active")).toContainText("Activity");
 
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText("Please remember this blocked reference http://127.0.0.1/private")).toBeVisible();
+  await expect(page.getByLabel("Channel message feed").getByText("Please remember this blocked reference http://127.0.0.1/private")).toBeVisible();
 });
 
 test("channel files tab supports PDF and Office uploads without AI ingestion", async ({ page }) => {
@@ -760,7 +766,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
 
   await expect(page.getByText("Loading protocol...")).toHaveCount(0);
   await expect(page.getByLabel("Objective")).toHaveCount(0);
-  await page.getByRole("button", { name: "Context" }).click();
+  await page.getByRole("button", { name: "Context", exact: true }).click();
   await page.getByLabel("Objective").fill("Ship channel v1.1 protocol");
   await page.getByLabel("Scope").fill("Brief, decisions, handoffs, context summaries");
   await page.getByLabel("Acceptance criteria").fill("Brief saves\nActivity shows protocol items");
@@ -795,7 +801,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
   await expect(page.getByText("Context summary", { exact: true }).first()).toBeVisible();
 
   await page.reload();
-  await page.getByRole("button", { name: "Context" }).click();
+  await page.getByRole("button", { name: "Context", exact: true }).click();
   await expect(page.getByLabel("Objective")).toHaveValue("Ship channel v1.1 protocol");
 });
 
@@ -816,7 +822,7 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
   await page.getByRole("button", { name: "Start workflow" }).first().click();
   await expect.poll(() => state.channelWorkflows.length).toBe(1);
   await expect.poll(() => state.channelWorkflowSteps.length).toBe(1);
-  await page.getByRole("button", { name: "Context" }).click();
+  await page.getByRole("button", { name: "Context", exact: true }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await expect(page.getByText("Workflow queue")).toBeVisible();
   await expect(page.getByText("Active decisions: 0")).toBeVisible();
@@ -852,7 +858,7 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
     workflow.status = "running";
   }
   await page.reload();
-  await page.getByRole("button", { name: "Context" }).click();
+  await page.getByRole("button", { name: "Context", exact: true }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await expect(page.locator(".workflow-step-card").filter({ hasText: "Blocked follow-up" })).toContainText("Provider preflight failed.");
 });
@@ -895,7 +901,7 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("button", { name: "Context" }).click();
+  await page.getByRole("button", { name: "Context", exact: true }).click();
   await page.getByRole("button", { name: "Runtime" }).click();
   await page.getByRole("button", { name: "Start + run" }).click();
   await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
@@ -1599,7 +1605,8 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await expect(page.getByLabel("任务检查器")).toHaveCount(0);
+  await expect(page.getByLabel("任务检查器")).toBeVisible();
+  await expect(page.getByText("任务上下文")).toBeVisible();
   await expect(page.getByText("Task context")).toHaveCount(0);
   await expect(page.getByText("No task selected")).toHaveCount(0);
   await expect(page.getByText("active · serial · boundPath lock")).toHaveCount(0);
@@ -2134,6 +2141,7 @@ test("workspace path initializes from daemon default and persists edits", async 
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), { defaultWorkspaceCwd: daemonCwd });
   await page.goto("/");
 
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Settings" }).click();
   const workspaceInput = page.getByLabel("Workspace path").first();
   await expect(workspaceInput).toHaveValue(daemonCwd);
 
@@ -2141,6 +2149,7 @@ test("workspace path initializes from daemon default and persists edits", async 
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.workspaceCwd"))).toBe("/tmp/custom-workspace");
 
   await page.reload();
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Workspace path").first()).toHaveValue("/tmp/custom-workspace");
 });
 
@@ -2153,6 +2162,7 @@ test("saved workspace path wins over daemon default", async ({ page }) => {
   });
   await page.goto("/");
 
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Workspace path").first()).toHaveValue("/tmp/saved-workspace");
 });
 
@@ -2183,6 +2193,78 @@ test("settings approval policy loads, edits, and saves tool decisions and write 
   await expect.poll(() => state.approvalPolicy.toolDecisions.bash).toBe("deny");
   await expect(bashDecision).toHaveValue("deny");
   await expect(settingsPanel.getByLabel("Allowed write paths")).toHaveValue(".\n/tmp/ling-stack-workspace");
+});
+
+test("settings external work status shows setup and explicit controls", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  const panel = page.locator(".external-work-settings-panel");
+  await expect(panel).toContainText("External work");
+  await expect(panel).toContainText("openclaw/openclaw");
+  await expect(panel).toContainText("configured");
+  await expect(panel).toContainText("not_configured");
+  await expect.poll(() => state.externalWorkPollCalls.github ?? 0).toBe(0);
+  await expect.poll(() => state.externalWorkBackgroundStartCalls).toBe(0);
+  await expect.poll(() => state.externalActionExecuteCalls.external_work_action_1 ?? 0).toBe(0);
+
+  await panel.getByRole("button", { name: "Poll once" }).click();
+  await expect.poll(() => state.externalWorkPollCalls.github ?? 0).toBe(1);
+
+  await panel.getByRole("button", { name: "Reconcile" }).click();
+  await expect.poll(() => state.externalWorkReconcileCalls).toBe(1);
+
+  await panel.getByRole("button", { name: "Start background" }).click();
+  await expect.poll(() => state.externalWorkBackgroundStartCalls).toBe(1);
+  await expect(panel).toContainText("running");
+  await expect(panel.getByRole("button", { name: "Stop background" })).toBeVisible();
+
+  await panel.getByRole("button", { name: "Stop background" }).click();
+  await expect.poll(() => state.externalWorkBackgroundStopCalls).toBe(1);
+  await expect(panel).toContainText("stopped");
+
+  await expect(page.getByLabel("Settings preview")).toContainText("openclaw/openclaw");
+});
+
+test("settings external work status renders invalid, missing, and Linear states", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.externalWorkStatus = createExternalWorkStatus({
+    workflowValid: false,
+    workflowError: "source.kind is required",
+    secretStatus: "missing",
+  });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  const panel = page.locator(".external-work-settings-panel");
+  await expect(panel).toContainText("invalid");
+  await expect(panel).toContainText("source.kind is required");
+  await expect(panel).toContainText("Secret is not configured");
+  await expect(panel.getByRole("button", { name: "Poll once" })).toBeDisabled();
+
+  state.externalWorkStatus = createExternalWorkStatus({ workflowExists: false, workflowValid: false, sourceKind: "unknown", workflowError: "WORKFLOW.md was not found" });
+  await panel.getByRole("button", { name: "Refresh" }).click();
+  await expect(panel).toContainText("missing");
+  await expect(panel).toContainText("WORKFLOW.md was not found");
+
+  state.externalWorkStatus = createExternalWorkStatus({ sourceKind: "linear" });
+  await panel.getByRole("button", { name: "Refresh" }).click();
+  await expect(panel).toContainText("linear");
+  await expect(panel).toContainText("ling-stack");
+  await expect(panel).toContainText("unsupported");
+  await expect(panel.getByRole("button", { name: "Start background" })).toHaveCount(0);
+
+  await panel.getByRole("button", { name: "Poll once" }).click();
+  await expect.poll(() => state.externalWorkPollCalls.linear ?? 0).toBe(1);
 });
 
 test("workspace defaults do not hardcode personal machine paths", async () => {
@@ -2544,11 +2626,11 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await page.goto("/");
 
   await openChannelTasksTab(page);
+  await page.getByRole("button", { name: "New task" }).click();
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
   await expect(providerSelect.locator("option").filter({ hasText: "Ready Local Relay" })).toHaveCount(1);
   await expect(providerSelect.locator("option").filter({ hasText: "Missing Key Gateway" })).toHaveCount(1);
   await expect(providerSelect.locator("option").filter({ hasText: "Seedream Image" })).toHaveCount(0);
-  await page.getByRole("button", { name: "New task" }).click();
   await expect(page.getByText("Media providers stay in Media Jobs and cannot run coding tasks.").first()).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
 
@@ -2583,8 +2665,10 @@ test("workspace task run uses the displayed ready provider fallback", async ({ p
   await page.goto("/");
 
   await openChannelTasksTab(page);
+  await page.getByRole("button", { name: "New task" }).click();
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
   await expect(providerSelect).toHaveValue("provider_ready");
+  await page.getByRole("button", { name: "Cancel" }).click();
 
   await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
 
@@ -3377,11 +3461,72 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     externalActionExecuteCalls: {},
     externalWorkCiTriage: [],
     ciTriageRunCalls: {},
+    externalWorkStatus: createExternalWorkStatus(),
+    externalWorkPollCalls: {},
+    externalWorkReconcileCalls: 0,
+    externalWorkBackgroundStartCalls: 0,
+    externalWorkBackgroundStopCalls: 0,
     mediaJobs: [],
     resourceLeases: [],
     stateTransitions: [],
     artifactsByRun: {},
     artifactsByMediaJob: {},
+  };
+}
+
+function createExternalWorkStatus(overrides: {
+  readonly sourceKind?: "github" | "linear" | "unknown";
+  readonly workflowExists?: boolean;
+  readonly workflowValid?: boolean;
+  readonly workflowError?: string;
+  readonly secretStatus?: string;
+  readonly backgroundStatus?: string;
+} = {}): Record<string, unknown> {
+  const sourceKind = overrides.sourceKind ?? "github";
+  const workflowExists = overrides.workflowExists ?? true;
+  const workflowValid = overrides.workflowValid ?? true;
+  const backgroundStatus = overrides.backgroundStatus ?? "not_configured";
+  return {
+    cwd,
+    channel: {
+      id: "channel_engineering",
+      name: "Engineering",
+      boundPath: cwd,
+    },
+    workflow: {
+      path: `${cwd}/WORKFLOW.md`,
+      exists: workflowExists,
+      valid: workflowValid,
+      ...(overrides.workflowError ? { error: overrides.workflowError } : {}),
+      sourceKind,
+      ...(sourceKind === "github" ? { repository: "openclaw/openclaw" } : {}),
+      ...(sourceKind === "linear" ? { projectSlug: "ling-stack" } : {}),
+      events: sourceKind === "linear" ? ["issue.created"] : sourceKind === "github" ? ["pull_request.opened", "issues.opened"] : [],
+      ...(sourceKind === "unknown" ? {} : { secretRef: sourceKind === "github" ? "env:GITHUB_TOKEN" : "env:LINEAR_TOKEN" }),
+    },
+    secret: sourceKind === "unknown"
+      ? { status: "not_required" }
+      : {
+          ref: sourceKind === "github" ? "env:GITHUB_TOKEN" : "env:LINEAR_TOKEN",
+          purpose: sourceKind === "github" ? "github_token" : "linear_token",
+          status: overrides.secretStatus ?? "configured",
+          ...(overrides.secretStatus === "missing" ? { message: `Secret is not configured: ${sourceKind === "github" ? "env:GITHUB_TOKEN" : "env:LINEAR_TOKEN"}` } : {}),
+        },
+    records: {
+      externalWork: { total: 2, ready: 1, blocked: 1, retryWait: 0, terminal: 0 },
+      ciTriage: { total: 1, triaged: 0, taskCreated: 1, runRequested: 0, blocked: 0, stale: 0, failed: 0 },
+      actions: { total: 1, waitingForApproval: 1, approved: 0, failed: 0, succeeded: 0, cancelled: 0, staleTarget: 0 },
+    },
+    background: sourceKind === "linear"
+      ? { supported: false, running: false, status: "unsupported" }
+      : {
+          supported: sourceKind === "github",
+          running: backgroundStatus === "running",
+          ...(backgroundStatus === "running" || backgroundStatus === "stopped" ? { schedulerId: "external_work_background_1" } : {}),
+          status: backgroundStatus,
+          ...(backgroundStatus === "running" ? { lastTickAt: "2026-06-01T00:00:00.000Z", nextPollAt: "2026-06-01T00:00:30.000Z" } : {}),
+        },
+    lastErrors: {},
   };
 }
 
@@ -5065,6 +5210,64 @@ async function handleDaemonRoute(
       (!runId || approval.runId === runId) && (!mediaJobId || approval.mediaJobId === mediaJobId)
     );
     await route.fulfill({ json: { cwd, approvals } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/external-work/status") {
+    await route.fulfill({ json: state.externalWorkStatus });
+    return;
+  }
+  if (request.method() === "POST" && (path === "/external-work/github/poll" || path === "/external-work/linear/poll")) {
+    const source = path.includes("/linear/") ? "linear" : "github";
+    state.externalWorkPollCalls[source] = (state.externalWorkPollCalls[source] ?? 0) + 1;
+    await route.fulfill({
+      json: {
+        candidates: 1,
+        claimed: 1,
+        duplicates: 0,
+        blocked: 0,
+        retryScheduled: 0,
+        terminalIgnored: 0,
+        artifacts: [],
+        results: [{ action: "claimed", identifier: source === "linear" ? "LIN-123" : "openclaw/openclaw#42" }],
+        schedulerStates: [],
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/external-work/reconcile") {
+    state.externalWorkReconcileCalls += 1;
+    await route.fulfill({ json: { expiredLeases: 0, checked: 1, blocked: 0, retryReady: 0, terminal: 0, schedulerStates: [] } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/external-work/github/background/start") {
+    state.externalWorkBackgroundStartCalls += 1;
+    state.externalWorkStatus = {
+      ...state.externalWorkStatus,
+      background: {
+        supported: true,
+        running: true,
+        schedulerId: "external_work_background_1",
+        status: "running",
+        lastTickAt: "2026-06-01T00:00:00.000Z",
+        nextPollAt: "2026-06-01T00:00:30.000Z",
+      },
+    };
+    await route.fulfill({ json: { cwd, scheduler: state.externalWorkStatus.background, duplicate: false } });
+    return;
+  }
+  const backgroundStopMatch = /^\/external-work\/background\/([^/]+)\/stop$/.exec(path);
+  if (request.method() === "POST" && backgroundStopMatch) {
+    state.externalWorkBackgroundStopCalls += 1;
+    state.externalWorkStatus = {
+      ...state.externalWorkStatus,
+      background: {
+        supported: true,
+        running: false,
+        schedulerId: decodeURIComponent(backgroundStopMatch[1]),
+        status: "stopped",
+      },
+    };
+    await route.fulfill({ json: { cwd, scheduler: state.externalWorkStatus.background, duplicate: false } });
     return;
   }
   if (request.method() === "GET" && path === "/external-work/github/ci/triage") {

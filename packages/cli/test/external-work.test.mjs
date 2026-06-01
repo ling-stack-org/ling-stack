@@ -460,6 +460,46 @@ test("external-work github background start, list, and stop render human and jso
   }
 });
 
+test("external-work status renders human and json output", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-status-"));
+  const daemon = await startExternalWorkDaemon();
+  try {
+    const human = await runCli(daemon.url, cwd, [
+      "external-work",
+      "status",
+      "--channel",
+      "channel_1",
+      "--workflow-path",
+      "WORKFLOW.md",
+    ]);
+    assert.equal(human.code, 0, human.stderr);
+    assert.match(human.stdout, /External work status:/);
+    assert.match(human.stdout, /Workflow valid: true/);
+    assert.match(human.stdout, /Target: openclaw\/openclaw/);
+    assert.match(human.stdout, /Background: running/);
+    assert.equal(daemon.requests.at(-1).method, "GET");
+    assert.equal(daemon.requests.at(-1).path, "/external-work/status");
+    assert.equal(daemon.requests.at(-1).query.channelId, "channel_1");
+
+    const json = await runCli(daemon.url, cwd, [
+      "--json",
+      "external-work",
+      "status",
+      "--channel",
+      "channel_1",
+    ]);
+    assert.equal(json.code, 0, json.stderr);
+    assert.equal(JSON.parse(json.stdout).workflow.repository, "openclaw/openclaw");
+
+    const missingChannel = await runCli(daemon.url, cwd, ["external-work", "status"]);
+    assert.equal(missingChannel.code, 2);
+    assert.match(missingChannel.stderr, /--channel/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 test("external-work github ci triage renders human and json output", async () => {
   const daemon = await startExternalWorkDaemon();
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-external-work-ci-"));
@@ -913,6 +953,16 @@ async function startExternalWorkDaemon() {
       writeJson(response, 200, externalWorkBackgroundListResponse());
       return;
     }
+    if (request.method === "GET" && url.pathname === "/external-work/status") {
+      requests.push({
+        method: request.method,
+        path: url.pathname,
+        cwd: url.searchParams.get("cwd"),
+        query: Object.fromEntries(url.searchParams.entries()),
+      });
+      writeJson(response, 200, externalWorkStatusResponse());
+      return;
+    }
     const isCiRunPath = /^\/external-work\/github\/ci\/triage\/[^/]+\/run$/.test(url.pathname);
     const isBackgroundStopPath = /^\/external-work\/background\/[^/]+\/stop$/.test(url.pathname);
     if (request.method !== "POST" || (!isCiRunPath && !isBackgroundStopPath && ![
@@ -1206,6 +1256,45 @@ function externalWorkBackgroundListResponse() {
   return {
     cwd: "/repo",
     schedulers: [externalWorkBackgroundScheduler()],
+  };
+}
+
+function externalWorkStatusResponse() {
+  return {
+    cwd: "/repo",
+    channel: {
+      id: "channel_1",
+      name: "Engineering",
+      boundPath: "/repo",
+    },
+    workflow: {
+      path: "/repo/WORKFLOW.md",
+      exists: true,
+      valid: true,
+      sourceKind: "github",
+      repository: "openclaw/openclaw",
+      events: ["pull_request.opened", "issues.opened"],
+      secretRef: "env:GITHUB_TOKEN",
+    },
+    secret: {
+      ref: "env:GITHUB_TOKEN",
+      purpose: "github_token",
+      status: "configured",
+    },
+    records: {
+      externalWork: { total: 2, ready: 1, blocked: 1, retryWait: 0, terminal: 0 },
+      ciTriage: { total: 1, triaged: 0, taskCreated: 1, runRequested: 0, blocked: 0, stale: 0, failed: 0 },
+      actions: { total: 1, waitingForApproval: 1, approved: 0, failed: 0, succeeded: 0, cancelled: 0, staleTarget: 0 },
+    },
+    background: {
+      supported: true,
+      running: true,
+      schedulerId: "external_work_background_1",
+      status: "running",
+      lastTickAt: "2026-06-01T00:00:00.000Z",
+      nextPollAt: "2026-06-01T00:00:30.000Z",
+    },
+    lastErrors: {},
   };
 }
 

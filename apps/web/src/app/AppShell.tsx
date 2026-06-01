@@ -36,6 +36,7 @@ import {
   deleteProvider,
   executeExternalWorkAction,
   getExternalWorkAction,
+  getExternalWorkStatus,
   listGitHubExternalWorkCiTriage,
   getDaemonHealth,
   getProviderSecret,
@@ -64,11 +65,16 @@ import {
   listStateTransitions,
   listTeammateChannels,
   listTasks,
+  pollGitHubExternalWork,
+  pollLinearExternalWork,
+  reconcileExternalWork,
   runMediaJob,
   replaceTeammateChannels,
   replaceTeammateMemoryScopes,
   replaceTeammateSkills,
   startChannelWorkflowStep,
+  startGitHubExternalWorkBackground,
+  stopExternalWorkBackground,
   uploadChannelAttachment,
   updateAiTeammate,
   updateChannel,
@@ -107,6 +113,7 @@ import type {
   ExternalWorkActionMutationResponse,
   ExternalWorkActionView,
   ExternalWorkCiTriageView,
+  ExternalWorkStatusResponse,
   MediaJob,
   MediaJobFormState,
   ProviderCheckResult,
@@ -338,6 +345,9 @@ export function AppShell(): JSX.Element {
   const [externalActionBusy, setExternalActionBusy] = useState<Record<string, ExternalActionBusyState>>({});
   const [externalWorkCiTriage, setExternalWorkCiTriage] = useState<readonly ExternalWorkCiTriageView[]>([]);
   const [externalWorkCiTriageLoading, setExternalWorkCiTriageLoading] = useState(false);
+  const [externalWorkStatus, setExternalWorkStatus] = useState<ExternalWorkStatusResponse | undefined>();
+  const [externalWorkStatusLoading, setExternalWorkStatusLoading] = useState(false);
+  const [externalWorkStatusAction, setExternalWorkStatusAction] = useState<"poll" | "reconcile" | "start" | "stop" | undefined>();
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [artifacts, setArtifacts] = useState<readonly RunArtifact[]>([]);
@@ -754,6 +764,7 @@ export function AppShell(): JSX.Element {
     }
     if (activeView === "settings") {
       void refreshApprovalPolicy();
+      void refreshExternalWorkStatus();
     }
   }, [activeView]);
 
@@ -764,6 +775,9 @@ export function AppShell(): JSX.Element {
       void refreshChannelFiles(selectedChannelId);
       void refreshChannelProtocol(selectedChannelId);
       void refreshExternalWorkCiTriage(form.cwd.trim(), selectedChannelId);
+      if (activeView === "settings") {
+        void refreshExternalWorkStatus(form.cwd.trim(), selectedChannelId);
+      }
     } else {
       setTasks([]);
       setChannelMessages([]);
@@ -780,6 +794,7 @@ export function AppShell(): JSX.Element {
       setChannelWorkflows([]);
       setChannelWorkflowSteps([]);
       setExternalWorkCiTriage([]);
+      setExternalWorkStatus(undefined);
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
@@ -1261,6 +1276,68 @@ export function AppShell(): JSX.Element {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setExternalWorkCiTriageLoading(false);
+    }
+  }
+
+  async function refreshExternalWorkStatus(
+    cwd = form.cwd.trim(),
+    channelId = selectedChannelId,
+  ): Promise<void> {
+    if (!cwd || !channelId) {
+      setExternalWorkStatus(undefined);
+      return;
+    }
+
+    setExternalWorkStatusLoading(true);
+    try {
+      setErrorMessage("");
+      const response = await getExternalWorkStatus(cwd, { channelId });
+      setExternalWorkStatus(response);
+    } catch (error) {
+      setExternalWorkStatus(undefined);
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExternalWorkStatusLoading(false);
+    }
+  }
+
+  async function runExternalWorkStatusAction(action: "poll" | "reconcile" | "start" | "stop"): Promise<void> {
+    const cwd = form.cwd.trim();
+    const channelId = selectedChannelId;
+    if (!cwd || !channelId) {
+      setErrorMessage("Select a channel before using external work controls.");
+      return;
+    }
+
+    setExternalWorkStatusAction(action);
+    try {
+      setErrorMessage("");
+      if (action === "poll") {
+        if (externalWorkStatus?.workflow.sourceKind === "linear") {
+          await pollLinearExternalWork(cwd, { channelId, limit: 50 });
+        } else {
+          await pollGitHubExternalWork(cwd, { channelId, limit: 50 });
+        }
+      } else if (action === "reconcile") {
+        await reconcileExternalWork(cwd, { channelId });
+      } else if (action === "start") {
+        await startGitHubExternalWorkBackground(cwd, { channelId, limit: 50 });
+      } else if (action === "stop") {
+        const schedulerId = externalWorkStatus?.background.schedulerId;
+        if (!schedulerId) {
+          throw new Error("No external work background scheduler is registered for this channel.");
+        }
+        await stopExternalWorkBackground(cwd, schedulerId);
+      }
+      await Promise.all([
+        refreshExternalWorkStatus(cwd, channelId),
+        refreshExternalWorkCiTriage(cwd, channelId),
+      ]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      await refreshExternalWorkStatus(cwd, channelId);
+    } finally {
+      setExternalWorkStatusAction(undefined);
     }
   }
 
@@ -2711,7 +2788,7 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  const showInspector = activeView !== "providers" && activeView !== "workspace";
+  const showInspector = activeView !== "providers";
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
@@ -2981,12 +3058,30 @@ export function AppShell(): JSX.Element {
                 cwd={form.cwd}
                 policy={approvalPolicy}
                 form={approvalPolicyForm}
+                selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
+                externalWorkStatus={externalWorkStatus}
                 isLoading={approvalPolicyLoading}
+                externalWorkStatusLoading={externalWorkStatusLoading}
+                externalWorkStatusAction={externalWorkStatusAction}
                 errorMessage={errorMessage}
                 onCwdChange={updateWorkspaceCwd}
                 onFormChange={setApprovalPolicyForm}
                 onRefresh={() => void refreshApprovalPolicy()}
                 onSave={() => void saveApprovalPolicy()}
+                onRefreshExternalWork={() => void refreshExternalWorkStatus()}
+                onExternalWorkAction={(action) => void runExternalWorkStatusAction(action)}
+                onOpenExternalWorkRecords={() => {
+                  if (selectedChannelId) {
+                    setActiveView("workspace");
+                    setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
+                  }
+                }}
+                onOpenExternalWorkTriage={() => {
+                  if (selectedChannelId) {
+                    setActiveView("workspace");
+                    setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
+                  }
+                }}
               />
             ) : (
               <ApprovalsPage
@@ -3059,6 +3154,7 @@ export function AppShell(): JSX.Element {
               externalActionBusy={externalActionBusy}
               externalWorkCiTriage={externalWorkCiTriage}
               externalWorkCiTriageLoading={externalWorkCiTriageLoading}
+              externalWorkStatus={externalWorkStatus}
               approvalPolicy={approvalPolicy}
               approvalPolicyForm={approvalPolicyForm}
               cwd={form.cwd}
