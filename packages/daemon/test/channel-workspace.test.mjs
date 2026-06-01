@@ -40,6 +40,39 @@ test("channel messages persist and AI blocker replies do not drop the user messa
   }
 });
 
+test("channel discussion uses the mentioned teammate provider preset", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-mentioned-teammate-provider-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    const check = await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(check.ok, true);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Designer 你好",
+      mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    assert.equal(created.aiReply.status, "ready");
+    assert.equal(created.aiReply.authorId, teammateId);
+    assert.equal(created.aiReply.body, "Designer reply");
+    assert.equal(runner.runs.length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel attachment upload validates file types and serves content safely", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-attachments-"));
   const daemon = await startDaemonForTest();
@@ -392,8 +425,23 @@ test("AI teammate private workspace endpoints persist roster, setup, private mes
   }
 });
 
-async function startDaemonForTest() {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 });
+class RecordingRunner {
+  constructor() {
+    this.runs = [];
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    return {
+      taskId: options.task.id,
+      messages: ["Designer reply"],
+      events: [],
+    };
+  }
+}
+
+async function startDaemonForTest(runner) {
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, runner ? { runner } : undefined);
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
@@ -417,6 +465,21 @@ async function createChannel(baseUrl, cwd) {
       queueOnConflict: true,
     },
   })).channel;
+}
+
+async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
+  return await postJson(`${baseUrl}/providers?cwd=${encodeURIComponent(cwd)}`, {
+    kind: "glm",
+    displayName: "Static Chat",
+    providerId: "static-chat",
+    model: "static-model",
+    api: "google-generative-ai",
+    capabilities: ["chat"],
+    input: ["text"],
+    authHeader: false,
+    enabled: true,
+    ...overrides,
+  });
 }
 
 async function getJson(url) {

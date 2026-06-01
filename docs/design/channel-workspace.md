@@ -487,6 +487,9 @@ Rules:
 - A mention never grants new tools or provider capabilities.
 - A mentioned teammate can only use the channel's allowed tools and the selected
   provider's capabilities.
+- Provider resolution for a discussion reply is deterministic: mentioned teammate
+  provider, explicit run provider, channel default provider, workspace selected provider,
+  then first preflight-ready chat provider.
 - An attachment never grants file read permission outside the uploaded file itself.
 - A link never grants network browsing permission beyond preview metadata.
 - Discuss mode is read-only by default. File edits, shell commands, external sends, and

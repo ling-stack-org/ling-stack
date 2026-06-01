@@ -37,6 +37,7 @@ interface MockState {
   runResponseDelayMs?: number;
   channelMessageDelayMs?: number;
   failNextChannelMessage?: boolean;
+  lastChannelMessageRequest?: Record<string, unknown>;
   failNextTaskCreate?: boolean;
   linkPreviewDelayMs?: number;
   approvals: MockApproval[];
@@ -403,6 +404,14 @@ test("channel activity supports mentions, messages, files, links, and task creat
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [createChatProvider({
+    lastCheck: {
+      ok: true,
+      code: "ready",
+      message: "Provider is reachable and accepted the configured model.",
+      checkedAt: "2026-05-25T00:11:00.000Z",
+    },
+  })];
   state.channelMessageDelayMs = 150;
   state.linkPreviewDelayMs = 150;
   await mockDaemon(page, state);
@@ -437,6 +446,7 @@ test("channel activity supports mentions, messages, files, links, and task creat
 
   await expect(page.getByText("@Engineer please refine the channel requirements")).toBeVisible();
   await expect(page.getByText("收到，我会按频道上下文推进。")).toBeVisible();
+  await expect.poll(() => state.lastChannelMessageRequest?.providerPresetId).toBe("provider_local");
   await page.getByRole("button", { name: "Files" }).click();
   await expect(page.getByText("brief.txt")).toBeVisible();
   await expect(page.getByText("Example Domain")).toBeVisible();
@@ -4630,6 +4640,7 @@ async function handleDaemonRoute(
   if (channelMessagesMatch && request.method() === "POST") {
     const channelId = decodeURIComponent(channelMessagesMatch[1]);
     const body = await request.postDataJSON() as Record<string, unknown>;
+    state.lastChannelMessageRequest = body;
     if (state.channelMessageDelayMs) {
       await new Promise((resolve) => setTimeout(resolve, state.channelMessageDelayMs));
     }
