@@ -945,6 +945,8 @@ export interface ChannelMessageListResponse {
   readonly cwd: string;
   readonly channelId: string;
   readonly messages: readonly ChannelMessage[];
+  readonly hasMore?: boolean;
+  readonly nextBeforeMessageId?: string;
 }
 
 export interface ChannelMessageMutationResponse {

@@ -23,6 +23,11 @@ The channel header is a compact toolbar:
 - icon-only attention queue,
 - icon-only details panel show/hide.
 
+Header icons are borderless. The left drawer toggle, channel identity marker, `...`
+button, and right-side action icons share the same dark icon color and 18px glyph size.
+The attention queue button does not show a numeric badge; counts remain inside the
+attention popover and activity surfaces.
+
 The `...` menu opens the requested channel surface in the right details panel. It closes
 on outside click, Escape, or menu item selection. The Chat surface is not listed because
 chat is the permanent center surface.
@@ -46,16 +51,27 @@ The attention queue:
 - opens as a floating popover from the header icon,
 - hides while the right details panel is visible,
 - restores when the details panel is hidden if the queue toggle is still on,
-- does not push or translate the chat body when the right details panel is hidden; chat
-  and composer remain centered in the available channel content area,
+- keeps the accepted HTML natural spacing on wide viewports; narrower desktop widths
+  align the chat body and composer against the popover lane with a small safety gap so
+  the popover does not cover the conversation,
+- nudges the chat/composer column slightly toward the attention popover on very wide
+  collapsed-left layouts so the conversation does not feel detached from the floating
+  progress surface,
 - includes a progress preview with an icon-only collapse control,
 - keeps the attention list visible when only the progress preview is collapsed.
+
+The attention popover typography follows the accepted HTML scale: progress and attention
+section titles are 14px/600, progress rows are 12px/500, secondary copy is 12px/400,
+attention item titles are 13px/600, and status/meta chips stay compact at 11px/600.
+Progress status icons are 18px with 2.4px stroke so check and waiting states have the
+same visual weight. Avoid heavier 760/780 text weights in this popover.
 
 ## Message Boundary
 
 Plain chat messages are quieter than work events.
 
-- Local user messages align right and do not show the local user's name or timestamp.
+- Local user messages align right, do not show the local user's name or timestamp, and
+  render as plain text without the default bubble background or border.
 - AI teammate and coordinator chat messages align left, keep author and AI tag, and do
   not show timestamps.
 - Reply-in-topic remains available through a hover/focus icon.
@@ -83,19 +99,27 @@ Channel creation lives beside the `Channels` section in the left sidebar. Channe
 settings edits only the current channel. The left brand block is removed from the strict
 workspace surface; Settings moves to the lower sidebar area.
 
-The accepted HTML direction treats the left navigation as a drawer, not merely a fixed
-sidebar. On desktop the expanded drawer is 232px wide. Collapsing it leaves a 48px
-toolbar rail with a single left-panel icon; hovering or focusing the drawer reveals it
-without navigating away from the channel. The strict channel shell should not fall back
-to the older 220px responsive sidebar treatment on desktop widths.
+The accepted HTML direction treats the left navigation as a shared app drawer, not merely
+a fixed sidebar and not a channel-only variant. On desktop the expanded drawer is 232px
+wide. Collapsing it leaves a 48px toolbar rail with a single left-panel icon; hovering or
+focusing the drawer reveals it without navigating away from the current surface. Switching
+to model workbench, runs, inbox, media jobs, AI teammates, or settings keeps the same
+drawer geometry, row treatment, notification badges, and bottom settings group instead
+of falling back to the older 220px responsive sidebar treatment on desktop widths.
 
 The drawer should use the accepted chat HTML row treatment, not the older global sidebar
 accent treatment: the current channel uses a full-row `#F5F5F5` selected background with
-no left accent bar, AI teammates use circular initial avatars with small status dots,
-and the right task/details drawer keeps header actions hidden until hover or focus. The
-bottom approval and Settings entries share a single bottom group with a top divider and
-render as ordinary drawer rows, not as warning cards or global sidebar chrome. Long AI
-teammate lists scroll inside the teammate section so the bottom group remains visible.
+no left accent bar, AI teammates use circular initial avatars, and row-end markers are
+notifications only. Channel rows do not show numeric attention badges; no notification
+means no marker, unread means a green dot, and opening the channel clears that dot. AI
+teammate rows may keep counted attention pills when they represent teammate-specific
+work. Generic online/active status dots are not shown. Section header actions are
+icon-only; empty or loading teammate sections must not show legacy `Create` text labels
+beside the title. The right task/details drawer keeps header actions hidden until hover
+or focus. The bottom
+approval and Settings entries share a single bottom group with a top divider and render as
+ordinary drawer rows, not as warning cards or global sidebar chrome. Long AI teammate
+lists scroll inside the teammate section so the bottom group remains visible.
 
 ## Layout Geometry
 
@@ -105,9 +129,19 @@ The accepted HTML layout is the geometry source of truth:
   center column while the right details drawer compresses that column,
 - left drawer collapsed + right details open: the 48px rail remains and the chat stays
   centered in the remaining center column,
-- left drawer collapsed + right details hidden: the channel content expands and the chat
-  and composer are centered in the full available content area,
+- the chat body starts directly below the top divider with no extra top inset before the
+  scrollable message feed,
+- left drawer collapsed + right details hidden + attention queue visible: wide viewports
+  keep the accepted HTML gap between chat/composer and the popover; narrower viewports
+  reserve a right-side lane only when needed to avoid overlap,
+- the message feed scrolls independently without showing a visible scrollbar, entering
+  or switching into a channel pins the feed to the latest visible conversation item, and
+  scrolling away from the latest item reveals a centered floating down-arrow button that
+  returns to the latest conversation position,
 - restoring either drawer returns to the same selected channel and selected detail view.
+
+Long conversation loading and DOM virtualization are covered by
+`channel-workspace-v1.22.md`; v1.21 owns the Codex-style layout and message chrome only.
 
 ## Non-Goals
 

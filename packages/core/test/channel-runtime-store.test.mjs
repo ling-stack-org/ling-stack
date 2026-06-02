@@ -123,6 +123,115 @@ test("sqlite channel workspace assets persist messages, attachments, and link pr
   }
 });
 
+test("sqlite channel messages page latest history with stable cursors", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-page-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel(
+      {
+        name: "Engineering",
+        boundPath: cwd,
+      },
+      "2026-05-29T00:00:00.000Z",
+    );
+    const messages = [];
+    for (let index = 0; index < 520; index += 1) {
+      messages.push(store.createChannelMessage(
+        {
+          channelId: channel.id,
+          authorType: "local-user",
+          body: `Message ${index + 1}`,
+        },
+        new Date(Date.UTC(2026, 4, 29, 0, 0, index)).toISOString(),
+      ));
+    }
+
+    const defaultPage = store.listChannelMessagesPage({ channelId: channel.id });
+    assert.equal(defaultPage.messages.length, 200);
+    assert.equal(defaultPage.hasMore, true);
+    assert.equal(defaultPage.messages[0].body, "Message 321");
+    assert.equal(defaultPage.messages.at(-1).body, "Message 520");
+    assert.equal(defaultPage.nextBeforeMessageId, defaultPage.messages[0].id);
+
+    const olderPage = store.listChannelMessagesPage({
+      channelId: channel.id,
+      beforeMessageId: defaultPage.nextBeforeMessageId,
+      limit: 100,
+    });
+    assert.equal(olderPage.messages.length, 100);
+    assert.equal(olderPage.hasMore, true);
+    assert.equal(olderPage.messages[0].body, "Message 221");
+    assert.equal(olderPage.messages.at(-1).body, "Message 320");
+    assert.equal(new Set([...defaultPage.messages, ...olderPage.messages].map((message) => message.id)).size, 300);
+
+    const oversizedPage = store.listChannelMessagesPage({ channelId: channel.id, limit: 999 });
+    assert.equal(oversizedPage.messages.length, 500);
+    assert.equal(oversizedPage.messages[0].body, "Message 21");
+    assert.equal(oversizedPage.messages.at(-1).body, "Message 520");
+
+    assert.throws(
+      () => store.listChannelMessagesPage({ channelId: channel.id, beforeMessageId: "message_missing" }),
+      /Invalid channel message cursor/,
+    );
+
+    assert.deepEqual(store.listChannelMessages({ channelId: channel.id, limit: 3 }).map((message) => message.body), [
+      "Message 518",
+      "Message 519",
+      "Message 520",
+    ]);
+
+    assert.equal(messages.length, 520);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite channel message cursors keep same-timestamp order stable", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-same-time-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel(
+      {
+        name: "Engineering",
+        boundPath: cwd,
+      },
+      "2026-05-29T01:00:00.000Z",
+    );
+    for (let index = 0; index < 6; index += 1) {
+      store.createChannelMessage(
+        {
+          channelId: channel.id,
+          authorType: "local-user",
+          body: `Same time ${index + 1}`,
+        },
+        "2026-05-29T01:01:00.000Z",
+      );
+    }
+
+    const latest = store.listChannelMessagesPage({ channelId: channel.id, limit: 3 });
+    assert.deepEqual(latest.messages.map((message) => message.body), [
+      "Same time 4",
+      "Same time 5",
+      "Same time 6",
+    ]);
+    const older = store.listChannelMessagesPage({
+      channelId: channel.id,
+      limit: 3,
+      beforeMessageId: latest.nextBeforeMessageId,
+    });
+    assert.deepEqual(older.messages.map((message) => message.body), [
+      "Same time 1",
+      "Same time 2",
+      "Same time 3",
+    ]);
+    assert.equal(older.hasMore, false);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite channel collaboration protocol persists brief, decisions, handoffs, and summaries", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-protocol-"));
   const now = "2026-05-28T01:00:00.000Z";

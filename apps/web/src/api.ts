@@ -161,8 +161,12 @@ export async function deleteChannel(cwd: string, channelId: string): Promise<voi
   await daemonClient.deleteChannel(cwd, channelId);
 }
 
-export async function listChannelMessages(cwd: string, channelId: string): Promise<ChannelMessageListResponse> {
-  return daemonClient.listChannelMessages(cwd, channelId);
+export async function listChannelMessages(
+  cwd: string,
+  channelId: string,
+  options: { readonly limit?: number; readonly beforeMessageId?: string; readonly threadId?: string } = {},
+): Promise<ChannelMessageListResponse> {
+  return daemonClient.listChannelMessages(cwd, channelId, options);
 }
 
 export async function createChannelMessage(

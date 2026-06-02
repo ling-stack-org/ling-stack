@@ -158,13 +158,6 @@ textarea {
   text-transform: uppercase;
 }
 
-.sidebar-section-title small {
-  color: var(--warning);
-  font-size: 10px;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
 .sidebar-section-action {
   display: inline-flex;
   align-items: center;

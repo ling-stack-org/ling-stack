@@ -352,7 +352,14 @@ export interface CreateChannelMessageInput {
 export interface ListChannelMessagesOptions {
   readonly channelId: string;
   readonly threadId?: string;
+  readonly beforeMessageId?: string;
   readonly limit?: number;
+}
+
+export interface ChannelMessageListPage {
+  readonly messages: readonly ChannelMessage[];
+  readonly hasMore: boolean;
+  readonly nextBeforeMessageId?: string;
 }
 
 export type ChannelExecutionProposalStatus = "draft" | "accepted" | "cancelled" | "superseded" | "blocked" | "run_failed";

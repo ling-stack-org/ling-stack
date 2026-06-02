@@ -37,6 +37,7 @@ import type {
   ChannelHandoff,
   ChannelLinkPreview,
   ChannelMessage,
+  ChannelMessageListPage,
   ChannelUpdateInput,
   CreateChannelAttachmentInput,
   CreateChannelContextSummaryInput,
@@ -334,6 +335,7 @@ export interface RunStore {
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage;
   getChannelMessage(id: string): ChannelMessage | undefined;
   listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[];
+  listChannelMessagesPage(options: ListChannelMessagesOptions): ChannelMessageListPage;
   createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal;
   getChannelExecutionProposal(id: string): ChannelExecutionProposal | undefined;
   listChannelExecutionProposals(options: ListChannelExecutionProposalsOptions): ChannelExecutionProposal[];

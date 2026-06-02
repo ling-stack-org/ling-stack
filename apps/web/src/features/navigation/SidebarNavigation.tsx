@@ -24,11 +24,18 @@ import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { AvatarInitial } from "../../shared/components/index.js";
 import type { AiTeammate, ApprovalRequest, Channel } from "../../types.js";
 
+export interface SidebarNotification {
+  readonly count?: number;
+  readonly unread?: boolean;
+}
+
 export function SidebarNavigation({
   activeSidebarTarget,
   channels,
   teammates,
   approvals,
+  channelNotifications = {},
+  teammateNotifications = {},
   onOpenView,
   onCreateChannel,
   onSelectChannel,
@@ -41,6 +48,8 @@ export function SidebarNavigation({
   readonly channels: readonly Channel[];
   readonly teammates: readonly AiTeammate[];
   readonly approvals: readonly ApprovalRequest[];
+  readonly channelNotifications?: Readonly<Record<string, SidebarNotification>>;
+  readonly teammateNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly onOpenView: (view: ViewId) => void;
   readonly onCreateChannel: () => void;
   readonly onSelectChannel: (channelId: string) => void;
@@ -91,14 +100,15 @@ export function SidebarNavigation({
               type="button"
               onClick={() => onSelectChannel(channel.id)}
             >
-              <Hash size={14} />
+              <span className="sidebar-hash" aria-hidden="true">#</span>
               <span>{channel.name}</span>
+              {renderSidebarNotification(channelNotifications[channel.id])}
             </button>
           ))
         )}
       </SidebarSection>
 
-      <SidebarSection title={t("AI Teammates")} actionLabel={visibleTeammates.length === 0 ? t("Create") : undefined}>
+      <SidebarSection title={t("AI Teammates")}>
         {visibleTeammates.length === 0 ? (
           <button className="sidebar-row muted-row" type="button" onClick={() => onOpenView("teammates")}>
             <Bot size={14} />
@@ -114,7 +124,7 @@ export function SidebarNavigation({
             >
               <AvatarInitial label={teammateInitial(teammate.displayName)} tone="gray" />
               <span>{teammate.displayName}</span>
-              {teammate.status === "active" ? <span className="status-dot green" aria-hidden="true" /> : null}
+              {renderSidebarNotification(teammateNotifications[teammate.id])}
             </button>
           ))
         )}
@@ -142,6 +152,19 @@ function teammateInitial(name: string): string {
   return name.trim().slice(0, 1).toUpperCase() || "A";
 }
 
+function renderSidebarNotification(notification: SidebarNotification | undefined): JSX.Element | null {
+  if (!notification) {
+    return null;
+  }
+
+  const count = notification.count ?? 0;
+  if (count > 0) {
+    return <span className="channel-mention" aria-hidden="true">{count > 99 ? "99+" : count}</span>;
+  }
+
+  return notification.unread ? <span className="channel-unread" aria-hidden="true" /> : null;
+}
+
 function SidebarSection({
   title,
   actionLabel,
@@ -157,14 +180,10 @@ function SidebarSection({
     <section className="sidebar-section">
       <div className="sidebar-section-title">
         <span>{title}</span>
-        {actionLabel ? (
-          onAction ? (
-            <button className="sidebar-section-action" type="button" onClick={onAction} aria-label={actionLabel} title={actionLabel}>
-              <Plus size={12} />
-            </button>
-          ) : (
-            <small>{actionLabel}</small>
-          )
+        {actionLabel && onAction ? (
+          <button className="sidebar-section-action" type="button" onClick={onAction} aria-label={actionLabel} title={actionLabel}>
+            <Plus size={12} />
+          </button>
         ) : null}
       </div>
       <div className="sidebar-section-list">{children}</div>
