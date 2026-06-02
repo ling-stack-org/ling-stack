@@ -2392,8 +2392,7 @@ export function WorkspaceClientView({
         {sidePanelOpen ? (
           <aside className="channel-side-panel" aria-label={sidePanelTitle}>
             <div className="channel-side-panel-head">
-              <span>
-                {channelTabIcon(sidePanelView, 15)}
+              <span className="channel-side-panel-title">
                 <strong>{sidePanelTitle}</strong>
               </span>
               <div className="channel-side-panel-actions">
@@ -2413,9 +2412,6 @@ export function WorkspaceClientView({
                 ) : null}
                 <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
                   {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-                </button>
-                <button className="icon-button" type="button" onClick={() => setSidePanelOpen(false)} aria-label={t("Hide details")} title={t("Hide details")}>
-                  <PanelRightClose size={15} />
                 </button>
               </div>
             </div>
