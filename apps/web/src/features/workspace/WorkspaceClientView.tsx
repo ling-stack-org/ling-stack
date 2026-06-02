@@ -40,7 +40,7 @@ import {
 import type { AiTeammateTemplate } from "@ling-stack/core";
 import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
-import { buildChannelActivityItems, type ChannelActivityAttention } from "../../lib/channel-activity.js";
+import { buildChannelActivityItems, type ChannelActivityAttention, type ChannelActivityItem } from "../../lib/channel-activity.js";
 import {
   buildChannelActivityDrilldownItem,
   type ChannelActivityDrilldownItem,
@@ -105,6 +105,7 @@ import type {
   ProviderPreset,
   ResourceLease,
   RunArtifact,
+  RunEventEnvelope,
   RunSession,
   StateTransitionEvent,
   Task,
@@ -114,10 +115,11 @@ import type {
   UpdateChannelBriefRequest,
 } from "../../types.js";
 import { CiTriageAuditPanel } from "../external-work/CiTriageAuditPanel.js";
+import { RunTimeline } from "../runs/index.js";
+import type { ApprovalResolution } from "../approvals/index.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
-type TaskFilter = "all" | "queued" | "running" | "review" | "done";
 type ChannelTab = "activity" | "tasks" | "files" | "protocol";
 type ChannelSidePanelView = Exclude<ChannelTab, "activity">;
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
@@ -152,7 +154,6 @@ interface ActiveMentionPicker {
   readonly end: number;
 }
 
-const taskFilters: readonly TaskFilter[] = ["all", "queued", "running", "review", "done"];
 const channelSidePanelViews: readonly ChannelSidePanelView[] = ["tasks", "files", "protocol"];
 const activityCategoryFilters: readonly ActivityCategoryFilter[] = ["all", "message", "work", "approval", "protocol", "runtime"];
 const activityAttentionFilters: readonly Exclude<ActivityAttentionFilter, "all">[] = ["needs_attention", "blocked", "failed", "pending"];
@@ -182,6 +183,10 @@ function channelTabIcon(tab: ChannelTab, size: number): JSX.Element {
     return <FileText size={size} />;
   }
   return <Workflow size={size} />;
+}
+
+function channelActivityVisibleInDefaultChat(item: ChannelActivityItem): boolean {
+  return item.kind === "message" || item.kind === "summary";
 }
 
 export function WorkspaceClientView({
@@ -229,7 +234,11 @@ export function WorkspaceClientView({
   channelProtocolLoading,
   providersLoading,
   approvals,
+  approvalsLoading,
+  resolvingApprovals,
   resourceLeases,
+  events,
+  assistantText,
   runs,
   runById,
   activeRunId,
@@ -278,6 +287,8 @@ export function WorkspaceClientView({
   onRunTask,
   onOpenRun,
   onOpenApprovals,
+  onRefreshRunApprovals,
+  onResolveApproval,
   onOpenProviders,
 }: {
   readonly cwd: string;
@@ -324,7 +335,11 @@ export function WorkspaceClientView({
   readonly channelProtocolLoading: boolean;
   readonly providersLoading: boolean;
   readonly approvals: readonly ApprovalRequest[];
+  readonly approvalsLoading: boolean;
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly resourceLeases: readonly ResourceLease[];
+  readonly events: readonly RunEventEnvelope[];
+  readonly assistantText: string;
   readonly runs: readonly RunSession[];
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly activeRunId: string;
@@ -380,10 +395,11 @@ export function WorkspaceClientView({
   readonly onRunTask: (task: Task) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
+  readonly onRefreshRunApprovals: () => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
@@ -479,29 +495,6 @@ export function WorkspaceClientView({
   }, [channelMoreOpen]);
 
   const latestRun = activeRunId ? runById.get(activeRunId) : runs[0];
-  const filteredTasks = useMemo(
-    () =>
-      tasks.filter((task) => {
-        const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
-        const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
-        return taskMatchesFilter(taskFilter, task, linkedRunStatus);
-      }),
-    [activeRunId, latestStatus, runById, taskFilter, tasks],
-  );
-  const filterCounts = useMemo(
-    () =>
-      Object.fromEntries(
-        taskFilters.map((filter) => [
-          filter,
-          tasks.filter((task) => {
-            const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
-            const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
-            return taskMatchesFilter(filter, task, linkedRunStatus);
-          }).length,
-        ]),
-      ) as Record<TaskFilter, number>,
-    [activeRunId, latestStatus, runById, tasks],
-  );
   const activityItems = useMemo(
     () => buildChannelActivityItems({
       channelId: selectedChannelId,
@@ -586,6 +579,11 @@ export function WorkspaceClientView({
     [searchedActivityItems],
   );
   const activityFiltersActive = activitySearch.trim().length > 0 || activityCategoryFilter !== "all" || activityAttentionFilter !== "all";
+  const auditActivityVisible = activityToolsOpen || activityFiltersActive;
+  const visibleActivityItems = useMemo(
+    () => auditActivityVisible ? filteredActivityItems : filteredActivityItems.filter(channelActivityVisibleInDefaultChat),
+    [auditActivityVisible, filteredActivityItems],
+  );
   const attentionQueueItems = useMemo(() => buildAttentionQueueItems(activityItems), [activityItems]);
   const activityDrilldown = useMemo(() => {
     const item = activityItems.find((candidate) => candidate.id === activityDrilldownItemId);
@@ -902,6 +900,11 @@ export function WorkspaceClientView({
       activeRunId={activeRunId}
       latestStatus={latestStatus}
       pendingApprovalCount={pendingApprovalCount}
+      approvals={approvals}
+      approvalsLoading={approvalsLoading}
+      resolvingApprovals={resolvingApprovals}
+      events={events}
+      assistantText={assistantText}
       effectiveProvider={effectiveProvider}
       providerBlocker={providerBlocker}
       isRunning={isRunning}
@@ -918,6 +921,8 @@ export function WorkspaceClientView({
       onRunTask={onRunTask}
       onOpenRun={onOpenRun}
       onOpenApprovals={onOpenApprovals}
+      onRefreshRunApprovals={onRefreshRunApprovals}
+      onResolveApproval={onResolveApproval}
       onOpenProviders={onOpenProviders}
     />
   ) : (
@@ -1659,7 +1664,7 @@ export function WorkspaceClientView({
     }
   }
 
-  const sidePanelTitle = t(channelTabLabel(sidePanelView));
+  const sidePanelTitle = sidePanelView === "tasks" ? t("Task detail") : t(channelTabLabel(sidePanelView));
   const sidePanelContent = sidePanelView === "files" ? (
     <ChannelFiles
       attachments={channelAttachments}
@@ -1702,54 +1707,9 @@ export function WorkspaceClientView({
       />
     </div>
   ) : (
-    <div className="tasks-tab-layout">
-      <div className="tasks-tab-list">
-        <div className="task-filter-tabs" aria-label={t("Task filters")}>
-          {taskFilters.map((filter) => (
-            <button key={filter} className={taskFilter === filter ? "active" : ""} type="button" onClick={() => setTaskFilter(filter)}>
-              {t(taskFilterLabel(filter))}
-              <small>{filterCounts[filter]}</small>
-            </button>
-          ))}
-        </div>
-        <div className="workbench-task-list">
-          {filteredTasks.length === 0 ? (
-            <div className="client-empty-state">
-              {tasksLoading ? <Loader2 className="spin" /> : <SquareTerminal />}
-              <span>{tasksLoading ? t("Loading tasks...") : t("No tasks match this filter")}</span>
-            </div>
-          ) : (
-            filteredTasks.map((task) => {
-              const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
-              const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
-              return (
-                <button
-                  key={task.id}
-                  type="button"
-                  className={task.id === selectedTask?.id && !createTaskOpen ? "client-task-card selected" : "client-task-card"}
-                  onClick={() => selectTask(task.id)}
-                >
-                  <span className="client-task-main">
-                    <span>
-                      <strong>{task.title}</strong>
-                      <small>{task.prompt}</small>
-                    </span>
-                    <span className={`task-status ${task.status}`}>{t(task.status)}</span>
-                  </span>
-                  <span className="task-card-meta">
-                    {task.currentRunId ? <StatusBadge status={linkedRunStatus} /> : <span className="status-badge queued">{t("Not run")}</span>}
-                    <small>{formatDateTime(task.updatedAt)}</small>
-                  </span>
-                </button>
-              );
-            })
-          )}
-        </div>
-      </div>
-      <section className="task-detail-panel inline-task-detail-panel" aria-label={createTaskOpen ? t("New task") : t("Task detail")}>
-        {taskDetailContent}
-      </section>
-    </div>
+    <section className="task-detail-panel inline-task-detail-panel" aria-label={createTaskOpen ? t("New task") : t("Task detail")}>
+      {taskDetailContent}
+    </section>
   );
 
   return (
@@ -2065,13 +2025,13 @@ export function WorkspaceClientView({
                       time={t("Now")}
                       body={selectedChannel ? t("Default workspace is ready.") : t("Create a default channel to start the workspace loop.")}
                     />
-                  ) : filteredActivityItems.length === 0 ? (
+                  ) : visibleActivityItems.length === 0 ? (
                     <div className="client-empty-state">
-                      <Search />
-                      <span>{t("No activity matches these filters")}</span>
+                      {activityFiltersActive ? <Search /> : <MessageSquare />}
+                      <span>{activityFiltersActive ? t("No activity matches these filters") : t("No channel messages yet")}</span>
                     </div>
                   ) : (
-                    filteredActivityItems.map((item) => {
+                    visibleActivityItems.map((item) => {
                       if (item.kind === "message") {
                         const message = item.record;
                         const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
@@ -2916,6 +2876,11 @@ function TaskDetailPanel({
   activeRunId,
   latestStatus,
   pendingApprovalCount,
+  approvals,
+  approvalsLoading,
+  resolvingApprovals,
+  events,
+  assistantText,
   effectiveProvider,
   providerBlocker,
   isRunning,
@@ -2932,6 +2897,8 @@ function TaskDetailPanel({
   onRunTask,
   onOpenRun,
   onOpenApprovals,
+  onRefreshRunApprovals,
+  onResolveApproval,
   onOpenProviders,
 }: {
   readonly task: Task;
@@ -2940,6 +2907,11 @@ function TaskDetailPanel({
   readonly activeRunId: string;
   readonly latestStatus: string;
   readonly pendingApprovalCount: number;
+  readonly approvals: readonly ApprovalRequest[];
+  readonly approvalsLoading: boolean;
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly events: readonly RunEventEnvelope[];
+  readonly assistantText: string;
   readonly effectiveProvider: ProviderPreset | undefined;
   readonly providerBlocker: string | undefined;
   readonly isRunning: boolean;
@@ -2956,6 +2928,8 @@ function TaskDetailPanel({
   readonly onRunTask: (task: Task) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
+  readonly onRefreshRunApprovals: () => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -2973,6 +2947,14 @@ function TaskDetailPanel({
   const activeDecisions = decisions.filter((decision) => decision.status === "active");
   const sourceWorkflowStep = workflowSteps.find((step) => step.taskId === task.id);
   const sourceWorkflow = sourceWorkflowStep ? workflows.find((workflow) => workflow.id === sourceWorkflowStep.workflowId) : undefined;
+  const timelineRunId = activeRunId || task.currentRunId || "";
+  const pendingRunApprovals = approvals.filter((approval) => {
+    if (effectiveApprovalStatus(approval) !== "pending") {
+      return false;
+    }
+    return timelineRunId ? approval.runId === timelineRunId : approval.taskId === task.id;
+  });
+  const showRunTimeline = events.length > 0 || isRunning || assistantText.trim().length > 0 || pendingRunApprovals.length > 0;
 
   return (
     <article className="client-task-card task-detail selected" aria-label={t("Task detail")}>
@@ -3071,6 +3053,19 @@ function TaskDetailPanel({
           {t("Run")}
         </button>
       </div>
+      {showRunTimeline ? (
+        <RunTimeline
+          events={events}
+          assistantText={assistantText}
+          errorMessage=""
+          isRunning={isRunning}
+          pendingApprovals={pendingRunApprovals}
+          approvalsLoading={approvalsLoading}
+          resolvingApprovals={resolvingApprovals}
+          onRefreshApprovals={onRefreshRunApprovals}
+          onResolveApproval={onResolveApproval}
+        />
+      ) : null}
     </article>
   );
 }
@@ -3099,16 +3094,16 @@ function MessageBubble({
   const inlineAuthor = tone === "chat" || tone === "chat-blocked";
   const sideClass = inlineAuthor ? side === "end" ? " message-bubble-own" : " message-bubble-peer" : "";
   const ownMessage = inlineAuthor && side === "end";
+  const peerMessage = inlineAuthor && side === "start";
   const showTime = !inlineAuthor && time.length > 0;
   return (
     <article className={`message-bubble message-bubble-${tone}${inlineAuthor ? " message-bubble-inline" : ""}${sideClass}`}>
-      {inlineAuthor ? null : avatar}
+      {!inlineAuthor || peerMessage ? avatar : null}
       <div className={metaAction ? "message-content has-floating-action" : "message-content"}>
         {ownMessage ? (
           metaAction ? <span className="message-meta-action">{metaAction}</span> : null
         ) : (
           <div className={metaAction ? "message-meta has-meta-action" : "message-meta"}>
-            {inlineAuthor && side === "start" ? avatar : null}
             <strong>{author}</strong>
             {tag ? <small>{tag}</small> : null}
             {showTime ? <time>{time}</time> : null}
@@ -3873,22 +3868,6 @@ function ActivityTriageDraftForm({
   );
 }
 
-function taskFilterLabel(filter: TaskFilter): string {
-  if (filter === "queued") {
-    return "Queued";
-  }
-  if (filter === "running") {
-    return "Running";
-  }
-  if (filter === "review") {
-    return "Needs review";
-  }
-  if (filter === "done") {
-    return "Done";
-  }
-  return "All";
-}
-
 function activityAttentionDisplayLabel(attention: Exclude<ChannelActivityAttention, "none">): string {
   if (attention === "blocked") {
     return "Blocked";
@@ -4030,22 +4009,6 @@ function activityAttentionFilterLabel(filter: ActivityAttentionFilter): string {
 
 function savedViewLabel(view: ChannelActivitySavedView, t: (key: string) => string): string {
   return view.builtin ? t(view.name) : view.name;
-}
-
-function taskMatchesFilter(filter: TaskFilter, task: Task, linkedRunStatus: string): boolean {
-  if (filter === "queued") {
-    return task.status === "todo";
-  }
-  if (filter === "running") {
-    return task.status === "running" || task.status === "claimed" || linkedRunStatus === "running" || linkedRunStatus === "queued";
-  }
-  if (filter === "review") {
-    return task.status === "failed" || task.status === "blocked" || task.status === "review" || linkedRunStatus === "failed" || linkedRunStatus === "waiting_for_approval";
-  }
-  if (filter === "done") {
-    return task.status === "done" || linkedRunStatus === "succeeded";
-  }
-  return true;
 }
 
 function isWorkflowStepTerminal(status: ChannelWorkflowStep["status"]): boolean {

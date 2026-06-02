@@ -231,48 +231,40 @@ test("workspace opens as a task workbench with task context in the inspector", a
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Workspace task toolbar")).toBeVisible();
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
-  await expect(page.getByLabel("Task inspector")).toContainText("Task context");
-  await expect(page.getByLabel("Task inspector")).not.toContainText("run_failed");
-  await openChannelTasksTab(page);
+  const sidePanel = page.locator(".channel-side-panel");
+  await expect(page.locator(".right-panel")).toHaveCount(0);
+  await expect(sidePanel).toHaveAttribute("aria-label", "Task detail");
+  await expect(sidePanel).not.toContainText("run_failed");
   const taskDetail = page.locator("article.task-detail");
   await expect(taskDetail).toContainText("Task detail");
   await expect(taskDetail).not.toContainText("run_failed");
 });
 
-test("workspace task list scrolls internally without growing the page", async ({ page }) => {
+test("workspace task detail panel stays bounded without growing the page", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const state = createBaseState({ approvalStatus: "expired" });
-  state.tasks = Array.from({ length: 24 }, (_, index) => ({
-    id: `task_scroll_${index + 1}`,
-    workspaceId: "workspace_default",
-    channelId: "channel_engineering",
-    title: `Scrollable task ${index + 1}`,
-    prompt: `Keep task row ${index + 1} inside the workbench list instead of growing the page.`,
-    status: "todo",
-    createdAt: "2026-05-25T00:05:00.000Z",
-    updatedAt: "2026-05-25T00:05:00.000Z",
-  }));
-  state.runs = [];
+  state.eventsByRun.run_failed = createVerboseRunEvents("run_failed");
   await mockDaemon(page, state);
   await page.goto("/");
   await openChannelTasksTab(page);
 
-  await expect(page.locator(".workbench-task-list .client-task-card")).toHaveCount(24);
+  await expect(page.locator(".workbench-task-list")).toHaveCount(0);
+  await expect(page.locator("article.task-detail")).toContainText("Task detail");
   await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Advanced channel settings")).toBeVisible();
   const metrics = await page.evaluate(() => {
-    const taskList = document.querySelector(".workbench-task-list");
+    const sidePanel = document.querySelector(".channel-side-panel");
+    const taskDetail = document.querySelector("article.task-detail");
     return {
       viewportHeight: document.documentElement.clientHeight,
       documentScrollHeight: document.documentElement.scrollHeight,
-      listClientHeight: taskList?.clientHeight ?? 0,
-      listScrollHeight: taskList?.scrollHeight ?? 0,
-      listOverflowY: taskList ? getComputedStyle(taskList).overflowY : "",
+      sidePanelHeight: sidePanel?.getBoundingClientRect().height ?? 0,
+      taskDetailHeight: taskDetail?.getBoundingClientRect().height ?? 0,
     };
   });
   expect(metrics.documentScrollHeight).toBeLessThanOrEqual(metrics.viewportHeight + 2);
-  expect(metrics.listOverflowY).toBe("auto");
-  expect(metrics.listScrollHeight).toBeGreaterThan(metrics.listClientHeight + 20);
+  expect(metrics.sidePanelHeight).toBeLessThanOrEqual(metrics.viewportHeight);
+  expect(metrics.taskDetailHeight).toBeLessThanOrEqual(metrics.sidePanelHeight);
 });
 
 test("channel runtime policy and default teammate are visible and used when creating channels", async ({ page }) => {
@@ -438,7 +430,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await page.goto("/");
 
   await expect(page.getByRole("button", { name: "Chat", exact: true })).toHaveCount(0);
-  await expect(page.getByLabel("Tasks")).toBeVisible();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
   await expect(page.locator('.channel-composer [aria-label="Composer mode"]')).toHaveCount(0);
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Task" })).toHaveCount(0);
   await expect(page.locator(".channel-composer").getByText("Discuss")).toHaveCount(0);
@@ -543,7 +535,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
     throw new Error("Expected own and peer chat bubbles to render in the message feed.");
   }
   expect(messageLayout.ownRight).toBeGreaterThan(messageLayout.feedRight - 64);
-  expect(messageLayout.peerLeft).toBeLessThan(messageLayout.feedLeft + 24);
+  expect(messageLayout.peerLeft).toBeLessThan(messageLayout.feedLeft + 48);
   expect(messageLayout.ownLeft).toBeGreaterThan(messageLayout.peerLeft);
   expect(messageLayout.ownRight).toBeGreaterThan(messageLayout.peerRight);
   await expect(sentMessage.getByRole("button", { name: /Create task|Record decision|Create handoff|Create task with context|Details/ })).toHaveCount(0);
@@ -560,6 +552,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   expect(sentMessageTypography.bodyFontWeight).toBeGreaterThanOrEqual(550);
   await expect(sentMessageContent).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(sentMessageContent).not.toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+  await page.mouse.move(8, 8);
   await expect(sentMessage.locator(".message-meta-action")).toHaveCSS("opacity", "0");
   const replyActionLayout = await sentMessage.evaluate((element) => {
     const action = element.querySelector(".message-meta-action");
@@ -713,7 +706,7 @@ test("channel execution proposal confirms into a task run with the assignee prov
   await expect(proposal.getByRole("button", { name: "Open run" })).toBeVisible();
 });
 
-test("channel files tab keeps empty dark surfaces on strict console tokens", async ({ page }) => {
+test("channel files tab keeps daylight surfaces even when the app theme is dark", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themePreference", "dark");
@@ -742,11 +735,24 @@ test("channel files tab keeps empty dark surfaces on strict console tokens", asy
     throw new Error("Files tab layout was not rendered");
   }
   expect(fileTabLayout.filesHeight).toBeGreaterThan(fileTabLayout.panelHeight - 96);
-  const fileTabDarkSurfaces = await page.evaluate(() => {
+  const fileTabDaylightSurfaces = await page.evaluate(() => {
+    function effectiveBackgroundColor(element: Element): number[] {
+      let current: Element | null = element;
+      while (current) {
+        const color = getComputedStyle(current).backgroundColor;
+        const channels = color.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+        const alpha = channels.length >= 4 ? channels[3] : 1;
+        if (channels.length >= 3 && alpha > 0) {
+          return channels.slice(0, 3);
+        }
+        current = current.parentElement;
+      }
+      return [255, 255, 255];
+    }
     const selectors = [".file-section", ".channel-files .client-empty-state"];
     return selectors.flatMap((selector) =>
       Array.from(document.querySelectorAll(selector)).map((element) => {
-        const color = getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
+        const color = effectiveBackgroundColor(element);
         return {
           selector,
           maxChannel: color.length > 0 ? Math.max(...color) : 255,
@@ -754,13 +760,13 @@ test("channel files tab keeps empty dark surfaces on strict console tokens", asy
       }),
     );
   });
-  expect(fileTabDarkSurfaces).toHaveLength(6);
-  for (const surface of fileTabDarkSurfaces) {
-    expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
+  expect(fileTabDaylightSurfaces).toHaveLength(6);
+  for (const surface of fileTabDaylightSurfaces) {
+    expect(surface.maxChannel, `${surface.selector} should stay on the accepted daylight channel surface`).toBeGreaterThanOrEqual(245);
   }
 });
 
-test("channel activity filter chips keep dark console tokens", async ({ page }) => {
+test("channel activity filter chips keep daylight channel tokens", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themePreference", "dark");
@@ -788,7 +794,7 @@ test("channel activity filter chips keep dark console tokens", async ({ page }) 
   });
   expect(filterChipSurfaces.length).toBeGreaterThan(0);
   for (const surface of filterChipSurfaces) {
-    expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
+    expect(surface.maxChannel, `${surface.selector} should stay on daylight channel tokens`).toBeGreaterThanOrEqual(245);
   }
 });
 
@@ -1070,6 +1076,7 @@ test("channel v1.1 protocol supports brief, decisions, handoffs, and context tas
     }
   };
 
+  await openChannelChatTools(page);
   await taskEventBubble.getByRole("button", { name: "Details" }).click();
   await openTriageActions();
   await activityDetails.getByRole("button", { name: "Record decision" }).click();
@@ -1218,6 +1225,7 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
     return isRecord(step) ? step.runId : undefined;
   }).toBe("run_2");
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
+  await openChannelChatTools(page);
   await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_2" })).toContainText("succeeded");
 });
 
@@ -1373,6 +1381,12 @@ test("channel activity derives task run approval transition and workflow events"
 
   await expect(messageBubble).toBeVisible();
   await expect(messageBubble.getByRole("button", { name: /Create task|Record decision|Create handoff|Create task with context|Details/ })).toHaveCount(0);
+  await expect(taskEventBubble).toHaveCount(0);
+  await expect(runEventBubble).toHaveCount(0);
+  await expect(approvalEventBubble).toHaveCount(0);
+  await expect(stateTransitionBubble).toHaveCount(0);
+  await expect(workflowStepBubble).toHaveCount(0);
+  await openChannelChatTools(page);
   await expect(taskEventBubble).toContainText("failed");
   await expect(runEventBubble).toContainText("failed");
   await expect(approvalEventBubble).toContainText("pending");
@@ -1398,7 +1412,7 @@ test("channel activity derives task run approval transition and workflow events"
 
   await taskEventBubble.getByRole("button", { name: "Details" }).click();
   await activityDetails.getByRole("button", { name: "Open task" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Tasks");
+  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
   await expect(activityDetails).toHaveCount(0);
 
@@ -1406,11 +1420,13 @@ test("channel activity derives task run approval transition and workflow events"
   await activityDetails.getByRole("button", { name: "Open run" }).click();
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await openChannelChatTools(page);
 
   await approvalEventBubble.getByRole("button", { name: "Details" }).click();
   await activityDetails.getByRole("button", { name: "Open approval" }).click();
   await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await openChannelChatTools(page);
 
   await workflowStepBubble.getByRole("button", { name: "Details" }).click();
   await activityDetails.getByRole("button", { name: "Open context" }).click();
@@ -1487,7 +1503,7 @@ test("channel activity derives task run approval transition and workflow events"
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expandQueueIfNeeded();
   await attentionQueue.locator(".attention-queue-item").filter({ hasText: "Inspect workspace" }).filter({ hasText: "Task" }).locator(".attention-queue-item-open").click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Tasks");
+  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
 
   await selectSavedView("Blocked");
@@ -1614,7 +1630,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
 
   await page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" }).getByRole("button", { name: "Open task" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Tasks");
+  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
 
   await page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" }).getByRole("button", { name: "Open run" }).click();
@@ -1622,10 +1638,12 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".run-detail-panel .session-file-list")).not.toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await openChannelChatTools(page);
   await page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" }).getByRole("button", { name: "Open approval" }).click();
   await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await openChannelChatTools(page);
   await page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" }).getByRole("button", { name: "Open context" }).click();
   await expect(page.locator(".channel-side-panel")).toContainText("Context");
 });
@@ -1715,6 +1733,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await expect(messageBubble).toBeVisible();
   await expect(messageBubble.getByRole("button", { name: /Create task|Record decision|Create handoff|Create task with context|Details/ })).toHaveCount(0);
 
+  await openChannelChatTools(page);
   await runEventBubble.getByRole("button", { name: "Details" }).click();
   await expect(activityDetails).toContainText("Triage actions");
   await expect(activityDetails.getByLabel("Triage title")).toHaveCount(0);
@@ -1732,10 +1751,11 @@ test("channel activity triage actions create follow-up records and preserve loca
   await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
   await expect.poll(() => state.tasks.some((task) => isRecord(task) && task.title === "Investigate failed run triage")).toBe(true);
   await activityDetails.getByRole("button", { name: "Open in Tasks" }).click();
-  await expect(page.locator(".channel-side-panel")).toContainText("Tasks");
+  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
   await expect(page.locator("article.task-detail")).toContainText("Investigate failed run triage");
 
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
+  await openChannelChatTools(page);
   await workflowStepBubble.getByRole("button", { name: "Details" }).click();
   await openTriageActions();
   await activityDetails.getByRole("button", { name: "Create handoff" }).click();
@@ -1748,6 +1768,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await expect(page.getByRole("region", { name: "Channel inspector" })).toContainText("Escalate blocked triage step");
 
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
+  await openChannelChatTools(page);
   await approvalEventBubble.getByRole("button", { name: "Details" }).click();
   await openTriageActions();
   await activityDetails.getByRole("button", { name: "Record decision" }).click();
@@ -1807,7 +1828,8 @@ test("channel activity hides the attention queue when no items need attention", 
   await expect(page.getByRole("button", { name: "Attention queue" }).locator(".toolbar-count")).toHaveCount(0);
   await expect(page.locator(".channel-attention-popover")).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
-  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
+  await expect(page.locator("article.task-detail")).toContainText("Task detail");
 });
 
 test("run detail renders state transitions from daemon timeline API", async ({ page }) => {
@@ -1923,8 +1945,9 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await expect(page.getByLabel("任务检查器")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "任务上下文" })).toBeVisible();
+  await expect(page.getByLabel("任务检查器")).toHaveCount(0);
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "任务详情");
+  await expect(page.getByRole("heading", { name: "任务上下文" })).toHaveCount(0);
   await expect(page.getByText("Task context")).toHaveCount(0);
   await expect(page.getByText("No task selected")).toHaveCount(0);
   await expect(page.getByText("active · serial · boundPath lock")).toHaveCount(0);
@@ -2742,7 +2765,7 @@ test("workspace new task panel creates and selects the new task", async ({ page 
 
   await expect.poll(() => state.tasks.some((task) => isRecord(task) && task.title === "Design inspector behavior")).toBe(true);
   await expect(page.locator("article.task-detail")).toContainText("Design inspector behavior");
-  await expect(page.getByLabel("Task inspector")).toContainText("Design inspector behavior");
+  await expect(page.locator("article.task-detail")).toContainText("Design inspector behavior");
 });
 
 test("model workbench creates custom OpenAI-compatible presets and surfaces readiness", async ({ page }) => {
@@ -3072,7 +3095,7 @@ test("workspace task run uses the displayed ready provider fallback", async ({ p
   await expect(page.locator(".task-detail")).not.toContainText("run_1");
 });
 
-test("workspace task actions only show a spinner on the clicked task action", async ({ page }) => {
+test("workspace task detail actions only show a spinner on the clicked action", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -3089,39 +3112,23 @@ test("workspace task actions only show a spinner on the clicked task action", as
   state.channels = state.channels.map((channel) =>
     isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel
   );
-  state.tasks = [
-    ...state.tasks.map((task) =>
-      isRecord(task) ? { ...task, status: "todo", currentRunId: undefined } : task
-    ),
-    {
-      id: "task_second",
-      workspaceId: "workspace_default",
-      channelId: "channel_engineering",
-      title: "Second task",
-      prompt: "Run the second task only.",
-      status: "todo",
-      createdAt: "2026-05-25T00:05:00.000Z",
-      updatedAt: "2026-05-25T00:05:00.000Z",
-    },
-  ];
+  state.tasks = state.tasks.map((task) =>
+    isRecord(task) ? { ...task, status: "todo", currentRunId: undefined } : task
+  );
   state.runs = [];
   state.runResponseDelayMs = 2000;
   await mockDaemon(page, state);
   await page.goto("/");
 
   await openChannelTasksTab(page);
-  const firstTask = page.locator(".workbench-task-list .client-task-card").filter({ hasText: "Inspect workspace" });
-  const secondTask = page.locator(".workbench-task-list .client-task-card").filter({ hasText: "Second task" });
-  await secondTask.click();
   const taskDetail = page.locator("article.task-detail");
   await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
 
   await expect(taskDetail.getByRole("button", { name: "Run", exact: true }).locator(".spin")).toHaveCount(1);
   await expect(taskDetail.getByRole("button", { name: "Check & run", exact: true }).locator(".spin")).toHaveCount(0);
-  await expect(firstTask.locator(".task-actions .spin")).toHaveCount(0);
   await expect(page.locator(".task-actions .spin")).toHaveCount(1);
 
-  await expect.poll(() => state.runs[0]?.taskId).toBe("task_second");
+  await expect.poll(() => state.runs[0]?.taskId).toBe("task_inspect");
 
   state.tasks = state.tasks.map((task) =>
     isRecord(task) ? { ...task, status: "todo", currentRunId: undefined } : task
@@ -3132,7 +3139,7 @@ test("workspace task actions only show a spinner on the clicked task action", as
 
   await expect(taskDetail.getByRole("button", { name: "Check & run", exact: true }).locator(".spin")).toHaveCount(1);
   await expect(taskDetail.getByRole("button", { name: "Run", exact: true }).locator(".spin")).toHaveCount(0);
-  await expect(firstTask.locator(".task-actions .spin")).toHaveCount(0);
+  await expect(page.locator(".task-actions .spin")).toHaveCount(1);
 });
 
 test("succeeded workspace tasks show a clear result action", async ({ page }) => {
@@ -3229,7 +3236,7 @@ test("workspace run timeline summarizes activity and keeps raw events contained"
   await expect(rawEvents.locator(".raw-event-list")).toHaveCSS("overflow-x", "hidden");
   await expect.poll(() => readScrollState(page, ".raw-event-list")).toMatchObject({ atBottom: true });
   await expect(rawEvents.getByText("assistant_thinking_delta").first()).toBeVisible();
-  await expect.poll(() => readHorizontalOverflow(page, ".workspace-task-inspector, .timeline, .timeline-activity-list, .raw-event-list, .assistant-output")).toEqual([]);
+  await expect.poll(() => readHorizontalOverflow(page, ".timeline, .timeline-activity-list, .raw-event-list, .assistant-output")).toEqual([]);
 });
 
 test("save and check enables a disabled provider before checking", async ({ page }) => {
@@ -3462,9 +3469,7 @@ test("workspace surfaces GitHub CI triage records without starting runs", async 
   await expect(workspaceTriage).toContainText("CI failure log");
   await expect(workspaceTriage).toContainText("stale");
 
-  const inspector = page.getByLabel("Task inspector");
-  await expect(inspector.locator(".ci-triage-panel")).toContainText("unit-tests");
-  await expect(inspector.locator(".ci-triage-panel")).not.toContainText("integration-tests");
+  await expect(page.locator(".right-panel")).toHaveCount(0);
   await expect(workspaceTriage.getByRole("button", { name: "Open run" }).first()).toBeVisible();
   await expect.poll(() => state.ciTriageRunCalls[linkedTriage.triage.id] ?? 0).toBe(0);
 });
@@ -3739,7 +3744,8 @@ async function openChannelContextPanel(page: Page): Promise<void> {
 }
 
 async function openChannelSidePanel(page: Page, name: "Tasks" | "Files" | "Context"): Promise<void> {
-  const panel = page.locator(".channel-side-panel").filter({ hasText: name });
+  const panelLabel = name === "Tasks" ? "Task detail" : name;
+  const panel = page.locator(".channel-side-panel").filter({ hasText: panelLabel });
   if ((await panel.count()) > 0 && await panel.isVisible().catch(() => false)) {
     return;
   }
