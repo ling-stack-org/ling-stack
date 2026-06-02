@@ -241,7 +241,7 @@ test("workspace opens as a task workbench with task context in the inspector", a
 });
 
 test("channel drawers match the accepted HTML layout", async ({ page }) => {
-  const state = createBaseState({ approvalStatus: "expired" });
+  const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" })];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -253,9 +253,18 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const leftToolbar = document.querySelector(".channel-sidebar-toolbar");
     const rightDrawer = document.querySelector(".channel-side-panel");
     const header = document.querySelector(".task-workbench-header");
+    const chatPanel = document.querySelector(".channel-chat-panel");
+    const chat = document.querySelector(".activity-chat-layout");
+    const composer = document.querySelector(".channel-composer");
     const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-row.selected");
     const selectedChannelBefore = selectedChannel ? getComputedStyle(selectedChannel, "::before") : undefined;
     const sidePanelActions = document.querySelector(".channel-side-panel-actions");
+    const sidebarBottom = document.querySelector(".channel-left-drawer .sidebar-bottom");
+    const approvals = document.querySelector(".channel-left-drawer .sidebar-inbox-alert");
+    const settings = document.querySelector(".channel-left-drawer .config-button");
+    const chatPanelRect = chatPanel?.getBoundingClientRect();
+    const chatRect = chat?.getBoundingClientRect();
+    const composerRect = composer?.getBoundingClientRect();
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
@@ -272,6 +281,19 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
       sidePanelActions: document.querySelectorAll(".channel-side-panel-actions .icon-button").length,
       sidePanelActionsOpacity: sidePanelActions ? getComputedStyle(sidePanelActions).opacity : "",
       sidePanelActionsVisibility: sidePanelActions ? getComputedStyle(sidePanelActions).visibility : "",
+      chatCenterDelta: chatPanelRect && chatRect ? Math.round((chatRect.left + chatRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
+      composerCenterDelta: chatPanelRect && composerRect ? Math.round((composerRect.left + composerRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
+      chatPanelWidth: Math.round(chatPanelRect?.width ?? 0),
+      chatWidth: Math.round(chatRect?.width ?? 0),
+      composerWidth: Math.round(composerRect?.width ?? 0),
+      sidebarBottomDisplay: sidebarBottom ? getComputedStyle(sidebarBottom).display : "",
+      sidebarBottomBorderTop: sidebarBottom ? getComputedStyle(sidebarBottom).borderTopWidth : "",
+      approvalsText: approvals?.textContent?.trim() ?? "",
+      approvalsHeight: Math.round(approvals?.getBoundingClientRect().height ?? 0),
+      approvalsColumns: approvals ? getComputedStyle(approvals).gridTemplateColumns : "",
+      settingsText: settings?.textContent?.trim() ?? "",
+      settingsHeight: Math.round(settings?.getBoundingClientRect().height ?? 0),
+      settingsColumns: settings ? getComputedStyle(settings).gridTemplateColumns : "",
       globalRightPanels: document.querySelectorAll(".right-panel").length,
     };
   });
@@ -288,6 +310,18 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(expanded.sidePanelActions).toBe(2);
   expect(expanded.sidePanelActionsOpacity).toBe("0");
   expect(expanded.sidePanelActionsVisibility).toBe("hidden");
+  expect(Math.abs(expanded.chatCenterDelta)).toBeLessThanOrEqual(1);
+  expect(Math.abs(expanded.composerCenterDelta)).toBeLessThanOrEqual(1);
+  expect(expanded.chatPanelWidth - expanded.chatWidth).toBe(48);
+  expect(expanded.composerWidth).toBe(expanded.chatWidth);
+  expect(expanded.sidebarBottomDisplay).toBe("grid");
+  expect(expanded.sidebarBottomBorderTop).toBe("1px");
+  expect(expanded.approvalsText).toContain("pending approvals");
+  expect(expanded.approvalsHeight).toBe(38);
+  expect(expanded.approvalsColumns.startsWith("24px ")).toBe(true);
+  expect(expanded.settingsText).toBe("Settings");
+  expect(expanded.settingsHeight).toBe(38);
+  expect(expanded.settingsColumns.startsWith("24px ")).toBe(true);
   expect(expanded.globalRightPanels).toBe(0);
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
@@ -297,37 +331,100 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const shell = document.querySelector(".app-shell");
     const leftDrawer = document.querySelector(".channel-left-drawer");
     const leftToolbar = document.querySelector(".channel-sidebar-toolbar");
+    const chatPanel = document.querySelector(".channel-chat-panel");
+    const chat = document.querySelector(".activity-chat-layout");
+    const composer = document.querySelector(".channel-composer");
+    const chatPanelRect = chatPanel?.getBoundingClientRect();
+    const chatRect = chat?.getBoundingClientRect();
+    const composerRect = composer?.getBoundingClientRect();
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       leftX: Math.round(leftDrawer?.getBoundingClientRect().x ?? 0),
       leftOpacity: leftDrawer ? getComputedStyle(leftDrawer).opacity : "",
       toolbarWidth: Math.round(leftToolbar?.getBoundingClientRect().width ?? 0),
+      chatCenterDelta: chatPanelRect && chatRect ? Math.round((chatRect.left + chatRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
+      composerCenterDelta: chatPanelRect && composerRect ? Math.round((composerRect.left + composerRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
     };
   });
   expect(leftCollapsed.columns.startsWith("48px ")).toBe(true);
   expect(leftCollapsed.leftX).toBe(-184);
   expect(leftCollapsed.leftOpacity).toBe("0");
   expect(leftCollapsed.toolbarWidth).toBe(48);
+  expect(Math.abs(leftCollapsed.chatCenterDelta)).toBeLessThanOrEqual(1);
+  expect(Math.abs(leftCollapsed.composerCenterDelta)).toBeLessThanOrEqual(1);
+
+  await page.mouse.move(22, 22);
+  await page.waitForTimeout(200);
+  const leftPeek = await page.evaluate(() => {
+    const leftDrawer = document.querySelector(".channel-left-drawer");
+    return {
+      leftX: Math.round(leftDrawer?.getBoundingClientRect().x ?? -999),
+      leftOpacity: leftDrawer ? getComputedStyle(leftDrawer).opacity : "",
+    };
+  });
+  expect(leftPeek.leftX).toBe(0);
+  expect(leftPeek.leftOpacity).toBe("1");
+  await page.mouse.move(640, 120);
+  await page.waitForTimeout(200);
 
   await page.getByRole("button", { name: "Hide details" }).click();
   await page.waitForTimeout(200);
   const rightCollapsed = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const main = document.querySelector(".task-workbench-main");
+    const chatPanel = document.querySelector(".channel-chat-panel");
+    const chat = document.querySelector(".activity-chat-layout");
+    const composer = document.querySelector(".channel-composer");
+    const attention = document.querySelector(".channel-attention-popover");
+    const chatPanelRect = chatPanel?.getBoundingClientRect();
+    const chatRect = chat?.getBoundingClientRect();
+    const composerRect = composer?.getBoundingClientRect();
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       sidePanelCount: document.querySelectorAll(".channel-side-panel").length,
       mainPaddingRight: main ? getComputedStyle(main).paddingRight : "",
+      chatCenterDelta: chatPanelRect && chatRect ? Math.round((chatRect.left + chatRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
+      composerCenterDelta: chatPanelRect && composerRect ? Math.round((composerRect.left + composerRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
+      chatTransform: chat ? getComputedStyle(chat).transform : "",
+      composerTransform: composer ? getComputedStyle(composer).transform : "",
+      attentionCount: document.querySelectorAll(".channel-attention-popover").length,
+      attentionTop: Math.round(attention?.getBoundingClientRect().top ?? 0),
     };
   });
   expect(rightCollapsed.columns.startsWith("48px ")).toBe(true);
   expect(rightCollapsed.sidePanelCount).toBe(0);
   expect(rightCollapsed.mainPaddingRight).toBe("0px");
+  expect(Math.abs(rightCollapsed.chatCenterDelta)).toBeLessThanOrEqual(1);
+  expect(Math.abs(rightCollapsed.composerCenterDelta)).toBeLessThanOrEqual(1);
+  expect(rightCollapsed.chatTransform).toBe("none");
+  expect(rightCollapsed.composerTransform).toBe("none");
+  expect(rightCollapsed.attentionCount).toBe(1);
+  expect(rightCollapsed.attentionTop).toBeGreaterThanOrEqual(60);
 
   await page.getByRole("button", { name: "Show details" }).click();
   await page.getByRole("button", { name: "Show navigation" }).click();
   await page.waitForTimeout(200);
   await expect(page.locator(".channel-side-panel")).toHaveCount(1);
+  const restored = await page.evaluate(() => {
+    const shell = document.querySelector(".app-shell");
+    const leftDrawer = document.querySelector(".channel-left-drawer");
+    const chatPanel = document.querySelector(".channel-chat-panel");
+    const chat = document.querySelector(".activity-chat-layout");
+    const chatPanelRect = chatPanel?.getBoundingClientRect();
+    const chatRect = chat?.getBoundingClientRect();
+    return {
+      columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
+      leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
+      sidePanelCount: document.querySelectorAll(".channel-side-panel").length,
+      chatCenterDelta: chatPanelRect && chatRect ? Math.round((chatRect.left + chatRect.width / 2) - (chatPanelRect.left + chatPanelRect.width / 2)) : 999,
+      attentionCount: document.querySelectorAll(".channel-attention-popover").length,
+    };
+  });
+  expect(restored.columns.startsWith("232px ")).toBe(true);
+  expect(restored.leftWidth).toBe(232);
+  expect(restored.sidePanelCount).toBe(1);
+  expect(Math.abs(restored.chatCenterDelta)).toBeLessThanOrEqual(1);
+  expect(restored.attentionCount).toBe(0);
 });
 
 test("workspace task detail panel stays bounded without growing the page", async ({ page }) => {

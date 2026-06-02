@@ -46,6 +46,8 @@ The attention queue:
 - opens as a floating popover from the header icon,
 - hides while the right details panel is visible,
 - restores when the details panel is hidden if the queue toggle is still on,
+- does not push or translate the chat body when the right details panel is hidden; chat
+  and composer remain centered in the available channel content area,
 - includes a progress preview with an icon-only collapse control,
 - keeps the attention list visible when only the progress preview is collapsed.
 
@@ -90,7 +92,22 @@ to the older 220px responsive sidebar treatment on desktop widths.
 The drawer should use the accepted chat HTML row treatment, not the older global sidebar
 accent treatment: the current channel uses a full-row `#F5F5F5` selected background with
 no left accent bar, AI teammates use circular initial avatars with small status dots,
-and the right task/details drawer keeps header actions hidden until hover or focus.
+and the right task/details drawer keeps header actions hidden until hover or focus. The
+bottom approval and Settings entries share a single bottom group with a top divider and
+render as ordinary drawer rows, not as warning cards or global sidebar chrome. Long AI
+teammate lists scroll inside the teammate section so the bottom group remains visible.
+
+## Layout Geometry
+
+The accepted HTML layout is the geometry source of truth:
+
+- left drawer open + right details open: chat and composer are centered in the remaining
+  center column while the right details drawer compresses that column,
+- left drawer collapsed + right details open: the 48px rail remains and the chat stays
+  centered in the remaining center column,
+- left drawer collapsed + right details hidden: the channel content expands and the chat
+  and composer are centered in the full available content area,
+- restoring either drawer returns to the same selected channel and selected detail view.
 
 ## Non-Goals
 

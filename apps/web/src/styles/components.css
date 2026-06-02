@@ -791,6 +791,18 @@ code,
 .channel-left-drawer .sidebar-section {
   gap: 8px;
   margin-top: 0;
+  min-height: 0;
+}
+
+.channel-left-drawer .sidebar-section:last-of-type {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.channel-left-drawer .sidebar-section:last-of-type .sidebar-section-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .channel-left-drawer .sidebar-section-title {
@@ -836,14 +848,59 @@ code,
 
 .channel-left-drawer .sidebar-config {
   margin-top: auto;
-  padding-top: 18px;
+  padding-top: 14px;
+}
+
+.channel-left-drawer .sidebar-bottom {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
 .channel-left-drawer .config-button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
   justify-content: flex-start;
+  justify-items: start;
   width: 100%;
   height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: #4f4f4f;
+  font-size: 16px;
+  line-height: 20px;
+  text-align: left;
+}
+
+.channel-left-drawer .config-button:hover,
+.channel-left-drawer .config-button.active {
   background: var(--surface-selected);
+  color: var(--text);
+}
+
+.channel-left-drawer .config-button svg {
+  justify-self: center;
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.9;
+}
+
+.config-button-label {
+  display: none;
+}
+
+.channel-left-drawer .config-button-label {
+  display: block;
+  justify-self: start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-shell.channel-sidebar-collapsed .channel-sidebar-toolbar {
@@ -1234,15 +1291,11 @@ code,
   min-width: 0;
   padding: 0;
   overflow: hidden;
+  transition: padding-right 160ms ease;
 }
 
 .task-workbench-main.with-channel-side-panel {
   grid-template-columns: minmax(0, 1fr) min(360px, calc(100vw - 280px));
-}
-
-.task-workbench-main.attention-open .activity-chat-layout,
-.task-workbench-main.attention-open .activity-shell .channel-composer {
-  transform: translateX(-180px);
 }
 
 .task-list-panel,
@@ -1261,6 +1314,7 @@ code,
 .channel-chat-panel {
   position: relative;
   z-index: 2;
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: var(--surface-panel);
@@ -1833,6 +1887,7 @@ code,
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   flex: 1 1 auto;
+  align-self: center;
   justify-self: center;
   width: min(960px, calc(100% - 48px));
   min-width: 0;
@@ -2059,6 +2114,10 @@ code,
   border-radius: 8px;
   background: var(--surface-panel);
   box-shadow: 0 18px 45px rgba(15, 23, 42, 0.13);
+}
+
+.task-workbench-main.attention-open .channel-attention-popover {
+  transform: none;
 }
 
 .attention-progress-preview {
@@ -2605,6 +2664,10 @@ code,
   width: min(960px, calc(100% - 48px));
   margin-bottom: 14px;
   transition: transform 160ms ease;
+}
+
+.activity-chat-main > .channel-composer {
+  width: 100%;
 }
 
 .thread-reply-panel {
@@ -3380,6 +3443,36 @@ code,
   color: var(--warning);
   font-size: 12px;
   font-weight: 760;
+}
+
+.channel-left-drawer .sidebar-inbox-alert {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  justify-items: start;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  margin-top: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: left;
+}
+
+.channel-left-drawer .sidebar-inbox-alert:hover {
+  background: var(--surface-selected);
+}
+
+.channel-left-drawer .sidebar-inbox-alert .status-dot {
+  justify-self: center;
+  width: 8px;
+  height: 8px;
 }
 
 .media-job-row,
