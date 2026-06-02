@@ -1776,37 +1776,6 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function createComposerTask(input: {
-    readonly prompt: string;
-    readonly assigneeTeammateId?: string;
-  }): Promise<void> {
-    if (!selectedChannelId) {
-      setErrorMessage("请先选择 channel");
-      return;
-    }
-    const prompt = input.prompt.trim();
-    if (!prompt) {
-      setErrorMessage("请输入 task prompt");
-      return;
-    }
-
-    try {
-      setErrorMessage("");
-      const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-      const response = await createTask(form.cwd.trim(), selectedChannelId, {
-        title: titleFromPrompt(prompt),
-        prompt,
-        assigneeTeammateId: input.assigneeTeammateId || selectedChannel?.defaultTeammateId,
-      });
-      setSelectedTaskId(response.task.id);
-      setTasks((current) => [response.task, ...current.filter((task) => task.id !== response.task.id)]);
-      await refreshTasks(selectedChannelId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
   async function sendChannelMessage(input: {
     readonly threadId?: string;
     readonly body: string;
@@ -3081,7 +3050,6 @@ export function AppShell(): JSX.Element {
             onCreateDefaultChannel={() => void saveDefaultChannel()}
             onCreateChannel={() => void saveChannel()}
             onCreateTask={() => void saveTask()}
-            onCreateTaskFromComposer={(input) => createComposerTask(input)}
             onSendMessage={sendChannelMessage}
             onConfirmExecutionProposal={(proposal) => void confirmChannelExecutionProposal(proposal)}
             onCancelExecutionProposal={(proposal) => void cancelChannelExecutionProposal(proposal)}

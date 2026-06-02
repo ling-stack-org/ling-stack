@@ -114,8 +114,7 @@ type TaskFilter = "all" | "queued" | "running" | "review" | "done";
 type ChannelTab = "activity" | "tasks" | "files" | "protocol";
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
-type ComposerSendState = "idle" | "sending" | "creating-task" | "failed";
-type ComposerFailureKind = "message" | "task";
+type ComposerSendState = "idle" | "sending" | "failed";
 type AiReplyState = "idle" | "replying" | "failed";
 type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
 type MessageBubbleTone = "chat" | "chat-blocked" | "system" | "work" | "approval" | "protocol" | "runtime";
@@ -239,7 +238,6 @@ export function WorkspaceClientView({
   onCreateDefaultChannel,
   onCreateChannel,
   onCreateTask,
-  onCreateTaskFromComposer,
   onSendMessage,
   onConfirmExecutionProposal,
   onCancelExecutionProposal,
@@ -331,7 +329,6 @@ export function WorkspaceClientView({
   readonly onCreateDefaultChannel: () => void;
   readonly onCreateChannel: () => void;
   readonly onCreateTask: () => void;
-  readonly onCreateTaskFromComposer: (input: { readonly prompt: string; readonly assigneeTeammateId?: string }) => Promise<void>;
   readonly onSendMessage: (input: {
     readonly threadId?: string;
     readonly body: string;
@@ -402,7 +399,6 @@ export function WorkspaceClientView({
   const [composerBusy, setComposerBusy] = useState(false);
   const [sendState, setSendState] = useState<ComposerSendState>("idle");
   const [sendError, setSendError] = useState("");
-  const [composerFailureKind, setComposerFailureKind] = useState<ComposerFailureKind>("message");
   const [aiReplyState, setAiReplyState] = useState<AiReplyState>("idle");
   const [activeThreadId, setActiveThreadId] = useState("");
   const [threadReplyDraft, setThreadReplyDraft] = useState("");
@@ -1159,7 +1155,6 @@ export function WorkspaceClientView({
     setComposerBusy(true);
     setSendState("sending");
     setSendError("");
-    setComposerFailureKind("message");
     setAiReplyState(shouldRequestAi ? "replying" : "idle");
     try {
       for (const url of pastedUrls) {
@@ -1199,49 +1194,7 @@ export function WorkspaceClientView({
       const message = error instanceof Error ? error.message : String(error);
       setSendState("failed");
       setSendError(message);
-      setComposerFailureKind("message");
       setAiReplyState(shouldRequestAi ? "failed" : "idle");
-    } finally {
-      setComposerBusy(false);
-    }
-  }
-
-  async function createTaskFromComposer(): Promise<void> {
-    const body = messageDraft.trim();
-    if (!selectedChannelId || composerBusy || assetOperationPending || !body) {
-      return;
-    }
-    const assigneeTeammateId = messageMentions.find((mention) => mention.kind === "ai-teammate")?.id;
-    const readyAttachmentLines = pendingAttachments.flatMap((item) => item.attachment ? [`Attached file: ${item.fileName}`] : []);
-    const readyLinkLines = pendingLinkPreviews.flatMap((item) => {
-      if (!item.preview) {
-        return [];
-      }
-      const previewUrl = item.preview.normalizedUrl || item.preview.url;
-      return body.includes(previewUrl) || body.includes(item.preview.url) ? [] : [`Link: ${item.preview.title} ${previewUrl}`];
-    });
-    const contextLines = [...readyAttachmentLines, ...readyLinkLines];
-    const prompt = contextLines.length > 0 ? `${body}\n\n${contextLines.join("\n")}` : body;
-    setComposerBusy(true);
-    setSendState("creating-task");
-    setSendError("");
-    setComposerFailureKind("task");
-    setAiReplyState("idle");
-    try {
-      await onCreateTaskFromComposer({ prompt, assigneeTeammateId });
-      setMessageDraft("");
-      setMessageMentions([]);
-      setPendingAttachments([]);
-      setPendingLinkPreviews([]);
-      autoPreviewUrlsRef.current.clear();
-      setSendState("idle");
-      setSendError("");
-      setActiveTab("tasks");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setSendState("failed");
-      setSendError(message);
-      setComposerFailureKind("task");
     } finally {
       setComposerBusy(false);
     }
@@ -1314,7 +1267,6 @@ export function WorkspaceClientView({
   const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
   const readyLinkPreviewIds = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview.id] : []);
   const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0;
-  const composerHasTaskContent = messageDraft.trim().length > 0;
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
   const channelComposer = (
     <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
@@ -1387,10 +1339,6 @@ export function WorkspaceClientView({
             }}
           />
         </label>
-        <button className="secondary-button compact-button composer-task-button" type="button" onClick={() => void createTaskFromComposer()} disabled={!selectedChannelId || composerBusy || assetOperationPending || !composerHasTaskContent}>
-          {sendState === "creating-task" ? <Loader2 className="spin" size={15} /> : <SquareTerminal size={15} />}
-          {sendState === "creating-task" ? t("Creating...") : t("Task")}
-        </button>
         <button className="primary-button" type="button" onClick={() => void sendMessage()} disabled={!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent}>
           {sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
           {sendState === "sending" ? t("Sending...") : t("Send")}
@@ -1437,12 +1385,6 @@ export function WorkspaceClientView({
               <span>{t("Sending message...")}</span>
             </div>
           ) : null}
-          {sendState === "creating-task" ? (
-            <div className="composer-status-row loading">
-              <Loader2 className="spin" size={14} />
-              <span>{t("Creating task...")}</span>
-            </div>
-          ) : null}
           {aiReplyState === "replying" ? (
             <div className="composer-status-row loading">
               <Loader2 className="spin" size={14} />
@@ -1452,12 +1394,8 @@ export function WorkspaceClientView({
           {sendState === "failed" ? (
             <div className="composer-status-row failed">
               <CircleAlert size={14} />
-              <span>{t(composerFailureKind === "task" ? "Task failed" : "Message failed")}{sendError ? `: ${sendError}` : ""}</span>
+              <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
               <button className="secondary-button compact-button" type="button" onClick={() => {
-                if (composerFailureKind === "task") {
-                  void createTaskFromComposer();
-                  return;
-                }
                 void sendMessage();
               }}>
                 <RefreshCw size={13} />

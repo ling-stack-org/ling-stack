@@ -18,12 +18,11 @@ The AI teammates page now uses the same client direction: a Helio-inspired, macO
 The richer channel surface is tracked in [Channel Workspace Design](channel-workspace.md). That document is the source of truth for channel tabs, default AI teammate assignment, member/notification/settings inspector behavior, file/artifact access, and the phased implementation checklist.
 
 Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, `Files`,
-and `Context` tabs; a unified channel composer with `Send` and `Task` actions;
+and `Context` tabs; a unified channel composer with a `Send` action;
 structured `@` AI teammate mentions; durable channel messages; no-tools AI discussion
 replies; user attachments; metadata-only web link previews; ordinary discussion
-messages without inline conversion controls; and task creation from the current composer
-input with `assigneeTeammateId` derived from the first AI mention or channel default
-teammate.
+messages without inline conversion controls; manual task creation from the `Tasks`
+panel; and proposal-driven task creation after user confirmation.
 
 Implemented v1.1 behavior: the channel inspector adds `Brief`, `Decisions`, `Handoffs`, and
 `Runtime` modes. Activity now synthesizes channel messages with decision, handoff, and
@@ -142,14 +141,18 @@ selection, dropped/pasted files, and URL previews. `Send` stores a discussion me
 `Task` creates a durable task from the same input and opens the `Tasks` tab. v1.18
 remains Web-only and reuses the existing message and task APIs.
 
-Accepted v1.19 design: channels are general multi-agent studios, not coding-only task
+Implemented v1.19 behavior: channels are general multi-agent studios, not coding-only task
 rooms. A coordinator can consult specialist teammates, show that process as a collapsed
 collaboration record, and emit safe execution proposals instead of directly creating
-tasks. The Web client will render an editable confirmation card; user confirmation
-creates the durable task and starts the assignee's PI run when the proposal is
-create-and-run. The user stays in channel context, approval cards surface in-channel,
-and assignee provider/tool/preflight blockers do not silently fall back to another
-provider.
+tasks. The Web client renders a confirmation card; user confirmation creates the durable
+task and starts the assignee's PI run when the proposal is create-and-run. The user stays
+in channel context, and assignee provider/tool/preflight blockers do not silently fall
+back to another provider.
+
+Implemented v1.20 behavior: the channel Chat composer removes the direct `Task` action.
+Chat stays a discussion surface with `Send`, attachments, link previews, and `@`
+mentions. Manual task creation remains in the `Tasks` panel, while chat-to-execution
+uses user-confirmed proposal cards.
 
 ## Goal
 

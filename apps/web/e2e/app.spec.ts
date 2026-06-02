@@ -428,6 +428,7 @@ test("channel activity supports mentions, messages, files, links, and task creat
   await expect(page.getByRole("button", { name: "Chat", exact: true })).toBeVisible();
   await expect(page.locator("article.task-detail")).toHaveCount(0);
   await expect(page.locator('.channel-composer [aria-label="Composer mode"]')).toHaveCount(0);
+  await expect(page.locator(".channel-composer").getByRole("button", { name: "Task" })).toHaveCount(0);
   const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
   await composerInput.fill("@Eng");
   await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
@@ -481,11 +482,9 @@ test("channel activity supports mentions, messages, files, links, and task creat
   await expect.poll(() => state.lastChannelMessageRequest?.threadId).toBe("msg_1");
   await expect(topicPanel).toContainText("Thread follow-up from the topic panel");
 
-  await composerInput.fill("@Eng");
-  await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
-  await page.getByRole("option", { name: /@Engineer/ }).click();
-  await composerInput.fill("@Engineer please refine the channel requirements");
-  await page.locator(".channel-composer").getByRole("button", { name: "Task" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.getByLabel("Prompt").fill("@Engineer please refine the channel requirements");
+  await page.getByRole("button", { name: "Create task" }).click();
   await expect.poll(() => {
     const created = state.tasks.find((task) => isRecord(task) && task.id === "task_2");
     return isRecord(created) ? created.assigneeTeammateId : undefined;
