@@ -40,6 +40,7 @@ import {
   createChannelBriefId,
   createChannelContextSummaryId,
   createChannelDecisionId,
+  createChannelExecutionProposalId,
   createChannelHandoffId,
   createChannelId,
   createChannelLinkPreviewId,
@@ -63,6 +64,8 @@ import {
   type ChannelContextSummaryTargetType,
   type ChannelDecision,
   type ChannelDecisionStatus,
+  type ChannelExecutionProposal,
+  type ChannelExecutionProposalStatus,
   type ChannelHandoff,
   type ChannelHandoffStatus,
   type ChannelLinkPreview,
@@ -82,6 +85,7 @@ import {
   type CreateChannelAttachmentInput,
   type CreateChannelContextSummaryInput,
   type CreateChannelDecisionInput,
+  type CreateChannelExecutionProposalInput,
   type CreateChannelHandoffInput,
   type CreateChannelInput,
   type CreateChannelLinkPreviewInput,
@@ -94,6 +98,7 @@ import {
   type ListChannelAttachmentsOptions,
   type ListChannelContextSummariesOptions,
   type ListChannelDecisionsOptions,
+  type ListChannelExecutionProposalsOptions,
   type ListChannelHandoffsOptions,
   type ListChannelsOptions,
   type ListChannelLinkPreviewsOptions,
@@ -120,6 +125,7 @@ import {
   type UpdateChannelBriefInput,
   type UpdateChannelContextSummaryInput,
   type UpdateChannelDecisionInput,
+  type UpdateChannelExecutionProposalInput,
   type UpdateChannelHandoffInput,
   type UpdateChannelLinkPreviewInput,
   type UpdateChannelWorkflowInput,
@@ -240,6 +246,8 @@ const EXTERNAL_WORK_ACTIONS_MIGRATION_VERSION = 19;
 const EXTERNAL_WORK_ACTIONS_MIGRATION_NAME = "create_external_work_actions";
 const EXTERNAL_WORK_CI_TRIAGE_MIGRATION_VERSION = 20;
 const EXTERNAL_WORK_CI_TRIAGE_MIGRATION_NAME = "create_external_work_ci_triage";
+const CHANNEL_EXECUTION_PROPOSALS_MIGRATION_VERSION = 21;
+const CHANNEL_EXECUTION_PROPOSALS_MIGRATION_NAME = "create_channel_execution_proposals";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -1682,6 +1690,172 @@ export class SqliteRunStore implements RunStore {
       .prepare(`${channelMessageSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at ASC, rowid ASC LIMIT ?`)
       .all(...params)
       .map(mapChannelMessage);
+  }
+
+  createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal {
+    if (!this.getChannel(input.channelId)) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+    const sourceMessage = this.getChannelMessage(input.sourceMessageId);
+    if (!sourceMessage || sourceMessage.channelId !== input.channelId) {
+      throw new Error(`Source message does not belong to channel: ${input.sourceMessageId}`);
+    }
+    const proposal: ChannelExecutionProposal = {
+      id: createChannelExecutionProposalId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      sourceMessageId: input.sourceMessageId,
+      proposedByTeammateId: input.proposedByTeammateId,
+      title: input.title,
+      prompt: input.prompt,
+      assigneeTeammateId: input.assigneeTeammateId,
+      acceptanceCriteria: input.acceptanceCriteria ?? [],
+      collaborationSteps: input.collaborationSteps ?? [],
+      requiredTools: input.requiredTools ?? [],
+      riskSummary: input.riskSummary,
+      status: input.status ?? "draft",
+      linkedTaskId: input.linkedTaskId,
+      linkedRunId: input.linkedRunId,
+      errorMessage: input.errorMessage,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO channel_execution_proposals (
+          id,
+          workspace_id,
+          channel_id,
+          source_message_id,
+          proposed_by_teammate_id,
+          title,
+          prompt,
+          assignee_teammate_id,
+          acceptance_criteria_json,
+          collaboration_steps_json,
+          required_tools_json,
+          risk_summary,
+          status,
+          linked_task_id,
+          linked_run_id,
+          error_message,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        proposal.id,
+        proposal.workspaceId,
+        proposal.channelId,
+        proposal.sourceMessageId,
+        proposal.proposedByTeammateId,
+        proposal.title,
+        proposal.prompt,
+        proposal.assigneeTeammateId,
+        stringifyJson(proposal.acceptanceCriteria),
+        stringifyJson(proposal.collaborationSteps),
+        stringifyJson(proposal.requiredTools),
+        proposal.riskSummary ?? null,
+        proposal.status,
+        proposal.linkedTaskId ?? null,
+        proposal.linkedRunId ?? null,
+        proposal.errorMessage ?? null,
+        proposal.createdAt,
+        proposal.updatedAt,
+      );
+
+    const created = this.getChannelExecutionProposal(proposal.id);
+    if (!created) {
+      throw new Error(`Failed to create channel execution proposal: ${proposal.id}`);
+    }
+    return created;
+  }
+
+  getChannelExecutionProposal(id: string): ChannelExecutionProposal | undefined {
+    const row = this.database.prepare(channelExecutionProposalSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelExecutionProposal(row) : undefined;
+  }
+
+  listChannelExecutionProposals(options: ListChannelExecutionProposalsOptions): ChannelExecutionProposal[] {
+    const clauses = ["workspace_id = ?", "channel_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
+    if (options.sourceMessageId) {
+      clauses.push("source_message_id = ?");
+      params.push(options.sourceMessageId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${channelExecutionProposalSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at ASC, rowid ASC LIMIT ?`)
+      .all(...params)
+      .map(mapChannelExecutionProposal);
+  }
+
+  updateChannelExecutionProposal(
+    id: string,
+    input: UpdateChannelExecutionProposalInput,
+    now: string,
+  ): ChannelExecutionProposal | undefined {
+    const existing = this.getChannelExecutionProposal(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: ChannelExecutionProposal = {
+      ...existing,
+      title: input.title ?? existing.title,
+      prompt: input.prompt ?? existing.prompt,
+      assigneeTeammateId: input.assigneeTeammateId ?? existing.assigneeTeammateId,
+      acceptanceCriteria: input.acceptanceCriteria ?? existing.acceptanceCriteria,
+      collaborationSteps: input.collaborationSteps ?? existing.collaborationSteps,
+      requiredTools: input.requiredTools ?? existing.requiredTools,
+      riskSummary: nullableUpdate(input.riskSummary, existing.riskSummary),
+      status: input.status ?? existing.status,
+      linkedTaskId: nullableUpdate(input.linkedTaskId, existing.linkedTaskId),
+      linkedRunId: nullableUpdate(input.linkedRunId, existing.linkedRunId),
+      errorMessage: nullableUpdate(input.errorMessage, existing.errorMessage),
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        UPDATE channel_execution_proposals
+        SET
+          title = ?,
+          prompt = ?,
+          assignee_teammate_id = ?,
+          acceptance_criteria_json = ?,
+          collaboration_steps_json = ?,
+          required_tools_json = ?,
+          risk_summary = ?,
+          status = ?,
+          linked_task_id = ?,
+          linked_run_id = ?,
+          error_message = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.title,
+        next.prompt,
+        next.assigneeTeammateId,
+        stringifyJson(next.acceptanceCriteria),
+        stringifyJson(next.collaborationSteps),
+        stringifyJson(next.requiredTools),
+        next.riskSummary ?? null,
+        next.status,
+        next.linkedTaskId ?? null,
+        next.linkedRunId ?? null,
+        next.errorMessage ?? null,
+        next.updatedAt,
+        next.id,
+      );
+
+    return this.getChannelExecutionProposal(id);
   }
 
   createChannelAttachment(input: CreateChannelAttachmentInput): ChannelAttachment {
@@ -5293,6 +5467,50 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(EXTERNAL_WORK_CI_TRIAGE_MIGRATION_VERSION, EXTERNAL_WORK_CI_TRIAGE_MIGRATION_NAME);
       }
     }
+
+    const hasChannelExecutionProposalsMigration = this.hasMigration(CHANNEL_EXECUTION_PROPOSALS_MIGRATION_VERSION);
+    if (!hasChannelExecutionProposalsMigration || !this.hasTable("channel_execution_proposals")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_execution_proposals (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          source_message_id TEXT NOT NULL,
+          proposed_by_teammate_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          assignee_teammate_id TEXT NOT NULL,
+          acceptance_criteria_json TEXT NOT NULL,
+          collaboration_steps_json TEXT NOT NULL,
+          required_tools_json TEXT NOT NULL,
+          risk_summary TEXT,
+          status TEXT NOT NULL,
+          linked_task_id TEXT,
+          linked_run_id TEXT,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_message_id) REFERENCES channel_messages(id) ON DELETE CASCADE,
+          FOREIGN KEY(linked_task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+          FOREIGN KEY(linked_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_execution_proposals_channel_created
+        ON channel_execution_proposals(channel_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_execution_proposals_source
+        ON channel_execution_proposals(source_message_id);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_execution_proposals_status
+        ON channel_execution_proposals(channel_id, status, updated_at);
+      `);
+
+      if (!hasChannelExecutionProposalsMigration) {
+        this.recordMigration(CHANNEL_EXECUTION_PROPOSALS_MIGRATION_VERSION, CHANNEL_EXECUTION_PROPOSALS_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -5765,6 +5983,29 @@ function mapChannelMessage(row: Record<string, SQLOutputValue>): ChannelMessage 
     linkedTaskId: readNullableString(row, "linked_task_id"),
     linkedRunId: readNullableString(row, "linked_run_id"),
     status: readString(row, "status") as ChannelMessage["status"],
+    errorMessage: readNullableString(row, "error_message"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelExecutionProposal(row: Record<string, SQLOutputValue>): ChannelExecutionProposal {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    sourceMessageId: readString(row, "source_message_id"),
+    proposedByTeammateId: readString(row, "proposed_by_teammate_id"),
+    title: readString(row, "title"),
+    prompt: readString(row, "prompt"),
+    assigneeTeammateId: readString(row, "assignee_teammate_id"),
+    acceptanceCriteria: parseJsonStringArray(readString(row, "acceptance_criteria_json")),
+    collaborationSteps: parseChannelExecutionProposalSteps(readString(row, "collaboration_steps_json")),
+    requiredTools: parseJsonStringArray(readString(row, "required_tools_json")) as ChannelExecutionProposal["requiredTools"],
+    riskSummary: readNullableString(row, "risk_summary"),
+    status: readString(row, "status") as ChannelExecutionProposalStatus,
+    linkedTaskId: readNullableString(row, "linked_task_id"),
+    linkedRunId: readNullableString(row, "linked_run_id"),
     errorMessage: readNullableString(row, "error_message"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
@@ -6389,6 +6630,32 @@ function channelMessageSelectSql(whereClause: string): string {
   `;
 }
 
+function channelExecutionProposalSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      source_message_id,
+      proposed_by_teammate_id,
+      title,
+      prompt,
+      assignee_teammate_id,
+      acceptance_criteria_json,
+      collaboration_steps_json,
+      required_tools_json,
+      risk_summary,
+      status,
+      linked_task_id,
+      linked_run_id,
+      error_message,
+      created_at,
+      updated_at
+    FROM channel_execution_proposals
+    ${whereClause}
+  `;
+}
+
 function channelAttachmentSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -6842,6 +7109,31 @@ function parseChannelMentions(value: string): ChannelMessage["mentions"] {
       id: item.id,
       label: item.label,
       kind: item.kind,
+    };
+  });
+}
+
+function parseChannelExecutionProposalSteps(value: string): ChannelExecutionProposal["collaborationSteps"] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Expected channel execution proposal steps array from SQLite");
+  }
+  return parsed.map((item) => {
+    if (!isJsonRecord(item) || typeof item.teammateId !== "string" || typeof item.summary !== "string") {
+      throw new Error("Expected channel execution proposal step from SQLite");
+    }
+    if (
+      item.action !== "coordinated" &&
+      item.action !== "consulted" &&
+      item.action !== "reviewed" &&
+      item.action !== "flagged_risk"
+    ) {
+      throw new Error("Expected channel execution proposal step action from SQLite");
+    }
+    return {
+      teammateId: item.teammateId,
+      action: item.action,
+      summary: item.summary,
     };
   });
 }

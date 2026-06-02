@@ -14,6 +14,8 @@ import type {
   ChannelDecisionListResponse,
   ChannelDecisionMutationResponse,
   ChannelDecisionStatus,
+  ChannelExecutionProposalListResponse,
+  ChannelExecutionProposalMutationResponse,
   ChannelHandoffListResponse,
   ChannelHandoffMutationResponse,
   ChannelHandoffStatus,
@@ -33,6 +35,7 @@ import type {
   CreateChannelAttachmentRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
+  CreateChannelExecutionProposalRequest,
   CreateChannelHandoffRequest,
   CreateChannelLinkPreviewRequest,
   CreateChannelMessageRequest,
@@ -108,6 +111,7 @@ import type {
   UpdateChannelBriefRequest,
   UpdateChannelContextSummaryRequest,
   UpdateChannelDecisionRequest,
+  UpdateChannelExecutionProposalRequest,
   UpdateChannelHandoffRequest,
   UpdateChannelWorkflowRequest,
   UpdateChannelWorkflowStepRequest,
@@ -217,6 +221,26 @@ export class LingDaemonClient {
     input: CreateChannelMessageRequest,
   ): Promise<ChannelMessageMutationResponse> {
     return this.post(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd }, input);
+  }
+
+  async listChannelExecutionProposals(cwd: string, channelId: string, limit = 100): Promise<ChannelExecutionProposalListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/proposals`, { cwd, limit });
+  }
+
+  async createChannelExecutionProposal(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelExecutionProposalRequest,
+  ): Promise<ChannelExecutionProposalMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/proposals`, { cwd }, input);
+  }
+
+  async updateChannelExecutionProposal(
+    cwd: string,
+    proposalId: string,
+    input: UpdateChannelExecutionProposalRequest,
+  ): Promise<ChannelExecutionProposalMutationResponse> {
+    return this.patch(`/channel-proposals/${encodeURIComponent(proposalId)}`, { cwd }, input);
   }
 
   async listAiTeammates(

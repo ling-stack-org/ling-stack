@@ -27,6 +27,8 @@ Related docs:
 - [Channel Workspace v1.15 Helio-Style Chat and Topics](channel-workspace-v1.15.md)
 - [Channel Workspace v1.16 Channel Settings Panels](channel-workspace-v1.16.md)
 - [Channel Workspace v1.17 Teammate Dock and Hover Topic Actions](channel-workspace-v1.17.md)
+- [Channel Workspace v1.18 Unified Composer Actions](channel-workspace-v1.18.md)
+- [Channel Workspace v1.19 General Multi-Agent Studio and Execution Proposals](channel-workspace-v1.19.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
@@ -67,13 +69,18 @@ work. The missing pieces are:
 
 ## Product Position
 
-A Ling Stack channel is not a generic chat room.
+A Ling Stack channel is not a generic chat room and is not a coding-only task room.
 
-A channel is an AI teammate workroom bound to a local project scope. Chat-like activity is
-only one representation of durable work events. The durable objects are:
+A channel is a general multi-agent work studio. It can be a software workspace, film
+production room, product planning room, content desk, operations room, research room, or
+another domain-specific scene. Chat-like activity is only one representation of durable
+work events. The durable objects are:
 
 - channel configuration,
 - AI teammate membership and defaults,
+- coordinator and role assignments,
+- execution proposals,
+- collaboration records,
 - tasks,
 - runs,
 - approvals,
@@ -81,16 +88,17 @@ only one representation of durable work events. The durable objects are:
 - runtime locks,
 - state transitions.
 
-The user should feel they are working in a focused project room, not messaging a bot in a
-stateless chat client.
+The user should feel they are working in a focused studio with configurable AI teammates,
+not messaging a bot in a stateless chat client.
 
 ## Design Goals
 
 - Make the selected channel the default first screen for real work.
-- Keep task creation and task execution more important than free-form chat.
-- Make the default AI teammate visible and editable from the channel.
+- Keep execution proposals and execution state more important than free-form chat.
+- Make the default coordinator and available AI teammates visible and editable from the channel.
 - Make multi-agent ownership and handoff visible before work starts.
-- Keep provider, tools, approval profile, and runtime lock state inspectable before a run.
+- Keep provider, tools, approval profile, and runtime lock state inspectable before a run,
+  with execution configuration following the assigned agent.
 - Let files and run artifacts be reached from the channel without opening run history first.
 - Preserve decisions and task context so agents can continue work without re-litigating
   the same assumptions.
@@ -102,8 +110,8 @@ stateless chat client.
 - Full Slack/Discord clone.
 - Cloud organizations, billing, or realtime multi-user presence.
 - Rich file explorer or in-browser code editor.
-- Persistent custom teammate instances before the teammate daemon/DB contract exists.
 - Unbounded generic chat that bypasses channel messages, tasks, approvals, or run state.
+- Broadcast-style multi-agent chat where every teammate posts visible messages by default.
 - Automatic trust in uploaded files, Office macros, embedded scripts, or binary content.
 - Automatic crawling, scraping, or AI ingestion of shared web links.
 - Bypassing provider preflight, approval policy, or runtime lock checks.
@@ -122,8 +130,8 @@ left sidebar
 center channel
   header
   tabs: activity / tasks / files
-  task-aware activity stream
-  discussion/task composer
+  execution-aware activity stream
+  unified discussion composer with explicit task action
 
 right inspector
   members
@@ -147,13 +155,14 @@ feature without copying another product's surface.
 | Teams tabs | A channel can expose specialized tabs instead of treating everything as messages. | Keep Activity, Tasks, Files, Brief, and Runtime as channel sub-surfaces. | Do not bury task state inside chat bubbles. |
 | ChatGPT Projects | A project groups chats, files, instructions, and project-scoped memory. | Treat the channel Brief, messages, files, links, and tasks as scoped context. | Do not let channel memory bleed into unrelated channels or workspaces. |
 | GitHub Copilot coding agent | Work is assigned, planned, executed, and returned for human review as a PR/task outcome. | Add assignment, handoff, review gates, and human final authority. | Do not let an AI teammate self-approve its own work or mark high-risk work done. |
+| Role-based studios | Domains such as film, content, and product work use specialists like director, cinematographer, editor, PM, researcher, and reviewer. | Treat teammate roles as configurable domain roles instead of hard-coded coding roles. | Do not require a code/project vocabulary for every channel. |
 
 Product decision:
 
 ```text
-Channel = context + coordination + task execution
+Channel = work scene + coordinator + role teammates + execution proposals
 not
-Channel = endless AI chat
+Channel = endless AI chat or coding-only task board
 ```
 
 The channel should borrow the visible collaboration affordances from team chat products,
@@ -179,7 +188,7 @@ The first viewport should show:
 - default AI teammate,
 - active runtime locks if any,
 - the selected channel tab,
-- discussion/task composer.
+- unified discussion composer with a `Task` action.
 
 ## Information Architecture
 
@@ -438,14 +447,12 @@ allow send anyway
 The channel should support talking with AI teammates, but the interaction must stay tied
 to the work model.
 
-Composer modes:
+The composer is one input surface with two explicit actions:
 
-```text
-Discuss
-Task
-```
+- `Send` stores a normal discussion message.
+- `Task` creates a durable task from the current input.
 
-`Discuss` is for:
+`Send` is for:
 
 - refining requirements,
 - asking implementation or product questions,
@@ -457,19 +464,21 @@ Task
 
 `Task` is for:
 
-- creating a durable task,
+- creating a durable execution item,
 - assigning an AI teammate,
-- attaching files as task context,
-- attaching links as task context,
+- capturing uploaded filenames as task context,
+- capturing shared links as task context,
 - running through provider preflight and approval policy,
 - producing auditable run events and artifacts.
 
-The composer should support `@` mentions in both modes.
-The composer should also support attachment controls in both modes. In Discuss mode,
-attachments are part of the conversation context. In Task mode, selected attachments are
-included as task inputs only after validation.
+The composer should support inline `@` mentions before either action. For discussion,
+AI mentions route the next AI reply. For task creation, the first selected AI teammate
+mention becomes the task assignee; otherwise the channel default teammate is used.
+For future proposal-driven execution, the proposed task assignee is the source of truth:
+provider, tools, approval profile, and execution blockers follow that assignee.
 
-The composer should support automatic link detection in both modes. Link previews help
+The composer should also support attachment controls and automatic link detection from
+the same input. Link previews help
 the human inspect what was shared, but link content is not fetched for AI use unless the
 user explicitly asks for inspection.
 
@@ -477,7 +486,7 @@ Mention targets:
 
 | Mention | MVP behavior | Future behavior |
 | --- | --- | --- |
-| `@Engineer`, `@Designer`, built-in AI teammate | In Discuss mode, route the next AI reply to that teammate. In Task mode, set the task assignee/default teammate. | Use persisted teammate instances and per-teammate memory/tools. |
+| `@Engineer`, `@Designer`, built-in AI teammate | On `Send`, route the next AI reply to that teammate. On `Task`, set the task assignee/default teammate. | Use persisted teammate instances and per-teammate memory/tools. |
 | `@local-teammate` draft | UI-only mention until teammate persistence exists. | Persist mention target and route to teammate instance. |
 | `@user` | Highlight and notification metadata only. | Notify real workspace members when team sync exists. |
 | `@channel` / `@all` | Not in MVP. | Add only with notification controls and abuse limits. |
@@ -485,23 +494,32 @@ Mention targets:
 
 Rules:
 
-- If no AI teammate is mentioned in Discuss mode, the channel default AI teammate should
-  answer.
-- If no default AI teammate exists, the UI should ask the user to choose one or route to
-  the `Engineer` template as a temporary local default.
+- If an AI teammate is mentioned for a discussion reply, that teammate should answer.
+- If no AI teammate is mentioned and the channel has a coordinator/default teammate, the
+  coordinator should decide whether to answer, ask a clarifying question, consult
+  specialists, create a collapsed collaboration record, or simply record the message.
+- Ordinary notes, status updates, and messages that do not need AI input should not
+  trigger an AI reply just because a coordinator exists.
+- If no default coordinator exists, the UI should store the message without AI response
+  and offer a setup route to add/select a coordinator.
 - A mention never grants new tools or provider capabilities.
 - A mentioned teammate can only use the channel's allowed tools and the selected
   provider's capabilities.
 - Provider resolution for a discussion reply is deterministic: mentioned teammate
   provider, explicit run provider, channel default provider, workspace selected provider,
   then first preflight-ready chat provider.
+- Provider resolution for execution is stricter: it follows the confirmed proposal/task
+  assignee. If the assignee provider is missing, failed, or not tool-capable, the task/run
+  is blocked and the user must fix configuration or edit the assignee. Do not silently
+  fall back to another teammate or provider.
 - An attachment never grants file read permission outside the uploaded file itself.
 - A link never grants network browsing permission beyond preview metadata.
-- Discuss mode is read-only by default. File edits, shell commands, external sends, and
+- Discussion is read-only by default. File edits, shell commands, external sends, and
   deploy actions require converting the discussion into a task/run.
 - AI replies should stay readable by default. When discussion produces executable work,
-  the explicit path is composer `Task` mode, an event details triage action, or a
-  context-summary action rather than inline conversion buttons on every message.
+  the preferred path is a user-confirmed execution proposal. The composer `Task` action,
+  an event details triage action, or a context-summary action remain explicit manual
+  paths rather than inline conversion buttons on every message.
 
 Recommended mention UX:
 
@@ -533,10 +551,42 @@ The output of a good discussion is one of:
 - a refined task prompt,
 - an acceptance checklist,
 - a plan summary,
+- an execution proposal with assignee and acceptance criteria,
+- a collapsed collaboration record showing which specialists contributed,
 - a linked follow-up task,
 - a decision note in the channel activity.
 
 Do not make AI discussion a side channel that disappears from the channel record.
+
+### General Studio Examples
+
+The protocol is domain-neutral. Code and film channels share the same objects because
+both need a scene, role teammates, a coordinator, an execution proposal, an assignee, and
+auditable execution state.
+
+Code channel:
+
+```text
+coordinator: Product / Architect
+specialists: Frontend Engineer, Backend Engineer, Reviewer, QA, Security, Docs
+proposal: simplify channel composer
+assignee: Frontend Engineer
+output: implementation, tests, review evidence, docs update
+```
+
+Film channel:
+
+```text
+coordinator: Director / Producer
+specialists: Cinematographer, Scene Designer, Editor, Script Consultant
+proposal: create rainy alley sci-fi scene plan
+assignee: Director
+output: logline, shot list, visual references, scene design notes
+```
+
+Adding a new teammate should not require changing the channel protocol. The new teammate
+needs role metadata, prompt, provider, tools, approval profile, and optional channel
+membership/default settings.
 
 ## Multi-Agent Collaboration Protocol
 
@@ -544,13 +594,26 @@ Multi-agent collaboration needs a protocol, not just multiple AI names in the si
 
 The channel should answer these questions at all times:
 
+- Who is the coordinator for this channel?
 - Who owns the current objective?
 - Which AI teammates are active, idle, blocked, or waiting for approval?
 - What is the current stage of work?
 - What context is each teammate allowed to use?
 - What decision has already been made?
+- Which specialists were consulted, and what did they contribute?
 - What handoff is next?
 - Who can approve completion?
+
+Coordinator rules:
+
+- The coordinator is the default AI participant for unmentioned messages that need AI
+  input.
+- The coordinator may consult specialists and summarize their input, but the default
+  channel view should show one integrated reply rather than one visible message per
+  consulted agent.
+- Specialist messages become visible by default only when explicitly mentioned, when
+  they disagree, when they identify a blocker/risk, or when user choice is required.
+- The collaboration process should be available as a collapsed record for traceability.
 
 ### Channel Roster
 
@@ -561,7 +624,9 @@ Roster fields:
 - participant id,
 - display name,
 - kind: user, built-in teammate, local teammate draft, system,
-- role: product, architect, designer, engineer, reviewer, QA, security, docs, release,
+- role: coordinator, product, architect, designer, engineer, reviewer, QA, security,
+  docs, release, director, cinematographer, scene designer, editor, producer, script
+  consultant, researcher, custom,
 - default provider preset,
 - allowed tools,
 - default skills,
@@ -1323,8 +1388,9 @@ not silently widen tool permissions.
 ### Create Task From Composer
 
 ```text
-write title and prompt
--> click Create task
+type task prompt in the channel composer
+-> optionally select @AI teammate from the mention popover
+-> click Task
 -> task is created in selected channel
 -> activity item appears
 -> task card appears
@@ -1342,13 +1408,12 @@ This should stay disabled until provider preflight and channel status allow it.
 
 ```text
 open channel
--> composer is in Discuss mode
 -> user types @Engineer help refine this requirement
 -> mention picker inserts structured teammate mention
--> user sends message
+-> user clicks Send
 -> channel stores the user message
 -> selected/default AI teammate replies with clarification, risks, and next steps
--> user switches composer to Task mode or uses an event/context-summary action when ready
+-> user clicks Task from the same composer or uses an event/context-summary action when ready
 ```
 
 Execution boundary:
@@ -1361,10 +1426,10 @@ Execution boundary:
 ### Promote Discussion to Task
 
 ```text
-copy or restate the actionable discussion in Task mode
--> task composer owns title, prompt, assignee, and provider selection
+copy or restate the actionable discussion in the channel composer
+-> Task action derives title from prompt and assigns mentioned/default teammate
 -> assignee defaults to mentioned AI teammate or channel default teammate
--> user confirms Create task or Create and run
+-> user clicks Task
 ```
 
 Plain discussion messages should not show inline conversion buttons by default. If a
@@ -1529,11 +1594,11 @@ Current MVP implementation status:
 
 - durable channel messages are implemented with `/channels/:id/messages`,
 - `@` mentions preserve structured AI teammate metadata,
-- Discuss mode can request a no-tools, text-only AI reply and persists blocker replies,
+- `Send` can request a no-tools, text-only AI reply and persists blocker replies,
 - channel attachments are stored under `.ling-stack/attachments` with a 25MB/file allow-list policy,
 - link previews are fetched by the daemon with SSRF protections and metadata-only storage,
 - Web now exposes `Activity`, `Tasks`, `Files`, and `Context` tabs; ordinary discussion
-  messages stay plain while tasks are created through Task mode, task detail, context
+  messages stay plain while tasks are created through the composer `Task` action, task detail, context
   summaries, or event details,
 - v1.1 now persists Channel Brief, Decision Log, Handoff, and Context Summary records,
   with Activity and inspector views synthesizing those protocol items,
@@ -1584,6 +1649,13 @@ Current MVP implementation status:
 - v1.17 now moves channel AI teammate membership management out of Settings into a
   dedicated header dock, and changes ordinary user/AI chat message chrome plus the topic
   reply affordance into hover/focus-only bubble UI with a right-edge icon tooltip,
+- v1.18 now removes the Chat composer `Discuss` / `Task` segmented mode switch and uses
+  a single input where `Send` creates discussion messages and `Task` creates tasks from
+  the current input,
+- v1.19 is the accepted design for a general multi-agent studio: channel discussion uses
+  a coordinator plus specialist teammates, multi-agent work stays collapsed by default,
+  agents may propose user-confirmed execution cards, and confirmation creates the task
+  and starts the assignee's PI run with approval/runtime state visible in-channel,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.
@@ -1595,7 +1667,7 @@ Current MVP implementation status:
 - [x] Map `channel.defaultTeammateId` in `channelToForm`.
 - [x] Add channel header default teammate chip.
 - [ ] Add right inspector shell with Members, Notifications, Settings, Runtime modes.
-- [x] Add composer mode model: `Discuss` and `Task`.
+- [x] Add composer action model: `Send` and `Task`.
 - [x] Add `@` mention parsing utilities for AI teammate targets.
 - [x] Add attachment UI affordance in the composer.
 - [x] Add URL detection and preview-card UI affordance in the composer.
@@ -1604,10 +1676,10 @@ Current MVP implementation status:
 
 ### Phase 2: AI Discussion MVP
 
-- [x] Add channel composer with Discuss/Task segmented control.
+- [x] Add channel composer with unified `Send` / `Task` actions.
 - [x] Add mention picker that lists AI teammates first.
-- [x] Route Discuss mode to the mentioned teammate or channel default teammate.
-- [x] Keep Discuss mode no-tools unless converted into a task.
+- [x] Route discussion replies to the mentioned teammate or channel default teammate.
+- [x] Keep discussion no-tools unless converted into a task.
 - [x] Add an explicit task creation path from channel discussion context.
 - [x] Decide first implementation: durable SQLite messages.
 - [x] Add e2e coverage for `@Engineer` mention and task creation from the channel
@@ -1685,7 +1757,7 @@ Current MVP implementation status:
 - [x] Define v1.5 Activity Events plan in `docs/design/channel-workspace-v1.5.md`.
 - [x] Build derived activity items from tasks/runs/approvals/state transitions.
 - [x] Add no-events and no-files empty states.
-- [x] Keep the discussion/task composer in Activity so Tasks can focus on queue + detail.
+- [x] Keep the unified composer in Activity so Tasks can focus on queue + detail.
 - [x] Move task detail into the `Tasks` tab.
 - [x] Add e2e coverage for tab switching through Activity/Files.
 
@@ -1835,6 +1907,8 @@ Current MVP implementation status:
 - [x] Auto-create link previews from URLs in the message body without a separate
   `Preview link` action.
 - [x] Request an AI discussion reply only when an AI teammate is explicitly mentioned.
+  v1.19 supersedes this trigger with coordinator intent detection for unmentioned
+  messages that need AI input.
 
 ### Phase 22: Activity Message Boundary Simplification
 
@@ -1846,7 +1920,7 @@ Current MVP implementation status:
   actionable.
 - [x] Add category-specific left-edge tones for work, approval, protocol, runtime, and
   system events.
-- [x] Update e2e coverage so task creation uses composer `Task` mode and protocol
+- [x] Update e2e coverage so task creation uses the composer `Task` action and protocol
   mutations use event details or context-summary actions.
 
 ### Phase 23: Helio-Style Chat and Topic Replies
@@ -1885,6 +1959,40 @@ Current MVP implementation status:
   keyboard focus.
 - [x] Show a right-edge icon bubble and icon tooltip before opening the topic reply panel.
 
+### Phase 26: Unified Composer Actions
+
+- [x] Define v1.18 Unified Composer Actions in
+  `docs/design/channel-workspace-v1.18.md`.
+- [x] Remove the Chat composer `Discuss` / `Task` segmented control.
+- [x] Keep one textarea for messages, mentions, file drops, pasted files, and URL
+  previews.
+- [x] Keep `Send` as the discussion action and `Task` as the explicit task creation
+  action from the same input.
+- [x] Derive task title from the prompt and assign the first selected AI teammate mention
+  or the channel default teammate.
+
+### Phase 27: General Multi-Agent Studio and Execution Proposals
+
+- [x] Define v1.19 General Multi-Agent Studio in
+  `docs/design/channel-workspace-v1.19.md`.
+- [ ] Add a persisted execution proposal contract, migration, daemon API, and Web client
+  methods.
+- [ ] Add a safe `propose_task` tool/result contract for channel AI replies.
+- [ ] Add coordinator participation rules for unmentioned messages: respond only when
+  the message needs AI input, otherwise record without noise.
+- [ ] Render proposed execution drafts as inline confirmation cards in Chat.
+- [ ] Show collapsed multi-agent collaboration records on proposal cards and allow
+  expansion for audit.
+- [ ] Let the user edit, cancel, or confirm the proposed execution before durable task
+  creation.
+- [ ] On confirmation, create the task and start a PI run for the proposal/task assignee.
+- [ ] Block confirmation when the assignee provider, tools, credentials, or approval
+  profile are not runnable; do not silently fall back to another provider.
+- [ ] Keep the user in the channel after confirmation and show task/run details in the
+  right-side detail surface when available.
+- [ ] Show PI approval cards in channel context when a run requests `bash`, `edit`,
+  `write`, external sends, or domain-specific side-effect tools.
+
 ## Validation Plan
 
 Run these before landing channel UI changes:
@@ -1905,11 +2013,22 @@ Focused e2e scenarios:
 - `@` opens a mention picker with AI teammates before users,
 - channel composer does not expose a `More` panel in the default Activity path,
 - dropped or pasted files attach from the composer without expanding secondary controls,
-- Discuss mode can produce an AI teammate reply without creating a task,
+- `Send` can produce an AI teammate reply without creating a task,
+- unmentioned messages use coordinator intent detection instead of forcing an AI reply
+  for ordinary notes,
+- code and film channels can both express coordinator, specialist teammates, proposal,
+  assignee, and execution state without changing the channel protocol,
+- proposed execution cards show assignee, acceptance criteria, and collapsed
+  collaboration steps,
 - ordinary discussion messages do not expose inline task, decision, handoff, context, or
   details buttons,
-- creating a task from composer `Task` mode preserves the typed prompt and
+- creating a task from the composer `Task` action preserves the typed prompt and
   channel/default teammate assignment,
+- confirming an execution proposal creates the task, starts the assignee PI run, and
+  leaves the user in channel context,
+- assignee provider/tool/preflight blockers stop execution and do not silently fall back
+  to a different provider,
+- approval requests from PI runs are visible from channel context,
 - channel roster shows active/default AI teammates and their blocked/running/waiting state,
 - Channel Brief records objective, scope, acceptance criteria, decisions, and open risks,
 - handoff and review gate activity is visible before a task is accepted as done,
@@ -1937,6 +2056,10 @@ Focused e2e scenarios:
   tasks should reference durable teammate ids going forward.
 - MVP decision: the first AI mention wins task `assigneeTeammateId`; if no AI mention is
   present, task creation falls back to channel `defaultTeammateId`.
+- v1.19 decision: for execution proposals, `assigneeTeammateId` is required and is the
+  source of truth for PI provider, tools, approval profile, and blockers.
+- v1.19 decision: no-mention messages are evaluated by the channel coordinator; ordinary
+  records should not produce AI noise.
 - MVP decision: Files includes user-uploaded attachments, shared links, and run artifact
   aggregation by channel. Artifact contents are not read or sent to AI context.
 - MVP decision: allowed attachment formats are `png`, `jpg`, `jpeg`, `webp`, `gif`,

@@ -355,6 +355,75 @@ export interface ListChannelMessagesOptions {
   readonly limit?: number;
 }
 
+export type ChannelExecutionProposalStatus = "draft" | "accepted" | "cancelled" | "superseded" | "blocked" | "run_failed";
+
+export type ChannelExecutionProposalStepAction = "coordinated" | "consulted" | "reviewed" | "flagged_risk";
+
+export interface ChannelExecutionProposalStep {
+  readonly teammateId: string;
+  readonly action: ChannelExecutionProposalStepAction;
+  readonly summary: string;
+}
+
+export interface ChannelExecutionProposal {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceMessageId: string;
+  readonly proposedByTeammateId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly assigneeTeammateId: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
+  readonly requiredTools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "edit" | "write")[];
+  readonly riskSummary?: string;
+  readonly status: ChannelExecutionProposalStatus;
+  readonly linkedTaskId?: string;
+  readonly linkedRunId?: string;
+  readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelExecutionProposalInput {
+  readonly channelId: string;
+  readonly sourceMessageId: string;
+  readonly proposedByTeammateId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly assigneeTeammateId: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
+  readonly requiredTools?: readonly ChannelExecutionProposal["requiredTools"][number][];
+  readonly riskSummary?: string;
+  readonly status?: ChannelExecutionProposalStatus;
+  readonly linkedTaskId?: string;
+  readonly linkedRunId?: string;
+  readonly errorMessage?: string;
+}
+
+export interface UpdateChannelExecutionProposalInput {
+  readonly title?: string;
+  readonly prompt?: string;
+  readonly assigneeTeammateId?: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
+  readonly requiredTools?: readonly ChannelExecutionProposal["requiredTools"][number][];
+  readonly riskSummary?: string | null;
+  readonly status?: ChannelExecutionProposalStatus;
+  readonly linkedTaskId?: string | null;
+  readonly linkedRunId?: string | null;
+  readonly errorMessage?: string | null;
+}
+
+export interface ListChannelExecutionProposalsOptions {
+  readonly channelId: string;
+  readonly sourceMessageId?: string;
+  readonly status?: ChannelExecutionProposalStatus;
+  readonly limit?: number;
+}
+
 export type ChannelAttachmentKind = "image" | "pdf" | "office" | "text";
 
 export interface ChannelAttachment {
@@ -797,6 +866,10 @@ export function createTeammateDirectMessageId(): string {
 
 export function createChannelMessageId(): string {
   return `msg_${randomUUID()}`;
+}
+
+export function createChannelExecutionProposalId(): string {
+  return `proposal_${randomUUID()}`;
 }
 
 export function createChannelAttachmentId(): string {

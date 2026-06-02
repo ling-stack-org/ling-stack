@@ -41,6 +41,7 @@ import {
   providerKinds,
   redactSecrets,
   readOnlyRunTools,
+  riskyRunTools,
   createCompositeSecretResolver,
   secretPurposes,
   taskStatuses,
@@ -66,6 +67,9 @@ import {
   type ChannelContextSummaryTargetType,
   channelDecisionStatuses,
   type ChannelDecisionStatus,
+  type ChannelExecutionProposal,
+  type ChannelExecutionProposalStep,
+  type ChannelExecutionProposalStatus,
   channelHandoffStatuses,
   type ChannelHandoff,
   type ChannelHandoffStatus,
@@ -84,6 +88,7 @@ import {
   type Channel,
   type CreateMediaJobInput,
   type CreateChannelInput,
+  type CreateChannelExecutionProposalInput,
   type CreateTaskInput,
   type MediaJob,
   type MediaJobStatus,
@@ -155,6 +160,7 @@ import {
   type Task,
   type TaskStatus,
   type TaskUpdateInput,
+  type UpdateChannelExecutionProposalInput,
 } from "@ling-stack/core";
 import {
   createPiRunner,
@@ -268,6 +274,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
   readonly provider?: PiRunnerProviderConfig;
+  readonly approvalProfile?: SkillApprovalProfile;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
 }
@@ -291,6 +298,18 @@ interface ChannelMessageRequest {
   readonly requestAiReply: boolean;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
+}
+
+interface ChannelExecutionProposalRequest {
+  readonly sourceMessageId: string;
+  readonly proposedByTeammateId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly assigneeTeammateId: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
+  readonly requiredTools: readonly RunTool[];
+  readonly riskSummary?: string;
 }
 
 interface ChannelAttachmentRequest {
@@ -1036,6 +1055,10 @@ async function routeRequest(
       await handleChannelMessagesCollection(request, response, config, runner, storeRegistry, secretResolver, channelRoute.channelId);
       return;
     }
+    if (channelRoute.action === "proposals") {
+      await handleChannelExecutionProposalsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
     if (channelRoute.action === "attachments") {
       await handleChannelAttachmentsCollection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
@@ -1061,6 +1084,12 @@ async function routeRequest(
       return;
     }
     await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId);
+    return;
+  }
+
+  const channelProposalRoute = parseChannelExecutionProposalRoute(url.pathname);
+  if (channelProposalRoute) {
+    await handleChannelExecutionProposalItem(request, response, config, storeRegistry, channelProposalRoute.proposalId);
     return;
   }
 
@@ -1330,7 +1359,7 @@ async function executeRunRequest(
         throw new Error(`Task transition failed: ${taskStartTransition.code}`);
       }
     }
-    const approvalPolicy = store.getApprovalPolicy();
+    const approvalPolicy = mergeApprovalPolicyWithProfile(store.getApprovalPolicy(), runRequest.approvalProfile);
 
     const result = await runner.runTask({
       ...runnerRequest,
@@ -1822,6 +1851,111 @@ async function handleChannelMessagesCollection(
     }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel messages` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelExecutionProposalsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        proposals: store.listChannelExecutionProposals({
+          channelId,
+          sourceMessageId: url.searchParams.get("sourceMessageId") ?? undefined,
+          status: readOptionalChannelExecutionProposalStatusQuery(url),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelExecutionProposalRequest(body);
+      const messageError = validateChannelMessageOwner(store, channelId, input.sourceMessageId);
+      if (messageError) {
+        writeJson(response, messageError.statusCode === 404 ? 400 : messageError.statusCode, {
+          error: messageError.code,
+          message: messageError.message,
+        });
+        return;
+      }
+      const proposal = store.createChannelExecutionProposal({ channelId, ...input }, new Date().toISOString());
+      writeJson(response, 201, { proposal });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel proposals` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleChannelExecutionProposalItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  proposalId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const proposal = store.getChannelExecutionProposal(proposalId);
+    if (!proposal) {
+      writeJson(response, 404, { error: "proposal_not_found", message: `Channel proposal not found: ${proposalId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, { proposal });
+      return;
+    }
+
+    if (request.method === "PATCH") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseChannelExecutionProposalUpdateInput(body);
+      const updated = store.updateChannelExecutionProposal(proposalId, input, new Date().toISOString());
+      writeJson(response, 200, { proposal: updated ?? proposal });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel proposal` });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
@@ -3439,6 +3573,7 @@ async function handleTaskRunRequest(
           channelId: task.channelId,
         },
         tools: readOptionalRunTools(body, "tools") ?? channel.allowedTools,
+        approvalProfile: readOptionalApprovalProfile(body, "approvalProfile"),
         thinkingLevel: readOptionalThinkingLevel(body, "thinkingLevel"),
         systemPrompt: readOptionalString(body, "systemPrompt"),
         appendSystemPrompt: readOptionalStringArray(body, "appendSystemPrompt"),
@@ -6060,6 +6195,10 @@ async function createAiChannelReply(input: {
           "Reply concisely and only to the current channel discussion.",
           "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
           "Do not perform tool use or side effects.",
+          "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
+          `Use exact teammate ids in proposal JSON. Default assigneeTeammateId and collaboration teammateId to "${canonicalTeammateId}" unless the user explicitly selected another teammate id.`,
+          `<ling_task_proposal>{"title":"...","prompt":"...","assigneeTeammateId":"${canonicalTeammateId}","acceptanceCriteria":["..."],"collaborationSteps":[{"teammateId":"${canonicalTeammateId}","action":"coordinated","summary":"..."}],"requiredTools":["read"],"riskSummary":"..."}</ling_task_proposal>`,
+          "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
         ].join("\n"),
       },
       input.secretResolver,
@@ -6081,6 +6220,10 @@ async function createAiChannelReply(input: {
         "Reply concisely and only to the current channel discussion.",
         "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
         "Do not perform tool use or side effects.",
+        "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
+        `Use exact teammate ids in proposal JSON. Default assigneeTeammateId and collaboration teammateId to "${canonicalTeammateId}" unless the user explicitly selected another teammate id.`,
+        `<ling_task_proposal>{"title":"...","prompt":"...","assigneeTeammateId":"${canonicalTeammateId}","acceptanceCriteria":["..."],"collaborationSteps":[{"teammateId":"${canonicalTeammateId}","action":"coordinated","summary":"..."}],"requiredTools":["read"],"riskSummary":"..."}</ling_task_proposal>`,
+        "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
       ].join("\n"),
       onEvent: (event) => {
         if (event.type === "assistant_text_delta") {
@@ -6088,8 +6231,10 @@ async function createAiChannelReply(input: {
         }
       },
     });
-    const replyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
-    return input.store.createChannelMessage(
+    const rawReplyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
+    const extractedProposal = extractChannelExecutionProposal(rawReplyText, canonicalTeammateId);
+    const replyText = extractedProposal?.visibleBody || rawReplyText;
+    const reply = input.store.createChannelMessage(
       {
         channelId: input.channel.id,
         threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
@@ -6101,6 +6246,24 @@ async function createAiChannelReply(input: {
       },
       new Date().toISOString(),
     );
+    if (extractedProposal) {
+      input.store.createChannelExecutionProposal(
+        {
+          channelId: input.channel.id,
+          sourceMessageId: reply.id,
+          proposedByTeammateId: canonicalTeammateId,
+          title: extractedProposal.title,
+          prompt: extractedProposal.prompt,
+          assigneeTeammateId: extractedProposal.assigneeTeammateId,
+          acceptanceCriteria: extractedProposal.acceptanceCriteria,
+          collaborationSteps: extractedProposal.collaborationSteps,
+          requiredTools: extractedProposal.requiredTools,
+          riskSummary: extractedProposal.riskSummary,
+        },
+        new Date().toISOString(),
+      );
+    }
+    return reply;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return input.store.createChannelMessage(
@@ -6122,6 +6285,72 @@ async function createAiChannelReply(input: {
 
 function resolveAiTeammateReference(store: RunStore, teammateId: string): AiTeammate | undefined {
   return store.getAiTeammate(teammateId) ?? store.getAiTeammate(createBuiltinAiTeammateId(teammateId));
+}
+
+function extractChannelExecutionProposal(
+  body: string,
+  fallbackTeammateId: string,
+): (Pick<CreateChannelExecutionProposalInput, "title" | "prompt" | "assigneeTeammateId" | "acceptanceCriteria" | "collaborationSteps" | "requiredTools" | "riskSummary"> & { readonly visibleBody: string }) | undefined {
+  const match = /<ling_task_proposal>([\s\S]*?)<\/ling_task_proposal>/i.exec(body);
+  if (!match) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(match[1] ?? "");
+    if (!isRecord(parsed)) {
+      return undefined;
+    }
+    const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
+    const prompt = typeof parsed.prompt === "string" ? parsed.prompt.trim() : "";
+    if (!title || !prompt) {
+      return undefined;
+    }
+    const assigneeTeammateId = typeof parsed.assigneeTeammateId === "string" && parsed.assigneeTeammateId.trim()
+      ? parsed.assigneeTeammateId.trim()
+      : fallbackTeammateId;
+    const acceptanceCriteria = Array.isArray(parsed.acceptanceCriteria)
+      ? parsed.acceptanceCriteria.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim())
+      : [];
+    const requiredTools = Array.isArray(parsed.requiredTools) ? parsed.requiredTools.filter(isRunTool) : [];
+    const collaborationSteps = parseProposalCollaborationSteps(parsed.collaborationSteps, fallbackTeammateId);
+    const visibleBody = body.replace(match[0], "").trim() || "我整理了一个可执行提案，确认后可以交给队友开始处理。";
+    return {
+      visibleBody,
+      title,
+      prompt,
+      assigneeTeammateId,
+      acceptanceCriteria,
+      collaborationSteps,
+      requiredTools,
+      riskSummary: typeof parsed.riskSummary === "string" && parsed.riskSummary.trim() ? parsed.riskSummary.trim() : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseProposalCollaborationSteps(value: unknown, fallbackTeammateId: string): ChannelExecutionProposalStep[] {
+  if (!Array.isArray(value)) {
+    return [{ teammateId: fallbackTeammateId, action: "coordinated", summary: "Drafted an execution proposal from the channel discussion." }];
+  }
+  const steps = value.flatMap((item): ChannelExecutionProposalStep[] => {
+    if (!isRecord(item)) {
+      return [];
+    }
+    const teammateId = typeof item.teammateId === "string" && item.teammateId.trim() ? item.teammateId.trim() : fallbackTeammateId;
+    const action = typeof item.action === "string" && isChannelExecutionProposalStepAction(item.action) ? item.action : "consulted";
+    const summary = typeof item.summary === "string" && item.summary.trim() ? item.summary.trim() : "Contributed to the execution proposal.";
+    return [{ teammateId, action, summary }];
+  });
+  return steps.length > 0 ? steps : [{ teammateId: fallbackTeammateId, action: "coordinated", summary: "Drafted an execution proposal from the channel discussion." }];
+}
+
+function isChannelExecutionProposalStepAction(value: string): value is ChannelExecutionProposalStep["action"] {
+  return value === "coordinated" || value === "consulted" || value === "reviewed" || value === "flagged_risk";
+}
+
+function isRunTool(value: unknown): value is RunTool {
+  return value === "read" || value === "grep" || value === "find" || value === "ls" || value === "bash" || value === "edit" || value === "write";
 }
 
 async function createAiTeammateDirectReply(input: {
@@ -7448,6 +7677,38 @@ function evaluateApprovalPolicy(
   };
 }
 
+function mergeApprovalPolicyWithProfile(policy: ApprovalPolicy, profile: SkillApprovalProfile | undefined): ApprovalPolicy {
+  if (!profile || profile.mode === "none") {
+    return policy;
+  }
+
+  const requiredTools = new Set<RunTool>();
+  for (const tool of profile.requiredForTools ?? []) {
+    requiredTools.add(tool);
+  }
+  for (const action of profile.requiredForActions ?? []) {
+    if (isRunTool(action)) {
+      requiredTools.add(action);
+    }
+  }
+  if (profile.mode === "strict") {
+    for (const tool of riskyRunTools) {
+      requiredTools.add(tool);
+    }
+  }
+  if (requiredTools.size === 0) {
+    return policy;
+  }
+
+  const toolDecisions = { ...policy.toolDecisions };
+  for (const tool of requiredTools) {
+    if (toolDecisions[tool] !== "deny") {
+      toolDecisions[tool] = "ask";
+    }
+  }
+  return { ...policy, toolDecisions };
+}
+
 function toCreateApprovalRequestInput(run: RunSession, request: PiRunnerApprovalRequest): CreateApprovalRequestInput {
   const payload = toApprovalPayload(request);
   const risk = classifyApprovalRisk(request, payload);
@@ -8423,10 +8684,11 @@ function parseRunRequest(value: unknown): RunRequest {
       channelId: readOptionalString(task, "channelId"),
     },
     provider: provider ? parseInlineProvider(provider) : undefined,
-    tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]) ?? [...readOnlyRunTools],
-    thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
-    systemPrompt: readOptionalString(value, "systemPrompt"),
-    appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
+      tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]) ?? [...readOnlyRunTools],
+      approvalProfile: readOptionalApprovalProfile(value, "approvalProfile"),
+      thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
+      systemPrompt: readOptionalString(value, "systemPrompt"),
+      appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     agentDir: readOptionalString(value, "agentDir"),
   };
 
@@ -8485,7 +8747,7 @@ function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows";
+  readonly action?: "brief" | "messages" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "channels") {
@@ -8497,6 +8759,7 @@ function parseChannelRoute(
     (
       segments[2] === "brief" ||
       segments[2] === "messages" ||
+      segments[2] === "proposals" ||
       segments[2] === "attachments" ||
       segments[2] === "link-previews" ||
       segments[2] === "decisions" ||
@@ -8506,6 +8769,14 @@ function parseChannelRoute(
     )
   ) {
     return { channelId: segments[1], action: segments[2] };
+  }
+  return undefined;
+}
+
+function parseChannelExecutionProposalRoute(pathname: string): { readonly proposalId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "channel-proposals") {
+    return { proposalId: segments[1] };
   }
   return undefined;
 }
@@ -8964,6 +9235,66 @@ function parseChannelMessageRequest(value: unknown): ChannelMessageRequest {
     throw new Error("A channel message can reference at most 10 attachments");
   }
   return input;
+}
+
+function parseChannelExecutionProposalRequest(value: unknown): ChannelExecutionProposalRequest {
+  if (!isRecord(value)) {
+    throw new Error("Channel proposal request must be a JSON object");
+  }
+  const input: ChannelExecutionProposalRequest = {
+    sourceMessageId: readString(value, "sourceMessageId"),
+    proposedByTeammateId: readString(value, "proposedByTeammateId"),
+    title: readString(value, "title"),
+    prompt: readString(value, "prompt"),
+    assigneeTeammateId: readString(value, "assigneeTeammateId"),
+    acceptanceCriteria: readOptionalStringArray(value, "acceptanceCriteria") ?? [],
+    collaborationSteps: readOptionalChannelExecutionProposalSteps(value, "collaborationSteps") ?? [],
+    requiredTools: readOptionalRunTools(value, "requiredTools") ?? [],
+    riskSummary: readOptionalString(value, "riskSummary"),
+  };
+  validateChannelExecutionProposalInput(input);
+  return input;
+}
+
+function parseChannelExecutionProposalUpdateInput(value: unknown): UpdateChannelExecutionProposalInput {
+  if (!isRecord(value)) {
+    throw new Error("Channel proposal update must be a JSON object");
+  }
+  const input: UpdateChannelExecutionProposalInput = {
+    title: readOptionalString(value, "title"),
+    prompt: readOptionalString(value, "prompt"),
+    assigneeTeammateId: readOptionalString(value, "assigneeTeammateId"),
+    acceptanceCriteria: readOptionalStringArray(value, "acceptanceCriteria"),
+    collaborationSteps: readOptionalChannelExecutionProposalSteps(value, "collaborationSteps"),
+    requiredTools: readOptionalRunTools(value, "requiredTools"),
+    riskSummary: readNullableString(value, "riskSummary"),
+    status: readOptionalChannelExecutionProposalStatus(value, "status"),
+    linkedTaskId: readNullableString(value, "linkedTaskId"),
+    linkedRunId: readNullableString(value, "linkedRunId"),
+    errorMessage: readNullableString(value, "errorMessage"),
+  };
+  validateChannelExecutionProposalInput(input);
+  return input;
+}
+
+function validateChannelExecutionProposalInput(
+  input: Partial<Pick<CreateChannelExecutionProposalInput, "title" | "prompt" | "assigneeTeammateId" | "acceptanceCriteria" | "collaborationSteps">>,
+): void {
+  if (input.title !== undefined && input.title.trim().length === 0) {
+    throw new Error("title must be a non-empty string");
+  }
+  if (input.prompt !== undefined && input.prompt.trim().length === 0) {
+    throw new Error("prompt must be a non-empty string");
+  }
+  if (input.assigneeTeammateId !== undefined && input.assigneeTeammateId.trim().length === 0) {
+    throw new Error("assigneeTeammateId must be a non-empty string");
+  }
+  if (input.acceptanceCriteria?.some((item) => !item.trim())) {
+    throw new Error("acceptanceCriteria entries must be non-empty strings");
+  }
+  if (input.collaborationSteps?.some((step) => !step.teammateId.trim() || !step.summary.trim())) {
+    throw new Error("collaborationSteps entries must contain teammateId and summary");
+  }
 }
 
 function parseChannelAttachmentRequest(value: unknown): ChannelAttachmentRequest {
@@ -10199,6 +10530,47 @@ function readOptionalRunTools(record: Record<string, unknown>, key: string): Run
   return readOptionalStringArray(record, key, [...readOnlyRunTools, "bash", "edit", "write"] as const);
 }
 
+function readOptionalChannelExecutionProposalSteps(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelExecutionProposalStep[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be an array`);
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key}[${index}] must be an object`);
+    }
+    const action = readString(item, "action");
+    if (action !== "coordinated" && action !== "consulted" && action !== "reviewed" && action !== "flagged_risk") {
+      throw new Error(`${key}[${index}].action must be one of: coordinated, consulted, reviewed, flagged_risk`);
+    }
+    return {
+      teammateId: readString(item, "teammateId"),
+      action,
+      summary: readString(item, "summary"),
+    };
+  });
+}
+
+function readOptionalChannelExecutionProposalStatus(
+  record: Record<string, unknown>,
+  key: string,
+): ChannelExecutionProposalStatus | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "draft" && value !== "accepted" && value !== "cancelled" && value !== "superseded" && value !== "blocked" && value !== "run_failed") {
+    throw new Error(`${key} must be one of: draft, accepted, cancelled, superseded, blocked, run_failed`);
+  }
+  return value;
+}
+
 function readAiTeammateRoleKey(record: Record<string, unknown>, key: string): CreateAiTeammateInput["roleKey"] {
   const value = readString(record, key);
   if (!["product", "architect", "engineer", "designer", "qa", "security", "release", "docs", "custom"].includes(value)) {
@@ -10617,6 +10989,17 @@ function readOptionalTaskStatusQuery(url: URL): TaskStatus | undefined {
     throw new Error(`status must be one of: ${taskStatuses.join(", ")}`);
   }
   return value as TaskStatus;
+}
+
+function readOptionalChannelExecutionProposalStatusQuery(url: URL): ChannelExecutionProposalStatus | undefined {
+  const value = url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (value !== "draft" && value !== "accepted" && value !== "cancelled" && value !== "superseded" && value !== "blocked" && value !== "run_failed") {
+    throw new Error("status must be one of: draft, accepted, cancelled, superseded, blocked, run_failed");
+  }
+  return value;
 }
 
 function readOptionalApprovalStatusQuery(url: URL): ApprovalStatus | undefined {

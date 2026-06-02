@@ -16,6 +16,8 @@ import type {
   ChannelContextSummaryTargetType,
   ChannelDecisionListResponse,
   ChannelDecisionMutationResponse,
+  ChannelExecutionProposalListResponse,
+  ChannelExecutionProposalMutationResponse,
   ChannelHandoffListResponse,
   ChannelHandoffMutationResponse,
   ChannelLinkPreviewListResponse,
@@ -33,6 +35,7 @@ import type {
   ChannelWorkflowStepStartResponse,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
+  CreateChannelExecutionProposalRequest,
   CreateChannelHandoffRequest,
   CreateChannelLinkPreviewRequest,
   CreateChannelMessageRequest,
@@ -89,6 +92,7 @@ import type {
   RunSession,
   SecretPurpose,
   SecretStatusResponse,
+  SkillApprovalProfile,
   StateEntityType,
   StateTransitionListResponse,
   Task,
@@ -108,6 +112,7 @@ import type {
   UpdateChannelBriefRequest,
   UpdateChannelContextSummaryRequest,
   UpdateChannelDecisionRequest,
+  UpdateChannelExecutionProposalRequest,
   UpdateChannelHandoffRequest,
   UpdateChannelWorkflowRequest,
   UpdateChannelWorkflowStepRequest,
@@ -166,6 +171,26 @@ export async function createChannelMessage(
   input: CreateChannelMessageRequest,
 ): Promise<ChannelMessageMutationResponse> {
   return daemonClient.createChannelMessage(cwd, channelId, input);
+}
+
+export async function listChannelExecutionProposals(cwd: string, channelId: string): Promise<ChannelExecutionProposalListResponse> {
+  return daemonClient.listChannelExecutionProposals(cwd, channelId);
+}
+
+export async function createChannelExecutionProposal(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelExecutionProposalRequest,
+): Promise<ChannelExecutionProposalMutationResponse> {
+  return daemonClient.createChannelExecutionProposal(cwd, channelId, input);
+}
+
+export async function updateChannelExecutionProposal(
+  cwd: string,
+  proposalId: string,
+  input: UpdateChannelExecutionProposalRequest,
+): Promise<ChannelExecutionProposalMutationResponse> {
+  return daemonClient.updateChannelExecutionProposal(cwd, proposalId, input);
 }
 
 export async function listAiTeammates(cwd: string): Promise<AiTeammateListResponse> {
@@ -693,6 +718,10 @@ export function buildTaskRunRequest(
   task: Task,
   channel: Channel,
   providerPresetId: string,
+  options: {
+    readonly tools?: readonly ToolName[];
+    readonly approvalProfile?: SkillApprovalProfile;
+  } = {},
 ): unknown {
   const fallbackTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
   return {
@@ -705,7 +734,8 @@ export function buildTaskRunRequest(
       channelId: task.channelId,
     },
     providerPresetId,
-    tools: (channel.allowedTools.length > 0 ? channel.allowedTools : fallbackTools).filter(isRunnerTool),
+    tools: (options.tools && options.tools.length > 0 ? options.tools : channel.allowedTools.length > 0 ? channel.allowedTools : fallbackTools).filter(isRunnerTool),
+    approvalProfile: options.approvalProfile,
     thinkingLevel: "medium",
   };
 }

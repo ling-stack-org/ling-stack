@@ -1,6 +1,6 @@
 # Multi-Channel Concurrency
 
-Ling Stack channels do not each own a separate business adapter or private state machine. A channel is a workspace surface with a runtime policy. All task, run, approval, media, and workflow state goes through core state machines and the daemon coordinator path.
+Ling Stack channels do not each own a separate business adapter or private state machine. A channel is a general multi-agent work scene with a runtime policy. All proposal, task, run, approval, media, and workflow state goes through core state machines and the daemon coordinator path.
 
 ## Shape
 
@@ -17,6 +17,39 @@ Channel Source Adapter
 - Runner / Provider / Tool Runtime: executes work only after coordinator approval.
 
 Web and CLI currently use the built-in `local` source. No external adapter is needed for v0.1.
+
+## PI Session Boundary
+
+Channels and AI teammates do not own permanent private PI processes. PI is the execution
+runtime for a task run.
+
+```text
+Assignee agent identity + confirmed task + provider/tools
+-> run id
+-> scoped PI session
+-> tool events, approvals, artifacts, terminal result
+```
+
+This means multiple channel conversations can happen without starting PI. When a user
+confirms an execution proposal, the task is created and, for create-and-run proposals,
+the assigned agent launches a run-scoped PI session immediately. Each run has its own
+task snapshot, channel id, proposal linkage when available, provider snapshot, approval
+records, artifacts, and status transitions.
+
+The assignee agent is the execution source of truth. Its provider, tools, and approval
+profile must be runnable before PI starts. If they are not runnable, the proposal/task is
+blocked for repair instead of silently falling back to another provider.
+
+Different agents can therefore use PI without sharing conversational state:
+
+```text
+Engineer on task A -> run_1 -> PI session 1
+Reviewer on task B -> run_2 -> PI session 2
+```
+
+The daemon coordinator and resource leases decide whether those sessions may run at the
+same time. Read-only runs can run in parallel when policy allows it. Write-capable runs
+are blocked by the configured write lock scope.
 
 ## Channel Runtime Policy
 

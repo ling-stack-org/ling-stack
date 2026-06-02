@@ -60,6 +60,50 @@ test("bash=allow lets the runner continue without creating an approval request",
   }
 });
 
+test("assignee approval profile tightens workspace approval policy", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-profile-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_bash_profile",
+    toolName: "bash",
+    input: { command: "echo profile-gated" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const response = await postRunStream(daemon.url, {
+      ...runBody(cwd, "task_bash_profile"),
+      approvalProfile: {
+        mode: "standard",
+        risk: "medium",
+        requiredForTools: ["bash"],
+      },
+    });
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+    const approval = await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "profile approval",
+    });
+    assert.equal(approval.approval.status, "approved");
+
+    const remaining = await sse.collectRemaining();
+    assert.deepEqual(runner.decisions, [{
+      approved: true,
+      approvalId,
+      reason: "profile approval",
+    }]);
+    assert.equal(remaining.some((event) => event.event === "approval_approved"), true);
+    assert.equal((await listApprovals(daemon.url, cwd, runId)).length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("bash=deny records an immediately denied approval request", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-"));
   const runner = new ApprovalProbeRunner({

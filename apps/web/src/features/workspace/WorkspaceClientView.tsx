@@ -90,6 +90,7 @@ import type {
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
+  ChannelExecutionProposal,
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
@@ -113,7 +114,8 @@ type TaskFilter = "all" | "queued" | "running" | "review" | "done";
 type ChannelTab = "activity" | "tasks" | "files" | "protocol";
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
-type ComposerSendState = "idle" | "sending" | "failed";
+type ComposerSendState = "idle" | "sending" | "creating-task" | "failed";
+type ComposerFailureKind = "message" | "task";
 type AiReplyState = "idle" | "replying" | "failed";
 type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
 type MessageBubbleTone = "chat" | "chat-blocked" | "system" | "work" | "approval" | "protocol" | "runtime";
@@ -184,6 +186,7 @@ export function WorkspaceClientView({
   tasks,
   taskForm,
   channelMessages,
+  channelExecutionProposals,
   channelAttachments,
   channelLinkPreviews,
   channelArtifactsByRun,
@@ -236,7 +239,10 @@ export function WorkspaceClientView({
   onCreateDefaultChannel,
   onCreateChannel,
   onCreateTask,
+  onCreateTaskFromComposer,
   onSendMessage,
+  onConfirmExecutionProposal,
+  onCancelExecutionProposal,
   onUploadAttachments,
   onCreateLinkPreview,
   onDeleteAttachment,
@@ -272,6 +278,7 @@ export function WorkspaceClientView({
   readonly tasks: readonly Task[];
   readonly taskForm: TaskFormState;
   readonly channelMessages: readonly ChannelMessage[];
+  readonly channelExecutionProposals: readonly ChannelExecutionProposal[];
   readonly channelAttachments: readonly ChannelAttachment[];
   readonly channelLinkPreviews: readonly ChannelLinkPreview[];
   readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
@@ -324,6 +331,7 @@ export function WorkspaceClientView({
   readonly onCreateDefaultChannel: () => void;
   readonly onCreateChannel: () => void;
   readonly onCreateTask: () => void;
+  readonly onCreateTaskFromComposer: (input: { readonly prompt: string; readonly assigneeTeammateId?: string }) => Promise<void>;
   readonly onSendMessage: (input: {
     readonly threadId?: string;
     readonly body: string;
@@ -332,6 +340,8 @@ export function WorkspaceClientView({
     readonly linkPreviewIds: readonly string[];
     readonly requestAiReply: boolean;
   }) => Promise<void>;
+  readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => void;
+  readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onUploadAttachments: (files: readonly File[]) => Promise<readonly ChannelAttachment[]>;
   readonly onCreateLinkPreview: (url: string) => Promise<ChannelLinkPreview | undefined>;
   readonly onDeleteAttachment: (attachmentId: string) => void;
@@ -382,7 +392,6 @@ export function WorkspaceClientView({
     openQuestions: "",
     risks: "",
   });
-  const [composerMode, setComposerMode] = useState<"discuss" | "task">("discuss");
   const [messageDraft, setMessageDraft] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem[]>([]);
   const [pendingLinkPreviews, setPendingLinkPreviews] = useState<readonly PendingLinkPreviewItem[]>([]);
@@ -393,6 +402,7 @@ export function WorkspaceClientView({
   const [composerBusy, setComposerBusy] = useState(false);
   const [sendState, setSendState] = useState<ComposerSendState>("idle");
   const [sendError, setSendError] = useState("");
+  const [composerFailureKind, setComposerFailureKind] = useState<ComposerFailureKind>("message");
   const [aiReplyState, setAiReplyState] = useState<AiReplyState>("idle");
   const [activeThreadId, setActiveThreadId] = useState("");
   const [threadReplyDraft, setThreadReplyDraft] = useState("");
@@ -547,6 +557,21 @@ export function WorkspaceClientView({
     () => activeThreadId ? channelMessages.filter((message) => message.threadId === activeThreadId) : [],
     [activeThreadId, channelMessages],
   );
+  const executionProposalsByMessageId = useMemo(() => {
+    const proposalsByMessageId = new Map<string, ChannelExecutionProposal[]>();
+    for (const proposal of channelExecutionProposals) {
+      if (proposal.status === "cancelled" || proposal.status === "superseded") {
+        continue;
+      }
+      const existing = proposalsByMessageId.get(proposal.sourceMessageId) ?? [];
+      existing.push(proposal);
+      proposalsByMessageId.set(proposal.sourceMessageId, existing);
+    }
+    for (const proposals of proposalsByMessageId.values()) {
+      proposals.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    }
+    return proposalsByMessageId;
+  }, [channelExecutionProposals]);
   const channelRunsForFiles = useMemo(
     () => deriveChannelRuns(selectedChannelId, tasks, runs, latestRun),
     [latestRun, runs, selectedChannelId, tasks],
@@ -962,16 +987,11 @@ export function WorkspaceClientView({
   }
 
   function commitMention(option: ChannelMention): void {
-    const source = composerMode === "discuss" ? messageDraft : taskForm.prompt;
-    const inserted = insertMentionToken(source, mentionPicker, option.label);
-    if (composerMode === "discuss") {
-      setMessageDraft(inserted.value);
-      setSendState("idle");
-      setSendError("");
-      setMessageMentions((current) => current.some((mention) => mention.id === option.id) ? current : [...current, option]);
-    } else {
-      onTaskFormChange({ ...taskForm, prompt: inserted.value, assigneeTeammateId: option.id });
-    }
+    const inserted = insertMentionToken(messageDraft, mentionPicker, option.label);
+    setMessageDraft(inserted.value);
+    setSendState("idle");
+    setSendError("");
+    setMessageMentions((current) => current.some((mention) => mention.id === option.id) ? current : [...current, option]);
     setMentionPicker(undefined);
     setMentionActiveIndex(0);
     focusComposerAt(inserted.caret);
@@ -983,13 +1003,9 @@ export function WorkspaceClientView({
 
   function handleComposerTextChange(event: ChangeEvent<HTMLTextAreaElement>): void {
     const value = event.currentTarget.value;
-    if (composerMode === "discuss") {
-      setMessageDraft(value);
-      setSendState("idle");
-      setSendError("");
-    } else {
-      onTaskFormChange({ ...taskForm, prompt: value });
-    }
+    setMessageDraft(value);
+    setSendState("idle");
+    setSendError("");
     updateMentionPicker(value, event.currentTarget.selectionStart ?? value.length);
   }
 
@@ -1023,7 +1039,7 @@ export function WorkspaceClientView({
   }
 
   function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
-    if (composerMode !== "discuss" || event.clipboardData.files.length === 0) {
+    if (event.clipboardData.files.length === 0) {
       return;
     }
     event.preventDefault();
@@ -1031,7 +1047,7 @@ export function WorkspaceClientView({
   }
 
   function handleComposerDragOver(event: DragEvent<HTMLElement>): void {
-    if (composerMode !== "discuss" || !Array.from(event.dataTransfer.types).includes("Files")) {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) {
       return;
     }
     event.preventDefault();
@@ -1047,7 +1063,7 @@ export function WorkspaceClientView({
   }
 
   function handleComposerDrop(event: DragEvent<HTMLElement>): void {
-    if (composerMode !== "discuss" || event.dataTransfer.files.length === 0) {
+    if (event.dataTransfer.files.length === 0) {
       setComposerDragActive(false);
       return;
     }
@@ -1131,6 +1147,9 @@ export function WorkspaceClientView({
   }
 
   async function sendMessage(): Promise<void> {
+    if (!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent) {
+      return;
+    }
     const body = messageDraft.trim();
     const pastedUrls = extractUrls(body);
     const newPreviews: ChannelLinkPreview[] = [];
@@ -1140,6 +1159,7 @@ export function WorkspaceClientView({
     setComposerBusy(true);
     setSendState("sending");
     setSendError("");
+    setComposerFailureKind("message");
     setAiReplyState(shouldRequestAi ? "replying" : "idle");
     try {
       for (const url of pastedUrls) {
@@ -1179,7 +1199,49 @@ export function WorkspaceClientView({
       const message = error instanceof Error ? error.message : String(error);
       setSendState("failed");
       setSendError(message);
+      setComposerFailureKind("message");
       setAiReplyState(shouldRequestAi ? "failed" : "idle");
+    } finally {
+      setComposerBusy(false);
+    }
+  }
+
+  async function createTaskFromComposer(): Promise<void> {
+    const body = messageDraft.trim();
+    if (!selectedChannelId || composerBusy || assetOperationPending || !body) {
+      return;
+    }
+    const assigneeTeammateId = messageMentions.find((mention) => mention.kind === "ai-teammate")?.id;
+    const readyAttachmentLines = pendingAttachments.flatMap((item) => item.attachment ? [`Attached file: ${item.fileName}`] : []);
+    const readyLinkLines = pendingLinkPreviews.flatMap((item) => {
+      if (!item.preview) {
+        return [];
+      }
+      const previewUrl = item.preview.normalizedUrl || item.preview.url;
+      return body.includes(previewUrl) || body.includes(item.preview.url) ? [] : [`Link: ${item.preview.title} ${previewUrl}`];
+    });
+    const contextLines = [...readyAttachmentLines, ...readyLinkLines];
+    const prompt = contextLines.length > 0 ? `${body}\n\n${contextLines.join("\n")}` : body;
+    setComposerBusy(true);
+    setSendState("creating-task");
+    setSendError("");
+    setComposerFailureKind("task");
+    setAiReplyState("idle");
+    try {
+      await onCreateTaskFromComposer({ prompt, assigneeTeammateId });
+      setMessageDraft("");
+      setMessageMentions([]);
+      setPendingAttachments([]);
+      setPendingLinkPreviews([]);
+      autoPreviewUrlsRef.current.clear();
+      setSendState("idle");
+      setSendError("");
+      setActiveTab("tasks");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSendState("failed");
+      setSendError(message);
+      setComposerFailureKind("task");
     } finally {
       setComposerBusy(false);
     }
@@ -1228,7 +1290,7 @@ export function WorkspaceClientView({
   }
 
   useEffect(() => {
-    if (composerMode !== "discuss" || !selectedChannelId) {
+    if (!selectedChannelId) {
       return undefined;
     }
     const knownPreviewUrls = new Set(
@@ -1247,36 +1309,21 @@ export function WorkspaceClientView({
       void addLinkPreview(nextUrl);
     }, 450);
     return () => globalThis.clearTimeout(timeoutId);
-  }, [composerMode, messageDraft, pendingLinkPreviews, selectedChannelId]);
+  }, [messageDraft, pendingLinkPreviews, selectedChannelId]);
 
   const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
   const readyLinkPreviewIds = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview.id] : []);
   const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0;
+  const composerHasTaskContent = messageDraft.trim().length > 0;
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
   const channelComposer = (
     <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
       <div className="composer-head">
         <span>
           <MessageSquare size={16} />
-          {composerMode === "discuss" ? t("Discuss") : t("New task")}
+          {t("Discuss")}
         </span>
-        <div className="segmented-control" aria-label={t("Composer mode")}>
-          <button type="button" className={composerMode === "discuss" ? "active" : ""} onClick={() => setComposerMode("discuss")}>
-            {t("Discuss")}
-          </button>
-          <button type="button" className={composerMode === "task" ? "active" : ""} onClick={() => setComposerMode("task")}>
-            {t("Task")}
-          </button>
-        </div>
       </div>
-      {composerMode === "task" ? (
-        <input
-          className="composer-title"
-          value={taskForm.title}
-          onChange={(event) => onTaskFormChange({ ...taskForm, title: event.target.value })}
-          placeholder={t("Title")}
-        />
-      ) : null}
       <div
         className={composerDragActive ? "composer-drop-zone active" : "composer-drop-zone"}
         onDragOver={handleComposerDragOver}
@@ -1285,14 +1332,14 @@ export function WorkspaceClientView({
       >
         <textarea
           ref={composerTextareaRef}
-          value={composerMode === "discuss" ? messageDraft : taskForm.prompt}
+          value={messageDraft}
           rows={3}
           onChange={handleComposerTextChange}
           onKeyDown={handleComposerKeyDown}
           onPaste={handleComposerPaste}
           onSelect={(event) => updateMentionPicker(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
-          placeholder={composerMode === "discuss" ? t("Message this channel or @ an AI teammate") : t("Prompt")}
-          aria-describedby={composerMode === "discuss" ? "channel-composer-smart-help" : undefined}
+          placeholder={t("Message this channel or @ an AI teammate")}
+          aria-describedby="channel-composer-smart-help"
         />
         {mentionPicker ? (
           <div className="mention-picker-popover" role="listbox" aria-label={t("Mention teammate")}>
@@ -1323,38 +1370,33 @@ export function WorkspaceClientView({
       </div>
       <div className="composer-primary-actions">
         <span id="channel-composer-smart-help" className="composer-smart-hint">
-          {composerMode === "discuss" ? t("@ teammates, drop files, or paste links") : t("@ a teammate to assign the task")}
+          {t("@ teammates, drop files, or paste links")}
         </span>
-        {composerMode === "discuss" ? (
-          <label className="icon-button composer-attach-button" aria-label={t("Attach files")} title={t("Attach files")}>
-            <FileText size={15} />
-            <input
-              type="file"
-              multiple
-              hidden
-              accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
-              onChange={(event) => {
-                if (event.target.files) {
-                  void attachFiles(event.target.files);
-                }
-                event.target.value = "";
-              }}
-            />
-          </label>
-        ) : null}
-        {composerMode === "discuss" ? (
-          <button className="primary-button" type="button" onClick={() => void sendMessage()} disabled={!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent}>
-            {sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
-            {sendState === "sending" ? t("Sending...") : t("Send")}
-          </button>
-        ) : (
-          <button className="primary-button" type="button" onClick={createTask} disabled={!selectedChannelId || !taskForm.prompt.trim()}>
-            <Send size={15} />
-            {t("Create task")}
-          </button>
-        )}
+        <label className="icon-button composer-attach-button" aria-label={t("Attach files")} title={t("Attach files")}>
+          <FileText size={15} />
+          <input
+            type="file"
+            multiple
+            hidden
+            accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
+            onChange={(event) => {
+              if (event.target.files) {
+                void attachFiles(event.target.files);
+              }
+              event.target.value = "";
+            }}
+          />
+        </label>
+        <button className="secondary-button compact-button composer-task-button" type="button" onClick={() => void createTaskFromComposer()} disabled={!selectedChannelId || composerBusy || assetOperationPending || !composerHasTaskContent}>
+          {sendState === "creating-task" ? <Loader2 className="spin" size={15} /> : <SquareTerminal size={15} />}
+          {sendState === "creating-task" ? t("Creating...") : t("Task")}
+        </button>
+        <button className="primary-button" type="button" onClick={() => void sendMessage()} disabled={!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent}>
+          {sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
+          {sendState === "sending" ? t("Sending...") : t("Send")}
+        </button>
       </div>
-      {composerMode === "discuss" && (pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0) ? (
+      {pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 ? (
         <div className="pending-assets" aria-label={t("Pending message assets")}>
           {messageMentions.map((mention) => (
             <span key={mention.id} className="pending-asset ready">
@@ -1387,12 +1429,18 @@ export function WorkspaceClientView({
           ))}
         </div>
       ) : null}
-      {composerMode === "discuss" && (sendState !== "idle" || aiReplyState !== "idle") ? (
+      {sendState !== "idle" || aiReplyState !== "idle" ? (
         <div className="composer-status-list" aria-live="polite">
           {sendState === "sending" ? (
             <div className="composer-status-row loading">
               <Loader2 className="spin" size={14} />
               <span>{t("Sending message...")}</span>
+            </div>
+          ) : null}
+          {sendState === "creating-task" ? (
+            <div className="composer-status-row loading">
+              <Loader2 className="spin" size={14} />
+              <span>{t("Creating task...")}</span>
             </div>
           ) : null}
           {aiReplyState === "replying" ? (
@@ -1404,8 +1452,14 @@ export function WorkspaceClientView({
           {sendState === "failed" ? (
             <div className="composer-status-row failed">
               <CircleAlert size={14} />
-              <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
-              <button className="secondary-button compact-button" type="button" onClick={() => void sendMessage()}>
+              <span>{t(composerFailureKind === "task" ? "Task failed" : "Message failed")}{sendError ? `: ${sendError}` : ""}</span>
+              <button className="secondary-button compact-button" type="button" onClick={() => {
+                if (composerFailureKind === "task") {
+                  void createTaskFromComposer();
+                  return;
+                }
+                void sendMessage();
+              }}>
                 <RefreshCw size={13} />
                 {t("Retry")}
               </button>
@@ -1812,26 +1866,42 @@ export function WorkspaceClientView({
                       if (item.kind === "message") {
                         const message = item.record;
                         const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
+                        const executionProposals = executionProposalsByMessageId.get(message.id) ?? [];
                         return (
-                          <MessageBubble
-                            key={item.id}
-                            tone={message.status === "blocked" ? "chat-blocked" : plainChatMessage ? "chat" : "system"}
-                            avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
-                            author={messageAuthorLabel(message, teammateOptions)}
-                            tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
-                            time={formatDateTime(message.createdAt)}
-                            body={message.body}
-                            metaAction={plainChatMessage ? (
-                              <button className="message-reply-button" type="button" onClick={() => openThreadForMessage(message)} aria-label={t("Reply in topic")} data-tooltip={t("Reply in topic")}>
-                                <Reply size={13} />
-                              </button>
-                            ) : undefined}
-                            action={
-                              plainChatMessage ? undefined : message.linkedTaskId ? (
-                                activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
-                              ) : activityActionRow(item.id)
-                            }
-                          />
+                          <div key={item.id} className="message-group">
+                            <MessageBubble
+                              tone={message.status === "blocked" ? "chat-blocked" : plainChatMessage ? "chat" : "system"}
+                              avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
+                              author={messageAuthorLabel(message, teammateOptions)}
+                              tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
+                              time={formatDateTime(message.createdAt)}
+                              body={message.body}
+                              metaAction={plainChatMessage ? (
+                                <button className="message-reply-button" type="button" onClick={() => openThreadForMessage(message)} aria-label={t("Reply in topic")} data-tooltip={t("Reply in topic")}>
+                                  <Reply size={13} />
+                                </button>
+                              ) : undefined}
+                              action={
+                                plainChatMessage ? undefined : message.linkedTaskId ? (
+                                  activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
+                                ) : activityActionRow(item.id)
+                              }
+                            />
+                            {executionProposals.map((proposal) => (
+                              <ChannelExecutionProposalCard
+                                key={proposal.id}
+                                proposal={proposal}
+                                assigneeLabel={teammateLabel(proposal.assigneeTeammateId, teammateOptions)}
+                                teammates={teammateOptions}
+                                linkedRun={proposal.linkedRunId ? runById.get(proposal.linkedRunId) : undefined}
+                                activeRunId={activeRunId}
+                                latestStatus={latestStatus}
+                                onConfirm={() => onConfirmExecutionProposal(proposal)}
+                                onCancel={() => onCancelExecutionProposal(proposal)}
+                                onOpenRun={onOpenRun}
+                              />
+                            ))}
+                          </div>
                         );
                       }
                   if (item.kind === "decision") {
@@ -2897,6 +2967,119 @@ function MessageBubble({
   );
 }
 
+function ChannelExecutionProposalCard({
+  proposal,
+  assigneeLabel,
+  teammates,
+  linkedRun,
+  activeRunId,
+  latestStatus,
+  onConfirm,
+  onCancel,
+  onOpenRun,
+}: {
+  readonly proposal: ChannelExecutionProposal;
+  readonly assigneeLabel: string;
+  readonly teammates: readonly ChannelMention[];
+  readonly linkedRun: RunSession | undefined;
+  readonly activeRunId: string;
+  readonly latestStatus: string;
+  readonly onConfirm: () => void;
+  readonly onCancel: () => void;
+  readonly onOpenRun: (runId: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const canStart = proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed";
+  const linkedRunStatus = proposal.linkedRunId
+    ? displayLinkedRunStatus(proposal.linkedRunId, linkedRun, activeRunId, latestStatus)
+    : "";
+  const statusIcon = proposal.status === "accepted"
+    ? <CheckCircle2 size={14} />
+    : proposal.status === "blocked" || proposal.status === "run_failed"
+      ? <CircleAlert size={14} />
+      : <Play size={14} />;
+
+  return (
+    <div className={`channel-execution-proposal ${proposal.status}`} aria-label={t("Execution proposal")}>
+      <div className="channel-proposal-head">
+        <span>
+          {statusIcon}
+          <strong>{proposal.title}</strong>
+        </span>
+        <small>{t(executionProposalStatusLabel(proposal.status))}</small>
+      </div>
+      <p>{proposal.prompt}</p>
+      <div className="channel-proposal-meta">
+        <span>{t("Assignee")}: <strong>{assigneeLabel}</strong></span>
+        {proposal.requiredTools.length > 0 ? <span>{t("Required tools")}: {proposal.requiredTools.join(", ")}</span> : null}
+        {linkedRunStatus ? <StatusBadge status={linkedRunStatus} /> : null}
+      </div>
+      {proposal.acceptanceCriteria.length > 0 ? (
+        <div className="channel-proposal-criteria">
+          <strong>{t("Acceptance criteria")}</strong>
+          <ul>
+            {proposal.acceptanceCriteria.slice(0, 4).map((criterion) => (
+              <li key={criterion}>{criterion}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {proposal.riskSummary ? (
+        <div className="channel-proposal-risk">
+          <CircleAlert size={14} />
+          <span>{proposal.riskSummary}</span>
+        </div>
+      ) : null}
+      {proposal.errorMessage ? (
+        <div className="channel-proposal-error">
+          <CircleAlert size={14} />
+          <span>{proposal.errorMessage}</span>
+        </div>
+      ) : null}
+      {proposal.collaborationSteps.length > 0 ? (
+        <details className="channel-proposal-collaboration">
+          <summary>
+            <span>
+              <History size={14} />
+              {t("Collaboration")}
+            </span>
+            <small>{proposal.collaborationSteps.length}</small>
+          </summary>
+          <ol>
+            {proposal.collaborationSteps.map((step, index) => (
+              <li key={`${step.teammateId}-${step.action}-${index}`}>
+                <strong>{teammateLabel(step.teammateId, teammates)}</strong>
+                <small>{t(proposalStepActionLabel(step.action))}</small>
+                <span>{step.summary}</span>
+              </li>
+            ))}
+          </ol>
+        </details>
+      ) : null}
+      <div className="channel-proposal-actions">
+        {canStart ? (
+          <button className="primary-button compact-button" type="button" onClick={onConfirm}>
+            <Play size={14} />
+            {t("Start handling")}
+          </button>
+        ) : null}
+        {proposal.linkedRunId ? (
+          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(proposal.linkedRunId ?? "")}>
+            <SquareTerminal size={14} />
+            {t("Open run")}
+          </button>
+        ) : null}
+        {proposal.status === "draft" ? (
+          <button className="secondary-button compact-button" type="button" onClick={onCancel}>
+            <X size={14} />
+            {t("Cancel proposal")}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function ThreadReplyPanel({
   rootMessage,
   replies,
@@ -3857,9 +4040,48 @@ function messageAuthorLabel(message: ChannelMessage, teammates: readonly Channel
     return "Ling Stack";
   }
   if (message.authorType === "ai-teammate") {
-    return teammates.find((teammate) => teammate.id === message.authorId)?.label ?? message.authorId ?? "AI teammate";
+    return teammateLabel(message.authorId, teammates, "AI teammate");
   }
   return message.authorId ?? "Tian";
+}
+
+function teammateLabel(teammateId: string | undefined, teammates: readonly ChannelMention[], fallback = "AI teammate"): string {
+  if (!teammateId) {
+    return fallback;
+  }
+  return teammates.find((teammate) => teammate.id === teammateId)?.label ?? teammateId;
+}
+
+function executionProposalStatusLabel(status: ChannelExecutionProposal["status"]): string {
+  if (status === "draft") {
+    return "Ready for confirmation";
+  }
+  if (status === "accepted") {
+    return "Accepted";
+  }
+  if (status === "blocked") {
+    return "Proposal blocked";
+  }
+  if (status === "run_failed") {
+    return "Run failed";
+  }
+  if (status === "superseded") {
+    return "Superseded";
+  }
+  return "Cancelled";
+}
+
+function proposalStepActionLabel(action: ChannelExecutionProposal["collaborationSteps"][number]["action"]): string {
+  if (action === "coordinated") {
+    return "Coordinated";
+  }
+  if (action === "consulted") {
+    return "Consulted";
+  }
+  if (action === "reviewed") {
+    return "Reviewed";
+  }
+  return "Flagged risk";
 }
 
 function findMentionsInText(body: string, teammates: readonly ChannelMention[]): readonly ChannelMention[] {

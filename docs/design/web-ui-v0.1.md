@@ -18,11 +18,12 @@ The AI teammates page now uses the same client direction: a Helio-inspired, macO
 The richer channel surface is tracked in [Channel Workspace Design](channel-workspace.md). That document is the source of truth for channel tabs, default AI teammate assignment, member/notification/settings inspector behavior, file/artifact access, and the phased implementation checklist.
 
 Implemented MVP behavior: the channel workspace now has `Activity`, `Tasks`, `Files`,
-and `Context` tabs; Discuss/Task composer modes; structured `@` AI teammate mentions;
-durable channel messages; no-tools AI discussion replies; user attachments;
-metadata-only web link previews; ordinary discussion messages without inline conversion
-controls; and task creation through composer `Task` mode with `assigneeTeammateId`
-derived from the first AI mention or channel default teammate.
+and `Context` tabs; a unified channel composer with `Send` and `Task` actions;
+structured `@` AI teammate mentions; durable channel messages; no-tools AI discussion
+replies; user attachments; metadata-only web link previews; ordinary discussion
+messages without inline conversion controls; and task creation from the current composer
+input with `assigneeTeammateId` derived from the first AI mention or channel default
+teammate.
 
 Implemented v1.1 behavior: the channel inspector adds `Brief`, `Decisions`, `Handoffs`, and
 `Runtime` modes. Activity now synthesizes channel messages with decision, handoff, and
@@ -135,6 +136,21 @@ replies move to hover/focus-only bubble UI with a right-edge icon and `Reply in 
 tooltip. v1.17 remains Web-only and reuses the existing teammate membership and channel
 message contracts.
 
+Implemented v1.18 behavior: the channel Chat composer removes the `Discuss` / `Task`
+segmented control. One textarea now handles discussion text, inline `@` teammate
+selection, dropped/pasted files, and URL previews. `Send` stores a discussion message;
+`Task` creates a durable task from the same input and opens the `Tasks` tab. v1.18
+remains Web-only and reuses the existing message and task APIs.
+
+Accepted v1.19 design: channels are general multi-agent studios, not coding-only task
+rooms. A coordinator can consult specialist teammates, show that process as a collapsed
+collaboration record, and emit safe execution proposals instead of directly creating
+tasks. The Web client will render an editable confirmation card; user confirmation
+creates the durable task and starts the assignee's PI run when the proposal is
+create-and-run. The user stays in channel context, approval cards surface in-channel,
+and assignee provider/tool/preflight blockers do not silently fall back to another
+provider.
+
 ## Goal
 
 Users should be able to run and inspect Ling Stack without `curl`.
@@ -189,7 +205,7 @@ Ling Stack product model:
 - keep workspace, channels, AI teammates, and direct messages in the left sidebar,
 - keep provider setup, approval inbox/policy, media jobs, and settings in the configuration rail or dedicated pages,
 - give AI teammates a dedicated management page instead of leaving them as decorative sidebar presence,
-- keep the center focused on channel activity and the discussion/task composer by default,
+- keep the center focused on channel activity and the unified composer by default,
 - keep task detail inside the `Tasks` tab so chat is not squeezed by a persistent detail pane,
 - keep readiness, first-run guidance, approvals, and live events in the right context panel,
 - avoid showing channel/provider/policy forms as the first thing a ready user sees.

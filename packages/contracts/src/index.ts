@@ -952,6 +952,73 @@ export interface ChannelMessageMutationResponse {
   readonly aiReply?: ChannelMessage;
 }
 
+export type ChannelExecutionProposalStatus = "draft" | "accepted" | "cancelled" | "superseded" | "blocked" | "run_failed";
+
+export type ChannelExecutionProposalStepAction = "coordinated" | "consulted" | "reviewed" | "flagged_risk";
+
+export interface ChannelExecutionProposalStep {
+  readonly teammateId: string;
+  readonly action: ChannelExecutionProposalStepAction;
+  readonly summary: string;
+}
+
+export interface ChannelExecutionProposal {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceMessageId: string;
+  readonly proposedByTeammateId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly assigneeTeammateId: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
+  readonly requiredTools: readonly RunTool[];
+  readonly riskSummary?: string;
+  readonly status: ChannelExecutionProposalStatus;
+  readonly linkedTaskId?: string;
+  readonly linkedRunId?: string;
+  readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelExecutionProposalRequest {
+  readonly sourceMessageId: string;
+  readonly proposedByTeammateId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly assigneeTeammateId: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
+  readonly requiredTools?: readonly RunTool[];
+  readonly riskSummary?: string;
+}
+
+export interface UpdateChannelExecutionProposalRequest {
+  readonly title?: string;
+  readonly prompt?: string;
+  readonly assigneeTeammateId?: string;
+  readonly acceptanceCriteria?: readonly string[];
+  readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
+  readonly requiredTools?: readonly RunTool[];
+  readonly riskSummary?: string | null;
+  readonly status?: ChannelExecutionProposalStatus;
+  readonly linkedTaskId?: string | null;
+  readonly linkedRunId?: string | null;
+  readonly errorMessage?: string | null;
+}
+
+export interface ChannelExecutionProposalListResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly proposals: readonly ChannelExecutionProposal[];
+}
+
+export interface ChannelExecutionProposalMutationResponse {
+  readonly proposal: ChannelExecutionProposal;
+}
+
 export type ChannelAttachmentKind = "image" | "pdf" | "office" | "text";
 
 export interface ChannelAttachment {

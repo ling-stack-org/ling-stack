@@ -31,6 +31,7 @@ import type {
   ChannelBrief,
   ChannelContextSummary,
   ChannelDecision,
+  ChannelExecutionProposal,
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelHandoff,
@@ -40,6 +41,7 @@ import type {
   CreateChannelAttachmentInput,
   CreateChannelContextSummaryInput,
   CreateChannelDecisionInput,
+  CreateChannelExecutionProposalInput,
   CreateChannelWorkflowInput,
   CreateChannelWorkflowStepInput,
   CreateChannelHandoffInput,
@@ -53,6 +55,7 @@ import type {
   ListChannelAttachmentsOptions,
   ListChannelContextSummariesOptions,
   ListChannelDecisionsOptions,
+  ListChannelExecutionProposalsOptions,
   ListChannelWorkflowStepsOptions,
   ListChannelWorkflowsOptions,
   ListChannelHandoffsOptions,
@@ -74,6 +77,7 @@ import type {
   UpdateChannelBriefInput,
   UpdateChannelContextSummaryInput,
   UpdateChannelDecisionInput,
+  UpdateChannelExecutionProposalInput,
   UpdateChannelWorkflowInput,
   UpdateChannelWorkflowStepInput,
   UpdateChannelHandoffInput,
@@ -330,6 +334,10 @@ export interface RunStore {
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage;
   getChannelMessage(id: string): ChannelMessage | undefined;
   listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[];
+  createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal;
+  getChannelExecutionProposal(id: string): ChannelExecutionProposal | undefined;
+  listChannelExecutionProposals(options: ListChannelExecutionProposalsOptions): ChannelExecutionProposal[];
+  updateChannelExecutionProposal(id: string, input: UpdateChannelExecutionProposalInput, now: string): ChannelExecutionProposal | undefined;
   createChannelAttachment(input: CreateChannelAttachmentInput): ChannelAttachment;
   getChannelAttachment(id: string): ChannelAttachment | undefined;
   listChannelAttachments(options: ListChannelAttachmentsOptions): ChannelAttachment[];

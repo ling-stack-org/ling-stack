@@ -538,6 +538,12 @@ textarea {
   padding: 4px 4px 0;
 }
 
+.message-group {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .message-bubble {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
@@ -755,6 +761,165 @@ textarea {
 .message-action {
   display: flex;
   justify-content: flex-start;
+}
+
+.channel-execution-proposal {
+  display: grid;
+  gap: 8px;
+  margin-left: 30px;
+  padding: 10px 12px;
+  border: 1px solid var(--info-border);
+  border-left: 3px solid var(--info);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--info-soft) 36%, var(--surface-panel-strong));
+}
+
+.channel-execution-proposal.blocked,
+.channel-execution-proposal.run_failed {
+  border-color: var(--warning-border);
+  border-left-color: var(--warning);
+  background: color-mix(in srgb, var(--warning-soft) 34%, var(--surface-panel-strong));
+}
+
+.channel-execution-proposal.accepted {
+  border-color: var(--success-border);
+  border-left-color: var(--success);
+  background: color-mix(in srgb, var(--success-soft) 34%, var(--surface-panel-strong));
+}
+
+.channel-proposal-head,
+.channel-proposal-meta,
+.channel-proposal-actions,
+.channel-proposal-risk,
+.channel-proposal-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.channel-proposal-head {
+  justify-content: space-between;
+}
+
+.channel-proposal-head span,
+.channel-proposal-meta span,
+.channel-proposal-risk,
+.channel-proposal-error {
+  min-width: 0;
+}
+
+.channel-proposal-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.channel-proposal-head strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-proposal-head small {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.channel-execution-proposal > p,
+.channel-proposal-risk,
+.channel-proposal-error {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.channel-proposal-meta {
+  flex-wrap: wrap;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.channel-proposal-meta strong {
+  color: var(--text);
+}
+
+.channel-proposal-criteria {
+  display: grid;
+  gap: 4px;
+}
+
+.channel-proposal-criteria strong {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 780;
+}
+
+.channel-proposal-criteria ul,
+.channel-proposal-collaboration ol {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.channel-proposal-criteria li,
+.channel-proposal-collaboration li {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.channel-proposal-risk,
+.channel-proposal-error {
+  color: var(--warning);
+}
+
+.channel-proposal-collaboration {
+  display: grid;
+  gap: 6px;
+}
+
+.channel-proposal-collaboration summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 760;
+  list-style: none;
+}
+
+.channel-proposal-collaboration summary::-webkit-details-marker {
+  display: none;
+}
+
+.channel-proposal-collaboration summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.channel-proposal-collaboration li {
+  display: grid;
+  gap: 2px;
+}
+
+.channel-proposal-collaboration li small {
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.channel-proposal-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .channel-tabs {
