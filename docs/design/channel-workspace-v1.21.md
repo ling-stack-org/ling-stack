@@ -2,8 +2,8 @@
 
 ## Status
 
-Implemented in the Web client only. This slice ports the accepted channel chat mockup
-into the product surface without adding daemon contracts.
+Implemented in the Web client only. This slice ports the accepted channel chat HTML
+direction into the product surface without adding daemon contracts.
 
 ## Intent
 
@@ -32,7 +32,9 @@ The right details panel:
 - is an in-layout sidebar, not an overlay,
 - compresses the chat when visible,
 - hides without losing the selected detail view,
-- reuses existing Tasks, Files, and Context components,
+- reuses existing Files and Context components,
+- shows the selected task detail directly instead of a task list,
+- embeds the active run timeline inside task detail when run events exist,
 - keeps task/run identifiers out of the default header chrome.
 
 The attention queue:
@@ -51,8 +53,23 @@ Plain chat messages are quieter than work events.
 - AI teammate and coordinator chat messages align left, keep author and AI tag, and do
   not show timestamps.
 - Reply-in-topic remains available through a hover/focus icon.
-- Task, run, approval, protocol, and state-transition events keep event-style borders
-  and metadata because they are audit records, not ordinary chat.
+- Task, run, approval, handoff, workflow, and state-transition events are audit records,
+  not ordinary chat. They are hidden from the default chat feed.
+- Audit records remain reachable through the header `...` menu's activity tools, saved
+  views, search, attention queue, and activity drilldown.
+- Execution proposal cards remain attached to their source chat message. Confirmation
+  keeps the user in the channel and updates the right task/run detail panel.
+
+## Visual Boundary
+
+The accepted channel chat HTML is a strict daylight surface. The channel workspace owns
+its own daylight token scope even when the global app theme is dark:
+
+- structural surfaces use `#FFFFFF` with `#E5E5E5` borders,
+- selected rows and local-user bubbles use `#F5F5F5`,
+- primary channel actions use black buttons with white text,
+- the channel page hides the global `PageInspector`; only the internal right details
+  panel is visible.
 
 ## Sidebar Boundary
 

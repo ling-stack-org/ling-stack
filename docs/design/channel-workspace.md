@@ -133,11 +133,11 @@ left sidebar
 center channel
   header
   default chat surface
-  execution-aware activity stream
+  quiet chat feed
   discussion composer
 
 right details panel
-  tasks
+  selected task/run detail
   files
   context/runtime
   approvals and run details
@@ -173,6 +173,11 @@ Channel = endless AI chat or coding-only task board
 The channel should borrow the visible collaboration affordances from team chat products,
 but the durable unit of work remains a Ling task/run with approvals and artifacts.
 
+The accepted Web channel surface is a strict daylight workspace. Even if the broader app
+theme is dark, the channel shell keeps white structural surfaces, black primary actions,
+gray borders, and a single in-channel details panel so it matches the approved HTML
+direction.
+
 ## First Screen
 
 When a workspace has at least one channel, `/` should open into the selected channel.
@@ -193,8 +198,14 @@ The first viewport should show:
 - default AI teammate,
 - active runtime locks if any,
 - the centered discussion feed,
+- plain user and AI teammate messages,
+- execution proposals attached to their source discussion when present,
 - the right details panel when the user has it open,
 - discussion composer with attachment, link, and mention support.
+
+The first viewport should not show raw task, run, approval, handoff, workflow, or
+state-transition audit cards by default. Those records are available from activity tools,
+saved views, search, attention queue, and drilldown.
 
 ## Information Architecture
 
@@ -238,6 +249,10 @@ Context
 These surfaces open from the compact header `...` menu into an in-layout right details
 panel. The panel compresses the chat while visible and lets the chat expand when hidden.
 The selected details surface is preserved while the panel is hidden.
+
+The channel workspace hides the global app inspector. The right panel is the single
+details surface for the selected channel. The `Tasks` surface shows the selected task and
+active run timeline directly instead of a task list.
 
 Future details surfaces can include:
 

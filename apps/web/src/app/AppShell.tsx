@@ -2975,12 +2975,13 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  const showInspector = !["providers", "teammates", "runs", "approvals", "media", "settings"].includes(activeView);
+  const showInspector = !["workspace", "providers", "teammates", "runs", "approvals", "media", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
   const shellClassName = [
     "app-shell",
+    activeView === "workspace" ? "channel-daylight-shell" : "",
     showInspector && inspectorCollapsed ? "inspector-collapsed" : "",
     showInspector ? "" : "inspector-hidden",
   ].filter(Boolean).join(" ");
@@ -3052,7 +3053,11 @@ export function AppShell(): JSX.Element {
             channelProtocolLoading={channelProtocolLoading}
             providersLoading={providersLoading}
             approvals={approvals}
+            approvalsLoading={approvalsLoading}
+            resolvingApprovals={resolvingApprovals}
             resourceLeases={resourceLeases}
+            events={events}
+            assistantText={assistantText}
             runs={runs}
             runById={runById}
             activeRunId={activeRunId}
@@ -3107,6 +3112,8 @@ export function AppShell(): JSX.Element {
             onRunTask={(task) => void runPersistedTask(task)}
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
+            onRefreshRunApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
+            onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
             onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers")}
           />
         ) : (

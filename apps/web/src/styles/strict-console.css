@@ -463,7 +463,9 @@
 .message-bubble-chat .message-content p,
 .message-bubble-chat-blocked .message-content p {
   color: var(--text-strong);
-  font-weight: 560;
+  font-size: 15px;
+  font-weight: 550;
+  line-height: 1.55;
 }
 
 .message-bubble-own .message-meta strong,
@@ -493,4 +495,15 @@
 
 :root[data-theme="dark"] .teammate-chat-composer .primary-button:disabled {
   color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .channel-daylight-shell .task-workbench-window .primary-button {
+  border-color: #111111;
+  background: #111111;
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] .channel-daylight-shell .task-workbench-window .primary-button:disabled {
+  color: #ffffff;
+  opacity: 0.48;
 }
