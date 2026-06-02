@@ -72,6 +72,9 @@ existing artifact content endpoint.
 - Reuse the existing artifact row/open/download patterns used by run history.
 - Empty state: explain that run artifacts appear after channel tasks produce outputs.
 - Loading/error states must not block attachments or shared links.
+- The Files tab should fill the available channel tab body. Do not cap the content to a
+  half-screen scroll area when the surrounding panel has more vertical space; let run
+  artifact groups expand as the main working-files section.
 
 ### 3. Safety Boundaries
 

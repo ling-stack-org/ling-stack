@@ -1435,7 +1435,7 @@ open channel
 -> click attachment button in composer
 -> choose image, PDF, or Office file
 -> daemon validates size, MIME, extension, and storage path
--> attachment appears in composer
+-> attachment appears at the top of the composer as a thumbnail or compact file card
 -> user sends discussion message or creates task with attachment
 -> attachment appears in Files tab and activity stream
 ```
@@ -1551,6 +1551,30 @@ Keep the existing macOS-like client direction:
 Web notes:
 
 - channel Files tab sections, file/link cards, run artifact groups, and empty states must use strict console light/dark tokens; dark mode must not fall back to legacy translucent gray or glass panels.
+- channel Files tab content should fill the available tab body instead of using a capped
+  half-screen scroll region that leaves unused space below the working files.
+- channel headers should not repeat obvious selected-channel state such as `active channel`;
+  reserve header subtext for real warnings, blockers, or scoped context.
+- channel Chat composer should stay visually quiet: no visible `Discuss` heading and no
+  static helper sentence below the input. Placeholder text, icon buttons, drag overlay,
+  and mention suggestions carry those affordances.
+- channel Chat composer should render as one rounded input shell: the textarea owns the
+  upper area, tool icons live inside the lower-left edge, and the send icon button lives
+  inside the lower-right edge. Do not split the composer into a form-like textarea plus
+  external action row.
+- pending attachments and link previews should live at the top of that rounded composer
+  shell, above the textarea. Image attachments render local thumbnails where possible;
+  PDFs, Office/text files, and links render compact preview cards. The lower toolbar
+  stays reserved for `+`, `@`, and send actions.
+- pending mention chips must mirror the textarea content. If the corresponding `@label`
+  or `@id` token is removed from the input, remove the chip immediately.
+- ordinary chat message bodies should use the same strong text color as the author name
+  with medium weight, while inline `@mentions` keep the blue information emphasis.
+- ordinary chat messages should separate authors spatially without showing a default
+  bubble background: local-user discussion messages align to the right, while AI
+  teammate and system discussion replies align to the left. The lightweight neutral
+  bubble boundary appears only on hover or keyboard focus. Work/protocol/run event cards
+  do not use this split-chat layout.
 - Activity filter panel chips, including attention chips, must also use strict console light/dark tokens; dark mode must not fall back to legacy pale chip fills.
 
 Avoid:
@@ -1953,6 +1977,10 @@ Current MVP implementation status:
 - [x] Hide ordinary chat bubble chrome and the topic reply affordance until hover or
   keyboard focus.
 - [x] Show a right-edge icon bubble and icon tooltip before opening the topic reply panel.
+- [x] Split ordinary chat by speaker side without default bubble fills: local-user
+  messages render on the right, AI teammate replies render on the left, hover/focus
+  reveals a neutral boundary, and non-chat work cards keep the event-card timeline
+  layout.
 
 ### Phase 26: Unified Composer Actions
 
@@ -1999,6 +2027,8 @@ Current MVP implementation status:
 - [x] Keep manual task creation available from the `Tasks` panel.
 - [x] Keep attachments, pasted files, links, and `@` mentions in the Chat composer for
   discussion messages.
+- [x] Render pending attachments and links at the top of the Chat composer: images use
+  thumbnail previews, while non-image files and links use compact cards.
 - [x] Update e2e coverage so composer task creation is absent while manual task creation
   still works through the `Tasks` panel.
 

@@ -844,6 +844,7 @@ const dictionaries: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     "Open AI Teammates": "打开 AI 队友",
     "Remove from channel": "从频道移除",
     "Channel composer": "频道输入框",
+    "Message tools": "消息工具",
     "More": "更多",
     "Chat tools": "聊天工具",
     "Filters active": "筛选已启用",
