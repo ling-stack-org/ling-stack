@@ -19,7 +19,6 @@ import {
   type ViewId,
 } from "../../app/view-types.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
-import { LingStackLogo } from "../../shared/components/index.js";
 import type { AiTeammate, ApprovalRequest, Channel } from "../../types.js";
 
 export function SidebarNavigation({
@@ -28,6 +27,7 @@ export function SidebarNavigation({
   teammates,
   approvals,
   onOpenView,
+  onCreateChannel,
   onSelectChannel,
   onSelectTeammate,
 }: {
@@ -36,6 +36,7 @@ export function SidebarNavigation({
   readonly teammates: readonly AiTeammate[];
   readonly approvals: readonly ApprovalRequest[];
   readonly onOpenView: (view: ViewId) => void;
+  readonly onCreateChannel: () => void;
   readonly onSelectChannel: (channelId: string) => void;
   readonly onSelectTeammate: (teammateId: string) => void;
 }): JSX.Element {
@@ -45,28 +46,17 @@ export function SidebarNavigation({
 
   return (
     <aside className="left-nav" aria-label="Ling Stack navigation">
-      <div className="brand">
-        <div className="brand-mark">
-          <LingStackLogo size={18} />
-        </div>
-        <div>
-          <strong>Ling Stack</strong>
-          <span>{t("AI teammate workspace")}</span>
-        </div>
-      </div>
-
       <nav className="primary-nav">
         <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeSidebarTarget === "providers"} onClick={() => onOpenView("providers")} />
         <NavItem icon={<History />} label={t("Runs")} active={activeSidebarTarget === "runs"} onClick={() => onOpenView("runs")} />
         <NavItem icon={<Inbox />} label={t("Inbox")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
         <NavItem icon={<Database />} label={t("Media Jobs")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />
-        <NavItem icon={<Settings />} label={t("Settings")} active={activeSidebarTarget === "settings"} onClick={() => onOpenView("settings")} />
         <NavItem icon={<Users />} label={t("AI Teammates")} active={activeSidebarTarget === "teammates"} onClick={() => onOpenView("teammates")} />
       </nav>
 
-      <SidebarSection title={t("Channels")} actionLabel={channels.length === 0 ? t("Create") : undefined}>
+      <SidebarSection title={t("Channels")} actionLabel={t("New channel")} onAction={onCreateChannel}>
         {channels.length === 0 ? (
-          <button className="sidebar-row muted-row" type="button" onClick={() => onOpenView("providers")}>
+          <button className="sidebar-row muted-row" type="button" onClick={onCreateChannel}>
             <Hash size={14} />
             <span>{t("No channel yet")}</span>
           </button>
@@ -112,6 +102,12 @@ export function SidebarNavigation({
           <span>{t("{count} pending approvals", { count: pendingApprovalCount })}</span>
         </button>
       ) : null}
+
+      <div className="sidebar-config">
+        <button className={activeSidebarTarget === "settings" ? "config-button active" : "config-button"} type="button" onClick={() => onOpenView("settings")} aria-label={t("Settings")} title={t("Settings")}>
+          <Settings size={15} />
+        </button>
+      </div>
     </aside>
   );
 }
@@ -133,9 +129,8 @@ function SidebarSection({
         <span>{title}</span>
         {actionLabel ? (
           onAction ? (
-            <button className="sidebar-section-action" type="button" onClick={onAction}>
-              <Plus size={11} />
-              {actionLabel}
+            <button className="sidebar-section-action" type="button" onClick={onAction} aria-label={actionLabel} title={actionLabel}>
+              <Plus size={12} />
             </button>
           ) : (
             <small>{actionLabel}</small>

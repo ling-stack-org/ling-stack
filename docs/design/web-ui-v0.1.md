@@ -154,6 +154,12 @@ Chat stays a discussion surface with `Send`, attachments, link previews, and `@`
 mentions. Manual task creation remains in the `Tasks` panel, while chat-to-execution
 uses user-confirmed proposal cards.
 
+Implemented v1.21 behavior: the channel workspace adopts the accepted Codex-style chat
+layout. Chat stays fixed in the center; `Tasks`, `Files`, and `Context` open from the
+header `...` menu into an in-layout right details panel. The attention queue becomes a
+header popover with a collapsible progress preview, local-user chat hides name/time,
+AI chat hides timestamps, and Settings moves to the lower sidebar area.
+
 ## Goal
 
 Users should be able to run and inspect Ling Stack without `curl`.

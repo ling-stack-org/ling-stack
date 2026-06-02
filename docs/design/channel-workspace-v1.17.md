@@ -24,8 +24,9 @@ but the message chrome and reply action are no longer always visible. A normal c
 keeps only the avatar, author, timestamp, and body visible by default. AI teammate
 blocked replies follow the same default, revealing their warning-tinted boundary only on
 hover or focus. Hovering or focusing that row reveals the lightweight message bubble
-boundary plus a compact right-edge action bubble. Hovering or focusing the icon shows the
-`Reply in topic` tooltip, and activating it opens the existing topic reply panel.
+boundary plus a compact header-row reply icon aligned to the far right of the message
+content. Hovering or focusing the icon shows the `Reply in topic` tooltip, and
+activating it opens the existing topic reply panel.
 
 Plain chat rows should also separate speaker ownership spatially without showing a
 default bubble fill. `local-user` messages align to the right, while AI teammate and

@@ -30,6 +30,7 @@ Related docs:
 - [Channel Workspace v1.18 Unified Composer Actions](channel-workspace-v1.18.md)
 - [Channel Workspace v1.19 General Multi-Agent Studio and Execution Proposals](channel-workspace-v1.19.md)
 - [Channel Workspace v1.20 Chat Composer Task Action Removal](channel-workspace-v1.20.md)
+- [Channel Workspace v1.21 Codex-Style Chat Workspace](channel-workspace-v1.21.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
@@ -63,8 +64,9 @@ work. The missing pieces are:
 - clear channel identity and purpose,
 - visible channel members and default AI teammate,
 - durable activity stream rather than only synthetic messages,
-- channel tabs for activity, tasks, and files,
-- right-side inspector for members, notifications, settings, and runtime context,
+- a quiet chat-first channel surface with details in a right-side panel,
+- member management, notifications, settings, tasks, files, and context reachable without
+  taking over the chat surface,
 - file/artifact access from the channel itself,
 - an implementation checklist that keeps future slices aligned.
 
@@ -130,19 +132,21 @@ left sidebar
 
 center channel
   header
-  tabs: activity / tasks / files
+  default chat surface
   execution-aware activity stream
   discussion composer
 
-right inspector
-  members
-  notifications
-  settings
-  runtime context
+right details panel
+  tasks
+  files
+  context/runtime
+  approvals and run details
 ```
 
 The center area should not start with setup forms once a channel exists. Setup and
 configuration belong in compact drawers, inspectors, or dedicated settings views.
+Chat is not a tab in the default channel workspace; it is the stable center surface.
+Secondary channel surfaces open from the header `...` menu into an in-layout right panel.
 
 ## External Pattern Benchmark
 
@@ -188,7 +192,8 @@ The first viewport should show:
 - default provider readiness,
 - default AI teammate,
 - active runtime locks if any,
-- the selected channel tab,
+- the centered discussion feed,
+- the right details panel when the user has it open,
 - discussion composer with attachment, link, and mention support.
 
 ## Information Architecture
@@ -217,20 +222,24 @@ Primary controls:
 
 The header should avoid large decorative artwork. It is an operational surface.
 
-### Channel Tabs
+### Channel Center and Details Panel
 
-Tabs are:
+The channel center is always Chat. Chat is not a tab and should not disappear when the
+user opens a secondary channel surface.
+
+Secondary channel surfaces are:
 
 ```text
-Activity
 Tasks
 Files
 Context
 ```
 
-`Activity` is the default tab.
+These surfaces open from the compact header `...` menu into an in-layout right details
+panel. The panel compresses the chat while visible and lets the chat expand when hidden.
+The selected details surface is preserved while the panel is hidden.
 
-Future tabs can include:
+Future details surfaces can include:
 
 - `Plan`,
 - `Approvals`,
@@ -1349,13 +1358,14 @@ Do not spread handoff, roster, and review-gate logic across visual components.
 
 ## Interaction Flows
 
-### Create Default Channel
+### Create Channel
 
 ```text
-no channel
--> user clicks Create default
--> Web picks first preflight-ready provider if available
--> Web picks Engineer teammate template as default when available
+no channel or existing selected channel
+-> user clicks + beside Channels in the left sidebar
+-> UI opens the New channel panel
+-> user confirms Create channel
+-> Web uses the selected channel as a template for path, provider, tools, and runtime policy when available
 -> daemon creates channel
 -> UI selects the new channel
 ```
@@ -1555,6 +1565,9 @@ Web notes:
   half-screen scroll region that leaves unused space below the working files.
 - channel headers should not repeat obvious selected-channel state such as `active channel`;
   reserve header subtext for real warnings, blockers, or scoped context.
+- channel creation belongs to the left sidebar `Channels` section through a `+` action.
+  Selected-channel Settings only edits the current channel and must not show `Create
+  channel` or `Create default` actions.
 - channel Chat composer should stay visually quiet: no visible `Discuss` heading and no
   static helper sentence below the input. Placeholder text, icon buttons, drag overlay,
   and mention suggestions carry those affordances.
@@ -1661,10 +1674,13 @@ Current MVP implementation status:
   panel,
 - v1.16 now reorganizes channel Settings into `Members`, `Notifications`, and
   `Channel management` cards. Adding a teammate is an explicit select-then-add action,
-  and notification preferences persist in browser-local storage by `cwd + channelId`,
+  notification preferences persist in browser-local storage by `cwd + channelId`, and
+  channel creation moves to the left sidebar `Channels` `+` action so Settings only
+  edits the selected channel,
 - v1.17 now moves channel AI teammate membership management out of Settings into a
   dedicated header dock, and changes ordinary user/AI chat message chrome plus the topic
-  reply affordance into hover/focus-only bubble UI with a right-edge icon tooltip,
+  reply affordance into hover/focus-only bubble UI with a far-right header-row icon
+  tooltip,
 - v1.18 now removes the Chat composer `Discuss` / `Task` segmented mode switch and uses
   a single input where `Send` creates discussion messages and `Task` creates tasks from
   the current input,
@@ -1675,6 +1691,11 @@ Current MVP implementation status:
 - v1.20 now removes the Chat composer `Task` action. Chat stays discussion-only; manual
   task creation lives in the `Tasks` panel, and executable work from chat enters through
   user-confirmed proposal cards,
+- v1.21 now ports the accepted Codex-style channel mockup: Chat is the fixed center
+  surface, `Tasks` / `Files` / `Context` open in an in-layout right details panel from
+  the header `...` menu, the attention queue is a header popover with collapsible
+  progress, local-user chat hides name/time, AI chat hides timestamps, and the left
+  sidebar removes the brand block while Settings moves to the bottom,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.
@@ -1976,7 +1997,7 @@ Current MVP implementation status:
 - [x] Keep channel Settings focused on notifications and channel/runtime management.
 - [x] Hide ordinary chat bubble chrome and the topic reply affordance until hover or
   keyboard focus.
-- [x] Show a right-edge icon bubble and icon tooltip before opening the topic reply panel.
+- [x] Show a compact far-right header-row icon and icon tooltip before opening the topic reply panel.
 - [x] Split ordinary chat by speaker side without default bubble fills: local-user
   messages render on the right, AI teammate replies render on the left, hover/focus
   reveals a neutral boundary, and non-chat work cards keep the event-card timeline
@@ -2031,6 +2052,18 @@ Current MVP implementation status:
   thumbnail previews, while non-image files and links use compact cards.
 - [x] Update e2e coverage so composer task creation is absent while manual task creation
   still works through the `Tasks` panel.
+
+### Phase 29: Codex-Style Chat Workspace
+
+- [x] Define v1.21 Codex-Style Chat Workspace in
+  `docs/design/channel-workspace-v1.21.md`.
+- [x] Make Chat the permanent center channel surface.
+- [x] Move `Tasks`, `Files`, and `Context` into a right details panel opened from the
+  header `...` menu.
+- [x] Add an icon-only attention popover with collapsible progress preview.
+- [x] Simplify chat message metadata: local-user messages omit name/time; AI chat omits
+  timestamps; audit/event cards keep metadata.
+- [x] Remove the left brand block and move Settings to the lower sidebar area.
 
 ## Validation Plan
 

@@ -48,7 +48,6 @@ export function ChannelTaskWorkspace({
   cwd,
   channels,
   selectedChannelId,
-  channelForm,
   channelEditForm,
   tasks,
   taskForm,
@@ -66,13 +65,11 @@ export function ChannelTaskWorkspace({
   runById,
   repairRun,
   errorMessage,
-  onChannelFormChange,
   onChannelEditFormChange,
   onTaskFormChange,
   onTaskEditFormChange,
   onProviderSelect,
   onSelectChannel,
-  onCreateChannel,
   onSaveChannelEdit,
   onDeleteChannel,
   onRefreshChannels,
@@ -94,7 +91,6 @@ export function ChannelTaskWorkspace({
   readonly cwd: string;
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
-  readonly channelForm: ChannelFormState;
   readonly channelEditForm: ChannelFormState;
   readonly tasks: readonly Task[];
   readonly taskForm: TaskFormState;
@@ -112,13 +108,11 @@ export function ChannelTaskWorkspace({
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly repairRun: RunSession | undefined;
   readonly errorMessage: string;
-  readonly onChannelFormChange: (form: ChannelFormState) => void;
   readonly onChannelEditFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
   readonly onTaskEditFormChange: (form: TaskEditFormState) => void;
   readonly onProviderSelect: (providerId: string) => void;
   readonly onSelectChannel: (channelId: string) => void;
-  readonly onCreateChannel: () => void;
   readonly onSaveChannelEdit: (channelId: string) => void;
   readonly onDeleteChannel: (channelId: string) => void;
   readonly onRefreshChannels: () => void;
@@ -272,60 +266,6 @@ export function ChannelTaskWorkspace({
           </div>
         ) : null}
 
-        <div className="channel-create">
-          <div className="panel-title tight">
-            <Plus size={16} />
-	            <h3>{t("New channel")}</h3>
-          </div>
-          <label className="field wide">
-	            <span>{t("Name")}</span>
-            <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} />
-          </label>
-          <details className="advanced-settings">
-            <summary>{t("Advanced settings")}</summary>
-            <ChannelRuntimePolicyFields form={channelForm} onChange={onChannelFormChange} />
-            <label className="field wide">
-	              <span>{t("Default provider")}</span>
-              <select
-                value={channelForm.defaultProviderPresetId}
-                onChange={(event) => onChannelFormChange({ ...channelForm, defaultProviderPresetId: event.target.value })}
-              >
-	                <option value="">{t("None")}</option>
-                <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-              </select>
-            </label>
-            {mediaProviders.length > 0 ? (
-              <div className="provider-run-notice neutral">
-                <Database size={16} />
-                <span>{t("Media providers stay in Media Jobs and cannot run coding tasks.")}</span>
-              </div>
-            ) : null}
-            <div className="tool-grid compact-tools" aria-label="Channel allowed tools">
-              {allTools.map((tool) => (
-                <label
-                  key={tool}
-                  className={`${channelForm.allowedTools.includes(tool) ? "tool-toggle selected" : "tool-toggle"}${riskyTools.includes(tool) ? " requires-approval" : ""}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={channelForm.allowedTools.includes(tool)}
-                    onChange={(event) => {
-                      const allowedTools = event.target.checked
-                        ? [...channelForm.allowedTools, tool]
-                        : channelForm.allowedTools.filter((item) => item !== tool);
-                      onChannelFormChange({ ...channelForm, allowedTools });
-                    }}
-                  />
-                  <span>{tool}</span>
-                </label>
-              ))}
-            </div>
-          </details>
-	          <button className="primary-button full" type="button" onClick={onCreateChannel}>
-	            <Plus size={16} />
-	            {t("Create channel")}
-	          </button>
-        </div>
       </section>
 
       <section className="panel task-panel" aria-labelledby="tasks-title">
