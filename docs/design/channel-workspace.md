@@ -137,7 +137,7 @@ center channel
   discussion composer
 
 right details panel
-  selected task/run detail
+  full-height selected task/run detail drawer
   files
   context/runtime
   approvals and run details
@@ -147,6 +147,15 @@ The center area should not start with setup forms once a channel exists. Setup a
 configuration belong in compact drawers, inspectors, or dedicated settings views.
 Chat is not a tab in the default channel workspace; it is the stable center surface.
 Secondary channel surfaces open from the header `...` menu into an in-layout right panel.
+The left navigation is also a drawer in the accepted channel chat direction: expanded at
+232px, collapsed to a 48px toolbar rail, and recoverable by hover/focus. The right
+details surface is a full-height drawer aligned to the top of the channel workspace,
+while the channel header and chat body occupy only the center column. Avoid placing a
+second close button inside the right drawer; the header show/hide icon owns that state.
+The current channel remains visibly selected with a full-row neutral background, without
+the older sidebar accent bar. AI teammate rows use circular initial avatars rather than
+generic bot icons, and drawer header actions stay hidden until hover/focus so the surface
+does not read like a busy toolbar by default.
 
 ## External Pattern Benchmark
 

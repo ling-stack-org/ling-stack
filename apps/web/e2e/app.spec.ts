@@ -240,6 +240,96 @@ test("workspace opens as a task workbench with task context in the inspector", a
   await expect(taskDetail).not.toContainText("run_failed");
 });
 
+test("channel drawers match the accepted HTML layout", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await expect(page.locator(".channel-left-drawer .sidebar-row.selected")).toContainText("Engineering");
+
+  const expanded = await page.evaluate(() => {
+    const shell = document.querySelector(".app-shell");
+    const leftDrawer = document.querySelector(".channel-left-drawer");
+    const leftToolbar = document.querySelector(".channel-sidebar-toolbar");
+    const rightDrawer = document.querySelector(".channel-side-panel");
+    const header = document.querySelector(".task-workbench-header");
+    const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-row.selected");
+    const selectedChannelBefore = selectedChannel ? getComputedStyle(selectedChannel, "::before") : undefined;
+    const sidePanelActions = document.querySelector(".channel-side-panel-actions");
+    return {
+      columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
+      leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
+      leftToolbarWidth: Math.round(leftToolbar?.getBoundingClientRect().width ?? 0),
+      selectedChannelText: selectedChannel?.textContent?.trim() ?? "",
+      selectedChannelBackground: selectedChannel ? getComputedStyle(selectedChannel).backgroundColor : "",
+      selectedChannelBeforeContent: selectedChannelBefore?.content ?? "",
+      teammateAvatarCount: document.querySelectorAll(".channel-left-drawer .sidebar-section .avatar-initial").length,
+      rightY: Math.round(rightDrawer?.getBoundingClientRect().y ?? -1),
+      rightHeight: Math.round(rightDrawer?.getBoundingClientRect().height ?? 0),
+      viewportHeight: window.innerHeight,
+      headerRight: Math.round(header?.getBoundingClientRect().right ?? 0),
+      rightLeft: Math.round(rightDrawer?.getBoundingClientRect().left ?? 0),
+      sidePanelActions: document.querySelectorAll(".channel-side-panel-actions .icon-button").length,
+      sidePanelActionsOpacity: sidePanelActions ? getComputedStyle(sidePanelActions).opacity : "",
+      sidePanelActionsVisibility: sidePanelActions ? getComputedStyle(sidePanelActions).visibility : "",
+      globalRightPanels: document.querySelectorAll(".right-panel").length,
+    };
+  });
+  expect(expanded.columns.startsWith("232px ")).toBe(true);
+  expect(expanded.leftWidth).toBe(232);
+  expect(expanded.leftToolbarWidth).toBe(232);
+  expect(expanded.selectedChannelText).toContain("Engineering");
+  expect(expanded.selectedChannelBackground).toBe("rgb(245, 245, 245)");
+  expect(expanded.selectedChannelBeforeContent).toBe("none");
+  expect(expanded.teammateAvatarCount).toBeGreaterThan(0);
+  expect(expanded.rightY).toBe(0);
+  expect(expanded.rightHeight).toBe(expanded.viewportHeight);
+  expect(expanded.headerRight).toBeLessThanOrEqual(expanded.rightLeft);
+  expect(expanded.sidePanelActions).toBe(2);
+  expect(expanded.sidePanelActionsOpacity).toBe("0");
+  expect(expanded.sidePanelActionsVisibility).toBe("hidden");
+  expect(expanded.globalRightPanels).toBe(0);
+
+  await page.getByRole("button", { name: "Hide navigation" }).click();
+  await page.mouse.move(640, 120);
+  await page.waitForTimeout(200);
+  const leftCollapsed = await page.evaluate(() => {
+    const shell = document.querySelector(".app-shell");
+    const leftDrawer = document.querySelector(".channel-left-drawer");
+    const leftToolbar = document.querySelector(".channel-sidebar-toolbar");
+    return {
+      columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
+      leftX: Math.round(leftDrawer?.getBoundingClientRect().x ?? 0),
+      leftOpacity: leftDrawer ? getComputedStyle(leftDrawer).opacity : "",
+      toolbarWidth: Math.round(leftToolbar?.getBoundingClientRect().width ?? 0),
+    };
+  });
+  expect(leftCollapsed.columns.startsWith("48px ")).toBe(true);
+  expect(leftCollapsed.leftX).toBe(-184);
+  expect(leftCollapsed.leftOpacity).toBe("0");
+  expect(leftCollapsed.toolbarWidth).toBe(48);
+
+  await page.getByRole("button", { name: "Hide details" }).click();
+  await page.waitForTimeout(200);
+  const rightCollapsed = await page.evaluate(() => {
+    const shell = document.querySelector(".app-shell");
+    const main = document.querySelector(".task-workbench-main");
+    return {
+      columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
+      sidePanelCount: document.querySelectorAll(".channel-side-panel").length,
+      mainPaddingRight: main ? getComputedStyle(main).paddingRight : "",
+    };
+  });
+  expect(rightCollapsed.columns.startsWith("48px ")).toBe(true);
+  expect(rightCollapsed.sidePanelCount).toBe(0);
+  expect(rightCollapsed.mainPaddingRight).toBe("0px");
+
+  await page.getByRole("button", { name: "Show details" }).click();
+  await page.getByRole("button", { name: "Show navigation" }).click();
+  await page.waitForTimeout(200);
+  await expect(page.locator(".channel-side-panel")).toHaveCount(1);
+});
+
 test("workspace task detail panel stays bounded without growing the page", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const state = createBaseState({ approvalStatus: "expired" });
@@ -2699,7 +2789,7 @@ test("sidebar selection is exclusive and conversation lists no longer live in gl
   const navigation = page.getByLabel("Ling Stack navigation");
   await expect(navigation.getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Tasks" })).toHaveCount(0);
-  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Engineering"] });
 
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Engineering"] });
@@ -2758,7 +2848,7 @@ test("workspace new task panel creates and selects the new task", async ({ page 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("button", { name: "New task" }).click();
+  await openNewTaskPanel(page);
   await page.getByLabel("New task").getByLabel("Title").fill("Design inspector behavior");
   await page.getByLabel("New task").getByLabel("Prompt").fill("Make the inspector follow the selected task.");
   await page.getByLabel("New task").getByRole("button", { name: "Create task" }).click();
@@ -3043,7 +3133,7 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await page.goto("/");
 
   await openChannelTasksTab(page);
-  await page.getByRole("button", { name: "New task" }).click();
+  await openNewTaskPanel(page);
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
   await expect(providerSelect.locator("option").filter({ hasText: "Ready Local Relay" })).toHaveCount(1);
   await expect(providerSelect.locator("option").filter({ hasText: "Missing Key Gateway" })).toHaveCount(1);
@@ -3083,7 +3173,7 @@ test("workspace task run uses the displayed ready provider fallback", async ({ p
   await page.goto("/");
 
   await openChannelTasksTab(page);
-  await page.getByRole("button", { name: "New task" }).click();
+  await openNewTaskPanel(page);
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
   await expect(providerSelect).toHaveValue("provider_ready");
   await page.getByRole("button", { name: "Cancel" }).click();
@@ -3735,6 +3825,11 @@ async function openChannelTasksTab(page: Page): Promise<void> {
   await openChannelSidePanel(page, "Tasks");
 }
 
+async function openNewTaskPanel(page: Page): Promise<void> {
+  await page.locator(".channel-side-panel").hover();
+  await page.getByRole("button", { name: "New task" }).click();
+}
+
 async function openChannelFilesPanel(page: Page): Promise<void> {
   await openChannelSidePanel(page, "Files");
 }
@@ -3747,10 +3842,12 @@ async function openChannelSidePanel(page: Page, name: "Tasks" | "Files" | "Conte
   const panelLabel = name === "Tasks" ? "Task detail" : name;
   const panel = page.locator(".channel-side-panel").filter({ hasText: panelLabel });
   if ((await panel.count()) > 0 && await panel.isVisible().catch(() => false)) {
+    await panel.hover();
     return;
   }
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name }).click();
+  await page.locator(".channel-side-panel").filter({ hasText: panelLabel }).hover();
 }
 
 async function openChannelChatTools(page: Page): Promise<void> {

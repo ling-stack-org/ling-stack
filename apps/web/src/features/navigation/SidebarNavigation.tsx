@@ -5,6 +5,8 @@ import {
   Hash,
   History,
   Inbox,
+  PanelLeftClose,
+  PanelLeftOpen,
   PlugZap,
   Plus,
   Settings,
@@ -19,6 +21,7 @@ import {
   type ViewId,
 } from "../../app/view-types.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
+import { AvatarInitial } from "../../shared/components/index.js";
 import type { AiTeammate, ApprovalRequest, Channel } from "../../types.js";
 
 export function SidebarNavigation({
@@ -30,6 +33,9 @@ export function SidebarNavigation({
   onCreateChannel,
   onSelectChannel,
   onSelectTeammate,
+  channelDrawer = false,
+  channelDrawerOpen = true,
+  onChannelDrawerOpenChange,
 }: {
   readonly activeSidebarTarget: SidebarTarget;
   readonly channels: readonly Channel[];
@@ -39,13 +45,30 @@ export function SidebarNavigation({
   readonly onCreateChannel: () => void;
   readonly onSelectChannel: (channelId: string) => void;
   readonly onSelectTeammate: (teammateId: string) => void;
+  readonly channelDrawer?: boolean;
+  readonly channelDrawerOpen?: boolean;
+  readonly onChannelDrawerOpenChange?: (open: boolean) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
   const visibleTeammates = teammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled");
 
   return (
-    <aside className="left-nav" aria-label="Ling Stack navigation">
+    <>
+      {channelDrawer ? (
+        <div className="channel-sidebar-toolbar">
+          <button
+            className="channel-sidebar-switch"
+            type="button"
+            aria-label={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}
+            title={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}
+            onClick={() => onChannelDrawerOpenChange?.(!channelDrawerOpen)}
+          >
+            {channelDrawerOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+          </button>
+        </div>
+      ) : null}
+      <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label="Ling Stack navigation">
       <nav className="primary-nav">
         <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeSidebarTarget === "providers"} onClick={() => onOpenView("providers")} />
         <NavItem icon={<History />} label={t("Runs")} active={activeSidebarTarget === "runs"} onClick={() => onOpenView("runs")} />
@@ -89,8 +112,9 @@ export function SidebarNavigation({
               type="button"
               onClick={() => onSelectTeammate(teammate.id)}
             >
-              <Bot size={14} />
+              <AvatarInitial label={teammateInitial(teammate.displayName)} tone="gray" />
               <span>{teammate.displayName}</span>
+              {teammate.status === "active" ? <span className="status-dot green" aria-hidden="true" /> : null}
             </button>
           ))
         )}
@@ -108,8 +132,13 @@ export function SidebarNavigation({
           <Settings size={15} />
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
+}
+
+function teammateInitial(name: string): string {
+  return name.trim().slice(0, 1).toUpperCase() || "A";
 }
 
 function SidebarSection({

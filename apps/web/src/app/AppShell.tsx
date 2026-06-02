@@ -278,6 +278,7 @@ export function AppShell(): JSX.Element {
   }));
   const [activeView, setActiveView] = useState<ViewId>("workspace");
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
+  const [channelSidebarOpen, setChannelSidebarOpen] = useState(true);
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
   const [activeRunId, setActiveRunId] = useState("");
   const [lookupRunId, setLookupRunId] = useState("");
@@ -2979,9 +2980,12 @@ export function AppShell(): JSX.Element {
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
+  const navigationActiveSidebarTarget =
+    activeView === "workspace" && selectedChannelId ? channelSidebarTarget(selectedChannelId) : activeSidebarTarget;
   const shellClassName = [
     "app-shell",
     activeView === "workspace" ? "channel-daylight-shell" : "",
+    activeView === "workspace" && !channelSidebarOpen ? "channel-sidebar-collapsed" : "",
     showInspector && inspectorCollapsed ? "inspector-collapsed" : "",
     showInspector ? "" : "inspector-hidden",
   ].filter(Boolean).join(" ");
@@ -2989,7 +2993,7 @@ export function AppShell(): JSX.Element {
   return (
     <main className={shellClassName}>
       <SidebarNavigation
-        activeSidebarTarget={activeSidebarTarget}
+        activeSidebarTarget={navigationActiveSidebarTarget}
         channels={channels}
         teammates={aiTeammates}
         approvals={approvals}
@@ -2997,6 +3001,9 @@ export function AppShell(): JSX.Element {
         onCreateChannel={openChannelCreatePanel}
         onSelectChannel={selectWorkspaceChannel}
         onSelectTeammate={selectAiTeammate}
+        channelDrawer={activeView === "workspace"}
+        channelDrawerOpen={channelSidebarOpen}
+        onChannelDrawerOpenChange={setChannelSidebarOpen}
       />
       <section
         className={

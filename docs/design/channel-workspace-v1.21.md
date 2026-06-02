@@ -30,12 +30,16 @@ chat is the permanent center surface.
 The right details panel:
 
 - is an in-layout sidebar, not an overlay,
+- is a full-height drawer aligned to the top of the channel workspace, not a panel that
+  starts below the channel header,
 - compresses the chat when visible,
 - hides without losing the selected detail view,
 - reuses existing Files and Context components,
 - shows the selected task detail directly instead of a task list,
 - embeds the active run timeline inside task detail when run events exist,
 - keeps task/run identifiers out of the default header chrome.
+- does not duplicate the details close control inside the drawer; show/hide is controlled
+  from the channel header icon.
 
 The attention queue:
 
@@ -76,6 +80,17 @@ its own daylight token scope even when the global app theme is dark:
 Channel creation lives beside the `Channels` section in the left sidebar. Channel
 settings edits only the current channel. The left brand block is removed from the strict
 workspace surface; Settings moves to the lower sidebar area.
+
+The accepted HTML direction treats the left navigation as a drawer, not merely a fixed
+sidebar. On desktop the expanded drawer is 232px wide. Collapsing it leaves a 48px
+toolbar rail with a single left-panel icon; hovering or focusing the drawer reveals it
+without navigating away from the channel. The strict channel shell should not fall back
+to the older 220px responsive sidebar treatment on desktop widths.
+
+The drawer should use the accepted chat HTML row treatment, not the older global sidebar
+accent treatment: the current channel uses a full-row `#F5F5F5` selected background with
+no left accent bar, AI teammates use circular initial avatars with small status dots,
+and the right task/details drawer keeps header actions hidden until hover or focus.
 
 ## Non-Goals
 
