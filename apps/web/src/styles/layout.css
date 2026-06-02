@@ -168,9 +168,10 @@ textarea {
 .sidebar-section-action {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  justify-content: center;
+  width: 20px;
   height: 20px;
-  padding: 0 5px;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -661,6 +662,10 @@ textarea {
   min-width: 0;
 }
 
+.message-meta.has-meta-action {
+  padding-right: 26px;
+}
+
 .message-bubble-inline .message-meta {
   gap: 7px;
 }
@@ -694,44 +699,40 @@ textarea {
 .message-meta-action {
   display: inline-flex;
   position: absolute;
-  top: 50%;
-  right: -9px;
+  top: 9px;
+  right: 10px;
+  width: 20px;
+  height: 20px;
   z-index: 2;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-panel);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  padding: 0;
+  border: 0;
+  background: transparent;
   opacity: 0;
   pointer-events: none;
-  transform: translate(6px, -50%) scale(0.98);
+  transform: translateY(1px) scale(0.96);
   transition:
     opacity 160ms ease,
-    transform 160ms ease,
-    border-color 160ms ease;
+    transform 160ms ease;
 }
 
 .message-bubble-chat:hover .message-meta-action,
 .message-bubble-chat:focus-within .message-meta-action,
 .message-bubble-chat-blocked:hover .message-meta-action,
 .message-bubble-chat-blocked:focus-within .message-meta-action {
-  border-color: var(--info-border);
   opacity: 1;
   pointer-events: auto;
-  transform: translate(0, -50%) scale(1);
+  transform: translateY(0) scale(1);
 }
 
 .message-bubble-own .message-meta-action {
-  right: auto;
-  left: -9px;
-  transform: translate(-6px, -50%) scale(0.98);
+  transform: translateY(1px) scale(0.96);
 }
 
 .message-bubble-chat.message-bubble-own:hover .message-meta-action,
 .message-bubble-chat.message-bubble-own:focus-within .message-meta-action,
 .message-bubble-chat-blocked.message-bubble-own:hover .message-meta-action,
 .message-bubble-chat-blocked.message-bubble-own:focus-within .message-meta-action {
-  transform: translate(0, -50%) scale(1);
+  transform: translateY(0) scale(1);
 }
 
 .message-reply-button {
@@ -739,8 +740,8 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 999px;

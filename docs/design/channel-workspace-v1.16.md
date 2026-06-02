@@ -33,9 +33,11 @@ actions.
 The preference is scoped by `cwd + channelId` in localStorage and does not mutate daemon
 state.
 
-`Channel management` contains the existing persisted channel controls: run provider,
-name, execution path, default AI teammate, runtime policy, refresh, and channel
-creation.
+`Channel management` contains only the selected channel's persisted controls: run
+provider, name, execution path, default AI teammate, runtime policy, refresh, and save.
+Channel creation is not part of selected-channel settings. New channels are created
+from the `+` action beside `Channels` in the left sidebar, which opens a separate
+`New channel` panel.
 
 ## Acceptance Criteria
 
@@ -44,6 +46,8 @@ creation.
 - Member default and remove actions keep using existing teammate membership routes.
 - Notification level changes persist locally for the selected channel.
 - Existing channel create/update/runtime tests keep passing.
+- Channel Settings does not show `Create channel` or `Create default`; it only saves the
+  current channel.
 
 ## Test Plan
 

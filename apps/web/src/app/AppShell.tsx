@@ -299,6 +299,7 @@ export function AppShell(): JSX.Element {
     ...defaultChannelForm,
     boundPath: initialWorkspaceCwd,
   }));
+  const [channelCreateOpen, setChannelCreateOpen] = useState(false);
   const [channelEditForm, setChannelEditForm] = useState<ChannelFormState>(defaultChannelEditForm);
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
@@ -603,11 +604,13 @@ export function AppShell(): JSX.Element {
     if (view === "approvals") {
       setApprovalRepairRunId("");
     }
+    setChannelCreateOpen(false);
     setActiveView(view);
     setActiveSidebarTarget(view);
   }
 
   function selectWorkspaceChannel(channelId: string): void {
+    setChannelCreateOpen(false);
     setSelectedChannelId(channelId);
     setTaskRunProviderId("");
     setActiveView("workspace");
@@ -615,8 +618,28 @@ export function AppShell(): JSX.Element {
   }
 
   function selectAiTeammate(teammateId: string): void {
+    setChannelCreateOpen(false);
     setActiveView("teammates");
     setActiveSidebarTarget(teammateSidebarTarget(teammateId));
+  }
+
+  function openChannelCreatePanel(): void {
+    const workspaceCwd = form.cwd.trim();
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    setChannelForm((current) => ({
+      ...defaultChannelForm,
+      ...current,
+      name: "",
+      status: "active",
+      boundPath: selectedChannel?.boundPath || workspaceCwd || current.boundPath,
+      defaultProviderPresetId: selectedChannel?.defaultProviderPresetId || form.providerPresetId || current.defaultProviderPresetId,
+      defaultTeammateId: "",
+      allowedTools: selectedChannel?.allowedTools.length ? selectedChannel.allowedTools : defaultChannelForm.allowedTools,
+      runtimePolicy: selectedChannel?.runtimePolicy ?? defaultChannelForm.runtimePolicy,
+    }));
+    setChannelCreateOpen(true);
+    setActiveView("workspace");
+    setActiveSidebarTarget(selectedChannelId ? channelSidebarTarget(selectedChannelId) : "workspace");
   }
 
   const resolvingApprovalsRef = useRef<Set<string>>(new Set());
@@ -1658,6 +1681,7 @@ export function AppShell(): JSX.Element {
       const response = await createChannel(form.cwd.trim(), channelForm);
       setSelectedChannelId(response.channel.id);
       setActiveSidebarTarget(channelSidebarTarget(response.channel.id));
+      setChannelCreateOpen(false);
       setChannelForm((current) => ({
         ...current,
         name: "",
@@ -1690,6 +1714,7 @@ export function AppShell(): JSX.Element {
       });
       setSelectedChannelId(response.channel.id);
       setActiveSidebarTarget(channelSidebarTarget(response.channel.id));
+      setChannelCreateOpen(false);
       setTaskRunProviderId("");
       if (readyProvider) {
       void applyProviderToRun(readyProvider);
@@ -2968,6 +2993,7 @@ export function AppShell(): JSX.Element {
         teammates={aiTeammates}
         approvals={approvals}
         onOpenView={openPlainView}
+        onCreateChannel={openChannelCreatePanel}
         onSelectChannel={selectWorkspaceChannel}
         onSelectTeammate={selectAiTeammate}
       />
@@ -2988,6 +3014,8 @@ export function AppShell(): JSX.Element {
             channels={channels}
             selectedChannelId={selectedChannelId}
             channelForm={channelForm}
+            channelCreateOpen={channelCreateOpen}
+            channelEditForm={channelEditForm}
             tasks={tasks}
             taskForm={taskForm}
             channelMessages={channelMessages}
@@ -3034,6 +3062,8 @@ export function AppShell(): JSX.Element {
             runningWorkflowStepId={runningWorkflowStepId}
             errorMessage={errorMessage}
             onChannelFormChange={setChannelForm}
+            onChannelCreateOpenChange={setChannelCreateOpen}
+            onChannelEditFormChange={setChannelEditForm}
             onTaskFormChange={setTaskForm}
             onProviderSelect={(providerId) => {
               setTaskRunProviderId(providerId);
@@ -3047,8 +3077,8 @@ export function AppShell(): JSX.Element {
             onSetDefaultChannelTeammate={(teammateId) => setDefaultChannelTeammate(teammateId)}
             onOpenTeammates={() => openPlainView("teammates")}
             onRefreshChannels={() => void refreshChannels()}
-            onCreateDefaultChannel={() => void saveDefaultChannel()}
             onCreateChannel={() => void saveChannel()}
+            onSaveChannel={() => selectedChannelId ? void saveChannelEdit(selectedChannelId) : undefined}
             onCreateTask={() => void saveTask()}
             onSendMessage={sendChannelMessage}
             onConfirmExecutionProposal={(proposal) => void confirmChannelExecutionProposal(proposal)}

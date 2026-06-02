@@ -4,6 +4,8 @@ import {
   AtSign,
   Bell,
   BellOff,
+  ChevronDown,
+  ChevronUp,
   CheckCircle2,
   CircleAlert,
   Clock3,
@@ -16,8 +18,12 @@ import {
   Image as ImageIcon,
   Info,
   Link2,
+  ListChecks,
   Loader2,
   MessageSquare,
+  MoreHorizontal,
+  PanelRightClose,
+  PanelRightOpen,
   Play,
   Plus,
   RefreshCw,
@@ -113,6 +119,7 @@ import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceCo
 
 type TaskFilter = "all" | "queued" | "running" | "review" | "done";
 type ChannelTab = "activity" | "tasks" | "files" | "protocol";
+type ChannelSidePanelView = Exclude<ChannelTab, "activity">;
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
@@ -146,8 +153,7 @@ interface ActiveMentionPicker {
 }
 
 const taskFilters: readonly TaskFilter[] = ["all", "queued", "running", "review", "done"];
-const channelPrimaryTabs: readonly ChannelTab[] = ["activity", "files"];
-const channelUtilityTabs: readonly ChannelTab[] = ["tasks", "protocol"];
+const channelSidePanelViews: readonly ChannelSidePanelView[] = ["tasks", "files", "protocol"];
 const activityCategoryFilters: readonly ActivityCategoryFilter[] = ["all", "message", "work", "approval", "protocol", "runtime"];
 const activityAttentionFilters: readonly Exclude<ActivityAttentionFilter, "all">[] = ["needs_attention", "blocked", "failed", "pending"];
 const channelNotificationLevels: readonly ChannelNotificationLevel[] = ["all", "mentions", "muted"];
@@ -185,6 +191,8 @@ export function WorkspaceClientView({
   channels,
   selectedChannelId,
   channelForm,
+  channelCreateOpen,
+  channelEditForm,
   tasks,
   taskForm,
   channelMessages,
@@ -231,6 +239,8 @@ export function WorkspaceClientView({
   runningWorkflowStepId,
   errorMessage,
   onChannelFormChange,
+  onChannelCreateOpenChange,
+  onChannelEditFormChange,
   onTaskFormChange,
   onProviderSelect,
   onAddChannelTeammate,
@@ -238,8 +248,8 @@ export function WorkspaceClientView({
   onSetDefaultChannelTeammate,
   onOpenTeammates,
   onRefreshChannels,
-  onCreateDefaultChannel,
   onCreateChannel,
+  onSaveChannel,
   onCreateTask,
   onSendMessage,
   onConfirmExecutionProposal,
@@ -276,6 +286,8 @@ export function WorkspaceClientView({
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
   readonly channelForm: ChannelFormState;
+  readonly channelCreateOpen: boolean;
+  readonly channelEditForm: ChannelFormState;
   readonly tasks: readonly Task[];
   readonly taskForm: TaskFormState;
   readonly channelMessages: readonly ChannelMessage[];
@@ -322,6 +334,8 @@ export function WorkspaceClientView({
   readonly runningWorkflowStepId: string;
   readonly errorMessage: string;
   readonly onChannelFormChange: (form: ChannelFormState) => void;
+  readonly onChannelCreateOpenChange: (open: boolean) => void;
+  readonly onChannelEditFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
   readonly onProviderSelect: (providerId: string) => void;
   readonly onAddChannelTeammate: (teammateId: string) => Promise<void>;
@@ -329,8 +343,8 @@ export function WorkspaceClientView({
   readonly onSetDefaultChannelTeammate: (teammateId: string) => Promise<void>;
   readonly onOpenTeammates: () => void;
   readonly onRefreshChannels: () => void;
-  readonly onCreateDefaultChannel: () => void;
   readonly onCreateChannel: () => void;
+  readonly onSaveChannel: () => void;
   readonly onCreateTask: () => void;
   readonly onSendMessage: (input: {
     readonly threadId?: string;
@@ -374,6 +388,12 @@ export function WorkspaceClientView({
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
   const [activeTab, setActiveTab] = useState<ChannelTab>("activity");
+  const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>("tasks");
+  const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  const [channelMoreOpen, setChannelMoreOpen] = useState(false);
+  const [attentionQueueOpen, setAttentionQueueOpen] = useState(true);
+  const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
+  const [activityToolsOpen, setActivityToolsOpen] = useState(false);
   const [activitySearch, setActivitySearch] = useState("");
   const [activityCategoryFilter, setActivityCategoryFilter] = useState<ActivityCategoryFilter>("all");
   const [activityAttentionFilter, setActivityAttentionFilter] = useState<ActivityAttentionFilter>("all");
@@ -410,6 +430,7 @@ export function WorkspaceClientView({
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const channelMoreRef = useRef<HTMLDivElement | null>(null);
   const autoPreviewUrlsRef = useRef(new Set<string>());
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
   const previousChannelIdRef = useRef(selectedChannelId);
@@ -423,6 +444,40 @@ export function WorkspaceClientView({
   const providerBlocker = providerRunPreflightBlocker(effectiveProvider, t);
   const activeLeaseCount = resourceLeases.filter((lease) => lease.status === "active").length;
   const taskActionPending = activeTaskRunAction !== undefined;
+
+  useEffect(() => {
+    if (!channelCreateOpen) {
+      return;
+    }
+    setWorkspaceSettingsOpen(false);
+    setTeammateManagerOpen(false);
+    setActivityToolsOpen(false);
+  }, [channelCreateOpen]);
+
+  useEffect(() => {
+    if (!channelMoreOpen) {
+      return undefined;
+    }
+    function handlePointerDown(event: MouseEvent): void {
+      const target = event.target;
+      if (target instanceof Node && channelMoreRef.current?.contains(target)) {
+        return;
+      }
+      setChannelMoreOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setChannelMoreOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [channelMoreOpen]);
+
   const latestRun = activeRunId ? runById.get(activeRunId) : runs[0];
   const filteredTasks = useMemo(
     () =>
@@ -636,28 +691,34 @@ export function WorkspaceClientView({
     setThreadReplyDraft("");
     setThreadReplyError("");
     setPendingChannelTeammateId("");
+    setChannelMoreOpen(false);
+    setActivityToolsOpen(false);
+    setAttentionProgressExpanded(true);
+    setSidePanelView("tasks");
     setChannelNotificationLevel(readChannelNotificationLevel(cwd, selectedChannelId));
   }, [selectedChannelId]);
 
   useEffect(() => {
-    if (activeTab === "files") {
+    if (sidePanelOpen && sidePanelView === "files") {
       onRefreshChannelFiles();
     }
-  }, [activeTab]);
+  }, [sidePanelOpen, sidePanelView]);
 
   function selectTask(taskId: string): void {
     setCreateTaskOpen(false);
+    setSidePanelView("tasks");
+    setSidePanelOpen(true);
     onSelectTask(taskId);
   }
 
   function openTaskFromActivity(taskId: string): void {
     selectTask(taskId);
-    setActiveTab("tasks");
   }
 
   function openProtocolFromActivity(mode: "brief" | "decisions" | "handoffs" | "runtime" = "runtime"): void {
     setInspectorMode(mode);
-    setActiveTab("protocol");
+    setSidePanelView("protocol");
+    setSidePanelOpen(true);
   }
 
   function openAttentionQueueItem(item: ChannelAttentionQueueItem): void {
@@ -725,7 +786,6 @@ export function WorkspaceClientView({
   function openThreadForMessage(message: ChannelMessage): void {
     setActiveThreadId(message.threadId ?? message.id);
     setThreadReplyError("");
-    setActiveTab("activity");
   }
 
   function updateChannelNotificationLevel(level: ChannelNotificationLevel): void {
@@ -881,24 +941,24 @@ export function WorkspaceClientView({
     });
   }
 
-  const activeTabLoading = activeTab === "tasks"
+  const sidePanelLoading = sidePanelView === "tasks"
     ? tasksLoading
-    : activeTab === "protocol"
+    : sidePanelView === "protocol"
       ? channelProtocolLoading
-      : activeTab === "files"
+      : sidePanelView === "files"
         ? channelFilesLoading || channelRunArtifactsLoading
         : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || externalWorkCiTriageLoading || channelsLoading;
 
-  function refreshActiveTab(): void {
-    if (activeTab === "tasks") {
+  function refreshSidePanel(): void {
+    if (sidePanelView === "tasks") {
       onRefreshTasks();
       return;
     }
-    if (activeTab === "protocol") {
+    if (sidePanelView === "protocol") {
       onRefreshChannelProtocol();
       return;
     }
-    if (activeTab === "files") {
+    if (sidePanelView === "files") {
       onRefreshChannelFiles();
       return;
     }
@@ -1233,7 +1293,6 @@ export function WorkspaceClientView({
       setSendState("idle");
       setSendError("");
       setAiReplyState("idle");
-      setActiveTab("activity");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setSendState("failed");
@@ -1580,88 +1639,233 @@ export function WorkspaceClientView({
     </section>
   );
 
+  const attentionProgressItems = [
+    selectedTask ? `${selectedTask.title} · ${t(selectedTask.status)}` : tasks[0] ? `${tasks[0].title} · ${t(tasks[0].status)}` : "",
+    latestRun ? `${t("Latest run")} · ${t(latestRun.status)}` : "",
+    pendingApprovalCount > 0 ? t("{count} pending approvals", { count: pendingApprovalCount }) : t("Waiting for proposal confirmation"),
+  ].filter(Boolean);
+
+  function openSidePanelView(view: ChannelSidePanelView): void {
+    setSidePanelView(view);
+    setSidePanelOpen(true);
+    setChannelMoreOpen(false);
+    setActivityToolsOpen(false);
+    if (view === "files") {
+      onRefreshChannelFiles();
+    } else if (view === "protocol") {
+      onRefreshChannelProtocol();
+    } else {
+      onRefreshTasks();
+    }
+  }
+
+  const sidePanelTitle = t(channelTabLabel(sidePanelView));
+  const sidePanelContent = sidePanelView === "files" ? (
+    <ChannelFiles
+      attachments={channelAttachments}
+      linkPreviews={channelLinkPreviews}
+      runs={channelRunsForFiles}
+      tasks={tasks}
+      artifactsByRun={channelArtifactsByRun}
+      artifactErrorsByRun={channelArtifactErrorsByRun}
+      loading={channelFilesLoading}
+      runArtifactsLoading={channelRunArtifactsLoading}
+      attachmentContentUrl={attachmentContentUrl}
+      onDeleteAttachment={onDeleteAttachment}
+    />
+  ) : sidePanelView === "protocol" ? (
+    <div className="channel-protocol-tab-content">
+      <ChannelInspector
+        mode={inspectorMode}
+        onModeChange={setInspectorMode}
+        brief={channelBrief}
+        briefDraft={briefDraft}
+        onBriefDraftChange={setBriefDraft}
+        onSaveBrief={saveBrief}
+        decisions={channelDecisions}
+        handoffs={channelHandoffs}
+        contextSummaries={channelContextSummaries}
+        workflows={channelWorkflows}
+        workflowSteps={channelWorkflowSteps}
+        attachments={channelAttachments}
+        linkPreviews={channelLinkPreviews}
+        runningWorkflowStepId={runningWorkflowStepId}
+        loading={channelProtocolLoading}
+        selectedTask={selectedTask}
+        onSupersedeDecision={onSupersedeDecision}
+        onRejectDecision={onRejectDecision}
+        onUpdateHandoffStatus={onUpdateHandoffStatus}
+        onStartWorkflowFromHandoff={onStartWorkflowFromHandoff}
+        onStartWorkflowStep={onStartWorkflowStep}
+        onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
+        onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
+      />
+    </div>
+  ) : (
+    <div className="tasks-tab-layout">
+      <div className="tasks-tab-list">
+        <div className="task-filter-tabs" aria-label={t("Task filters")}>
+          {taskFilters.map((filter) => (
+            <button key={filter} className={taskFilter === filter ? "active" : ""} type="button" onClick={() => setTaskFilter(filter)}>
+              {t(taskFilterLabel(filter))}
+              <small>{filterCounts[filter]}</small>
+            </button>
+          ))}
+        </div>
+        <div className="workbench-task-list">
+          {filteredTasks.length === 0 ? (
+            <div className="client-empty-state">
+              {tasksLoading ? <Loader2 className="spin" /> : <SquareTerminal />}
+              <span>{tasksLoading ? t("Loading tasks...") : t("No tasks match this filter")}</span>
+            </div>
+          ) : (
+            filteredTasks.map((task) => {
+              const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
+              const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
+              return (
+                <button
+                  key={task.id}
+                  type="button"
+                  className={task.id === selectedTask?.id && !createTaskOpen ? "client-task-card selected" : "client-task-card"}
+                  onClick={() => selectTask(task.id)}
+                >
+                  <span className="client-task-main">
+                    <span>
+                      <strong>{task.title}</strong>
+                      <small>{task.prompt}</small>
+                    </span>
+                    <span className={`task-status ${task.status}`}>{t(task.status)}</span>
+                  </span>
+                  <span className="task-card-meta">
+                    {task.currentRunId ? <StatusBadge status={linkedRunStatus} /> : <span className="status-badge queued">{t("Not run")}</span>}
+                    <small>{formatDateTime(task.updatedAt)}</small>
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+      <section className="task-detail-panel inline-task-detail-panel" aria-label={createTaskOpen ? t("New task") : t("Task detail")}>
+        {taskDetailContent}
+      </section>
+    </div>
+  );
+
   return (
     <div className="client-window task-workbench-window" aria-label={t("Workspace")}>
       <header className="channel-header task-workbench-header">
-        <div>
+        <div className="channel-title-area">
           <div className="channel-title-line">
-            <Hash size={21} />
+            <span className="channel-title-icon"><Hash size={14} /></span>
             <h1>{selectedChannel?.name ?? "Engineering"}</h1>
+            <div className="channel-more-wrap" ref={channelMoreRef}>
+              <button
+                className={channelMoreOpen ? "icon-button channel-more-button active" : "icon-button channel-more-button"}
+                type="button"
+                aria-expanded={channelMoreOpen}
+                aria-label={t("More channel views")}
+                title={t("More channel views")}
+                onClick={() => setChannelMoreOpen((current) => !current)}
+              >
+                <MoreHorizontal size={17} />
+              </button>
+              {channelMoreOpen ? (
+                <div className="channel-more-menu" role="menu" aria-label={t("More channel views")}>
+                  {channelSidePanelViews.map((view) => (
+                    <button
+                      key={view}
+                      className={sidePanelOpen && sidePanelView === view ? "channel-more-item active" : "channel-more-item"}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => openSidePanelView(view)}
+                    >
+                      {channelTabIcon(view, 15)}
+                      <span>{t(channelTabLabel(view))}</span>
+                    </button>
+                  ))}
+                  <button
+                    className={activityToolsOpen ? "channel-more-item active" : "channel-more-item"}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setActivityToolsOpen((current) => !current);
+                      setChannelMoreOpen(false);
+                    }}
+                  >
+                    <Search size={15} />
+                    <span>{t("Activity filters")}</span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
         <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
-          {daemonHealthy !== true ? (
-            <span className="glass-chip attention">
-              <Activity size={14} />
-              {daemonHealthy === undefined ? t("Checking daemon") : t("Daemon offline")}
-            </span>
-          ) : null}
-          {providerBlocker ? (
-            <span className="glass-chip attention">
-              <Command size={14} />
-              {effectiveProvider?.displayName ?? providerLabel}
-            </span>
-          ) : null}
-          <span className={selectedChannel?.defaultTeammateId ? "glass-chip ok" : "glass-chip attention"}>
-            <MessageSquare size={14} />
-            {defaultTeammate?.label ?? selectedChannel?.defaultTeammateId ?? t("No default teammate")}
-          </span>
-          {selectedChannel && selectedChannel.status !== "active" ? (
-            <span className="glass-chip attention">
-              <Workflow size={14} />
-              {t(selectedChannel.status)}
-            </span>
-          ) : null}
-          {pendingApprovalCount > 0 ? (
-            <span className="glass-chip attention">
-              <CheckCircle2 size={14} />
-              {t("Pending approvals")} {pendingApprovalCount}
-            </span>
-          ) : null}
-          {activeLeaseCount > 0 ? (
-            <span className="glass-chip attention">
-              <Clock3 size={14} />
-              {t("{count} active leases", { count: activeLeaseCount })}
-            </span>
-          ) : null}
           <button
-            className={teammateManagerOpen ? "secondary-button compact-button active task-toolbar-teammates" : "secondary-button compact-button task-toolbar-teammates"}
+            className={teammateManagerOpen ? "icon-button active task-toolbar-teammates" : "icon-button task-toolbar-teammates"}
             type="button"
             aria-expanded={teammateManagerOpen}
+            aria-label={t("AI teammate management")}
+            title={t("AI teammate management")}
             onClick={() => {
               setTeammateManagerOpen((current) => !current);
               setWorkspaceSettingsOpen(false);
+              setActivityToolsOpen(false);
+              onChannelCreateOpenChange(false);
             }}
             disabled={!selectedChannelId}
           >
             <UserPlus size={15} />
-            {t("AI teammate management")}
           </button>
           <button
-            className={workspaceSettingsOpen ? "secondary-button compact-button active task-toolbar-settings" : "secondary-button compact-button task-toolbar-settings"}
+            className={workspaceSettingsOpen ? "icon-button active task-toolbar-settings" : "icon-button task-toolbar-settings"}
             type="button"
             aria-expanded={workspaceSettingsOpen}
+            aria-label={t("Settings")}
+            title={t("Settings")}
             onClick={() => {
               setWorkspaceSettingsOpen((current) => !current);
               setTeammateManagerOpen(false);
+              setActivityToolsOpen(false);
+              onChannelCreateOpenChange(false);
             }}
           >
             <SlidersHorizontal size={15} />
-            {t("Settings")}
           </button>
           <button
-            className="primary-button compact-button task-toolbar-create"
+            className={attentionQueueOpen ? "icon-button active task-toolbar-attention" : "icon-button task-toolbar-attention"}
             type="button"
-            onClick={() => {
-              setActiveTab("tasks");
-              setCreateTaskOpen(true);
-            }}
-            disabled={!selectedChannelId}
+            aria-label={t("Attention queue")}
+            title={t("Attention queue")}
+            onClick={() => setAttentionQueueOpen((current) => !current)}
           >
-            <Plus size={15} />
-            {t("New task")}
+            <ListChecks size={15} />
+            {attentionQueueItems.length > 0 ? <span className="toolbar-count">{attentionQueueItems.length}</span> : null}
+          </button>
+          <button
+            className={sidePanelOpen ? "icon-button active task-toolbar-panel" : "icon-button task-toolbar-panel"}
+            type="button"
+            aria-expanded={sidePanelOpen}
+            aria-label={sidePanelOpen ? t("Hide details") : t("Show details")}
+            title={sidePanelOpen ? t("Hide details") : t("Show details")}
+            onClick={() => setSidePanelOpen((current) => !current)}
+          >
+            {sidePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
           </button>
         </div>
+        {attentionQueueOpen && !sidePanelOpen ? (
+          <div className="channel-attention-popover">
+            <AttentionQueue
+              items={attentionQueueItems}
+              expanded={attentionProgressExpanded}
+              onExpandedChange={setAttentionProgressExpanded}
+              progressItems={attentionProgressItems}
+              onOpenItem={openAttentionQueueItem}
+              onOpenItemDetails={openAttentionQueueItemDetails}
+            />
+          </div>
+        ) : null}
       </header>
 
       {teammateManagerOpen ? (
@@ -1670,21 +1874,20 @@ export function WorkspaceClientView({
         </section>
       ) : null}
 
-      {workspaceSettingsOpen ? (
-        <section className="workbench-settings-panel channel-options" aria-label={t("Advanced channel settings")}>
-          {channelNotificationPanel}
-          <section className="channel-settings-card channel-management-panel" aria-label={t("Channel management")}>
+      {channelCreateOpen ? (
+        <section className="workbench-settings-panel channel-options" aria-label={t("New channel")}>
+          <section className="channel-settings-card channel-management-panel">
             <div className="channel-settings-section-head">
               <span>
-                <SlidersHorizontal size={15} />
-                <strong>{t("Channel management")}</strong>
+                <Plus size={15} />
+                <strong>{t("New channel")}</strong>
               </span>
-              <small>{t("Provider, path, and runtime")}</small>
+              <small>{t("Create or select a channel first.")}</small>
             </div>
             <div className="channel-options-grid">
               <label className="field wide">
                 <span>{t("Run provider")}</span>
-                <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providersLoading || providers.length === 0}>
+                <select value={channelForm.defaultProviderPresetId} onChange={(event) => onChannelFormChange({ ...channelForm, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0}>
                   <option value="">{t("Select provider preset")}</option>
                   <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
                 </select>
@@ -1708,19 +1911,122 @@ export function WorkspaceClientView({
               </label>
               <ChannelRuntimePolicyFields form={channelForm} onChange={onChannelFormChange} />
               <div className="channel-option-actions">
-                {channels.length === 0 ? (
-                  <button className="secondary-button compact-button" type="button" onClick={onCreateDefaultChannel} disabled={channelsLoading || !readyProvider}>
-                    <Plus size={14} />
-                    {t("Create default")}
-                  </button>
-                ) : null}
+                <button className="primary-button compact-button" type="button" onClick={onCreateChannel} disabled={channelsLoading}>
+                  <Plus size={14} />
+                  {t("Create channel")}
+                </button>
+                <button className="secondary-button compact-button" type="button" onClick={() => onChannelCreateOpenChange(false)}>
+                  {t("Cancel")}
+                </button>
+              </div>
+            </div>
+          </section>
+        </section>
+      ) : null}
+
+      {activityToolsOpen ? (
+        <section className="workbench-settings-panel channel-activity-tools" aria-label={t("Activity tools")}>
+          <div className="activity-ops-panel">
+            <ActivityFilterToolbar
+              search={activitySearch}
+              categoryFilter={activityCategoryFilter}
+              attentionFilter={activityAttentionFilter}
+              savedViews={allActivitySavedViews}
+              activeSavedViewId={activeActivityViewId}
+              filtersExpanded={activityFiltersExpanded}
+              savedViewCounts={savedViewCounts}
+              selectedSavedView={selectedActivitySavedView}
+              categoryCounts={activityCategoryCounts}
+              attentionCounts={activityAttentionCounts}
+              clearDisabled={!activityFiltersActive}
+              customViewLimitReached={activitySavedViews.length >= maxCustomChannelActivitySavedViews}
+              onSavedViewSelect={applyActivityView}
+              onSaveView={saveActivityView}
+              onRenameView={renameActivityView}
+              onDeleteView={deleteActivityView}
+              onFiltersExpandedChange={setActivityFiltersExpanded}
+              onSearchChange={(value) => {
+                setActiveActivityViewId("");
+                setActivitySearch(value);
+              }}
+              onCategoryFilterChange={(filter) => {
+                setActiveActivityViewId("");
+                setActivityCategoryFilter(filter);
+              }}
+              onAttentionFilterChange={(filter) => {
+                setActiveActivityViewId("");
+                setActivityAttentionFilter(filter);
+              }}
+              onClear={() => {
+                applyActivityView(builtinChannelActivitySavedViews[0]);
+              }}
+            />
+            <AttentionQueue
+              items={attentionQueueItems}
+              expanded={attentionProgressExpanded}
+              onExpandedChange={setAttentionProgressExpanded}
+              progressItems={attentionProgressItems}
+              onOpenItem={openAttentionQueueItem}
+              onOpenItemDetails={openAttentionQueueItemDetails}
+            />
+            <CiTriageAuditPanel
+              records={externalWorkCiTriage}
+              loading={externalWorkCiTriageLoading}
+              maxRecords={4}
+              cwd={cwd}
+              onRefresh={onRefreshExternalWorkCiTriage}
+              onSelectTask={openTaskFromActivity}
+              onOpenRun={onOpenRun}
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {workspaceSettingsOpen ? (
+        <section className="workbench-settings-panel channel-options" aria-label={t("Advanced channel settings")}>
+          {channelNotificationPanel}
+          <section className="channel-settings-card channel-management-panel" aria-label={t("Channel management")}>
+            <div className="channel-settings-section-head">
+              <span>
+                <SlidersHorizontal size={15} />
+                <strong>{t("Channel management")}</strong>
+              </span>
+              <small>{t("Provider, path, and runtime")}</small>
+            </div>
+            <div className="channel-options-grid">
+              <label className="field wide">
+                <span>{t("Run provider")}</span>
+                <select value={channelEditForm.defaultProviderPresetId} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0 || !selectedChannelId}>
+                  <option value="">{t("Select provider preset")}</option>
+                  <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
+                </select>
+              </label>
+              <label className="field wide">
+                <span>{t("Name")}</span>
+                <input value={channelEditForm.name} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, name: event.target.value })} disabled={!selectedChannelId} />
+              </label>
+              <label className="field wide">
+                <span>{t("Execution path")}</span>
+                <input value={channelEditForm.boundPath} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, boundPath: event.target.value })} disabled={!selectedChannelId} />
+              </label>
+              <label className="field wide">
+                <span>{t("Default AI teammate")}</span>
+                <select value={channelEditForm.defaultTeammateId} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultTeammateId: event.target.value })} disabled={!selectedChannelId}>
+                  <option value="">{t("No default teammate")}</option>
+                  {teammateOptions.map((option) => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <ChannelRuntimePolicyFields form={channelEditForm} onChange={onChannelEditFormChange} />
+              <div className="channel-option-actions">
                 <button className="secondary-button compact-button" type="button" onClick={onRefreshChannels} disabled={channelsLoading}>
                   {channelsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
                   {t("Refresh channels")}
                 </button>
-                <button className="primary-button compact-button" type="button" onClick={onCreateChannel}>
-                  <Plus size={14} />
-                  {t("Create channel")}
+                <button className="primary-button compact-button" type="button" onClick={onSaveChannel} disabled={!selectedChannelId}>
+                  <FileCheck2 size={14} />
+                  {t("Save channel")}
                 </button>
               </div>
             </div>
@@ -1735,113 +2041,15 @@ export function WorkspaceClientView({
         </div>
       ) : null}
 
-      <div className="task-workbench-main">
-        <section
-          className={[
-            "panel",
-            "task-list-panel",
-            activeTab === "activity" ? "activity-tab-panel" : "",
-            activeTab === "protocol" ? "protocol-tab-panel" : "",
-          ].filter(Boolean).join(" ")}
-          aria-label={t("Channel activity")}
-        >
-          <div className="channel-tabs-row">
-            <div className="channel-tabs" role="tablist" aria-label={t("Channel tabs")}>
-              {channelPrimaryTabs.map((tab) => (
-                <button key={tab} type="button" className={activeTab === tab ? "channel-tab active" : "channel-tab"} onClick={() => setActiveTab(tab)}>
-                  {channelTabIcon(tab, 14)}
-                  {t(channelTabLabel(tab))}
-                </button>
-              ))}
-            </div>
-            <div className="channel-utility-tabs" aria-label={t("More channel views")}>
-              {channelUtilityTabs.map((tab) => (
-                <button key={tab} type="button" className={activeTab === tab ? "channel-tab channel-utility-tab active" : "channel-tab channel-utility-tab"} onClick={() => setActiveTab(tab)}>
-                  {channelTabIcon(tab, 13)}
-                  {t(channelTabLabel(tab))}
-                </button>
-              ))}
-            </div>
-            <button
-              className="icon-button channel-tabs-refresh"
-              type="button"
-              onClick={refreshActiveTab}
-              disabled={!selectedChannelId || activeTabLoading}
-              aria-label={t("Refresh")}
-            >
-              {activeTabLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            </button>
-          </div>
-
-          {activeTab === "activity" ? (
-            <div className="activity-shell">
-              <details className="activity-ops-disclosure" open={activityFiltersActive || attentionQueueExpanded ? true : undefined}>
-                <summary>
-                  <span>
-                    <SlidersHorizontal size={14} />
-                    {t("Chat tools")}
-                  </span>
-                  <small>
-                    {activityFiltersActive
-                      ? t("Filters active")
-                      : attentionQueueItems.length > 0
-                        ? t("{count} items need attention", { count: attentionQueueItems.length })
-                        : t("Search, filters, and attention")}
-                  </small>
-                </summary>
-                <div className="activity-ops-panel">
-                  <ActivityFilterToolbar
-                    search={activitySearch}
-                    categoryFilter={activityCategoryFilter}
-                    attentionFilter={activityAttentionFilter}
-                    savedViews={allActivitySavedViews}
-                    activeSavedViewId={activeActivityViewId}
-                    filtersExpanded={activityFiltersExpanded}
-                    savedViewCounts={savedViewCounts}
-                    selectedSavedView={selectedActivitySavedView}
-                    categoryCounts={activityCategoryCounts}
-                    attentionCounts={activityAttentionCounts}
-                    clearDisabled={!activityFiltersActive}
-                    customViewLimitReached={activitySavedViews.length >= maxCustomChannelActivitySavedViews}
-                    onSavedViewSelect={applyActivityView}
-                    onSaveView={saveActivityView}
-                    onRenameView={renameActivityView}
-                    onDeleteView={deleteActivityView}
-                    onFiltersExpandedChange={setActivityFiltersExpanded}
-                    onSearchChange={(value) => {
-                      setActiveActivityViewId("");
-                      setActivitySearch(value);
-                    }}
-                    onCategoryFilterChange={(filter) => {
-                      setActiveActivityViewId("");
-                      setActivityCategoryFilter(filter);
-                    }}
-                    onAttentionFilterChange={(filter) => {
-                      setActiveActivityViewId("");
-                      setActivityAttentionFilter(filter);
-                    }}
-                    onClear={() => {
-                      applyActivityView(builtinChannelActivitySavedViews[0]);
-                    }}
-                  />
-                  <AttentionQueue
-                    items={attentionQueueItems}
-                    expanded={attentionQueueExpanded}
-                    onExpandedChange={setAttentionQueueExpanded}
-                    onOpenItem={openAttentionQueueItem}
-                    onOpenItemDetails={openAttentionQueueItemDetails}
-                  />
-                  <CiTriageAuditPanel
-                    records={externalWorkCiTriage}
-                    loading={externalWorkCiTriageLoading}
-                    maxRecords={4}
-                    cwd={cwd}
-                    onRefresh={onRefreshExternalWorkCiTriage}
-                    onSelectTask={openTaskFromActivity}
-                    onOpenRun={onOpenRun}
-                  />
-                </div>
-              </details>
+      <div
+        className={[
+          "task-workbench-main",
+          sidePanelOpen ? "with-channel-side-panel" : "",
+          attentionQueueOpen && !sidePanelOpen ? "attention-open" : "",
+        ].filter(Boolean).join(" ")}
+      >
+        <section className="panel task-list-panel activity-tab-panel channel-chat-panel" aria-label={t("Channel activity")}>
+          <div className="activity-shell">
               <div className={activeThreadRoot ? "activity-chat-layout with-thread" : "activity-chat-layout"}>
                 <div className="activity-chat-main">
                   <div className="message-feed" aria-label={t("Channel message feed")}>
@@ -1880,7 +2088,7 @@ export function WorkspaceClientView({
                               body={message.body}
                               metaAction={plainChatMessage ? (
                                 <button className="message-reply-button" type="button" onClick={() => openThreadForMessage(message)} aria-label={t("Reply in topic")} data-tooltip={t("Reply in topic")}>
-                                  <Reply size={13} />
+                                  <Reply size={11} />
                                 </button>
                               ) : undefined}
                               action={
@@ -2220,106 +2428,42 @@ export function WorkspaceClientView({
                 />
               ) : null}
             </div>
-          ) : null}
-
-          {activeTab === "files" ? (
-            <ChannelFiles
-              attachments={channelAttachments}
-              linkPreviews={channelLinkPreviews}
-              runs={channelRunsForFiles}
-              tasks={tasks}
-              artifactsByRun={channelArtifactsByRun}
-              artifactErrorsByRun={channelArtifactErrorsByRun}
-              loading={channelFilesLoading}
-              runArtifactsLoading={channelRunArtifactsLoading}
-              attachmentContentUrl={attachmentContentUrl}
-              onDeleteAttachment={onDeleteAttachment}
-            />
-          ) : null}
-
-          {activeTab === "tasks" ? (
-            <div className="tasks-tab-layout">
-              <div className="tasks-tab-list">
-                <div className="task-filter-tabs" aria-label={t("Task filters")}>
-                  {taskFilters.map((filter) => (
-                    <button key={filter} className={taskFilter === filter ? "active" : ""} type="button" onClick={() => setTaskFilter(filter)}>
-                      {t(taskFilterLabel(filter))}
-                      <small>{filterCounts[filter]}</small>
-                    </button>
-                  ))}
-                </div>
-                <div className="workbench-task-list">
-                  {filteredTasks.length === 0 ? (
-                    <div className="client-empty-state">
-                      {tasksLoading ? <Loader2 className="spin" /> : <SquareTerminal />}
-                      <span>{tasksLoading ? t("Loading tasks...") : t("No tasks match this filter")}</span>
-                    </div>
-                  ) : (
-                    filteredTasks.map((task) => {
-                      const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
-                      const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
-                      return (
-                        <button
-                          key={task.id}
-                          type="button"
-                          className={task.id === selectedTask?.id && !createTaskOpen ? "client-task-card selected" : "client-task-card"}
-                          onClick={() => selectTask(task.id)}
-                        >
-                          <span className="client-task-main">
-                            <span>
-                              <strong>{task.title}</strong>
-                              <small>{task.prompt}</small>
-                            </span>
-                            <span className={`task-status ${task.status}`}>{t(task.status)}</span>
-                          </span>
-                          <span className="task-card-meta">
-                            {task.currentRunId ? <StatusBadge status={linkedRunStatus} /> : <span className="status-badge queued">{t("Not run")}</span>}
-                            <small>{formatDateTime(task.updatedAt)}</small>
-                          </span>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-              <section className="task-detail-panel inline-task-detail-panel" aria-label={createTaskOpen ? t("New task") : t("Task detail")}>
-                {taskDetailContent}
-              </section>
-            </div>
-          ) : null}
-
-          {activeTab === "protocol" ? (
-            <div className="channel-protocol-tab-content">
-              <ChannelInspector
-                mode={inspectorMode}
-                onModeChange={setInspectorMode}
-                brief={channelBrief}
-                briefDraft={briefDraft}
-                onBriefDraftChange={setBriefDraft}
-                onSaveBrief={saveBrief}
-                decisions={channelDecisions}
-                handoffs={channelHandoffs}
-                contextSummaries={channelContextSummaries}
-                workflows={channelWorkflows}
-                workflowSteps={channelWorkflowSteps}
-                attachments={channelAttachments}
-                linkPreviews={channelLinkPreviews}
-                runningWorkflowStepId={runningWorkflowStepId}
-                loading={channelProtocolLoading}
-                selectedTask={selectedTask}
-                onSupersedeDecision={onSupersedeDecision}
-                onRejectDecision={onRejectDecision}
-                onUpdateHandoffStatus={onUpdateHandoffStatus}
-                onStartWorkflowFromHandoff={onStartWorkflowFromHandoff}
-                onStartWorkflowStep={onStartWorkflowStep}
-                onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
-                onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
-              />
-            </div>
-          ) : null}
-
         </section>
-
+        {sidePanelOpen ? (
+          <aside className="channel-side-panel" aria-label={sidePanelTitle}>
+            <div className="channel-side-panel-head">
+              <span>
+                {channelTabIcon(sidePanelView, 15)}
+                <strong>{sidePanelTitle}</strong>
+              </span>
+              <div className="channel-side-panel-actions">
+                {sidePanelView === "tasks" ? (
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={() => {
+                      setSidePanelView("tasks");
+                      setCreateTaskOpen(true);
+                    }}
+                    aria-label={t("New task")}
+                    title={t("New task")}
+                  >
+                    <Plus size={15} />
+                  </button>
+                ) : null}
+                <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
+                  {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+                </button>
+                <button className="icon-button" type="button" onClick={() => setSidePanelOpen(false)} aria-label={t("Hide details")} title={t("Hide details")}>
+                  <PanelRightClose size={15} />
+                </button>
+              </div>
+            </div>
+            <div className="channel-side-panel-body">
+              {sidePanelContent}
+            </div>
+          </aside>
+        ) : null}
       </div>
     </div>
   );
@@ -2954,21 +3098,27 @@ function MessageBubble({
 }): JSX.Element {
   const inlineAuthor = tone === "chat" || tone === "chat-blocked";
   const sideClass = inlineAuthor ? side === "end" ? " message-bubble-own" : " message-bubble-peer" : "";
+  const ownMessage = inlineAuthor && side === "end";
+  const showTime = !inlineAuthor && time.length > 0;
   return (
     <article className={`message-bubble message-bubble-${tone}${inlineAuthor ? " message-bubble-inline" : ""}${sideClass}`}>
       {inlineAuthor ? null : avatar}
-      <div className="message-content">
-        <div className="message-meta">
-          {inlineAuthor && side === "start" ? avatar : null}
-          <strong>{author}</strong>
-          {tag ? <small>{tag}</small> : null}
-          <time>{time}</time>
-          {metaAction ? <span className="message-meta-action">{metaAction}</span> : null}
-          {inlineAuthor && side === "end" ? avatar : null}
-        </div>
+      <div className={metaAction ? "message-content has-floating-action" : "message-content"}>
+        {ownMessage ? (
+          metaAction ? <span className="message-meta-action">{metaAction}</span> : null
+        ) : (
+          <div className={metaAction ? "message-meta has-meta-action" : "message-meta"}>
+            {inlineAuthor && side === "start" ? avatar : null}
+            <strong>{author}</strong>
+            {tag ? <small>{tag}</small> : null}
+            {showTime ? <time>{time}</time> : null}
+            {metaAction ? <span className="message-meta-action">{metaAction}</span> : null}
+          </div>
+        )}
         <p>{renderMessageBody(body)}</p>
         {action ? <div className="message-action">{action}</div> : null}
       </div>
+      {inlineAuthor && side === "end" ? avatar : null}
     </article>
   );
 }
@@ -3109,6 +3259,7 @@ function ThreadReplyPanel({
 }): JSX.Element {
   const { t } = useI18n();
   const canSend = draft.trim().length > 0 && !pending;
+  const rootMessageIsOwn = rootMessage.authorType === "local-user";
   return (
     <aside className="thread-reply-panel" aria-label={t("Topic replies")}>
       <div className="thread-reply-head">
@@ -3121,22 +3272,28 @@ function ThreadReplyPanel({
         </button>
       </div>
       <div className="thread-root-message">
-        <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates) })}</small>
+        {rootMessageIsOwn ? null : (
+          <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates) })}</small>
+        )}
         <p>{renderMessageBody(rootMessage.body)}</p>
       </div>
       <div className="thread-reply-list" aria-label={t("Replies")}>
         {replies.length === 0 ? (
           <div className="thread-empty-state">{t("No replies yet")}</div>
-        ) : replies.map((reply) => (
-          <article key={reply.id} className="thread-reply-item">
-            <div className="thread-reply-meta">
-              <strong>{messageAuthorLabel(reply, teammates)}</strong>
-              {reply.kind === "ai_reply" ? <small>AI</small> : null}
-              <time>{formatDateTime(reply.createdAt)}</time>
-            </div>
-            <p>{renderMessageBody(reply.body)}</p>
-          </article>
-        ))}
+        ) : replies.map((reply) => {
+          const replyIsOwn = reply.authorType === "local-user";
+          return (
+            <article key={reply.id} className={replyIsOwn ? "thread-reply-item thread-reply-own" : "thread-reply-item"}>
+              {replyIsOwn ? null : (
+                <div className="thread-reply-meta">
+                  <strong>{messageAuthorLabel(reply, teammates)}</strong>
+                  {reply.kind === "ai_reply" ? <small>AI</small> : null}
+                </div>
+              )}
+              <p>{renderMessageBody(reply.body)}</p>
+            </article>
+          );
+        })}
       </div>
       <div className="thread-reply-composer">
         <textarea
@@ -3329,12 +3486,14 @@ function AttentionQueue({
   items,
   expanded,
   onExpandedChange,
+  progressItems,
   onOpenItem,
   onOpenItemDetails,
 }: {
   readonly items: readonly ChannelAttentionQueueItem[];
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
+  readonly progressItems: readonly string[];
   readonly onOpenItem: (item: ChannelAttentionQueueItem) => void;
   readonly onOpenItemDetails: (item: ChannelAttentionQueueItem) => void;
 }): JSX.Element | null {
@@ -3343,53 +3502,71 @@ function AttentionQueue({
   const failedCount = items.filter((item) => item.attention === "failed").length;
   const pendingCount = items.filter((item) => item.attention === "pending").length;
   const visibleItems = items.slice(0, 5);
-  if (items.length === 0) {
-    return null;
-  }
   return (
     <section className="attention-queue compact" aria-label={t("Attention queue")}>
-      <button
-        className="attention-queue-summary"
-        type="button"
-        aria-expanded={expanded}
-        onClick={() => onExpandedChange(!expanded)}
-      >
-        <CircleAlert size={14} />
-        <strong>{t("Attention")} · {items.length}</strong>
-        <span>{items.length > 0 ? t("{count} items need attention", { count: items.length }) : t("No attention items")}</span>
-        <span className="attention-queue-counts" aria-label={t("Attention counts")}>
-          <small className="blocked">{t("Blocked")} {blockedCount}</small>
-          <small className="failed">{t("Failed")} {failedCount}</small>
-          <small className="pending">{t("Pending")} {pendingCount}</small>
-        </span>
-        <span className="attention-queue-toggle">{expanded ? t("Collapse") : t("Expand")}</span>
-      </button>
-      {expanded ? (
-        <div className="attention-queue-list" aria-label={t("Top attention items")}>
-          {visibleItems.map((item) => (
-            <div
-              key={item.id}
-              className={`attention-queue-item ${item.attention}`}
-            >
-              <button className="attention-queue-item-open" type="button" onClick={() => onOpenItem(item)}>
-                <span className="attention-queue-item-main">
-                  <strong>{t(item.title)}</strong>
-                  <small>{t(item.description)}</small>
-                </span>
-                <span className="attention-queue-item-meta">
-                  <small>{t(activityAttentionDisplayLabel(item.attention))}</small>
-                  <small>{t(attentionQueueTargetLabel(item.target))}</small>
-                  <time>{formatDateTime(item.createdAt)}</time>
-                </span>
-              </button>
-              <button className="secondary-button compact-button attention-queue-details" type="button" onClick={() => onOpenItemDetails(item)}>
-                <Info size={13} />
-                {t("Details")}
-              </button>
-            </div>
-          ))}
+      <div className="attention-progress-preview">
+        <div className="attention-progress-head">
+          <strong>{t("Progress")}</strong>
+          <button
+            className="icon-button attention-progress-toggle"
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => onExpandedChange(!expanded)}
+            aria-label={expanded ? t("Collapse") : t("Expand")}
+            title={expanded ? t("Collapse") : t("Expand")}
+          >
+            {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          </button>
         </div>
-      ) : null}
+        {expanded ? (
+          <div className="attention-progress-list" aria-label={t("Progress")}>
+            {progressItems.slice(0, 3).map((item, index) => (
+              <span key={`${item}:${index}`}>
+                {index < progressItems.length - 1 ? <CheckCircle2 size={14} /> : <Clock3 size={14} />}
+                <small>{item}</small>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <div className="attention-queue-head">
+        <strong>{t("Attention")}</strong>
+        <small>{items.length}</small>
+      </div>
+      <div className="attention-queue-counts" aria-label={t("Attention counts")}>
+        <small className="blocked">{t("Blocked")} {blockedCount}</small>
+        <small className="failed">{t("Failed")} {failedCount}</small>
+        <small className="pending">{t("Pending")} {pendingCount}</small>
+      </div>
+      <div className="attention-queue-list" aria-label={t("Top attention items")}>
+        {visibleItems.length === 0 ? (
+          <div className="client-empty-state compact attention-empty-state">
+            <ListChecks size={16} />
+            <span>{t("No attention items")}</span>
+          </div>
+        ) : visibleItems.map((item) => (
+          <div
+            key={item.id}
+            className={`attention-queue-item ${item.attention}`}
+          >
+            <button className="attention-queue-item-open" type="button" onClick={() => onOpenItem(item)}>
+              <span className="attention-queue-item-main">
+                <strong>{t(item.title)}</strong>
+                <small>{t(item.description)}</small>
+              </span>
+              <span className="attention-queue-item-meta">
+                <small>{t(activityAttentionDisplayLabel(item.attention))}</small>
+                <small>{t(attentionQueueTargetLabel(item.target))}</small>
+                <time>{formatDateTime(item.createdAt)}</time>
+              </span>
+            </button>
+            <button className="secondary-button compact-button attention-queue-details" type="button" onClick={() => onOpenItemDetails(item)}>
+              <Info size={13} />
+              {t("Details")}
+            </button>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
