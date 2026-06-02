@@ -15,6 +15,7 @@ interface MockState {
   providerSecrets: Record<string, string>;
   channels: unknown[];
   channelMessages: unknown[];
+  channelExecutionProposals: unknown[];
   channelAttachments: unknown[];
   channelLinkPreviews: unknown[];
   channelBriefs: Record<string, unknown>;
@@ -426,6 +427,7 @@ test("channel activity supports mentions, messages, files, links, and task creat
 
   await expect(page.getByRole("button", { name: "Chat", exact: true })).toBeVisible();
   await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await expect(page.locator('.channel-composer [aria-label="Composer mode"]')).toHaveCount(0);
   const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
   await composerInput.fill("@Eng");
   await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
@@ -479,9 +481,11 @@ test("channel activity supports mentions, messages, files, links, and task creat
   await expect.poll(() => state.lastChannelMessageRequest?.threadId).toBe("msg_1");
   await expect(topicPanel).toContainText("Thread follow-up from the topic panel");
 
+  await composerInput.fill("@Eng");
+  await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
+  await page.getByRole("option", { name: /@Engineer/ }).click();
+  await composerInput.fill("@Engineer please refine the channel requirements");
   await page.locator(".channel-composer").getByRole("button", { name: "Task" }).click();
-  await page.getByPlaceholder("Prompt").fill("@Engineer please refine the channel requirements");
-  await page.getByRole("button", { name: "Create task" }).click();
   await expect.poll(() => {
     const created = state.tasks.find((task) => isRecord(task) && task.id === "task_2");
     return isRecord(created) ? created.assigneeTeammateId : undefined;
@@ -489,6 +493,126 @@ test("channel activity supports mentions, messages, files, links, and task creat
   await openChannelTasksTab(page);
   await expect(page.locator(".channel-tab.active")).toContainText("Tasks");
   await expect(page.locator("article.task-detail")).toContainText("@Engineer please refine the channel requirements");
+});
+
+test("channel execution proposal confirms into a task run with the assignee provider", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Relay",
+      lastCheck: { ok: true, code: "ready", message: "ready", checkedAt: "2026-05-25T00:11:00.000Z" },
+    }),
+  ];
+  state.aiTeammates = [
+    createMockTeammate({
+      id: "teammate_builtin_engineer",
+      displayName: "Ling Engineer",
+      providerPresetId: "provider_ready",
+      allowedTools: ["read", "bash"],
+      approvalProfile: { mode: "standard", risk: "medium", requiredForTools: ["bash"] },
+    }),
+  ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, defaultTeammateId: "teammate_builtin_engineer" }
+      : channel,
+  );
+  state.teammateChannelMemberships = [
+    {
+      teammateId: "teammate_builtin_engineer",
+      channelId: "channel_engineering",
+      isDefault: true,
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:10:00.000Z",
+    },
+  ];
+  state.channelMessages = [
+    {
+      id: "msg_user_proposal",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Can we turn this into an execution task?",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:18:00.000Z",
+      updatedAt: "2026-05-25T00:18:00.000Z",
+    },
+    {
+      id: "msg_ai_proposal",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_user_proposal",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "teammate_builtin_engineer",
+      body: "I can handle this as an execution task after confirmation.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:18:01.000Z",
+      updatedAt: "2026-05-25T00:18:01.000Z",
+    },
+  ];
+  state.channelExecutionProposals = [
+    {
+      id: "proposal_1",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_ai_proposal",
+      proposedByTeammateId: "teammate_builtin_engineer",
+      title: "Refine channel workspace copy",
+      prompt: "Refine the channel workspace copy and verify the visible chat flow.",
+      assigneeTeammateId: "teammate_builtin_engineer",
+      acceptanceCriteria: ["Task is created only after confirmation", "Run uses the assignee provider"],
+      collaborationSteps: [
+        { teammateId: "teammate_builtin_engineer", action: "coordinated", summary: "Summarized discussion into one execution proposal." },
+      ],
+      requiredTools: ["read", "grep"],
+      riskSummary: "Provider must be ready before execution.",
+      status: "draft",
+      createdAt: "2026-05-25T00:18:02.000Z",
+      updatedAt: "2026-05-25T00:18:02.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const proposal = page.getByLabel("Execution proposal");
+  await expect(proposal).toContainText("Refine channel workspace copy");
+  await expect(proposal).toContainText("Ling Engineer");
+  await expect(proposal).toContainText("Collaboration");
+  await proposal.getByRole("button", { name: "Start handling" }).click();
+
+  await expect.poll(() => {
+    const task = state.tasks.find((item) => isRecord(item) && item.title === "Refine channel workspace copy");
+    return isRecord(task) ? task.assigneeTeammateId : undefined;
+  }).toBe("teammate_builtin_engineer");
+  await expect.poll(() => state.runs[0]?.providerPresetId).toBe("provider_ready");
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) && Array.isArray(snapshot.tools) ? snapshot.tools.join(",") : "";
+  }).toBe("read,bash");
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) && isRecord(snapshot.approvalProfile) ? snapshot.approvalProfile.mode : "";
+  }).toBe("standard");
+  await expect.poll(() => {
+    const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_1");
+    return isRecord(updated) ? [updated.status, updated.linkedTaskId, updated.linkedRunId].join("|") : "";
+  }).toMatch(/^accepted\|task_\d+\|run_\d+$/);
+  await expect(proposal.getByRole("button", { name: "Open run" })).toBeVisible();
 });
 
 test("channel files tab keeps empty dark surfaces on strict console tokens", async ({ page }) => {
@@ -3565,6 +3689,7 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
       },
     ],
     channelMessages: [],
+    channelExecutionProposals: [],
     channelAttachments: [],
     channelLinkPreviews: [],
     channelBriefs: {},
@@ -4802,6 +4927,65 @@ async function handleDaemonRoute(
       state.channelMessages.push(aiReply);
     }
     await route.fulfill({ status: 201, json: aiReply ? { message, aiReply } : { message } });
+    return;
+  }
+  const channelProposalsMatch = /^\/channels\/([^/]+)\/proposals$/.exec(path);
+  if (channelProposalsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelProposalsMatch[1]);
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        proposals: state.channelExecutionProposals.filter((proposal) => isRecord(proposal) && proposal.channelId === channelId),
+      },
+    });
+    return;
+  }
+  if (channelProposalsMatch && request.method() === "POST") {
+    const channelId = decodeURIComponent(channelProposalsMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const proposal = {
+      id: `proposal_${state.channelExecutionProposals.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      sourceMessageId: typeof body.sourceMessageId === "string" ? body.sourceMessageId : "",
+      proposedByTeammateId: typeof body.proposedByTeammateId === "string" ? body.proposedByTeammateId : "engineer",
+      title: typeof body.title === "string" ? body.title : "Proposed task",
+      prompt: typeof body.prompt === "string" ? body.prompt : "",
+      assigneeTeammateId: typeof body.assigneeTeammateId === "string" ? body.assigneeTeammateId : "engineer",
+      acceptanceCriteria: Array.isArray(body.acceptanceCriteria) ? body.acceptanceCriteria : [],
+      collaborationSteps: Array.isArray(body.collaborationSteps) ? body.collaborationSteps : [],
+      requiredTools: Array.isArray(body.requiredTools) ? body.requiredTools : [],
+      riskSummary: typeof body.riskSummary === "string" ? body.riskSummary : undefined,
+      status: "draft",
+      createdAt: "2026-05-25T00:18:03.000Z",
+      updatedAt: "2026-05-25T00:18:03.000Z",
+    };
+    state.channelExecutionProposals.unshift(proposal);
+    await route.fulfill({ status: 201, json: { proposal } });
+    return;
+  }
+  const channelProposalMatch = /^\/channel-proposals\/([^/]+)$/.exec(path);
+  if (channelProposalMatch && request.method() === "PATCH") {
+    const proposalId = decodeURIComponent(channelProposalMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    let updated: unknown;
+    state.channelExecutionProposals = state.channelExecutionProposals.map((proposal) => {
+      if (!isRecord(proposal) || proposal.id !== proposalId) {
+        return proposal;
+      }
+      updated = {
+        ...proposal,
+        ...body,
+        riskSummary: body.riskSummary === null ? undefined : body.riskSummary ?? proposal.riskSummary,
+        linkedTaskId: body.linkedTaskId === null ? undefined : body.linkedTaskId ?? proposal.linkedTaskId,
+        linkedRunId: body.linkedRunId === null ? undefined : body.linkedRunId ?? proposal.linkedRunId,
+        errorMessage: body.errorMessage === null ? undefined : body.errorMessage ?? proposal.errorMessage,
+        updatedAt: "2026-05-25T00:18:04.000Z",
+      };
+      return updated;
+    });
+    await route.fulfill({ status: updated ? 200 : 404, json: updated ? { proposal: updated } : { error: "proposal_not_found" } });
     return;
   }
   const channelAttachmentsMatch = /^\/channels\/([^/]+)\/attachments$/.exec(path);

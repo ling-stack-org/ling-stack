@@ -57,6 +57,7 @@ import {
   listChannelHandoffs,
   listChannelLinkPreviews,
   listChannelMessages,
+  listChannelExecutionProposals,
   listChannelWorkflows,
   listChannelWorkflowSteps,
   listAiTeammates,
@@ -86,6 +87,7 @@ import {
   updateChannelContextSummary,
   updateChannelDecision,
   updateChannelHandoff,
+  updateChannelExecutionProposal,
   updateChannelWorkflowStep,
   updateTask,
   updateTaskStatus,
@@ -109,6 +111,7 @@ import type {
   ChannelHandoffStatus,
   ChannelLinkPreview,
   ChannelMessage,
+  ChannelExecutionProposal,
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
@@ -305,6 +308,7 @@ export function AppShell(): JSX.Element {
     prompt: t(defaultTaskForm.prompt),
   }));
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
+  const [channelExecutionProposals, setChannelExecutionProposals] = useState<readonly ChannelExecutionProposal[]>([]);
   const [channelAttachments, setChannelAttachments] = useState<readonly ChannelAttachment[]>([]);
   const [channelLinkPreviews, setChannelLinkPreviews] = useState<readonly ChannelLinkPreview[]>([]);
   const [channelArtifactsByRun, setChannelArtifactsByRun] = useState<Record<string, readonly RunArtifact[]>>({});
@@ -775,6 +779,7 @@ export function AppShell(): JSX.Element {
     if (selectedChannelId) {
       void refreshTasks(selectedChannelId);
       void refreshChannelMessages(selectedChannelId);
+      void refreshChannelExecutionProposals(selectedChannelId);
       void refreshChannelFiles(selectedChannelId);
       void refreshChannelProtocol(selectedChannelId);
       void refreshExternalWorkCiTriage(form.cwd.trim(), selectedChannelId);
@@ -784,6 +789,7 @@ export function AppShell(): JSX.Element {
     } else {
       setTasks([]);
       setChannelMessages([]);
+      setChannelExecutionProposals([]);
       setChannelAttachments([]);
       setChannelLinkPreviews([]);
       setChannelArtifactsByRun({});
@@ -1439,6 +1445,28 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function refreshChannelExecutionProposals(channelId = selectedChannelId): Promise<void> {
+    if (!form.cwd.trim() || !channelId) {
+      setChannelExecutionProposals([]);
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      const response = await listChannelExecutionProposals(form.cwd.trim(), channelId);
+      setChannelExecutionProposals(response.proposals);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function upsertChannelExecutionProposal(proposal: ChannelExecutionProposal): void {
+    setChannelExecutionProposals((current) => [
+      proposal,
+      ...current.filter((item) => item.id !== proposal.id),
+    ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  }
+
   async function refreshChannelFiles(channelId = selectedChannelId): Promise<void> {
     if (!form.cwd.trim() || !channelId) {
       setChannelAttachments([]);
@@ -1563,6 +1591,7 @@ export function AppShell(): JSX.Element {
       refreshChannels(),
       refreshTasks(channelId),
       refreshChannelMessages(channelId),
+      refreshChannelExecutionProposals(channelId),
       refreshChannelProtocol(channelId),
       refreshRuns(),
       refreshApprovals(),
@@ -1747,6 +1776,37 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function createComposerTask(input: {
+    readonly prompt: string;
+    readonly assigneeTeammateId?: string;
+  }): Promise<void> {
+    if (!selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+    const prompt = input.prompt.trim();
+    if (!prompt) {
+      setErrorMessage("请输入 task prompt");
+      return;
+    }
+
+    try {
+      setErrorMessage("");
+      const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+      const response = await createTask(form.cwd.trim(), selectedChannelId, {
+        title: titleFromPrompt(prompt),
+        prompt,
+        assigneeTeammateId: input.assigneeTeammateId || selectedChannel?.defaultTeammateId,
+      });
+      setSelectedTaskId(response.task.id);
+      setTasks((current) => [response.task, ...current.filter((task) => task.id !== response.task.id)]);
+      await refreshTasks(selectedChannelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
   async function sendChannelMessage(input: {
     readonly threadId?: string;
     readonly body: string;
@@ -1782,6 +1842,9 @@ export function AppShell(): JSX.Element {
         response.message,
         ...(response.aiReply ? [response.aiReply] : []),
       ]);
+      if (response.aiReply) {
+        await refreshChannelExecutionProposals(selectedChannelId);
+      }
       await refreshChannelFiles(selectedChannelId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -2172,9 +2235,146 @@ export function AppShell(): JSX.Element {
     return aiTeammates.find((teammate) => teammate.id === teammateId || teammate.templateId === teammateId);
   }
 
+  async function markChannelExecutionProposal(
+    proposal: ChannelExecutionProposal,
+    input: Parameters<typeof updateChannelExecutionProposal>[2],
+  ): Promise<ChannelExecutionProposal | undefined> {
+    try {
+      const response = await updateChannelExecutionProposal(form.cwd.trim(), proposal.id, input);
+      upsertChannelExecutionProposal(response.proposal);
+      return response.proposal;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
+  }
+
+  async function blockChannelExecutionProposal(proposal: ChannelExecutionProposal, message: string): Promise<void> {
+    setErrorMessage(message);
+    await markChannelExecutionProposal(proposal, { status: "blocked", errorMessage: message });
+  }
+
+  async function confirmChannelExecutionProposal(proposal: ChannelExecutionProposal): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage(t("Local workspace is not ready."));
+      return;
+    }
+    if (isRunning) {
+      setErrorMessage(t("A run is already active. Wait for it to finish before starting another proposal."));
+      return;
+    }
+
+    const channel = channels.find((item) => item.id === proposal.channelId);
+    if (!channel) {
+      await blockChannelExecutionProposal(proposal, t("Task channel not found."));
+      return;
+    }
+    if (channel.status !== "active") {
+      await blockChannelExecutionProposal(proposal, t("Channel is {status}; resume it before starting a new run.", { status: t(channel.status) }));
+      return;
+    }
+
+    const assignee = findAiTeammateByReference(proposal.assigneeTeammateId);
+    if (!assignee) {
+      await blockChannelExecutionProposal(proposal, t("Assignee teammate not found. Add the teammate to this workspace before starting."));
+      return;
+    }
+    const providerPresetId = assignee.providerPresetId;
+    if (!providerPresetId) {
+      await blockChannelExecutionProposal(proposal, t("Assignee teammate has no provider configured. Open AI teammate management and assign a runnable provider."));
+      return;
+    }
+    const provider = providers.find((item) => item.id === providerPresetId);
+    const providerBlocker = providerRunPreflightBlocker(provider, t);
+    if (providerBlocker) {
+      await blockChannelExecutionProposal(proposal, providerBlocker);
+      return;
+    }
+
+    let taskToRun = proposal.linkedTaskId ? tasks.find((task) => task.id === proposal.linkedTaskId) : undefined;
+    try {
+      setErrorMessage("");
+      if (!taskToRun) {
+        const taskResponse = await createTask(workspaceCwd, proposal.channelId, {
+          title: proposal.title.trim() || titleFromPrompt(proposal.prompt),
+          prompt: proposal.prompt,
+          assigneeTeammateId: proposal.assigneeTeammateId,
+        });
+        taskToRun = taskResponse.task;
+        setSelectedTaskId(taskResponse.task.id);
+        setTasks((current) => [taskResponse.task, ...current.filter((task) => task.id !== taskResponse.task.id)]);
+      } else {
+        setSelectedTaskId(taskToRun.id);
+      }
+      const confirmedTask = taskToRun;
+
+      await markChannelExecutionProposal(proposal, {
+        status: "accepted",
+        linkedTaskId: confirmedTask.id,
+        errorMessage: null,
+      });
+
+      let linkedRunId = "";
+      const runStarted = await runPersistedTask(confirmedTask, {
+        providerPresetIdOverride: providerPresetId,
+        toolsOverride: assignee.allowedTools,
+        approvalProfileOverride: assignee.approvalProfile,
+        afterRunLoaded: async (runId) => {
+          linkedRunId = runId;
+          await markChannelExecutionProposal(proposal, {
+            status: "accepted",
+            linkedTaskId: confirmedTask.id,
+            linkedRunId: runId,
+            errorMessage: null,
+          });
+        },
+      });
+
+      if (!runStarted) {
+        await markChannelExecutionProposal(proposal, {
+          status: "run_failed",
+          linkedTaskId: confirmedTask.id,
+          errorMessage: t("Run failed to start."),
+        });
+      } else if (!linkedRunId) {
+        await markChannelExecutionProposal(proposal, {
+          status: "run_failed",
+          linkedTaskId: confirmedTask.id,
+          errorMessage: t("Proposal run did not return a run id."),
+        });
+      }
+
+      await Promise.all([
+        refreshTasks(proposal.channelId),
+        refreshRuns(workspaceCwd),
+        refreshChannelExecutionProposals(proposal.channelId),
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setErrorMessage(message);
+      await markChannelExecutionProposal(proposal, {
+        status: "run_failed",
+        linkedTaskId: taskToRun?.id ?? proposal.linkedTaskId ?? null,
+        errorMessage: message,
+      });
+    }
+  }
+
+  async function cancelChannelExecutionProposal(proposal: ChannelExecutionProposal): Promise<void> {
+    await markChannelExecutionProposal(proposal, { status: "cancelled" });
+  }
+
   async function runPersistedTask(
     task: Task,
-    options: { readonly skipPreflight?: boolean; readonly action?: TaskRunActionState["action"] } = {},
+    options: {
+      readonly skipPreflight?: boolean;
+      readonly action?: TaskRunActionState["action"];
+      readonly providerPresetIdOverride?: string;
+      readonly toolsOverride?: readonly Channel["allowedTools"][number][];
+      readonly approvalProfileOverride?: AiTeammate["approvalProfile"];
+      readonly afterRunLoaded?: (runId: string) => Promise<void>;
+    } = {},
   ): Promise<boolean> {
     const action = options.action ?? "run";
     setActiveTaskRunAction({ taskId: task.id, action });
@@ -2188,7 +2388,7 @@ export function AppShell(): JSX.Element {
         setErrorMessage(t("Channel is {status}; resume it before starting a new run.", { status: t(channel.status) }));
         return false;
       }
-      const providerPresetId = resolveTaskRunProviderPresetId(channel);
+      const providerPresetId = options.providerPresetIdOverride || resolveTaskRunProviderPresetId(channel);
       if (!providerPresetId) {
         setErrorMessage(t("No provider preset is selected for this task run."));
         return false;
@@ -2209,8 +2409,12 @@ export function AppShell(): JSX.Element {
       }
 
       const runCwd = form.cwd.trim();
-      await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId), runCwd, async () => {
+      await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId, {
+        tools: options.toolsOverride,
+        approvalProfile: options.approvalProfileOverride,
+      }), runCwd, async (runId) => {
         await refreshTasks(task.channelId);
+        await options.afterRunLoaded?.(runId);
       });
       return true;
     } finally {
@@ -2818,6 +3022,7 @@ export function AppShell(): JSX.Element {
             tasks={tasks}
             taskForm={taskForm}
             channelMessages={channelMessages}
+            channelExecutionProposals={channelExecutionProposals}
             channelAttachments={channelAttachments}
             channelLinkPreviews={channelLinkPreviews}
             channelArtifactsByRun={channelArtifactsByRun}
@@ -2876,7 +3081,10 @@ export function AppShell(): JSX.Element {
             onCreateDefaultChannel={() => void saveDefaultChannel()}
             onCreateChannel={() => void saveChannel()}
             onCreateTask={() => void saveTask()}
+            onCreateTaskFromComposer={(input) => createComposerTask(input)}
             onSendMessage={sendChannelMessage}
+            onConfirmExecutionProposal={(proposal) => void confirmChannelExecutionProposal(proposal)}
+            onCancelExecutionProposal={(proposal) => void cancelChannelExecutionProposal(proposal)}
             onUploadAttachments={(files) => uploadChannelFiles(files)}
             onCreateLinkPreview={(url) => addChannelLinkPreview(url)}
             onDeleteAttachment={(attachmentId) => void removeChannelAttachment(attachmentId)}
