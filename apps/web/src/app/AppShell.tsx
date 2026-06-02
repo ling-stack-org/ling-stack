@@ -155,7 +155,7 @@ import {
 import { ApprovalsPage, type ApprovalResolution } from "../features/approvals/index.js";
 import { PageInspector } from "../features/inspector/PageInspector.js";
 import { MediaJobsPage } from "../features/media/index.js";
-import { SidebarNavigation } from "../features/navigation/SidebarNavigation.js";
+import { SidebarNavigation, type SidebarNotification } from "../features/navigation/SidebarNavigation.js";
 import { ProviderSettings, type ProviderBatchResult } from "../features/providers/index.js";
 import { RunHistory } from "../features/runs/index.js";
 import { SettingsPage } from "../features/settings/index.js";
@@ -211,6 +211,8 @@ import { StatusBadge } from "../shared/components/index.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
+const channelMessageInitialLimit = 200;
+const channelMessageOlderLimit = 100;
 
 type ExternalActionBusyState = "execute" | "cancel";
 
@@ -291,6 +293,8 @@ export function AppShell(): JSX.Element {
   const [channels, setChannels] = useState<readonly Channel[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
   const [selectedChannelId, setSelectedChannelId] = useState("");
+  const [channelUnreadById, setChannelUnreadById] = useState<Readonly<Record<string, boolean>>>({});
+  const channelSeenMessageAtRef = useRef<Record<string, string>>({});
   const [aiTeammates, setAiTeammates] = useState<readonly AiTeammate[]>([]);
   const [aiTeammatesLoading, setAiTeammatesLoading] = useState(false);
   const [teammateChannelMembershipsByTeammate, setTeammateChannelMembershipsByTeammate] = useState<Readonly<Record<string, readonly TeammateChannelMembership[]>>>({});
@@ -310,6 +314,8 @@ export function AppShell(): JSX.Element {
     prompt: t(defaultTaskForm.prompt),
   }));
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
+  const [channelMessagesHasOlder, setChannelMessagesHasOlder] = useState(false);
+  const [channelMessagesLoadingOlder, setChannelMessagesLoadingOlder] = useState(false);
   const [channelExecutionProposals, setChannelExecutionProposals] = useState<readonly ChannelExecutionProposal[]>([]);
   const [channelAttachments, setChannelAttachments] = useState<readonly ChannelAttachment[]>([]);
   const [channelLinkPreviews, setChannelLinkPreviews] = useState<readonly ChannelLinkPreview[]>([]);
@@ -612,6 +618,7 @@ export function AppShell(): JSX.Element {
 
   function selectWorkspaceChannel(channelId: string): void {
     setChannelCreateOpen(false);
+    markChannelRead(channelId);
     setSelectedChannelId(channelId);
     setTaskRunProviderId("");
     setActiveView("workspace");
@@ -622,6 +629,27 @@ export function AppShell(): JSX.Element {
     setChannelCreateOpen(false);
     setActiveView("teammates");
     setActiveSidebarTarget(teammateSidebarTarget(teammateId));
+  }
+
+  function markChannelRead(channelId: string): void {
+    setChannelUnreadById((current) => current[channelId] ? removeRecordKey(current, channelId) : current);
+  }
+
+  function updateChannelMessageReadState(channelId: string, messages: readonly ChannelMessage[]): void {
+    const latestMessageAt = latestChannelMessageTimestamp(messages);
+    if (!latestMessageAt) {
+      return;
+    }
+    if (channelId === selectedChannelId) {
+      channelSeenMessageAtRef.current[channelId] = latestMessageAt;
+      markChannelRead(channelId);
+      return;
+    }
+
+    const seenAt = channelSeenMessageAtRef.current[channelId];
+    if (!seenAt || latestMessageAt > seenAt) {
+      setChannelUnreadById((current) => current[channelId] ? current : { ...current, [channelId]: true });
+    }
   }
 
   function openChannelCreatePanel(): void {
@@ -670,6 +698,20 @@ export function AppShell(): JSX.Element {
     }
     return items;
   }, [run, runs]);
+  const sidebarChannelNotifications = useMemo(
+    () => buildSidebarChannelNotifications(
+      approvals,
+      [...runs, ...(run ? [run] : [])],
+      tasks,
+      selectedChannelId,
+      channelUnreadById,
+    ),
+    [approvals, channelUnreadById, run, runs, selectedChannelId, tasks],
+  );
+  const sidebarTeammateNotifications = useMemo(
+    () => buildSidebarTeammateNotifications(approvals, tasks),
+    [approvals, tasks],
+  );
   const localTeammates = useMemo(
     () => aiTeammates.map((teammate) => aiTeammateToLocalDraft(teammate, providers)),
     [aiTeammates, providers],
@@ -1454,18 +1496,44 @@ export function AppShell(): JSX.Element {
   async function refreshChannelMessages(channelId = selectedChannelId): Promise<void> {
     if (!form.cwd.trim() || !channelId) {
       setChannelMessages([]);
+      setChannelMessagesHasOlder(false);
       return;
     }
 
     setChannelMessagesLoading(true);
     try {
       setErrorMessage("");
-      const response = await listChannelMessages(form.cwd.trim(), channelId);
+      const response = await listChannelMessages(form.cwd.trim(), channelId, { limit: channelMessageInitialLimit });
       setChannelMessages(response.messages);
+      setChannelMessagesHasOlder(response.hasMore === true);
+      updateChannelMessageReadState(channelId, response.messages);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setChannelMessagesLoading(false);
+    }
+  }
+
+  async function loadOlderChannelMessages(channelId = selectedChannelId): Promise<void> {
+    const cwd = form.cwd.trim();
+    const beforeMessageId = channelMessages[0]?.id;
+    if (!cwd || !channelId || !beforeMessageId || channelMessagesLoadingOlder || !channelMessagesHasOlder) {
+      return;
+    }
+
+    setChannelMessagesLoadingOlder(true);
+    try {
+      setErrorMessage("");
+      const response = await listChannelMessages(cwd, channelId, {
+        limit: channelMessageOlderLimit,
+        beforeMessageId,
+      });
+      setChannelMessages((current) => mergeChannelMessages(response.messages, current));
+      setChannelMessagesHasOlder(response.hasMore === true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChannelMessagesLoadingOlder(false);
     }
   }
 
@@ -2984,8 +3052,9 @@ export function AppShell(): JSX.Element {
     activeView === "workspace" && selectedChannelId ? channelSidebarTarget(selectedChannelId) : activeSidebarTarget;
   const shellClassName = [
     "app-shell",
+    "channel-drawer-shell",
     activeView === "workspace" ? "channel-daylight-shell" : "",
-    activeView === "workspace" && !channelSidebarOpen ? "channel-sidebar-collapsed" : "",
+    !channelSidebarOpen ? "channel-sidebar-collapsed" : "",
     showInspector && inspectorCollapsed ? "inspector-collapsed" : "",
     showInspector ? "" : "inspector-hidden",
   ].filter(Boolean).join(" ");
@@ -2997,11 +3066,13 @@ export function AppShell(): JSX.Element {
         channels={channels}
         teammates={aiTeammates}
         approvals={approvals}
+        channelNotifications={sidebarChannelNotifications}
+        teammateNotifications={sidebarTeammateNotifications}
         onOpenView={openPlainView}
         onCreateChannel={openChannelCreatePanel}
         onSelectChannel={selectWorkspaceChannel}
         onSelectTeammate={selectAiTeammate}
-        channelDrawer={activeView === "workspace"}
+        channelDrawer
         channelDrawerOpen={channelSidebarOpen}
         onChannelDrawerOpenChange={setChannelSidebarOpen}
       />
@@ -3055,6 +3126,8 @@ export function AppShell(): JSX.Element {
             channelsLoading={channelsLoading}
             tasksLoading={tasksLoading}
             channelMessagesLoading={channelMessagesLoading}
+            channelMessagesHasOlder={channelMessagesHasOlder}
+            channelMessagesLoadingOlder={channelMessagesLoadingOlder}
             channelFilesLoading={channelFilesLoading}
             channelRunArtifactsLoading={channelRunArtifactsLoading}
             channelProtocolLoading={channelProtocolLoading}
@@ -3108,6 +3181,7 @@ export function AppShell(): JSX.Element {
             onUpdateWorkflowStepStatus={(step, status) => void updateWorkflowStepStatus(step, status)}
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
             onRunActivityTriageAction={runActivityTriageAction}
+            onLoadOlderChannelMessages={loadOlderChannelMessages}
             onRefreshChannelActivity={() => void refreshChannelActivity()}
             onRefreshExternalWorkCiTriage={() => void refreshExternalWorkCiTriage()}
             onRefreshChannelProtocol={() => void refreshChannelProtocol()}
@@ -3387,6 +3461,78 @@ function aiTeammateToLocalDraft(teammate: AiTeammate, providers: readonly Provid
     hidden: teammate.hidden || teammate.status === "disabled",
     createdAt: teammate.createdAt,
   };
+}
+
+function buildSidebarChannelNotifications(
+  approvals: readonly ApprovalRequest[],
+  runs: readonly RunSession[],
+  tasks: readonly Task[],
+  selectedChannelId: string,
+  channelUnreadById: Readonly<Record<string, boolean>>,
+): Readonly<Record<string, SidebarNotification>> {
+  const runById = new Map(runs.map((item) => [item.id, item]));
+  const taskById = new Map(tasks.map((item) => [item.id, item]));
+  const unread = new Set<string>();
+
+  for (const approval of approvals) {
+    if (effectiveApprovalStatus(approval) !== "pending") {
+      continue;
+    }
+    const channelId = approval.channelId
+      ?? (approval.runId ? runById.get(approval.runId)?.channelId : undefined)
+      ?? (approval.taskId ? taskById.get(approval.taskId)?.channelId : undefined);
+    if (channelId && channelId !== selectedChannelId) {
+      unread.add(channelId);
+    }
+  }
+
+  for (const [channelId, hasUnread] of Object.entries(channelUnreadById)) {
+    if (hasUnread && channelId !== selectedChannelId) {
+      unread.add(channelId);
+    }
+  }
+
+  return Object.fromEntries([...unread].map((channelId) => [channelId, { unread: true }]));
+}
+
+function latestChannelMessageTimestamp(messages: readonly ChannelMessage[]): string {
+  return messages.reduce((latest, message) => message.updatedAt > latest ? message.updatedAt : latest, "");
+}
+
+function mergeChannelMessages(
+  olderMessages: readonly ChannelMessage[],
+  currentMessages: readonly ChannelMessage[],
+): readonly ChannelMessage[] {
+  const seen = new Set<string>();
+  const merged: ChannelMessage[] = [];
+  for (const message of [...olderMessages, ...currentMessages]) {
+    if (seen.has(message.id)) {
+      continue;
+    }
+    seen.add(message.id);
+    merged.push(message);
+  }
+  return merged;
+}
+
+function buildSidebarTeammateNotifications(
+  approvals: readonly ApprovalRequest[],
+  tasks: readonly Task[],
+): Readonly<Record<string, SidebarNotification>> {
+  const taskById = new Map(tasks.map((item) => [item.id, item]));
+  const counts = new Map<string, number>();
+
+  for (const approval of approvals) {
+    if (effectiveApprovalStatus(approval) !== "pending" || !approval.taskId) {
+      continue;
+    }
+    const assigneeTeammateId = taskById.get(approval.taskId)?.assigneeTeammateId;
+    if (assigneeTeammateId) {
+      counts.set(assigneeTeammateId, (counts.get(assigneeTeammateId) ?? 0) + 1);
+    }
+  }
+
+  return Object.fromEntries([...counts.entries()].map(([teammateId, count]) => [teammateId, { count }]));
 }
 
 function buildMemoryScopesForTeammate(

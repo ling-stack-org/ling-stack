@@ -74,6 +74,7 @@ import {
   type ChannelMessageAuthorType,
   type ChannelMessageIntent,
   type ChannelMessageKind,
+  type ChannelMessageListPage,
   type ChannelRuntimePolicy,
   type ChannelStatus,
   type ChannelUpdateInput,
@@ -1678,18 +1679,44 @@ export class SqliteRunStore implements RunStore {
   }
 
   listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[] {
+    return this.listChannelMessagesPage(options).messages.slice();
+  }
+
+  listChannelMessagesPage(options: ListChannelMessagesOptions): ChannelMessageListPage {
     const clauses = ["workspace_id = ?", "channel_id = ?"];
     const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.channelId];
     if (options.threadId) {
       clauses.push("thread_id = ?");
       params.push(options.threadId);
     }
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
-    return this.database
-      .prepare(`${channelMessageSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at ASC, rowid ASC LIMIT ?`)
+    if (options.beforeMessageId) {
+      const cursor = this.database
+        .prepare("SELECT channel_id, thread_id, created_at, rowid FROM channel_messages WHERE workspace_id = ? AND id = ?")
+        .get(DEFAULT_WORKSPACE_ID, options.beforeMessageId);
+      if (!cursor || readString(cursor, "channel_id") !== options.channelId) {
+        throw new Error(`Invalid channel message cursor: ${options.beforeMessageId}`);
+      }
+      const cursorThreadId = readNullableString(cursor, "thread_id");
+      if ((options.threadId ?? undefined) !== cursorThreadId) {
+        throw new Error(`Invalid channel message cursor: ${options.beforeMessageId}`);
+      }
+      clauses.push("(created_at < ? OR (created_at = ? AND rowid < ?))");
+      const cursorCreatedAt = readString(cursor, "created_at");
+      params.push(cursorCreatedAt, cursorCreatedAt, readNumber(cursor, "rowid"));
+    }
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 500);
+    params.push(limit + 1);
+    const rows = this.database
+      .prepare(`${channelMessageSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
       .all(...params)
       .map(mapChannelMessage);
+    const hasMore = rows.length > limit;
+    const messages = rows.slice(0, limit).reverse();
+    return {
+      messages,
+      hasMore,
+      nextBeforeMessageId: hasMore && messages.length > 0 ? messages[0].id : undefined,
+    };
   }
 
   createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal {

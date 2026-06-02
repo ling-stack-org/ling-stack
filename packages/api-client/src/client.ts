@@ -211,8 +211,17 @@ export class LingDaemonClient {
     await this.request("DELETE", `/channels/${encodeURIComponent(channelId)}`, { cwd });
   }
 
-  async listChannelMessages(cwd: string, channelId: string, limit = 100): Promise<ChannelMessageListResponse> {
-    return this.get(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd, limit });
+  async listChannelMessages(
+    cwd: string,
+    channelId: string,
+    options: { readonly limit?: number; readonly beforeMessageId?: string; readonly threadId?: string } = {},
+  ): Promise<ChannelMessageListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/messages`, {
+      cwd,
+      limit: options.limit,
+      beforeMessageId: options.beforeMessageId,
+      threadId: options.threadId,
+    });
   }
 
   async createChannelMessage(

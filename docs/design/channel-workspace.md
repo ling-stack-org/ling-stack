@@ -31,6 +31,7 @@ Related docs:
 - [Channel Workspace v1.19 General Multi-Agent Studio and Execution Proposals](channel-workspace-v1.19.md)
 - [Channel Workspace v1.20 Chat Composer Task Action Removal](channel-workspace-v1.20.md)
 - [Channel Workspace v1.21 Codex-Style Chat Workspace](channel-workspace-v1.21.md)
+- [Channel Workspace v1.22 Long Conversation Virtual Feed](channel-workspace-v1.22.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
@@ -147,24 +148,48 @@ The center area should not start with setup forms once a channel exists. Setup a
 configuration belong in compact drawers, inspectors, or dedicated settings views.
 Chat is not a tab in the default channel workspace; it is the stable center surface.
 Secondary channel surfaces open from the header `...` menu into an in-layout right panel.
-The left navigation is also a drawer in the accepted channel chat direction: expanded at
-232px, collapsed to a 48px toolbar rail, and recoverable by hover/focus. The right
-details surface is a full-height drawer aligned to the top of the channel workspace,
-while the channel header and chat body occupy only the center column. Avoid placing a
-second close button inside the right drawer; the header show/hide icon owns that state.
+The channel header uses borderless icon controls: the left drawer toggle, `#` identity
+marker, `...`, teammate management, settings, attention queue, and details toggle all
+share the same icon color and 18px glyph size. The attention queue icon should not carry
+an overlaid numeric badge; progress and attention counts belong in the popover or detail
+surfaces.
+The left navigation is also a shared app drawer in the accepted channel chat direction:
+expanded at 232px, collapsed to a 48px toolbar rail, and recoverable by hover/focus. It
+does not switch back to the older global sidebar styling when the user opens model
+workbench, runs, inbox, media jobs, AI teammates, or settings; those pages change the
+center surface while preserving the same drawer geometry, row treatment, notification
+badges, and bottom settings group. The right details surface is a full-height drawer
+aligned to the top of the channel workspace, while the channel header and chat body occupy
+only the center column. Avoid placing a second close button inside the right drawer; the
+header show/hide icon owns that state.
 The current channel remains visibly selected with a full-row neutral background, without
 the older sidebar accent bar. AI teammate rows use circular initial avatars rather than
 generic bot icons, and drawer header actions stay hidden until hover/focus so the surface
-does not read like a busy toolbar by default. The bottom approval and Settings entries
-share the accepted HTML bottom-group treatment: a divider above them and ordinary drawer
-rows, not legacy warning-card or icon-only sidebar styling. Long AI teammate lists scroll
-inside the teammate section so the bottom group remains visible.
+does not read like a busy toolbar by default. Channel and AI teammate row badges are
+notifications only: no notification renders no trailing marker, unread renders a green
+dot. Channel rows do not show numeric attention pills; opening a channel clears its
+unread dot. AI teammate rows may keep counted attention pills for teammate-specific work.
+Section header actions are icon-only; empty or loading sections must not flash legacy
+`Create` text labels. They must not show generic online/active status dots. The bottom approval and Settings entries share
+the accepted HTML bottom-group treatment: a divider above them and ordinary drawer rows, not legacy
+warning-card or icon-only sidebar styling. Long AI teammate lists scroll inside the
+teammate section so the bottom group remains visible.
 
 When the right details drawer is hidden, the chat body and composer expand back into the
-available channel content area and stay centered. The attention queue may restore as a
-floating popover, but it must not translate or push the chat. When the right details
-drawer is shown again, it compresses the chat area and hides the attention popover while
-preserving the selected detail view.
+available channel content area. If the attention queue is visible, wide viewports keep
+the accepted HTML natural spacing between chat/composer and the popover, and very wide
+collapsed-left layouts nudge the conversation column slightly toward that popover so the
+surfaces read as one workspace. Narrower desktop widths align the chat body and composer
+against the popover lane with a small safety gap, instead of keeping the conversation
+centered while the popover is open. When the right details drawer is shown again, it
+compresses the chat area and hides the attention popover while preserving the selected
+detail view.
+
+The attention popover keeps the accepted HTML typography scale: 14px/600 section titles,
+12px/500 progress rows, 12px/400 secondary copy, 13px/600 attention item titles, and
+compact 11px/600 status/meta chips. Progress status icons are 18px with 2.4px stroke so
+check and waiting states have the same visual weight. It should not use heavier 760/780
+text weights that make the popover read larger than the chat workspace.
 
 ## External Pattern Benchmark
 
@@ -1729,6 +1754,11 @@ Current MVP implementation status:
   the header `...` menu, the attention queue is a header popover with collapsible
   progress, local-user chat hides name/time, AI chat hides timestamps, and the left
   sidebar removes the brand block while Settings moves to the bottom,
+- v1.22 now keeps channel history durable while scaling long conversations: the daemon
+  returns latest-first cursor pages as chronological display slices, the Web client
+  loads latest `200` messages first, prepends `100` older messages on upward scroll, and
+  virtualizes the merged visible activity feed so thousands of loaded messages do not
+  become thousands of DOM nodes,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.
@@ -1863,6 +1893,13 @@ Current MVP implementation status:
 
 - [x] Define v1.3 chat experience plan in `docs/design/channel-workspace-v1.3.md`.
 - [x] Make the Activity message feed independently scrollable.
+- [x] Hide the Activity message feed scrollbar while preserving scroll behavior.
+- [x] Pin the Activity message feed to the latest visible conversation item when entering
+  or switching channels.
+- [x] Show a centered floating down-arrow button when the user scrolls away from the
+  latest conversation item.
+- [x] Let the Activity message feed start directly below the top divider with no extra
+  top inset.
 - [x] Keep the Activity composer sticky at the bottom of the channel conversation.
 - [x] Add clear sending, failed-send retry, and AI reply pending/blocker states.
 - [x] Keep pending attachments and URL previews inside the composer without switching
@@ -1989,6 +2026,8 @@ Current MVP implementation status:
   `docs/design/channel-workspace-v1.14.md`.
 - [x] Render ordinary user and AI discussion as plain chat bubbles without inline
   task/protocol/details buttons.
+- [x] Remove the default bubble background and border from ordinary local-user chat
+  messages while keeping right alignment and topic-reply hover affordance.
 - [x] Keep task, run, approval, protocol, workflow, and state-transition activity cards
   actionable.
 - [x] Add category-specific left-edge tones for work, approval, protocol, runtime, and
@@ -2097,6 +2136,23 @@ Current MVP implementation status:
 - [x] Simplify chat message metadata: local-user messages omit name/time; AI chat omits
   timestamps; audit/event cards keep metadata.
 - [x] Remove the left brand block and move Settings to the lower sidebar area.
+- [x] Remove legacy section-title `Create` text labels from the left drawer so refresh
+  states keep icon-only header actions.
+- [x] Replace channel-row numeric attention badges with unread-only green dots that clear
+  when the channel is opened.
+
+### Phase 30: Long Conversation Virtual Feed
+
+- [x] Define v1.22 Long Conversation Virtual Feed in
+  `docs/design/channel-workspace-v1.22.md`.
+- [x] Keep channel history durable and remove any UI-level history truncation semantics.
+- [x] Add cursor pagination to channel messages with latest `200` as the default page and
+  `100` older messages per upward load.
+- [x] Return `hasMore` and `nextBeforeMessageId` from the channel message list response.
+- [x] Virtualize the channel Activity chat feed and dynamically measure message/event
+  rows.
+- [x] Preserve scroll position when older messages are prepended and keep the existing
+  jump-to-latest behavior when the user reads history.
 
 ## Validation Plan
 
@@ -2149,6 +2205,10 @@ Focused e2e scenarios:
 - Files tab shows artifacts for a run linked to the channel,
 - Activity composer remains visible after the message list grows,
 - message feed scrolls independently from the channel header and tabs,
+- message feed does not show a visible scrollbar and defaults to the latest conversation
+  position when the user enters a channel,
+- when the user scrolls away from the latest conversation item, a centered floating
+  down-arrow returns the feed to the latest message without moving the composer,
 - task, run, approval, protocol, workflow, and state-transition cards remain actionable
   and visually distinguishable from plain chat,
 - channel English/Chinese language switching keeps tabs and composer controls readable,

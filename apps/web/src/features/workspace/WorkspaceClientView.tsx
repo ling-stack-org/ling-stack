@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import {
   Activity,
+  ArrowDown,
   AtSign,
   Bell,
   BellOff,
@@ -189,6 +191,10 @@ function channelActivityVisibleInDefaultChat(item: ChannelActivityItem): boolean
   return item.kind === "message" || item.kind === "summary";
 }
 
+type MessageFeedItem =
+  | { readonly id: "older-channel-messages"; readonly kind: "older-loader" }
+  | { readonly id: string; readonly kind: "activity"; readonly item: ChannelActivityItem };
+
 export function WorkspaceClientView({
   cwd,
   daemonHealthy,
@@ -229,6 +235,8 @@ export function WorkspaceClientView({
   channelsLoading,
   tasksLoading,
   channelMessagesLoading,
+  channelMessagesHasOlder,
+  channelMessagesLoadingOlder,
   channelFilesLoading,
   channelRunArtifactsLoading,
   channelProtocolLoading,
@@ -276,6 +284,7 @@ export function WorkspaceClientView({
   onUpdateWorkflowStepStatus,
   onCreateTaskFromContextSummary,
   onRunActivityTriageAction,
+  onLoadOlderChannelMessages,
   onRefreshChannelActivity,
   onRefreshExternalWorkCiTriage,
   onRefreshChannelProtocol,
@@ -330,6 +339,8 @@ export function WorkspaceClientView({
   readonly channelsLoading: boolean;
   readonly tasksLoading: boolean;
   readonly channelMessagesLoading: boolean;
+  readonly channelMessagesHasOlder: boolean;
+  readonly channelMessagesLoadingOlder: boolean;
   readonly channelFilesLoading: boolean;
   readonly channelRunArtifactsLoading: boolean;
   readonly channelProtocolLoading: boolean;
@@ -384,6 +395,7 @@ export function WorkspaceClientView({
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onRunActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
+  readonly onLoadOlderChannelMessages: () => void;
   readonly onRefreshChannelActivity: () => void;
   readonly onRefreshExternalWorkCiTriage: () => void;
   readonly onRefreshChannelProtocol: () => void;
@@ -445,7 +457,12 @@ export function WorkspaceClientView({
   const [threadReplyError, setThreadReplyError] = useState("");
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
+  const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageFeedRef = useRef<HTMLDivElement | null>(null);
+  const messageFeedPinnedToLatestRef = useRef(true);
+  const messageFeedOlderLoadArmedRef = useRef(true);
+  const messageFeedOlderLoadSnapshotRef = useRef<{ readonly anchorId: string; readonly anchorOffset: number } | undefined>();
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
   const autoPreviewUrlsRef = useRef(new Set<string>());
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
@@ -584,6 +601,115 @@ export function WorkspaceClientView({
     () => auditActivityVisible ? filteredActivityItems : filteredActivityItems.filter(channelActivityVisibleInDefaultChat),
     [auditActivityVisible, filteredActivityItems],
   );
+  const latestVisibleActivityItemId =
+    visibleActivityItems.length > 0 ? visibleActivityItems[visibleActivityItems.length - 1]?.id ?? "" : "";
+  const messageFeedCanLoadOlder =
+    channelMessagesHasOlder && !activityFiltersActive && visibleActivityItems.length > 0;
+  const messageFeedItems = useMemo<readonly MessageFeedItem[]>(
+    () => [
+      ...(messageFeedCanLoadOlder ? [{ id: "older-channel-messages", kind: "older-loader" } satisfies MessageFeedItem] : []),
+      ...visibleActivityItems.map((item) => ({ id: item.id, kind: "activity" as const, item })),
+    ],
+    [messageFeedCanLoadOlder, visibleActivityItems],
+  );
+  const messageFeedVirtualizer = useVirtualizer({
+    count: messageFeedItems.length,
+    getScrollElement: () => messageFeedRef.current,
+    estimateSize: (index) => messageFeedItems[index]?.kind === "older-loader" ? 48 : 128,
+    overscan: 10,
+    getItemKey: (index) => messageFeedItems[index]?.id ?? index,
+  });
+  const messageFeedVirtualRows = messageFeedVirtualizer.getVirtualItems();
+  const firstMessageFeedVirtualIndex = messageFeedVirtualRows[0]?.index ?? -1;
+  useEffect(() => {
+    if (
+      firstMessageFeedVirtualIndex !== 0 ||
+      !messageFeedCanLoadOlder ||
+      channelMessagesLoading ||
+      channelMessagesLoadingOlder ||
+      channelProtocolLoading ||
+      messageFeedPinnedToLatestRef.current ||
+      !messageFeedOlderLoadArmedRef.current ||
+      messageFeedOlderLoadSnapshotRef.current
+    ) {
+      return;
+    }
+    const feed = messageFeedRef.current;
+    if (feed) {
+      const anchorRow = messageFeedVirtualRows.find((virtualRow) => messageFeedItems[virtualRow.index]?.kind === "activity");
+      const anchorItem = anchorRow ? messageFeedItems[anchorRow.index] : undefined;
+      if (anchorRow && anchorItem?.kind === "activity") {
+        messageFeedOlderLoadSnapshotRef.current = {
+          anchorId: anchorItem.id,
+          anchorOffset: anchorRow.start - feed.scrollTop,
+        };
+      } else {
+        const fallbackAnchor = messageFeedItems.find((item) => item.kind === "activity");
+        if (fallbackAnchor?.kind === "activity") {
+          messageFeedOlderLoadSnapshotRef.current = {
+            anchorId: fallbackAnchor.id,
+            anchorOffset: 48,
+          };
+        }
+      }
+    }
+    messageFeedOlderLoadArmedRef.current = false;
+    void onLoadOlderChannelMessages();
+  }, [
+    channelMessagesLoading,
+    channelMessagesLoadingOlder,
+    channelProtocolLoading,
+    firstMessageFeedVirtualIndex,
+    messageFeedCanLoadOlder,
+    messageFeedItems,
+    onLoadOlderChannelMessages,
+  ]);
+  useEffect(() => {
+    if (channelMessagesLoadingOlder) {
+      return;
+    }
+    const snapshot = messageFeedOlderLoadSnapshotRef.current;
+    const feed = messageFeedRef.current;
+    if (!snapshot || !feed) {
+      return;
+    }
+    const anchorIndex = messageFeedItems.findIndex((item) => item.id === snapshot.anchorId);
+    if (anchorIndex < 0) {
+      messageFeedOlderLoadSnapshotRef.current = undefined;
+      return;
+    }
+    messageFeedVirtualizer.scrollToIndex(anchorIndex, { align: "start" });
+    const frameIds: number[] = [];
+    const finishRestore = (): void => {
+      messageFeedOlderLoadSnapshotRef.current = undefined;
+      messageFeedPinnedToLatestRef.current = false;
+      setMessageFeedLatestButtonVisible(feed.scrollHeight > feed.clientHeight);
+    };
+    const scheduleRestore = (attempt: number): void => {
+      messageFeedVirtualizer.scrollToIndex(anchorIndex, { align: "start" });
+      const frameId = globalThis.requestAnimationFrame(() => {
+        const anchorElement = Array.from(feed.querySelectorAll<HTMLElement>("[data-feed-item-id]"))
+          .find((element) => element.dataset.feedItemId === snapshot.anchorId);
+        if (anchorElement) {
+          const feedTop = feed.getBoundingClientRect().top;
+          const anchorTop = anchorElement.getBoundingClientRect().top;
+          feed.scrollTop += anchorTop - feedTop - snapshot.anchorOffset;
+          finishRestore();
+          return;
+        }
+        if (attempt < 8) {
+          scheduleRestore(attempt + 1);
+          return;
+        }
+        finishRestore();
+      });
+      frameIds.push(frameId);
+    };
+    scheduleRestore(0);
+    return () => {
+      frameIds.forEach((frameId) => globalThis.cancelAnimationFrame(frameId));
+    };
+  }, [channelMessagesLoadingOlder, messageFeedItems, messageFeedVirtualizer]);
   const attentionQueueItems = useMemo(() => buildAttentionQueueItems(activityItems), [activityItems]);
   const activityDrilldown = useMemo(() => {
     const item = activityItems.find((candidate) => candidate.id === activityDrilldownItemId);
@@ -636,7 +762,38 @@ export function WorkspaceClientView({
     setThreadReplyError("");
     setPendingChannelTeammateId("");
     setChannelNotificationLevel(readChannelNotificationLevel(cwd, selectedChannelId));
+    messageFeedPinnedToLatestRef.current = true;
+    messageFeedOlderLoadArmedRef.current = true;
+    messageFeedOlderLoadSnapshotRef.current = undefined;
+    setMessageFeedLatestButtonVisible(false);
   }, [cwd, selectedChannelId]);
+
+  useEffect(() => {
+    if (channelMessagesLoading || channelProtocolLoading || !messageFeedPinnedToLatestRef.current) {
+      return undefined;
+    }
+    const feed = messageFeedRef.current;
+    if (!feed) {
+      return undefined;
+    }
+    const animationFrame = globalThis.requestAnimationFrame(() => {
+      if (messageFeedItems.length > 0) {
+        messageFeedVirtualizer.scrollToIndex(messageFeedItems.length - 1, { align: "end" });
+      } else {
+        feed.scrollTop = feed.scrollHeight;
+      }
+      messageFeedPinnedToLatestRef.current = true;
+      setMessageFeedLatestButtonVisible(false);
+    });
+    return () => globalThis.cancelAnimationFrame(animationFrame);
+  }, [
+    channelMessagesLoading,
+    channelProtocolLoading,
+    latestVisibleActivityItemId,
+    messageFeedItems.length,
+    selectedChannelId,
+    visibleActivityItems.length,
+  ]);
 
   useEffect(() => {
     if (!activityDrilldownItemId) {
@@ -694,6 +851,10 @@ export function WorkspaceClientView({
     setAttentionProgressExpanded(true);
     setSidePanelView("tasks");
     setChannelNotificationLevel(readChannelNotificationLevel(cwd, selectedChannelId));
+    messageFeedPinnedToLatestRef.current = true;
+    messageFeedOlderLoadArmedRef.current = true;
+    messageFeedOlderLoadSnapshotRef.current = undefined;
+    setMessageFeedLatestButtonVisible(false);
   }, [selectedChannelId]);
 
   useEffect(() => {
@@ -707,6 +868,37 @@ export function WorkspaceClientView({
     setSidePanelView("tasks");
     setSidePanelOpen(true);
     onSelectTask(taskId);
+  }
+
+  function handleMessageFeedScroll(): void {
+    const feed = messageFeedRef.current;
+    if (!feed) {
+      return;
+    }
+    const maxScrollTop = feed.scrollHeight - feed.clientHeight;
+    const pinnedToLatest = maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
+    if (feed.scrollTop > 80) {
+      messageFeedOlderLoadArmedRef.current = true;
+    }
+    messageFeedPinnedToLatestRef.current = pinnedToLatest;
+    setMessageFeedLatestButtonVisible((visible) => {
+      const nextVisible = !pinnedToLatest && maxScrollTop > 0;
+      return visible === nextVisible ? visible : nextVisible;
+    });
+  }
+
+  function scrollMessageFeedToLatest(): void {
+    const feed = messageFeedRef.current;
+    if (!feed) {
+      return;
+    }
+    if (messageFeedItems.length > 0) {
+      messageFeedVirtualizer.scrollToIndex(messageFeedItems.length - 1, { align: "end" });
+    } else {
+      feed.scrollTop = feed.scrollHeight;
+    }
+    messageFeedPinnedToLatestRef.current = true;
+    setMessageFeedLatestButtonVisible(false);
   }
 
   function openTaskFromActivity(taskId: string): void {
@@ -1388,6 +1580,322 @@ export function WorkspaceClientView({
   const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0;
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
   const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0;
+
+  function renderMessageFeedActivityItem(item: ChannelActivityItem): ReactNode {
+    if (item.kind === "message") {
+      const message = item.record;
+      const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
+      const executionProposals = executionProposalsByMessageId.get(message.id) ?? [];
+      return (
+        <div className="message-group">
+          <MessageBubble
+            tone={message.status === "blocked" ? "chat-blocked" : plainChatMessage ? "chat" : "system"}
+            side={plainChatMessage && message.authorType === "local-user" ? "end" : "start"}
+            avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
+            author={messageAuthorLabel(message, teammateOptions)}
+            tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
+            time={formatDateTime(message.createdAt)}
+            body={message.body}
+            metaAction={plainChatMessage ? (
+              <button className="message-reply-button" type="button" onClick={() => openThreadForMessage(message)} aria-label={t("Reply in topic")} data-tooltip={t("Reply in topic")}>
+                <Reply size={11} />
+              </button>
+            ) : undefined}
+            action={
+              plainChatMessage ? undefined : message.linkedTaskId ? (
+                activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
+              ) : activityActionRow(item.id)
+            }
+          />
+          {executionProposals.map((proposal) => (
+            <ChannelExecutionProposalCard
+              key={proposal.id}
+              proposal={proposal}
+              assigneeLabel={teammateLabel(proposal.assigneeTeammateId, teammateOptions)}
+              teammates={teammateOptions}
+              linkedRun={proposal.linkedRunId ? runById.get(proposal.linkedRunId) : undefined}
+              activeRunId={activeRunId}
+              latestStatus={latestStatus}
+              onConfirm={() => onConfirmExecutionProposal(proposal)}
+              onCancel={() => onCancelExecutionProposal(proposal)}
+              onOpenRun={onOpenRun}
+            />
+          ))}
+        </div>
+      );
+    }
+    if (item.kind === "decision") {
+      const decision = item.record;
+      return (
+        <MessageBubble
+          tone="protocol"
+          avatar={<AvatarInitial label="D" tone="violet" />}
+          author={t("Decision log")}
+          tag={decision.status}
+          time={formatDateTime(decision.createdAt)}
+          body={`${decision.title}: ${decision.decision}`}
+          action={
+            activityActionRow(item.id, <>
+              <button className="secondary-button compact-button" type="button" onClick={() => onSupersedeDecision(decision)}>
+                <FileCheck2 size={14} />
+                {t("Supersede")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => onRejectDecision(decision)}>
+                <CircleAlert size={14} />
+                {t("Reject")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("decisions")}>
+                <Workflow size={14} />
+                {t("Open context")}
+              </button>
+            </>)
+          }
+        />
+      );
+    }
+    if (item.kind === "handoff") {
+      const handoff = item.record;
+      const handoffWorkflow = channelWorkflows.find((workflow) => workflow.sourceHandoffId === handoff.id);
+      return (
+        <MessageBubble
+          tone="protocol"
+          avatar={<AvatarInitial label="H" tone="teal" />}
+          author={t("Handoff")}
+          tag={handoff.status}
+          time={formatDateTime(handoff.createdAt)}
+          body={`${handoff.fromParticipantLabel} -> ${handoff.toParticipantLabel}: ${handoff.reason}`}
+          action={
+            activityActionRow(item.id, <>
+              <button className="secondary-button compact-button" type="button" onClick={() => onStartWorkflowFromHandoff(handoff)} disabled={Boolean(handoffWorkflow)}>
+                <Play size={14} />
+                {handoffWorkflow ? t("Workflow started") : t("Start workflow")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "accepted")}>
+                {t("Accept")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>
+                {t("Complete")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("handoffs")}>
+                <Workflow size={14} />
+                {t("Open context")}
+              </button>
+            </>)
+          }
+        />
+      );
+    }
+    if (item.kind === "workflow") {
+      const workflow = item.record;
+      const steps = channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
+      return (
+        <MessageBubble
+          tone="runtime"
+          avatar={<AvatarInitial label="W" tone="violet" />}
+          author={t("Workflow")}
+          tag={workflow.status}
+          time={formatDateTime(workflow.updatedAt)}
+          body={`${workflow.title}: ${workflow.objective}`}
+          action={
+            activityActionRow(item.id, <>
+              <small>{t("{count} steps", { count: steps.length })}</small>
+              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
+                <Workflow size={14} />
+                {t("Open context")}
+              </button>
+            </>)
+          }
+        />
+      );
+    }
+    if (item.kind === "workflow-step") {
+      const step = item.record;
+      return (
+        <MessageBubble
+          tone="runtime"
+          avatar={<AvatarInitial label="S" tone="teal" />}
+          author={t("Workflow step")}
+          tag={step.status}
+          time={formatDateTime(step.updatedAt)}
+          body={`${step.title}: ${step.prompt}`}
+          action={
+            step.blocker ? (
+              activityActionRow(item.id, <>
+                <div className="provider-run-notice compact">
+                  <CircleAlert size={14} />
+                  <span>{step.blocker}</span>
+                </div>
+                <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
+                  <Workflow size={14} />
+                  {t("Open context")}
+                </button>
+              </>)
+            ) : step.taskId ? (
+              activityActionRow(item.id, <>
+                <code>{step.taskId}{step.runId ? ` / ${step.runId}` : ""}</code>
+                <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
+                  <Workflow size={14} />
+                  {t("Open context")}
+                </button>
+              </>)
+            ) : (
+              activityActionRow(item.id, (
+                <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
+                  <Workflow size={14} />
+                  {t("Open context")}
+                </button>
+              ))
+            )
+          }
+        />
+      );
+    }
+    if (item.kind === "task") {
+      const task = item.record;
+      return (
+        <MessageBubble
+          tone="work"
+          avatar={<AvatarInitial label="T" tone="orange" />}
+          author={t("Task event")}
+          tag={task.status}
+          time={formatDateTime(task.updatedAt)}
+          body={t("Task {title} is {status}.", { title: task.title, status: task.status })}
+          action={
+            activityActionRow(item.id, (
+              <button className="secondary-button compact-button" type="button" onClick={() => openTaskFromActivity(task.id)}>
+                <SquareTerminal size={14} />
+                {t("Open task")}
+              </button>
+            ))
+          }
+        />
+      );
+    }
+    if (item.kind === "run") {
+      const run = item.record;
+      const taskTitle = item.task?.title ?? readRunTitle(run);
+      return (
+        <MessageBubble
+          tone="work"
+          avatar={<AvatarInitial label="R" tone="violet" />}
+          author={t("Run event")}
+          tag={run.status}
+          time={formatDateTime(run.endedAt ?? run.startedAt ?? run.updatedAt)}
+          body={t("Run {runId} for {title} is {status}.", { runId: run.id, title: taskTitle, status: run.status })}
+          action={
+            activityActionRow(item.id, (
+              <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(run.id)}>
+                <History size={14} />
+                {t("Open run")}
+              </button>
+            ))
+          }
+        />
+      );
+    }
+    if (item.kind === "approval") {
+      const approval = item.record;
+      const approvalStatus = effectiveApprovalStatus(approval);
+      return (
+        <MessageBubble
+          tone="approval"
+          avatar={<AvatarInitial label="A" tone="teal" />}
+          author={t("Approval event")}
+          tag={approvalStatus}
+          time={formatDateTime(approval.resolvedAt ?? approval.createdAt)}
+          body={t("{title} is {status}.", { title: approval.title, status: approvalStatus })}
+          action={
+            activityActionRow(item.id, (
+              <button className="secondary-button compact-button" type="button" onClick={() => onOpenApprovals(approval.runId)}>
+                <CheckCircle2 size={14} />
+                {t("Open approval")}
+              </button>
+            ))
+          }
+        />
+      );
+    }
+    if (item.kind === "state-transition") {
+      const transition = item.record;
+      return (
+        <MessageBubble
+          tone="runtime"
+          avatar={<AvatarInitial label="S" tone="violet" />}
+          author={t("State change")}
+          tag={transition.entityType}
+          time={formatDateTime(transition.createdAt)}
+          body={t("{entityType} {entityId}: {fromStatus} -> {toStatus} via {event}.", {
+            entityType: transition.entityType,
+            entityId: transition.entityId,
+            fromStatus: transition.fromStatus,
+            toStatus: transition.toStatus,
+            event: transition.event,
+          })}
+          action={
+            activityActionRow(item.id, (
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={() => {
+                  if (transition.entityType === "task") {
+                    openTaskFromActivity(transition.entityId);
+                  } else if (transition.entityType === "run") {
+                    onOpenRun(transition.entityId);
+                  } else if (transition.entityType === "approval") {
+                    onOpenApprovals();
+                  } else {
+                    openProtocolFromActivity("runtime");
+                  }
+                }}
+              >
+                {transition.entityType === "task" ? <SquareTerminal size={14} /> : transition.entityType === "run" ? <History size={14} /> : <Workflow size={14} />}
+                {t("Open event")}
+              </button>
+            ))
+          }
+        />
+      );
+    }
+    const summary = item.record;
+    return (
+      <MessageBubble
+        tone="protocol"
+        avatar={<AvatarInitial label="C" tone="orange" />}
+        author={t("Context summary")}
+        tag={summary.targetType}
+        time={formatDateTime(summary.updatedAt)}
+        body={summary.summary}
+        action={
+          activityActionRow(item.id, <>
+            <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>
+              <Plus size={14} />
+              {t("Create task")}
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("brief")}>
+              <Workflow size={14} />
+              {t("Open context")}
+            </button>
+          </>)
+        }
+      />
+    );
+  }
+
+  function renderMessageFeedItem(feedItem: MessageFeedItem | undefined): ReactNode {
+    if (!feedItem) {
+      return null;
+    }
+    if (feedItem.kind === "older-loader") {
+      return (
+        <div className="message-feed-loader-row" role="status">
+          {channelMessagesLoadingOlder ? <Loader2 className="spin" size={14} /> : <ChevronUp size={14} />}
+          <span>{channelMessagesLoadingOlder ? t("Loading earlier messages...") : t("Scroll up to load earlier messages")}</span>
+        </div>
+      );
+    }
+    return renderMessageFeedActivityItem(feedItem.item);
+  }
+
   const channelComposer = (
     <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
       <div
@@ -1717,7 +2225,7 @@ export function WorkspaceClientView({
       <header className="channel-header task-workbench-header">
         <div className="channel-title-area">
           <div className="channel-title-line">
-            <span className="channel-title-icon"><Hash size={14} /></span>
+            <span className="channel-title-icon" aria-hidden="true">#</span>
             <h1>{selectedChannel?.name ?? "Engineering"}</h1>
             <div className="channel-more-wrap" ref={channelMoreRef}>
               <button
@@ -1801,7 +2309,6 @@ export function WorkspaceClientView({
             onClick={() => setAttentionQueueOpen((current) => !current)}
           >
             <ListChecks size={15} />
-            {attentionQueueItems.length > 0 ? <span className="toolbar-count">{attentionQueueItems.length}</span> : null}
           </button>
           <button
             className={sidePanelOpen ? "icon-button active task-toolbar-panel" : "icon-button task-toolbar-panel"}
@@ -2012,7 +2519,13 @@ export function WorkspaceClientView({
           <div className="activity-shell">
               <div className={activeThreadRoot ? "activity-chat-layout with-thread" : "activity-chat-layout"}>
                 <div className="activity-chat-main">
-                  <div className="message-feed" aria-label={t("Channel message feed")}>
+                  <div className="message-feed-wrap">
+                    <div
+                      ref={messageFeedRef}
+                      className="message-feed"
+                      aria-label={t("Channel message feed")}
+                      onScroll={handleMessageFeedScroll}
+                    >
                   {channelMessagesLoading || channelProtocolLoading ? (
                     <div className="client-empty-state">
                       <Loader2 className="spin" />
@@ -2031,314 +2544,21 @@ export function WorkspaceClientView({
                       <span>{activityFiltersActive ? t("No activity matches these filters") : t("No channel messages yet")}</span>
                     </div>
                   ) : (
-                    visibleActivityItems.map((item) => {
-                      if (item.kind === "message") {
-                        const message = item.record;
-                        const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
-                        const executionProposals = executionProposalsByMessageId.get(message.id) ?? [];
-                        return (
-                          <div key={item.id} className="message-group">
-                            <MessageBubble
-                              tone={message.status === "blocked" ? "chat-blocked" : plainChatMessage ? "chat" : "system"}
-                              side={plainChatMessage && message.authorType === "local-user" ? "end" : "start"}
-                              avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
-                              author={messageAuthorLabel(message, teammateOptions)}
-                              tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
-                              time={formatDateTime(message.createdAt)}
-                              body={message.body}
-                              metaAction={plainChatMessage ? (
-                                <button className="message-reply-button" type="button" onClick={() => openThreadForMessage(message)} aria-label={t("Reply in topic")} data-tooltip={t("Reply in topic")}>
-                                  <Reply size={11} />
-                                </button>
-                              ) : undefined}
-                              action={
-                                plainChatMessage ? undefined : message.linkedTaskId ? (
-                                  activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
-                                ) : activityActionRow(item.id)
-                              }
-                            />
-                            {executionProposals.map((proposal) => (
-                              <ChannelExecutionProposalCard
-                                key={proposal.id}
-                                proposal={proposal}
-                                assigneeLabel={teammateLabel(proposal.assigneeTeammateId, teammateOptions)}
-                                teammates={teammateOptions}
-                                linkedRun={proposal.linkedRunId ? runById.get(proposal.linkedRunId) : undefined}
-                                activeRunId={activeRunId}
-                                latestStatus={latestStatus}
-                                onConfirm={() => onConfirmExecutionProposal(proposal)}
-                                onCancel={() => onCancelExecutionProposal(proposal)}
-                                onOpenRun={onOpenRun}
-                              />
-                            ))}
-                          </div>
-                        );
-                      }
-                  if (item.kind === "decision") {
-                    const decision = item.record;
-                    return (
-                      <MessageBubble
-                        key={item.id}
-                        tone="protocol"
-                        avatar={<AvatarInitial label="D" tone="violet" />}
-                        author={t("Decision log")}
-                        tag={decision.status}
-                        time={formatDateTime(decision.createdAt)}
-                        body={`${decision.title}: ${decision.decision}`}
-                        action={
-                          activityActionRow(item.id, <>
-                            <button className="secondary-button compact-button" type="button" onClick={() => onSupersedeDecision(decision)}>
-                              <FileCheck2 size={14} />
-                              {t("Supersede")}
-                            </button>
-                            <button className="secondary-button compact-button" type="button" onClick={() => onRejectDecision(decision)}>
-                              <CircleAlert size={14} />
-                              {t("Reject")}
-                            </button>
-                            <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("decisions")}>
-                              <Workflow size={14} />
-                              {t("Open context")}
-                            </button>
-                          </>)
-                        }
-                      />
-                    );
-                  }
-                  if (item.kind === "handoff") {
-                    const handoff = item.record;
-                    const handoffWorkflow = channelWorkflows.find((workflow) => workflow.sourceHandoffId === handoff.id);
-                    return (
-                      <MessageBubble
-                        key={item.id}
-                        tone="protocol"
-                        avatar={<AvatarInitial label="H" tone="teal" />}
-                        author={t("Handoff")}
-                        tag={handoff.status}
-                        time={formatDateTime(handoff.createdAt)}
-                        body={`${handoff.fromParticipantLabel} -> ${handoff.toParticipantLabel}: ${handoff.reason}`}
-                        action={
-                          activityActionRow(item.id, <>
-                            <button className="secondary-button compact-button" type="button" onClick={() => onStartWorkflowFromHandoff(handoff)} disabled={Boolean(handoffWorkflow)}>
-                              <Play size={14} />
-                              {handoffWorkflow ? t("Workflow started") : t("Start workflow")}
-                            </button>
-                            <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "accepted")}>
-                              {t("Accept")}
-                            </button>
-                            <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>
-                              {t("Complete")}
-                            </button>
-                            <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("handoffs")}>
-                              <Workflow size={14} />
-                              {t("Open context")}
-                            </button>
-                          </>)
-                        }
-                      />
-                    );
-                  }
-                  if (item.kind === "workflow") {
-                    const workflow = item.record;
-                    const steps = channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
-                    return (
-                      <MessageBubble
-                        key={item.id}
-                        tone="runtime"
-                        avatar={<AvatarInitial label="W" tone="violet" />}
-                        author={t("Workflow")}
-                        tag={workflow.status}
-                        time={formatDateTime(workflow.updatedAt)}
-                        body={`${workflow.title}: ${workflow.objective}`}
-                        action={
-                          activityActionRow(item.id, <>
-                            <small>{t("{count} steps", { count: steps.length })}</small>
-                            <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
-                              <Workflow size={14} />
-                              {t("Open context")}
-                            </button>
-                          </>)
-                        }
-                      />
-                    );
-                  }
-                  if (item.kind === "workflow-step") {
-                    const step = item.record;
-                    return (
-                      <MessageBubble
-                        key={item.id}
-                        tone="runtime"
-                        avatar={<AvatarInitial label="S" tone="teal" />}
-                        author={t("Workflow step")}
-                        tag={step.status}
-                        time={formatDateTime(step.updatedAt)}
-                        body={`${step.title}: ${step.prompt}`}
-                        action={
-                          step.blocker ? (
-                            activityActionRow(item.id, <>
-                              <div className="provider-run-notice compact">
-                                <CircleAlert size={14} />
-                                <span>{step.blocker}</span>
-                              </div>
-                              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
-                                <Workflow size={14} />
-                                {t("Open context")}
-                              </button>
-                            </>)
-                          ) : step.taskId ? (
-                            activityActionRow(item.id, <>
-                              <code>{step.taskId}{step.runId ? ` / ${step.runId}` : ""}</code>
-                              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
-                                <Workflow size={14} />
-                                {t("Open context")}
-                              </button>
-                            </>)
-                          ) : (
-                            activityActionRow(item.id, (
-                              <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
-                                <Workflow size={14} />
-                                {t("Open context")}
-                              </button>
-                            ))
-                          )
-                        }
-                      />
-                    );
-                  }
-                  if (item.kind === "task") {
-                    const task = item.record;
-                    return (
-                      <MessageBubble
-                        key={item.id}
-                        tone="work"
-                        avatar={<AvatarInitial label="T" tone="orange" />}
-                        author={t("Task event")}
-                        tag={task.status}
-                        time={formatDateTime(task.updatedAt)}
-                        body={t("Task {title} is {status}.", { title: task.title, status: task.status })}
-                        action={
-                          activityActionRow(item.id, (
-                            <button className="secondary-button compact-button" type="button" onClick={() => openTaskFromActivity(task.id)}>
-                              <SquareTerminal size={14} />
-                              {t("Open task")}
-                            </button>
-                          ))
-                        }
-                      />
-                    );
-                  }
-                  if (item.kind === "run") {
-                    const run = item.record;
-                    const taskTitle = item.task?.title ?? readRunTitle(run);
-                    return (
-                      <MessageBubble
-                        key={item.id}
-                        tone="work"
-                        avatar={<AvatarInitial label="R" tone="violet" />}
-                        author={t("Run event")}
-                        tag={run.status}
-                        time={formatDateTime(run.endedAt ?? run.startedAt ?? run.updatedAt)}
-                        body={t("Run {runId} for {title} is {status}.", { runId: run.id, title: taskTitle, status: run.status })}
-                        action={
-                          activityActionRow(item.id, (
-                            <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(run.id)}>
-                              <History size={14} />
-                              {t("Open run")}
-                            </button>
-                          ))
-                        }
-                      />
-                    );
-                  }
-                  if (item.kind === "approval") {
-                    const approval = item.record;
-                    const approvalStatus = effectiveApprovalStatus(approval);
-                    return (
-                      <MessageBubble
-                        key={item.id}
-                        tone="approval"
-                        avatar={<AvatarInitial label="A" tone="teal" />}
-                        author={t("Approval event")}
-                        tag={approvalStatus}
-                        time={formatDateTime(approval.resolvedAt ?? approval.createdAt)}
-                        body={t("{title} is {status}.", { title: approval.title, status: approvalStatus })}
-                        action={
-                          activityActionRow(item.id, (
-                            <button className="secondary-button compact-button" type="button" onClick={() => onOpenApprovals(approval.runId)}>
-                              <CheckCircle2 size={14} />
-                              {t("Open approval")}
-                            </button>
-                          ))
-                        }
-                      />
-                    );
-                  }
-                  if (item.kind === "state-transition") {
-                    const transition = item.record;
-                    return (
-                      <MessageBubble
-                        key={item.id}
-                        tone="runtime"
-                        avatar={<AvatarInitial label="S" tone="violet" />}
-                        author={t("State change")}
-                        tag={transition.entityType}
-                        time={formatDateTime(transition.createdAt)}
-                        body={t("{entityType} {entityId}: {fromStatus} -> {toStatus} via {event}.", {
-                          entityType: transition.entityType,
-                          entityId: transition.entityId,
-                          fromStatus: transition.fromStatus,
-                          toStatus: transition.toStatus,
-                          event: transition.event,
-                        })}
-                        action={
-                          activityActionRow(item.id, (
-                            <button
-                              className="secondary-button compact-button"
-                              type="button"
-                              onClick={() => {
-                                if (transition.entityType === "task") {
-                                  openTaskFromActivity(transition.entityId);
-                                } else if (transition.entityType === "run") {
-                                  onOpenRun(transition.entityId);
-                                } else if (transition.entityType === "approval") {
-                                  onOpenApprovals();
-                                } else {
-                                  openProtocolFromActivity("runtime");
-                                }
-                              }}
-                            >
-                              {transition.entityType === "task" ? <SquareTerminal size={14} /> : transition.entityType === "run" ? <History size={14} /> : <Workflow size={14} />}
-                              {t("Open event")}
-                            </button>
-                          ))
-                        }
-                      />
-                    );
-                  }
-                  const summary = item.record;
-                  return (
-                    <MessageBubble
-                      key={item.id}
-                      tone="protocol"
-                      avatar={<AvatarInitial label="C" tone="orange" />}
-                      author={t("Context summary")}
-                      tag={summary.targetType}
-                      time={formatDateTime(summary.updatedAt)}
-                      body={summary.summary}
-                      action={
-                        activityActionRow(item.id, <>
-                          <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>
-                            <Plus size={14} />
-                            {t("Create task")}
-                          </button>
-                          <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("brief")}>
-                            <Workflow size={14} />
-                            {t("Open context")}
-                          </button>
-                        </>)
-                      }
-                    />
-                  );
-                    })
+                    <div
+                      className="message-feed-virtualizer"
+                      style={{ height: `${messageFeedVirtualizer.getTotalSize()}px` }}
+                    >
+                      {messageFeedVirtualRows.map((virtualRow) => (
+                        <MessageFeedVirtualRow
+                          key={virtualRow.key}
+                          feedItem={messageFeedItems[virtualRow.index]}
+                          measureElement={messageFeedVirtualizer.measureElement}
+                          virtualRow={virtualRow}
+                        >
+                          {renderMessageFeedItem(messageFeedItems[virtualRow.index])}
+                        </MessageFeedVirtualRow>
+                      ))}
+                    </div>
                   )}
                   {channelActivityTransitionsLoading ? (
                     <div className="activity-feed-status" role="status">
@@ -2352,6 +2572,17 @@ export function WorkspaceClientView({
                       <span>{t("Some activity changes could not be loaded")}</span>
                     </div>
                   ) : null}
+                    </div>
+                    {messageFeedLatestButtonVisible ? (
+                      <button
+                        className="message-feed-latest-button"
+                        type="button"
+                        onClick={scrollMessageFeedToLatest}
+                        aria-label={t("Jump to latest message")}
+                      >
+                        <ArrowDown size={22} />
+                      </button>
+                    ) : null}
                   </div>
                   {channelComposer}
                 </div>
@@ -3063,6 +3294,33 @@ function TaskDetailPanel({
         />
       ) : null}
     </article>
+  );
+}
+
+function MessageFeedVirtualRow({
+  children,
+  feedItem,
+  measureElement,
+  virtualRow,
+}: {
+  readonly children: ReactNode;
+  readonly feedItem: MessageFeedItem | undefined;
+  readonly measureElement: (node: HTMLDivElement | null) => void;
+  readonly virtualRow: VirtualItem;
+}): JSX.Element {
+  return (
+    <div
+      ref={measureElement}
+      className="message-feed-virtual-row"
+      data-feed-item-id={feedItem?.id}
+      data-feed-item-kind={feedItem?.kind}
+      data-index={virtualRow.index}
+      style={{
+        transform: `translateY(${virtualRow.start}px)`,
+      }}
+    >
+      {children}
+    </div>
   );
 }
 

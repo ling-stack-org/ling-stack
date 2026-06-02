@@ -1791,14 +1791,18 @@ async function handleChannelMessagesCollection(
     }
 
     if (request.method === "GET") {
+      const page = store.listChannelMessagesPage({
+        channelId,
+        threadId: url.searchParams.get("threadId") ?? undefined,
+        beforeMessageId: url.searchParams.get("beforeMessageId") ?? undefined,
+        limit: readOptionalIntegerQuery(url, "limit", 1),
+      });
       writeJson(response, 200, {
         cwd,
         channelId,
-        messages: store.listChannelMessages({
-          channelId,
-          threadId: url.searchParams.get("threadId") ?? undefined,
-          limit: readOptionalIntegerQuery(url, "limit", 1),
-        }),
+        messages: page.messages,
+        hasMore: page.hasMore,
+        nextBeforeMessageId: page.nextBeforeMessageId,
       });
       return;
     }

@@ -39,6 +39,7 @@ interface MockState {
   channelMessageDelayMs?: number;
   failNextChannelMessage?: boolean;
   lastChannelMessageRequest?: Record<string, unknown>;
+  channelMessageQueries?: Record<string, unknown>[];
   failNextTaskCreate?: boolean;
   linkPreviewDelayMs?: number;
   approvals: MockApproval[];
@@ -258,6 +259,24 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const composer = document.querySelector(".channel-composer");
     const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-row.selected");
     const selectedChannelBefore = selectedChannel ? getComputedStyle(selectedChannel, "::before") : undefined;
+    const primaryNav = document.querySelector(".channel-left-drawer .primary-nav");
+    const drawerSections = Array.from(document.querySelectorAll(".channel-left-drawer .sidebar-section"));
+    const firstSection = drawerSections[0];
+    const teammateSection = drawerSections[1];
+    const firstSectionTitle = firstSection?.querySelector(".sidebar-section-title");
+    const teammateSectionTitle = teammateSection?.querySelector(".sidebar-section-title");
+    const teammateRows = Array.from(teammateSection?.querySelectorAll(".sidebar-row") ?? []);
+    const teammateFirstRow = teammateSection?.querySelector(".sidebar-row");
+    const teammateSecondRow = teammateRows[1];
+    const sidebarAction = firstSection?.querySelector(".sidebar-section-action");
+    const sidebarActionSvg = sidebarAction?.querySelector("svg");
+    const sidebarSwitchSvg = document.querySelector(".channel-sidebar-switch svg");
+    const titleIcon = document.querySelector(".channel-title-icon");
+    const channelMoreButton = document.querySelector(".channel-more-button");
+    const toolbarButton = document.querySelector(".task-toolbar-attention");
+    const toolbarButtonSvg = toolbarButton?.querySelector("svg");
+    const sidebarSwitch = document.querySelector(".channel-sidebar-switch");
+    const toolbarCount = toolbarButton?.querySelector(".toolbar-count");
     const sidePanelActions = document.querySelector(".channel-side-panel-actions");
     const sidebarBottom = document.querySelector(".channel-left-drawer .sidebar-bottom");
     const approvals = document.querySelector(".channel-left-drawer .sidebar-inbox-alert");
@@ -272,7 +291,57 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
       selectedChannelText: selectedChannel?.textContent?.trim() ?? "",
       selectedChannelBackground: selectedChannel ? getComputedStyle(selectedChannel).backgroundColor : "",
       selectedChannelBeforeContent: selectedChannelBefore?.content ?? "",
+      primaryNavBorderBottom: primaryNav ? getComputedStyle(primaryNav).borderBottomWidth : "",
+      primaryNavSectionGap: primaryNav && firstSectionTitle
+        ? Math.round(firstSectionTitle.getBoundingClientRect().top - primaryNav.getBoundingClientRect().bottom)
+        : -1,
+      teammateTitleListGap: teammateSectionTitle && teammateFirstRow
+        ? Math.round(teammateFirstRow.getBoundingClientRect().top - teammateSectionTitle.getBoundingClientRect().bottom)
+        : -1,
+      teammateRowGap: teammateFirstRow && teammateSecondRow
+        ? Math.round(teammateSecondRow.getBoundingClientRect().top - teammateFirstRow.getBoundingClientRect().bottom)
+        : -1,
+      sectionTitleColor: firstSectionTitle ? getComputedStyle(firstSectionTitle).color : "",
+      sectionTitleFontSize: firstSectionTitle ? getComputedStyle(firstSectionTitle).fontSize : "",
+      sectionTitleFontWeight: firstSectionTitle ? getComputedStyle(firstSectionTitle).fontWeight : "",
+      sidebarActionWidth: Math.round(sidebarAction?.getBoundingClientRect().width ?? 0),
+      sidebarActionHeight: Math.round(sidebarAction?.getBoundingClientRect().height ?? 0),
+      sidebarActionColor: sidebarAction ? getComputedStyle(sidebarAction).color : "",
+      sidebarActionSvgStroke: sidebarActionSvg ? getComputedStyle(sidebarActionSvg).strokeWidth : "",
+      sidebarSwitchBorderWidth: sidebarSwitch ? getComputedStyle(sidebarSwitch).borderTopWidth : "",
+      sidebarSwitchColor: sidebarSwitch ? getComputedStyle(sidebarSwitch).color : "",
+      sidebarSwitchSvgWidth: Math.round(sidebarSwitchSvg?.getBoundingClientRect().width ?? 0),
+      sidebarSwitchSvgHeight: Math.round(sidebarSwitchSvg?.getBoundingClientRect().height ?? 0),
+      sidebarSwitchSvgStroke: sidebarSwitchSvg ? getComputedStyle(sidebarSwitchSvg).strokeWidth : "",
+      titleIconText: titleIcon?.textContent?.trim() ?? "",
+      titleIconBorderWidth: titleIcon ? getComputedStyle(titleIcon).borderTopWidth : "",
+      titleIconColor: titleIcon ? getComputedStyle(titleIcon).color : "",
+      titleIconFontSize: titleIcon ? getComputedStyle(titleIcon).fontSize : "",
+      titleIconFontWeight: titleIcon ? getComputedStyle(titleIcon).fontWeight : "",
+      titleIconWidth: Math.round(titleIcon?.getBoundingClientRect().width ?? 0),
+      titleIconHeight: Math.round(titleIcon?.getBoundingClientRect().height ?? 0),
+      channelMoreButtonColor: channelMoreButton ? getComputedStyle(channelMoreButton).color : "",
+      channelMoreButtonBorderWidth: channelMoreButton ? getComputedStyle(channelMoreButton).borderTopWidth : "",
+      channelMoreButtonWidth: Math.round(channelMoreButton?.getBoundingClientRect().width ?? 0),
+      toolbarButtonBorderWidth: toolbarButton ? getComputedStyle(toolbarButton).borderTopWidth : "",
+      toolbarButtonColor: toolbarButton ? getComputedStyle(toolbarButton).color : "",
+      toolbarButtonWidth: Math.round(toolbarButton?.getBoundingClientRect().width ?? 0),
+      toolbarButtonSvgWidth: Math.round(toolbarButtonSvg?.getBoundingClientRect().width ?? 0),
+      toolbarButtonSvgHeight: Math.round(toolbarButtonSvg?.getBoundingClientRect().height ?? 0),
+      toolbarButtonSvgStroke: toolbarButtonSvg ? getComputedStyle(toolbarButtonSvg).strokeWidth : "",
+      toolbarCountText: toolbarCount?.textContent?.trim() ?? "",
+      selectedChannelMentionText: selectedChannel?.querySelector(".channel-mention")?.textContent?.trim() ?? "",
+      selectedChannelUnreadCount: selectedChannel?.querySelectorAll(".channel-unread").length ?? 0,
+      channelMentionCount: document.querySelectorAll(".channel-left-drawer .sidebar-section:first-of-type .channel-mention").length,
+      selectedChannelHashText: selectedChannel?.querySelector(".sidebar-hash")?.textContent?.trim() ?? "",
       teammateAvatarCount: document.querySelectorAll(".channel-left-drawer .sidebar-section .avatar-initial").length,
+      teammateNotificationCount: Array.from(document.querySelectorAll(".channel-left-drawer .sidebar-row")).filter((row) =>
+        row.querySelector(".avatar-initial") && (
+          row.querySelector(".channel-mention") ||
+          row.querySelector(".channel-unread") ||
+          row.querySelector(".status-dot")
+        )
+      ).length,
       rightY: Math.round(rightDrawer?.getBoundingClientRect().y ?? -1),
       rightHeight: Math.round(rightDrawer?.getBoundingClientRect().height ?? 0),
       viewportHeight: window.innerHeight,
@@ -303,7 +372,45 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(expanded.selectedChannelText).toContain("Engineering");
   expect(expanded.selectedChannelBackground).toBe("rgb(245, 245, 245)");
   expect(expanded.selectedChannelBeforeContent).toBe("none");
+  expect(expanded.primaryNavBorderBottom).toBe("0px");
+  expect(expanded.primaryNavSectionGap).toBeLessThanOrEqual(16);
+  expect(expanded.teammateTitleListGap).toBeLessThanOrEqual(6);
+  expect(expanded.teammateRowGap).toBeLessThanOrEqual(6);
+  expect(expanded.sectionTitleColor).toBe("rgb(107, 107, 107)");
+  expect(expanded.sectionTitleFontSize).toBe("12px");
+  expect(expanded.sectionTitleFontWeight).toBe("500");
+  expect(expanded.sidebarActionWidth).toBe(20);
+  expect(expanded.sidebarActionHeight).toBe(20);
+  expect(expanded.sidebarActionColor).toBe("rgb(17, 17, 17)");
+  expect(expanded.sidebarActionSvgStroke).toBe("2.4px");
+  expect(expanded.sidebarSwitchBorderWidth).toBe("0px");
+  expect(expanded.sidebarSwitchColor).toBe("rgb(17, 17, 17)");
+  expect(expanded.sidebarSwitchSvgWidth).toBe(18);
+  expect(expanded.sidebarSwitchSvgHeight).toBe(18);
+  expect(expanded.sidebarSwitchSvgStroke).toBe("2.4px");
+  expect(expanded.titleIconText).toBe("#");
+  expect(expanded.titleIconBorderWidth).toBe("0px");
+  expect(expanded.titleIconColor).toBe("rgb(17, 17, 17)");
+  expect(expanded.titleIconFontSize).toBe("18px");
+  expect(expanded.titleIconFontWeight).toBe("600");
+  expect(expanded.titleIconWidth).toBe(30);
+  expect(expanded.titleIconHeight).toBe(30);
+  expect(expanded.channelMoreButtonColor).toBe("rgb(17, 17, 17)");
+  expect(expanded.channelMoreButtonBorderWidth).toBe("0px");
+  expect(expanded.channelMoreButtonWidth).toBe(30);
+  expect(expanded.toolbarButtonBorderWidth).toBe("0px");
+  expect(expanded.toolbarButtonColor).toBe("rgb(17, 17, 17)");
+  expect(expanded.toolbarButtonWidth).toBe(34);
+  expect(expanded.toolbarButtonSvgWidth).toBe(18);
+  expect(expanded.toolbarButtonSvgHeight).toBe(18);
+  expect(expanded.toolbarButtonSvgStroke).toBe("2.4px");
+  expect(expanded.toolbarCountText).toBe("");
+  expect(expanded.selectedChannelHashText).toBe("#");
+  expect(expanded.selectedChannelMentionText).toBe("");
+  expect(expanded.selectedChannelUnreadCount).toBe(0);
+  expect(expanded.channelMentionCount).toBe(0);
   expect(expanded.teammateAvatarCount).toBeGreaterThan(0);
+  expect(expanded.teammateNotificationCount).toBe(0);
   expect(expanded.rightY).toBe(0);
   expect(expanded.rightHeight).toBe(expanded.viewportHeight);
   expect(expanded.headerRight).toBeLessThanOrEqual(expanded.rightLeft);
@@ -389,17 +496,29 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
       composerTransform: composer ? getComputedStyle(composer).transform : "",
       attentionCount: document.querySelectorAll(".channel-attention-popover").length,
       attentionTop: Math.round(attention?.getBoundingClientRect().top ?? 0),
+      chatLeft: Math.round(chatRect?.left ?? 0),
+      attentionLeft: Math.round(attention?.getBoundingClientRect().left ?? 0),
+      composerRight: Math.round(composerRect?.right ?? 0),
+      composerAttentionGap: composerRect && attention
+        ? Math.round(attention.getBoundingClientRect().left - composerRect.right)
+        : 0,
+      composerAttentionOverlapX: composerRect && attention
+        ? Math.max(0, Math.round(Math.min(composerRect.right, attention.getBoundingClientRect().right) - Math.max(composerRect.left, attention.getBoundingClientRect().left)))
+        : 0,
     };
   });
   expect(rightCollapsed.columns.startsWith("48px ")).toBe(true);
   expect(rightCollapsed.sidePanelCount).toBe(0);
   expect(rightCollapsed.mainPaddingRight).toBe("0px");
-  expect(Math.abs(rightCollapsed.chatCenterDelta)).toBeLessThanOrEqual(1);
-  expect(Math.abs(rightCollapsed.composerCenterDelta)).toBeLessThanOrEqual(1);
   expect(rightCollapsed.chatTransform).toBe("none");
   expect(rightCollapsed.composerTransform).toBe("none");
   expect(rightCollapsed.attentionCount).toBe(1);
   expect(rightCollapsed.attentionTop).toBeGreaterThanOrEqual(60);
+  expect(rightCollapsed.chatLeft).toBeGreaterThanOrEqual(70);
+  expect(rightCollapsed.composerAttentionGap).toBeGreaterThanOrEqual(16);
+  expect(rightCollapsed.composerAttentionGap).toBeLessThanOrEqual(24);
+  expect(rightCollapsed.composerRight).toBeLessThanOrEqual(rightCollapsed.attentionLeft);
+  expect(rightCollapsed.composerAttentionOverlapX).toBe(0);
 
   await page.getByRole("button", { name: "Show details" }).click();
   await page.getByRole("button", { name: "Show navigation" }).click();
@@ -425,6 +544,108 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(restored.sidePanelCount).toBe(1);
   expect(Math.abs(restored.chatCenterDelta)).toBeLessThanOrEqual(1);
   expect(restored.attentionCount).toBe(0);
+});
+
+test("channel drawer does not flash legacy create labels in section headers", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.aiTeammates = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const drawer = page.locator(".channel-left-drawer");
+  await expect(drawer.getByRole("button", { name: "New channel" })).toBeVisible();
+  await expect(drawer.locator(".sidebar-section-title small")).toHaveCount(0);
+  await expect(drawer.getByText("Create", { exact: true })).toHaveCount(0);
+  await expect(drawer.locator(".sidebar-section:first-of-type .sidebar-section-action")).toHaveText("");
+});
+
+test("channel drawer uses unread dots instead of count badges and clears on channel open", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channels.push({
+    id: "channel_research",
+    workspaceId: "workspace_default",
+    name: "Research",
+    status: "active",
+    boundPath: cwd,
+    defaultTeammateId: "",
+    allowedTools: ["read", "grep"],
+    runtimePolicy: defaultRuntimePolicy,
+    createdAt: "2026-05-22T00:00:00.000Z",
+    updatedAt: "2026-05-22T00:00:00.000Z",
+  });
+  state.approvals.push({
+    id: "approval_research",
+    channelId: "channel_research",
+    actionType: "channel_message",
+    risk: "low",
+    title: "Review new channel note",
+    description: "Unread channel item",
+    payload: { type: "channel_message" },
+    status: "pending",
+    createdAt: "2026-05-22T00:02:00.000Z",
+    expiresAt: "2099-01-01T00:01:00.000Z",
+  });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const drawer = page.locator(".channel-left-drawer");
+  const engineering = drawer.locator(".sidebar-row").filter({ hasText: "Engineering" });
+  const research = drawer.locator(".sidebar-row").filter({ hasText: "Research" });
+  await expect(engineering.locator(".channel-mention")).toHaveCount(0);
+  await expect(engineering.locator(".channel-unread")).toHaveCount(0);
+  await expect(research.locator(".channel-mention")).toHaveCount(0);
+  await expect(research.locator(".channel-unread")).toBeVisible();
+
+  await research.click();
+  await expect(research).toHaveClass(/selected/);
+  await expect(research.locator(".channel-unread")).toHaveCount(0);
+});
+
+test("wide channel attention popover keeps the accepted HTML spacing", async ({ page }) => {
+  await page.setViewportSize({ width: 2048, height: 1140 });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Hide navigation" }).click();
+  await page.getByRole("button", { name: "Hide details" }).click();
+  await page.waitForTimeout(200);
+
+  const spacing = await page.evaluate(() => {
+    const main = document.querySelector(".task-workbench-main");
+    const chat = document.querySelector(".activity-chat-layout");
+    const composer = document.querySelector(".channel-composer");
+    const attention = document.querySelector(".channel-attention-popover");
+    const composerRect = composer?.getBoundingClientRect();
+    const attentionRect = attention?.getBoundingClientRect();
+    return {
+      mainPaddingRight: main ? getComputedStyle(main).paddingRight : "",
+      chatWidth: Math.round(chat?.getBoundingClientRect().width ?? 0),
+      composerWidth: Math.round(composerRect?.width ?? 0),
+      attentionWidth: Math.round(attentionRect?.width ?? 0),
+      chatTransform: chat ? getComputedStyle(chat).transform : "",
+      composerTransform: composer ? getComputedStyle(composer).transform : "",
+      gap: composerRect && attentionRect ? Math.round(attentionRect.left - composerRect.right) : -1,
+      overlapX: composerRect && attentionRect
+        ? Math.max(0, Math.round(Math.min(composerRect.right, attentionRect.right) - Math.max(composerRect.left, attentionRect.left)))
+        : -1,
+    };
+  });
+  expect(spacing.mainPaddingRight).toBe("0px");
+  expect(spacing.chatWidth).toBe(960);
+  expect(spacing.composerWidth).toBe(960);
+  expect(spacing.attentionWidth).toBe(390);
+  expect(spacing.chatTransform).not.toBe("none");
+  expect(spacing.composerTransform).not.toBe("none");
+  expect(spacing.gap).toBeGreaterThanOrEqual(48);
+  expect(spacing.gap).toBeLessThanOrEqual(80);
+  expect(spacing.overlapX).toBe(0);
 });
 
 test("workspace task detail panel stays bounded without growing the page", async ({ page }) => {
@@ -737,8 +958,9 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   });
   expect(sentMessageTypography.bodyColor).not.toBe("");
   expect(sentMessageTypography.bodyFontWeight).toBeGreaterThanOrEqual(550);
-  await expect(sentMessageContent).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(sentMessageContent).not.toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+  await expect(sentMessageContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(sentMessageContent).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+  await expect(sentMessageContent).toHaveCSS("padding-top", "0px");
   await page.mouse.move(8, 8);
   await expect(sentMessage.locator(".message-meta-action")).toHaveCSS("opacity", "0");
   const replyActionLayout = await sentMessage.evaluate((element) => {
@@ -1014,15 +1236,89 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await expect(page.locator('[aria-label="Channel activity"] > .panel-title')).toHaveCount(0);
   const scrollState = await readScrollState(page, ".activity-shell .message-feed");
   expect(scrollState.max).toBeGreaterThan(0);
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
+  const latestButton = page.getByRole("button", { name: "Jump to latest message" });
+  await expect(latestButton).toHaveCount(0);
+  const feedChrome = await page.locator(".activity-shell .message-feed").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      overflowY: style.overflowY,
+      scrollbarWidth: style.scrollbarWidth,
+    };
+  });
+  expect(feedChrome).toEqual({
+    overflowY: "auto",
+    scrollbarWidth: "none",
+  });
+  await expect(page.locator(".activity-chat-layout")).toHaveCSS("padding-top", "0px");
   const panelBox = await page.locator(".task-list-panel.activity-tab-panel").boundingBox();
   const feedBox = await page.locator(".activity-shell .message-feed").boundingBox();
   const composerBox = await page.getByLabel("Channel composer").boundingBox();
   expect(feedBox?.height ?? 0).toBeGreaterThan(180);
   expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeGreaterThan((panelBox?.y ?? 0) + (panelBox?.height ?? 0) - 36);
   await page.locator(".activity-shell .message-feed").evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
   });
+  await expect(latestButton).toBeVisible();
+  const latestButtonBox = await latestButton.boundingBox();
+  expect(latestButtonBox?.width ?? 0).toBeGreaterThanOrEqual(40);
+  expect(latestButtonBox?.height ?? 0).toBeGreaterThanOrEqual(40);
+  await latestButton.click();
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
+  await expect(latestButton).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
+});
+
+test("channel activity paginates long message history and virtualizes visible rows", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = Array.from({ length: 3000 }, (_, index) => ({
+    id: `msg_long_${index + 1}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: index % 2 === 0 ? "local-user" : "ai-teammate",
+    authorId: index % 2 === 0 ? "tian" : "engineer",
+    body: `Long channel message ${index + 1}`,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    status: "ready",
+    createdAt: new Date(Date.UTC(2026, 4, 26, 0, 0, index)).toISOString(),
+    updatedAt: new Date(Date.UTC(2026, 4, 26, 0, 0, index)).toISOString(),
+  }));
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await expect(page.getByLabel("Channel message feed").getByText("Long channel message 3000")).toBeVisible();
+  await expect(page.getByLabel("Channel message feed").getByText("Long channel message 1")).toHaveCount(0);
+  expect(state.channelMessageQueries?.[0]).toMatchObject({
+    channelId: "channel_engineering",
+    limit: 200,
+    beforeMessageId: undefined,
+  });
+
+  const renderedBefore = await page.locator(".activity-shell .message-feed .message-bubble").count();
+  expect(renderedBefore).toBeGreaterThan(0);
+  expect(renderedBefore).toBeLessThan(100);
+  const scrollBefore = await readScrollState(page, ".activity-shell .message-feed");
+  expect(scrollBefore.atBottom).toBe(true);
+
+  await page.locator(".activity-shell .message-feed").evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect.poll(() => state.channelMessageQueries?.some((query) => query.beforeMessageId === "msg_long_2801")).toBe(true);
+  await expect(page.getByLabel("Channel message feed").getByText("Long channel message 2801")).toBeVisible();
+  const renderedAfter = await page.locator(".activity-shell .message-feed .message-bubble").count();
+  expect(renderedAfter).toBeLessThan(120);
+  const scrollAfter = await readScrollState(page, ".activity-shell .message-feed");
+  expect(scrollAfter.top).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Jump to latest message" })).toBeVisible();
 });
 
 test("channel composer preserves failed sends and can retry", async ({ page }) => {
@@ -1669,6 +1965,53 @@ test("channel activity derives task run approval transition and workflow events"
   const topAttentionItems = attentionQueue.getByLabel("Top attention items");
   await expect(topAttentionItems.locator(".attention-queue-item")).toHaveCount(5);
   await expect(topAttentionItems.locator(".attention-queue-item-open").first()).toContainText("Blocked timeline step");
+  const attentionTypography = await page.evaluate(() => {
+    const read = (selector: string) => {
+      const element = document.querySelector(selector);
+      if (!element) {
+        return null;
+      }
+      const style = getComputedStyle(element);
+      return {
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        lineHeight: style.lineHeight,
+      };
+    };
+    const readIcon = (selector: string) => {
+      const element = document.querySelector(selector);
+      if (!element) {
+        return null;
+      }
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        strokeWidth: style.strokeWidth,
+      };
+    };
+    return {
+      progressTitle: read(".attention-progress-head strong"),
+      progressRow: read(".attention-progress-list small"),
+      progressIcon: readIcon(".attention-progress-list svg"),
+      attentionTitle: read(".attention-queue-head strong"),
+      attentionCount: read(".attention-queue-head small"),
+      countChip: read(".attention-queue-counts small"),
+      itemTitle: read(".attention-queue-item-main strong"),
+      itemCopy: read(".attention-queue-item-main small"),
+      itemTime: read(".attention-queue-item-meta time"),
+    };
+  });
+  expect(attentionTypography.progressTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
+  expect(attentionTypography.progressRow).toEqual({ fontSize: "12px", fontWeight: "500", lineHeight: "17px" });
+  expect(attentionTypography.progressIcon).toEqual({ width: 18, height: 18, strokeWidth: "2.4px" });
+  expect(attentionTypography.attentionTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
+  expect(attentionTypography.attentionCount).toEqual({ fontSize: "12px", fontWeight: "500", lineHeight: "17px" });
+  expect(attentionTypography.countChip).toEqual({ fontSize: "11px", fontWeight: "600", lineHeight: "16px" });
+  expect(attentionTypography.itemTitle).toEqual({ fontSize: "13px", fontWeight: "600", lineHeight: "18px" });
+  expect(attentionTypography.itemCopy).toEqual({ fontSize: "12px", fontWeight: "400", lineHeight: "17px" });
+  expect(attentionTypography.itemTime).toEqual({ fontSize: "12px", fontWeight: "400", lineHeight: "17px" });
   const expandQueueIfNeeded = async () => {
     await openChannelChatTools(page);
     await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
@@ -2880,7 +3223,9 @@ test("workspace defaults do not hardcode personal machine paths", async () => {
 });
 
 test("sidebar selection is exclusive and conversation lists no longer live in global navigation", async ({ page }) => {
-  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [createMockTeammate({ id: "teammate_sidebar_designer", displayName: "Designer" })];
+  await mockDaemon(page, state);
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
@@ -2896,6 +3241,17 @@ test("sidebar selection is exclusive and conversation lists no longer live in gl
   await navigation.getByRole("button", { name: "AI Teammates" }).click();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: ["AI Teammates"], selectedRows: [] });
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
+  await expect(navigation).toHaveClass(/channel-left-drawer/);
+  await expect(page.locator(".channel-sidebar-toolbar")).toBeVisible();
+  await expect(page.locator(".channel-left-drawer .primary-nav")).toHaveCSS("border-bottom-width", "0px");
+  await expect(page.locator(".channel-left-drawer .sidebar-row.selected")).toHaveCount(0);
+
+  await navigation.locator('.sidebar-row:has(.avatar-initial):has-text("Designer")').click();
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Designer"] });
+  const selectedTeammateRow = page.locator(".channel-left-drawer .sidebar-row.selected");
+  await expect(selectedTeammateRow).toHaveCSS("background-color", "rgb(245, 245, 245)");
+  expect(await selectedTeammateRow.evaluate((row) => getComputedStyle(row, "::before").content)).toBe("none");
+  await expect(page.getByRole("heading", { name: "Designer", level: 1 })).toBeVisible();
 });
 
 test("sidebar text entries route to context-aware inspectors", async ({ page }) => {
@@ -3909,7 +4265,7 @@ async function readSidebarSelection(page: Page): Promise<{ readonly activeNav: s
   return await page.evaluate(() => {
     const navLabel = (element: Element): string => element.querySelector("span")?.textContent?.trim() ?? "";
     const rowLabel = (element: Element): string =>
-      element.querySelector("span:not(.avatar-initial)")?.textContent?.trim() ?? "";
+      element.querySelector("span:not(.avatar-initial):not(.sidebar-hash):not(.channel-mention):not(.channel-unread)")?.textContent?.trim() ?? "";
 
     return {
       activeNav: [...document.querySelectorAll(".nav-item.active")].map(navLabel),
@@ -4018,6 +4374,7 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
       },
     ],
     channelMessages: [],
+    channelMessageQueries: [],
     channelExecutionProposals: [],
     channelAttachments: [],
     channelLinkPreviews: [],
@@ -5192,11 +5549,41 @@ async function handleDaemonRoute(
   const channelMessagesMatch = /^\/channels\/([^/]+)\/messages$/.exec(path);
   if (channelMessagesMatch && request.method() === "GET") {
     const channelId = decodeURIComponent(channelMessagesMatch[1]);
+    const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10);
+    const limit = Math.min(Math.max(Number.isInteger(rawLimit) ? rawLimit : 200, 1), 500);
+    const beforeMessageId = url.searchParams.get("beforeMessageId");
+    state.channelMessageQueries?.push({
+      channelId,
+      limit,
+      beforeMessageId: beforeMessageId ?? undefined,
+    });
+    const messages = state.channelMessages
+      .filter((message) => isRecord(message) && message.channelId === channelId)
+      .sort((left, right) => {
+        if (!isRecord(left) || !isRecord(right)) {
+          return 0;
+        }
+        const leftCreatedAt = typeof left.createdAt === "string" ? left.createdAt : "";
+        const rightCreatedAt = typeof right.createdAt === "string" ? right.createdAt : "";
+        return leftCreatedAt.localeCompare(rightCreatedAt);
+      });
+    const beforeIndex = beforeMessageId
+      ? messages.findIndex((message) => isRecord(message) && message.id === beforeMessageId)
+      : messages.length;
+    if (beforeMessageId && beforeIndex < 0) {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: `Invalid channel message cursor: ${beforeMessageId}` } });
+      return;
+    }
+    const pageEnd = beforeIndex;
+    const pageStart = Math.max(0, pageEnd - limit);
+    const pageMessages = messages.slice(pageStart, pageEnd);
     await route.fulfill({
       json: {
         cwd,
         channelId,
-        messages: state.channelMessages.filter((message) => isRecord(message) && message.channelId === channelId),
+        messages: pageMessages,
+        hasMore: pageStart > 0,
+        nextBeforeMessageId: pageStart > 0 && isRecord(pageMessages[0]) && typeof pageMessages[0].id === "string" ? pageMessages[0].id : undefined,
       },
     });
     return;
