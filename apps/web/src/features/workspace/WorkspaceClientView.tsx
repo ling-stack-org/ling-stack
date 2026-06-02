@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   Activity,
+  AtSign,
   Bell,
   BellOff,
   CheckCircle2,
@@ -123,7 +124,9 @@ type ChannelNotificationLevel = "all" | "mentions" | "muted";
 interface PendingAttachmentItem {
   readonly localId: string;
   readonly fileName: string;
+  readonly sizeBytes: number;
   readonly state: PendingAssetState;
+  readonly previewUrl?: string;
   readonly attachment?: ChannelAttachment;
   readonly error?: string;
 }
@@ -408,6 +411,7 @@ export function WorkspaceClientView({
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const autoPreviewUrlsRef = useRef(new Set<string>());
+  const attachmentPreviewUrlsRef = useRef(new Set<string>());
   const previousChannelIdRef = useRef(selectedChannelId);
   const pendingApprovalCount = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending").length;
   const readyProvider = providers.find(providerPreflightReady);
@@ -419,11 +423,6 @@ export function WorkspaceClientView({
   const providerBlocker = providerRunPreflightBlocker(effectiveProvider, t);
   const activeLeaseCount = resourceLeases.filter((lease) => lease.status === "active").length;
   const taskActionPending = activeTaskRunAction !== undefined;
-  const channelStatusText = selectedChannel
-    ? t("{status} channel", {
-      status: t(selectedChannel.status),
-    })
-    : t("No channel yet");
   const latestRun = activeRunId ? runById.get(activeRunId) : runs[0];
   const filteredTasks = useMemo(
     () =>
@@ -619,6 +618,7 @@ export function WorkspaceClientView({
     setMessageMentions([]);
     setMentionPicker(undefined);
     setMentionActiveIndex(0);
+    revokePendingAttachmentPreviews(pendingAttachments);
     setPendingAttachments([]);
     setPendingLinkPreviews([]);
     autoPreviewUrlsRef.current.clear();
@@ -997,9 +997,30 @@ export function WorkspaceClientView({
     setMessageMentions((current) => current.filter((mention) => mention.id !== mentionId));
   }
 
+  function insertMentionTrigger(): void {
+    const textarea = composerTextareaRef.current;
+    const start = textarea?.selectionStart ?? messageDraft.length;
+    const end = textarea?.selectionEnd ?? start;
+    const before = messageDraft.slice(0, start);
+    const after = messageDraft.slice(end);
+    const insert = before.endsWith("@") ? "" : before.length === 0 || /\s$/.test(before) ? "@" : " @";
+    const nextDraft = `${before}${insert}${after}`;
+    const nextCursor = before.length + insert.length;
+    setMessageDraft(nextDraft);
+    updateMentionPicker(nextDraft, nextCursor);
+    globalThis.requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(nextCursor, nextCursor);
+    });
+  }
+
   function handleComposerTextChange(event: ChangeEvent<HTMLTextAreaElement>): void {
     const value = event.currentTarget.value;
     setMessageDraft(value);
+    setMessageMentions((current) => mergeMentions(
+      current.filter((mention) => mentionTokenExistsInText(value, mention)),
+      findMentionsInText(value, teammateOptions),
+    ));
     setSendState("idle");
     setSendError("");
     updateMentionPicker(value, event.currentTarget.selectionStart ?? value.length);
@@ -1068,16 +1089,38 @@ export function WorkspaceClientView({
     void attachFiles(event.dataTransfer.files);
   }
 
+  function revokePendingAttachmentPreview(item: PendingAttachmentItem | undefined): void {
+    if (!item?.previewUrl || !attachmentPreviewUrlsRef.current.has(item.previewUrl)) {
+      return;
+    }
+    revokeObjectUrl(item.previewUrl);
+    attachmentPreviewUrlsRef.current.delete(item.previewUrl);
+  }
+
+  function revokePendingAttachmentPreviews(items: readonly PendingAttachmentItem[]): void {
+    for (const item of items) {
+      revokePendingAttachmentPreview(item);
+    }
+  }
+
   async function attachFiles(files: FileList | readonly File[]): Promise<void> {
     const selectedFiles = Array.from(files).slice(0, 10);
     if (selectedFiles.length === 0) {
       return;
     }
-    const uploadItems = selectedFiles.map((file) => ({
-      localId: createLocalId("attachment"),
-      fileName: file.name,
-      state: "uploading" as const,
-    }));
+    const uploadItems = selectedFiles.map((file) => {
+      const previewUrl = createAttachmentPreviewUrl(file);
+      if (previewUrl) {
+        attachmentPreviewUrlsRef.current.add(previewUrl);
+      }
+      return {
+        localId: createLocalId("attachment"),
+        fileName: file.name,
+        sizeBytes: file.size,
+        state: "uploading" as const,
+        previewUrl,
+      };
+    });
     setPendingAttachments((current) => [...current, ...uploadItems]);
     setComposerBusy(true);
     try {
@@ -1181,6 +1224,7 @@ export function WorkspaceClientView({
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
         requestAiReply: shouldRequestAi,
       });
+      revokePendingAttachmentPreviews(pendingAttachments);
       setMessageDraft("");
       setMessageMentions([]);
       setPendingAttachments([]);
@@ -1227,7 +1271,11 @@ export function WorkspaceClientView({
   }
 
   function removePendingAttachment(localId: string): void {
-    setPendingAttachments((current) => current.filter((item) => item.localId !== localId));
+    setPendingAttachments((current) => {
+      const removed = current.find((item) => item.localId === localId);
+      revokePendingAttachmentPreview(removed);
+      return current.filter((item) => item.localId !== localId);
+    });
   }
 
   function removePendingLinkPreview(localId: string): void {
@@ -1264,24 +1312,72 @@ export function WorkspaceClientView({
     return () => globalThis.clearTimeout(timeoutId);
   }, [messageDraft, pendingLinkPreviews, selectedChannelId]);
 
+  useEffect(() => () => {
+    for (const previewUrl of attachmentPreviewUrlsRef.current) {
+      revokeObjectUrl(previewUrl);
+    }
+    attachmentPreviewUrlsRef.current.clear();
+  }, []);
+
   const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
   const readyLinkPreviewIds = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview.id] : []);
   const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0;
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
+  const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0;
   const channelComposer = (
     <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
-      <div className="composer-head">
-        <span>
-          <MessageSquare size={16} />
-          {t("Discuss")}
-        </span>
-      </div>
       <div
         className={composerDragActive ? "composer-drop-zone active" : "composer-drop-zone"}
         onDragOver={handleComposerDragOver}
         onDragLeave={handleComposerDragLeave}
         onDrop={handleComposerDrop}
       >
+        {pendingMessageAssetsVisible ? (
+          <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
+            {pendingAttachments.map((item) => (
+              <div key={item.localId} className={`composer-preview-card ${item.previewUrl ? "image" : "file"} ${item.state}`}>
+                {item.previewUrl ? (
+                  <img className="composer-preview-thumbnail" src={item.previewUrl} alt={item.fileName} />
+                ) : (
+                  <span className="composer-preview-file-icon" aria-hidden="true">
+                    <FileText size={17} />
+                  </span>
+                )}
+                <span className="composer-preview-body">
+                  <strong title={item.fileName}>{item.fileName}</strong>
+                  <small>{item.error ?? `${t(pendingAssetLabel(item.state))} · ${formatBytes(item.attachment?.sizeBytes ?? item.sizeBytes)}`}</small>
+                </span>
+                {item.state === "uploading" ? <Loader2 className="composer-preview-state-icon spin" size={13} /> : null}
+                <button className="composer-preview-remove" type="button" onClick={() => removePendingAttachment(item.localId)} aria-label={t("Remove pending attachment")}>
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+            {pendingLinkPreviews.map((item) => (
+              <div key={item.localId} className={`composer-preview-card link ${item.state}`}>
+                <span className="composer-preview-file-icon" aria-hidden="true">
+                  {item.state === "uploading" ? <Loader2 className="spin" size={15} /> : <Link2 size={16} />}
+                </span>
+                <span className="composer-preview-body">
+                  <strong title={item.preview?.title ?? item.url}>{item.preview?.title ?? item.url}</strong>
+                  <small>{item.error ?? t(pendingPreviewLabel(item.state))}</small>
+                </span>
+                <button className="composer-preview-remove" type="button" onClick={() => removePendingLinkPreview(item.localId)} aria-label={t("Remove pending link preview")}>
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+            {messageMentions.map((mention) => (
+              <span key={mention.id} className="pending-asset composer-preview-mention ready">
+                @{mention.label}
+                <small>{t("Mention")}</small>
+                <button type="button" onClick={() => removeMessageMention(mention.id)} aria-label={t("Remove pending mention")}>
+                  <Trash2 size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <textarea
           ref={composerTextareaRef}
           value={messageDraft}
@@ -1291,7 +1387,7 @@ export function WorkspaceClientView({
           onPaste={handleComposerPaste}
           onSelect={(event) => updateMentionPicker(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
           placeholder={t("Message this channel or @ an AI teammate")}
-          aria-describedby="channel-composer-smart-help"
+          aria-label={t("Message this channel or @ an AI teammate")}
         />
         {mentionPicker ? (
           <div className="mention-picker-popover" role="listbox" aria-label={t("Mention teammate")}>
@@ -1321,62 +1417,30 @@ export function WorkspaceClientView({
         ) : null}
       </div>
       <div className="composer-primary-actions">
-        <span id="channel-composer-smart-help" className="composer-smart-hint">
-          {t("@ teammates, drop files, or paste links")}
-        </span>
-        <label className="icon-button composer-attach-button" aria-label={t("Attach files")} title={t("Attach files")}>
-          <FileText size={15} />
-          <input
-            type="file"
-            multiple
-            hidden
-            accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
-            onChange={(event) => {
-              if (event.target.files) {
-                void attachFiles(event.target.files);
-              }
-              event.target.value = "";
-            }}
-          />
-        </label>
-        <button className="primary-button" type="button" onClick={() => void sendMessage()} disabled={!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent}>
+        <div className="composer-tool-row" aria-label={t("Message tools")}>
+          <label className="icon-button composer-tool-button composer-attach-button" aria-label={t("Attach files")} title={t("Attach files")}>
+            <Plus size={17} />
+            <input
+              type="file"
+              multiple
+              hidden
+              accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
+              onChange={(event) => {
+                if (event.target.files) {
+                  void attachFiles(event.target.files);
+                }
+                event.target.value = "";
+              }}
+            />
+          </label>
+          <button className="icon-button composer-tool-button" type="button" onClick={insertMentionTrigger} disabled={!selectedChannelId || composerBusy} aria-label={t("Mention teammate")} title={t("Mention teammate")}>
+            <AtSign size={16} />
+          </button>
+        </div>
+        <button className="primary-button composer-send-button" type="button" onClick={() => void sendMessage()} disabled={!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent} aria-label={sendState === "sending" ? t("Sending...") : t("Send")} title={sendState === "sending" ? t("Sending...") : t("Send")}>
           {sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
-          {sendState === "sending" ? t("Sending...") : t("Send")}
         </button>
       </div>
-      {pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 ? (
-        <div className="pending-assets" aria-label={t("Pending message assets")}>
-          {messageMentions.map((mention) => (
-            <span key={mention.id} className="pending-asset ready">
-              @{mention.label}
-              <small>{t("Mention")}</small>
-              <button type="button" onClick={() => removeMessageMention(mention.id)} aria-label={t("Remove pending mention")}>
-                <Trash2 size={12} />
-              </button>
-            </span>
-          ))}
-          {pendingAttachments.map((item) => (
-            <span key={item.localId} className={`pending-asset ${item.state}`}>
-              {item.state === "uploading" ? <Loader2 className="spin" size={12} /> : null}
-              {item.fileName}
-              <small>{t(pendingAssetLabel(item.state))}</small>
-              <button type="button" onClick={() => removePendingAttachment(item.localId)} aria-label={t("Remove pending attachment")}>
-                <Trash2 size={12} />
-              </button>
-            </span>
-          ))}
-          {pendingLinkPreviews.map((item) => (
-            <span key={item.localId} className={`pending-asset ${item.state}`}>
-              {item.state === "uploading" ? <Loader2 className="spin" size={12} /> : <Link2 size={12} />}
-              {item.preview?.title ?? item.url}
-              <small>{item.error ?? t(pendingPreviewLabel(item.state))}</small>
-              <button type="button" onClick={() => removePendingLinkPreview(item.localId)} aria-label={t("Remove pending link preview")}>
-                <Trash2 size={12} />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : null}
       {sendState !== "idle" || aiReplyState !== "idle" ? (
         <div className="composer-status-list" aria-live="polite">
           {sendState === "sending" ? (
@@ -1524,7 +1588,6 @@ export function WorkspaceClientView({
             <Hash size={21} />
             <h1>{selectedChannel?.name ?? "Engineering"}</h1>
           </div>
-          <p>{channelStatusText}</p>
         </div>
         <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
           {daemonHealthy !== true ? (
@@ -1809,6 +1872,7 @@ export function WorkspaceClientView({
                           <div key={item.id} className="message-group">
                             <MessageBubble
                               tone={message.status === "blocked" ? "chat-blocked" : plainChatMessage ? "chat" : "system"}
+                              side={plainChatMessage && message.authorType === "local-user" ? "end" : "start"}
                               avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
                               author={messageAuthorLabel(message, teammateOptions)}
                               tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
@@ -2869,6 +2933,7 @@ function TaskDetailPanel({
 
 function MessageBubble({
   tone = "chat",
+  side = "start",
   avatar,
   author,
   tag,
@@ -2878,6 +2943,7 @@ function MessageBubble({
   action,
 }: {
   readonly tone?: MessageBubbleTone;
+  readonly side?: "start" | "end";
   readonly avatar: JSX.Element;
   readonly author: string;
   readonly tag?: string;
@@ -2887,16 +2953,18 @@ function MessageBubble({
   readonly action?: JSX.Element;
 }): JSX.Element {
   const inlineAuthor = tone === "chat" || tone === "chat-blocked";
+  const sideClass = inlineAuthor ? side === "end" ? " message-bubble-own" : " message-bubble-peer" : "";
   return (
-    <article className={`message-bubble message-bubble-${tone}${inlineAuthor ? " message-bubble-inline" : ""}`}>
+    <article className={`message-bubble message-bubble-${tone}${inlineAuthor ? " message-bubble-inline" : ""}${sideClass}`}>
       {inlineAuthor ? null : avatar}
       <div className="message-content">
         <div className="message-meta">
-          {inlineAuthor ? avatar : null}
+          {inlineAuthor && side === "start" ? avatar : null}
           <strong>{author}</strong>
           {tag ? <small>{tag}</small> : null}
           <time>{time}</time>
           {metaAction ? <span className="message-meta-action">{metaAction}</span> : null}
+          {inlineAuthor && side === "end" ? avatar : null}
         </div>
         <p>{renderMessageBody(body)}</p>
         {action ? <div className="message-action">{action}</div> : null}
@@ -4032,6 +4100,34 @@ function findMentionsInText(body: string, teammates: readonly ChannelMention[]):
   return teammates.filter((teammate) => tokens.has(teammate.label.toLowerCase()) || tokens.has(teammate.id.toLowerCase()));
 }
 
+function mergeMentions(
+  current: readonly ChannelMention[],
+  detected: readonly ChannelMention[],
+): readonly ChannelMention[] {
+  const seen = new Set<string>();
+  return [...current, ...detected].filter((mention) => {
+    if (seen.has(mention.id)) {
+      return false;
+    }
+    seen.add(mention.id);
+    return true;
+  });
+}
+
+function mentionTokenExistsInText(body: string, mention: ChannelMention): boolean {
+  return [mention.label, mention.id].some((token) => {
+    const escaped = escapeRegExp(token.trim());
+    if (!escaped) {
+      return false;
+    }
+    return new RegExp(`(^|\\s)@${escaped}(?=$|\\s|[.,!?;:，。！？；：)])`, "i").test(body);
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function channelNotificationLevelLabel(level: ChannelNotificationLevel): string {
   if (level === "all") {
     return "All activity";
@@ -4148,6 +4244,21 @@ function pendingPreviewLabel(state: PendingAssetState): string {
 function createLocalId(prefix: string): string {
   const randomId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return `${prefix}-${randomId}`;
+}
+
+function createAttachmentPreviewUrl(file: File): string | undefined {
+  if (!isPreviewableImageFile(file)) {
+    return undefined;
+  }
+  return globalThis.URL.createObjectURL(file);
+}
+
+function revokeObjectUrl(previewUrl: string): void {
+  globalThis.URL.revokeObjectURL(previewUrl);
+}
+
+function isPreviewableImageFile(file: File): boolean {
+  return file.type.startsWith("image/") || /\.(gif|jpe?g|png|webp)$/i.test(file.name);
 }
 
 function formatBytes(value: number): string {

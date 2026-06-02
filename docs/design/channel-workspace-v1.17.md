@@ -27,6 +27,12 @@ hover or focus. Hovering or focusing that row reveals the lightweight message bu
 boundary plus a compact right-edge action bubble. Hovering or focusing the icon shows the
 `Reply in topic` tooltip, and activating it opens the existing topic reply panel.
 
+Plain chat rows should also separate speaker ownership spatially without showing a
+default bubble fill. `local-user` messages align to the right, while AI teammate and
+system discussion messages align to the left. Hover or keyboard focus reveals a neutral
+theme-token boundary. Work, protocol, run, approval, and other event cards keep the
+existing left-edge event timeline layout rather than using split chat alignment.
+
 ## Non-Goals
 
 - No new teammate persistence or membership API.

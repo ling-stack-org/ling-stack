@@ -561,6 +561,8 @@ textarea {
 }
 
 .message-bubble-inline .message-content {
+  width: fit-content;
+  max-width: min(76%, 680px);
   padding: 9px 12px;
 }
 
@@ -577,6 +579,7 @@ textarea {
 
 .message-bubble-chat .message-content,
 .message-bubble-chat-blocked .message-content {
+  border-left-width: 1px;
   border-color: transparent;
   background: transparent;
   transition:
@@ -584,11 +587,39 @@ textarea {
     border-color 160ms ease;
 }
 
+.message-bubble-peer .message-content {
+  justify-self: start;
+  border-radius: 10px 10px 10px 4px;
+}
+
+.message-bubble-own .message-content {
+  justify-self: end;
+  border-color: transparent;
+  border-radius: 10px 10px 4px 10px;
+  background: transparent;
+  color: var(--text-strong);
+}
+
+.message-bubble-own .message-meta {
+  justify-content: flex-end;
+}
+
+.message-bubble-own .message-meta strong,
+.message-bubble-own .message-meta time,
+.message-bubble-own .message-content p {
+  color: var(--text-strong);
+}
+
 .message-bubble-chat:hover .message-content,
 .message-bubble-chat:focus-within .message-content {
   border-color: var(--border);
-  border-left-color: color-mix(in srgb, var(--border) 76%, transparent);
   background: color-mix(in srgb, var(--surface-panel-strong) 92%, transparent);
+}
+
+.message-bubble-chat.message-bubble-own:hover .message-content,
+.message-bubble-chat.message-bubble-own:focus-within .message-content {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--surface-selected) 80%, transparent);
 }
 
 .message-bubble-chat-blocked:hover .message-content,
@@ -690,6 +721,19 @@ textarea {
   transform: translate(0, -50%) scale(1);
 }
 
+.message-bubble-own .message-meta-action {
+  right: auto;
+  left: -9px;
+  transform: translate(-6px, -50%) scale(0.98);
+}
+
+.message-bubble-chat.message-bubble-own:hover .message-meta-action,
+.message-bubble-chat.message-bubble-own:focus-within .message-meta-action,
+.message-bubble-chat-blocked.message-bubble-own:hover .message-meta-action,
+.message-bubble-chat-blocked.message-bubble-own:focus-within .message-meta-action {
+  transform: translate(0, -50%) scale(1);
+}
+
 .message-reply-button {
   position: relative;
   display: inline-flex;
@@ -751,6 +795,10 @@ textarea {
 
 .message-bubble-inline .message-content p {
   padding-left: 27px;
+}
+
+.message-bubble-own .message-content p {
+  padding-left: 0;
 }
 
 .message-mention-token {
@@ -1304,20 +1352,29 @@ textarea {
 
 .channel-files {
   display: grid;
-  align-content: start;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: stretch;
   gap: 12px;
-  min-height: 280px;
-  max-height: min(52vh, 560px);
+  height: 100%;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
 }
 
 .file-section {
   display: grid;
   gap: 9px;
+  min-height: 0;
   padding: 10px;
   border: 1px solid rgba(33, 38, 42, 0.08);
   border-radius: 8px;
   background: rgba(248, 247, 243, 0.54);
+}
+
+.run-artifact-section {
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
 }
 
 .file-grid {

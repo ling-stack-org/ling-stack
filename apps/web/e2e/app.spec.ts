@@ -295,7 +295,8 @@ test("channel runtime policy and default teammate are visible and used when crea
   await mockDaemon(page, state, { templates: [openAiTemplate] });
   await page.goto("/");
 
-  await expect(page.getByText("active channel")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await expect(page.getByText("active channel")).toHaveCount(0);
   await expect(page.locator(".channel-header-actions")).toContainText("Engineer");
 
   await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
@@ -429,12 +430,22 @@ test("channel activity supports mentions, messages, files, links, and task creat
   await expect(page.locator("article.task-detail")).toHaveCount(0);
   await expect(page.locator('.channel-composer [aria-label="Composer mode"]')).toHaveCount(0);
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Task" })).toHaveCount(0);
+  await expect(page.locator(".channel-composer").getByText("Discuss")).toHaveCount(0);
+  await expect(page.locator(".channel-composer").getByText("@ teammates, drop files, or paste links")).toHaveCount(0);
   const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  await expect(page.getByLabel("Message tools").getByLabel("Attach files")).toBeVisible();
+  await expect(page.getByLabel("Message tools").getByRole("button", { name: "Mention teammate" })).toBeVisible();
+  await expect(page.locator(".channel-composer").getByRole("button", { name: "Send" })).toBeVisible();
+  await page.getByLabel("Message tools").getByRole("button", { name: "Mention teammate" }).click();
+  await expect(composerInput).toHaveValue("@");
+  await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
   await composerInput.fill("@Eng");
   await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
   await page.getByRole("option", { name: /@Engineer/ }).click();
   await expect(page.getByLabel("Pending message assets")).toContainText("@Engineer");
   await expect(composerInput).toHaveValue("@Engineer ");
+  await composerInput.fill("please refine without mention");
+  await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
   await composerInput.fill("@Engineer please refine the channel requirements https://example.com");
   await expect(page.locator(".channel-tab.active")).toContainText("Chat");
   await expect(page.getByText("Example Domain").first()).toBeVisible({ timeout: 3_000 });
@@ -448,24 +459,96 @@ test("channel activity supports mentions, messages, files, links, and task creat
   await expect(page.getByText("Drop files to attach")).toBeVisible();
   await dropZone.dispatchEvent("drop", { dataTransfer });
   await dataTransfer.dispose();
-  await expect(page.getByText("brief.txt")).toBeVisible();
+  const pendingAssets = page.getByLabel("Pending message assets");
+  await expect(pendingAssets).toContainText("brief.txt");
+  const previewLayout = await page.locator(".channel-composer").evaluate((element) => {
+    const preview = element.querySelector(".composer-preview-strip");
+    const textarea = element.querySelector("textarea");
+    if (!preview || !textarea) {
+      return null;
+    }
+    return {
+      previewTop: preview.getBoundingClientRect().top,
+      textareaTop: textarea.getBoundingClientRect().top,
+    };
+  });
+  if (!previewLayout) {
+    throw new Error("Expected composer pending assets to render before the textarea.");
+  }
+  expect(previewLayout.previewTop).toBeLessThan(previewLayout.textareaTop);
+  const imageTransfer = await page.evaluateHandle(() => {
+    const transfer = new DataTransfer();
+    const binary = atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=");
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    transfer.items.add(new File([bytes], "shot.png", { type: "image/png" }));
+    return transfer;
+  });
+  await dropZone.dispatchEvent("drop", { dataTransfer: imageTransfer });
+  await imageTransfer.dispose();
+  await expect(page.locator(".composer-preview-thumbnail[alt='shot.png']")).toBeVisible();
   await expect(page.locator(".channel-tab.active")).toContainText("Chat");
-  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".channel-composer").getByRole("button", { name: "Send" })).toBeEnabled();
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Sending message...")).toBeVisible();
   await expect(page.getByText("AI teammate is replying...")).toBeVisible();
 
   await expect(page.getByText("@Engineer please refine the channel requirements")).toBeVisible();
   await expect(page.getByText("收到，我会按频道上下文推进。")).toBeVisible();
+  await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
   await expect.poll(() => state.lastChannelMessageRequest?.providerPresetId).toBe("provider_local");
   await page.getByRole("button", { name: "Files" }).click();
   await expect(page.getByText("brief.txt")).toBeVisible();
+  await expect(page.getByText("shot.png")).toBeVisible();
   await expect(page.getByText("Example Domain")).toBeVisible();
 
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   const sentMessage = page.locator(".message-bubble").filter({ hasText: "@Engineer please refine the channel requirements" });
+  const teammateReply = page.locator(".message-bubble").filter({ hasText: "收到，我会按频道上下文推进。" });
   const sentMessageContent = sentMessage.locator(".message-content");
   await expect(sentMessage).toBeVisible();
+  await expect(teammateReply).toBeVisible();
+  await expect(sentMessage).toHaveClass(/message-bubble-own/);
+  await expect(teammateReply).toHaveClass(/message-bubble-peer/);
+  const messageLayout = await page.locator(".message-feed").evaluate((feed) => {
+    const own = feed.querySelector(".message-bubble-own .message-content");
+    const peer = feed.querySelector(".message-bubble-peer .message-content");
+    if (!own || !peer) {
+      return null;
+    }
+    const feedRect = feed.getBoundingClientRect();
+    const ownRect = own.getBoundingClientRect();
+    const peerRect = peer.getBoundingClientRect();
+    return {
+      feedLeft: feedRect.left,
+      feedRight: feedRect.right,
+      ownLeft: ownRect.left,
+      ownRight: ownRect.right,
+      peerLeft: peerRect.left,
+      peerRight: peerRect.right,
+    };
+  });
+  if (!messageLayout) {
+    throw new Error("Expected own and peer chat bubbles to render in the message feed.");
+  }
+  expect(messageLayout.ownRight).toBeGreaterThan(messageLayout.feedRight - 24);
+  expect(messageLayout.peerLeft).toBeLessThan(messageLayout.feedLeft + 24);
+  expect(messageLayout.ownLeft).toBeGreaterThan(messageLayout.peerLeft);
+  expect(messageLayout.ownRight).toBeGreaterThan(messageLayout.peerRight);
   await expect(sentMessage.getByRole("button", { name: /Create task|Record decision|Create handoff|Create task with context|Details/ })).toHaveCount(0);
+  const sentMessageTypography = await sentMessage.evaluate((element) => {
+    const author = element.querySelector(".message-meta strong");
+    const body = element.querySelector(".message-content p");
+    return {
+      authorColor: author ? getComputedStyle(author).color : "",
+      bodyColor: body ? getComputedStyle(body).color : "",
+      bodyFontWeight: body ? Number(getComputedStyle(body).fontWeight) : 0,
+    };
+  });
+  expect(sentMessageTypography.bodyColor).toBe(sentMessageTypography.authorColor);
+  expect(sentMessageTypography.bodyFontWeight).toBeGreaterThanOrEqual(550);
   await expect(sentMessageContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(sentMessageContent).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
   await expect(sentMessage.locator(".message-meta-action")).toHaveCSS("opacity", "0");
@@ -628,6 +711,23 @@ test("channel files tab keeps empty dark surfaces on strict console tokens", asy
   await expect(page.getByText("No attachments in this channel")).toBeVisible();
   await expect(page.getByText("No shared links in this channel")).toBeVisible();
   await expect(page.getByText("No run artifacts in this channel")).toBeVisible();
+  const fileTabLayout = await page.evaluate(() => {
+    const panel = document.querySelector(".task-list-panel");
+    const tabs = document.querySelector(".channel-tabs-row");
+    const files = document.querySelector(".channel-files");
+    if (!panel || !tabs || !files) {
+      return null;
+    }
+    return {
+      filesHeight: files.getBoundingClientRect().height,
+      panelHeight: panel.getBoundingClientRect().height,
+      tabsHeight: tabs.getBoundingClientRect().height,
+    };
+  });
+  if (!fileTabLayout) {
+    throw new Error("Files tab layout was not rendered");
+  }
+  expect(fileTabLayout.filesHeight).toBeGreaterThan(fileTabLayout.panelHeight - fileTabLayout.tabsHeight - 64);
   const fileTabDarkSurfaces = await page.evaluate(() => {
     const selectors = [".file-section", ".channel-files .client-empty-state"];
     return selectors.flatMap((selector) =>

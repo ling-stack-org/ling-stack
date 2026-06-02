@@ -67,6 +67,8 @@
 .mention-chip,
 .mention-chip.muted,
 .pending-assets span,
+.composer-preview-card,
+.composer-preview-file-icon,
 .mention-picker,
 .link-preview-input,
 .mention-picker-popover,
@@ -77,6 +79,17 @@
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+.composer-preview-card.uploading,
+.composer-preview-card.failed,
+.composer-preview-card.blocked {
+  background: var(--surface-panel-strong);
+  color: var(--text);
+}
+
+.composer-preview-thumbnail {
+  background: var(--surface-muted);
 }
 
 .channel-tab,
@@ -445,6 +458,18 @@
 
 .teammate-chat-composer textarea {
   background: var(--surface-panel);
+}
+
+.message-bubble-chat .message-content p,
+.message-bubble-chat-blocked .message-content p {
+  color: var(--text-strong);
+  font-weight: 560;
+}
+
+.message-bubble-own .message-meta strong,
+.message-bubble-own .message-meta time,
+.message-bubble-own .message-content p {
+  color: var(--text-strong);
 }
 
 .teammate-step span {
