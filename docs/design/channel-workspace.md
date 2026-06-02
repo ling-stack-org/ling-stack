@@ -29,6 +29,7 @@ Related docs:
 - [Channel Workspace v1.17 Teammate Dock and Hover Topic Actions](channel-workspace-v1.17.md)
 - [Channel Workspace v1.18 Unified Composer Actions](channel-workspace-v1.18.md)
 - [Channel Workspace v1.19 General Multi-Agent Studio and Execution Proposals](channel-workspace-v1.19.md)
+- [Channel Workspace v1.20 Chat Composer Task Action Removal](channel-workspace-v1.20.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
@@ -131,7 +132,7 @@ center channel
   header
   tabs: activity / tasks / files
   execution-aware activity stream
-  unified discussion composer with explicit task action
+  discussion composer
 
 right inspector
   members
@@ -188,7 +189,7 @@ The first viewport should show:
 - default AI teammate,
 - active runtime locks if any,
 - the selected channel tab,
-- unified discussion composer with a `Task` action.
+- discussion composer with attachment, link, and mention support.
 
 ## Information Architecture
 
@@ -447,10 +448,9 @@ allow send anyway
 The channel should support talking with AI teammates, but the interaction must stay tied
 to the work model.
 
-The composer is one input surface with two explicit actions:
+The Chat composer is one input surface for discussion:
 
 - `Send` stores a normal discussion message.
-- `Task` creates a durable task from the current input.
 
 `Send` is for:
 
@@ -460,21 +460,12 @@ The composer is one input surface with two explicit actions:
 - getting acceptance criteria,
 - discussing a failed run,
 - summarizing a thread,
-- drafting a plan before work becomes a task.
+- drafting a plan before work becomes an execution proposal or a task.
 
-`Task` is for:
-
-- creating a durable execution item,
-- assigning an AI teammate,
-- capturing uploaded filenames as task context,
-- capturing shared links as task context,
-- running through provider preflight and approval policy,
-- producing auditable run events and artifacts.
-
-The composer should support inline `@` mentions before either action. For discussion,
-AI mentions route the next AI reply. For task creation, the first selected AI teammate
-mention becomes the task assignee; otherwise the channel default teammate is used.
-For future proposal-driven execution, the proposed task assignee is the source of truth:
+The composer should support inline `@` mentions for discussion routing. AI mentions route
+the next AI reply. Task creation is no longer a direct composer action; it is handled by
+the `Tasks` panel for manual creation or by a user-confirmed execution proposal card.
+For proposal-driven execution, the proposed task assignee is the source of truth:
 provider, tools, approval profile, and execution blockers follow that assignee.
 
 The composer should also support attachment controls and automatic link detection from
@@ -486,7 +477,7 @@ Mention targets:
 
 | Mention | MVP behavior | Future behavior |
 | --- | --- | --- |
-| `@Engineer`, `@Designer`, built-in AI teammate | On `Send`, route the next AI reply to that teammate. On `Task`, set the task assignee/default teammate. | Use persisted teammate instances and per-teammate memory/tools. |
+| `@Engineer`, `@Designer`, built-in AI teammate | On `Send`, route the next AI reply to that teammate. | Use persisted teammate instances and per-teammate memory/tools. |
 | `@local-teammate` draft | UI-only mention until teammate persistence exists. | Persist mention target and route to teammate instance. |
 | `@user` | Highlight and notification metadata only. | Notify real workspace members when team sync exists. |
 | `@channel` / `@all` | Not in MVP. | Add only with notification controls and abuse limits. |
@@ -517,9 +508,9 @@ Rules:
 - Discussion is read-only by default. File edits, shell commands, external sends, and
   deploy actions require converting the discussion into a task/run.
 - AI replies should stay readable by default. When discussion produces executable work,
-  the preferred path is a user-confirmed execution proposal. The composer `Task` action,
-  an event details triage action, or a context-summary action remain explicit manual
-  paths rather than inline conversion buttons on every message.
+  the preferred path is a user-confirmed execution proposal. Manual task creation remains
+  available from the `Tasks` panel, while event details and context-summary actions remain
+  explicit secondary paths rather than inline conversion buttons on every message.
 
 Recommended mention UX:
 
@@ -1413,7 +1404,8 @@ open channel
 -> user clicks Send
 -> channel stores the user message
 -> selected/default AI teammate replies with clarification, risks, and next steps
--> user clicks Task from the same composer or uses an event/context-summary action when ready
+-> AI teammate may return an execution proposal when work is ready
+-> user confirms the proposal or creates a manual task from the Tasks panel
 ```
 
 Execution boundary:
@@ -1426,15 +1418,15 @@ Execution boundary:
 ### Promote Discussion to Task
 
 ```text
-copy or restate the actionable discussion in the channel composer
--> Task action derives title from prompt and assigns mentioned/default teammate
--> assignee defaults to mentioned AI teammate or channel default teammate
--> user clicks Task
+AI teammate proposes executable work from the discussion
+-> proposal card shows assignee, acceptance criteria, tools, and risks
+-> user confirms, edits later, or cancels
+-> confirmation creates the task and starts the assignee PI run
 ```
 
 Plain discussion messages should not show inline conversion buttons by default. If a
-future selected-message task flow returns, it should be behind selection or details UI
-and should preserve a link back to the source message/thread.
+manual selected-message task flow returns, it should be behind selection or details UI
+or the Tasks panel, and should preserve a link back to the source message/thread.
 
 ### Send Attachment
 
@@ -1464,11 +1456,11 @@ should be a separate implementation step unless a safe parser is already in plac
 
 ```text
 open channel
--> paste URL into Discuss or Task composer
+-> paste URL into the Chat composer
 -> composer detects the URL
 -> daemon creates or reuses a link preview record
 -> preview card shows host, title, description, and image when available
--> user sends the message or creates a task
+-> user sends the message
 -> link appears in Activity and Files
 ```
 
@@ -1598,8 +1590,8 @@ Current MVP implementation status:
 - channel attachments are stored under `.ling-stack/attachments` with a 25MB/file allow-list policy,
 - link previews are fetched by the daemon with SSRF protections and metadata-only storage,
 - Web now exposes `Activity`, `Tasks`, `Files`, and `Context` tabs; ordinary discussion
-  messages stay plain while tasks are created through the composer `Task` action, task detail, context
-  summaries, or event details,
+  messages stay plain while tasks are created through proposal confirmation, the `Tasks`
+  panel, task detail, context summaries, or event details,
 - v1.1 now persists Channel Brief, Decision Log, Handoff, and Context Summary records,
   with Activity and inspector views synthesizing those protocol items,
 - v1.2 now lets handoffs create explicit, user-started workflow/step records with
@@ -1656,6 +1648,9 @@ Current MVP implementation status:
   a coordinator plus specialist teammates, multi-agent work stays collapsed by default,
   agents may propose user-confirmed execution cards, and confirmation creates the task
   and starts the assignee's PI run with approval/runtime state visible in-channel,
+- v1.20 now removes the Chat composer `Task` action. Chat stays discussion-only; manual
+  task creation lives in the `Tasks` panel, and executable work from chat enters through
+  user-confirmed proposal cards,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.
@@ -1667,7 +1662,7 @@ Current MVP implementation status:
 - [x] Map `channel.defaultTeammateId` in `channelToForm`.
 - [x] Add channel header default teammate chip.
 - [ ] Add right inspector shell with Members, Notifications, Settings, Runtime modes.
-- [x] Add composer action model: `Send` and `Task`.
+- [x] Add composer action model: `Send`.
 - [x] Add `@` mention parsing utilities for AI teammate targets.
 - [x] Add attachment UI affordance in the composer.
 - [x] Add URL detection and preview-card UI affordance in the composer.
@@ -1676,14 +1671,14 @@ Current MVP implementation status:
 
 ### Phase 2: AI Discussion MVP
 
-- [x] Add channel composer with unified `Send` / `Task` actions.
+- [x] Add channel composer with a unified `Send` action.
 - [x] Add mention picker that lists AI teammates first.
 - [x] Route discussion replies to the mentioned teammate or channel default teammate.
 - [x] Keep discussion no-tools unless converted into a task.
 - [x] Add an explicit task creation path from channel discussion context.
 - [x] Decide first implementation: durable SQLite messages.
-- [x] Add e2e coverage for `@Engineer` mention and task creation from the channel
-  composer.
+- [x] Add e2e coverage for `@Engineer` mention and manual task creation from the
+  channel workspace.
 
 ### Phase 3: Multi-Agent Protocol MVP
 
@@ -1920,8 +1915,8 @@ Current MVP implementation status:
   actionable.
 - [x] Add category-specific left-edge tones for work, approval, protocol, runtime, and
   system events.
-- [x] Update e2e coverage so task creation uses the composer `Task` action and protocol
-  mutations use event details or context-summary actions.
+- [x] Update e2e coverage so ordinary messages have no inline conversion controls and
+  protocol mutations use event details or context-summary actions.
 
 ### Phase 23: Helio-Style Chat and Topic Replies
 
@@ -1970,6 +1965,8 @@ Current MVP implementation status:
   action from the same input.
 - [x] Derive task title from the prompt and assign the first selected AI teammate mention
   or the channel default teammate.
+- [x] Superseded in v1.20: remove the direct composer `Task` action after execution
+  proposal cards become the preferred discussion-to-execution path.
 
 ### Phase 27: General Multi-Agent Studio and Execution Proposals
 
@@ -1992,6 +1989,18 @@ Current MVP implementation status:
   right-side detail surface when available.
 - [ ] Show PI approval cards in channel context when a run requests `bash`, `edit`,
   `write`, external sends, or domain-specific side-effect tools.
+
+### Phase 28: Chat Composer Task Action Removal
+
+- [x] Define v1.20 Chat Composer Task Action Removal in
+  `docs/design/channel-workspace-v1.20.md`.
+- [x] Remove the Chat composer `Task` button after execution proposals become the
+  preferred discussion-to-execution path.
+- [x] Keep manual task creation available from the `Tasks` panel.
+- [x] Keep attachments, pasted files, links, and `@` mentions in the Chat composer for
+  discussion messages.
+- [x] Update e2e coverage so composer task creation is absent while manual task creation
+  still works through the `Tasks` panel.
 
 ## Validation Plan
 
@@ -2022,8 +2031,9 @@ Focused e2e scenarios:
   collaboration steps,
 - ordinary discussion messages do not expose inline task, decision, handoff, context, or
   details buttons,
-- creating a task from the composer `Task` action preserves the typed prompt and
-  channel/default teammate assignment,
+- the Chat composer does not expose a direct `Task` action,
+- creating a task from the `Tasks` panel preserves manual task creation without crowding
+  ordinary chat,
 - confirming an execution proposal creates the task, starts the assignee PI run, and
   leaves the user in channel context,
 - assignee provider/tool/preflight blockers stop execution and do not silently fall back

@@ -2,8 +2,9 @@
 
 ## Status
 
-Implemented in the Web client only. This slice simplifies the channel Chat composer
-without adding daemon contracts.
+Implemented in the Web client only, then superseded by v1.20 for the direct composer
+task action. This slice simplified the channel Chat composer without adding daemon
+contracts.
 
 ## Intent
 
@@ -14,8 +15,9 @@ before typing. The composer now behaves as one input surface with explicit actio
 - `Send` stores the current input as a normal channel discussion message.
 - `Task` creates a durable task from the same input.
 
-This keeps ordinary chat lightweight while preserving the audit boundary for runnable
-work.
+This kept ordinary chat lightweight while preserving the audit boundary for runnable
+work. v1.20 removes the direct `Task` action now that v1.19 execution proposals provide
+the preferred discussion-to-execution path.
 
 ## Interaction Model
 
