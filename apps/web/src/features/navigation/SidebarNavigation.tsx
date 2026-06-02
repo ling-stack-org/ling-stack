@@ -120,16 +120,17 @@ export function SidebarNavigation({
         )}
       </SidebarSection>
 
-      {pendingApprovalCount > 0 ? (
-        <button className="sidebar-inbox-alert" type="button" onClick={() => onOpenView("approvals")}>
-          <ShieldCheck size={15} />
-          <span>{t("{count} pending approvals", { count: pendingApprovalCount })}</span>
-        </button>
-      ) : null}
+      <div className={channelDrawer ? "sidebar-bottom" : "sidebar-config"}>
+        {pendingApprovalCount > 0 ? (
+          <button className="sidebar-inbox-alert" type="button" onClick={() => onOpenView("approvals")}>
+            {channelDrawer ? <span className="status-dot red" aria-hidden="true" /> : <ShieldCheck size={15} />}
+            <span>{t("{count} pending approvals", { count: pendingApprovalCount })}</span>
+          </button>
+        ) : null}
 
-      <div className="sidebar-config">
         <button className={activeSidebarTarget === "settings" ? "config-button active" : "config-button"} type="button" onClick={() => onOpenView("settings")} aria-label={t("Settings")} title={t("Settings")}>
           <Settings size={15} />
+          <span className="config-button-label">{t("Settings")}</span>
         </button>
       </div>
       </aside>

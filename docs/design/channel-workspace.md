@@ -155,7 +155,16 @@ second close button inside the right drawer; the header show/hide icon owns that
 The current channel remains visibly selected with a full-row neutral background, without
 the older sidebar accent bar. AI teammate rows use circular initial avatars rather than
 generic bot icons, and drawer header actions stay hidden until hover/focus so the surface
-does not read like a busy toolbar by default.
+does not read like a busy toolbar by default. The bottom approval and Settings entries
+share the accepted HTML bottom-group treatment: a divider above them and ordinary drawer
+rows, not legacy warning-card or icon-only sidebar styling. Long AI teammate lists scroll
+inside the teammate section so the bottom group remains visible.
+
+When the right details drawer is hidden, the chat body and composer expand back into the
+available channel content area and stay centered. The attention queue may restore as a
+floating popover, but it must not translate or push the chat. When the right details
+drawer is shown again, it compresses the chat area and hides the attention popover while
+preserving the selected detail view.
 
 ## External Pattern Benchmark
 
