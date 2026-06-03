@@ -61,6 +61,10 @@ interface MockState {
   externalWorkWorkflowConfigureCalls: number;
   lastExternalWorkWorkflowConfigure?: Record<string, unknown>;
   mediaJobs: MockMediaJob[];
+  workUnits: MockWorkUnit[];
+  runtimeSemaphoreSlots: MockRuntimeSemaphoreSlot[];
+  runtimeEventsByWorkUnit: Record<string, MockRuntimeEvent[]>;
+  workUnitAttemptsByWorkUnit: Record<string, MockWorkUnitAttempt[]>;
   resourceLeases: unknown[];
   stateTransitions: unknown[];
   artifactsByRun: Record<string, MockArtifact[]>;
@@ -80,6 +84,7 @@ interface MockRun {
   providerSnapshot: unknown;
   requestSnapshot: unknown;
   eventLogPath: string;
+  workUnitId?: string;
   summaryPath?: string;
   errorMessage?: string;
   createdAt: string;
@@ -223,6 +228,76 @@ interface MockMediaJob {
   errorMessage?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+interface MockWorkUnit {
+  id: string;
+  workspaceId: string;
+  kind: string;
+  ownerType: string;
+  ownerId: string;
+  channelId?: string;
+  taskId?: string;
+  providerPresetId?: string;
+  runnerId?: string;
+  idempotencyKey: string;
+  status: string;
+  priority: number;
+  attemptCount: number;
+  activeAttemptId?: string;
+  createdByActor: string;
+  request: unknown;
+  timeoutPolicy: Record<string, number>;
+  linkedRunId?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  lastEventAt?: string;
+  lastHeartbeatAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+interface MockWorkUnitAttempt {
+  id: string;
+  workUnitId: string;
+  attemptNumber: number;
+  runtimeInstanceId: string;
+  runnerId?: string;
+  providerPresetId?: string;
+  status: string;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  lastEventAt?: string;
+  lastHeartbeatAt?: string;
+}
+
+interface MockRuntimeEvent {
+  id: string;
+  workUnitId: string;
+  attemptId?: string;
+  seq: number;
+  ts: string;
+  type: string;
+  actor: string;
+  data: unknown;
+}
+
+interface MockRuntimeSemaphoreSlot {
+  id: string;
+  workspaceId: string;
+  resourceType: string;
+  resourceKey: string;
+  ownerType: string;
+  ownerId: string;
+  workUnitId?: string;
+  attemptId?: string;
+  status: string;
+  acquiredAt: string;
+  lastRenewedAt: string;
+  expiresAt: string;
 }
 
 test("workspace opens as a task workbench with task context in the inspector", async ({ page }) => {
@@ -446,7 +521,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(expanded.rightY).toBe(0);
   expect(expanded.rightHeight).toBe(expanded.viewportHeight);
   expect(expanded.headerRight).toBeLessThanOrEqual(expanded.rightLeft);
-  expect(expanded.sidePanelActions).toBe(1);
+  expect(expanded.sidePanelActions).toBe(2);
   expect(Number(expanded.sidePanelActionsOpacity)).toBeLessThanOrEqual(0.05);
   expect(expanded.sidePanelActionsVisibility).toBe("hidden");
   expect(Math.abs(expanded.chatCenterDelta)).toBeLessThanOrEqual(1);
@@ -711,7 +786,7 @@ test("workspace task detail panel stays bounded without growing the page", async
   await expect(page.locator(".workbench-task-list")).toHaveCount(0);
   await expect(page.locator("article.task-detail .client-task-kicker")).toHaveCount(0);
   await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Settings" }).click();
-  await expect(page.getByLabel("Advanced channel settings")).toBeVisible();
+  await expect(page.getByLabel("Channel management")).toBeVisible();
   const metrics = await page.evaluate(() => {
     const sidePanel = document.querySelector(".channel-side-panel");
     const taskDetail = document.querySelector("article.task-detail");
@@ -750,7 +825,7 @@ test("channel runtime policy and default teammate are visible and used when crea
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByText("active channel")).toHaveCount(0);
   await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
-  await expect(page.getByLabel("Advanced channel settings").getByLabel("Default AI teammate")).toHaveValue("engineer");
+  await expect(page.getByLabel("Channel management").getByLabel("Default AI teammate")).toHaveValue("engineer");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New channel" }).click();
   const createChannelPanel = page.getByRole("region", { name: "New channel" });
@@ -777,7 +852,7 @@ test("channel runtime policy and default teammate are visible and used when crea
   await expect(createChannelPanel).toHaveCount(0);
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Release" })).toBeVisible();
   await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
-  const details = page.getByLabel("Advanced channel settings");
+  const details = page.getByLabel("Channel management");
   await expect(details.getByLabel("Default AI teammate")).toHaveValue("designer");
   await expect(details.getByRole("button", { name: "Create channel" })).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create default" })).toHaveCount(0);
@@ -1605,6 +1680,157 @@ test("channel files tab aggregates run artifacts and keeps other channel artifac
   await expect(page.getByText("Other channel report")).toHaveCount(0);
 });
 
+test("runtime diagnostics surface supervisor state and work unit controls", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = state.runs.map((run) => ({ ...run, workUnitId: "wu_running" }));
+  const timeoutPolicy = {
+    heartbeatIntervalMs: 10_000,
+    heartbeatTimeoutMs: 45_000,
+    idleTimeoutMs: 600_000,
+    hardTimeoutMs: 3_600_000,
+    cancelGraceMs: 15_000,
+  };
+  state.workUnits = [
+    {
+      id: "wu_running",
+      workspaceId: "workspace_default",
+      kind: "task_run",
+      ownerType: "task",
+      ownerId: "task_inspect",
+      channelId: "channel_engineering",
+      taskId: "task_inspect",
+      providerPresetId: "provider_local",
+      runnerId: "pi-coding-agent",
+      idempotencyKey: "run-active",
+      status: "running",
+      priority: 0,
+      attemptCount: 1,
+      activeAttemptId: "attempt_running",
+      createdByActor: "user",
+      request: { prompt: "Inspect workspace" },
+      timeoutPolicy,
+      linkedRunId: "run_failed",
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:12:00.000Z",
+      startedAt: "2026-05-25T00:10:05.000Z",
+      lastEventAt: "2026-05-25T00:12:00.000Z",
+      lastHeartbeatAt: "2026-05-25T00:12:00.000Z",
+      errorCode: "runtime_stuck",
+    },
+    {
+      id: "wu_queue",
+      workspaceId: "workspace_default",
+      kind: "channel_ai_reply",
+      ownerType: "channel",
+      ownerId: "channel_engineering",
+      channelId: "channel_engineering",
+      providerPresetId: "provider_local",
+      runnerId: "pi-coding-agent",
+      idempotencyKey: "reply-queued",
+      status: "queued",
+      priority: 0,
+      attemptCount: 1,
+      activeAttemptId: "attempt_queue",
+      createdByActor: "system",
+      request: { body: "Queued reply" },
+      timeoutPolicy,
+      createdAt: "2026-05-25T00:13:00.000Z",
+      updatedAt: "2026-05-25T00:13:00.000Z",
+      lastEventAt: "2026-05-25T00:13:00.000Z",
+    },
+    {
+      id: "wu_stale",
+      workspaceId: "workspace_default",
+      kind: "media_job",
+      ownerType: "media_job",
+      ownerId: "media_job_1",
+      runnerId: "media-provider",
+      idempotencyKey: "media-stale",
+      status: "stale",
+      priority: 0,
+      attemptCount: 1,
+      activeAttemptId: "attempt_stale",
+      createdByActor: "system",
+      request: { prompt: "Generate image" },
+      timeoutPolicy,
+      createdAt: "2026-05-25T00:09:00.000Z",
+      updatedAt: "2026-05-25T00:14:00.000Z",
+      endedAt: "2026-05-25T00:14:00.000Z",
+      lastEventAt: "2026-05-25T00:14:00.000Z",
+      errorMessage: "runtime lost heartbeat",
+    },
+  ];
+  state.workUnitAttemptsByWorkUnit = Object.fromEntries(state.workUnits.map((unit) => [unit.id, [{
+    id: unit.activeAttemptId ?? `attempt_${unit.id}`,
+    workUnitId: unit.id,
+    attemptNumber: 1,
+    runtimeInstanceId: "runtime_e2e_shared",
+    runnerId: unit.runnerId,
+    providerPresetId: unit.providerPresetId,
+    status: unit.status === "stale" ? "lost" : unit.status === "queued" ? "created" : "started",
+    createdAt: unit.createdAt,
+    startedAt: unit.startedAt,
+    lastEventAt: unit.lastEventAt,
+    lastHeartbeatAt: unit.lastHeartbeatAt,
+  }]]));
+  state.runtimeEventsByWorkUnit = {
+    wu_running: [{ id: "runtime_event_running_1", workUnitId: "wu_running", attemptId: "attempt_running", seq: 1, ts: "2026-05-25T00:12:00.000Z", type: "work_unit_progress", actor: "runner", data: {} }],
+    wu_queue: [{ id: "runtime_event_queue_1", workUnitId: "wu_queue", attemptId: "attempt_queue", seq: 1, ts: "2026-05-25T00:13:00.000Z", type: "work_unit_queued", actor: "system", data: {} }],
+    wu_stale: [{ id: "runtime_event_stale_1", workUnitId: "wu_stale", attemptId: "attempt_stale", seq: 1, ts: "2026-05-25T00:14:00.000Z", type: "work_unit_stale", actor: "system", data: {} }],
+  };
+  state.resourceLeases = [{
+    id: "lease_running",
+    workspaceId: "workspace_default",
+    resourceType: "bound_path",
+    resourceKey: cwd,
+    ownerType: "run",
+    ownerId: "run_failed",
+    workUnitId: "wu_running",
+    attemptId: "attempt_running",
+    status: "active",
+    acquiredAt: "2026-05-25T00:10:05.000Z",
+    lastRenewedAt: "2026-05-25T00:12:00.000Z",
+    expiresAt: "2026-05-25T01:12:00.000Z",
+  }];
+  state.runtimeSemaphoreSlots = [{
+    id: "slot_provider",
+    workspaceId: "workspace_default",
+    resourceType: "provider",
+    resourceKey: "provider_local",
+    ownerType: "work_unit_attempt",
+    ownerId: "attempt_running",
+    workUnitId: "wu_running",
+    attemptId: "attempt_running",
+    status: "active",
+    acquiredAt: "2026-05-25T00:10:05.000Z",
+    lastRenewedAt: "2026-05-25T00:12:00.000Z",
+    expiresAt: "2026-05-25T01:12:00.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openChannelContextPanel(page);
+  await page.getByRole("button", { name: "Runtime" }).click();
+
+  const diagnostics = page.getByLabel("Runtime diagnostics");
+  await expect(diagnostics).toContainText("runtime_e2e_shared");
+  await expect(diagnostics.locator(".runtime-kpi-grid")).toContainText("Active");
+  await expect(diagnostics.locator(".runtime-kpi-grid")).toContainText("Queued");
+  await expect(diagnostics.locator(".runtime-kpi-grid")).toContainText("Stuck");
+  await expect(diagnostics.locator(".runtime-kpi-grid")).toContainText("Stale");
+  await expect(diagnostics.locator(".runtime-work-unit-row").filter({ hasText: "wu_running" })).toContainText("running");
+  await expect(diagnostics.locator(".runtime-work-unit-row").filter({ hasText: "wu_queue" })).toContainText("queued");
+  await expect(diagnostics.locator(".runtime-work-unit-row").filter({ hasText: "wu_stale" })).toContainText("runtime lost heartbeat");
+  await expect(diagnostics.locator(".runtime-resource-row").filter({ hasText: "bound_path" })).toBeVisible();
+  await expect(diagnostics.locator(".runtime-resource-row").filter({ hasText: "provider_local" })).toBeVisible();
+
+  await diagnostics.locator(".runtime-work-unit-row").filter({ hasText: "wu_queue" }).getByRole("button", { name: "Cancel" }).click();
+  await expect.poll(() => state.workUnits.find((unit) => unit.id === "wu_queue")?.status).toBe("cancelled");
+});
+
 test("channel v1.1 protocol supports brief, decisions, handoffs, and context task creation", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -1825,7 +2051,7 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
   }).toBe("run_2");
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await openChannelChatTools(page);
-  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_2" })).toContainText("succeeded");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Run seeded step" })).toContainText("succeeded");
 });
 
 test("channel activity derives task run approval transition and workflow events", async ({ page }) => {
@@ -1962,7 +2188,7 @@ test("channel activity derives task run approval transition and workflow events"
 
   const messageBubble = page.locator(".message-bubble").filter({ hasText: "Timeline source message" });
   const taskEventBubble = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" });
-  const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" });
+  const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" });
   const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
   const stateTransitionBubble = page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" });
   const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" });
@@ -2018,13 +2244,15 @@ test("channel activity derives task run approval transition and workflow events"
   await openChannelChatTools(page);
   await runEventBubble.getByRole("button", { name: "Details" }).click();
   await activityDetails.getByRole("button", { name: "Open run" }).click();
-  await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
+  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
+  await expect(page.locator("article.task-detail")).toContainText("Latest run");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
 
   await approvalEventBubble.getByRole("button", { name: "Details" }).click();
   await activityDetails.getByRole("button", { name: "Open approval" }).click();
-  await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
+  await expect(page.locator(".channel-side-panel")).toContainText("Approval details");
+  await expect(page.locator(".channel-approval-detail-panel")).toContainText("Approve shell command");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
 
@@ -2134,6 +2362,10 @@ test("channel activity derives task run approval transition and workflow events"
   expect(attentionTypography.itemTimeCount).toBe(0);
   expect(attentionTypography.detailsButtonCount).toBe(0);
   const expandQueueIfNeeded = async () => {
+    const hideDetails = page.getByRole("button", { name: "Hide details" });
+    if (await hideDetails.isVisible().catch(() => false)) {
+      await hideDetails.click();
+    }
     await openChannelChatTools(page);
     await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
   };
@@ -2146,11 +2378,13 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".channel-side-panel")).toContainText("Context");
   await expandQueueIfNeeded();
   await attentionQueueItemByTitle("Run run_failed").locator(".attention-queue-item-open").click();
-  await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
+  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
+  await expect(page.locator("article.task-detail")).toContainText("Latest run");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expandQueueIfNeeded();
   await attentionQueueItemByTitle("Approve shell command").locator(".attention-queue-item-open").click();
-  await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
+  await expect(page.locator(".channel-side-panel")).toContainText("Approval details");
+  await expect(page.locator(".channel-approval-detail-panel")).toContainText("Approve shell command");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expandQueueIfNeeded();
   await attentionQueueItemByTitle("Inspect workspace").locator(".attention-queue-item-open").click();
@@ -2165,7 +2399,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toHaveCount(0);
   await selectSavedView("Failed work");
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toBeVisible();
-  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" })).toBeVisible();
   await expect(page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" })).toHaveCount(0);
   await selectSavedView("Runtime");
   await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
@@ -2184,7 +2418,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
 
   await searchInput.fill("run_failed");
-  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" })).toBeVisible();
 
   await searchInput.fill("Approve shell command");
   await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toBeVisible();
@@ -2285,14 +2519,15 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
 
   await openChannelChatTools(page);
-  await page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" }).getByRole("button", { name: "Open run" }).click();
-  await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
-  await expect(page.locator(".run-detail-panel .session-file-list")).not.toBeVisible();
+  await page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" }).getByRole("button", { name: "Open run" }).click();
+  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
+  await expect(page.locator("article.task-detail")).toContainText("Latest run");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
   await page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" }).getByRole("button", { name: "Open approval" }).click();
-  await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
+  await expect(page.locator(".channel-side-panel")).toContainText("Approval details");
+  await expect(page.locator(".channel-approval-detail-panel")).toContainText("Approve shell command");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
@@ -2370,7 +2605,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await page.goto("/");
 
   const activityDetails = page.getByLabel("Activity details");
-  const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" });
+  const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" });
   const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked triage step" });
   const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
   const messageBubble = page.locator(".message-bubble").filter({ hasText: "Timeline source message for triage" });
@@ -2607,9 +2842,9 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByText("Daemon ready")).toHaveCount(0);
   await expect(page.getByText("本地服务已就绪")).toHaveCount(0);
   await page.locator(".channel-header-actions").getByRole("button", { name: "设置" }).click();
-  await expect(page.getByLabel("频道高级设置")).toContainText("运行模型预设");
+  await expect(page.getByLabel("频道管理")).toContainText("运行模型预设");
   await expect(page.getByLabel("频道运行策略")).toBeVisible();
-  await expect(page.getByLabel("频道高级设置").getByRole("button", { name: "创建频道" })).toHaveCount(0);
+  await expect(page.getByLabel("频道管理").getByRole("button", { name: "创建频道" })).toHaveCount(0);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI 队友" }).click();
   await expect(page.getByRole("heading", { name: "AI 队友", level: 1 })).toBeVisible();
@@ -4583,6 +4818,10 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     externalWorkSecretDeleteCalls: 0,
     externalWorkWorkflowConfigureCalls: 0,
     mediaJobs: [],
+    workUnits: [],
+    runtimeSemaphoreSlots: [],
+    runtimeEventsByWorkUnit: {},
+    workUnitAttemptsByWorkUnit: {},
     resourceLeases: [],
     stateTransitions: [],
     artifactsByRun: {},
@@ -4646,6 +4885,36 @@ function createExternalWorkStatus(overrides: {
         },
     lastErrors: {},
   };
+}
+
+function createMockRuntime() {
+  return {
+    workspaceId: "workspace_default",
+    runtimeInstanceId: "runtime_e2e_shared",
+    pid: 17891,
+    host: "127.0.0.1",
+    port: 17891,
+    startedAt: "2026-05-25T00:00:00.000Z",
+    version: "0.0.0",
+    schemaVersion: 22,
+    status: "healthy",
+  };
+}
+
+function createMockWorkUnitDetail(state: MockState, workUnit: MockWorkUnit) {
+  return {
+    cwd,
+    workUnit,
+    attempts: state.workUnitAttemptsByWorkUnit[workUnit.id] ?? [],
+    events: state.runtimeEventsByWorkUnit[workUnit.id] ?? [],
+    leases: state.resourceLeases.filter((lease) => isRecord(lease) && lease.workUnitId === workUnit.id),
+    semaphoreSlots: state.runtimeSemaphoreSlots.filter((slot) => slot.workUnitId === workUnit.id),
+    run: workUnit.linkedRunId ? state.runs.find((run) => run.id === workUnit.linkedRunId) : undefined,
+  };
+}
+
+function isActiveMockWorkUnit(status: string): boolean {
+  return status === "claimed" || status === "running" || status === "waiting_for_approval" || status === "cancelling";
 }
 
 function addExternalActionApproval(
@@ -6310,6 +6579,89 @@ async function handleDaemonRoute(
     const leases = status ? state.resourceLeases.filter((lease) => isRecord(lease) && lease.status === status) : state.resourceLeases;
     await route.fulfill({ json: { cwd, leases } });
     return;
+  }
+  if (request.method() === "GET" && path === "/runtime/supervisor") {
+    const active = state.workUnits.filter((unit) => isActiveMockWorkUnit(unit.status));
+    await route.fulfill({
+      json: {
+        cwd,
+        runtime: createMockRuntime(),
+        active,
+        stuck: active.filter((unit) => unit.status === "running" && unit.errorCode === "runtime_stuck"),
+        queued: state.workUnits.filter((unit) => unit.status === "queued"),
+        stale: state.workUnits.filter((unit) => unit.status === "stale"),
+        leases: state.resourceLeases.filter((lease) => isRecord(lease) && lease.status === "active"),
+        semaphoreSlots: state.runtimeSemaphoreSlots.filter((slot) => slot.status === "active"),
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/runtime/active") {
+    await route.fulfill({ json: { cwd, workUnits: state.workUnits.filter((unit) => isActiveMockWorkUnit(unit.status)) } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/runtime/stuck") {
+    await route.fulfill({ json: { cwd, workUnits: state.workUnits.filter((unit) => unit.status === "running" && unit.errorCode === "runtime_stuck") } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/runtime/semaphores") {
+    await route.fulfill({ json: { cwd, semaphoreSlots: state.runtimeSemaphoreSlots.filter((slot) => slot.status === "active") } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/work-units") {
+    const status = url.searchParams.get("status");
+    const kind = url.searchParams.get("kind");
+    const limit = Number(url.searchParams.get("limit") ?? 100);
+    const workUnits = state.workUnits
+      .filter((unit) => !status || unit.status === status)
+      .filter((unit) => !kind || unit.kind === kind)
+      .slice(0, Number.isFinite(limit) ? limit : 100);
+    await route.fulfill({ json: { cwd, workUnits } });
+    return;
+  }
+  const workUnitRouteMatch = /^\/work-units\/([^/]+)(?:\/([^/]+))?$/.exec(path);
+  if (workUnitRouteMatch) {
+    const workUnitId = decodeURIComponent(workUnitRouteMatch[1]);
+    const action = workUnitRouteMatch[2];
+    const workUnit = state.workUnits.find((unit) => unit.id === workUnitId);
+    if (!workUnit) {
+      await route.fulfill({ status: 404, json: { error: "work_unit_not_found" } });
+      return;
+    }
+    if (request.method() === "GET" && action === "events") {
+      await route.fulfill({
+        json: {
+          cwd,
+          workUnitId,
+          events: state.runtimeEventsByWorkUnit[workUnitId] ?? [],
+          nextSeq: (state.runtimeEventsByWorkUnit[workUnitId]?.length ?? 0) + 1,
+        },
+      });
+      return;
+    }
+    if (request.method() === "GET" && !action) {
+      await route.fulfill({ json: createMockWorkUnitDetail(state, workUnit) });
+      return;
+    }
+    if (request.method() === "POST" && (action === "cancel" || action === "retry" || action === "reconcile")) {
+      const nextStatus = action === "cancel" ? "cancelled" : action === "retry" ? "queued" : "stale";
+      const now = "2026-05-25T00:31:00.000Z";
+      const updated = { ...workUnit, status: nextStatus, updatedAt: now, endedAt: action === "retry" ? undefined : now };
+      state.workUnits = state.workUnits.map((unit) => unit.id === workUnitId ? updated : unit);
+      const event = {
+        id: `runtime_event_${workUnitId}_${(state.runtimeEventsByWorkUnit[workUnitId]?.length ?? 0) + 1}`,
+        workUnitId,
+        attemptId: updated.activeAttemptId,
+        seq: (state.runtimeEventsByWorkUnit[workUnitId]?.length ?? 0) + 1,
+        ts: now,
+        type: action === "cancel" ? "work_unit_cancelled" : action === "retry" ? "work_unit_queued" : "work_unit_stale",
+        actor: "local-user",
+        data: { action },
+      };
+      state.runtimeEventsByWorkUnit[workUnitId] = [...(state.runtimeEventsByWorkUnit[workUnitId] ?? []), event];
+      await route.fulfill({ json: { cwd, workUnit: updated, event } });
+      return;
+    }
   }
   if (request.method() === "GET" && path === "/state-transitions") {
     const entityType = url.searchParams.get("entityType");

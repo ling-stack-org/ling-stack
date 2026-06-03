@@ -12,6 +12,7 @@ import {
   buildRerunRequest,
   buildRunRequest,
   buildTaskRunRequest,
+  cancelWorkUnit,
   cancelRun,
   cancelExternalWorkAction,
   checkProvider,
@@ -45,8 +46,10 @@ import {
   getProviderSecret,
   getApprovalPolicy,
   getChannelBrief,
+  getRuntimeDiagnostics,
   getRun,
   getRunEvents,
+  getWorkUnit,
   listMediaJobArtifacts,
   listRunArtifacts,
   listResourceLeases,
@@ -69,9 +72,12 @@ import {
   listStateTransitions,
   listTeammateChannels,
   listTasks,
+  listWorkUnits,
   pollGitHubExternalWork,
   pollLinearExternalWork,
+  reconcileWorkUnit,
   reconcileExternalWork,
+  retryWorkUnit,
   runMediaJob,
   replaceTeammateChannels,
   replaceTeammateMemoryScopes,
@@ -128,6 +134,7 @@ import type {
   ProviderTemplate,
   ReplaceTeammateMemoryScopesRequest,
   ResourceLease,
+  RuntimeDiagnosticsResponse,
   RunArtifact,
   RunEventEnvelope,
   RunFormState,
@@ -141,6 +148,8 @@ import type {
   TeammateChannelMembership,
   UpdateAiTeammateRequest,
   UpdateChannelBriefRequest,
+  WorkUnit,
+  WorkUnitDetailResponse,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -376,6 +385,11 @@ export function AppShell(): JSX.Element {
   const [channelActivityTransitionsLoading, setChannelActivityTransitionsLoading] = useState(false);
   const [channelActivityTransitionError, setChannelActivityTransitionError] = useState("");
   const [resourceLeases, setResourceLeases] = useState<readonly ResourceLease[]>([]);
+  const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnosticsResponse | undefined>();
+  const [workUnits, setWorkUnits] = useState<readonly WorkUnit[]>([]);
+  const [selectedWorkUnitDetail, setSelectedWorkUnitDetail] = useState<WorkUnitDetailResponse | undefined>();
+  const [runtimeLoading, setRuntimeLoading] = useState(false);
+  const [runtimeActionWorkUnitId, setRuntimeActionWorkUnitId] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
   const [selectedMediaJobId, setSelectedMediaJobId] = useState("");
@@ -989,6 +1003,7 @@ export function AppShell(): JSX.Element {
           refreshAiTeammates(defaultWorkspaceCwd),
           refreshRuns(defaultWorkspaceCwd),
           refreshApprovals(defaultWorkspaceCwd),
+          refreshRuntimeState(defaultWorkspaceCwd),
         ]).catch((error: unknown) => {
           setErrorMessage(error instanceof Error ? error.message : String(error));
         });
@@ -1023,6 +1038,7 @@ export function AppShell(): JSX.Element {
     setEvents([]);
     setArtifacts([]);
     setRun(undefined);
+    setSelectedWorkUnitDetail(undefined);
     setActiveRunId("");
     setIsRunning(true);
 
@@ -1080,6 +1096,15 @@ export function AppShell(): JSX.Element {
       setArtifacts(artifactResult.artifacts);
       setActiveRunId(runResult.id);
       setLookupRunId(runResult.id);
+      if (runResult.workUnitId) {
+        try {
+          setSelectedWorkUnitDetail(await getWorkUnit(cwd, runResult.workUnitId));
+        } catch {
+          setSelectedWorkUnitDetail(undefined);
+        }
+      } else {
+        setSelectedWorkUnitDetail(undefined);
+      }
       await refreshRuntimeState(cwd, runResult);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -1091,9 +1116,13 @@ export function AppShell(): JSX.Element {
     if (!cwd) {
       setStateTransitions([]);
       setResourceLeases([]);
+      setRuntimeDiagnostics(undefined);
+      setWorkUnits([]);
+      setSelectedWorkUnitDetail(undefined);
       return;
     }
 
+    setRuntimeLoading(true);
     try {
       const transitionRequests: Promise<readonly StateTransitionEvent[]>[] = [];
       if (sourceRun?.id) {
@@ -1107,19 +1136,32 @@ export function AppShell(): JSX.Element {
           listStateTransitions(cwd, { entityType: "task", entityId: taskTransitionId, limit: 50 }).then((response) => response.transitions),
         );
       }
-      const [leasesResponse, ...transitionResponses] = await Promise.all([
+      if (sourceRun?.workUnitId) {
+        transitionRequests.push(
+          listStateTransitions(cwd, { entityType: "work_unit", entityId: sourceRun.workUnitId, limit: 50 }).then((response) => response.transitions),
+        );
+      }
+      const [leasesResponse, diagnosticsResponse, workUnitsResponse, ...transitionResponses] = await Promise.all([
         listResourceLeases(cwd, { status: "active", limit: 50 }),
+        getRuntimeDiagnostics(cwd).catch(() => undefined),
+        listWorkUnits(cwd, { limit: 100 }).catch(() => ({ cwd, workUnits: [] })),
         ...transitionRequests,
       ]);
       const uniqueTransitions = new Map<string, StateTransitionEvent>();
       for (const transition of transitionResponses.flat()) {
         uniqueTransitions.set(transition.id, transition);
       }
-      setResourceLeases(leasesResponse.leases);
+      setResourceLeases(diagnosticsResponse?.leases ?? leasesResponse.leases);
+      setRuntimeDiagnostics(diagnosticsResponse);
+      setWorkUnits(workUnitsResponse.workUnits);
       setStateTransitions([...uniqueTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
     } catch {
       setResourceLeases([]);
       setStateTransitions([]);
+      setRuntimeDiagnostics(undefined);
+      setWorkUnits([]);
+    } finally {
+      setRuntimeLoading(false);
     }
   }
 
@@ -3044,6 +3086,42 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function runWorkUnitAction(workUnitId: string, action: "cancel" | "retry" | "reconcile"): Promise<void> {
+    const cwd = form.cwd.trim();
+    if (!cwd || runtimeActionWorkUnitId) {
+      return;
+    }
+
+    setRuntimeActionWorkUnitId(workUnitId);
+    try {
+      setErrorMessage("");
+      const response = action === "cancel"
+        ? await cancelWorkUnit(cwd, workUnitId)
+        : action === "retry"
+          ? await retryWorkUnit(cwd, workUnitId)
+          : await reconcileWorkUnit(cwd, workUnitId);
+      if (action === "cancel" && response.workUnit.linkedRunId && response.workUnit.linkedRunId === activeRunId) {
+        abortRef.current?.abort();
+        setIsRunning(false);
+      }
+      await Promise.all([
+        refreshRuns(cwd),
+        refreshRuntimeState(cwd, run),
+      ]);
+      if (run?.workUnitId === workUnitId) {
+        try {
+          setSelectedWorkUnitDetail(await getWorkUnit(cwd, workUnitId));
+        } catch {
+          setSelectedWorkUnitDetail(undefined);
+        }
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRuntimeActionWorkUnitId("");
+    }
+  }
+
   const showInspector = !["workspace", "providers", "teammates", "runs", "approvals", "media", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
@@ -3136,6 +3214,10 @@ export function AppShell(): JSX.Element {
             approvalsLoading={approvalsLoading}
             resolvingApprovals={resolvingApprovals}
             resourceLeases={resourceLeases}
+            runtimeDiagnostics={runtimeDiagnostics}
+            workUnits={workUnits}
+            runtimeLoading={runtimeLoading}
+            runtimeActionWorkUnitId={runtimeActionWorkUnitId}
             runs={runs}
             runById={runById}
             activeRunId={activeRunId}
@@ -3192,6 +3274,10 @@ export function AppShell(): JSX.Element {
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
             onRefreshRunApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
+            onRefreshRuntime={() => void refreshRuntimeState()}
+            onCancelWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "cancel")}
+            onRetryWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "retry")}
+            onReconcileWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "reconcile")}
             onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
             onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers")}
           />
@@ -3245,6 +3331,7 @@ export function AppShell(): JSX.Element {
                 artifacts={artifacts}
                 resourceLeases={resourceLeases}
                 stateTransitions={stateTransitions}
+                workUnitDetail={selectedWorkUnitDetail}
                 assistantText={assistantText}
                 approvals={activeRunApprovals}
                 approvalsLoading={approvalsLoading}

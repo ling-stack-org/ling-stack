@@ -53,6 +53,7 @@ import type {
   RunEventEnvelope,
   RunSession,
   StateTransitionEvent,
+  WorkUnitDetailResponse,
 } from "../../types.js";
 
 export function RunHistory({
@@ -64,6 +65,7 @@ export function RunHistory({
   artifacts,
   resourceLeases,
   stateTransitions,
+  workUnitDetail,
   assistantText,
   approvals,
   approvalsLoading,
@@ -89,6 +91,7 @@ export function RunHistory({
   readonly artifacts: readonly RunArtifact[];
   readonly resourceLeases: readonly ResourceLease[];
   readonly stateTransitions: readonly StateTransitionEvent[];
+  readonly workUnitDetail: WorkUnitDetailResponse | undefined;
   readonly assistantText: string;
   readonly approvals: readonly ApprovalRequest[];
   readonly approvalsLoading: boolean;
@@ -164,6 +167,7 @@ export function RunHistory({
         artifacts={artifacts}
         resourceLeases={resourceLeases}
         stateTransitions={stateTransitions}
+        workUnitDetail={workUnitDetail}
         assistantText={assistantText}
         approvals={approvals}
         approvalsLoading={approvalsLoading}
@@ -187,6 +191,7 @@ function RunDetailPanel({
   artifacts,
   resourceLeases,
   stateTransitions,
+  workUnitDetail,
   assistantText,
   approvals,
   approvalsLoading,
@@ -205,6 +210,7 @@ function RunDetailPanel({
   readonly artifacts: readonly RunArtifact[];
   readonly resourceLeases: readonly ResourceLease[];
   readonly stateTransitions: readonly StateTransitionEvent[];
+  readonly workUnitDetail: WorkUnitDetailResponse | undefined;
   readonly assistantText: string;
   readonly approvals: readonly ApprovalRequest[];
   readonly approvalsLoading: boolean;
@@ -226,11 +232,12 @@ function RunDetailPanel({
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
   const repairHint = run ? buildRunRepairHint(run, pendingApprovals.length, run.status, readRunEventIssueText(terminalEvent), t) : undefined;
   const runtimeRepairRun = run && run.status === "failed" && repairHint?.target === "run" ? run : undefined;
-  const runLeases = run ? resourceLeases.filter((lease) => lease.ownerId === run.id) : [];
+  const runLeases = run ? resourceLeases.filter((lease) => lease.ownerId === run.id || lease.workUnitId === run.workUnitId) : [];
   const relevantTransitions = run
     ? stateTransitions.filter((transition) =>
         (transition.entityType === "run" && transition.entityId === run.id) ||
-        (transition.entityType === "task" && transition.entityId === run.taskId)
+        (transition.entityType === "task" && transition.entityId === run.taskId) ||
+        (transition.entityType === "work_unit" && transition.entityId === run.workUnitId)
       )
     : [];
 
@@ -263,6 +270,7 @@ function RunDetailPanel({
           <div className="run-detail-summary">
             <MetaRow label={t("Status")} value={run.status} compact />
             <MetaRow label={t("Provider")} value={`${run.providerName}/${run.providerModel}`} compact />
+            <MetaRow label={t("Work unit")} value={run.workUnitId ?? "-"} compact />
             <MetaRow label={t("Created")} value={formatDateTime(run.createdAt)} compact />
             <MetaRow label={t("Ended")} value={run.endedAt ? formatDateTime(run.endedAt) : "-"} compact />
           </div>
@@ -367,7 +375,7 @@ function RunDetailPanel({
               <strong>{readTaskTitle(run.taskSnapshot) || run.taskId}</strong>
               <p>{readTaskPrompt(run.taskSnapshot) || t("No prompt snapshot.")}</p>
             </div>
-            <RuntimeAuditBlock leases={runLeases} transitions={relevantTransitions} />
+            <RuntimeAuditBlock leases={runLeases} transitions={relevantTransitions} workUnitDetail={workUnitDetail} />
             <div className="run-detail-section">
               <div className="panel-title tight split">
                 <span>
@@ -449,11 +457,14 @@ function RunDetailPanel({
 function RuntimeAuditBlock({
   leases,
   transitions,
+  workUnitDetail,
 }: {
   readonly leases: readonly ResourceLease[];
   readonly transitions: readonly StateTransitionEvent[];
+  readonly workUnitDetail: WorkUnitDetailResponse | undefined;
 }): JSX.Element {
   const { t } = useI18n();
+  const workUnit = workUnitDetail?.workUnit;
   return (
     <div className="run-detail-section runtime-audit-block">
       <div className="panel-title tight split">
@@ -463,6 +474,27 @@ function RuntimeAuditBlock({
         </span>
         <span className="event-count">{t("{count} transitions", { count: transitions.length })}</span>
       </div>
+      {workUnit ? (
+        <div className="run-evidence-grid">
+          <MetaRow label={t("Work unit")} value={workUnit.id} compact />
+          <MetaRow label={t("Kind")} value={workUnit.kind} compact />
+          <MetaRow label={t("Status")} value={workUnit.status} compact />
+          <MetaRow label={t("Attempt")} value={workUnit.activeAttemptId ?? "-"} compact />
+          <MetaRow label={t("Last event")} value={workUnit.lastEventAt ? formatDateTime(workUnit.lastEventAt) : "-"} compact />
+          <MetaRow label={t("Last heartbeat")} value={workUnit.lastHeartbeatAt ? formatDateTime(workUnit.lastHeartbeatAt) : "-"} compact />
+        </div>
+      ) : null}
+      {workUnitDetail?.attempts.length ? (
+        <div className="runtime-list">
+          {workUnitDetail.attempts.map((attempt) => (
+            <div key={attempt.id} className="runtime-list-row">
+              <StatusBadge status={attempt.status} />
+              <span>{attempt.runnerId}</span>
+              <small>{attempt.lastHeartbeatAt ? formatDateTime(attempt.lastHeartbeatAt) : attempt.runtimeInstanceId}</small>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {leases.length > 0 ? (
         <div className="runtime-list">
           {leases.map((lease) => (
@@ -490,6 +522,28 @@ function RuntimeAuditBlock({
           ))
         )}
       </div>
+      {workUnitDetail?.semaphoreSlots.length ? (
+        <div className="runtime-list">
+          {workUnitDetail.semaphoreSlots.map((slot) => (
+            <div key={slot.id} className="runtime-list-row">
+              <StatusBadge status={slot.resourceType} />
+              <span>{truncatePreview(slot.resourceKey, 48)}</span>
+              <small>{slot.status}</small>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {workUnitDetail?.events.length ? (
+        <div className="runtime-list transition-list">
+          {workUnitDetail.events.slice(0, 8).map((event) => (
+            <div key={event.id} className="runtime-list-row">
+              <StatusBadge status={event.type} />
+              <span>#{event.seq} {event.type}</span>
+              <small>{formatDateTime(event.ts)}</small>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

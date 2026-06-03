@@ -604,6 +604,257 @@ test("sqlite lease expiry marks active stale leases as expired", async () => {
   }
 });
 
+test("sqlite work units link run sessions and enforce CAS transitions", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-work-unit-cas-"));
+  const now = "2026-06-04T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
+    const task = store.createTask({ channelId: channel.id, title: "Runtime task", prompt: "Run under supervisor." }, now);
+    const workUnit = store.createWorkUnit({
+      id: "wu_task_runtime",
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      kind: "task_run",
+      ownerType: "task",
+      ownerId: task.id,
+      channelId: channel.id,
+      taskId: task.id,
+      providerPresetId: "provider_runtime",
+      idempotencyKey: "wu-key-1",
+      createdByActor: "user",
+      request: { prompt: task.prompt, apiKey: "secret-value" },
+      now,
+    });
+    assert.equal(workUnit.status, "queued");
+    assert.equal(workUnit.attemptCount, 0);
+    assert.deepEqual(workUnit.request, { prompt: task.prompt, apiKey: "[REDACTED]" });
+    assert.equal(
+      store.findWorkUnitByIdempotency({
+        kind: "task_run",
+        ownerType: "task",
+        ownerId: task.id,
+        idempotencyKey: "wu-key-1",
+      })?.id,
+      workUnit.id,
+    );
+
+    store.createRun({
+      id: "run_linked_runtime",
+      cwd,
+      taskId: task.id,
+      channelId: channel.id,
+      providerPresetId: "provider_runtime",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: task,
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const linked = store.linkRunToWorkUnit("run_linked_runtime", workUnit.id, "2026-06-04T00:00:01.000Z");
+    assert.equal(linked?.workUnitId, workUnit.id);
+    assert.equal(store.getWorkUnit(workUnit.id)?.linkedRunId, "run_linked_runtime");
+
+    const claimed = store.transitionWorkUnitStatus({
+      workUnitId: workUnit.id,
+      expectedStatus: "queued",
+      event: "claim",
+      actor: "system",
+      reason: "runtime_supervisor",
+      idempotencyKey: "claim-once",
+      now: "2026-06-04T00:00:02.000Z",
+    });
+    assert.deepEqual(claimed, { ok: true, from: "queued", to: "claimed" });
+
+    const stale = store.transitionWorkUnitStatus({
+      workUnitId: workUnit.id,
+      expectedStatus: "queued",
+      event: "claim",
+      actor: "system",
+      reason: "runtime_supervisor",
+      idempotencyKey: "claim-twice",
+      now: "2026-06-04T00:00:03.000Z",
+    });
+    assert.deepEqual(stale, {
+      ok: false,
+      code: "stale_transition",
+      currentStatus: "claimed",
+    });
+
+    const duplicate = store.transitionWorkUnitStatus({
+      workUnitId: workUnit.id,
+      expectedStatus: "queued",
+      event: "claim",
+      actor: "system",
+      reason: "runtime_supervisor",
+      idempotencyKey: "claim-once",
+      now: "2026-06-04T00:00:04.000Z",
+    });
+    assert.deepEqual(duplicate, { ok: true, from: "claimed", to: "claimed", duplicate: true });
+    const transitions = store.listStateTransitionEvents({ entityType: "work_unit", entityId: workUnit.id });
+    assert.equal(transitions.length, 1);
+    assert.equal(transitions[0].event, "claim");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite runtime events heartbeat lease renewal and semaphore limits are durable", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-heartbeat-"));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-06-04T00:10:00.000Z";
+  try {
+    const workUnit = store.createWorkUnit({
+      id: "wu_runtime_heartbeat",
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      kind: "task_run",
+      ownerType: "task",
+      ownerId: "task_runtime_heartbeat",
+      idempotencyKey: "wu-heartbeat-key",
+      createdByActor: "system",
+      request: { prompt: "heartbeat" },
+      now,
+    });
+    const attempt = store.createWorkUnitAttempt({
+      id: "attempt_runtime_heartbeat",
+      workUnitId: workUnit.id,
+      attemptNumber: 1,
+      runtimeInstanceId: "runtime_test",
+      runnerId: "runner_pi_embedded",
+      providerPresetId: "provider_runtime",
+      now,
+    });
+
+    const firstEvent = store.appendRuntimeEvent({
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      type: "work_unit_started",
+      actor: "runner",
+      data: { ok: true },
+      ts: "2026-06-04T00:10:01.000Z",
+    });
+    const secondEvent = store.appendRuntimeEvent({
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      type: "work_unit_progress",
+      actor: "runner",
+      data: { message: "progress" },
+      ts: "2026-06-04T00:10:02.000Z",
+    });
+    assert.equal(firstEvent.seq, 1);
+    assert.equal(secondEvent.seq, 2);
+    assert.deepEqual(store.listRuntimeEvents(workUnit.id, { afterSeq: 1 }).map((event) => event.seq), [2]);
+
+    const lease = store.acquireResourceLease({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      resourceType: "provider",
+      resourceKey: "provider_runtime",
+      ownerType: "work_unit_attempt",
+      ownerId: attempt.id,
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      acquiredAt: "2026-06-04T00:10:03.000Z",
+      expiresAt: "2026-06-04T00:20:03.000Z",
+    });
+    assert.ok(lease);
+    const slot = store.acquireRuntimeSemaphoreSlot({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      resourceType: "provider",
+      resourceKey: "provider_runtime",
+      limit: 1,
+      ownerType: "work_unit_attempt",
+      ownerId: attempt.id,
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      acquiredAt: "2026-06-04T00:10:04.000Z",
+      expiresAt: "2026-06-04T00:20:04.000Z",
+    });
+    assert.ok(slot);
+    assert.equal(store.acquireRuntimeSemaphoreSlot({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      resourceType: "provider",
+      resourceKey: "provider_runtime",
+      limit: 1,
+      ownerType: "work_unit_attempt",
+      ownerId: "attempt_blocked",
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      acquiredAt: "2026-06-04T00:10:05.000Z",
+      expiresAt: "2026-06-04T00:20:05.000Z",
+    }), undefined);
+
+    store.recordRuntimeHeartbeat({
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      runtimeInstanceId: "runtime_test",
+      ts: "2026-06-04T00:11:00.000Z",
+      source: "runner",
+      detail: { apiKey: "secret-value" },
+    });
+    assert.equal(store.getWorkUnit(workUnit.id)?.lastHeartbeatAt, "2026-06-04T00:11:00.000Z");
+    assert.equal(store.getWorkUnitAttempt(attempt.id)?.lastHeartbeatAt, "2026-06-04T00:11:00.000Z");
+    assert.equal(store.listResourceLeases({ workUnitId: workUnit.id, status: "active" })[0]?.lastRenewedAt, "2026-06-04T00:11:00.000Z");
+    assert.equal(store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, status: "active" })[0]?.lastRenewedAt, "2026-06-04T00:11:00.000Z");
+    assert.equal(store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, "2026-06-04T00:12:00.000Z", "test_release"), 1);
+    assert.equal(store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, status: "released" })[0]?.releaseReason, "test_release");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite runtime supervisor migration self-heals missing runtime tables while preserving legacy runs", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-supervisor-heal-"));
+  let store = createSqliteRunStore(cwd);
+  try {
+    const databasePath = store.paths.databasePath;
+    store.createRun({
+      id: "run_legacy_no_work_unit",
+      cwd,
+      taskId: "task_legacy_no_work_unit",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_legacy_no_work_unit", title: "Legacy" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-04T00:30:00.000Z",
+    });
+    store.close();
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec(`
+        DROP TABLE IF EXISTS runtime_semaphore_slots;
+        DROP TABLE IF EXISTS runtime_heartbeats;
+        DROP TABLE IF EXISTS runtime_events;
+        DROP TABLE IF EXISTS work_unit_attempts;
+        DROP TABLE IF EXISTS work_units;
+      `);
+      assert.equal(Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'work_units'").get()), false);
+    } finally {
+      database.close();
+    }
+
+    store = createSqliteRunStore(cwd);
+    assert.equal(store.getRun("run_legacy_no_work_unit")?.workUnitId, undefined);
+    const workUnit = store.createWorkUnit({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      kind: "media_job",
+      ownerType: "media_job",
+      ownerId: "media_job_after_heal",
+      idempotencyKey: "after-heal",
+      createdByActor: "system",
+      request: { operation: "image_generate" },
+      now: "2026-06-04T00:31:00.000Z",
+    });
+    assert.equal(store.getWorkUnit(workUnit.id)?.kind, "media_job");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite channel runtime migration self-heals missing lease tables", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-runtime-heal-"));
   let store = createSqliteRunStore(cwd);

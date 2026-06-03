@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { lookup } from "node:dns/promises";
 import { mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
+import { hostname } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -148,6 +149,9 @@ import {
   type RunStore,
   type RunSummary,
   type RunStatus,
+  type RuntimeEvent,
+  type RuntimeInstance,
+  type RuntimeSemaphoreSlot,
   type ResourceLease,
   type ReplaceTeammateChannelMembershipInput,
   type ReplaceTeammateMemoryScopeInput,
@@ -160,7 +164,12 @@ import {
   type Task,
   type TaskStatus,
   type TaskUpdateInput,
+  type TeammateDirectMessage,
   type UpdateChannelExecutionProposalInput,
+  type WorkUnit,
+  type WorkUnitAttempt,
+  type WorkUnitKind,
+  type WorkUnitStatus,
 } from "@ling-stack/core";
 import {
   createPiRunner,
@@ -482,11 +491,16 @@ interface ExternalLinearImportRequest {
 
 interface PreparedRunConcurrency {
   readonly channel?: Channel;
+  readonly task?: Task;
   readonly taskExists: boolean;
   readonly leases: readonly ResourceLease[];
 }
 
+type QueueableRunConflictCode = "resource_conflict" | "runtime_semaphore_conflict";
+
 const RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
+const RUNTIME_SCHEMA_VERSION = 22;
+const DEFAULT_RUNNER_ID = "pi-coding-agent";
 
 export interface DaemonServer {
   readonly server: Server;
@@ -509,9 +523,22 @@ export function createDaemonServer(
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore);
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
+  const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig);
   const server = createServer(async (request, response) => {
     try {
-      await routeRequest(request, response, resolvedConfig, runner, storeRegistry, activeRuns, secretResolver, externalSecretStore, externalWorkFetch, backgroundSchedulers);
+      await routeRequest(
+        request,
+        response,
+        resolvedConfig,
+        runner,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        externalSecretStore,
+        externalWorkFetch,
+        backgroundSchedulers,
+      );
     } catch (error) {
       if (!response.headersSent) {
         writeJson(response, 500, {
@@ -539,6 +566,7 @@ export function createDaemonServer(
     stop: () =>
       new Promise<void>((resolve, reject) => {
         activeRuns.cancelAll();
+        runtimeSupervisor.releaseAll();
         backgroundSchedulers.stopAll();
         server.close((error) => {
           storeRegistry.closeAll();
@@ -766,6 +794,7 @@ async function routeRequest(
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   externalSecretStore: ExternalSecretStore,
   externalWorkFetch?: typeof globalThis.fetch,
@@ -894,7 +923,17 @@ async function routeRequest(
 
   const externalWorkCiTriageRunRoute = parseExternalWorkCiTriageRunRoute(url.pathname);
   if (externalWorkCiTriageRunRoute) {
-    await handleExternalWorkCiTriageRun(request, response, config, runner, storeRegistry, activeRuns, secretResolver, externalWorkCiTriageRunRoute.triageId);
+    await handleExternalWorkCiTriageRun(
+      request,
+      response,
+      config,
+      runner,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      externalWorkCiTriageRunRoute.triageId,
+    );
     return;
   }
 
@@ -915,7 +954,7 @@ async function routeRequest(
 
   const externalWorkActionRoute = parseExternalWorkActionRoute(url.pathname);
   if (externalWorkActionRoute) {
-    await handleExternalWorkActionItem(request, response, config, storeRegistry, secretResolver, externalWorkFetch, externalWorkActionRoute);
+    await handleExternalWorkActionItem(request, response, config, storeRegistry, runtimeSupervisor, secretResolver, externalWorkFetch, externalWorkActionRoute);
     return;
   }
 
@@ -955,13 +994,43 @@ async function routeRequest(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/runtime") {
+    handleGetRuntime(response, url, storeRegistry, runtimeSupervisor);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/runtime/supervisor") {
+    handleGetRuntimeSupervisor(response, url, storeRegistry, runtimeSupervisor);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/runtime/active") {
+    handleListRuntimeActive(response, url, storeRegistry);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/runtime/stuck") {
+    handleListRuntimeStuck(response, url, storeRegistry);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/runtime/semaphores") {
+    handleListRuntimeSemaphores(response, url, storeRegistry);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/work-units") {
+    handleListWorkUnits(response, url, storeRegistry);
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/secrets/status") {
     handleSecretStatus(response, url, secretResolver);
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/runs") {
-    await handleRun(request, response, config, runner, storeRegistry, activeRuns, secretResolver);
+    await handleRun(request, response, config, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver);
     return;
   }
   if (request.method === "GET" && url.pathname === "/runs") {
@@ -984,6 +1053,12 @@ async function routeRequest(
   }
   if (request.method === "GET" && runRoute?.kind === "artifacts") {
     handleListRunArtifacts(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+
+  const workUnitRoute = parseWorkUnitRoute(url.pathname);
+  if (workUnitRoute) {
+    handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute);
     return;
   }
 
@@ -1035,7 +1110,18 @@ async function routeRequest(
       await handleChannelWorkflowStepsCollection(request, response, config, storeRegistry, workflowRoute.workflowId);
       return;
     }
-    await handleChannelWorkflowStepItem(request, response, config, runner, storeRegistry, activeRuns, secretResolver, workflowRoute.workflowStepId, workflowRoute.action);
+      await handleChannelWorkflowStepItem(
+        request,
+        response,
+        config,
+        runner,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        workflowRoute.workflowStepId,
+        workflowRoute.action,
+      );
     return;
   }
 
@@ -1052,7 +1138,7 @@ async function routeRequest(
       return;
     }
     if (channelRoute.action === "messages") {
-      await handleChannelMessagesCollection(request, response, config, runner, storeRegistry, secretResolver, channelRoute.channelId);
+      await handleChannelMessagesCollection(request, response, config, runner, storeRegistry, runtimeSupervisor, secretResolver, channelRoute.channelId);
       return;
     }
     if (channelRoute.action === "proposals") {
@@ -1095,14 +1181,14 @@ async function routeRequest(
 
   const teammateRoute = parseTeammateRoute(url.pathname);
   if (teammateRoute) {
-    await handleTeammateRoute(request, response, config, runner, storeRegistry, secretResolver, teammateRoute);
+    await handleTeammateRoute(request, response, config, runner, storeRegistry, runtimeSupervisor, secretResolver, teammateRoute);
     return;
   }
 
   const taskRoute = parseTaskRoute(url.pathname);
   if (taskRoute) {
     if (request.method === "POST" && taskRoute.action === "run") {
-      await handleTaskRunRequest(request, response, config, runner, storeRegistry, activeRuns, secretResolver, taskRoute.taskId);
+      await handleTaskRunRequest(request, response, config, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, taskRoute.taskId);
       return;
     }
     if (taskRoute.action) {
@@ -1122,7 +1208,7 @@ async function routeRequest(
   const mediaJobRoute = parseMediaJobRoute(url.pathname);
   if (mediaJobRoute) {
     if (request.method === "POST" && mediaJobRoute.action === "run") {
-      await handleRunMediaJob(response, url, storeRegistry, secretResolver, mediaJobRoute.mediaJobId);
+      await handleRunMediaJob(response, url, storeRegistry, runtimeSupervisor, secretResolver, mediaJobRoute.mediaJobId);
       return;
     }
     if (request.method === "GET" && mediaJobRoute.action === "artifacts") {
@@ -1168,6 +1254,7 @@ async function handleRun(
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
 ): Promise<void> {
   let runRequest: RunRequest;
@@ -1182,7 +1269,7 @@ async function handleRun(
     return;
   }
 
-  await executeRunRequest(runRequest, response, runner, storeRegistry, activeRuns, secretResolver);
+  await executeRunRequest(runRequest, response, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver);
 }
 
 async function executeRunRequest(
@@ -1191,18 +1278,27 @@ async function executeRunRequest(
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   options: ExecuteRunRequestOptions = {},
 ): Promise<string | undefined> {
   let store: RunStore | undefined;
   let run: RunSession | undefined;
+  let workUnit: WorkUnit | undefined;
+  let attempt: WorkUnitAttempt | undefined;
+  let runtime: RuntimeInstance | undefined;
   let runnerRequest: PiRunnerRunOptions;
   let preparedConcurrency: PreparedRunConcurrency = { taskExists: false, leases: [] };
   let resolvedSecretValues: readonly (string | undefined)[] = [];
+  let resolvedProvider: PiRunnerProviderConfig | undefined;
+  let runId = "";
+  let createdAt = "";
+  let workspaceCwd = "";
   try {
-    const workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
+    workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
     store = storeRegistry.getStore(workspaceCwd);
-    const resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver);
+    runtime = runtimeSupervisor.getRuntime(workspaceCwd, store);
+    resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver);
     runnerRequest = {
       cwd: runRequest.cwd,
       task: runRequest.task,
@@ -1214,13 +1310,102 @@ async function executeRunRequest(
       agentDir: runRequest.agentDir,
     };
     resolvedSecretValues = [resolvedProvider.apiKey];
-    const runId = createRunId();
-    const createdAt = new Date().toISOString();
+    runId = createRunId();
+    createdAt = new Date().toISOString();
+    const idempotencyKey = runRequest.idempotencyKey ?? `run:${runId}`;
+    const existingWorkUnit = runRequest.idempotencyKey
+      ? store.findWorkUnitByIdempotency({
+          kind: "task_run",
+          ownerType: "task",
+          ownerId: runRequest.task.id,
+          idempotencyKey: runRequest.idempotencyKey,
+        })
+      : undefined;
+    if (existingWorkUnit?.linkedRunId) {
+      throw new DuplicateRunRequestError(existingWorkUnit.linkedRunId);
+    }
+    if (existingWorkUnit) {
+      throw new HttpError(409, "duplicate_work_unit", `Duplicate work unit request: ${existingWorkUnit.id}`);
+    }
+    workUnit = store.createWorkUnit({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      kind: "task_run",
+      ownerType: "task",
+      ownerId: runRequest.task.id,
+      channelId: runRequest.task.channelId,
+      taskId: runRequest.task.id,
+      providerPresetId: runRequest.providerPresetId,
+      runnerId: DEFAULT_RUNNER_ID,
+      idempotencyKey,
+      createdByActor: "user",
+      request: { ...runRequest, workspaceCwd, provider: resolvedProvider },
+      now: createdAt,
+    });
+    store.appendRuntimeEvent({
+      workUnitId: workUnit.id,
+      type: "work_unit_created",
+      actor: "system",
+      ts: createdAt,
+      data: {
+        kind: workUnit.kind,
+        ownerType: workUnit.ownerType,
+        ownerId: workUnit.ownerId,
+      },
+    });
+    attempt = store.createWorkUnitAttempt({
+      workUnitId: workUnit.id,
+      attemptNumber: workUnit.attemptCount + 1,
+      runtimeInstanceId: runtime.runtimeInstanceId,
+      runnerId: DEFAULT_RUNNER_ID,
+      providerPresetId: runRequest.providerPresetId,
+      now: createdAt,
+    });
     preparedConcurrency = prepareRunConcurrency({
       store,
       runRequest,
       runId,
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
       now: createdAt,
+    });
+    acquireRunRuntimeSemaphores({
+      store,
+      workUnit,
+      attempt,
+      channel: preparedConcurrency.channel,
+      providerKey: runRequest.providerPresetId ?? `${resolvedProvider.provider}:${resolvedProvider.model}`,
+      now: createdAt,
+    });
+    claimPreparedRunTask({
+      store,
+      task: preparedConcurrency.task,
+      runRequest,
+      runId,
+      leases: preparedConcurrency.leases,
+      attemptId: attempt.id,
+      now: createdAt,
+    });
+    const claimTransition = store.transitionWorkUnitStatus({
+      workUnitId: workUnit.id,
+      expectedStatus: "queued",
+      event: "claim",
+      actor: "system",
+      now: createdAt,
+      activeAttemptId: attempt.id,
+    });
+    if (!claimTransition.ok) {
+      releasePreparedRunResources(store, preparedConcurrency.leases, attempt.id, createdAt, "work-unit-claim-failed");
+      throw new Error(`Work unit claim failed: ${claimTransition.code}`);
+    }
+    store.appendRuntimeEvent({
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      type: "work_unit_claimed",
+      actor: "system",
+      ts: createdAt,
+      data: {
+        runId,
+      },
     });
     run = store.createRun({
       id: runId,
@@ -1233,11 +1418,14 @@ async function executeRunRequest(
       taskSnapshot: runRequest.task,
       providerSnapshot: { providerPresetId: runRequest.providerPresetId, ...resolvedProvider },
       requestSnapshot: { ...runRequest, workspaceCwd, provider: resolvedProvider },
+      workUnitId: workUnit.id,
       createdAt,
     });
+    store.linkRunToWorkUnit(run.id, workUnit.id, createdAt);
     storeRegistry.rememberRun(run.id, store);
     store.appendEvent(run.id, "run_created", {
       taskId: run.taskId,
+      workUnitId: workUnit.id,
       workspaceCwd,
       cwd: run.cwd,
       providerName: run.providerName,
@@ -1246,13 +1434,73 @@ async function executeRunRequest(
         id: lease.id,
         resourceType: lease.resourceType,
         resourceKey: lease.resourceKey,
+        workUnitId: lease.workUnitId,
+        attemptId: lease.attemptId,
       })),
     });
   } catch (error) {
+    if (error instanceof QueueableRunConflictError && store && workUnit && attempt && resolvedProvider) {
+      const queuedAt = new Date().toISOString();
+      releasePreparedRunResources(store, preparedConcurrency.leases, attempt.id, queuedAt, "queued-conflict");
+      run = createQueuedRunForConflict({
+        store,
+        storeRegistry,
+        runRequest,
+        runId,
+        workspaceCwd: workspaceCwd || runRequest.cwd,
+        workUnit,
+        attempt,
+        channel: error.channel ?? preparedConcurrency.channel,
+        provider: resolvedProvider,
+        queuedAt,
+        reason: error.code,
+        message: error.message,
+      });
+      try {
+        options.onRunReady?.(run.id);
+      } catch {
+        // The queued run is durable; auxiliary link updates must not corrupt SSE.
+      }
+      writeSseHead(response);
+      writeSse(response, "ready", {
+        ok: true,
+        runId: run.id,
+        workUnitId: workUnit.id,
+        queued: true,
+        queueReason: error.code,
+      });
+      response.end();
+      return run.id;
+    }
     if (preparedConcurrency.leases.length > 0) {
       const now = new Date().toISOString();
       for (const lease of preparedConcurrency.leases) {
         store?.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
+      }
+    }
+    if (store && workUnit && !isTerminalWorkUnitStatus(store.getWorkUnit(workUnit.id)?.status ?? workUnit.status)) {
+      const now = new Date().toISOString();
+      const message = error instanceof Error ? error.message : String(error);
+      const failed = store.transitionWorkUnitStatus({
+        workUnitId: workUnit.id,
+        expectedStatus: store.getWorkUnit(workUnit.id)?.status,
+        event: "runner_failed",
+        actor: "system",
+        reason: message,
+        now,
+        endedAt: now,
+        errorCode: error instanceof HttpError ? error.code : "run_prepare_failed",
+        errorMessage: message,
+      });
+      if (failed.ok) {
+        store.appendRuntimeEvent({
+          workUnitId: workUnit.id,
+          attemptId: attempt?.id,
+          type: "work_unit_failed",
+          actor: "system",
+          ts: now,
+          data: { message },
+        });
       }
     }
     if (error instanceof DuplicateRunRequestError) {
@@ -1274,7 +1522,7 @@ async function executeRunRequest(
     return undefined;
   }
 
-  if (!store || !run) {
+  if (!store || !run || !workUnit || !attempt || !runtime) {
     writeJson(response, 500, { error: "run_storage_unavailable", message: "Run was not initialized." });
     return undefined;
   }
@@ -1309,6 +1557,77 @@ async function executeRunRequest(
     streamEnvelope,
   });
 
+  let lastRuntimeActivityAt = Date.now();
+  const recordRuntimeHeartbeat = (source: "supervisor" | "runner" = "supervisor", detail?: unknown): void => {
+    const ts = new Date().toISOString();
+    try {
+      store.recordRuntimeHeartbeat({
+        workUnitId: workUnit.id,
+        attemptId: attempt.id,
+        runtimeInstanceId: runtime.runtimeInstanceId,
+        ts,
+        source,
+        detail,
+      });
+    } catch {
+      // Heartbeat persistence must not hide runner output; runtime diagnostics will show stale state if storage fails.
+    }
+  };
+  const requestRuntimeAbort = (event: "idle_timeout" | "hard_timeout"): void => {
+    const current = store.getWorkUnit(workUnit.id);
+    if (!current || current.status === "cancelling" || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
+      return;
+    }
+    const now = new Date().toISOString();
+    const transition = store.transitionWorkUnitStatus({
+      workUnitId: workUnit.id,
+      expectedStatus: current.status,
+      event,
+      actor: "system",
+      reason: event,
+      now,
+      lastHeartbeatAt: now,
+    });
+    if (transition.ok) {
+      store.updateWorkUnitAttemptStatus({
+        attemptId: attempt.id,
+        status: "cancelling",
+        now,
+        abortRequestedAt: now,
+        errorCode: event,
+        errorMessage: event,
+      });
+      store.appendRuntimeEvent({
+        workUnitId: workUnit.id,
+        attemptId: attempt.id,
+        type: "work_unit_cancelling",
+        actor: "system",
+        ts: now,
+        data: { reason: event },
+      });
+      abortController.abort();
+    }
+  };
+  const heartbeatTimer = setInterval(() => {
+    recordRuntimeHeartbeat("supervisor");
+    const current = store.getWorkUnit(workUnit.id);
+    if (!current || !isActiveWorkUnitStatus(current.status)) {
+      return;
+    }
+    if (Date.now() - lastRuntimeActivityAt > current.timeoutPolicy.idleTimeoutMs) {
+      requestRuntimeAbort("idle_timeout");
+    }
+  }, workUnit.timeoutPolicy.heartbeatIntervalMs);
+  if (typeof heartbeatTimer.unref === "function") {
+    heartbeatTimer.unref();
+  }
+  const hardTimeoutTimer = setTimeout(() => {
+    requestRuntimeAbort("hard_timeout");
+  }, workUnit.timeoutPolicy.hardTimeoutMs);
+  if (typeof hardTimeoutTimer.unref === "function") {
+    hardTimeoutTimer.unref();
+  }
+
   const appendAndMaybeStream = (type: RunEventType, data: unknown): RunEventEnvelope | undefined => {
     if (persistenceError) {
       return undefined;
@@ -1322,9 +1641,12 @@ async function executeRunRequest(
 
     try {
       const envelope = store.appendEvent(run.id, type, redactSecrets(data, resolvedSecretValues));
+      lastRuntimeActivityAt = Date.now();
       if (type === "run_error") {
         persistedRunError = true;
       }
+      syncWorkUnitForRunEvent(store, workUnit.id, attempt.id, type, envelope);
+      appendRuntimeProgressForRunEvent(store, workUnit.id, attempt.id, type, envelope);
       streamEnvelope(envelope);
       return envelope;
     } catch (error) {
@@ -1346,6 +1668,34 @@ async function executeRunRequest(
     if (!runStartTransition.ok) {
       throw new Error(`Run transition failed: ${runStartTransition.code}`);
     }
+    const workUnitStartTransition = store.transitionWorkUnitStatus({
+      workUnitId: workUnit.id,
+      expectedStatus: "claimed",
+      event: "runner_started",
+      actor: "runner",
+      now: runStartedAt,
+      startedAt: runStartedAt,
+      lastHeartbeatAt: runStartedAt,
+    });
+    if (!workUnitStartTransition.ok) {
+      throw new Error(`Work unit start failed: ${workUnitStartTransition.code}`);
+    }
+    store.updateWorkUnitAttemptStatus({
+      attemptId: attempt.id,
+      status: "started",
+      now: runStartedAt,
+      startedAt: runStartedAt,
+      lastHeartbeatAt: runStartedAt,
+    });
+    store.appendRuntimeEvent({
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      type: "work_unit_started",
+      actor: "runner",
+      ts: runStartedAt,
+      data: { runId: run.id },
+    });
+    recordRuntimeHeartbeat("runner", { event: "runner_started" });
     if (preparedConcurrency.taskExists) {
       const taskStartTransition = store.transitionTaskStatus({
         taskId: run.taskId,
@@ -1445,6 +1795,15 @@ async function executeRunRequest(
       summaryPath,
       errorMessage: null,
     });
+    transitionWorkUnitTerminal(store, {
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      event: "runner_succeeded",
+      attemptStatus: "succeeded",
+      runtimeEventType: "work_unit_succeeded",
+      actor: "runner",
+      now: endedAt,
+    });
     if (preparedConcurrency.taskExists) {
       store.transitionTaskStatus({
         taskId: run.taskId,
@@ -1470,6 +1829,7 @@ async function executeRunRequest(
         active: false,
         streamEnvelope,
       });
+      transitionWorkUnitCancelled(store, workUnit.id, attempt.id, "cancelled");
       if (!clientClosed) {
         response.end();
       }
@@ -1500,6 +1860,17 @@ async function executeRunRequest(
       summaryPath,
       errorMessage: message,
     });
+    transitionWorkUnitTerminal(store, {
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      event: "runner_failed",
+      attemptStatus: "failed",
+      runtimeEventType: "work_unit_failed",
+      actor: "runner",
+      now: endedAt,
+      errorCode: "runner_failed",
+      errorMessage: message,
+    });
     if (preparedConcurrency.taskExists) {
       store.transitionTaskStatus({
         taskId: run.taskId,
@@ -1516,16 +1887,83 @@ async function executeRunRequest(
       response.end();
     }
   } finally {
+    clearInterval(heartbeatTimer);
+    clearTimeout(hardTimeoutTimer);
     store.releaseResourceLeasesForOwner("run", run.id, new Date().toISOString());
+    store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, new Date().toISOString(), "run-finished");
     activeRuns.delete(run.id);
   }
   return run.id;
+}
+
+function createQueuedRunForConflict(input: {
+  readonly store: RunStore;
+  readonly storeRegistry: RunStoreRegistry;
+  readonly runRequest: RunRequest;
+  readonly runId: string;
+  readonly workspaceCwd: string;
+  readonly workUnit: WorkUnit;
+  readonly attempt: WorkUnitAttempt;
+  readonly channel?: Channel;
+  readonly provider: PiRunnerProviderConfig;
+  readonly queuedAt: string;
+  readonly reason: QueueableRunConflictCode;
+  readonly message: string;
+}): RunSession {
+  const run = input.store.createRun({
+    id: input.runId,
+    cwd: input.runRequest.cwd,
+    taskId: input.runRequest.task.id,
+    channelId: input.channel?.id ?? input.runRequest.task.channelId,
+    providerPresetId: input.runRequest.providerPresetId,
+    providerName: input.provider.provider,
+    providerModel: input.provider.model,
+    taskSnapshot: input.runRequest.task,
+    providerSnapshot: { providerPresetId: input.runRequest.providerPresetId, ...input.provider },
+    requestSnapshot: {
+      ...input.runRequest,
+      workspaceCwd: input.workspaceCwd,
+      provider: input.provider,
+      queued: true,
+      queueReason: input.reason,
+    },
+    workUnitId: input.workUnit.id,
+    createdAt: input.queuedAt,
+  });
+  input.store.linkRunToWorkUnit(run.id, input.workUnit.id, input.queuedAt);
+  input.storeRegistry.rememberRun(run.id, input.store);
+  input.store.appendEvent(run.id, "run_created", {
+    taskId: run.taskId,
+    workUnitId: input.workUnit.id,
+    workspaceCwd: input.workspaceCwd,
+    cwd: run.cwd,
+    providerName: run.providerName,
+    providerModel: run.providerModel,
+    queued: true,
+    queueReason: input.reason,
+    message: input.message,
+  });
+  input.store.appendRuntimeEvent({
+    workUnitId: input.workUnit.id,
+    attemptId: input.attempt.id,
+    type: "work_unit_queued",
+    actor: "system",
+    ts: input.queuedAt,
+    data: {
+      runId: run.id,
+      reason: input.reason,
+      message: input.message,
+    },
+  });
+  return run;
 }
 
 function prepareRunConcurrency(input: {
   readonly store: RunStore;
   readonly runRequest: RunRequest;
   readonly runId: string;
+  readonly workUnitId?: string;
+  readonly attemptId?: string;
   readonly now: string;
 }): PreparedRunConcurrency {
   input.store.expireResourceLeases(input.now);
@@ -1558,6 +1996,8 @@ function prepareRunConcurrency(input: {
   const leases: ResourceLease[] = [];
   const leaseInputs = buildRunLeaseInputs({
     runId: input.runId,
+    workUnitId: input.workUnitId,
+    attemptId: input.attemptId,
     runRequest: input.runRequest,
     channel,
     taskId,
@@ -1571,65 +2011,95 @@ function prepareRunConcurrency(input: {
       for (const acquiredLease of leases) {
         input.store.releaseResourceLeasesForOwner(acquiredLease.ownerType, acquiredLease.ownerId, input.now);
       }
-      throw new HttpError(
-        409,
-        "resource_conflict",
-        blockingLease
-          ? `Resource is locked by ${blockingLease.ownerType}:${blockingLease.ownerId}: ${blockingLease.resourceType}:${blockingLease.resourceKey}`
-          : `Resource is locked: ${leaseInput.resourceType}:${leaseInput.resourceKey}`,
-      );
+      const message = blockingLease
+        ? `Resource is locked by ${blockingLease.ownerType}:${blockingLease.ownerId}: ${blockingLease.resourceType}:${blockingLease.resourceKey}`
+        : `Resource is locked: ${leaseInput.resourceType}:${leaseInput.resourceKey}`;
+      if (channel?.runtimePolicy.queueOnConflict) {
+        throw new QueueableRunConflictError("resource_conflict", message, channel, task);
+      }
+      throw new HttpError(409, "resource_conflict", message);
     }
     leases.push(lease);
   }
 
-  if (task) {
-    const claimEvent = task.status === "todo" ? "claim" : task.status === "failed" ? "retry" : undefined;
-    if (claimEvent) {
-      const result = input.store.transitionTaskStatus({
-        taskId: task.id,
-        expectedStatus: task.status,
-        event: claimEvent,
-        actor: "system",
-        reason: `run:${input.runId}`,
-        idempotencyKey: input.runRequest.idempotencyKey,
-        now: input.now,
-      });
-      if (!result.ok) {
-        for (const lease of leases) {
-          input.store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, input.now);
-        }
-        throw new HttpError(409, result.code, `Task transition failed: ${result.code}`);
-      }
-    } else if (task.status !== "claimed") {
-      for (const lease of leases) {
-        input.store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, input.now);
-      }
-      throw new HttpError(409, "task_not_runnable", `Task ${task.id} is ${task.status}`);
-    }
-  }
-
   return {
     channel,
+    task,
     taskExists: Boolean(task),
     leases,
   };
 }
 
+function claimPreparedRunTask(input: {
+  readonly store: RunStore;
+  readonly task?: Task;
+  readonly runRequest: RunRequest;
+  readonly runId: string;
+  readonly leases: readonly ResourceLease[];
+  readonly attemptId?: string;
+  readonly now: string;
+}): void {
+  const task = input.task;
+  if (!task) {
+    return;
+  }
+  const claimEvent = task.status === "todo" ? "claim" : task.status === "failed" ? "retry" : undefined;
+  if (claimEvent) {
+    const result = input.store.transitionTaskStatus({
+      taskId: task.id,
+      expectedStatus: task.status,
+      event: claimEvent,
+      actor: "system",
+      reason: `run:${input.runId}`,
+      idempotencyKey: input.runRequest.idempotencyKey,
+      now: input.now,
+    });
+    if (result.ok) {
+      return;
+    }
+    releasePreparedRunResources(input.store, input.leases, input.attemptId, input.now, "task-claim-failed");
+    throw new HttpError(409, result.code, `Task transition failed: ${result.code}`);
+  }
+  if (task.status !== "claimed") {
+    releasePreparedRunResources(input.store, input.leases, input.attemptId, input.now, "task-not-runnable");
+    throw new HttpError(409, "task_not_runnable", `Task ${task.id} is ${task.status}`);
+  }
+}
+
+function releasePreparedRunResources(
+  store: RunStore,
+  leases: readonly ResourceLease[],
+  attemptId: string | undefined,
+  now: string,
+  semaphoreReason: string,
+): void {
+  for (const lease of leases) {
+    store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
+  }
+  if (attemptId) {
+    store.releaseRuntimeSemaphoreSlotsForOwner(attemptId, now, semaphoreReason);
+  }
+}
+
 function buildRunLeaseInputs(input: {
   readonly runId: string;
+  readonly workUnitId?: string;
+  readonly attemptId?: string;
   readonly runRequest: RunRequest;
   readonly channel?: Channel;
   readonly taskId: string;
   readonly now: string;
 }): Parameters<RunStore["acquireResourceLease"]>[0][] {
   const expiresAt = new Date(new Date(input.now).getTime() + RESOURCE_LEASE_TTL_MS).toISOString();
-  const base = {
+  const base = removeUndefined({
     workspaceId: DEFAULT_WORKSPACE_ID,
     ownerType: "run" as const,
     ownerId: input.runId,
     acquiredAt: input.now,
     expiresAt,
-  };
+    workUnitId: input.workUnitId,
+    attemptId: input.attemptId,
+  });
   const leases: Parameters<RunStore["acquireResourceLease"]>[0][] = [
     {
       ...base,
@@ -1658,6 +2128,77 @@ function buildRunLeaseInputs(input: {
   }
 
   return leases;
+}
+
+function acquireRunRuntimeSemaphores(input: {
+  readonly store: RunStore;
+  readonly workUnit: WorkUnit;
+  readonly attempt: WorkUnitAttempt;
+  readonly channel?: Channel;
+  readonly providerKey: string;
+  readonly now: string;
+}): void {
+  const expiresAt = new Date(new Date(input.now).getTime() + RESOURCE_LEASE_TTL_MS).toISOString();
+  const slots = [
+    {
+      resourceType: "provider" as const,
+      resourceKey: input.providerKey,
+      limit: 4,
+    },
+    {
+      resourceType: "runner" as const,
+      resourceKey: DEFAULT_RUNNER_ID,
+      limit: 4,
+    },
+    ...(input.channel
+      ? [
+          {
+            resourceType: "channel_parallel" as const,
+            resourceKey: input.channel.id,
+            limit: Math.max(input.channel.runtimePolicy.maxConcurrentRuns, 1),
+          },
+        ]
+      : []),
+  ];
+
+  for (const slotInput of slots) {
+    const slot = input.store.acquireRuntimeSemaphoreSlot({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      resourceType: slotInput.resourceType,
+      resourceKey: slotInput.resourceKey,
+      limit: slotInput.limit,
+      ownerType: "work_unit_attempt",
+      ownerId: input.attempt.id,
+      workUnitId: input.workUnit.id,
+      attemptId: input.attempt.id,
+      acquiredAt: input.now,
+      expiresAt,
+    });
+    if (!slot) {
+      input.store.releaseRuntimeSemaphoreSlotsForOwner(input.attempt.id, input.now, "semaphore-conflict");
+      for (const lease of input.store.listResourceLeases({ workUnitId: input.workUnit.id, status: "active", limit: 500 })) {
+        input.store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, input.now);
+      }
+      const message = `Runtime semaphore is full: ${slotInput.resourceType}:${slotInput.resourceKey}`;
+      if (input.channel?.runtimePolicy.queueOnConflict) {
+        throw new QueueableRunConflictError("runtime_semaphore_conflict", message, input.channel);
+      }
+      throw new HttpError(409, "runtime_semaphore_conflict", message);
+    }
+    input.store.appendRuntimeEvent({
+      workUnitId: input.workUnit.id,
+      attemptId: input.attempt.id,
+      type: "semaphore_acquired",
+      actor: "system",
+      ts: input.now,
+      data: {
+        id: slot.id,
+        resourceType: slot.resourceType,
+        resourceKey: slot.resourceKey,
+        limit: slotInput.limit,
+      },
+    });
+  }
 }
 
 function usesSideEffectTools(tools: readonly RunTool[]): boolean {
@@ -1772,6 +2313,7 @@ async function handleChannelMessagesCollection(
   config: ResolvedDaemonConfig,
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   channelId: string,
 ): Promise<void> {
@@ -1846,6 +2388,7 @@ async function handleChannelMessagesCollection(
           sourceMessage: message,
           providerPresetId: input.providerPresetId,
           teammateId: input.teammateId,
+          runtimeSupervisor,
           secretResolver,
         });
       }
@@ -2017,6 +2560,7 @@ async function handleTeammateRoute(
   config: ResolvedDaemonConfig,
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   route: { readonly teammateId: string; readonly action?: "channels" | "skills" | "memory-scopes" | "direct-thread" | "direct-messages" | "tasks" | "activity" },
 ): Promise<void> {
@@ -2163,6 +2707,7 @@ async function handleTeammateRoute(
               thread,
               sourceMessage: message,
               providerPresetId: input.providerPresetId,
+              runtimeSupervisor,
               secretResolver,
             })
           : undefined;
@@ -2908,6 +3453,7 @@ async function handleChannelWorkflowStepItem(
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   workflowStepId: string,
   action?: "start",
@@ -2927,7 +3473,7 @@ async function handleChannelWorkflowStepItem(
       return;
     }
     if (action === "start") {
-      await handleChannelWorkflowStepStart(request, response, config, runner, storeRegistry, activeRuns, secretResolver, cwd, existing.id);
+      await handleChannelWorkflowStepStart(request, response, config, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, cwd, existing.id);
       return;
     }
     if (request.method === "GET") {
@@ -2970,6 +3516,7 @@ async function handleChannelWorkflowStepStart(
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   cwd: string,
   workflowStepId: string,
@@ -3017,7 +3564,7 @@ async function handleChannelWorkflowStepStart(
     return;
   }
 
-  const runId = await executeRunRequest(started.runRequest, response, runner, storeRegistry, activeRuns, secretResolver);
+  const runId = await executeRunRequest(started.runRequest, response, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver);
   const completedAt = new Date().toISOString();
   if (!runId) {
     store.transitionChannelWorkflowStepStatus({
@@ -3535,6 +4082,7 @@ async function handleTaskRunRequest(
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   taskId: string,
 ): Promise<void> {
@@ -3587,6 +4135,7 @@ async function handleTaskRunRequest(
       runner,
       storeRegistry,
       activeRuns,
+      runtimeSupervisor,
       secretResolver,
     );
   } catch (error) {
@@ -4790,6 +5339,7 @@ async function handleExternalWorkActionItem(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   externalWorkFetch: typeof globalThis.fetch | undefined,
   route: { readonly actionId: string; readonly action?: "cancel" | "execute" },
@@ -4844,6 +5394,7 @@ async function handleExternalWorkActionItem(
       writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work action execute` });
       return;
     }
+    let supervised: { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt } | undefined;
     try {
       const body = await readOptionalJsonBody(request, config.maxBodyBytes);
       const input = parseExternalWorkActionExecuteRequest(body);
@@ -4867,12 +5418,49 @@ async function handleExternalWorkActionItem(
         writeJson(response, 400, { error: "repository_mismatch", message: `WORKFLOW.md source.repository does not match action target: ${workflowDefinition.config.source.repository} !== ${action.target.repository}` });
         return;
       }
+      supervised = startRuntimeWorkUnit({
+        store,
+        runtimeSupervisor,
+        kind: "external_work_action",
+        ownerType: "external_work_action",
+        ownerId: action.id,
+        channelId: action.channelId,
+        linkedExternalWorkId: action.externalWorkId,
+        idempotencyKey: `external_work_action:${action.id}:${action.executionAttemptCount}`,
+        request: {
+          actionId: action.id,
+          externalWorkId: action.externalWorkId,
+          sourceKind: action.sourceKind,
+          actionKind: action.actionKind,
+        },
+      });
       const githubToken = resolveExternalGitHubToken(workflowDefinition, secretResolver);
       const result = await executeExternalWorkAction({
         store,
         actionId: route.actionId,
         githubToken,
         fetch: externalWorkFetch,
+      });
+      for (const artifact of result.artifacts) {
+        store.appendRuntimeEvent({
+          workUnitId: supervised.workUnit.id,
+          attemptId: supervised.attempt.id,
+          type: "artifact_created",
+          actor: "system",
+          ts: new Date().toISOString(),
+          data: { artifactId: artifact.id, title: artifact.title, path: artifact.path },
+        });
+      }
+      transitionWorkUnitTerminal(store, {
+        workUnitId: supervised.workUnit.id,
+        attemptId: supervised.attempt.id,
+        event: result.action.status === "succeeded" ? "runner_succeeded" : "runner_failed",
+        attemptStatus: result.action.status === "succeeded" ? "succeeded" : "failed",
+        runtimeEventType: result.action.status === "succeeded" ? "work_unit_succeeded" : "work_unit_failed",
+        actor: "runner",
+        now: new Date().toISOString(),
+        errorCode: result.action.status === "succeeded" ? undefined : result.action.status,
+        errorMessage: result.action.lastErrorMessage,
       });
       const responseBody: ExternalWorkActionMutationResponse = {
         cwd,
@@ -4882,6 +5470,19 @@ async function handleExternalWorkActionItem(
       };
       writeJson(response, 200, responseBody);
     } catch (error) {
+      if (supervised) {
+        transitionWorkUnitTerminal(store, {
+          workUnitId: supervised.workUnit.id,
+          attemptId: supervised.attempt.id,
+          event: "runner_failed",
+          attemptStatus: "failed",
+          runtimeEventType: "work_unit_failed",
+          actor: "runner",
+          now: new Date().toISOString(),
+          errorCode: error instanceof HttpError ? error.code : "external_work_action_failed",
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      }
       writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
     }
     return;
@@ -5218,6 +5819,7 @@ async function handleExternalWorkCiTriageRun(
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   triageId: string,
 ): Promise<void> {
@@ -5284,6 +5886,7 @@ async function handleExternalWorkCiTriageRun(
       runner,
       storeRegistry,
       activeRuns,
+      runtimeSupervisor,
       secretResolver,
       {
         onRunReady: (runId) => {
@@ -5606,6 +6209,7 @@ async function handleRunMediaJob(
   response: ServerResponse,
   url: URL,
   storeRegistry: RunStoreRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   mediaJobId: string,
 ): Promise<void> {
@@ -5617,6 +6221,7 @@ async function handleRunMediaJob(
 
   let store: RunStore | undefined;
   let job: MediaJob | undefined;
+  let supervised: { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt } | undefined;
   let startedExecution = false;
   try {
     store = storeRegistry.getStore(cwd);
@@ -5652,6 +6257,45 @@ async function handleRunMediaJob(
       return;
     }
 
+    supervised = startRuntimeWorkUnit({
+      store,
+      runtimeSupervisor,
+      kind: "media_job",
+      ownerType: "media_job",
+      ownerId: job.id,
+      providerPresetId: job.providerPresetId,
+      linkedMediaJobId: job.id,
+      idempotencyKey: `media_job:${job.id}:${job.status}`,
+      request: {
+        mediaJobId: job.id,
+        providerPresetId: job.providerPresetId,
+        operation: job.operation,
+      },
+    });
+    const semaphore = store.acquireRuntimeSemaphoreSlot({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      resourceType: "media_provider",
+      resourceKey: provider.id,
+      limit: 2,
+      ownerType: "work_unit_attempt",
+      ownerId: supervised.attempt.id,
+      workUnitId: supervised.workUnit.id,
+      attemptId: supervised.attempt.id,
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + RESOURCE_LEASE_TTL_MS).toISOString(),
+    });
+    if (!semaphore) {
+      throw new HttpError(409, "runtime_semaphore_conflict", `Media provider is busy: ${provider.id}`);
+    }
+    store.appendRuntimeEvent({
+      workUnitId: supervised.workUnit.id,
+      attemptId: supervised.attempt.id,
+      type: "semaphore_acquired",
+      actor: "system",
+      ts: new Date().toISOString(),
+      data: { id: semaphore.id, resourceType: semaphore.resourceType, resourceKey: semaphore.resourceKey },
+    });
+
     job = store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, new Date().toISOString()) ?? job;
     startedExecution = true;
 
@@ -5684,6 +6328,19 @@ async function handleRunMediaJob(
         },
         new Date().toISOString(),
       ) ?? job;
+      if (supervised) {
+        transitionWorkUnitTerminal(store, {
+          workUnitId: supervised.workUnit.id,
+          attemptId: supervised.attempt.id,
+          event: "runner_failed",
+          attemptStatus: "failed",
+          runtimeEventType: "work_unit_failed",
+          actor: "provider",
+          now: new Date().toISOString(),
+          errorCode: "media_adapter_failed",
+          errorMessage: execution.errorMessage ?? "Media adapter execution failed.",
+        });
+      }
       writeJson(response, 200, { mediaJob: failed, artifacts: [] });
       return;
     }
@@ -5700,6 +6357,27 @@ async function handleRunMediaJob(
       },
       completedAt,
     ) ?? job;
+    if (supervised) {
+      for (const artifact of artifacts) {
+        store.appendRuntimeEvent({
+          workUnitId: supervised.workUnit.id,
+          attemptId: supervised.attempt.id,
+          type: "artifact_created",
+          actor: "provider",
+          ts: completedAt,
+          data: { artifactId: artifact.id, title: artifact.title, path: artifact.path },
+        });
+      }
+      transitionWorkUnitTerminal(store, {
+        workUnitId: supervised.workUnit.id,
+        attemptId: supervised.attempt.id,
+        event: "runner_succeeded",
+        attemptStatus: "succeeded",
+        runtimeEventType: "work_unit_succeeded",
+        actor: "provider",
+        now: completedAt,
+      });
+    }
 
     writeJson(response, 200, { mediaJob: succeeded, artifacts });
   } catch (error) {
@@ -5710,11 +6388,28 @@ async function handleRunMediaJob(
     const failed = store && job && startedExecution
       ? store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, new Date().toISOString())
       : undefined;
+    if (store && supervised) {
+      transitionWorkUnitTerminal(store, {
+        workUnitId: supervised.workUnit.id,
+        attemptId: supervised.attempt.id,
+        event: "runner_failed",
+        attemptStatus: "failed",
+        runtimeEventType: "work_unit_failed",
+        actor: "provider",
+        now: new Date().toISOString(),
+        errorCode: error instanceof HttpError ? error.code : "media_job_execution_failed",
+        errorMessage: message,
+      });
+    }
     writeJson(response, statusCode, {
       error: error instanceof HttpError ? error.code : startedExecution ? "media_job_execution_failed" : "bad_request",
       message,
       ...(failed ? { mediaJob: failed } : {}),
     });
+  } finally {
+    if (store && supervised) {
+      store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, new Date().toISOString(), "media-job-finished");
+    }
   }
 }
 
@@ -5929,7 +6624,7 @@ function handleListStateTransitions(response: ServerResponse, url: URL, storeReg
     return;
   }
   const entityType = url.searchParams.get("entityType") ?? undefined;
-  if (entityType !== undefined && !["task", "run", "approval", "media_job", "workflow", "workflow_step"].includes(entityType)) {
+  if (entityType !== undefined && !["task", "run", "approval", "media_job", "workflow", "workflow_step", "work_unit"].includes(entityType)) {
     writeJson(response, 400, { error: "bad_request", message: "entityType is invalid" });
     return;
   }
@@ -5960,6 +6655,12 @@ function handleListResourceLeases(response: ServerResponse, url: URL, storeRegis
     writeJson(response, 400, { error: "bad_request", message: "status is invalid" });
     return;
   }
+  const ownerType = url.searchParams.get("ownerType") ?? undefined;
+  if (ownerType !== undefined && !["run", "workflow_step", "work_unit_attempt", "system"].includes(ownerType)) {
+    writeJson(response, 400, { error: "bad_request", message: "ownerType is invalid" });
+    return;
+  }
+  const resourceType = url.searchParams.get("resourceType") ?? undefined;
 
   try {
     const store = storeRegistry.getStore(cwd);
@@ -5967,13 +6668,316 @@ function handleListResourceLeases(response: ServerResponse, url: URL, storeRegis
       cwd,
       leases: store.listResourceLeases({
         status: status as NonNullable<Parameters<RunStore["listResourceLeases"]>[0]>["status"] | undefined,
+        ownerType: ownerType as NonNullable<Parameters<RunStore["listResourceLeases"]>[0]>["ownerType"] | undefined,
         ownerId: url.searchParams.get("ownerId") ?? undefined,
+        resourceType: resourceType as NonNullable<Parameters<RunStore["listResourceLeases"]>[0]>["resourceType"] | undefined,
+        resourceKey: url.searchParams.get("resourceKey") ?? undefined,
+        workUnitId: url.searchParams.get("workUnitId") ?? undefined,
+        attemptId: url.searchParams.get("attemptId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       }),
     });
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
+}
+
+function handleGetRuntime(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry, runtimeSupervisor: RuntimeSupervisor): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  try {
+    writeJson(response, 200, {
+      cwd: resolved.cwd,
+      runtime: runtimeSupervisor.getRuntime(resolved.cwd, resolved.store),
+    });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function handleGetRuntimeSupervisor(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
+): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  try {
+    writeJson(response, 200, {
+      cwd: resolved.cwd,
+      ...runtimeSupervisor.getDiagnostics(resolved.cwd, resolved.store),
+    });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function handleListRuntimeActive(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  writeJson(response, 200, { cwd: resolved.cwd, workUnits: listActiveWorkUnits(resolved.store) });
+}
+
+function handleListRuntimeStuck(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  const now = new Date();
+  writeJson(response, 200, {
+    cwd: resolved.cwd,
+    workUnits: listActiveWorkUnits(resolved.store).filter((workUnit) => isStuckWorkUnit(workUnit, now)),
+  });
+}
+
+function handleListRuntimeSemaphores(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  writeJson(response, 200, {
+    cwd: resolved.cwd,
+    semaphoreSlots: resolved.store.listRuntimeSemaphoreSlots({ status: "active", limit: readOptionalIntegerQuery(url, "limit", 1) }),
+  });
+}
+
+function handleListWorkUnits(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  const status = url.searchParams.get("status") ?? undefined;
+  if (status !== undefined && !isWorkUnitStatus(status)) {
+    writeJson(response, 400, { error: "bad_request", message: "status is invalid" });
+    return;
+  }
+  const kind = url.searchParams.get("kind") ?? undefined;
+  if (kind !== undefined && !isWorkUnitKind(kind)) {
+    writeJson(response, 400, { error: "bad_request", message: "kind is invalid" });
+    return;
+  }
+  writeJson(response, 200, {
+    cwd: resolved.cwd,
+    workUnits: resolved.store.listWorkUnits({
+      status: status as WorkUnitStatus | undefined,
+      kind: kind as WorkUnitKind | undefined,
+      ownerType: url.searchParams.get("ownerType") ?? undefined,
+      ownerId: url.searchParams.get("ownerId") ?? undefined,
+      channelId: url.searchParams.get("channelId") ?? undefined,
+      linkedRunId: url.searchParams.get("linkedRunId") ?? undefined,
+      limit: readOptionalIntegerQuery(url, "limit", 1),
+    }),
+  });
+}
+
+function handleWorkUnitRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
+  route: NonNullable<ReturnType<typeof parseWorkUnitRoute>>,
+): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  runtimeSupervisor.getRuntime(resolved.cwd, resolved.store);
+  const workUnit = resolved.store.getWorkUnit(route.workUnitId);
+  if (!workUnit) {
+    writeJson(response, 404, { error: "work_unit_not_found", message: `Work unit not found: ${route.workUnitId}` });
+    return;
+  }
+
+  if (route.kind === "detail") {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for work unit detail` });
+      return;
+    }
+    writeJson(response, 200, buildWorkUnitDetailResponse(resolved.cwd, resolved.store, workUnit));
+    return;
+  }
+
+  if (route.kind === "events") {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for work unit events` });
+      return;
+    }
+    const afterSeq = readOptionalIntegerQuery(url, "afterSeq", 0);
+    const events = resolved.store.listRuntimeEvents(workUnit.id, { afterSeq, limit: readOptionalIntegerQuery(url, "limit", 1) });
+    const lastEvent = events.at(-1);
+    writeJson(response, 200, {
+      cwd: resolved.cwd,
+      workUnitId: workUnit.id,
+      events,
+      nextSeq: lastEvent ? lastEvent.seq + 1 : (afterSeq ?? 0) + 1,
+    });
+    return;
+  }
+
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for work unit ${route.kind}` });
+    return;
+  }
+
+  if (route.kind === "cancel") {
+    const runId = workUnit.linkedRunId;
+    if (runId) {
+      const activeRun = activeRuns.get(runId);
+      const run = resolved.store.getRun(runId);
+      if (run) {
+        ensureRunCancelled({
+          store: resolved.store,
+          runId,
+          taskId: run.taskId,
+          startedAt: run.startedAt,
+          reason: "work_unit_cancel_requested",
+          active: Boolean(activeRun),
+          streamEnvelope: activeRun?.streamEnvelope,
+        });
+      } else {
+        cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
+      }
+      activeRun?.abortController.abort();
+    } else {
+      cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
+    }
+    writeJson(response, 200, {
+      cwd: resolved.cwd,
+      workUnit: resolved.store.getWorkUnit(workUnit.id) ?? workUnit,
+    });
+    return;
+  }
+
+  if (route.kind === "retry") {
+    const now = new Date().toISOString();
+    const current = resolved.store.getWorkUnit(workUnit.id) ?? workUnit;
+    const transition = resolved.store.transitionWorkUnitStatus({
+      workUnitId: current.id,
+      expectedStatus: current.status,
+      event: "retry",
+      actor: "local-user",
+      reason: "manual_retry",
+      now,
+      activeAttemptId: null,
+      endedAt: null,
+      errorCode: null,
+      errorMessage: null,
+    });
+    if (!transition.ok) {
+      writeJson(response, 409, { error: transition.code, message: `Work unit retry failed: ${transition.code}`, workUnit: current });
+      return;
+    }
+    const event = resolved.store.appendRuntimeEvent({
+      workUnitId: current.id,
+      type: "work_unit_queued",
+      actor: "local-user",
+      ts: now,
+      data: { reason: "manual_retry" },
+    });
+    writeJson(response, 200, {
+      cwd: resolved.cwd,
+      workUnit: resolved.store.getWorkUnit(current.id) ?? current,
+      event,
+    });
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const reconciled = isActiveWorkUnitStatus(workUnit.status)
+    ? markWorkUnitStale(resolved.store, workUnit, now, "manual_reconcile")
+    : releaseWorkUnitRuntimeResources(resolved.store, workUnit, now, "manual_reconcile");
+  writeJson(response, 200, {
+    cwd: resolved.cwd,
+    workUnit: resolved.store.getWorkUnit(reconciled.id) ?? reconciled,
+  });
+}
+
+function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: WorkUnit): {
+  readonly cwd: string;
+  readonly workUnit: WorkUnit;
+  readonly attempts: readonly WorkUnitAttempt[];
+  readonly events: readonly RuntimeEvent[];
+  readonly leases: readonly ResourceLease[];
+  readonly semaphoreSlots: readonly RuntimeSemaphoreSlot[];
+  readonly run?: RunSession;
+} {
+  return removeUndefined({
+    cwd,
+    workUnit,
+    attempts: store.listWorkUnitAttempts(workUnit.id),
+    events: store.listRuntimeEvents(workUnit.id, { limit: 500 }),
+    leases: store.listResourceLeases({ workUnitId: workUnit.id, limit: 500 }),
+    semaphoreSlots: store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, limit: 500 }),
+    run: workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined,
+  });
+}
+
+function cancelStandaloneWorkUnit(store: RunStore, workUnit: WorkUnit, reason: string): WorkUnit {
+  const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
+  if (attemptId) {
+    transitionWorkUnitCancelled(store, workUnit.id, attemptId, reason);
+  } else if (!isTerminalWorkUnitStatus(workUnit.status) && workUnit.status !== "stale") {
+    const now = new Date().toISOString();
+    const cancelling = store.transitionWorkUnitStatus({
+      workUnitId: workUnit.id,
+      expectedStatus: workUnit.status,
+      event: "cancel",
+      actor: "local-user",
+      reason,
+      now,
+    });
+    if (cancelling.ok) {
+      store.transitionWorkUnitStatus({
+        workUnitId: workUnit.id,
+        expectedStatus: "cancelling",
+        event: "runner_cancelled",
+        actor: "system",
+        reason,
+        now,
+        endedAt: now,
+      });
+    }
+  }
+  releaseWorkUnitRuntimeResources(store, workUnit, new Date().toISOString(), "cancelled");
+  return store.getWorkUnit(workUnit.id) ?? workUnit;
+}
+
+function releaseWorkUnitRuntimeResources(store: RunStore, workUnit: WorkUnit, now: string, releaseReason: string): WorkUnit {
+  for (const attempt of store.listWorkUnitAttempts(workUnit.id)) {
+    store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, now, releaseReason);
+  }
+  for (const lease of store.listResourceLeases({ workUnitId: workUnit.id, status: "active", limit: 500 })) {
+    store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
+  }
+  return store.getWorkUnit(workUnit.id) ?? workUnit;
+}
+
+function getCwdStoreOrWriteError(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+): { readonly cwd: string; readonly store: RunStore } | undefined {
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return undefined;
+  }
+  return { cwd, store: storeRegistry.getStore(cwd) };
 }
 
 function handleGetRun(
@@ -6125,6 +7129,175 @@ function handleGetArtifactContent(
   }
 }
 
+function startMessageWorkUnit(input: {
+  readonly store: RunStore;
+  readonly runtimeSupervisor: RuntimeSupervisor;
+  readonly kind: Extract<WorkUnitKind, "channel_ai_reply" | "teammate_direct_reply">;
+  readonly ownerType: string;
+  readonly ownerId: string;
+  readonly channelId?: string;
+  readonly teammateId?: string;
+  readonly providerPresetId?: string;
+  readonly linkedMessageId: string;
+  readonly idempotencyKey: string;
+  readonly request: unknown;
+}): { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt } {
+  return startRuntimeWorkUnit(input);
+}
+
+function startRuntimeWorkUnit(input: {
+  readonly store: RunStore;
+  readonly runtimeSupervisor: RuntimeSupervisor;
+  readonly kind: WorkUnitKind;
+  readonly ownerType: string;
+  readonly ownerId: string;
+  readonly channelId?: string;
+  readonly teammateId?: string;
+  readonly providerPresetId?: string;
+  readonly linkedMessageId?: string;
+  readonly linkedMediaJobId?: string;
+  readonly linkedExternalWorkId?: string;
+  readonly idempotencyKey: string;
+  readonly request: unknown;
+}): { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt } {
+  const now = new Date().toISOString();
+  const runtime = input.runtimeSupervisor.getRuntime(input.store.paths.cwd, input.store);
+  const workUnit = input.store.createWorkUnit({
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    kind: input.kind,
+    ownerType: input.ownerType,
+    ownerId: input.ownerId,
+    channelId: input.channelId,
+    teammateId: input.teammateId,
+    providerPresetId: input.providerPresetId,
+    runnerId: DEFAULT_RUNNER_ID,
+    idempotencyKey: input.idempotencyKey,
+    createdByActor: "system",
+    request: input.request,
+    linkedMessageId: input.linkedMessageId,
+    linkedMediaJobId: input.linkedMediaJobId,
+    linkedExternalWorkId: input.linkedExternalWorkId,
+    now,
+  });
+  input.store.appendRuntimeEvent({
+    workUnitId: workUnit.id,
+    type: "work_unit_created",
+    actor: "system",
+    ts: now,
+    data: { kind: input.kind, ownerType: input.ownerType, ownerId: input.ownerId },
+  });
+  const attempt = input.store.createWorkUnitAttempt({
+    workUnitId: workUnit.id,
+    attemptNumber: workUnit.attemptCount + 1,
+    runtimeInstanceId: runtime.runtimeInstanceId,
+    runnerId: DEFAULT_RUNNER_ID,
+    providerPresetId: input.providerPresetId,
+    now,
+  });
+  input.store.transitionWorkUnitStatus({
+    workUnitId: workUnit.id,
+    expectedStatus: "queued",
+    event: "claim",
+    actor: "system",
+    now,
+    activeAttemptId: attempt.id,
+  });
+  input.store.transitionWorkUnitStatus({
+    workUnitId: workUnit.id,
+    expectedStatus: "claimed",
+    event: "runner_started",
+    actor: "runner",
+    now,
+    startedAt: now,
+    lastHeartbeatAt: now,
+  });
+  input.store.updateWorkUnitAttemptStatus({
+    attemptId: attempt.id,
+    status: "started",
+    now,
+    startedAt: now,
+    lastHeartbeatAt: now,
+  });
+  input.store.appendRuntimeEvent({
+    workUnitId: workUnit.id,
+    attemptId: attempt.id,
+    type: "work_unit_started",
+    actor: "runner",
+    ts: now,
+    data: {
+      linkedMessageId: input.linkedMessageId,
+      linkedMediaJobId: input.linkedMediaJobId,
+      linkedExternalWorkId: input.linkedExternalWorkId,
+    },
+  });
+  return {
+    workUnit: input.store.getWorkUnit(workUnit.id) ?? workUnit,
+    attempt: input.store.getWorkUnitAttempt(attempt.id) ?? attempt,
+  };
+}
+
+function finishChannelMessageWorkUnit(
+  store: RunStore,
+  supervised: { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt },
+  messageId: string,
+  input: { readonly body: string; readonly status: ChannelMessage["status"]; readonly errorMessage?: string | null },
+): ChannelMessage {
+  const now = new Date().toISOString();
+  transitionWorkUnitTerminal(store, {
+    workUnitId: supervised.workUnit.id,
+    attemptId: supervised.attempt.id,
+    event: input.status === "ready" ? "runner_succeeded" : "runner_failed",
+    attemptStatus: input.status === "ready" ? "succeeded" : "failed",
+    runtimeEventType: input.status === "ready" ? "work_unit_succeeded" : "work_unit_failed",
+    actor: "runner",
+    now,
+    errorCode: input.status === "ready" ? undefined : "message_reply_blocked",
+    errorMessage: input.errorMessage ?? undefined,
+  });
+  return (
+    store.updateChannelMessageRuntime(
+      messageId,
+      {
+        body: input.body,
+        status: input.status,
+        errorMessage: input.errorMessage ?? null,
+      },
+      now,
+    ) ?? store.getChannelMessage(messageId)!
+  );
+}
+
+function finishDirectMessageWorkUnit(
+  store: RunStore,
+  supervised: { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt },
+  messageId: string,
+  input: { readonly body: string; readonly status: TeammateDirectMessage["status"]; readonly errorMessage?: string | null },
+): TeammateDirectMessage {
+  const now = new Date().toISOString();
+  transitionWorkUnitTerminal(store, {
+    workUnitId: supervised.workUnit.id,
+    attemptId: supervised.attempt.id,
+    event: input.status === "ready" ? "runner_succeeded" : "runner_failed",
+    attemptStatus: input.status === "ready" ? "succeeded" : "failed",
+    runtimeEventType: input.status === "ready" ? "work_unit_succeeded" : "work_unit_failed",
+    actor: "runner",
+    now,
+    errorCode: input.status === "ready" ? undefined : "message_reply_blocked",
+    errorMessage: input.errorMessage ?? undefined,
+  });
+  return (
+    store.updateTeammateDirectMessageRuntime(
+      messageId,
+      {
+        body: input.body,
+        status: input.status,
+        errorMessage: input.errorMessage ?? null,
+      },
+      now,
+    ) ?? store.getTeammateDirectMessage(messageId)!
+  );
+}
+
 async function createAiChannelReply(input: {
   readonly runner: RunnerAdapter;
   readonly store: RunStore;
@@ -6132,6 +7305,7 @@ async function createAiChannelReply(input: {
   readonly sourceMessage: ChannelMessage;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
+  readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
 }): Promise<ChannelMessage> {
   const teammateId =
@@ -6143,39 +7317,51 @@ async function createAiChannelReply(input: {
   const canonicalTeammateId = teammate?.id ?? teammateId;
   const providerPresetId = input.providerPresetId ?? teammate?.providerPresetId ?? input.channel.defaultProviderPresetId;
   const now = new Date().toISOString();
+  const pending = input.store.createChannelMessage(
+    {
+      channelId: input.channel.id,
+      threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: canonicalTeammateId,
+      body: "AI teammate is preparing a reply...",
+      status: "pending",
+    },
+    now,
+  );
+  const supervised = startMessageWorkUnit({
+    store: input.store,
+    runtimeSupervisor: input.runtimeSupervisor,
+    kind: "channel_ai_reply",
+    ownerType: "channel_message",
+    ownerId: input.sourceMessage.id,
+    channelId: input.channel.id,
+    teammateId: canonicalTeammateId,
+    providerPresetId,
+    linkedMessageId: pending.id,
+    idempotencyKey: `channel_ai_reply:${input.sourceMessage.id}:${pending.id}`,
+    request: {
+      sourceMessageId: input.sourceMessage.id,
+      providerPresetId,
+      teammateId: canonicalTeammateId,
+    },
+  });
 
   if (teammate && teammate.status !== "active") {
-    return input.store.createChannelMessage(
-      {
-        channelId: input.channel.id,
-        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
-        kind: "ai_reply",
-        intent: "discuss",
-        authorType: "ai-teammate",
-        authorId: canonicalTeammateId,
-        body: `AI teammate is ${teammate.status}.`,
-        status: "blocked",
-        errorMessage: `Teammate status is ${teammate.status}.`,
-      },
-      now,
-    );
+    return finishChannelMessageWorkUnit(input.store, supervised, pending.id, {
+      body: `AI teammate is ${teammate.status}.`,
+      status: "blocked",
+      errorMessage: `Teammate status is ${teammate.status}.`,
+    });
   }
 
   if (!providerPresetId) {
-    return input.store.createChannelMessage(
-      {
-        channelId: input.channel.id,
-        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
-        kind: "ai_reply",
-        intent: "discuss",
-        authorType: "ai-teammate",
-        authorId: canonicalTeammateId,
-        body: "AI teammate is not configured for this channel.",
-        status: "blocked",
-        errorMessage: "No provider preset is selected for this channel discussion.",
-      },
-      now,
-    );
+    return finishChannelMessageWorkUnit(input.store, supervised, pending.id, {
+      body: "AI teammate is not configured for this channel.",
+      status: "blocked",
+      errorMessage: "No provider preset is selected for this channel discussion.",
+    });
   }
 
   const textDeltas: string[] = [];
@@ -6208,6 +7394,15 @@ async function createAiChannelReply(input: {
       input.secretResolver,
     );
 
+    acquireRunRuntimeSemaphores({
+      store: input.store,
+      workUnit: supervised.workUnit,
+      attempt: supervised.attempt,
+      channel: input.channel,
+      providerKey: providerPresetId,
+      now,
+    });
+
     const result = await input.runner.runTask({
       cwd: input.store.paths.cwd,
       task: {
@@ -6230,6 +7425,14 @@ async function createAiChannelReply(input: {
         "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
       ].join("\n"),
       onEvent: (event) => {
+        input.store.appendRuntimeEvent({
+          workUnitId: supervised.workUnit.id,
+          attemptId: supervised.attempt.id,
+          type: "work_unit_progress",
+          actor: "runner",
+          ts: new Date().toISOString(),
+          data: { runnerEventType: event.type },
+        });
         if (event.type === "assistant_text_delta") {
           textDeltas.push(event.text);
         }
@@ -6238,23 +7441,16 @@ async function createAiChannelReply(input: {
     const rawReplyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
     const extractedProposal = extractChannelExecutionProposal(rawReplyText, canonicalTeammateId);
     const replyText = extractedProposal?.visibleBody || rawReplyText;
-    const reply = input.store.createChannelMessage(
-      {
-        channelId: input.channel.id,
-        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
-        kind: "ai_reply",
-        intent: "discuss",
-        authorType: "ai-teammate",
-        authorId: canonicalTeammateId,
-        body: replyText,
-      },
-      new Date().toISOString(),
-    );
+    const reply = finishChannelMessageWorkUnit(input.store, supervised, pending.id, {
+      body: replyText,
+      status: "ready",
+      errorMessage: null,
+    });
     if (extractedProposal) {
       input.store.createChannelExecutionProposal(
         {
           channelId: input.channel.id,
-          sourceMessageId: reply.id,
+          sourceMessageId: pending.id,
           proposedByTeammateId: canonicalTeammateId,
           title: extractedProposal.title,
           prompt: extractedProposal.prompt,
@@ -6270,20 +7466,13 @@ async function createAiChannelReply(input: {
     return reply;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return input.store.createChannelMessage(
-      {
-        channelId: input.channel.id,
-        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
-        kind: "ai_reply",
-        intent: "discuss",
-        authorType: "ai-teammate",
-        authorId: canonicalTeammateId,
-        body: `AI teammate is blocked: ${message}`,
-        status: "blocked",
-        errorMessage: message,
-      },
-      new Date().toISOString(),
-    );
+    return finishChannelMessageWorkUnit(input.store, supervised, pending.id, {
+      body: `AI teammate is blocked: ${message}`,
+      status: "blocked",
+      errorMessage: message,
+    });
+  } finally {
+    input.store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
   }
 }
 
@@ -6364,38 +7553,52 @@ async function createAiTeammateDirectReply(input: {
   readonly thread: { readonly id: string };
   readonly sourceMessage: { readonly id: string; readonly body: string };
   readonly providerPresetId?: string;
+  readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
 }): Promise<ReturnType<RunStore["createTeammateDirectMessage"]>> {
   const providerPresetId = input.providerPresetId ?? input.teammate.providerPresetId;
   const now = new Date().toISOString();
+  const pending = input.store.createTeammateDirectMessage(
+    {
+      threadId: input.thread.id,
+      teammateId: input.teammate.id,
+      authorType: "ai-teammate",
+      authorId: input.teammate.id,
+      body: "AI teammate is preparing a reply...",
+      status: "pending",
+    },
+    now,
+  );
+  const supervised = startMessageWorkUnit({
+    store: input.store,
+    runtimeSupervisor: input.runtimeSupervisor,
+    kind: "teammate_direct_reply",
+    ownerType: "teammate_direct_message",
+    ownerId: input.sourceMessage.id,
+    teammateId: input.teammate.id,
+    providerPresetId,
+    linkedMessageId: pending.id,
+    idempotencyKey: `teammate_direct_reply:${input.sourceMessage.id}:${pending.id}`,
+    request: {
+      sourceMessageId: input.sourceMessage.id,
+      teammateId: input.teammate.id,
+      providerPresetId,
+    },
+  });
   if (input.teammate.status !== "active") {
-    return input.store.createTeammateDirectMessage(
-      {
-        threadId: input.thread.id,
-        teammateId: input.teammate.id,
-        authorType: "ai-teammate",
-        authorId: input.teammate.id,
-        body: `AI teammate is ${input.teammate.status}.`,
-        status: "blocked",
-        errorMessage: `Teammate status is ${input.teammate.status}.`,
-      },
-      now,
-    );
+    return finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
+      body: `AI teammate is ${input.teammate.status}.`,
+      status: "blocked",
+      errorMessage: `Teammate status is ${input.teammate.status}.`,
+    });
   }
 
   if (!providerPresetId) {
-    return input.store.createTeammateDirectMessage(
-      {
-        threadId: input.thread.id,
-        teammateId: input.teammate.id,
-        authorType: "ai-teammate",
-        authorId: input.teammate.id,
-        body: "AI teammate is blocked: no provider preset is selected.",
-        status: "blocked",
-        errorMessage: "No provider preset is selected for this teammate.",
-      },
-      now,
-    );
+    return finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
+      body: "AI teammate is blocked: no provider preset is selected.",
+      status: "blocked",
+      errorMessage: "No provider preset is selected for this teammate.",
+    });
   }
 
   const recentMessages = input.store.listTeammateDirectMessages({
@@ -6432,6 +7635,14 @@ async function createAiTeammateDirectReply(input: {
       input.secretResolver,
     );
 
+    acquireRunRuntimeSemaphores({
+      store: input.store,
+      workUnit: supervised.workUnit,
+      attempt: supervised.attempt,
+      providerKey: providerPresetId,
+      now,
+    });
+
     const result = await input.runner.runTask({
       cwd: input.store.paths.cwd,
       task,
@@ -6440,36 +7651,34 @@ async function createAiTeammateDirectReply(input: {
       thinkingLevel: "medium",
       systemPrompt,
       onEvent: (event) => {
+        input.store.appendRuntimeEvent({
+          workUnitId: supervised.workUnit.id,
+          attemptId: supervised.attempt.id,
+          type: "work_unit_progress",
+          actor: "runner",
+          ts: new Date().toISOString(),
+          data: { runnerEventType: event.type },
+        });
         if (event.type === "assistant_text_delta") {
           textDeltas.push(event.text);
         }
       },
     });
     const replyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
-    return input.store.createTeammateDirectMessage(
-      {
-        threadId: input.thread.id,
-        teammateId: input.teammate.id,
-        authorType: "ai-teammate",
-        authorId: input.teammate.id,
-        body: replyText,
-      },
-      new Date().toISOString(),
-    );
+    return finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
+      body: replyText,
+      status: "ready",
+      errorMessage: null,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return input.store.createTeammateDirectMessage(
-      {
-        threadId: input.thread.id,
-        teammateId: input.teammate.id,
-        authorType: "ai-teammate",
-        authorId: input.teammate.id,
-        body: `AI teammate is blocked: ${message}`,
-        status: "blocked",
-        errorMessage: message,
-      },
-      new Date().toISOString(),
-    );
+    return finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
+      body: `AI teammate is blocked: ${message}`,
+      status: "blocked",
+      errorMessage: message,
+    });
+  } finally {
+    input.store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
   }
 }
 
@@ -7332,11 +8541,225 @@ function ensureRunCancelled(input: {
     });
   }
   input.store.releaseResourceLeasesForOwner("run", input.runId, endedAt);
+  if (current.workUnitId) {
+    const workUnit = input.store.getWorkUnit(current.workUnitId);
+    const attemptId = workUnit?.activeAttemptId ?? input.store.listWorkUnitAttempts(current.workUnitId).at(-1)?.id;
+    if (attemptId) {
+      transitionWorkUnitCancelled(input.store, current.workUnitId, attemptId, input.reason);
+    }
+  }
   return { event };
+}
+
+function syncWorkUnitForRunEvent(
+  store: RunStore,
+  workUnitId: string,
+  attemptId: string,
+  type: RunEventType,
+  envelope: RunEventEnvelope,
+): void {
+  const current = store.getWorkUnit(workUnitId);
+  if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
+    return;
+  }
+  const now = envelope.ts;
+  if (type === "approval_requested" && current.status === "running") {
+    const transition = store.transitionWorkUnitStatus({
+      workUnitId,
+      expectedStatus: current.status,
+      event: "approval_requested",
+      actor: "system",
+      now,
+      lastEventAt: now,
+    });
+    if (transition.ok) {
+      store.updateWorkUnitAttemptStatus({ attemptId, status: "waiting_for_approval", now, lastEventAt: now });
+      store.appendRuntimeEvent({
+        workUnitId,
+        attemptId,
+        type: "work_unit_approval_requested",
+        actor: "system",
+        ts: now,
+        data: { runEventId: envelope.id, runEventSeq: envelope.seq },
+      });
+    }
+    return;
+  }
+  if (type === "approval_approved" && current.status === "waiting_for_approval") {
+    store.transitionWorkUnitStatus({
+      workUnitId,
+      expectedStatus: current.status,
+      event: "approval_approved",
+      actor: "local-user",
+      now,
+      lastEventAt: now,
+    });
+    store.updateWorkUnitAttemptStatus({ attemptId, status: "started", now, lastEventAt: now });
+    return;
+  }
+  if ((type === "approval_denied" || type === "approval_expired") && current.status === "waiting_for_approval") {
+    transitionWorkUnitTerminal(store, {
+      workUnitId,
+      attemptId,
+      event: type === "approval_expired" ? "approval_expired" : "approval_denied",
+      attemptStatus: "failed",
+      runtimeEventType: "work_unit_failed",
+      actor: type === "approval_expired" ? "system" : "local-user",
+      now,
+      errorCode: type,
+      errorMessage: type,
+    });
+  }
+}
+
+function appendRuntimeProgressForRunEvent(
+  store: RunStore,
+  workUnitId: string,
+  attemptId: string,
+  type: RunEventType,
+  envelope: RunEventEnvelope,
+): void {
+  try {
+    store.appendRuntimeEvent({
+      workUnitId,
+      attemptId,
+      type: type === "artifact_created" ? "artifact_created" : "work_unit_progress",
+      actor: "runner",
+      ts: envelope.ts,
+      data: {
+        runId: envelope.runId,
+        runEventId: envelope.id,
+        runEventSeq: envelope.seq,
+        runEventType: type,
+      },
+    });
+  } catch {
+    // Runtime events are diagnostic projections; run event persistence remains authoritative.
+  }
+}
+
+function transitionWorkUnitTerminal(
+  store: RunStore,
+  input: {
+    readonly workUnitId: string;
+    readonly attemptId: string;
+    readonly event: Parameters<RunStore["transitionWorkUnitStatus"]>[0]["event"];
+    readonly attemptStatus: WorkUnitAttempt["status"];
+    readonly runtimeEventType: RuntimeEvent["type"];
+    readonly actor: Parameters<RunStore["transitionWorkUnitStatus"]>[0]["actor"];
+    readonly now: string;
+    readonly errorCode?: string;
+    readonly errorMessage?: string;
+  },
+): void {
+  const current = store.getWorkUnit(input.workUnitId);
+  if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
+    return;
+  }
+  const transition = store.transitionWorkUnitStatus({
+    workUnitId: input.workUnitId,
+    expectedStatus: current.status,
+    event: input.event,
+    actor: input.actor,
+    now: input.now,
+    endedAt: input.now,
+    errorCode: input.errorCode ?? null,
+    errorMessage: input.errorMessage ?? null,
+  });
+  if (!transition.ok) {
+    return;
+  }
+  store.updateWorkUnitAttemptStatus({
+    attemptId: input.attemptId,
+    status: input.attemptStatus,
+    now: input.now,
+    endedAt: input.now,
+    errorCode: input.errorCode ?? null,
+    errorMessage: input.errorMessage ?? null,
+  });
+  store.appendRuntimeEvent({
+    workUnitId: input.workUnitId,
+    attemptId: input.attemptId,
+    type: input.runtimeEventType,
+    actor: input.actor === "runner" ? "runner" : input.actor === "provider" ? "provider" : "system",
+    ts: input.now,
+    data: {
+      fromStatus: transition.from,
+      toStatus: transition.to,
+      errorCode: input.errorCode,
+      errorMessage: input.errorMessage,
+    },
+  });
+}
+
+function transitionWorkUnitCancelled(store: RunStore, workUnitId: string, attemptId: string, reason: string): void {
+  const current = store.getWorkUnit(workUnitId);
+  if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
+    return;
+  }
+  const now = new Date().toISOString();
+  const cancelling =
+    current.status === "cancelling"
+      ? { ok: true as const, from: current.status, to: current.status }
+      : store.transitionWorkUnitStatus({
+          workUnitId,
+          expectedStatus: current.status,
+          event: "cancel",
+          actor: "local-user",
+          reason,
+          now,
+        });
+  if (!cancelling.ok) {
+    return;
+  }
+  const latest = store.getWorkUnit(workUnitId);
+  if (!latest || latest.status !== "cancelling") {
+    return;
+  }
+  transitionWorkUnitTerminal(store, {
+    workUnitId,
+    attemptId,
+    event: "runner_cancelled",
+    attemptStatus: "cancelled",
+    runtimeEventType: "work_unit_cancelled",
+    actor: "runner",
+    now,
+    errorCode: "cancelled",
+    errorMessage: reason,
+  });
 }
 
 function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function isTerminalWorkUnitStatus(status: WorkUnitStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function isWorkUnitStatus(value: string): value is WorkUnitStatus {
+  return (
+    value === "queued" ||
+    value === "claimed" ||
+    value === "running" ||
+    value === "waiting_for_approval" ||
+    value === "cancelling" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "cancelled" ||
+    value === "stale"
+  );
+}
+
+function isWorkUnitKind(value: string): value is WorkUnitKind {
+  return (
+    value === "task_run" ||
+    value === "channel_ai_reply" ||
+    value === "teammate_direct_reply" ||
+    value === "external_work_step" ||
+    value === "external_work_action" ||
+    value === "media_job"
+  );
 }
 
 function updateLinkedTaskForRun(store: RunStore, taskId: string, input: TaskUpdateInput): void {
@@ -8732,6 +10155,27 @@ function parseRunRoute(
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "cancel") {
     return { kind: "cancel", runId: segments[1] };
+  }
+  return undefined;
+}
+
+function parseWorkUnitRoute(
+  pathname: string,
+):
+  | { readonly kind: "detail"; readonly workUnitId: string }
+  | { readonly kind: "events"; readonly workUnitId: string }
+  | { readonly kind: "cancel"; readonly workUnitId: string }
+  | { readonly kind: "retry"; readonly workUnitId: string }
+  | { readonly kind: "reconcile"; readonly workUnitId: string }
+  | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "work-units") {
+    return { kind: "detail", workUnitId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "work-units") {
+    if (segments[2] === "events" || segments[2] === "cancel" || segments[2] === "retry" || segments[2] === "reconcile") {
+      return { kind: segments[2], workUnitId: segments[1] };
+    }
   }
   return undefined;
 }
@@ -11251,9 +12695,173 @@ class HttpError extends Error {
   }
 }
 
+class QueueableRunConflictError extends HttpError {
+  constructor(
+    readonly code: QueueableRunConflictCode,
+    message: string,
+    readonly channel?: Channel,
+    readonly task?: Task,
+  ) {
+    super(409, code, message);
+  }
+}
+
 class DuplicateRunRequestError extends Error {
   constructor(readonly runId: string) {
     super(`Duplicate run request for ${runId}`);
+  }
+}
+
+class RuntimeSupervisor {
+  private readonly runtimesByCwd = new Map<string, RuntimeInstance>();
+  private readonly lockedCwds = new Set<string>();
+  private readonly reconciledCwds = new Set<string>();
+
+  constructor(private readonly config: ResolvedDaemonConfig) {}
+
+  getRuntime(cwd: string, store: RunStore): RuntimeInstance {
+    const existing = this.runtimesByCwd.get(cwd);
+    if (existing) {
+      return existing;
+    }
+
+    this.ensureRuntimeLock(cwd, store);
+    this.reconcileStartup(cwd, store);
+    const now = new Date().toISOString();
+    const runtime: RuntimeInstance = {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      runtimeInstanceId: `runtime_${randomUUID()}`,
+      pid: process.pid,
+      host: this.config.host,
+      port: this.config.port,
+      startedAt: now,
+      version: "0.0.0",
+      schemaVersion: RUNTIME_SCHEMA_VERSION,
+      status: "healthy",
+    };
+    this.runtimesByCwd.set(cwd, runtime);
+    this.writeRuntimeLock(store, runtime);
+    return runtime;
+  }
+
+  getDiagnostics(cwd: string, store: RunStore): {
+    readonly runtime: RuntimeInstance;
+    readonly active: readonly WorkUnit[];
+    readonly stuck: readonly WorkUnit[];
+    readonly queued: readonly WorkUnit[];
+    readonly stale: readonly WorkUnit[];
+    readonly leases: readonly ResourceLease[];
+    readonly semaphoreSlots: readonly RuntimeSemaphoreSlot[];
+  } {
+    const runtime = this.getRuntime(cwd, store);
+    const active = listActiveWorkUnits(store);
+    return {
+      runtime,
+      active,
+      stuck: active.filter((workUnit) => isStuckWorkUnit(workUnit, new Date())),
+      queued: store.listWorkUnits({ status: "queued", limit: 200 }),
+      stale: store.listWorkUnits({ status: "stale", limit: 200 }),
+      leases: store.listResourceLeases({ status: "active", limit: 500 }),
+      semaphoreSlots: store.listRuntimeSemaphoreSlots({ status: "active", limit: 500 }),
+    };
+  }
+
+  releaseAll(): void {
+    for (const [cwd, runtime] of this.runtimesByCwd.entries()) {
+      const lockPath = join(cwd, ".ling-stack", "runtime.lock");
+      try {
+        const current = parseRuntimeLock(readFileSync(lockPath, "utf8"));
+        if (current?.runtimeInstanceId === runtime.runtimeInstanceId) {
+          unlinkSync(lockPath);
+        }
+      } catch {
+        // Lock cleanup is best-effort; stale locks are reconciled on the next runtime start.
+      }
+    }
+    this.runtimesByCwd.clear();
+    this.lockedCwds.clear();
+    this.reconciledCwds.clear();
+  }
+
+  private ensureRuntimeLock(cwd: string, store: RunStore): void {
+    if (this.lockedCwds.has(cwd)) {
+      return;
+    }
+    const lockPath = join(store.paths.rootDir, "runtime.lock");
+    const lock = {
+      runtimeInstanceId: `runtime_lock_probe_${randomUUID()}`,
+      pid: process.pid,
+      host: this.config.host,
+      port: this.config.port,
+      cwd,
+      startedAt: new Date().toISOString(),
+    };
+    try {
+      writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
+      this.lockedCwds.add(cwd);
+      return;
+    } catch (error) {
+      if (!isFsErrorCode(error, "EEXIST")) {
+        throw error;
+      }
+    }
+
+    const existing = parseRuntimeLock(readFileSync(lockPath, "utf8"));
+    if (existing && isProcessAlive(existing.pid)) {
+      if (existing.pid !== process.pid || existing.port !== this.config.port || existing.host !== this.config.host) {
+        throw new HttpError(
+          409,
+          "runtime_already_running",
+          `Workspace runtime is already owned by pid ${existing.pid} at ${existing.host}:${existing.port}.`,
+        );
+      }
+      this.lockedCwds.add(cwd);
+      return;
+    }
+
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // If unlink races with another daemon, the following create will surface the correct error.
+    }
+    writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
+    this.lockedCwds.add(cwd);
+  }
+
+  private writeRuntimeLock(store: RunStore, runtime: RuntimeInstance): void {
+    const lockPath = join(store.paths.rootDir, "runtime.lock");
+    writeFileSync(
+      lockPath,
+      `${JSON.stringify(
+        {
+          runtimeInstanceId: runtime.runtimeInstanceId,
+          pid: runtime.pid,
+          host: runtime.host,
+          port: runtime.port,
+          cwd: store.paths.cwd,
+          startedAt: runtime.startedAt,
+          schemaVersion: runtime.schemaVersion,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
+
+  private reconcileStartup(cwd: string, store: RunStore): void {
+    if (this.reconciledCwds.has(cwd)) {
+      return;
+    }
+    this.reconciledCwds.add(cwd);
+    const now = new Date().toISOString();
+    const candidates = [
+      ...store.listWorkUnits({ status: "claimed", limit: 500 }),
+      ...store.listWorkUnits({ status: "running", limit: 500 }),
+      ...store.listWorkUnits({ status: "cancelling", limit: 500 }),
+    ];
+    for (const workUnit of candidates) {
+      markWorkUnitStale(store, workUnit, now, "runtime-startup-reconcile");
+    }
   }
 }
 
@@ -11283,6 +12891,117 @@ class ActiveRunRegistry {
     }
     this.activeRuns.clear();
   }
+}
+
+function parseRuntimeLock(value: string): { readonly runtimeInstanceId?: string; readonly pid: number; readonly host: string; readonly port: number } | undefined {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isRecord(parsed) || typeof parsed.pid !== "number" || typeof parsed.host !== "string" || typeof parsed.port !== "number") {
+      return undefined;
+    }
+    return {
+      runtimeInstanceId: typeof parsed.runtimeInstanceId === "string" ? parsed.runtimeInstanceId : undefined,
+      pid: parsed.pid,
+      host: parsed.host,
+      port: parsed.port,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function isFsErrorCode(error: unknown, code: string): boolean {
+  return isRecord(error) && error.code === code;
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function listActiveWorkUnits(store: RunStore): WorkUnit[] {
+  return [
+    ...store.listWorkUnits({ status: "claimed", limit: 500 }),
+    ...store.listWorkUnits({ status: "running", limit: 500 }),
+    ...store.listWorkUnits({ status: "waiting_for_approval", limit: 500 }),
+    ...store.listWorkUnits({ status: "cancelling", limit: 500 }),
+  ];
+}
+
+function isActiveWorkUnitStatus(status: WorkUnitStatus): boolean {
+  return status === "claimed" || status === "running" || status === "waiting_for_approval" || status === "cancelling";
+}
+
+function isStuckWorkUnit(workUnit: WorkUnit, now: Date): boolean {
+  if (!isActiveWorkUnitStatus(workUnit.status)) {
+    return false;
+  }
+  const heartbeatAge = ageMs(workUnit.lastHeartbeatAt, now);
+  if (heartbeatAge !== undefined && heartbeatAge > workUnit.timeoutPolicy.heartbeatTimeoutMs) {
+    return true;
+  }
+  const activityAge = ageMs(workUnit.lastEventAt ?? workUnit.updatedAt, now);
+  if (activityAge !== undefined && activityAge > workUnit.timeoutPolicy.idleTimeoutMs) {
+    return true;
+  }
+  const runAge = ageMs(workUnit.startedAt ?? workUnit.createdAt, now);
+  return runAge !== undefined && runAge > workUnit.timeoutPolicy.hardTimeoutMs;
+}
+
+function ageMs(value: string | undefined, now: Date): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? now.getTime() - parsed : undefined;
+}
+
+function markWorkUnitStale(store: RunStore, workUnit: WorkUnit, now: string, reason: string): WorkUnit {
+  const attempt = workUnit.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
+  const event = workUnit.status === "cancelling" ? "cancel_timeout" : "runner_lost";
+  const transition = store.transitionWorkUnitStatus({
+    workUnitId: workUnit.id,
+    expectedStatus: workUnit.status,
+    event,
+    actor: "system",
+    reason,
+    now,
+    endedAt: now,
+    errorCode: "runtime_stale",
+    errorMessage: reason,
+  });
+  if (transition.ok) {
+    store.appendRuntimeEvent({
+      workUnitId: workUnit.id,
+      attemptId: attempt?.id,
+      type: "work_unit_stale",
+      actor: "system",
+      ts: now,
+      data: { reason, fromStatus: transition.from },
+    });
+  }
+  if (attempt) {
+    store.updateWorkUnitAttemptStatus({
+      attemptId: attempt.id,
+      status: "lost",
+      now,
+      endedAt: now,
+      errorCode: "runtime_stale",
+      errorMessage: reason,
+    });
+    store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, now, "stale-released");
+  }
+  for (const lease of store.listResourceLeases({ workUnitId: workUnit.id, status: "active", limit: 500 })) {
+    store.releaseResourceLeasesForOwner(lease.ownerType, lease.ownerId, now);
+  }
+  return store.getWorkUnit(workUnit.id) ?? workUnit;
 }
 
 interface ExternalWorkBackgroundSchedulerEntry {

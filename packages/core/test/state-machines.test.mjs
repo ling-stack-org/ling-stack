@@ -5,6 +5,7 @@ import {
   transitionMediaJob,
   transitionRun,
   transitionTask,
+  transitionWorkUnit,
   transitionWorkflow,
   transitionWorkflowStep,
 } from "../dist/index.js";
@@ -138,5 +139,72 @@ test("media job and workflow transitions require state machine events", () => {
       actor: "ai-teammate",
     }),
     { ok: true, from: "queued", to: "claimed" },
+  );
+});
+
+test("work unit transitions enforce supervisor lifecycle and terminal guards", () => {
+  const claimed = transitionWorkUnit({
+    entityId: "wu_1",
+    currentStatus: "queued",
+    event: "claim",
+    actor: "system",
+  });
+  assert.deepEqual(claimed, { ok: true, from: "queued", to: "claimed" });
+
+  const running = transitionWorkUnit({
+    entityId: "wu_1",
+    currentStatus: claimed.to,
+    expectedStatus: "claimed",
+    event: "runner_started",
+    actor: "runner",
+  });
+  assert.deepEqual(running, { ok: true, from: "claimed", to: "running" });
+
+  const stale = transitionWorkUnit({
+    entityId: "wu_1",
+    currentStatus: running.to,
+    expectedStatus: "running",
+    event: "runner_lost",
+    actor: "system",
+  });
+  assert.deepEqual(stale, { ok: true, from: "running", to: "stale" });
+
+  assert.deepEqual(
+    transitionWorkUnit({
+      entityId: "wu_1",
+      currentStatus: stale.to,
+      expectedStatus: "running",
+      event: "runner_succeeded",
+      actor: "runner",
+    }),
+    {
+      ok: false,
+      code: "stale_transition",
+      currentStatus: "stale",
+    },
+  );
+
+  assert.deepEqual(
+    transitionWorkUnit({
+      entityId: "wu_1",
+      currentStatus: stale.to,
+      event: "retry",
+      actor: "local-user",
+    }),
+    { ok: true, from: "stale", to: "queued" },
+  );
+
+  assert.deepEqual(
+    transitionWorkUnit({
+      entityId: "wu_done",
+      currentStatus: "succeeded",
+      event: "runner_started",
+      actor: "runner",
+    }),
+    {
+      ok: false,
+      code: "terminal_state",
+      currentStatus: "succeeded",
+    },
   );
 });

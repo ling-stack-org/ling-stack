@@ -155,6 +155,11 @@ The detailed contract lives in [State Machines and Recovery](design/state-machin
 
 Multi-channel concurrency does not mean one adapter or state machine per channel. External sources normalize into channel events, the daemon coordinator acquires resource leases, and core state machines decide legal transitions. The detailed contract lives in [Multi-Channel Concurrency](design/multi-channel-concurrency.md).
 
+Web, desktop, CLI, and future clients must share one daemon-owned runtime supervisor per
+workspace. The supervisor owns active work units, runner attempts, heartbeats, leases,
+semaphores, cancellation, retry, and startup recovery. The detailed target design lives
+in [Runtime Supervisor](design/runtime-supervisor.md).
+
 ## Future Platform Architecture
 
 The aggressive long-term direction is a platform kernel plus extension host:

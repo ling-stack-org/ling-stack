@@ -97,6 +97,9 @@ import type {
   ProviderSecretResponse,
   ProviderTemplateListResponse,
   ResourceLeaseListResponse,
+  RuntimeDiagnosticsResponse,
+  RuntimeResponse,
+  RuntimeSemaphoreListResponse,
   RunArtifactListResponse,
   RunCancelResponse,
   RunEventsResponse,
@@ -129,6 +132,12 @@ import type {
   TeammateMemoryScopeListResponse,
   TeammateSkillBindingListResponse,
   UpdateAiTeammateRequest,
+  WorkUnitDetailResponse,
+  WorkUnitEventsResponse,
+  WorkUnitKind,
+  WorkUnitListResponse,
+  WorkUnitMutationResponse,
+  WorkUnitStatus,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "./errors.js";
 
@@ -193,6 +202,70 @@ export class LingDaemonClient {
 
   async cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {
     return this.post(`/runs/${encodeURIComponent(runId)}/cancel`, { cwd });
+  }
+
+  async getRuntime(cwd: string): Promise<RuntimeResponse> {
+    return this.get("/runtime", { cwd });
+  }
+
+  async getRuntimeDiagnostics(cwd: string): Promise<RuntimeDiagnosticsResponse> {
+    return this.get("/runtime/supervisor", { cwd });
+  }
+
+  async listRuntimeActive(cwd: string): Promise<WorkUnitListResponse> {
+    return this.get("/runtime/active", { cwd });
+  }
+
+  async listRuntimeStuck(cwd: string): Promise<WorkUnitListResponse> {
+    return this.get("/runtime/stuck", { cwd });
+  }
+
+  async listRuntimeSemaphores(cwd: string): Promise<RuntimeSemaphoreListResponse> {
+    return this.get("/runtime/semaphores", { cwd });
+  }
+
+  async listWorkUnits(
+    cwd: string,
+    options: {
+      readonly status?: WorkUnitStatus;
+      readonly kind?: WorkUnitKind;
+      readonly ownerType?: string;
+      readonly ownerId?: string;
+      readonly channelId?: string;
+      readonly linkedRunId?: string;
+      readonly limit?: number;
+    } = {},
+  ): Promise<WorkUnitListResponse> {
+    return this.get("/work-units", {
+      cwd,
+      status: options.status,
+      kind: options.kind,
+      ownerType: options.ownerType,
+      ownerId: options.ownerId,
+      channelId: options.channelId,
+      linkedRunId: options.linkedRunId,
+      limit: options.limit,
+    });
+  }
+
+  async getWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitDetailResponse> {
+    return this.get(`/work-units/${encodeURIComponent(workUnitId)}`, { cwd });
+  }
+
+  async getWorkUnitEvents(cwd: string, workUnitId: string, afterSeq?: number): Promise<WorkUnitEventsResponse> {
+    return this.get(`/work-units/${encodeURIComponent(workUnitId)}/events`, { cwd, afterSeq });
+  }
+
+  async cancelWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
+    return this.post(`/work-units/${encodeURIComponent(workUnitId)}/cancel`, { cwd });
+  }
+
+  async retryWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
+    return this.post(`/work-units/${encodeURIComponent(workUnitId)}/retry`, { cwd });
+  }
+
+  async reconcileWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
+    return this.post(`/work-units/${encodeURIComponent(workUnitId)}/reconcile`, { cwd });
   }
 
   async listChannels(cwd: string): Promise<ChannelListResponse> {
@@ -808,7 +881,12 @@ export class LingDaemonClient {
     return this.get("/runtime/leases", {
       cwd,
       status: options.status,
+      ownerType: options.ownerType,
       ownerId: options.ownerId,
+      resourceType: options.resourceType,
+      resourceKey: options.resourceKey,
+      workUnitId: options.workUnitId,
+      attemptId: options.attemptId,
       limit: options.limit,
     });
   }

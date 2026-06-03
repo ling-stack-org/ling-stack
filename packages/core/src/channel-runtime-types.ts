@@ -31,7 +31,7 @@ export type ResourceType =
   | "external_subject"
   | "external_workspace";
 
-export type ResourceLeaseOwnerType = "run" | "workflow_step" | "system";
+export type ResourceLeaseOwnerType = "run" | "workflow_step" | "work_unit_attempt" | "system";
 
 export type ResourceLeaseStatus = "active" | "released" | "expired";
 
@@ -45,7 +45,11 @@ export interface ResourceLease {
   readonly status: ResourceLeaseStatus;
   readonly acquiredAt: string;
   readonly expiresAt: string;
+  readonly lastRenewedAt?: string;
   readonly releasedAt?: string;
+  readonly releaseReason?: string;
+  readonly workUnitId?: string;
+  readonly attemptId?: string;
 }
 
 export interface CreateResourceLeaseInput {
@@ -56,6 +60,9 @@ export interface CreateResourceLeaseInput {
   readonly ownerId: string;
   readonly acquiredAt: string;
   readonly expiresAt: string;
+  readonly lastRenewedAt?: string;
+  readonly workUnitId?: string;
+  readonly attemptId?: string;
 }
 
 export interface ListResourceLeasesOptions {
@@ -64,6 +71,8 @@ export interface ListResourceLeasesOptions {
   readonly ownerId?: string;
   readonly resourceType?: ResourceType;
   readonly resourceKey?: string;
+  readonly workUnitId?: string;
+  readonly attemptId?: string;
   readonly limit?: number;
 }
 

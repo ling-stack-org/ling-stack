@@ -150,6 +150,34 @@ import {
   type RunStatus,
 } from "../run-types.js";
 import {
+  createRuntimeEventId,
+  createRuntimeHeartbeatId,
+  createRuntimeSemaphoreSlotId,
+  createWorkUnitAttemptId,
+  createWorkUnitId,
+  defaultRuntimeTimeoutPolicy,
+  type AcquireRuntimeSemaphoreSlotInput,
+  type AppendRuntimeEventInput,
+  type CreateWorkUnitAttemptInput,
+  type CreateWorkUnitInput,
+  type ListRuntimeEventsOptions,
+  type ListRuntimeSemaphoreSlotsOptions,
+  type ListWorkUnitsOptions,
+  type RecordRuntimeHeartbeatInput,
+  type RuntimeEvent,
+  type RuntimeEventType,
+  type RuntimeHeartbeat,
+  type RuntimeSemaphoreResourceType,
+  type RuntimeSemaphoreSlot,
+  type RuntimeSemaphoreSlotStatus,
+  type RuntimeTimeoutPolicy,
+  type WorkUnit,
+  type WorkUnitAttempt,
+  type WorkUnitAttemptStatus,
+  type WorkUnitKind,
+  type WorkUnitStatus,
+} from "../runtime-supervisor-types.js";
+import {
   createExternalWorkActionId,
   createExternalWorkCiTriageId,
   createExternalWorkId,
@@ -186,6 +214,7 @@ import {
 import {
   transitionRun,
   transitionTask,
+  transitionWorkUnit,
   transitionWorkflow,
   transitionWorkflowStep,
   type RunTransitionEvent,
@@ -193,6 +222,7 @@ import {
   type StateTransitionActor,
   type TaskTransitionEvent,
   type TransitionResult,
+  type WorkUnitTransitionEvent,
   type WorkflowStepTransitionEvent,
   type WorkflowTransitionEvent,
 } from "../state-machines.js";
@@ -249,6 +279,8 @@ const EXTERNAL_WORK_CI_TRIAGE_MIGRATION_VERSION = 20;
 const EXTERNAL_WORK_CI_TRIAGE_MIGRATION_NAME = "create_external_work_ci_triage";
 const CHANNEL_EXECUTION_PROPOSALS_MIGRATION_VERSION = 21;
 const CHANNEL_EXECUTION_PROPOSALS_MIGRATION_NAME = "create_channel_execution_proposals";
+const RUNTIME_SUPERVISOR_MIGRATION_VERSION = 22;
+const RUNTIME_SUPERVISOR_MIGRATION_NAME = "create_runtime_supervisor";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -298,13 +330,14 @@ export class SqliteRunStore implements RunStore {
           provider_snapshot_json,
           request_snapshot_json,
           event_log_path,
+          work_unit_id,
           summary_path,
           error_message,
           created_at,
           started_at,
           ended_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.id,
@@ -320,6 +353,7 @@ export class SqliteRunStore implements RunStore {
         stringifyJson(redactedProviderSnapshot),
         stringifyJson(redactedRequestSnapshot),
         eventLogPath,
+        input.workUnitId ?? null,
         null,
         null,
         input.createdAt,
@@ -399,6 +433,7 @@ export class SqliteRunStore implements RunStore {
             provider_snapshot_json,
             request_snapshot_json,
             event_log_path,
+            work_unit_id,
             summary_path,
             error_message,
             created_at,
@@ -443,6 +478,7 @@ export class SqliteRunStore implements RunStore {
         provider_snapshot_json,
         request_snapshot_json,
         event_log_path,
+        work_unit_id,
         summary_path,
         error_message,
         created_at,
@@ -478,6 +514,535 @@ export class SqliteRunStore implements RunStore {
   countEvents(runId: string): number {
     const row = this.database.prepare("SELECT COUNT(*) AS count FROM run_events WHERE run_id = ?").get(runId);
     return readNumber(row, "count");
+  }
+
+  createWorkUnit(input: CreateWorkUnitInput): WorkUnit {
+    const id = input.id ?? createWorkUnitId();
+    const timeoutPolicy = input.timeoutPolicy ?? defaultRuntimeTimeoutPolicy;
+    const status = input.status ?? "queued";
+    this.database
+      .prepare(`
+        INSERT INTO work_units (
+          id,
+          workspace_id,
+          kind,
+          owner_type,
+          owner_id,
+          channel_id,
+          task_id,
+          teammate_id,
+          provider_preset_id,
+          runner_id,
+          idempotency_key,
+          status,
+          priority,
+          attempt_count,
+          active_attempt_id,
+          created_by_client_id,
+          created_by_actor,
+          request_json,
+          timeout_policy_json,
+          linked_run_id,
+          linked_message_id,
+          linked_media_job_id,
+          linked_external_work_id,
+          created_at,
+          updated_at,
+          started_at,
+          ended_at,
+          last_event_at,
+          last_heartbeat_at,
+          error_code,
+          error_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        input.workspaceId,
+        input.kind,
+        input.ownerType,
+        input.ownerId,
+        input.channelId ?? null,
+        input.taskId ?? null,
+        input.teammateId ?? null,
+        input.providerPresetId ?? null,
+        input.runnerId ?? null,
+        input.idempotencyKey,
+        status,
+        input.priority ?? 0,
+        0,
+        null,
+        input.createdByClientId ?? null,
+        input.createdByActor,
+        stringifyJson(redactSecrets(input.request)),
+        stringifyJson(timeoutPolicy),
+        input.linkedRunId ?? null,
+        input.linkedMessageId ?? null,
+        input.linkedMediaJobId ?? null,
+        input.linkedExternalWorkId ?? null,
+        input.now,
+        input.now,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+      );
+
+    const workUnit = this.getWorkUnit(id);
+    if (!workUnit) {
+      throw new Error(`Failed to create work unit: ${id}`);
+    }
+    return workUnit;
+  }
+
+  getWorkUnit(workUnitId: string): WorkUnit | undefined {
+    const row = this.database.prepare(workUnitSelectSql("WHERE id = ?")).get(workUnitId);
+    return row ? mapWorkUnit(row) : undefined;
+  }
+
+  listWorkUnits(options: ListWorkUnitsOptions = {}): WorkUnit[] {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.kind) {
+      clauses.push("kind = ?");
+      params.push(options.kind);
+    }
+    if (options.ownerType) {
+      clauses.push("owner_type = ?");
+      params.push(options.ownerType);
+    }
+    if (options.ownerId) {
+      clauses.push("owner_id = ?");
+      params.push(options.ownerId);
+    }
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.linkedRunId) {
+      clauses.push("linked_run_id = ?");
+      params.push(options.linkedRunId);
+    }
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.database
+      .prepare(`${workUnitSelectSql(whereClause)} ORDER BY created_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapWorkUnit);
+  }
+
+  findWorkUnitByIdempotency(input: {
+    readonly kind: WorkUnit["kind"];
+    readonly ownerType: string;
+    readonly ownerId: string;
+    readonly idempotencyKey: string;
+  }): WorkUnit | undefined {
+    const row = this.database
+      .prepare(workUnitSelectSql("WHERE workspace_id = ? AND kind = ? AND owner_type = ? AND owner_id = ? AND idempotency_key = ?"))
+      .get(DEFAULT_WORKSPACE_ID, input.kind, input.ownerType, input.ownerId, input.idempotencyKey);
+    return row ? mapWorkUnit(row) : undefined;
+  }
+
+  linkRunToWorkUnit(runId: string, workUnitId: string, now: string): RunSession | undefined {
+    this.database
+      .prepare("UPDATE run_sessions SET work_unit_id = ?, updated_at = ? WHERE id = ?")
+      .run(workUnitId, now, runId);
+    this.database
+      .prepare("UPDATE work_units SET linked_run_id = ?, updated_at = ? WHERE id = ?")
+      .run(runId, now, workUnitId);
+    return this.getRun(runId);
+  }
+
+  transitionWorkUnitStatus(input: {
+    readonly workUnitId: string;
+    readonly expectedStatus?: WorkUnitStatus;
+    readonly event: WorkUnitTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+    readonly activeAttemptId?: string | null;
+    readonly startedAt?: string;
+    readonly endedAt?: string | null;
+    readonly lastEventAt?: string;
+    readonly lastHeartbeatAt?: string;
+    readonly errorCode?: string | null;
+    readonly errorMessage?: string | null;
+  }): TransitionResult<WorkUnitStatus> {
+    const workUnit = this.getWorkUnit(input.workUnitId);
+    if (!workUnit) {
+      return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
+    }
+    if (input.idempotencyKey) {
+      const existing = this.findStateTransitionByIdempotency("work_unit", input.workUnitId, input.idempotencyKey);
+      if (existing) {
+        return { ok: true, from: workUnit.status, to: workUnit.status, duplicate: true };
+      }
+    }
+
+    const result = transitionWorkUnit({
+      entityId: input.workUnitId,
+      currentStatus: workUnit.status,
+      expectedStatus: input.expectedStatus,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!result.ok) {
+      return result;
+    }
+
+    const update = this.database
+      .prepare(`
+        UPDATE work_units
+        SET
+          status = ?,
+          active_attempt_id = ?,
+          updated_at = ?,
+          started_at = ?,
+          ended_at = ?,
+          last_event_at = ?,
+          last_heartbeat_at = ?,
+          error_code = ?,
+          error_message = ?
+        WHERE id = ? AND status = ?
+      `)
+      .run(
+        result.to,
+        input.activeAttemptId === undefined ? workUnit.activeAttemptId ?? null : input.activeAttemptId,
+        input.now,
+        input.startedAt ?? workUnit.startedAt ?? null,
+        input.endedAt === undefined ? workUnit.endedAt ?? null : input.endedAt,
+        input.lastEventAt ?? workUnit.lastEventAt ?? null,
+        input.lastHeartbeatAt ?? workUnit.lastHeartbeatAt ?? null,
+        input.errorCode === undefined ? workUnit.errorCode ?? null : input.errorCode,
+        input.errorMessage === undefined ? workUnit.errorMessage ?? null : input.errorMessage,
+        input.workUnitId,
+        result.from,
+      );
+    if (Number(update.changes) === 0) {
+      const current = this.getWorkUnit(input.workUnitId);
+      return { ok: false, code: "stale_transition", currentStatus: current?.status ?? workUnit.status };
+    }
+
+    this.recordStateTransitionEvent({
+      workspaceId: workUnit.workspaceId,
+      entityType: "work_unit",
+      entityId: input.workUnitId,
+      fromStatus: result.from,
+      toStatus: result.to,
+      event: input.event,
+      actor: input.actor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: input.now,
+    });
+    return result;
+  }
+
+  createWorkUnitAttempt(input: CreateWorkUnitAttemptInput): WorkUnitAttempt {
+    const id = input.id ?? createWorkUnitAttemptId();
+    const workUnit = this.getWorkUnit(input.workUnitId);
+    if (!workUnit) {
+      throw new Error(`Work unit not found: ${input.workUnitId}`);
+    }
+    this.database
+      .prepare(`
+        INSERT INTO work_unit_attempts (
+          id,
+          work_unit_id,
+          attempt_number,
+          runtime_instance_id,
+          runner_id,
+          provider_preset_id,
+          status,
+          created_at,
+          started_at,
+          ended_at,
+          last_event_at,
+          last_heartbeat_at,
+          abort_requested_at,
+          error_code,
+          error_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        input.workUnitId,
+        input.attemptNumber,
+        input.runtimeInstanceId,
+        input.runnerId,
+        input.providerPresetId ?? null,
+        input.status ?? "created",
+        input.now,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+      );
+    this.database
+      .prepare("UPDATE work_units SET attempt_count = MAX(attempt_count, ?), active_attempt_id = ?, updated_at = ? WHERE id = ?")
+      .run(input.attemptNumber, id, input.now, input.workUnitId);
+    const attempt = this.getWorkUnitAttempt(id);
+    if (!attempt) {
+      throw new Error(`Failed to create work unit attempt: ${id}`);
+    }
+    return attempt;
+  }
+
+  getWorkUnitAttempt(attemptId: string): WorkUnitAttempt | undefined {
+    const row = this.database.prepare(workUnitAttemptSelectSql("WHERE id = ?")).get(attemptId);
+    return row ? mapWorkUnitAttempt(row) : undefined;
+  }
+
+  listWorkUnitAttempts(workUnitId: string): WorkUnitAttempt[] {
+    return this.database
+      .prepare(`${workUnitAttemptSelectSql("WHERE work_unit_id = ?")} ORDER BY attempt_number ASC, created_at ASC`)
+      .all(workUnitId)
+      .map(mapWorkUnitAttempt);
+  }
+
+  updateWorkUnitAttemptStatus(input: {
+    readonly attemptId: string;
+    readonly status: WorkUnitAttempt["status"];
+    readonly now: string;
+    readonly startedAt?: string;
+    readonly endedAt?: string;
+    readonly lastEventAt?: string;
+    readonly lastHeartbeatAt?: string;
+    readonly abortRequestedAt?: string;
+    readonly errorCode?: string | null;
+    readonly errorMessage?: string | null;
+  }): WorkUnitAttempt | undefined {
+    const attempt = this.getWorkUnitAttempt(input.attemptId);
+    if (!attempt) {
+      return undefined;
+    }
+    this.database
+      .prepare(`
+        UPDATE work_unit_attempts
+        SET
+          status = ?,
+          started_at = ?,
+          ended_at = ?,
+          last_event_at = ?,
+          last_heartbeat_at = ?,
+          abort_requested_at = ?,
+          error_code = ?,
+          error_message = ?
+        WHERE id = ?
+      `)
+      .run(
+        input.status,
+        input.startedAt ?? attempt.startedAt ?? null,
+        input.endedAt === undefined ? attempt.endedAt ?? null : input.endedAt,
+        input.lastEventAt ?? attempt.lastEventAt ?? null,
+        input.lastHeartbeatAt ?? attempt.lastHeartbeatAt ?? null,
+        input.abortRequestedAt ?? attempt.abortRequestedAt ?? null,
+        input.errorCode === undefined ? attempt.errorCode ?? null : input.errorCode,
+        input.errorMessage === undefined ? attempt.errorMessage ?? null : input.errorMessage,
+        input.attemptId,
+      );
+    return this.getWorkUnitAttempt(input.attemptId);
+  }
+
+  appendRuntimeEvent(input: AppendRuntimeEventInput): RuntimeEvent {
+    const workUnit = this.getWorkUnit(input.workUnitId);
+    if (!workUnit) {
+      throw new Error(`Work unit not found: ${input.workUnitId}`);
+    }
+    const event: RuntimeEvent = {
+      id: createRuntimeEventId(),
+      workUnitId: input.workUnitId,
+      ...(input.attemptId ? { attemptId: input.attemptId } : {}),
+      seq: this.nextRuntimeEventSeq(input.workUnitId),
+      ts: input.ts,
+      type: input.type,
+      actor: input.actor,
+      data: redactSecrets(input.data),
+    };
+    this.database
+      .prepare(`
+        INSERT INTO runtime_events (id, work_unit_id, attempt_id, seq, ts, type, actor, data_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(event.id, event.workUnitId, event.attemptId ?? null, event.seq, event.ts, event.type, event.actor, stringifyJson(event.data));
+    this.database
+      .prepare("UPDATE work_units SET last_event_at = ?, updated_at = ? WHERE id = ?")
+      .run(event.ts, event.ts, input.workUnitId);
+    if (input.attemptId) {
+      this.database
+        .prepare("UPDATE work_unit_attempts SET last_event_at = ? WHERE id = ?")
+        .run(event.ts, input.attemptId);
+    }
+    return event;
+  }
+
+  listRuntimeEvents(workUnitId: string, options: ListRuntimeEventsOptions = {}): RuntimeEvent[] {
+    const afterSeq = options.afterSeq ?? 0;
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
+    return this.database
+      .prepare(`${runtimeEventSelectSql("WHERE work_unit_id = ? AND seq > ?")} ORDER BY seq ASC LIMIT ?`)
+      .all(workUnitId, afterSeq, limit)
+      .map(mapRuntimeEvent);
+  }
+
+  recordRuntimeHeartbeat(input: RecordRuntimeHeartbeatInput): RuntimeHeartbeat {
+    const heartbeat: RuntimeHeartbeat = {
+      id: createRuntimeHeartbeatId(),
+      workUnitId: input.workUnitId,
+      attemptId: input.attemptId,
+      runtimeInstanceId: input.runtimeInstanceId,
+      ts: input.ts,
+      source: input.source,
+      ...(input.detail !== undefined ? { detail: redactSecrets(input.detail) } : {}),
+    };
+    this.database
+      .prepare(`
+        INSERT INTO runtime_heartbeats (id, work_unit_id, attempt_id, runtime_instance_id, ts, source, detail_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        heartbeat.id,
+        heartbeat.workUnitId,
+        heartbeat.attemptId,
+        heartbeat.runtimeInstanceId,
+        heartbeat.ts,
+        heartbeat.source,
+        heartbeat.detail === undefined ? null : stringifyJson(heartbeat.detail),
+      );
+    this.database
+      .prepare("UPDATE work_units SET last_heartbeat_at = ?, updated_at = ? WHERE id = ?")
+      .run(input.ts, input.ts, input.workUnitId);
+    this.database
+      .prepare("UPDATE work_unit_attempts SET last_heartbeat_at = ? WHERE id = ?")
+      .run(input.ts, input.attemptId);
+    this.database
+      .prepare("UPDATE resource_leases SET last_renewed_at = ? WHERE attempt_id = ? AND status = 'active'")
+      .run(input.ts, input.attemptId);
+    this.database
+      .prepare("UPDATE runtime_semaphore_slots SET last_renewed_at = ? WHERE attempt_id = ? AND status = 'active'")
+      .run(input.ts, input.attemptId);
+    return heartbeat;
+  }
+
+  acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined {
+    const id = createRuntimeSemaphoreSlotId();
+    try {
+      this.database.exec("BEGIN IMMEDIATE;");
+      const activeCount = readNumber(
+        this.database
+          .prepare(`
+            SELECT COUNT(*) AS count
+            FROM runtime_semaphore_slots
+            WHERE workspace_id = ? AND resource_type = ? AND resource_key = ? AND status = 'active'
+          `)
+          .get(input.workspaceId, input.resourceType, input.resourceKey),
+        "count",
+      );
+      if (activeCount >= input.limit) {
+        this.database.exec("ROLLBACK;");
+        return undefined;
+      }
+      this.database
+        .prepare(`
+          INSERT INTO runtime_semaphore_slots (
+            id,
+            workspace_id,
+            resource_type,
+            resource_key,
+            owner_type,
+            owner_id,
+            work_unit_id,
+            attempt_id,
+            status,
+            acquired_at,
+            last_renewed_at,
+            expires_at,
+            released_at,
+            release_reason
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+        `)
+        .run(
+          id,
+          input.workspaceId,
+          input.resourceType,
+          input.resourceKey,
+          input.ownerType,
+          input.ownerId,
+          input.workUnitId,
+          input.attemptId,
+          input.acquiredAt,
+          input.acquiredAt,
+          input.expiresAt,
+          null,
+          null,
+        );
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      try {
+        this.database.exec("ROLLBACK;");
+      } catch {
+        // Ignore rollback failure; original error path returns no slot.
+      }
+      return undefined;
+    }
+    const slot = this.database.prepare(runtimeSemaphoreSlotSelectSql("WHERE id = ?")).get(id);
+    return slot ? mapRuntimeSemaphoreSlot(slot) : undefined;
+  }
+
+  releaseRuntimeSemaphoreSlotsForOwner(ownerId: string, releasedAt: string, releaseReason: string): number {
+    const result = this.database
+      .prepare(`
+        UPDATE runtime_semaphore_slots
+        SET status = 'released', released_at = ?, release_reason = ?
+        WHERE owner_id = ? AND status = 'active'
+      `)
+      .run(releasedAt, releaseReason, ownerId);
+    return Number(result.changes);
+  }
+
+  listRuntimeSemaphoreSlots(options: ListRuntimeSemaphoreSlotsOptions = {}): RuntimeSemaphoreSlot[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.resourceType) {
+      clauses.push("resource_type = ?");
+      params.push(options.resourceType);
+    }
+    if (options.resourceKey) {
+      clauses.push("resource_key = ?");
+      params.push(options.resourceKey);
+    }
+    if (options.ownerId) {
+      clauses.push("owner_id = ?");
+      params.push(options.ownerId);
+    }
+    if (options.workUnitId) {
+      clauses.push("work_unit_id = ?");
+      params.push(options.workUnitId);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.database
+      .prepare(`${runtimeSemaphoreSlotSelectSql(whereClause)} ORDER BY acquired_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapRuntimeSemaphoreSlot);
   }
 
   createArtifact(input: CreateRunArtifactInput): RunArtifact {
@@ -829,6 +1394,9 @@ export class SqliteRunStore implements RunStore {
       status: "active",
       acquiredAt: input.acquiredAt,
       expiresAt: input.expiresAt,
+      lastRenewedAt: input.lastRenewedAt ?? input.acquiredAt,
+      workUnitId: input.workUnitId,
+      attemptId: input.attemptId,
     };
     try {
       this.database
@@ -843,8 +1411,12 @@ export class SqliteRunStore implements RunStore {
             status,
             acquired_at,
             expires_at,
-            released_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            last_renewed_at,
+            released_at,
+            release_reason,
+            work_unit_id,
+            attempt_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           lease.id,
@@ -856,7 +1428,11 @@ export class SqliteRunStore implements RunStore {
           lease.status,
           lease.acquiredAt,
           lease.expiresAt,
+          lease.lastRenewedAt ?? lease.acquiredAt,
           null,
+          null,
+          lease.workUnitId ?? null,
+          lease.attemptId ?? null,
         );
       return lease;
     } catch {
@@ -868,7 +1444,7 @@ export class SqliteRunStore implements RunStore {
     const result = this.database
       .prepare(`
         UPDATE resource_leases
-        SET status = 'released', released_at = ?
+        SET status = 'released', released_at = ?, release_reason = COALESCE(release_reason, 'released')
         WHERE owner_type = ? AND owner_id = ? AND status = 'active'
       `)
       .run(releasedAt, ownerType, ownerId);
@@ -879,7 +1455,7 @@ export class SqliteRunStore implements RunStore {
     const result = this.database
       .prepare(`
         UPDATE resource_leases
-        SET status = 'expired', released_at = ?
+        SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
         WHERE status = 'active' AND expires_at <= ?
       `)
       .run(now, now);
@@ -908,6 +1484,14 @@ export class SqliteRunStore implements RunStore {
     if (options.resourceKey) {
       clauses.push("resource_key = ?");
       params.push(options.resourceKey);
+    }
+    if (options.workUnitId) {
+      clauses.push("work_unit_id = ?");
+      params.push(options.workUnitId);
+    }
+    if (options.attemptId) {
+      clauses.push("attempt_id = ?");
+      params.push(options.attemptId);
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
@@ -1530,6 +2114,11 @@ export class SqliteRunStore implements RunStore {
       .map(mapTeammateDirectMessage);
   }
 
+  getTeammateDirectMessage(id: string): TeammateDirectMessage | undefined {
+    const row = this.database.prepare(teammateDirectMessageSelectSql("WHERE id = ?")).get(id);
+    return row ? mapTeammateDirectMessage(row) : undefined;
+  }
+
   createTeammateDirectMessage(input: CreateTeammateDirectMessageInput, now: string): TeammateDirectMessage {
     const teammate = this.getAiTeammate(input.teammateId);
     if (!teammate) {
@@ -1595,6 +2184,44 @@ export class SqliteRunStore implements RunStore {
       throw new Error(`Failed to create teammate direct message: ${message.id}`);
     }
     return mapTeammateDirectMessage(created);
+  }
+
+  updateTeammateDirectMessageRuntime(
+    id: string,
+    input: {
+      readonly body?: string;
+      readonly status?: TeammateDirectMessage["status"];
+      readonly errorMessage?: string | null;
+      readonly linkedRunId?: string | null;
+    },
+    now: string,
+  ): TeammateDirectMessage | undefined {
+    const existing = this.database.prepare(teammateDirectMessageSelectSql("WHERE id = ?")).get(id);
+    if (!existing) {
+      return undefined;
+    }
+    const current = mapTeammateDirectMessage(existing);
+    this.database
+      .prepare(`
+        UPDATE teammate_direct_messages
+        SET
+          body = ?,
+          status = ?,
+          error_message = ?,
+          linked_run_id = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        input.body ?? current.body,
+        input.status ?? current.status,
+        input.errorMessage === undefined ? current.errorMessage ?? null : input.errorMessage,
+        input.linkedRunId === undefined ? current.linkedRunId ?? null : input.linkedRunId,
+        now,
+        id,
+      );
+    const updated = this.database.prepare(teammateDirectMessageSelectSql("WHERE id = ?")).get(id);
+    return updated ? mapTeammateDirectMessage(updated) : undefined;
   }
 
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage {
@@ -1671,6 +2298,42 @@ export class SqliteRunStore implements RunStore {
       throw new Error(`Failed to create channel message: ${message.id}`);
     }
     return created;
+  }
+
+  updateChannelMessageRuntime(
+    id: string,
+    input: {
+      readonly body?: string;
+      readonly status?: ChannelMessage["status"];
+      readonly errorMessage?: string | null;
+      readonly linkedRunId?: string | null;
+    },
+    now: string,
+  ): ChannelMessage | undefined {
+    const existing = this.getChannelMessage(id);
+    if (!existing) {
+      return undefined;
+    }
+    this.database
+      .prepare(`
+        UPDATE channel_messages
+        SET
+          body = ?,
+          status = ?,
+          error_message = ?,
+          linked_run_id = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        input.body ?? existing.body,
+        input.status ?? existing.status,
+        input.errorMessage === undefined ? existing.errorMessage ?? null : input.errorMessage,
+        input.linkedRunId === undefined ? existing.linkedRunId ?? null : input.linkedRunId,
+        now,
+        id,
+      );
+    return this.getChannelMessage(id);
   }
 
   getChannelMessage(id: string): ChannelMessage | undefined {
@@ -5538,6 +6201,190 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(CHANNEL_EXECUTION_PROPOSALS_MIGRATION_VERSION, CHANNEL_EXECUTION_PROPOSALS_MIGRATION_NAME);
       }
     }
+
+    const hasRuntimeSupervisorMigration = this.hasMigration(RUNTIME_SUPERVISOR_MIGRATION_VERSION);
+    if (
+      !hasRuntimeSupervisorMigration ||
+      !this.hasColumn("run_sessions", "work_unit_id") ||
+      !this.hasTable("work_units") ||
+      !this.hasTable("work_unit_attempts") ||
+      !this.hasTable("runtime_events") ||
+      !this.hasTable("runtime_heartbeats") ||
+      !this.hasTable("runtime_semaphore_slots") ||
+      !this.hasColumn("resource_leases", "last_renewed_at") ||
+      !this.hasColumn("resource_leases", "release_reason") ||
+      !this.hasColumn("resource_leases", "work_unit_id") ||
+      !this.hasColumn("resource_leases", "attempt_id")
+    ) {
+      if (!this.hasColumn("run_sessions", "work_unit_id")) {
+        this.database.exec("ALTER TABLE run_sessions ADD COLUMN work_unit_id TEXT;");
+      }
+      if (!this.hasColumn("resource_leases", "last_renewed_at")) {
+        this.database.exec("ALTER TABLE resource_leases ADD COLUMN last_renewed_at TEXT;");
+        this.database.exec("UPDATE resource_leases SET last_renewed_at = acquired_at WHERE last_renewed_at IS NULL;");
+      }
+      if (!this.hasColumn("resource_leases", "release_reason")) {
+        this.database.exec("ALTER TABLE resource_leases ADD COLUMN release_reason TEXT;");
+      }
+      if (!this.hasColumn("resource_leases", "work_unit_id")) {
+        this.database.exec("ALTER TABLE resource_leases ADD COLUMN work_unit_id TEXT;");
+      }
+      if (!this.hasColumn("resource_leases", "attempt_id")) {
+        this.database.exec("ALTER TABLE resource_leases ADD COLUMN attempt_id TEXT;");
+      }
+
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS work_units (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          owner_type TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          channel_id TEXT,
+          task_id TEXT,
+          teammate_id TEXT,
+          provider_preset_id TEXT,
+          runner_id TEXT,
+          idempotency_key TEXT NOT NULL,
+          status TEXT NOT NULL,
+          priority INTEGER NOT NULL,
+          attempt_count INTEGER NOT NULL,
+          active_attempt_id TEXT,
+          created_by_client_id TEXT,
+          created_by_actor TEXT NOT NULL,
+          request_json TEXT NOT NULL,
+          timeout_policy_json TEXT NOT NULL,
+          linked_run_id TEXT,
+          linked_message_id TEXT,
+          linked_media_job_id TEXT,
+          linked_external_work_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          ended_at TEXT,
+          last_event_at TEXT,
+          last_heartbeat_at TEXT,
+          error_code TEXT,
+          error_message TEXT,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(linked_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_work_units_idempotency
+        ON work_units(workspace_id, kind, owner_type, owner_id, idempotency_key);
+
+        CREATE INDEX IF NOT EXISTS idx_work_units_status_priority
+        ON work_units(workspace_id, status, priority, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_work_units_owner
+        ON work_units(workspace_id, owner_type, owner_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_work_units_linked_run
+        ON work_units(linked_run_id);
+
+        CREATE INDEX IF NOT EXISTS idx_run_sessions_work_unit
+        ON run_sessions(work_unit_id);
+
+        CREATE TABLE IF NOT EXISTS work_unit_attempts (
+          id TEXT PRIMARY KEY,
+          work_unit_id TEXT NOT NULL,
+          attempt_number INTEGER NOT NULL,
+          runtime_instance_id TEXT NOT NULL,
+          runner_id TEXT NOT NULL,
+          provider_preset_id TEXT,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          ended_at TEXT,
+          last_event_at TEXT,
+          last_heartbeat_at TEXT,
+          abort_requested_at TEXT,
+          error_code TEXT,
+          error_message TEXT,
+          FOREIGN KEY(work_unit_id) REFERENCES work_units(id) ON DELETE CASCADE,
+          UNIQUE(work_unit_id, attempt_number)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_work_unit_attempts_work_unit
+        ON work_unit_attempts(work_unit_id, attempt_number);
+
+        CREATE INDEX IF NOT EXISTS idx_work_unit_attempts_runtime
+        ON work_unit_attempts(runtime_instance_id, status);
+
+        CREATE TABLE IF NOT EXISTS runtime_events (
+          id TEXT PRIMARY KEY,
+          work_unit_id TEXT NOT NULL,
+          attempt_id TEXT,
+          seq INTEGER NOT NULL,
+          ts TEXT NOT NULL,
+          type TEXT NOT NULL,
+          actor TEXT NOT NULL,
+          data_json TEXT NOT NULL,
+          FOREIGN KEY(work_unit_id) REFERENCES work_units(id) ON DELETE CASCADE,
+          FOREIGN KEY(attempt_id) REFERENCES work_unit_attempts(id) ON DELETE SET NULL,
+          UNIQUE(work_unit_id, seq)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_events_work_unit_seq
+        ON runtime_events(work_unit_id, seq);
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_events_type_ts
+        ON runtime_events(type, ts);
+
+        CREATE TABLE IF NOT EXISTS runtime_heartbeats (
+          id TEXT PRIMARY KEY,
+          work_unit_id TEXT NOT NULL,
+          attempt_id TEXT NOT NULL,
+          runtime_instance_id TEXT NOT NULL,
+          ts TEXT NOT NULL,
+          source TEXT NOT NULL,
+          detail_json TEXT,
+          FOREIGN KEY(work_unit_id) REFERENCES work_units(id) ON DELETE CASCADE,
+          FOREIGN KEY(attempt_id) REFERENCES work_unit_attempts(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_heartbeats_attempt_ts
+        ON runtime_heartbeats(attempt_id, ts);
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_heartbeats_runtime_ts
+        ON runtime_heartbeats(runtime_instance_id, ts);
+
+        CREATE TABLE IF NOT EXISTS runtime_semaphore_slots (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          resource_type TEXT NOT NULL,
+          resource_key TEXT NOT NULL,
+          owner_type TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          work_unit_id TEXT NOT NULL,
+          attempt_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          acquired_at TEXT NOT NULL,
+          last_renewed_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          released_at TEXT,
+          release_reason TEXT,
+          FOREIGN KEY(work_unit_id) REFERENCES work_units(id) ON DELETE CASCADE,
+          FOREIGN KEY(attempt_id) REFERENCES work_unit_attempts(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_semaphore_active
+        ON runtime_semaphore_slots(workspace_id, resource_type, resource_key, status, expires_at);
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_semaphore_owner
+        ON runtime_semaphore_slots(owner_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_semaphore_work_unit
+        ON runtime_semaphore_slots(work_unit_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_resource_leases_work_unit
+        ON resource_leases(work_unit_id, attempt_id, status);
+      `);
+
+      if (!hasRuntimeSupervisorMigration) {
+        this.recordMigration(RUNTIME_SUPERVISOR_MIGRATION_VERSION, RUNTIME_SUPERVISOR_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -5656,6 +6503,13 @@ export class SqliteRunStore implements RunStore {
 
   private nextEventSeq(runId: string): number {
     const row = this.database.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM run_events WHERE run_id = ?").get(runId);
+    return readNumber(row, "next_seq");
+  }
+
+  private nextRuntimeEventSeq(workUnitId: string): number {
+    const row = this.database
+      .prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM runtime_events WHERE work_unit_id = ?")
+      .get(workUnitId);
     return readNumber(row, "next_seq");
   }
 
@@ -5857,6 +6711,7 @@ function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
     providerSnapshot: parseJson(readString(row, "provider_snapshot_json")),
     requestSnapshot: parseJson(readString(row, "request_snapshot_json")),
     eventLogPath: readString(row, "event_log_path"),
+    workUnitId: readNullableString(row, "work_unit_id"),
     summaryPath: readNullableString(row, "summary_path"),
     errorMessage: readNullableString(row, "error_message"),
     createdAt: readString(row, "created_at"),
@@ -6413,6 +7268,94 @@ function mapStateTransitionEvent(row: Record<string, SQLOutputValue>): StateTran
   });
 }
 
+function mapWorkUnit(row: Record<string, SQLOutputValue>): WorkUnit {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    kind: readString(row, "kind") as WorkUnitKind,
+    ownerType: readString(row, "owner_type"),
+    ownerId: readString(row, "owner_id"),
+    channelId: readNullableString(row, "channel_id"),
+    taskId: readNullableString(row, "task_id"),
+    teammateId: readNullableString(row, "teammate_id"),
+    providerPresetId: readNullableString(row, "provider_preset_id"),
+    runnerId: readNullableString(row, "runner_id"),
+    idempotencyKey: readString(row, "idempotency_key"),
+    status: readString(row, "status") as WorkUnitStatus,
+    priority: readNumber(row, "priority"),
+    attemptCount: readNumber(row, "attempt_count"),
+    activeAttemptId: readNullableString(row, "active_attempt_id"),
+    createdByClientId: readNullableString(row, "created_by_client_id"),
+    createdByActor: readString(row, "created_by_actor") as WorkUnit["createdByActor"],
+    request: parseJson(readString(row, "request_json")),
+    timeoutPolicy: parseRuntimeTimeoutPolicy(readString(row, "timeout_policy_json")),
+    linkedRunId: readNullableString(row, "linked_run_id"),
+    linkedMessageId: readNullableString(row, "linked_message_id"),
+    linkedMediaJobId: readNullableString(row, "linked_media_job_id"),
+    linkedExternalWorkId: readNullableString(row, "linked_external_work_id"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    startedAt: readNullableString(row, "started_at"),
+    endedAt: readNullableString(row, "ended_at"),
+    lastEventAt: readNullableString(row, "last_event_at"),
+    lastHeartbeatAt: readNullableString(row, "last_heartbeat_at"),
+    errorCode: readNullableString(row, "error_code"),
+    errorMessage: readNullableString(row, "error_message"),
+  });
+}
+
+function mapWorkUnitAttempt(row: Record<string, SQLOutputValue>): WorkUnitAttempt {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workUnitId: readString(row, "work_unit_id"),
+    attemptNumber: readNumber(row, "attempt_number"),
+    runtimeInstanceId: readString(row, "runtime_instance_id"),
+    runnerId: readString(row, "runner_id"),
+    providerPresetId: readNullableString(row, "provider_preset_id"),
+    status: readString(row, "status") as WorkUnitAttemptStatus,
+    createdAt: readString(row, "created_at"),
+    startedAt: readNullableString(row, "started_at"),
+    endedAt: readNullableString(row, "ended_at"),
+    lastEventAt: readNullableString(row, "last_event_at"),
+    lastHeartbeatAt: readNullableString(row, "last_heartbeat_at"),
+    abortRequestedAt: readNullableString(row, "abort_requested_at"),
+    errorCode: readNullableString(row, "error_code"),
+    errorMessage: readNullableString(row, "error_message"),
+  });
+}
+
+function mapRuntimeEvent(row: Record<string, SQLOutputValue>): RuntimeEvent {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workUnitId: readString(row, "work_unit_id"),
+    attemptId: readNullableString(row, "attempt_id"),
+    seq: readNumber(row, "seq"),
+    ts: readString(row, "ts"),
+    type: readString(row, "type") as RuntimeEventType,
+    actor: readString(row, "actor") as RuntimeEvent["actor"],
+    data: parseJson(readString(row, "data_json")),
+  });
+}
+
+function mapRuntimeSemaphoreSlot(row: Record<string, SQLOutputValue>): RuntimeSemaphoreSlot {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    resourceType: readString(row, "resource_type") as RuntimeSemaphoreResourceType,
+    resourceKey: readString(row, "resource_key"),
+    ownerType: readString(row, "owner_type") as RuntimeSemaphoreSlot["ownerType"],
+    ownerId: readString(row, "owner_id"),
+    workUnitId: readString(row, "work_unit_id"),
+    attemptId: readString(row, "attempt_id"),
+    status: readString(row, "status") as RuntimeSemaphoreSlotStatus,
+    acquiredAt: readString(row, "acquired_at"),
+    lastRenewedAt: readString(row, "last_renewed_at"),
+    expiresAt: readString(row, "expires_at"),
+    releasedAt: readNullableString(row, "released_at"),
+    releaseReason: readNullableString(row, "release_reason"),
+  });
+}
+
 function mapResourceLease(row: Record<string, SQLOutputValue>): ResourceLease {
   return omitUndefined({
     id: readString(row, "id"),
@@ -6424,7 +7367,11 @@ function mapResourceLease(row: Record<string, SQLOutputValue>): ResourceLease {
     status: readString(row, "status") as ResourceLeaseStatus,
     acquiredAt: readString(row, "acquired_at"),
     expiresAt: readString(row, "expires_at"),
+    lastRenewedAt: readNullableString(row, "last_renewed_at"),
     releasedAt: readNullableString(row, "released_at"),
+    releaseReason: readNullableString(row, "release_reason"),
+    workUnitId: readNullableString(row, "work_unit_id"),
+    attemptId: readNullableString(row, "attempt_id"),
   });
 }
 
@@ -6452,6 +7399,25 @@ function parseChannelRuntimePolicy(value: string): ChannelRuntimePolicy {
     allowReadOnlyParallel: typeof parsed.allowReadOnlyParallel === "boolean" ? parsed.allowReadOnlyParallel : undefined,
     queueOnConflict: typeof parsed.queueOnConflict === "boolean" ? parsed.queueOnConflict : undefined,
   });
+}
+
+function parseRuntimeTimeoutPolicy(value: string): RuntimeTimeoutPolicy {
+  try {
+    const parsed = parseJsonObject(value);
+    return {
+      heartbeatIntervalMs: readRuntimePolicyNumber(parsed.heartbeatIntervalMs, defaultRuntimeTimeoutPolicy.heartbeatIntervalMs),
+      heartbeatTimeoutMs: readRuntimePolicyNumber(parsed.heartbeatTimeoutMs, defaultRuntimeTimeoutPolicy.heartbeatTimeoutMs),
+      idleTimeoutMs: readRuntimePolicyNumber(parsed.idleTimeoutMs, defaultRuntimeTimeoutPolicy.idleTimeoutMs),
+      hardTimeoutMs: readRuntimePolicyNumber(parsed.hardTimeoutMs, defaultRuntimeTimeoutPolicy.hardTimeoutMs),
+      cancelGraceMs: readRuntimePolicyNumber(parsed.cancelGraceMs, defaultRuntimeTimeoutPolicy.cancelGraceMs),
+    };
+  } catch {
+    return defaultRuntimeTimeoutPolicy;
+  }
+}
+
+function readRuntimePolicyNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
 function channelSelectSql(whereClause: string): string {
@@ -6504,8 +7470,112 @@ function resourceLeaseSelectSql(whereClause: string): string {
       status,
       acquired_at,
       expires_at,
-      released_at
+      last_renewed_at,
+      released_at,
+      release_reason,
+      work_unit_id,
+      attempt_id
     FROM resource_leases
+    ${whereClause}
+  `;
+}
+
+function workUnitSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      kind,
+      owner_type,
+      owner_id,
+      channel_id,
+      task_id,
+      teammate_id,
+      provider_preset_id,
+      runner_id,
+      idempotency_key,
+      status,
+      priority,
+      attempt_count,
+      active_attempt_id,
+      created_by_client_id,
+      created_by_actor,
+      request_json,
+      timeout_policy_json,
+      linked_run_id,
+      linked_message_id,
+      linked_media_job_id,
+      linked_external_work_id,
+      created_at,
+      updated_at,
+      started_at,
+      ended_at,
+      last_event_at,
+      last_heartbeat_at,
+      error_code,
+      error_message
+    FROM work_units
+    ${whereClause}
+  `;
+}
+
+function workUnitAttemptSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      work_unit_id,
+      attempt_number,
+      runtime_instance_id,
+      runner_id,
+      provider_preset_id,
+      status,
+      created_at,
+      started_at,
+      ended_at,
+      last_event_at,
+      last_heartbeat_at,
+      abort_requested_at,
+      error_code,
+      error_message
+    FROM work_unit_attempts
+    ${whereClause}
+  `;
+}
+
+function runtimeEventSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      work_unit_id,
+      attempt_id,
+      seq,
+      ts,
+      type,
+      actor,
+      data_json
+    FROM runtime_events
+    ${whereClause}
+  `;
+}
+
+function runtimeSemaphoreSlotSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      resource_type,
+      resource_key,
+      owner_type,
+      owner_id,
+      work_unit_id,
+      attempt_id,
+      status,
+      acquired_at,
+      last_renewed_at,
+      expires_at,
+      released_at,
+      release_reason
+    FROM runtime_semaphore_slots
     ${whereClause}
   `;
 }

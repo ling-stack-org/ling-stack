@@ -38,6 +38,7 @@ Related docs:
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
 - [State machines and recovery](state-machine-recovery.md)
+- [Runtime Supervisor](runtime-supervisor.md)
 - [Daemon API](../daemon-api.md)
 
 External pattern references:

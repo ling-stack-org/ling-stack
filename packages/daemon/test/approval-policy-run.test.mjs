@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { createSqliteRunStore } from "../../core/dist/index.js";
+import { DEFAULT_WORKSPACE_ID, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 
 test("health includes the configured default workspace cwd", async () => {
@@ -1233,12 +1233,14 @@ test("write runs in channels sharing a bound path conflict through resource leas
       boundPath: cwd,
       allowedTools: ["read", "write"],
       defaultProviderPresetId: provider.provider.id,
+      runtimePolicy: { queueOnConflict: false },
     });
     const secondChannel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Engineering B",
       boundPath: cwd,
       allowedTools: ["read", "write"],
       defaultProviderPresetId: provider.provider.id,
+      runtimePolicy: { queueOnConflict: false },
     });
     const firstTask = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
       channelId: firstChannel.channel.id,
@@ -1290,6 +1292,292 @@ test("write runs in channels sharing a bound path conflict through resource leas
 
     const remainingLeases = await getJson(`${daemon.url}/runtime/leases?cwd=${encodeURIComponent(cwd)}&status=active`);
     assert.equal(remainingLeases.leases.some((lease) => lease.ownerId === runId), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("queueOnConflict persists a queued run and work unit instead of starting another runner", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-bound-path-queue-"));
+  const runner = new BlockingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const firstChannel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering A",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+      runtimePolicy: { queueOnConflict: true },
+    });
+    const secondChannel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering B",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+      runtimePolicy: { queueOnConflict: true },
+    });
+    const firstTask = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: firstChannel.channel.id,
+      title: "First writer",
+      prompt: "Hold the path lock.",
+    });
+    const secondTask = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: secondChannel.channel.id,
+      title: "Second writer",
+      prompt: "Queue for the path lock.",
+    });
+
+    const firstResponse = await postTaskRunStream(daemon.url, cwd, firstTask.task.id, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["write"],
+      idempotencyKey: "first-queued-writer",
+    });
+    const firstSse = createSseReader(firstResponse);
+    const firstReady = await firstSse.nextEvent();
+    assert.equal(firstReady.event, "ready");
+    await runner.waitUntilStarted();
+
+    const queuedResponse = await postTaskRunStream(daemon.url, cwd, secondTask.task.id, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["write"],
+      idempotencyKey: "second-queued-writer",
+    });
+    const queuedEvents = parseSseText(await queuedResponse.text());
+    assert.equal(queuedEvents[0].event, "ready");
+    assert.equal(queuedEvents[0].data.queued, true);
+    assert.equal(queuedEvents[0].data.queueReason, "resource_conflict");
+    assert.equal(runner.runs.length, 1);
+
+    const queuedRunId = queuedEvents[0].data.runId;
+    const queuedWorkUnitId = queuedEvents[0].data.workUnitId;
+    const queuedRuns = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}&status=queued&limit=20`);
+    assert.equal(queuedRuns.runs.some((run) => run.id === queuedRunId && run.workUnitId === queuedWorkUnitId), true);
+
+    const supervisor = await getJson(`${daemon.url}/runtime/supervisor?cwd=${encodeURIComponent(cwd)}`);
+    const queuedWorkUnit = supervisor.queued.find((workUnit) => workUnit.id === queuedWorkUnitId);
+    assert.ok(queuedWorkUnit);
+    assert.equal(queuedWorkUnit.linkedRunId, queuedRunId);
+    assert.equal(queuedWorkUnit.status, "queued");
+
+    const detail = await getJson(`${daemon.url}/work-units/${encodeURIComponent(queuedWorkUnitId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.run.status, "queued");
+    assert.equal(detail.events.some((event) => event.type === "work_unit_queued"), true);
+    assert.equal(detail.leases.some((lease) => lease.status === "active"), false);
+    assert.equal(detail.semaphoreSlots.some((slot) => slot.status === "active"), false);
+
+    runner.release();
+    await firstSse.collectRemaining();
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runtime diagnostics expose the same daemon-owned work unit to web and desktop-style clients", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-runtime-diagnostics-"));
+  const runner = new BlockingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const task = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      title: "Shared runtime task",
+      prompt: "Hold active runtime state.",
+    });
+
+    const response = await postTaskRunStream(daemon.url, cwd, task.task.id, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["read", "write"],
+      idempotencyKey: "shared-runtime-client-key",
+    });
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const runId = ready.data.runId;
+    await runner.waitUntilStarted();
+
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(run.workUnitId);
+    const webRuntime = await getJson(`${daemon.url}/runtime?cwd=${encodeURIComponent(cwd)}`);
+    const desktopRuntime = await getJson(`${daemon.url}/runtime?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(webRuntime.runtime.runtimeInstanceId, desktopRuntime.runtime.runtimeInstanceId);
+
+    const listed = await getJson(`${daemon.url}/work-units?cwd=${encodeURIComponent(cwd)}&linkedRunId=${encodeURIComponent(runId)}`);
+    assert.equal(listed.workUnits.length, 1);
+    assert.equal(listed.workUnits[0].id, run.workUnitId);
+    assert.equal(listed.workUnits[0].status, "running");
+
+    const detail = await getJson(`${daemon.url}/work-units/${encodeURIComponent(run.workUnitId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.run.id, runId);
+    assert.equal(detail.workUnit.linkedRunId, runId);
+    assert.equal(detail.attempts.length, 1);
+    assert.equal(detail.events.some((event) => event.type === "work_unit_started"), true);
+    assert.equal(detail.leases.some((lease) => lease.workUnitId === run.workUnitId), true);
+
+    const eventReplay = await getJson(`${daemon.url}/work-units/${encodeURIComponent(run.workUnitId)}/events?cwd=${encodeURIComponent(cwd)}&afterSeq=0`);
+    assert.equal(eventReplay.workUnitId, run.workUnitId);
+    assert.ok(eventReplay.events.length >= 1);
+
+    const diagnostics = await getJson(`${daemon.url}/runtime/supervisor?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(diagnostics.runtime.runtimeInstanceId, webRuntime.runtime.runtimeInstanceId);
+    assert.equal(diagnostics.active.some((unit) => unit.id === run.workUnitId), true);
+    assert.equal(diagnostics.leases.some((lease) => lease.workUnitId === run.workUnitId), true);
+
+    const active = await getJson(`${daemon.url}/runtime/active?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(active.workUnits.some((unit) => unit.id === run.workUnitId), true);
+    const leases = await getJson(`${daemon.url}/runtime/leases?cwd=${encodeURIComponent(cwd)}&status=active&workUnitId=${encodeURIComponent(run.workUnitId)}`);
+    assert.equal(leases.leases.every((lease) => lease.workUnitId === run.workUnitId), true);
+    const semaphores = await getJson(`${daemon.url}/runtime/semaphores?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(Array.isArray(semaphores.semaphoreSlots));
+
+    runner.release();
+    await sse.collectRemaining();
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("work unit cancel cancels a linked active run without late success overwrite", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-work-unit-cancel-"));
+  const runner = new BlockingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const task = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      title: "Cancel by work unit",
+      prompt: "Cancel through the runtime supervisor.",
+    });
+
+    const response = await postTaskRunStream(daemon.url, cwd, task.task.id, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["read", "write"],
+      idempotencyKey: "work-unit-cancel-key",
+    });
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const runId = ready.data.runId;
+    await runner.waitUntilStarted();
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(run.workUnitId);
+
+    const cancelled = await postJson(`${daemon.url}/work-units/${encodeURIComponent(run.workUnitId)}/cancel?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cancelled.workUnit.status, "cancelled");
+    const cancelledRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(cancelledRun.status, "cancelled");
+
+    runner.release();
+    await sse.collectRemaining();
+    const finalRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(finalRun.status, "cancelled");
+    const detail = await getJson(`${daemon.url}/work-units/${encodeURIComponent(run.workUnitId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.events.some((event) => event.type === "work_unit_cancelled"), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("work unit retry and reconcile APIs operate on durable supervisor state", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-work-unit-controls-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused",
+    toolName: "read",
+    input: { path: "README.md" },
+  }));
+  try {
+    await getJson(`${daemon.url}/runtime?cwd=${encodeURIComponent(cwd)}`);
+
+    let store = createSqliteRunStore(cwd);
+    try {
+      store.createWorkUnit({
+        id: "wu_failed_retry",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        kind: "task_run",
+        ownerType: "task",
+        ownerId: "task_failed_retry",
+        idempotencyKey: "failed-retry-key",
+        status: "failed",
+        createdByActor: "system",
+        request: { prompt: "retry" },
+        now: "2026-06-04T01:00:00.000Z",
+      });
+      const running = store.createWorkUnit({
+        id: "wu_running_reconcile",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        kind: "task_run",
+        ownerType: "task",
+        ownerId: "task_running_reconcile",
+        idempotencyKey: "running-reconcile-key",
+        status: "running",
+        createdByActor: "system",
+        request: { prompt: "reconcile" },
+        now: "2026-06-04T01:01:00.000Z",
+      });
+      const attempt = store.createWorkUnitAttempt({
+        id: "attempt_running_reconcile",
+        workUnitId: running.id,
+        attemptNumber: 1,
+        runtimeInstanceId: "runtime_test",
+        runnerId: "runner_pi_embedded",
+        now: "2026-06-04T01:01:01.000Z",
+      });
+      store.acquireResourceLease({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        resourceType: "provider",
+        resourceKey: "provider_reconcile",
+        ownerType: "work_unit_attempt",
+        ownerId: attempt.id,
+        workUnitId: running.id,
+        attemptId: attempt.id,
+        acquiredAt: "2026-06-04T01:01:02.000Z",
+        expiresAt: "2026-06-04T01:11:02.000Z",
+      });
+      store.acquireRuntimeSemaphoreSlot({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        resourceType: "provider",
+        resourceKey: "provider_reconcile",
+        limit: 1,
+        ownerType: "work_unit_attempt",
+        ownerId: attempt.id,
+        workUnitId: running.id,
+        attemptId: attempt.id,
+        acquiredAt: "2026-06-04T01:01:03.000Z",
+        expiresAt: "2026-06-04T01:11:03.000Z",
+      });
+    } finally {
+      store.close();
+    }
+
+    const retried = await postJson(`${daemon.url}/work-units/wu_failed_retry/retry?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(retried.workUnit.status, "queued");
+    assert.equal(retried.event.type, "work_unit_queued");
+
+    const reconciled = await postJson(`${daemon.url}/work-units/wu_running_reconcile/reconcile?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(reconciled.workUnit.status, "stale");
+    const detail = await getJson(`${daemon.url}/work-units/wu_running_reconcile?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.attempts[0].status, "lost");
+    assert.equal(detail.leases.some((lease) => lease.status === "active"), false);
+    assert.equal(detail.semaphoreSlots.some((slot) => slot.status === "active"), false);
+    assert.equal(detail.events.some((event) => event.type === "work_unit_stale"), true);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

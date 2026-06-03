@@ -80,10 +80,14 @@ import type {
   ProviderMutationResponse,
   ProviderSecretResponse,
   ProviderTemplateListResponse,
+  ListResourceLeasesRequest,
   ResourceLeaseListResponse,
   ReplaceTeammateChannelMembershipRequest,
   ReplaceTeammateMemoryScopesRequest,
   ReplaceTeammateSkillBindingsRequest,
+  RuntimeDiagnosticsResponse,
+  RuntimeResponse,
+  RuntimeSemaphoreListResponse,
   RunCancelResponse,
   RunArtifactListResponse,
   RunEventsResponse,
@@ -119,6 +123,12 @@ import type {
   UpdateChannelRequest,
   UpdateTaskRequest,
   StartChannelWorkflowStepRequest,
+  WorkUnitDetailResponse,
+  WorkUnitEventsResponse,
+  WorkUnitKind,
+  WorkUnitListResponse,
+  WorkUnitMutationResponse,
+  WorkUnitStatus,
 } from "./types.js";
 
 export const daemonBaseUrl = daemonBaseUrlFromEnv(import.meta.env as Record<string, string | undefined>);
@@ -481,9 +491,56 @@ export async function listStateTransitions(
 
 export async function listResourceLeases(
   cwd: string,
-  options: { readonly status?: "active" | "released" | "expired"; readonly ownerId?: string; readonly limit?: number } = {},
+  options: ListResourceLeasesRequest = {},
 ): Promise<ResourceLeaseListResponse> {
   return daemonClient.listResourceLeases(cwd, options);
+}
+
+export async function getRuntime(cwd: string): Promise<RuntimeResponse> {
+  return daemonClient.getRuntime(cwd);
+}
+
+export async function getRuntimeDiagnostics(cwd: string): Promise<RuntimeDiagnosticsResponse> {
+  return daemonClient.getRuntimeDiagnostics(cwd);
+}
+
+export async function listRuntimeSemaphores(cwd: string): Promise<RuntimeSemaphoreListResponse> {
+  return daemonClient.listRuntimeSemaphores(cwd);
+}
+
+export async function listWorkUnits(
+  cwd: string,
+  options: {
+    readonly status?: WorkUnitStatus;
+    readonly kind?: WorkUnitKind;
+    readonly ownerType?: string;
+    readonly ownerId?: string;
+    readonly channelId?: string;
+    readonly linkedRunId?: string;
+    readonly limit?: number;
+  } = {},
+): Promise<WorkUnitListResponse> {
+  return daemonClient.listWorkUnits(cwd, options);
+}
+
+export async function getWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitDetailResponse> {
+  return daemonClient.getWorkUnit(cwd, workUnitId);
+}
+
+export async function getWorkUnitEvents(cwd: string, workUnitId: string, afterSeq?: number): Promise<WorkUnitEventsResponse> {
+  return daemonClient.getWorkUnitEvents(cwd, workUnitId, afterSeq);
+}
+
+export async function cancelWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
+  return daemonClient.cancelWorkUnit(cwd, workUnitId);
+}
+
+export async function retryWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
+  return daemonClient.retryWorkUnit(cwd, workUnitId);
+}
+
+export async function reconcileWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
+  return daemonClient.reconcileWorkUnit(cwd, workUnitId);
 }
 
 export async function getSecretStatus(ref: string, purpose?: SecretPurpose): Promise<SecretStatusResponse> {

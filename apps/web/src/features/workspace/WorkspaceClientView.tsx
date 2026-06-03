@@ -78,6 +78,7 @@ import {
   type ChannelAttentionQueueTarget,
 } from "../../lib/channel-activity-views.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
+import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { buildRunRepairHint, displayLinkedRunStatus, readRunWorkspaceCwd } from "../../lib/run-evidence.js";
 import { defaultTools, riskyTools } from "../../lib/tools.js";
@@ -87,6 +88,7 @@ import {
   providerPreflightReady,
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
+import { CiTriageAuditPanel } from "../external-work/CiTriageAuditPanel.js";
 import { ArtifactRow, AvatarInitial, MetaRow, RunRepairHintBanner, StatusBadge } from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
@@ -108,6 +110,7 @@ import type {
   ExternalWorkCiTriageView,
   ProviderPreset,
   ResourceLease,
+  RuntimeDiagnosticsResponse,
   RunArtifact,
   RunSession,
   StateTransitionEvent,
@@ -116,6 +119,7 @@ import type {
   TaskRunActionState,
   TeammateChannelMembership,
   UpdateChannelBriefRequest,
+  WorkUnit,
 } from "../../types.js";
 import { ApprovalCard, type ApprovalResolution } from "../approvals/index.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
@@ -256,6 +260,10 @@ export function WorkspaceClientView({
   approvalsLoading,
   resolvingApprovals,
   resourceLeases,
+  runtimeDiagnostics,
+  workUnits,
+  runtimeLoading,
+  runtimeActionWorkUnitId,
   runs,
   runById,
   activeRunId,
@@ -306,6 +314,10 @@ export function WorkspaceClientView({
   onOpenRun,
   onOpenApprovals,
   onRefreshRunApprovals,
+  onRefreshRuntime,
+  onCancelWorkUnit,
+  onRetryWorkUnit,
+  onReconcileWorkUnit,
   onResolveApproval,
   onOpenProviders,
 }: {
@@ -358,6 +370,10 @@ export function WorkspaceClientView({
   readonly approvalsLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly resourceLeases: readonly ResourceLease[];
+  readonly runtimeDiagnostics: RuntimeDiagnosticsResponse | undefined;
+  readonly workUnits: readonly WorkUnit[];
+  readonly runtimeLoading: boolean;
+  readonly runtimeActionWorkUnitId: string;
   readonly runs: readonly RunSession[];
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly activeRunId: string;
@@ -415,6 +431,10 @@ export function WorkspaceClientView({
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onRefreshRunApprovals: () => void;
+  readonly onRefreshRuntime: () => void;
+  readonly onCancelWorkUnit: (workUnitId: string) => void;
+  readonly onRetryWorkUnit: (workUnitId: string) => void;
+  readonly onReconcileWorkUnit: (workUnitId: string) => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
 }): JSX.Element {
@@ -994,6 +1014,11 @@ export function WorkspaceClientView({
     setInspectorMode(mode);
     setSidePanelView("context");
     setSidePanelOpen(true);
+    if (mode === "runtime") {
+      onRefreshRuntime();
+    } else {
+      onRefreshChannelProtocol();
+    }
   }
 
   function openProgressPanel(): void {
@@ -1150,10 +1175,16 @@ export function WorkspaceClientView({
     setCreateTaskOpen(false);
   }
 
-  function activityActionRow(_activityItemId: string, children?: ReactNode): JSX.Element {
+  function activityActionRow(activityItemId: string, children?: ReactNode): JSX.Element {
     return (
       <div className="activity-action-row">
         {children}
+        {auditActivityVisible ? (
+          <button className="secondary-button compact-button" type="button" onClick={() => setActivityDrilldownItemId(activityItemId)}>
+            <Info size={14} />
+            {t("Details")}
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -1227,7 +1258,7 @@ export function WorkspaceClientView({
   const sidePanelLoading = sidePanelView === "task"
     ? tasksLoading
     : sidePanelView === "context"
-      ? channelProtocolLoading
+      ? inspectorMode === "runtime" ? runtimeLoading : channelProtocolLoading
       : sidePanelView === "files"
         ? channelFilesLoading || channelRunArtifactsLoading
         : sidePanelView === "settings"
@@ -1243,7 +1274,11 @@ export function WorkspaceClientView({
       return;
     }
     if (sidePanelView === "context") {
-      onRefreshChannelProtocol();
+      if (inspectorMode === "runtime") {
+        onRefreshRuntime();
+      } else {
+        onRefreshChannelProtocol();
+      }
       return;
     }
     if (sidePanelView === "files") {
@@ -2370,10 +2405,14 @@ export function WorkspaceClientView({
         contextSummaries={channelContextSummaries}
         workflows={channelWorkflows}
         workflowSteps={channelWorkflowSteps}
+        runtimeDiagnostics={runtimeDiagnostics}
+        workUnits={workUnits}
         attachments={channelAttachments}
         linkPreviews={channelLinkPreviews}
         runningWorkflowStepId={runningWorkflowStepId}
         loading={channelProtocolLoading}
+        runtimeLoading={runtimeLoading}
+        runtimeActionWorkUnitId={runtimeActionWorkUnitId}
         selectedTask={selectedTask}
         onSupersedeDecision={onSupersedeDecision}
         onRejectDecision={onRejectDecision}
@@ -2382,6 +2421,10 @@ export function WorkspaceClientView({
         onStartWorkflowStep={onStartWorkflowStep}
         onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
         onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
+        onRefreshRuntime={onRefreshRuntime}
+        onCancelWorkUnit={onCancelWorkUnit}
+        onRetryWorkUnit={onRetryWorkUnit}
+        onReconcileWorkUnit={onReconcileWorkUnit}
       />
     </div>
   ) : sidePanelView === "settings" ? (
@@ -2403,7 +2446,7 @@ export function WorkspaceClientView({
       {taskDetailContent}
     </section>
   );
-  const attentionQueueVisible = attentionQueueOpen && !teammateManagerOpen && !sidePanelOpen && !activityToolsOpen && channelHasChatContent && attentionQueueItems.length > 0;
+  const attentionQueueVisible = attentionQueueOpen && !teammateManagerOpen && !sidePanelOpen && (activityToolsOpen || channelHasChatContent) && attentionQueueItems.length > 0;
 
   return (
     <div className="client-window task-workbench-window" aria-label={t("Workspace")}>
@@ -2425,23 +2468,38 @@ export function WorkspaceClientView({
               </button>
               {channelMoreOpen ? (
                 <div className="channel-more-menu" role="menu" aria-label={t("More channel views")}>
-                  {channelSidePanelRootViews.map((view) => (
-                    <button
-                      key={view}
-                      className={sidePanelOpen && sidePanelView === view ? "channel-more-item active" : "channel-more-item"}
+	                  {channelSidePanelRootViews.map((view) => (
+	                    <button
+	                      key={view}
+	                      className={sidePanelOpen && sidePanelView === view ? "channel-more-item active" : "channel-more-item"}
                       type="button"
                       role="menuitem"
                       onClick={() => openSidePanelView(view)}
                     >
                       {channelSidePanelIcon(view, 15)}
-                      <span>{t(channelSidePanelLabel(view))}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
+	                      <span>{t(channelSidePanelLabel(view))}</span>
+	                    </button>
+	                  ))}
+	                  <button
+	                    className={activityToolsOpen ? "channel-more-item active" : "channel-more-item"}
+	                    type="button"
+	                    role="menuitem"
+	                    onClick={() => {
+	                      setActivityToolsOpen(true);
+	                      setActivityFiltersExpanded(false);
+	                      setChannelMoreOpen(false);
+	                      setSidePanelOpen(false);
+	                      setTeammateManagerOpen(false);
+	                    }}
+	                  >
+	                    <SlidersHorizontal size={15} />
+	                    <span>{t("Activity filters")}</span>
+	                  </button>
+	                </div>
+	              ) : null}
+	            </div>
+	          </div>
+	        </div>
         <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
           <button
             ref={teammateManagerButtonRef}
@@ -2597,12 +2655,54 @@ export function WorkspaceClientView({
       >
         <section className="panel task-list-panel activity-tab-panel channel-chat-panel" aria-label={t("Channel activity")}>
           <div className="activity-shell">
-              <div className={activeThreadRoot ? "activity-chat-layout with-thread" : "activity-chat-layout"}>
-                <div className="activity-chat-main">
-                  <div className="message-feed-wrap">
-                    <div
-                      ref={messageFeedRef}
-                      className={messageFeedEmpty ? "message-feed message-feed-empty" : "message-feed"}
+	              <div className={activeThreadRoot ? "activity-chat-layout with-thread" : "activity-chat-layout"}>
+	                <div className="activity-chat-main">
+                  {auditActivityVisible ? (
+                    <div className="channel-activity-tools">
+                      <ActivityFilterToolbar
+                        search={activitySearch}
+                        categoryFilter={activityCategoryFilter}
+                        attentionFilter={activityAttentionFilter}
+                        savedViews={allActivitySavedViews}
+                        activeSavedViewId={activeActivityViewId}
+                        filtersExpanded={activityFiltersExpanded}
+                        savedViewCounts={savedViewCounts}
+                        selectedSavedView={selectedActivitySavedView}
+                        categoryCounts={activityCategoryCounts}
+                        attentionCounts={activityAttentionCounts}
+                        clearDisabled={!activityFiltersActive}
+                        customViewLimitReached={activitySavedViews.length >= maxCustomChannelActivitySavedViews}
+                        onSavedViewSelect={applyActivityView}
+                        onSaveView={saveActivityView}
+                        onRenameView={renameActivityView}
+                        onDeleteView={deleteActivityView}
+                        onFiltersExpandedChange={setActivityFiltersExpanded}
+                        onSearchChange={setActivitySearch}
+                        onCategoryFilterChange={setActivityCategoryFilter}
+                        onAttentionFilterChange={setActivityAttentionFilter}
+                        onClear={() => {
+                          setActivitySearch("");
+                          setActivityCategoryFilter("all");
+                          setActivityAttentionFilter("all");
+                          setActiveActivityViewId(allChannelActivitySavedViewId);
+                        }}
+                      />
+                      <CiTriageAuditPanel
+                        records={externalWorkCiTriage}
+                        loading={externalWorkCiTriageLoading}
+                        compact
+                        maxRecords={3}
+                        cwd={cwd}
+                        onRefresh={onRefreshExternalWorkCiTriage}
+                        onSelectTask={openTaskFromActivity}
+                        onOpenRun={openRunInPanel}
+                      />
+                    </div>
+                  ) : null}
+	                  <div className="message-feed-wrap">
+	                    <div
+	                      ref={messageFeedRef}
+	                      className={messageFeedEmpty ? "message-feed message-feed-empty" : "message-feed"}
                       aria-label={t("Channel message feed")}
                       onScroll={handleMessageFeedScroll}
                     >
@@ -2699,12 +2799,31 @@ export function WorkspaceClientView({
               <span className="channel-side-panel-title">
                 {channelSidePanelIcon(sidePanelView, 16)}
                 <strong>{sidePanelTitle}</strong>
-              </span>
-              <div className="channel-side-panel-actions">
-                <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
-                  {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-                </button>
-              </div>
+	              </span>
+	              <div className="channel-side-panel-actions">
+	                {(sidePanelView === "progress" || sidePanelView === "task") ? (
+	                  <button
+	                    className="icon-button"
+	                    type="button"
+	                    onClick={() => {
+	                      setCreateTaskOpen(true);
+	                      setSidePanelView("task");
+	                      setSidePanelOpen(true);
+	                      setActivityToolsOpen(false);
+	                      setAttentionQueueOpen(false);
+	                      setTeammateManagerOpen(false);
+	                    }}
+	                    disabled={!selectedChannelId}
+	                    aria-label={t("New task")}
+	                    title={t("New task")}
+	                  >
+	                    <Plus size={15} />
+	                  </button>
+	                ) : null}
+	                <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
+	                  {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+	                </button>
+	              </div>
             </div>
             <div className="channel-side-panel-nav" aria-label={t("Channel drawer pages")}>
               {channelSidePanelRootViews.map((view) => (
@@ -2744,10 +2863,14 @@ function ChannelInspector({
   contextSummaries,
   workflows,
   workflowSteps,
+  runtimeDiagnostics,
+  workUnits,
   attachments,
   linkPreviews,
   runningWorkflowStepId,
   loading,
+  runtimeLoading,
+  runtimeActionWorkUnitId,
   selectedTask,
   onSupersedeDecision,
   onRejectDecision,
@@ -2756,6 +2879,10 @@ function ChannelInspector({
   onStartWorkflowStep,
   onUpdateWorkflowStepStatus,
   onCreateTaskFromContextSummary,
+  onRefreshRuntime,
+  onCancelWorkUnit,
+  onRetryWorkUnit,
+  onReconcileWorkUnit,
 }: {
   readonly mode: ChannelInspectorMode;
   readonly onModeChange: (mode: ChannelInspectorMode) => void;
@@ -2780,10 +2907,14 @@ function ChannelInspector({
   readonly contextSummaries: readonly ChannelContextSummary[];
   readonly workflows: readonly ChannelWorkflow[];
   readonly workflowSteps: readonly ChannelWorkflowStep[];
+  readonly runtimeDiagnostics: RuntimeDiagnosticsResponse | undefined;
+  readonly workUnits: readonly WorkUnit[];
   readonly attachments: readonly ChannelAttachment[];
   readonly linkPreviews: readonly ChannelLinkPreview[];
   readonly runningWorkflowStepId: string;
   readonly loading: boolean;
+  readonly runtimeLoading: boolean;
+  readonly runtimeActionWorkUnitId: string;
   readonly selectedTask: Task | undefined;
   readonly onSupersedeDecision: (decision: ChannelDecision) => void;
   readonly onRejectDecision: (decision: ChannelDecision) => void;
@@ -2792,6 +2923,10 @@ function ChannelInspector({
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
+  readonly onRefreshRuntime: () => void;
+  readonly onCancelWorkUnit: (workUnitId: string) => void;
+  readonly onRetryWorkUnit: (workUnitId: string) => void;
+  readonly onReconcileWorkUnit: (workUnitId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const activeDecisions = decisions.filter((decision) => decision.status === "active");
@@ -2806,10 +2941,10 @@ function ChannelInspector({
           </button>
         ))}
       </div>
-      {loading ? (
+      {(mode === "runtime" ? runtimeLoading : loading) ? (
         <div className="client-empty-state compact">
           <Loader2 className="spin" />
-          <span>{t("Loading protocol...")}</span>
+          <span>{mode === "runtime" ? t("Loading runtime...") : t("Loading protocol...")}</span>
         </div>
       ) : null}
       {mode === "brief" ? (
@@ -2886,6 +3021,16 @@ function ChannelInspector({
       ) : null}
       {mode === "runtime" ? (
         <div className="runtime-protocol">
+          <RuntimeDiagnosticsPanel
+            diagnostics={runtimeDiagnostics}
+            workUnits={workUnits}
+            loading={runtimeLoading}
+            actionWorkUnitId={runtimeActionWorkUnitId}
+            onRefresh={onRefreshRuntime}
+            onCancelWorkUnit={onCancelWorkUnit}
+            onRetryWorkUnit={onRetryWorkUnit}
+            onReconcileWorkUnit={onReconcileWorkUnit}
+          />
           <div className="task-strip-head">
             <span><Workflow size={15} /><strong>{t("Workflow queue")}</strong></span>
             <small>{activeWorkflows.length}</small>
@@ -2943,6 +3088,227 @@ function ChannelInspector({
       ) : null}
     </section>
   );
+}
+
+function RuntimeDiagnosticsPanel({
+  diagnostics,
+  workUnits,
+  loading,
+  actionWorkUnitId,
+  onRefresh,
+  onCancelWorkUnit,
+  onRetryWorkUnit,
+  onReconcileWorkUnit,
+}: {
+  readonly diagnostics: RuntimeDiagnosticsResponse | undefined;
+  readonly workUnits: readonly WorkUnit[];
+  readonly loading: boolean;
+  readonly actionWorkUnitId: string;
+  readonly onRefresh: () => void;
+  readonly onCancelWorkUnit: (workUnitId: string) => void;
+  readonly onRetryWorkUnit: (workUnitId: string) => void;
+  readonly onReconcileWorkUnit: (workUnitId: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const active = diagnostics?.active ?? workUnits.filter(isActiveWorkUnit);
+  const queued = diagnostics?.queued ?? workUnits.filter((unit) => unit.status === "queued");
+  const stuck = diagnostics?.stuck ?? [];
+  const stale = diagnostics?.stale ?? workUnits.filter((unit) => unit.status === "stale");
+  const leases = diagnostics?.leases ?? [];
+  const semaphoreSlots = diagnostics?.semaphoreSlots ?? [];
+  const visibleUnits = uniqueWorkUnits([...stuck, ...active, ...queued, ...stale, ...workUnits]).slice(0, 8);
+
+  return (
+    <section className="runtime-diagnostics-panel" aria-label={t("Runtime diagnostics")}>
+      <div className="task-strip-head">
+        <span><Activity size={15} /><strong>{t("Runtime supervisor")}</strong></span>
+        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={loading}>
+          {loading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          {t("Refresh")}
+        </button>
+      </div>
+
+      {diagnostics ? (
+        <div className="run-evidence-grid runtime-supervisor-meta">
+          <MetaRow label={t("Runtime")} value={diagnostics.runtime.runtimeInstanceId} compact />
+          <MetaRow label={t("PID")} value={String(diagnostics.runtime.pid)} compact />
+          <MetaRow label={t("Status")} value={diagnostics.runtime.status} compact />
+          <MetaRow label={t("Started")} value={formatDateTime(diagnostics.runtime.startedAt)} compact />
+        </div>
+      ) : (
+        <div className="provider-run-notice compact">
+          <CircleAlert size={14} />
+          <span>{t("Runtime diagnostics are unavailable.")}</span>
+        </div>
+      )}
+
+      <div className="runtime-kpi-grid">
+        <div>
+          <span>{t("Active")}</span>
+          <strong>{active.length}</strong>
+        </div>
+        <div>
+          <span>{t("Queued")}</span>
+          <strong>{queued.length}</strong>
+        </div>
+        <div>
+          <span>{t("Stuck")}</span>
+          <strong>{stuck.length}</strong>
+        </div>
+        <div>
+          <span>{t("Stale")}</span>
+          <strong>{stale.length}</strong>
+        </div>
+      </div>
+
+      <div className="task-strip-head">
+        <span><Workflow size={15} /><strong>{t("Work units")}</strong></span>
+        <small>{visibleUnits.length}</small>
+      </div>
+      <ProtocolList
+        emptyLabel={t("No work units recorded")}
+        items={visibleUnits}
+        renderItem={(unit) => (
+          <WorkUnitDiagnosticsRow
+            key={unit.id}
+            workUnit={unit}
+            busy={actionWorkUnitId === unit.id}
+            onCancel={onCancelWorkUnit}
+            onRetry={onRetryWorkUnit}
+            onReconcile={onReconcileWorkUnit}
+          />
+        )}
+      />
+
+      <div className="task-strip-head">
+        <span><ShieldCheck size={15} /><strong>{t("Held leases")}</strong></span>
+        <small>{leases.length}</small>
+      </div>
+      <ProtocolList
+        emptyLabel={t("No held leases")}
+        items={leases.slice(0, 6)}
+        renderItem={(lease) => (
+          <div className="protocol-row compact runtime-resource-row" key={lease.id}>
+            <span>
+              <strong>{lease.resourceType}: {truncatePreview(lease.resourceKey, 42)}</strong>
+              <small>{lease.workUnitId ?? lease.ownerId} · {t("renewed")} {formatAge(lease.lastRenewedAt ?? lease.acquiredAt)}</small>
+            </span>
+            <StatusBadge status={lease.status} />
+          </div>
+        )}
+      />
+
+      <div className="task-strip-head">
+        <span><SlidersHorizontal size={15} /><strong>{t("Semaphores")}</strong></span>
+        <small>{semaphoreSlots.length}</small>
+      </div>
+      <ProtocolList
+        emptyLabel={t("No semaphore slots")}
+        items={semaphoreSlots.slice(0, 6)}
+        renderItem={(slot) => (
+          <div className="protocol-row compact runtime-resource-row" key={slot.id}>
+            <span>
+              <strong>{slot.resourceType}: {truncatePreview(slot.resourceKey, 42)}</strong>
+              <small>{slot.workUnitId} · {t("renewed")} {formatAge(slot.lastRenewedAt)}</small>
+            </span>
+            <StatusBadge status={slot.status} />
+          </div>
+        )}
+      />
+    </section>
+  );
+}
+
+function WorkUnitDiagnosticsRow({
+  workUnit,
+  busy,
+  onCancel,
+  onRetry,
+  onReconcile,
+}: {
+  readonly workUnit: WorkUnit;
+  readonly busy: boolean;
+  readonly onCancel: (workUnitId: string) => void;
+  readonly onRetry: (workUnitId: string) => void;
+  readonly onReconcile: (workUnitId: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const canCancel = ["queued", "claimed", "running", "waiting_for_approval"].includes(workUnit.status);
+  const canRetry = workUnit.status === "failed" || workUnit.status === "stale";
+  const canReconcile = ["claimed", "running", "waiting_for_approval", "cancelling", "stale"].includes(workUnit.status);
+  return (
+    <div className="protocol-row runtime-work-unit-row">
+      <span>
+        <strong>{workUnit.kind} · {workUnit.id}</strong>
+        <small>
+          {workUnit.ownerType}:{workUnit.ownerId}
+          {workUnit.linkedRunId ? ` · run:${workUnit.linkedRunId}` : ""}
+        </small>
+        <small>
+          {t("Last event")} {formatAge(workUnit.lastEventAt)}
+          {" · "}
+          {t("Last heartbeat")} {formatAge(workUnit.lastHeartbeatAt)}
+        </small>
+        {workUnit.errorMessage ? <small className="error-text">{workUnit.errorMessage}</small> : null}
+      </span>
+      <StatusBadge status={workUnit.status} />
+      <div className="activity-action-row">
+        {canCancel ? (
+          <button className="secondary-button compact-button" type="button" onClick={() => onCancel(workUnit.id)} disabled={busy}>
+            {busy ? <Loader2 className="spin" size={13} /> : <X size={13} />}
+            {t("Cancel")}
+          </button>
+        ) : null}
+        {canRetry ? (
+          <button className="secondary-button compact-button" type="button" onClick={() => onRetry(workUnit.id)} disabled={busy}>
+            {busy ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}
+            {t("Retry")}
+          </button>
+        ) : null}
+        {canReconcile ? (
+          <button className="secondary-button compact-button" type="button" onClick={() => onReconcile(workUnit.id)} disabled={busy}>
+            {busy ? <Loader2 className="spin" size={13} /> : <FileCheck2 size={13} />}
+            {t("Reconcile")}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function isActiveWorkUnit(workUnit: WorkUnit): boolean {
+  return ["claimed", "running", "waiting_for_approval", "cancelling"].includes(workUnit.status);
+}
+
+function uniqueWorkUnits(workUnits: readonly WorkUnit[]): readonly WorkUnit[] {
+  const byId = new Map<string, WorkUnit>();
+  for (const unit of workUnits) {
+    byId.set(unit.id, unit);
+  }
+  return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function formatAge(value: string | undefined): string {
+  if (!value) {
+    return "-";
+  }
+  const ts = Date.parse(value);
+  if (!Number.isFinite(ts)) {
+    return "-";
+  }
+  const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) {
+    return `${hours}h`;
+  }
+  return `${Math.floor(hours / 24)}d`;
 }
 
 function ProtocolList<T>({

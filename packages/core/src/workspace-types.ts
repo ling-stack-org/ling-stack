@@ -261,7 +261,7 @@ export interface TeammateDirectThread {
   readonly updatedAt: string;
 }
 
-export type TeammateDirectMessageStatus = "ready" | "blocked" | "failed";
+export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "failed";
 
 export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
 
@@ -326,7 +326,7 @@ export interface ChannelMessage {
   readonly linkPreviewIds: readonly string[];
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
-  readonly status: "ready" | "blocked" | "failed";
+  readonly status: "pending" | "ready" | "blocked" | "failed";
   readonly errorMessage?: string;
   readonly createdAt: string;
   readonly updatedAt: string;

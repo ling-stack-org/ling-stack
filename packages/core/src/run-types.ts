@@ -99,9 +99,26 @@ import type {
   StateTransitionActor,
   TaskTransitionEvent,
   TransitionResult,
+  WorkUnitTransitionEvent,
   WorkflowStepTransitionEvent,
   WorkflowTransitionEvent,
 } from "./state-machines.js";
+import type {
+  AcquireRuntimeSemaphoreSlotInput,
+  AppendRuntimeEventInput,
+  CreateWorkUnitAttemptInput,
+  CreateWorkUnitInput,
+  ListRuntimeEventsOptions,
+  ListRuntimeSemaphoreSlotsOptions,
+  ListWorkUnitsOptions,
+  RecordRuntimeHeartbeatInput,
+  RuntimeEvent,
+  RuntimeHeartbeat,
+  RuntimeSemaphoreSlot,
+  WorkUnit,
+  WorkUnitAttempt,
+  WorkUnitStatus,
+} from "./runtime-supervisor-types.js";
 import type {
   CreateExternalWorkActionInput,
   CreateExternalWorkCiTriageInput,
@@ -158,6 +175,7 @@ export interface RunSession {
   readonly providerSnapshot: unknown;
   readonly requestSnapshot: unknown;
   readonly eventLogPath: string;
+  readonly workUnitId?: string;
   readonly summaryPath?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;
@@ -187,6 +205,7 @@ export interface CreateRunInput {
   readonly taskSnapshot: unknown;
   readonly providerSnapshot: unknown;
   readonly requestSnapshot: unknown;
+  readonly workUnitId?: string;
   readonly createdAt: string;
 }
 
@@ -254,6 +273,53 @@ export interface RunStore {
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
   countEvents(runId: string): number;
+  createWorkUnit(input: CreateWorkUnitInput): WorkUnit;
+  getWorkUnit(workUnitId: string): WorkUnit | undefined;
+  listWorkUnits(options?: ListWorkUnitsOptions): WorkUnit[];
+  findWorkUnitByIdempotency(input: {
+    readonly kind: WorkUnit["kind"];
+    readonly ownerType: string;
+    readonly ownerId: string;
+    readonly idempotencyKey: string;
+  }): WorkUnit | undefined;
+  linkRunToWorkUnit(runId: string, workUnitId: string, now: string): RunSession | undefined;
+  transitionWorkUnitStatus(input: {
+    readonly workUnitId: string;
+    readonly expectedStatus?: WorkUnitStatus;
+    readonly event: WorkUnitTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+    readonly activeAttemptId?: string | null;
+    readonly startedAt?: string;
+    readonly endedAt?: string | null;
+    readonly lastEventAt?: string;
+    readonly lastHeartbeatAt?: string;
+    readonly errorCode?: string | null;
+    readonly errorMessage?: string | null;
+  }): TransitionResult<WorkUnitStatus>;
+  createWorkUnitAttempt(input: CreateWorkUnitAttemptInput): WorkUnitAttempt;
+  getWorkUnitAttempt(attemptId: string): WorkUnitAttempt | undefined;
+  listWorkUnitAttempts(workUnitId: string): WorkUnitAttempt[];
+  updateWorkUnitAttemptStatus(input: {
+    readonly attemptId: string;
+    readonly status: WorkUnitAttempt["status"];
+    readonly now: string;
+    readonly startedAt?: string;
+    readonly endedAt?: string;
+    readonly lastEventAt?: string;
+    readonly lastHeartbeatAt?: string;
+    readonly abortRequestedAt?: string;
+    readonly errorCode?: string | null;
+    readonly errorMessage?: string | null;
+  }): WorkUnitAttempt | undefined;
+  appendRuntimeEvent(input: AppendRuntimeEventInput): RuntimeEvent;
+  listRuntimeEvents(workUnitId: string, options?: ListRuntimeEventsOptions): RuntimeEvent[];
+  recordRuntimeHeartbeat(input: RecordRuntimeHeartbeatInput): RuntimeHeartbeat;
+  acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined;
+  releaseRuntimeSemaphoreSlotsForOwner(ownerId: string, releasedAt: string, releaseReason: string): number;
+  listRuntimeSemaphoreSlots(options?: ListRuntimeSemaphoreSlotsOptions): RuntimeSemaphoreSlot[];
   createArtifact(input: CreateRunArtifactInput): RunArtifact;
   getArtifact(artifactId: string): RunArtifact | undefined;
   listArtifacts(runId: string): RunArtifact[];
@@ -331,8 +397,29 @@ export interface RunStore {
   ): TeammateMemoryScope[];
   getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread;
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[];
+  getTeammateDirectMessage(id: string): TeammateDirectMessage | undefined;
   createTeammateDirectMessage(input: CreateTeammateDirectMessageInput, now: string): TeammateDirectMessage;
+  updateTeammateDirectMessageRuntime(
+    id: string,
+    input: {
+      readonly body?: string;
+      readonly status?: TeammateDirectMessage["status"];
+      readonly errorMessage?: string | null;
+      readonly linkedRunId?: string | null;
+    },
+    now: string,
+  ): TeammateDirectMessage | undefined;
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage;
+  updateChannelMessageRuntime(
+    id: string,
+    input: {
+      readonly body?: string;
+      readonly status?: ChannelMessage["status"];
+      readonly errorMessage?: string | null;
+      readonly linkedRunId?: string | null;
+    },
+    now: string,
+  ): ChannelMessage | undefined;
   getChannelMessage(id: string): ChannelMessage | undefined;
   listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[];
   listChannelMessagesPage(options: ListChannelMessagesOptions): ChannelMessageListPage;
