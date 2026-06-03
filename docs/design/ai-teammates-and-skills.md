@@ -128,12 +128,31 @@ Skills do not grant execution authority. A skill can require tools and provider 
 
 `apps/web` includes an `AI Teammates` page for the `gstack-default` pack.
 
+The current management view follows the Stitch `Ling Stack Strict Daylight UX v3`
+direction. It is intentionally a quiet management surface, not a separate AI workbench
+or marketing page:
+
+- the page uses a two-column desktop layout: workspace teammates on the left and default
+  role templates on the right,
+- workspace teammate rows show avatar, name, provider/channel summary, provider readiness
+  dot, and compact row actions,
+- default role cards open a right-side role detail Sheet,
+- `Add teammate` opens a right-side Sheet instead of replacing the page,
+- Sheets use strict daylight styling: pure white surfaces, `#111111` primary text,
+  `#6B6B6B` secondary text, `#E5E5E5` borders, `#F5F5F5` hover/selected state, and
+  radius no larger than 8px,
+- role detail explains what the role does, best-fit scenarios, default skills, and safety
+  boundaries; system prompt, tools, provider capabilities, and workflow remain folded in
+  advanced details,
+- creating a teammate is blocked when the selected provider preset is not runnable, with
+  a direct path back to the Model Workbench.
+
 The page should behave like a client management view:
 
 - list built-in teammate templates from `@ling-stack/core/builtin-skill-packs`,
 - show each template's role, default skills, allowed tools, provider capabilities, system prompt, and approval profile,
-- provide a four-step `Role -> Model -> Profile -> Scope` wizard that creates a durable
-  workspace teammate through the daemon,
+- provide a right-side Sheet with `Role -> Model -> Basic information -> Advanced settings`
+  sections that creates a durable workspace teammate through the daemon,
 - prefer adapted default roles from `gstack-default`; if no template fits, allow `Start from blank` with a short description,
 - let each teammate bind a different provider/model preset,
 - let each teammate persist channel membership and memory-scope metadata,

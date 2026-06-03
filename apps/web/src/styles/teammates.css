@@ -1588,3 +1588,624 @@
     max-height: clamp(260px, 48vh, 520px);
   }
 }
+
+/* Strict daylight AI teammate management, aligned with Stitch UX v3. */
+.workspace.workspace-teammates-surface {
+  height: 100vh;
+  padding: 20px 20px 24px;
+  background: #ffffff;
+}
+
+.workspace-teammates-surface .workspace-head {
+  min-height: 36px;
+  margin-bottom: 16px;
+}
+
+.workspace-teammates-surface .workspace-head h1 {
+  color: #111111;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.workspace-teammates-surface .workspace-head p {
+  margin-top: 2px;
+  color: #6b6b6b;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.workspace-teammates-surface .workspace-head .status-badge {
+  display: none;
+}
+
+.workspace-teammates-surface .teammates-page {
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+.workspace-teammates-surface .teammate-management-grid {
+  grid-template-columns: minmax(360px, 0.96fr) minmax(360px, 1fr);
+  gap: 20px;
+  height: 100%;
+  min-height: 0;
+}
+
+.teammate-template-panel,
+.teammate-add-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.workspace-teammates-surface .teammate-add-panel > .panel-title,
+.workspace-teammates-surface .teammate-template-panel > .panel-title {
+  min-height: 28px;
+  margin-bottom: 14px;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.workspace-teammates-surface .panel-title h2 {
+  margin: 0;
+  color: #111111;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.workspace-teammates-surface .panel-title svg {
+  width: 14px;
+  height: 14px;
+  color: #111111;
+  stroke-width: 2;
+}
+
+.workspace-teammates-surface .panel-title small,
+.teammate-create-section-title small,
+.teammate-create-header p,
+.teammate-detail-hero p,
+.teammate-readable-copy,
+.teammate-template-row small,
+.teammate-draft-row small,
+.teammate-skill-row small,
+.workflow-step-card small {
+  color: #6b6b6b;
+}
+
+.teammate-draft-list,
+.teammate-template-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  gap: 8px;
+  overflow-y: auto;
+  padding: 0 2px 0 0;
+}
+
+.teammate-template-row,
+.teammate-draft-row,
+.teammate-provider-row,
+.teammate-use-list span,
+.teammate-skill-row,
+.workflow-step-card {
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111111;
+  box-shadow: none;
+}
+
+.teammate-template-row {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  min-height: 76px;
+  padding: 12px;
+}
+
+.teammate-draft-row {
+  position: relative;
+  grid-template-columns: 34px minmax(0, 1fr) 8px 28px;
+  min-height: 60px;
+  padding: 10px 8px 10px 10px;
+}
+
+.teammate-template-row:hover,
+.teammate-template-row.selected,
+.teammate-draft-row:hover,
+.teammate-provider-row:hover,
+.teammate-provider-row.selected {
+  border-color: #111111;
+  background: #f5f5f5;
+  box-shadow: none;
+}
+
+.teammate-template-row .avatar-initial,
+.teammate-draft-row .avatar-initial {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e5e5e5;
+  background: #ffffff;
+  color: #111111;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.teammate-template-copy,
+.teammate-draft-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.teammate-template-row strong,
+.teammate-draft-row strong,
+.teammate-skill-row strong,
+.workflow-step-card strong {
+  color: #111111;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.teammate-template-row small,
+.teammate-draft-row small,
+.teammate-skill-row small,
+.workflow-step-card small {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.template-skill-count {
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.teammate-role-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111111;
+}
+
+.teammate-role-icon.large {
+  width: 36px;
+  height: 36px;
+}
+
+.teammate-role-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
+}
+
+.teammate-status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+}
+
+.teammate-status-dot.ready {
+  background: #10b981;
+}
+
+.teammate-status-dot.blocked {
+  background: #6b6b6b;
+}
+
+.teammate-row-menu {
+  position: relative;
+}
+
+.teammate-row-menu summary {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: #6b6b6b;
+  cursor: pointer;
+  list-style: none;
+}
+
+.teammate-row-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.teammate-row-menu summary:hover,
+.teammate-row-menu[open] summary {
+  background: #f5f5f5;
+  color: #111111;
+}
+
+.teammate-row-menu-popover {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  z-index: 8;
+  display: grid;
+  gap: 2px;
+  width: 132px;
+  padding: 4px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(17, 17, 17, 0.08);
+}
+
+.teammate-row-menu-popover button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #111111;
+  font-size: 12px;
+  text-align: left;
+}
+
+.teammate-row-menu-popover button:hover {
+  background: #f5f5f5;
+}
+
+.teammate-sheet-backdrop {
+  padding: 0;
+  background: rgba(17, 17, 17, 0.08);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.teammate-create-sheet,
+.teammate-detail-sheet {
+  width: min(460px, calc(100vw - 24px));
+  height: 100vh;
+  border: 0;
+  border-left: 1px solid #e5e5e5;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.teammate-create-header,
+.teammate-detail-sheet-header {
+  align-items: flex-start;
+  padding: 20px 20px 14px;
+  border-bottom: 0;
+  background: #ffffff;
+}
+
+.teammate-create-header h2,
+.teammate-detail-hero h2 {
+  margin: 0;
+  color: #111111;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.teammate-create-header p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.teammate-create-body,
+.teammate-detail-sheet-body {
+  gap: 14px;
+  padding: 0 20px 20px;
+}
+
+.teammate-create-section,
+.teammate-advanced-detail,
+.teammate-workflow-panel {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.teammate-create-section-title,
+.teammate-create-advanced summary {
+  align-items: center;
+  min-height: 24px;
+}
+
+.teammate-create-section-title span,
+.teammate-create-advanced summary span,
+.teammate-section h3,
+.teammate-create-advanced-body h3 {
+  color: #111111;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.teammate-create-section-title small,
+.teammate-create-advanced summary small {
+  max-width: 210px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 15px;
+}
+
+.teammate-filter-tabs {
+  gap: 4px;
+}
+
+.teammate-filter-tabs button {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.teammate-filter-tabs button.active,
+.teammate-filter-tabs button:hover {
+  border-color: #111111;
+  background: #f5f5f5;
+  color: #111111;
+}
+
+.teammate-create-list {
+  max-height: 280px;
+  gap: 8px;
+  padding: 0;
+}
+
+.teammate-create-list.role-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.teammate-create-list.role-grid .teammate-template-row {
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-content: start;
+  min-height: 88px;
+}
+
+.teammate-create-list.role-grid .template-skill-count {
+  grid-column: 2;
+  justify-self: start;
+}
+
+.teammate-provider-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 50px;
+  padding: 9px 10px;
+}
+
+.teammate-provider-row span:last-child {
+  gap: 2px;
+}
+
+.teammate-provider-row strong {
+  color: #111111;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.teammate-provider-row small {
+  color: #6b6b6b;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.teammate-create-fields {
+  gap: 8px;
+}
+
+.teammate-create-fields .field span,
+.teammate-add-panel .field span {
+  color: #6b6b6b;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.teammate-create-fields input,
+.teammate-create-fields textarea {
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111111;
+}
+
+.teammate-create-fields textarea {
+  min-height: 84px;
+}
+
+.teammate-create-advanced {
+  border-top: 1px solid #e5e5e5;
+  padding-top: 10px;
+}
+
+.teammate-create-advanced summary {
+  padding: 0;
+}
+
+.teammate-create-advanced-body {
+  padding: 10px 0 0;
+}
+
+.teammate-chip {
+  min-height: 30px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.teammate-chip.selected {
+  border-color: #111111;
+  background: #f5f5f5;
+  color: #111111;
+}
+
+.teammate-toggle {
+  min-height: 42px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111111;
+}
+
+.teammate-toggle input {
+  accent-color: #111111;
+}
+
+.teammate-toggle strong {
+  color: #111111;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.teammate-create-actions,
+.teammate-detail-sheet-actions {
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px 20px;
+  border-top: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.teammate-create-blocked {
+  margin-right: auto;
+  color: #b42318;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.teammate-detail-hero {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 10px;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.teammate-pack-label {
+  color: #6b6b6b;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 15px;
+}
+
+.teammate-detail-sheet-body {
+  align-content: start;
+}
+
+.teammate-section {
+  gap: 8px;
+  margin: 0;
+}
+
+.teammate-use-list {
+  gap: 6px;
+}
+
+.teammate-use-list span {
+  min-height: 32px;
+  padding: 7px 9px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.teammate-readable-copy {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.teammate-skill-list {
+  gap: 8px;
+}
+
+.teammate-skill-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 58px;
+  padding: 9px;
+}
+
+.phase-token,
+.approval-profile-badge {
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.approval-profile-badge.strict,
+.approval-profile-badge.standard {
+  border-color: #e5e5e5;
+  background: #ffffff;
+  color: #111111;
+}
+
+.teammate-advanced-detail {
+  border-top: 1px solid #e5e5e5;
+  padding-top: 10px;
+}
+
+.teammate-advanced-detail summary {
+  padding: 0;
+  color: #6b6b6b;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.teammate-advanced-detail[open] {
+  padding-bottom: 0;
+}
+
+.teammate-advanced-detail .teammate-meta-grid,
+.teammate-advanced-detail .teammate-section,
+.teammate-advanced-detail .teammate-workflow-panel {
+  margin: 10px 0 0;
+}
+
+.teammate-prompt-preview {
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111111;
+}
+
+@media (max-width: 980px) {
+  .workspace-teammates-surface .teammate-management-grid,
+  .teammate-create-list.role-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace.workspace-teammates-surface {
+    height: auto;
+    min-height: 100vh;
+  }
+}

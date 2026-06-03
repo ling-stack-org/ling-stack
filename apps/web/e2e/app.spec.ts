@@ -2894,6 +2894,9 @@ test("AI teammates page creates a durable teammate and opens its private workspa
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
+  await expect(page.locator(".teammate-management-grid")).toBeVisible();
+  await expect(page.getByLabel("Workspace teammates")).toBeVisible();
+  await expect(page.getByLabel("Teammate templates")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation").getByText("Ling Engineer")).toHaveCount(0);
   await expect(page.locator(".teammate-command-strip")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
@@ -2934,6 +2937,8 @@ test("AI teammates page creates a durable teammate and opens its private workspa
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
   await expect(page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" })).toBeVisible();
+  await expect(page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" }).locator(".teammate-status-dot.ready")).toBeVisible();
+  await expect(page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" }).getByLabel("Teammate actions")).toBeVisible();
   await expect(page.getByLabel("Workflow")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
 });

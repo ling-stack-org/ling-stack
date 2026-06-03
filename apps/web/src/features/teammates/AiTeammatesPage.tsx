@@ -2,15 +2,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   Brain,
+  CheckCircle2,
+  Code2,
   EyeOff,
   FileText,
-  Folder,
   Hash,
+  MoreHorizontal,
+  Palette,
   Pin,
   PinOff,
   PlugZap,
   Plus,
+  Rocket,
   Sparkles,
+  ShieldCheck,
   Trash2,
   UserPlus,
   Users,
@@ -106,10 +111,8 @@ export function AiTeammatesPage({
   const previewName = draftName.trim() || selectedTemplate?.name || t("Custom teammate");
   const previewDescription = draftDescription.trim() || selectedTemplate?.summary || t("Describe this teammate with a short working brief.");
   const filteredTemplates = templates.filter((template) => teammateTemplateMatchesFilter(template, templateFilter));
-  const selectedChannelNames = selectedChannelIds
-    .map((channelId) => channels.find((channel) => channel.id === channelId)?.name)
-    .filter((name): name is string => Boolean(name));
-  const previewDisplayName = selectedTemplate && previewName === selectedTemplate.name ? t(previewName) : previewName;
+  const selectedProviderReady = selectedProvider ? providerPreflightReady(selectedProvider) : false;
+  const canCreateTeammate = Boolean(previewName.trim()) && Boolean(selectedProvider) && selectedProviderReady;
 
   useEffect(() => {
     if (!selectedProviderId || !providerOptions.some((provider) => provider.id === selectedProviderId)) {
@@ -148,6 +151,9 @@ export function AiTeammatesPage({
   }
 
   function createTeammateDraft(): void {
+    if (!canCreateTeammate) {
+      return;
+    }
     onCreateTeammate({
       templateId: selectedTemplate?.id,
       displayName: previewName,
@@ -189,19 +195,9 @@ export function AiTeammatesPage({
         <div className="teammate-sheet-backdrop" role="presentation">
           <section className="teammate-create-sheet" aria-label={t("Create AI teammate")} ref={wizardRef} role="dialog" aria-modal="true">
             <header className="teammate-create-header">
-              <div className="teammate-create-summary">
-                <AvatarInitial label={selectedTemplate ? teammateInitial(selectedTemplate) : teammateInitialFromName(previewName)} tone={selectedTemplate ? roleAvatarTone(selectedTemplate.roleKey) : "gray"} />
-                <div>
-                  <span className="teammate-pack-label">{selectedTemplate ? roleLabel(selectedTemplate.roleKey, t) : t("Custom")}</span>
-                  <h2>{t("Add teammate")}</h2>
-                  <p>
-                    {previewDisplayName}
-                    {" · "}
-                    {selectedProvider ? selectedProvider.displayName : t("No model selected")}
-                    {" · "}
-                    {selectedChannelNames.length ? selectedChannelNames.join(", ") : t("No channel")}
-                  </p>
-                </div>
+              <div>
+                <h2>{t("Add teammate")}</h2>
+                <p>{t("Choose role, model, and channel scope.")}</p>
               </div>
               <button className="icon-button" type="button" onClick={() => setCreateOpen(false)} aria-label={t("Close teammate creator")}>
                 <X size={16} />
@@ -211,8 +207,8 @@ export function AiTeammatesPage({
             <div className="teammate-create-body">
               <section className="teammate-create-section">
                 <div className="teammate-create-section-title">
-                  <span><UserPlus size={15} />{t("Choose a role")}</span>
-                  <small>{t("Pick a default role or start blank.")}</small>
+                  <span>{t("Choose a role")}</span>
+                  <small>{t("Start from a default role or blank teammate.")}</small>
                 </div>
                 <div className="teammate-filter-tabs" role="tablist" aria-label={t("Role filters")}>
                   {teammateTemplateFilters.map((filter) => (
@@ -226,7 +222,7 @@ export function AiTeammatesPage({
                     </button>
                   ))}
                 </div>
-                <div className="teammate-create-list" aria-label={t("Teammate template chooser")}>
+                <div className="teammate-create-list role-grid" aria-label={t("Teammate template chooser")}>
                   {filteredTemplates.map((template) => (
                     <button
                       key={template.id}
@@ -235,12 +231,12 @@ export function AiTeammatesPage({
                       aria-pressed={template.id === selectedTemplate?.id}
                       onClick={() => selectTemplate(template)}
                     >
-                      <AvatarInitial label={teammateInitial(template)} tone={roleAvatarTone(template.roleKey)} />
-                      <span>
+                      <span className="teammate-role-icon">{templateRoleIcon(template)}</span>
+                      <span className="teammate-template-copy">
                         <strong>{t(template.name)}</strong>
                         <small>{t(template.summary)}</small>
                       </span>
-                      <small className="template-skill-count">{t("{count} skills", { count: template.defaultSkillIds.length })}</small>
+                      <small className="template-skill-count">{roleLabel(template.roleKey, t)}</small>
                     </button>
                   ))}
                   <button
@@ -249,8 +245,8 @@ export function AiTeammatesPage({
                     aria-pressed={!selectedTemplateId}
                     onClick={selectBlankTemplate}
                   >
-                    <AvatarInitial label="AI" tone="gray" />
-                    <span>
+                    <span className="teammate-role-icon"><Plus size={14} /></span>
+                    <span className="teammate-template-copy">
                       <strong>{t("Start from blank")}</strong>
                       <small>{t("Use a short description now, then bind skills and memory later.")}</small>
                     </span>
@@ -261,7 +257,7 @@ export function AiTeammatesPage({
 
               <section className="teammate-create-section">
                 <div className="teammate-create-section-title">
-                  <span><Sparkles size={15} />{t("Choose a model")}</span>
+                  <span>{t("Choose a model")}</span>
                   <small>{t("Bind a provider preset for this teammate.")}</small>
                 </div>
                 {providerOptions.length === 0 ? (
@@ -295,7 +291,7 @@ export function AiTeammatesPage({
 
               <section className="teammate-create-section">
                 <div className="teammate-create-section-title">
-                  <span><Bot size={15} />{t("Basic information")}</span>
+                  <span>{t("Basic information")}</span>
                   <small>{t("Name and a short working brief.")}</small>
                 </div>
                 <div className="teammate-create-fields">
@@ -312,7 +308,7 @@ export function AiTeammatesPage({
 
               <details className="teammate-create-section teammate-create-advanced">
                 <summary>
-                  <span><Folder size={15} />{t("Advanced settings")}</span>
+                  <span>{t("Advanced settings")}</span>
                   <small>{t("Channels and memory")}</small>
                 </summary>
                 <div className="teammate-create-advanced-body">
@@ -360,8 +356,11 @@ export function AiTeammatesPage({
             </div>
 
             <footer className="teammate-create-actions">
+              {!selectedProviderReady ? (
+                <span className="teammate-create-blocked">{selectedProvider ? t("Selected model needs configuration.") : t("Choose a model before creating.")}</span>
+              ) : null}
               <button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>{t("Cancel")}</button>
-              <button className="primary-button" type="button" onClick={createTeammateDraft} disabled={!previewName.trim() || providerOptions.length === 0}>
+              <button className="primary-button" type="button" onClick={createTeammateDraft} disabled={!canCreateTeammate}>
                 <Plus size={15} />
                 {t("Create teammate")}
               </button>
@@ -391,24 +390,35 @@ export function AiTeammatesPage({
                 const draftChannels = draft.channelIds
                   .map((channelId) => channels.find((channel) => channel.id === channelId)?.name)
                   .filter((name): name is string => Boolean(name));
+                const provider = draft.providerPresetId ? providers.find((item) => item.id === draft.providerPresetId) : undefined;
+                const ready = provider ? providerPreflightReady(provider) : false;
                 return (
                   <article key={draft.id} className={draft.hidden ? "teammate-draft-row hidden-row" : "teammate-draft-row"}>
                     <AvatarInitial label={template ? teammateInitial(template) : teammateInitialFromName(draft.displayName)} tone={template ? roleAvatarTone(template.roleKey) : "gray"} />
-                    <span>
+                    <span className="teammate-draft-copy">
                       <strong>{draft.displayName}</strong>
                       <small>{draft.modelLabel} · {draftChannels.length ? draftChannels.join(", ") : t("No channel")}</small>
                     </span>
-                    <div className="teammate-row-actions">
-                      <button className={draft.pinned ? "icon-button active" : "icon-button"} type="button" onClick={() => onToggleTeammatePinned(draft.id)} aria-label={`${draft.pinned ? t("Unpin") : t("Pin")} ${draft.displayName}`}>
-                        {draft.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-                      </button>
-                      <button className={draft.hidden ? "icon-button active" : "icon-button"} type="button" onClick={() => onToggleTeammateHidden(draft.id)} aria-label={`${t("Hide")} ${draft.displayName}`}>
-                        <EyeOff size={14} />
-                      </button>
-                      <button className="icon-button" type="button" onClick={() => onRemoveTeammate(draft.id)} aria-label={t("Delete")}>
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
+                    <span className={ready ? "teammate-status-dot ready" : "teammate-status-dot blocked"} aria-label={ready ? t("ready") : t("needs check")} />
+                    <details className="teammate-row-menu">
+                      <summary aria-label={t("Teammate actions")} title={t("Teammate actions")}>
+                        <MoreHorizontal size={16} />
+                      </summary>
+                      <div className="teammate-row-menu-popover" role="menu">
+                        <button type="button" onClick={() => onToggleTeammatePinned(draft.id)} role="menuitem">
+                          {draft.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                          {draft.pinned ? t("Unpin") : t("Pin")}
+                        </button>
+                        <button type="button" onClick={() => onToggleTeammateHidden(draft.id)} role="menuitem">
+                          <EyeOff size={14} />
+                          {draft.hidden ? t("Show") : t("Hide")}
+                        </button>
+                        <button type="button" onClick={() => onRemoveTeammate(draft.id)} role="menuitem">
+                          <Trash2 size={14} />
+                          {t("Delete")}
+                        </button>
+                      </div>
+                    </details>
                   </article>
                 );
               })}
@@ -436,12 +446,12 @@ export function AiTeammatesPage({
                 aria-pressed={template.id === detailTemplate?.id}
                 onClick={() => openTemplateDetail(template)}
               >
-                <AvatarInitial label={teammateInitial(template)} tone={roleAvatarTone(template.roleKey)} />
-                <span>
+                <span className="teammate-role-icon">{templateRoleIcon(template)}</span>
+                <span className="teammate-template-copy">
                   <strong>{t(template.name)}</strong>
                   <small>{t(template.summary)}</small>
                 </span>
-                <small className="template-skill-count">{t("{count} skills", { count: template.defaultSkillIds.length })}</small>
+                <small className="template-skill-count">{roleLabel(template.roleKey, t)}</small>
               </button>
             ))}
           </div>
@@ -461,6 +471,34 @@ export function AiTeammatesPage({
       ) : null}
     </div>
   );
+}
+
+function templateRoleIcon(template: AiTeammateTemplate): JSX.Element {
+  if (template.roleKey === "product") {
+    return <Brain size={15} />;
+  }
+  if (template.roleKey === "engineer") {
+    return <Code2 size={15} />;
+  }
+  if (template.roleKey === "architect") {
+    return <Workflow size={15} />;
+  }
+  if (template.roleKey === "designer") {
+    return <Palette size={15} />;
+  }
+  if (template.roleKey === "qa") {
+    return <CheckCircle2 size={15} />;
+  }
+  if (template.roleKey === "security") {
+    return <ShieldCheck size={15} />;
+  }
+  if (template.roleKey === "release") {
+    return <Rocket size={15} />;
+  }
+  if (template.roleKey === "docs") {
+    return <FileText size={15} />;
+  }
+  return <Sparkles size={15} />;
 }
 
 function TemplateDetailSheet({
@@ -486,7 +524,7 @@ function TemplateDetailSheet({
       <section className="teammate-detail-sheet" aria-label={t("Role detail")} role="dialog" aria-modal="true">
         <header className="teammate-detail-sheet-header">
           <div className="teammate-detail-hero">
-            <AvatarInitial label={teammateInitial(template)} tone={roleAvatarTone(template.roleKey)} />
+            <span className="teammate-role-icon large">{templateRoleIcon(template)}</span>
             <div>
               <span className="teammate-pack-label">{roleLabel(template.roleKey, t)}</span>
               <h2>{t(template.name)}</h2>
