@@ -746,7 +746,7 @@ export function AppShell(): JSX.Element {
   const activeTeammateId = readTeammateSidebarTarget(activeSidebarTarget);
   const selectedAiTeammate = activeTeammateId ? aiTeammates.find((teammate) => teammate.id === activeTeammateId) : undefined;
   const selectedWorkspaceTask = useMemo(
-    () => tasks.find((task) => task.id === selectedTaskId) ?? tasks[0],
+    () => tasks.find((task) => task.id === selectedTaskId),
     [selectedTaskId, tasks],
   );
   const channelRunsForArtifacts = useMemo(
@@ -1324,7 +1324,7 @@ export function AppShell(): JSX.Element {
         if (response.tasks.some((task) => task.id === current)) {
           return current;
         }
-        return response.tasks[0]?.id ?? "";
+        return "";
       });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -3136,8 +3136,6 @@ export function AppShell(): JSX.Element {
             approvalsLoading={approvalsLoading}
             resolvingApprovals={resolvingApprovals}
             resourceLeases={resourceLeases}
-            events={events}
-            assistantText={assistantText}
             runs={runs}
             runById={runById}
             activeRunId={activeRunId}

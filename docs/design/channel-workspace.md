@@ -32,6 +32,8 @@ Related docs:
 - [Channel Workspace v1.20 Chat Composer Task Action Removal](channel-workspace-v1.20.md)
 - [Channel Workspace v1.21 Codex-Style Chat Workspace](channel-workspace-v1.21.md)
 - [Channel Workspace v1.22 Long Conversation Virtual Feed](channel-workspace-v1.22.md)
+- [Channel Workspace v1.23 Explicit Task Selection](channel-workspace-v1.23.md)
+- [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
@@ -284,9 +286,10 @@ user opens a secondary channel surface.
 Secondary channel surfaces are:
 
 ```text
-Tasks
+Progress
 Files
 Context
+Settings
 ```
 
 These surfaces open from the compact header `...` menu into an in-layout right details
@@ -294,8 +297,14 @@ panel. The panel compresses the chat while visible and lets the chat expand when
 The selected details surface is preserved while the panel is hidden.
 
 The channel workspace hides the global app inspector. The right panel is the single
-details surface for the selected channel. The `Tasks` surface shows the selected task and
-active run timeline directly instead of a task list.
+details surface for the selected channel, but it should not open with stale task state.
+Chat is the default surface. A channel task detail appears only after the user explicitly
+opens a task from attention, progress, activity, a task creation result, or a run repair
+path. Task detail and approval detail are drill-down pages, not root drawer pages. The
+client must not auto-select `tasks[0]` merely because a channel has historical tasks.
+Floating progress and attention indicators are also channel-scoped: they use the
+selected channel's task/run/approval ownership and stay hidden when the channel has no
+current work, so an empty channel does not imply active progress.
 
 Future details surfaces can include:
 
@@ -352,9 +361,11 @@ todo / running / review / done / blocked / failed / cancelled
 
 MVP can remain a single list with filters if columns are too heavy.
 
-The selected task detail belongs in the `Tasks` tab, adjacent to the task queue. It
-should not occupy the default `Activity` chat view because that makes discussion feel
-like a secondary surface.
+Tasks are channel-scoped durable work items. A task belongs to exactly one channel through
+`task.channelId`, and different channels should maintain independent task lists,
+selection state, runs, approvals, and attention items. The selected task detail belongs in
+the `Tasks` surface and opens only after explicit user action; it should not occupy the
+default chat view because that makes discussion feel like a secondary surface.
 
 Task cards show:
 
@@ -1759,6 +1770,21 @@ Current MVP implementation status:
   loads latest `200` messages first, prepends `100` older messages on upward scroll, and
   virtualizes the merged visible activity feed so thousands of loaded messages do not
   become thousands of DOM nodes,
+- v1.23 now makes task selection explicit: entering or switching channels no longer
+  auto-selects the first task or opens a task detail drawer, and task detail appears only
+  from explicit task creation/open actions. Progress and attention popovers are also
+  derived from current-channel state and stay hidden for channels with no chat content.
+  Current-channel teammate management is a transient popover: internal add/remove/default
+  actions keep it open, outside click or Escape closes it, and opening it hides the
+  attention/progress popover to prevent stacked popovers from stealing clicks. It is
+  centered on the channel chat surface and follows the remaining chat area when the right
+  details panel is open, instead of anchoring to the global right edge,
+- v1.24 now turns the right detail surface into a Codex-like multi-page drawer. Root
+  pages are `Progress`, `Files`, `Context`, and `Settings`; `Task detail` and `Approval
+  details` are drill-down views opened from explicit work items. Settings edits only the
+  current channel, progress is bound to current-channel work, run IDs and raw audit
+  payloads stay out of the default channel detail UI, and run actions try to resolve back
+  to the linked task inside the channel before falling back to the run page,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.
@@ -2153,6 +2179,19 @@ Current MVP implementation status:
   rows.
 - [x] Preserve scroll position when older messages are prepended and keep the existing
   jump-to-latest behavior when the user reads history.
+
+### Phase 31: Right Drawer Workspace
+
+- [x] Define v1.24 Right Drawer Workspace in
+  `docs/design/channel-workspace-v1.24.md`.
+- [x] Replace the old root right-side task view with `Progress`, `Files`, `Context`, and
+  `Settings` drawer pages.
+- [x] Keep task detail and approval detail as explicit drill-down pages.
+- [x] Move current-channel notifications, teammate membership, and channel runtime
+  settings into the Settings drawer page.
+- [x] Keep run IDs and raw approval audit payloads out of default channel detail UI.
+- [x] Route run actions back to the linked task drawer when the current channel state can
+  resolve the task.
 
 ## Validation Plan
 

@@ -1220,12 +1220,32 @@ code,
   background: color-mix(in srgb, var(--surface-panel-strong) 82%, transparent);
 }
 
-.workbench-settings-panel.channel-options,
-.workbench-settings-panel.channel-teammate-dock {
+.workbench-settings-panel.channel-options {
   margin: 0;
   display: grid;
   gap: 12px;
   padding: 0 14px 12px;
+}
+
+.workbench-settings-panel.channel-teammate-dock {
+  position: absolute;
+  top: 54px;
+  left: 50%;
+  z-index: 35;
+  width: min(640px, calc(100% - 108px));
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.1);
+  transform: translateX(-50%);
+}
+
+@media (min-width: 901px) {
+  .task-workbench-window:has(.channel-side-panel) > .workbench-settings-panel.channel-teammate-dock {
+    left: calc((100% - min(380px, calc(100vw - 280px))) / 2);
+    width: min(640px, calc(100% - min(380px, calc(100vw - 280px)) - 108px));
+    margin-right: 0;
+  }
 }
 
 .channel-settings-card {
@@ -1240,6 +1260,7 @@ code,
 
 .channel-settings-section-head,
 .channel-settings-section-head span,
+.channel-settings-section-head div,
 .channel-teammate-row,
 .channel-teammate-actions,
 .channel-notification-option span {
@@ -1258,29 +1279,160 @@ code,
   min-width: 0;
 }
 
+.channel-settings-section-head div {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
 .channel-settings-section-head strong {
   color: var(--text);
-  font-size: 13px;
+  font-size: 17px;
+  font-weight: 720;
+  line-height: 1.2;
 }
 
 .channel-settings-section-head small {
   color: var(--text-muted);
-  font-size: 11px;
-  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .channel-teammate-add-row {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto auto;
-  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
+.channel-teammate-select {
+  display: inline-grid;
+  min-width: min(220px, 100%);
+}
+
+.channel-teammate-select select {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 34px 0 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
 .channel-teammate-list {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.channel-teammate-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  height: 36px;
+  max-width: 210px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #f8f8f8;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.channel-teammate-chip.default {
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border));
+  background: #fff;
+}
+
+.channel-teammate-chip:hover,
+.channel-teammate-chip:focus-within {
+  border-color: color-mix(in srgb, var(--text) 34%, var(--border));
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+
+.channel-teammate-chip-main {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
   min-width: 0;
+  height: 100%;
+  max-width: 100%;
+  padding: 4px 12px 4px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: padding-right 140ms ease;
+}
+
+.channel-teammate-chip-main:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.channel-teammate-chip:hover .channel-teammate-chip-main:not(:disabled),
+.channel-teammate-chip:focus-within .channel-teammate-chip-main:not(:disabled) {
+  padding-right: 34px;
+}
+
+.channel-teammate-chip .avatar-initial {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.channel-teammate-chip strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-teammate-remove-button {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.channel-teammate-chip:hover .channel-teammate-remove-button,
+.channel-teammate-chip:focus-within .channel-teammate-remove-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.channel-teammate-remove-button:hover:not(:disabled) {
+  background: var(--surface-selected);
+  color: var(--text);
+}
+
+.channel-teammate-remove-button:disabled {
+  cursor: default;
 }
 
 .channel-teammate-row {
@@ -1390,19 +1542,19 @@ code,
 }
 
 .task-workbench-main.with-channel-side-panel {
-  grid-template-columns: minmax(0, 1fr) min(360px, calc(100vw - 280px));
+  grid-template-columns: minmax(0, 1fr) min(380px, calc(100vw - 280px));
 }
 
 @media (min-width: 901px) and (max-width: 2055px) {
   .app-shell:not(.channel-sidebar-collapsed) .task-workbench-main.attention-open {
-    --channel-attention-popover-width: min(390px, calc(100vw - 360px));
+    --channel-attention-popover-width: min(390px, calc(100vw - 380px));
     padding-right: calc(var(--channel-attention-popover-width) + 24px);
   }
 }
 
 @media (min-width: 901px) and (max-width: 1871px) {
   .app-shell.channel-sidebar-collapsed .task-workbench-main.attention-open {
-    --channel-attention-popover-width: min(390px, calc(100vw - 360px));
+    --channel-attention-popover-width: min(390px, calc(100vw - 380px));
     padding-right: 0;
   }
 
@@ -1436,6 +1588,8 @@ code,
 .channel-chat-panel {
   position: relative;
   z-index: 2;
+  min-height: 0;
+  height: 100%;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -1444,11 +1598,11 @@ code,
 
 .channel-side-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
   z-index: 3;
   border-left: 1px solid var(--border);
-  background: #fbfbfb;
+  background: #ffffff;
   overflow: hidden;
 }
 
@@ -1469,6 +1623,12 @@ code,
   align-items: center;
   gap: 7px;
   min-width: 0;
+}
+
+.channel-side-panel-title svg {
+  flex: 0 0 auto;
+  color: var(--text);
+  stroke-width: 2.35;
 }
 
 .channel-side-panel-head strong {
@@ -1501,6 +1661,41 @@ code,
   min-height: 28px;
 }
 
+.channel-side-panel-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 18px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.channel-side-panel-nav-item {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.channel-side-panel-nav-item svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 2.35;
+}
+
+.channel-side-panel-nav-item:hover:not(:disabled),
+.channel-side-panel-nav-item.active {
+  background: var(--surface-selected);
+  color: var(--text);
+}
+
 .channel-side-panel-body {
   min-height: 0;
   overflow: auto;
@@ -1514,8 +1709,264 @@ code,
 }
 
 .channel-side-panel .channel-files,
-.channel-side-panel .channel-protocol-tab-content {
+.channel-side-panel .channel-protocol-tab-content,
+.channel-side-panel .channel-settings-stack,
+.channel-side-panel .channel-progress-panel,
+.channel-side-panel .channel-approval-detail-panel {
   height: 100%;
+}
+
+.channel-settings-stack,
+.channel-progress-panel,
+.channel-approval-detail-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.channel-side-panel .channel-management-panel .channel-options-grid {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.channel-side-panel .channel-management-panel .field {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.channel-side-panel .channel-management-panel .runtime-policy-grid {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.channel-side-panel .channel-management-panel .runtime-policy-grid .field span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-side-panel .channel-management-panel .runtime-policy-grid .toggle-row {
+  grid-column: 1 / -1;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 8px;
+}
+
+.channel-side-panel .channel-management-panel .runtime-policy-grid .toggle-row span {
+  min-width: 0;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.channel-side-panel .channel-management-panel .channel-option-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  padding-top: 2px;
+}
+
+.channel-side-panel .channel-management-panel .channel-option-actions .compact-button {
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.channel-progress-panel.empty,
+.channel-approval-detail-panel.empty {
+  align-content: stretch;
+}
+
+.channel-progress-empty {
+  height: 100%;
+  min-height: 260px;
+}
+
+.channel-progress-summary-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.channel-progress-card,
+.channel-progress-row {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  color: var(--text);
+  text-align: left;
+}
+
+.channel-progress-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.channel-progress-card span,
+.channel-progress-row span,
+.channel-approval-hero > span,
+.channel-approval-links,
+.channel-approval-badges,
+.channel-approval-actions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.channel-progress-card span {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.channel-progress-card span:first-child {
+  justify-content: flex-start;
+}
+
+.channel-progress-card strong,
+.channel-progress-section .task-strip-head strong,
+.channel-approval-hero strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.channel-progress-card p,
+.channel-progress-row p,
+.channel-approval-hero p,
+.channel-approval-note p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 17px;
+}
+
+.channel-progress-card p {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 620;
+  line-height: 19px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-progress-card:hover,
+.channel-progress-row:hover {
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
+  background: #ffffff;
+}
+
+.channel-progress-card.attention {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.channel-progress-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.channel-progress-list {
+  display: grid;
+  gap: 7px;
+}
+
+.channel-progress-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+}
+
+.channel-progress-row.passive {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.channel-progress-row > span {
+  display: grid;
+  gap: 2px;
+}
+
+.channel-progress-row strong,
+.channel-progress-row small,
+.channel-progress-row p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channel-progress-row strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.channel-progress-row small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.channel-progress-row.pending {
+  border-color: var(--accent-border);
+}
+
+.channel-approval-hero,
+.channel-approval-note,
+.channel-approval-decision-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
+}
+
+.channel-approval-hero > span {
+  gap: 7px;
+}
+
+.channel-approval-hero h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.channel-approval-badges,
+.channel-approval-links,
+.channel-approval-actions {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.channel-approval-badges > span:not(.approval-state):not(.approval-risk) {
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--surface-selected);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.channel-approval-note strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .channel-side-panel .channel-inspector {
@@ -1589,14 +2040,8 @@ code,
 
 .channel-side-panel .task-detail-head {
   align-items: center;
+  justify-content: flex-end;
   min-height: 24px;
-}
-
-.channel-side-panel .client-task-kicker {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
 }
 
 .channel-side-panel .task-detail-copy,
@@ -1656,27 +2101,27 @@ code,
   margin: 0 -18px -18px;
   padding: 12px 18px;
   border-top: 1px solid var(--border);
-  background: #fbfbfb;
+  background: #ffffff;
 }
 
 @media (min-width: 901px) {
   .task-workbench-window:has(.channel-side-panel) .task-workbench-header {
-    margin-right: min(360px, calc(100vw - 280px));
+    margin-right: min(380px, calc(100vw - 280px));
   }
 
   .task-workbench-window:has(.channel-side-panel) > .workbench-settings-panel {
-    margin-right: min(360px, calc(100vw - 280px));
+    margin-right: min(380px, calc(100vw - 280px));
   }
 
   .task-workbench-main.with-channel-side-panel {
     grid-template-columns: minmax(0, 1fr);
-    padding-right: min(360px, calc(100vw - 280px));
+    padding-right: min(380px, calc(100vw - 280px));
   }
 
   .task-workbench-main.with-channel-side-panel .channel-side-panel {
     position: absolute;
     inset: 0 0 0 auto;
-    width: min(360px, calc(100vw - 280px));
+    width: min(380px, calc(100vw - 280px));
   }
 }
 
@@ -1733,6 +2178,18 @@ code,
 .message-bubble-chat.message-bubble-own:hover .message-content,
 .message-bubble-chat.message-bubble-own:focus-within .message-content {
   padding: 0 2px 0 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.message-bubble-chat.message-bubble-peer .message-content,
+.message-bubble-chat.message-bubble-peer:hover .message-content,
+.message-bubble-chat.message-bubble-peer:focus-within .message-content,
+.message-bubble-chat-blocked.message-bubble-peer .message-content,
+.message-bubble-chat-blocked.message-bubble-peer:hover .message-content,
+.message-bubble-chat-blocked.message-bubble-peer:focus-within .message-content {
+  padding: 0;
   border-color: transparent;
   background: transparent;
   box-shadow: none;
@@ -1828,8 +2285,105 @@ code,
   font-weight: 600;
 }
 
+.channel-proposal-collaboration {
+  display: grid;
+  gap: 8px;
+}
+
+.channel-proposal-collaboration summary {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.channel-proposal-collaboration summary:hover {
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
+  background: #fbfbfb;
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.05);
+}
+
+.channel-proposal-collaboration summary::-webkit-details-marker {
+  display: none;
+}
+
+.channel-proposal-collaboration[open] summary {
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border));
+}
+
+.channel-proposal-collaboration-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.channel-proposal-collaboration-summary svg {
+  flex: 0 0 auto;
+}
+
+.channel-proposal-collaboration-summary strong {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.channel-proposal-collaboration-summary small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-proposal-collaboration ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 0 0 22px;
+}
+
+.channel-proposal-collaboration li {
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.channel-proposal-collaboration li strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.channel-proposal-collaboration li small {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.channel-proposal-collaboration li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .task-list-panel.activity-tab-panel {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .task-list-panel.protocol-tab-panel {
@@ -2024,6 +2578,7 @@ code,
 
 .activity-chat-layout {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   flex: 1 1 auto;
@@ -2032,6 +2587,7 @@ code,
   width: min(960px, calc(100% - 48px));
   min-width: 0;
   min-height: 0;
+  height: 100%;
   padding-top: 0;
   transition: transform 160ms ease;
 }
@@ -2043,10 +2599,12 @@ code,
 .activity-chat-main {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   gap: 0;
   position: relative;
   min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 
 .activity-filter-toolbar {
@@ -2249,7 +2807,7 @@ code,
   top: 62px;
   right: 18px;
   z-index: 25;
-  width: min(390px, calc(100vw - 360px));
+  width: min(390px, calc(100vw - 380px));
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -2458,7 +3016,7 @@ code,
 }
 
 .attention-queue-item {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   color: var(--text);
   text-align: left;
@@ -2470,6 +3028,7 @@ code,
   align-items: center;
   gap: 8px;
   min-width: 0;
+  width: 100%;
   border: 0;
   background: transparent;
   color: inherit;
@@ -2480,21 +3039,6 @@ code,
 .attention-queue-item-open:hover {
   border-color: var(--accent-border);
   background: var(--accent-soft);
-}
-
-.attention-queue-details {
-  justify-self: end;
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  padding: 0;
-  overflow: hidden;
-  color: transparent;
-  white-space: nowrap;
-}
-
-.attention-queue-details svg {
-  color: var(--text-muted);
 }
 
 .attention-empty-state {
@@ -2531,14 +3075,6 @@ code,
   display: inline-flex;
   align-items: center;
   gap: 5px;
-}
-
-.attention-queue-item-meta time {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 17px;
-  white-space: nowrap;
 }
 
 .attention-queue-empty {
@@ -2811,6 +3347,7 @@ code,
 
 .activity-shell .message-feed-wrap {
   position: relative;
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -2825,6 +3362,10 @@ code,
   overscroll-behavior: contain;
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+
+.activity-shell .message-feed.message-feed-empty {
+  padding-bottom: 0;
 }
 
 .activity-shell .message-feed::-webkit-scrollbar {
@@ -2856,6 +3397,26 @@ code,
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
+}
+
+.message-feed-empty-state {
+  min-height: 100%;
+  height: 100%;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 0 0 4px;
+  color: var(--text-muted);
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.message-feed-empty-state svg {
+  width: 34px;
+  height: 34px;
+  color: #686868;
+  stroke-width: 1.9px;
 }
 
 .message-feed-latest-button {
@@ -3525,6 +4086,7 @@ code,
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .workflow-queue-head > span,
@@ -3534,18 +4096,40 @@ code,
   min-width: 0;
 }
 
+.workflow-queue-head .status-badge,
+.workflow-step-head .status-badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .workflow-step-list {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .workflow-step-card.compact {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: 8px;
+  min-width: 0;
   padding: 9px;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--surface-panel);
+}
+
+.workflow-step-card .activity-action-row {
+  align-items: stretch;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.workflow-step-card .activity-action-row .compact-button {
+  flex: 0 0 auto;
+  min-width: 68px;
+  white-space: nowrap;
 }
 
 .context-packet {
@@ -3604,13 +4188,6 @@ code,
 
 .task-detail-head {
   justify-content: space-between;
-}
-
-.client-task-kicker {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 800;
-  text-transform: uppercase;
 }
 
 .task-detail-copy {
@@ -4675,16 +5252,39 @@ textarea:disabled {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
+  .workbench-settings-panel.channel-teammate-dock {
+    position: relative;
+    inset: auto;
+    width: auto;
+    margin: 0;
+    padding: 0 14px 12px;
+    box-shadow: none;
+  }
+
   .channel-utility-tabs {
     grid-column: 1 / -1;
     justify-content: flex-start;
     overflow-x: auto;
   }
 
-  .channel-teammate-add-row,
   .channel-teammate-row,
   .channel-notification-options {
     grid-template-columns: 1fr;
+  }
+
+  .channel-teammate-add-row,
+  .channel-teammate-list {
+    align-items: stretch;
+  }
+
+  .channel-teammate-select,
+  .channel-teammate-chip {
+    width: 100%;
+    max-width: none;
+  }
+
+  .channel-teammate-add-row .compact-button {
+    justify-content: center;
   }
 
   .channel-teammate-row {
