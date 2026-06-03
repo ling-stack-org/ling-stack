@@ -234,11 +234,8 @@ test("workspace opens as a task workbench with task context in the inspector", a
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   const sidePanel = page.locator(".channel-side-panel");
   await expect(page.locator(".right-panel")).toHaveCount(0);
-  await expect(sidePanel).toHaveAttribute("aria-label", "Task detail");
-  await expect(sidePanel).not.toContainText("run_failed");
-  const taskDetail = page.locator("article.task-detail");
-  await expect(taskDetail).toContainText("Task detail");
-  await expect(taskDetail).not.toContainText("run_failed");
+  await expect(sidePanel).toHaveCount(0);
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
 });
 
 test("channel drawers match the accepted HTML layout", async ({ page }) => {
@@ -247,6 +244,17 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
   await expect(page.locator(".channel-left-drawer .sidebar-row.selected")).toContainText("Engineering");
+  await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
+  await expect(page.locator(".channel-attention-popover")).toHaveCount(0);
+  await page.locator(".task-toolbar-attention").click();
+  await expect(page.locator(".channel-attention-popover")).toHaveCount(0);
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await page.getByRole("button", { name: "Show details" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Progress");
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
+  await page.mouse.move(640, 120);
+  await page.waitForTimeout(200);
 
   const expanded = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
@@ -256,7 +264,14 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const header = document.querySelector(".task-workbench-header");
     const chatPanel = document.querySelector(".channel-chat-panel");
     const chat = document.querySelector(".activity-chat-layout");
+    const activityShell = document.querySelector(".activity-shell");
+    const activityMain = document.querySelector(".activity-chat-main");
+    const workbenchMain = document.querySelector(".task-workbench-main");
+    const workbenchWindow = document.querySelector(".task-workbench-window");
+    const workspace = document.querySelector(".workspace");
     const composer = document.querySelector(".channel-composer");
+    const feed = document.querySelector(".message-feed");
+    const emptyState = document.querySelector(".message-feed-empty-state");
     const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-row.selected");
     const selectedChannelBefore = selectedChannel ? getComputedStyle(selectedChannel, "::before") : undefined;
     const primaryNav = document.querySelector(".channel-left-drawer .primary-nav");
@@ -284,6 +299,8 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const chatPanelRect = chatPanel?.getBoundingClientRect();
     const chatRect = chat?.getBoundingClientRect();
     const composerRect = composer?.getBoundingClientRect();
+    const feedRect = feed?.getBoundingClientRect();
+    const emptyStateRect = emptyState?.getBoundingClientRect();
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
@@ -355,6 +372,21 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
       chatPanelWidth: Math.round(chatPanelRect?.width ?? 0),
       chatWidth: Math.round(chatRect?.width ?? 0),
       composerWidth: Math.round(composerRect?.width ?? 0),
+      workspaceHeight: Math.round(workspace?.getBoundingClientRect().height ?? 0),
+      workbenchWindowHeight: Math.round(workbenchWindow?.getBoundingClientRect().height ?? 0),
+      workbenchMainHeight: Math.round(workbenchMain?.getBoundingClientRect().height ?? 0),
+      chatPanelHeight: Math.round(chatPanelRect?.height ?? 0),
+      activityShellHeight: Math.round(activityShell?.getBoundingClientRect().height ?? 0),
+      chatHeight: Math.round(chatRect?.height ?? 0),
+      activityMainHeight: Math.round(activityMain?.getBoundingClientRect().height ?? 0),
+      emptyStateText: emptyState?.textContent?.trim() ?? "",
+      emptyStateCenterDelta: feedRect && emptyStateRect
+        ? Math.round((emptyStateRect.top + emptyStateRect.height / 2) - (feedRect.top + feedRect.height / 2))
+        : 999,
+      emptyStateIconCount: emptyState?.querySelectorAll("svg").length ?? 0,
+      composerBottomGap: chatPanelRect && composerRect ? Math.round(chatPanelRect.bottom - composerRect.bottom) : 999,
+      feedHeight: Math.round(feedRect?.height ?? 0),
+      feedBottomComposerGap: feedRect && composerRect ? Math.round(composerRect.top - feedRect.bottom) : 999,
       sidebarBottomDisplay: sidebarBottom ? getComputedStyle(sidebarBottom).display : "",
       sidebarBottomBorderTop: sidebarBottom ? getComputedStyle(sidebarBottom).borderTopWidth : "",
       approvalsText: approvals?.textContent?.trim() ?? "",
@@ -414,13 +446,19 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(expanded.rightY).toBe(0);
   expect(expanded.rightHeight).toBe(expanded.viewportHeight);
   expect(expanded.headerRight).toBeLessThanOrEqual(expanded.rightLeft);
-  expect(expanded.sidePanelActions).toBe(2);
-  expect(expanded.sidePanelActionsOpacity).toBe("0");
+  expect(expanded.sidePanelActions).toBe(1);
+  expect(Number(expanded.sidePanelActionsOpacity)).toBeLessThanOrEqual(0.05);
   expect(expanded.sidePanelActionsVisibility).toBe("hidden");
   expect(Math.abs(expanded.chatCenterDelta)).toBeLessThanOrEqual(1);
   expect(Math.abs(expanded.composerCenterDelta)).toBeLessThanOrEqual(1);
   expect(expanded.chatPanelWidth - expanded.chatWidth).toBe(48);
   expect(expanded.composerWidth).toBe(expanded.chatWidth);
+  expect(expanded.emptyStateText).toBe("No channel messages yet");
+  expect(expanded.emptyStateIconCount).toBe(1);
+  expect(Math.abs(expanded.emptyStateCenterDelta)).toBeLessThanOrEqual(2);
+  expect(expanded.composerBottomGap).toBeLessThanOrEqual(18);
+  expect(expanded.feedHeight).toBeGreaterThan(300);
+  expect(expanded.feedBottomComposerGap).toBe(0);
   expect(expanded.sidebarBottomDisplay).toBe("grid");
   expect(expanded.sidebarBottomBorderTop).toBe("1px");
   expect(expanded.approvalsText).toContain("pending approvals");
@@ -512,18 +550,15 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(rightCollapsed.mainPaddingRight).toBe("0px");
   expect(rightCollapsed.chatTransform).toBe("none");
   expect(rightCollapsed.composerTransform).toBe("none");
-  expect(rightCollapsed.attentionCount).toBe(1);
-  expect(rightCollapsed.attentionTop).toBeGreaterThanOrEqual(60);
+  expect(rightCollapsed.attentionCount).toBe(0);
   expect(rightCollapsed.chatLeft).toBeGreaterThanOrEqual(70);
-  expect(rightCollapsed.composerAttentionGap).toBeGreaterThanOrEqual(16);
-  expect(rightCollapsed.composerAttentionGap).toBeLessThanOrEqual(24);
-  expect(rightCollapsed.composerRight).toBeLessThanOrEqual(rightCollapsed.attentionLeft);
   expect(rightCollapsed.composerAttentionOverlapX).toBe(0);
 
   await page.getByRole("button", { name: "Show details" }).click();
   await page.getByRole("button", { name: "Show navigation" }).click();
   await page.waitForTimeout(200);
   await expect(page.locator(".channel-side-panel")).toHaveCount(1);
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Progress");
   const restored = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const leftDrawer = document.querySelector(".channel-left-drawer");
@@ -610,11 +645,28 @@ test("channel drawer uses unread dots instead of count badges and clears on chan
 test("wide channel attention popover keeps the accepted HTML spacing", async ({ page }) => {
   await page.setViewportSize({ width: 2048, height: 1140 });
   const state = createBaseState({ approvalStatus: "pending" });
+  state.channelMessages = [
+    {
+      id: "msg_attention_layout",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Kick off the attention layout discussion.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:02:00.000Z",
+      updatedAt: "2026-05-25T00:02:00.000Z",
+    },
+  ];
   await mockDaemon(page, state);
   await page.goto("/");
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
-  await page.getByRole("button", { name: "Hide details" }).click();
   await page.waitForTimeout(200);
 
   const spacing = await page.evaluate(() => {
@@ -654,10 +706,10 @@ test("workspace task detail panel stays bounded without growing the page", async
   state.eventsByRun.run_failed = createVerboseRunEvents("run_failed");
   await mockDaemon(page, state);
   await page.goto("/");
-  await openChannelTasksTab(page);
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
 
   await expect(page.locator(".workbench-task-list")).toHaveCount(0);
-  await expect(page.locator("article.task-detail")).toContainText("Task detail");
+  await expect(page.locator("article.task-detail .client-task-kicker")).toHaveCount(0);
   await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Advanced channel settings")).toBeVisible();
   const metrics = await page.evaluate(() => {
@@ -762,44 +814,55 @@ test("channel settings can add remove and set default teammates", async ({ page 
   await page.goto("/");
 
   await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
-  const manager = page.getByLabel("Channel teammates");
+  let manager = page.getByLabel("Channel teammates");
   await expect(manager).toContainText("No teammates in this channel");
+  await page.getByLabel("Channel message feed").click();
+  await expect(manager).toHaveCount(0);
+  await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
+  manager = page.getByLabel("Channel teammates");
+  await expect(manager).toContainText("No teammates in this channel");
+  await manager.click();
+  await expect(manager).toBeVisible();
   await manager.getByLabel("Add teammate").selectOption("teammate_builtin_engineer");
-  await manager.getByRole("button", { name: "Add to channel" }).click();
+  await manager.getByRole("button", { name: "Add", exact: true }).click();
   await expect.poll(() => state.teammateChannelMemberships.some((membership) =>
     isRecord(membership) &&
     membership.teammateId === "teammate_builtin_engineer" &&
     membership.channelId === "channel_engineering"
   )).toBe(true);
-  const engineerRow = manager.locator(".channel-teammate-row").filter({ hasText: "Ling Engineer" });
-  await expect(engineerRow).toBeVisible();
+  const engineerChip = manager.locator(".channel-teammate-chip").filter({ hasText: "Ling Engineer" });
+  await expect(engineerChip).toBeVisible();
+  await expect(engineerChip.locator(".channel-teammate-remove-button")).toHaveCSS("opacity", "0");
+  await engineerChip.hover();
+  await expect(engineerChip.locator(".channel-teammate-remove-button")).toHaveCSS("opacity", "1");
 
-  await engineerRow.getByRole("button", { name: "Set default" }).click();
+  await engineerChip.locator(".channel-teammate-chip-main").click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
     return isRecord(channel) ? channel.defaultTeammateId : undefined;
   }).toBe("teammate_builtin_engineer");
-  await expect(engineerRow).toContainText("Default teammate");
+  await expect(engineerChip).toHaveClass(/default/);
 
   await manager.getByLabel("Add teammate").selectOption("teammate_builtin_designer");
-  await manager.getByRole("button", { name: "Add to channel" }).click();
-  const designerRow = manager.locator(".channel-teammate-row").filter({ hasText: "Ling Designer" });
-  await expect(designerRow).toBeVisible();
-  await designerRow.getByRole("button", { name: "Set default" }).click();
+  await manager.getByRole("button", { name: "Add", exact: true }).click();
+  const designerChip = manager.locator(".channel-teammate-chip").filter({ hasText: "Ling Designer" });
+  await expect(designerChip).toBeVisible();
+  await designerChip.locator(".channel-teammate-chip-main").click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
     return isRecord(channel) ? channel.defaultTeammateId : undefined;
   }).toBe("teammate_builtin_designer");
-  await expect(designerRow).toContainText("Default teammate");
+  await expect(designerChip).toHaveClass(/default/);
 
-  await engineerRow.getByRole("button", { name: "Remove from channel" }).click();
+  await engineerChip.hover();
+  await engineerChip.getByRole("button", { name: "Remove from channel" }).click();
   await expect.poll(() => state.teammateChannelMemberships.some((membership) =>
     isRecord(membership) &&
     membership.teammateId === "teammate_builtin_engineer" &&
     membership.channelId === "channel_engineering"
   )).toBe(false);
-  await expect(engineerRow).toHaveCount(0);
-  await expect(designerRow).toBeVisible();
+  await expect(engineerChip).toHaveCount(0);
+  await expect(designerChip).toBeVisible();
   await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
   const notifications = page.getByLabel("Channel notifications");
   await notifications.getByRole("radio", { name: "Muted" }).click();
@@ -813,7 +876,7 @@ test("paused channels disable task run actions", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await openChannelTasksTab(page);
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskCard = page.locator("article.task-detail");
   await expect(taskCard).toContainText("Channel is not active");
   await expect(taskCard.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
@@ -838,7 +901,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await page.goto("/");
 
   await expect(page.getByRole("button", { name: "Chat", exact: true })).toHaveCount(0);
-  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await expect(page.locator('.channel-composer [aria-label="Composer mode"]')).toHaveCount(0);
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Task" })).toHaveCount(0);
   await expect(page.locator(".channel-composer").getByText("Discuss")).toHaveCount(0);
@@ -917,6 +980,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   const sentMessage = page.locator(".message-bubble").filter({ hasText: "@Engineer please refine the channel requirements" });
   const teammateReply = page.locator(".message-bubble").filter({ hasText: "收到，我会按频道上下文推进。" });
   const sentMessageContent = sentMessage.locator(".message-content");
+  const teammateReplyContent = teammateReply.locator(".message-content");
   await expect(sentMessage).toBeVisible();
   await expect(teammateReply).toBeVisible();
   await expect(sentMessage).toHaveClass(/message-bubble-own/);
@@ -961,6 +1025,10 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(sentMessageContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(sentMessageContent).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
   await expect(sentMessageContent).toHaveCSS("padding-top", "0px");
+  await teammateReply.hover();
+  await expect(teammateReplyContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(teammateReplyContent).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+  await expect(teammateReplyContent).toHaveCSS("padding-top", "0px");
   await page.mouse.move(8, 8);
   await expect(sentMessage.locator(".message-meta-action")).toHaveCSS("opacity", "0");
   const replyActionLayout = await sentMessage.evaluate((element) => {
@@ -1014,6 +1082,13 @@ test("channel execution proposal confirms into a task run with the assignee prov
       providerPresetId: "provider_ready",
       allowedTools: ["read", "bash"],
       approvalProfile: { mode: "standard", risk: "medium", requiredForTools: ["bash"] },
+    }),
+    createMockTeammate({
+      id: "teammate_builtin_designer",
+      templateId: "designer",
+      roleKey: "designer",
+      displayName: "Ling Designer",
+      description: "Reviews visual flow and interaction risks.",
     }),
   ];
   state.channels = state.channels.map((channel) =>
@@ -1078,6 +1153,7 @@ test("channel execution proposal confirms into a task run with the assignee prov
       acceptanceCriteria: ["Task is created only after confirmation", "Run uses the assignee provider"],
       collaborationSteps: [
         { teammateId: "teammate_builtin_engineer", action: "coordinated", summary: "Summarized discussion into one execution proposal." },
+        { teammateId: "teammate_builtin_designer", action: "reviewed", summary: "Checked visual hierarchy before execution." },
       ],
       requiredTools: ["read", "grep"],
       riskSummary: "Provider must be ready before execution.",
@@ -1092,7 +1168,16 @@ test("channel execution proposal confirms into a task run with the assignee prov
   const proposal = page.getByLabel("Execution proposal");
   await expect(proposal).toContainText("Refine channel workspace copy");
   await expect(proposal).toContainText("Ling Engineer");
-  await expect(proposal).toContainText("Collaboration");
+  const collaboration = proposal.locator(".channel-proposal-collaboration");
+  await expect(collaboration).not.toHaveAttribute("open", /.+/);
+  await expect(collaboration.locator("summary")).toContainText("Collaboration 2 records");
+  await expect(collaboration.locator("summary")).toContainText("Ling Engineer Summarized discussion into one execution proposal.");
+  await expect(collaboration.locator("summary")).toContainText("Ling Designer Checked visual hierarchy before execution.");
+  await expect(collaboration.locator("li").first()).not.toBeVisible();
+  await collaboration.locator("summary").click();
+  await expect(collaboration.locator("li").first()).toBeVisible();
+  await expect(collaboration).toContainText("Coordinated");
+  await expect(collaboration).toContainText("Reviewed");
   await proposal.getByRole("button", { name: "Start handling" }).click();
 
   await expect.poll(() => {
@@ -1611,7 +1696,7 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await openChannelTasksTab(page);
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
   await page.locator("article.task-detail").getByRole("button", { name: "Create handoff" }).click();
   await expect.poll(() => state.channelHandoffs.length).toBe(1);
 
@@ -1624,6 +1709,37 @@ test("channel v1.2 handoff workflows can start steps and surface runtime context
   await page.getByRole("button", { name: "Runtime" }).click();
   await expect(page.getByText("Workflow queue")).toBeVisible();
   await expect(page.getByText("Active decisions: 0")).toBeVisible();
+  const workflowStepLayout = await page.locator(".workflow-step-card").first().evaluate((element) => {
+    const cardRect = element.getBoundingClientRect();
+    const actionRow = element.querySelector(".activity-action-row");
+    const actionRect = actionRow?.getBoundingClientRect();
+    const buttons = Array.from(element.querySelectorAll<HTMLButtonElement>(".activity-action-row .compact-button")).map((button) => {
+      const rect = button.getBoundingClientRect();
+      return {
+        width: Math.round(rect.width),
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        whiteSpace: getComputedStyle(button).whiteSpace,
+      };
+    });
+    return {
+      cardLeft: Math.round(cardRect.left),
+      cardRight: Math.round(cardRect.right),
+      actionLeft: Math.round(actionRect?.left ?? 0),
+      actionRight: Math.round(actionRect?.right ?? 0),
+      gridColumns: getComputedStyle(element).gridTemplateColumns,
+      buttons,
+    };
+  });
+  expect(workflowStepLayout.gridColumns.split(" ").length).toBe(1);
+  expect(workflowStepLayout.actionLeft).toBeGreaterThanOrEqual(workflowStepLayout.cardLeft);
+  expect(workflowStepLayout.actionRight).toBeLessThanOrEqual(workflowStepLayout.cardRight);
+  for (const button of workflowStepLayout.buttons) {
+    expect(button.left).toBeGreaterThanOrEqual(workflowStepLayout.cardLeft);
+    expect(button.right).toBeLessThanOrEqual(workflowStepLayout.cardRight);
+    expect(button.width).toBeGreaterThanOrEqual(58);
+    expect(button.whiteSpace).toBe("nowrap");
+  }
 
   const taskCount = state.tasks.length;
   await page.getByRole("button", { name: "Start step" }).click();
@@ -1899,6 +2015,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
   await expect(activityDetails).toHaveCount(0);
 
+  await openChannelChatTools(page);
   await runEventBubble.getByRole("button", { name: "Details" }).click();
   await activityDetails.getByRole("button", { name: "Open run" }).click();
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
@@ -2000,7 +2117,9 @@ test("channel activity derives task run approval transition and workflow events"
       countChip: read(".attention-queue-counts small"),
       itemTitle: read(".attention-queue-item-main strong"),
       itemCopy: read(".attention-queue-item-main small"),
-      itemTime: read(".attention-queue-item-meta time"),
+      itemMetaChipCount: document.querySelector(".attention-queue-item-meta")?.querySelectorAll("small").length ?? 0,
+      itemTimeCount: document.querySelectorAll(".attention-queue-item-meta time").length,
+      detailsButtonCount: document.querySelectorAll(".attention-queue-details").length,
     };
   });
   expect(attentionTypography.progressTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
@@ -2011,28 +2130,30 @@ test("channel activity derives task run approval transition and workflow events"
   expect(attentionTypography.countChip).toEqual({ fontSize: "11px", fontWeight: "600", lineHeight: "16px" });
   expect(attentionTypography.itemTitle).toEqual({ fontSize: "13px", fontWeight: "600", lineHeight: "18px" });
   expect(attentionTypography.itemCopy).toEqual({ fontSize: "12px", fontWeight: "400", lineHeight: "17px" });
-  expect(attentionTypography.itemTime).toEqual({ fontSize: "12px", fontWeight: "400", lineHeight: "17px" });
+  expect(attentionTypography.itemMetaChipCount).toBe(1);
+  expect(attentionTypography.itemTimeCount).toBe(0);
+  expect(attentionTypography.detailsButtonCount).toBe(0);
   const expandQueueIfNeeded = async () => {
     await openChannelChatTools(page);
     await expect(attentionQueue.locator(".attention-queue-item").first()).toBeVisible();
   };
-  const blockedQueueItem = attentionQueue.locator(".attention-queue-item").filter({ hasText: "Blocked timeline step" });
-  await blockedQueueItem.getByRole("button", { name: "Details" }).click();
-  await expect(activityDetails).toContainText("Blocked timeline step");
-  await expect(activityDetails).toContainText("Runtime policy is waiting.");
-  await activityDetails.getByLabel("Close details").click();
+  const attentionQueueItemByTitle = (title: string) =>
+    attentionQueue.locator(".attention-queue-item").filter({
+      has: page.locator(".attention-queue-item-main strong").filter({ hasText: title }),
+    });
+  const blockedQueueItem = attentionQueueItemByTitle("Blocked timeline step");
   await blockedQueueItem.locator(".attention-queue-item-open").click();
   await expect(page.locator(".channel-side-panel")).toContainText("Context");
   await expandQueueIfNeeded();
-  await attentionQueue.locator(".attention-queue-item").filter({ hasText: "Run run_failed" }).locator(".attention-queue-item-open").click();
+  await attentionQueueItemByTitle("Run run_failed").locator(".attention-queue-item-open").click();
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expandQueueIfNeeded();
-  await attentionQueue.locator(".attention-queue-item").filter({ hasText: "Approve shell command" }).locator(".attention-queue-item-open").click();
+  await attentionQueueItemByTitle("Approve shell command").locator(".attention-queue-item-open").click();
   await expect(page.getByLabel("Approval requests")).toContainText("Approve shell command");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expandQueueIfNeeded();
-  await attentionQueue.locator(".attention-queue-item").filter({ hasText: "Inspect workspace" }).filter({ hasText: "Task" }).locator(".attention-queue-item-open").click();
+  await attentionQueueItemByTitle("Inspect workspace").locator(".attention-queue-item-open").click();
   await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
 
@@ -2163,6 +2284,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
   await expect(page.locator("article.task-detail")).toContainText("Inspect workspace");
 
+  await openChannelChatTools(page);
   await page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "run_failed" }).getByRole("button", { name: "Open run" }).click();
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
   await expect(page.locator(".run-detail-panel .session-file-list")).not.toBeVisible();
@@ -2358,8 +2480,8 @@ test("channel activity hides the attention queue when no items need attention", 
   await expect(page.getByRole("button", { name: "Attention queue" }).locator(".toolbar-count")).toHaveCount(0);
   await expect(page.locator(".channel-attention-popover")).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
-  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
-  await expect(page.locator("article.task-detail")).toContainText("Task detail");
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
+  await expect(page.locator("article.task-detail")).toHaveCount(0);
 });
 
 test("run detail renders state transitions from daemon timeline API", async ({ page }) => {
@@ -2476,7 +2598,7 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await page.goto("/");
 
   await expect(page.getByLabel("任务检查器")).toHaveCount(0);
-  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "任务详情");
+  await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "任务上下文" })).toHaveCount(0);
   await expect(page.getByText("Task context")).toHaveCount(0);
   await expect(page.getByText("No task selected")).toHaveCount(0);
@@ -3585,7 +3707,7 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await openChannelTasksTab(page);
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
   await openNewTaskPanel(page);
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
   await expect(providerSelect.locator("option").filter({ hasText: "Ready Local Relay" })).toHaveCount(1);
@@ -3594,6 +3716,7 @@ test("workspace task runs only expose preflight-ready coding providers", async (
   await expect(page.getByText("Media providers stay in Media Jobs and cannot run coding tasks.").first()).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
 
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
   await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
   await expect.poll(() => state.runs.some((run) => run.id === "run_2")).toBe(true);
   await expect(page.locator(".task-detail")).toContainText("Latest run");
@@ -3625,12 +3748,13 @@ test("workspace task run uses the displayed ready provider fallback", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await openChannelTasksTab(page);
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
   await openNewTaskPanel(page);
   const providerSelect = page.locator("label.field").filter({ hasText: "Run provider" }).locator("select");
   await expect(providerSelect).toHaveValue("provider_ready");
   await page.getByRole("button", { name: "Cancel" }).click();
 
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
   await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
 
   await expect.poll(() => state.runs[0]?.providerPresetId).toBe("provider_ready");
@@ -3663,7 +3787,7 @@ test("workspace task detail actions only show a spinner on the clicked action", 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await openChannelTasksTab(page);
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskDetail = page.locator("article.task-detail");
   await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
 
@@ -3718,18 +3842,18 @@ test("succeeded workspace tasks show a clear result action", async ({ page }) =>
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await openChannelTasksTab(page);
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
   await expect(page.getByText("Task complete").first()).toBeVisible();
 
   const taskDetail = page.locator("article.task-detail");
   await expect(taskDetail).toContainText("Task complete");
   await expect(taskDetail.getByRole("button", { name: "View result" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Run activity" })).toBeVisible();
-  await expect(page.getByText("AI is analyzing the task").first()).toBeVisible();
-  await expect(page.getByText("Read package.json")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Run activity" })).toHaveCount(0);
+  await expect(taskDetail).not.toContainText("AI is analyzing the task");
+  await expect(taskDetail).not.toContainText("Read package.json");
 });
 
-test("workspace run timeline summarizes activity and keeps raw events contained", async ({ page }) => {
+test("run detail keeps debug event timeline contained", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
@@ -3746,40 +3870,25 @@ test("workspace run timeline summarizes activity and keeps raw events contained"
   state.channels = state.channels.map((channel) =>
     isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel
   );
-  state.tasks = state.tasks.map((task) =>
-    isRecord(task) ? { ...task, status: "todo", currentRunId: undefined } : task
-  );
-  state.runs = [];
-  state.nextStreamEvents = createVerboseRunEvents("run_1");
+  state.eventsByRun.run_failed = createVerboseRunEvents("run_failed");
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await openChannelTasksTab(page);
-  await page.locator(".task-detail").getByRole("button", { name: "Run", exact: true }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
-  await expect(page.getByRole("heading", { name: "Run activity" })).toBeVisible();
-  await expect(page.getByText("AI is analyzing the task").first()).toBeVisible();
-  await expect(page.getByText("Read package.json")).toBeVisible();
-  await expect(page.getByText("Generated artifact: read content")).toBeVisible();
-  await expect(page.getByText("Tool failed: grep")).toBeVisible();
-  await expect(page.getByText("Approval requested: bash")).toBeVisible();
-  await expect(page.getByText("Run completed")).toBeVisible();
-  await expect(page.locator(".timeline-activity-list")).toHaveCSS("overflow-y", "auto");
-  await expect(page.locator(".timeline")).not.toHaveCSS("overflow-y", "auto");
-  await expect.poll(() => readScrollState(page, ".timeline-activity-list")).toMatchObject({ atBottom: true });
+  await expect(page.getByRole("heading", { name: "Evidence" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Run activity" })).toHaveCount(0);
 
-  const visibleThinkingRows = page.locator(".timeline-activity-list").getByText("assistant_thinking_delta");
-  await expect(visibleThinkingRows).toHaveCount(0);
-
-  const rawEvents = page.locator("details.raw-event-panel");
-  await expect(rawEvents).toHaveCount(1);
-  await expect(rawEvents).not.toHaveAttribute("open", /.+/);
-  await rawEvents.locator(":scope > summary").click();
-  await expect(rawEvents.locator(".raw-event-list")).toHaveCSS("overflow-y", "auto");
-  await expect(rawEvents.locator(".raw-event-list")).toHaveCSS("overflow-x", "hidden");
-  await expect.poll(() => readScrollState(page, ".raw-event-list")).toMatchObject({ atBottom: true });
-  await expect(rawEvents.getByText("assistant_thinking_delta").first()).toBeVisible();
-  await expect.poll(() => readHorizontalOverflow(page, ".timeline, .timeline-activity-list, .raw-event-list, .assistant-output")).toEqual([]);
+  const debugDetails = page.locator("details.debug-details");
+  await expect(debugDetails).toHaveCount(1);
+  await expect(debugDetails).not.toHaveAttribute("open", /.+/);
+  await debugDetails.locator(":scope > summary").click();
+  await expect(page.getByRole("heading", { name: "Tool activity" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Event timeline" })).toBeVisible();
+  await expect(debugDetails.getByText("assistant_thinking_delta").first()).toBeVisible();
+  await expect(debugDetails.getByText("tool_start").first()).toBeVisible();
+  await expect.poll(() => readHorizontalOverflow(page, ".run-detail-events, .tool-event-list, .debug-details")).toEqual([]);
 });
 
 test("save and check enables a disabled provider before checking", async ({ page }) => {
@@ -4275,10 +4384,24 @@ async function readSidebarSelection(page: Page): Promise<{ readonly activeNav: s
 }
 
 async function openChannelTasksTab(page: Page): Promise<void> {
-  await openChannelSidePanel(page, "Tasks");
+  await openChannelSidePanel(page, "Progress");
+}
+
+async function openTaskFromAttentionQueue(page: Page, title: string): Promise<void> {
+  const hideDetails = page.getByRole("button", { name: "Hide details" });
+  if (await hideDetails.count() > 0 && await hideDetails.isVisible().catch(() => false)) {
+    await hideDetails.click();
+    await expect(page.locator(".channel-side-panel")).toHaveCount(0);
+  }
+  await openChannelChatTools(page);
+  const taskEvent = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: title }).first();
+  await expect(taskEvent).toBeVisible();
+  await taskEvent.getByRole("button", { name: "Open task" }).click();
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Task detail");
 }
 
 async function openNewTaskPanel(page: Page): Promise<void> {
+  await openChannelTasksTab(page);
   await page.locator(".channel-side-panel").hover();
   await page.getByRole("button", { name: "New task" }).click();
 }
@@ -4291,16 +4414,19 @@ async function openChannelContextPanel(page: Page): Promise<void> {
   await openChannelSidePanel(page, "Context");
 }
 
-async function openChannelSidePanel(page: Page, name: "Tasks" | "Files" | "Context"): Promise<void> {
-  const panelLabel = name === "Tasks" ? "Task detail" : name;
-  const panel = page.locator(".channel-side-panel").filter({ hasText: panelLabel });
-  if ((await panel.count()) > 0 && await panel.isVisible().catch(() => false)) {
+async function openChannelSidePanel(page: Page, name: "Progress" | "Files" | "Context" | "Settings"): Promise<void> {
+  const expectedLabels = [name];
+  const panel = page.locator(".channel-side-panel");
+  const panelVisible = (await panel.count()) > 0 && await panel.isVisible().catch(() => false);
+  const panelLabel = panelVisible ? await panel.getAttribute("aria-label") : "";
+  if (panelVisible && panelLabel && expectedLabels.includes(panelLabel)) {
     await panel.hover();
     return;
   }
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name }).click();
-  await page.locator(".channel-side-panel").filter({ hasText: panelLabel }).hover();
+  await expect(panel).toBeVisible();
+  await panel.hover();
 }
 
 async function openChannelChatTools(page: Page): Promise<void> {

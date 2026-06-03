@@ -1095,14 +1095,6 @@ textarea {
   border-top: 1px solid rgba(22, 140, 120, 0.28);
 }
 
-.client-task-kicker {
-  color: #13715f;
-  font-size: 10px;
-  font-weight: 820;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .client-task-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1590,6 +1582,13 @@ textarea {
   color: #5e6463;
   font-size: 12px;
   font-weight: 700;
+}
+
+.toggle-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
 }
 
 .runtime-state-panel {
