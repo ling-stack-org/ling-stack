@@ -2701,7 +2701,8 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
   await expect(page.getByRole("heading", { name: "模型工作台" }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "模型工作台" })).toHaveCount(1);
-  await expect(page.getByRole("heading", { name: "模型预设" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "模型预设" })).toHaveCount(0);
+  await expect(page.locator(".provider-table")).toBeVisible();
   await expect(page.locator(".workspace-head .status-badge")).toHaveCount(0);
   await expect(page.getByText("聊天能力")).toBeVisible();
   await expect(page.getByText("Chat-capable")).toHaveCount(0);

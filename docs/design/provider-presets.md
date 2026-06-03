@@ -73,6 +73,34 @@ This slice does not include:
 - API keys must not be stored in SQLite, JSONL, summaries, events, or logs.
 - Inline provider config remains useful for development but should not be the normal product path.
 
+## Web Model Workbench UI
+
+The Web UI presents provider presets as a model workbench, not as a settings-card
+collection. The main view is a dense table so users can scan model name, model id, Base
+URL, API key state, check state, readiness, and row actions without opening each preset.
+
+Default workbench layout:
+
+- `Model Workbench` is the only visible page title in the main content. Do not nest a
+  second `Model presets` panel title under it.
+- Summary chips show available, needs-configuration, and disabled counts.
+- Secondary summary text keeps capability totals visible: chat-capable, coding-ready,
+  missing secrets, and template counts.
+- Search covers display name, provider id, model, API protocol, and Base URL.
+- Status filters are UI-only; they do not change provider persistence semantics.
+- Row actions appear on hover/focus and keep the existing actions: use/stop using, edit,
+  check, and delete.
+
+Add/edit uses a right-side sheet. The sheet owns template selection, API key entry, Base
+URL, API protocol, model discovery, capability flags, and save validation. Closing or
+saving the sheet returns the user to the workbench table. Provider repair handoffs from
+failed runs still open the same sheet for the affected preset.
+
+The UI must stay strict-daylight and low decoration: white surface, `#111111` primary
+text, `#6B6B6B` secondary text, `#E5E5E5` borders, `#F5F5F5` selected/hover surface,
+and 8px or smaller radii. Model Workbench should not reintroduce large nested cards or
+a nested settings panel around the provider table.
+
 ## Provider Kinds
 
 ```ts
