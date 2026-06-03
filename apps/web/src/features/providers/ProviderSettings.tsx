@@ -13,7 +13,6 @@ import {
   RotateCcw,
   Save,
   Search,
-  Settings,
   Trash2,
   X,
 } from "lucide-react";
@@ -42,7 +41,6 @@ import {
   providerTemplateKindLabel,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
-import { MetaRow } from "../../shared/components/index.js";
 import type {
   ProviderCheckResult,
   ProviderFormState,
@@ -54,7 +52,7 @@ import type {
 import type { ProviderBatchResult } from "./types.js";
 
 const customOpenAICompatibleTemplateId = "custom-openai-compatible";
-type ProviderStatusFilter = "all" | "ready" | "needsAttention" | "missingKey";
+type ProviderStatusFilter = "all" | "ready" | "needsAttention" | "missingKey" | "disabled";
 
 export interface ProviderSaveResult {
   readonly ok: boolean;
@@ -129,6 +127,8 @@ export function ProviderSettings({
   const preflightReadyProviderCount = providers.filter(providerPreflightReady).length;
   const batchCheckProviderCount = providers.filter(canBatchCheckProvider).length;
   const missingSecretCount = providers.filter((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured).length;
+  const disabledProviderCount = providers.filter((provider) => !provider.enabled).length;
+  const needsAttentionProviderCount = providers.filter((provider) => provider.enabled && !providerPreflightReady(provider)).length;
   const chatTemplateCount = templates.filter((template) => template.capabilities.includes("chat")).length;
   const mediaTemplateCount = templates.length - chatTemplateCount;
   const templateGroups = useMemo(() => groupProviderTemplates(templates), [templates]);
@@ -193,7 +193,8 @@ export function ProviderSettings({
           providerStatusFilter === "all" ||
           (providerStatusFilter === "ready" && providerPreflightReady(provider)) ||
           (providerStatusFilter === "missingKey" && providerNeedsSecret(provider) && !provider.apiKeyConfigured) ||
-          (providerStatusFilter === "needsAttention" && !providerPreflightReady(provider));
+          (providerStatusFilter === "needsAttention" && provider.enabled && !providerPreflightReady(provider)) ||
+          (providerStatusFilter === "disabled" && !provider.enabled);
         return matchesQuery && matchesStatus;
       }),
     [providerSearch, providerStatusFilter, providers],
@@ -306,13 +307,13 @@ export function ProviderSettings({
   }
 
   return (
-    <div className="provider-layout provider-management-layout">
-      <section className="panel provider-list-panel" aria-labelledby="provider-list-title">
-        <div className="panel-title split">
-          <span>
-            <PlugZap size={18} />
-            <h2 id="provider-list-title">{t("Model presets")}</h2>
-          </span>
+    <div className="provider-layout provider-management-layout provider-workbench-surface">
+      <section className="provider-list-panel provider-workbench" aria-labelledby="provider-workbench-title">
+        <header className="provider-workbench-header">
+          <div>
+            <h1 id="provider-workbench-title">{t("Model Workbench")}</h1>
+            <p>{t("Manage and configure all available model presets.")}</p>
+          </div>
           <div className="provider-title-actions">
             <button className="primary-button compact-button" type="button" onClick={openNewProviderSheet}>
               <Plus size={15} />
@@ -327,28 +328,64 @@ export function ProviderSettings({
               {t("Refresh")}
             </button>
           </div>
-        </div>
+        </header>
 
         <div className="provider-toolbar" aria-label={t("Model preset filters")}>
-          <label className="provider-search-field">
-            <Search size={15} />
-            <input
-              aria-label={t("Search model presets")}
-              value={providerSearch}
-              placeholder={t("Search name, model, or endpoint")}
-              onChange={(event) => setProviderSearch(event.target.value)}
-            />
-          </label>
-          <select
-            aria-label={t("Filter model presets")}
-            value={providerStatusFilter}
-            onChange={(event) => setProviderStatusFilter(event.target.value as ProviderStatusFilter)}
-          >
-            <option value="all">{t("All presets")}</option>
-            <option value="ready">{t("Ready presets")}</option>
-            <option value="needsAttention">{t("Needs attention")}</option>
-            <option value="missingKey">{t("Missing key")}</option>
-          </select>
+          <div className="provider-status-tabs" aria-label={t("Provider workbench status")}>
+            <button
+              className={providerStatusFilter === "ready" ? "selected" : ""}
+              type="button"
+              onClick={() => setProviderStatusFilter("ready")}
+            >
+              <span className="provider-status-dot ready" />
+              {t("Available")} <strong>{preflightReadyProviderCount}</strong>
+            </button>
+            <button
+              className={providerStatusFilter === "needsAttention" ? "selected" : ""}
+              type="button"
+              onClick={() => setProviderStatusFilter("needsAttention")}
+            >
+              <span className="provider-status-dot warning" />
+              {t("Needs config")} <strong>{needsAttentionProviderCount}</strong>
+            </button>
+            <button
+              className={providerStatusFilter === "disabled" ? "selected" : ""}
+              type="button"
+              onClick={() => setProviderStatusFilter("disabled")}
+            >
+              <span className="provider-status-dot muted" />
+              {t("Disabled providers")} <strong>{disabledProviderCount}</strong>
+            </button>
+          </div>
+          <div className="provider-toolbar-controls">
+            <label className="provider-search-field">
+              <Search size={15} />
+              <input
+                aria-label={t("Search model presets")}
+                value={providerSearch}
+                placeholder={t("Search name, model, or endpoint")}
+                onChange={(event) => setProviderSearch(event.target.value)}
+              />
+            </label>
+            <select
+              aria-label={t("Filter model presets")}
+              value={providerStatusFilter}
+              onChange={(event) => setProviderStatusFilter(event.target.value as ProviderStatusFilter)}
+            >
+              <option value="all">{t("All presets")}</option>
+              <option value="ready">{t("Ready presets")}</option>
+              <option value="needsAttention">{t("Needs attention")}</option>
+              <option value="missingKey">{t("Missing key")}</option>
+              <option value="disabled">{t("Disabled providers")}</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="provider-capability-summary" aria-label={t("Provider workbench status")}>
+          <span>{t("Chat-capable")} <strong>{compatibleProviderCount}</strong></span>
+          <span>{t("Coding ready")} <strong>{preflightReadyProviderCount}</strong></span>
+          <span>{t("Missing secrets")} <strong>{missingSecretCount}</strong></span>
+          <span>{t("Templates")} <strong>{t("{chatCount} chat / {mediaCount} media", { chatCount: chatTemplateCount, mediaCount: mediaTemplateCount })}</strong></span>
         </div>
 
         {errorMessage ? (
@@ -357,13 +394,6 @@ export function ProviderSettings({
             {errorMessage}
           </div>
         ) : null}
-
-        <div className="provider-onboarding-strip" aria-label="Provider onboarding status">
-          <MetaRow label={t("Chat-capable")} value={String(compatibleProviderCount)} compact />
-          <MetaRow label={t("Coding ready")} value={String(preflightReadyProviderCount)} compact />
-          <MetaRow label={t("Missing secrets")} value={String(missingSecretCount)} compact />
-          <MetaRow label={t("Templates")} value={t("{chatCount} chat / {mediaCount} media", { chatCount: chatTemplateCount, mediaCount: mediaTemplateCount })} compact />
-        </div>
 
         <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={isLoading} />
         {repairRun ? (
@@ -392,7 +422,7 @@ export function ProviderSettings({
           </div>
         ) : null}
 
-        <div className="provider-list">
+        <div className="provider-table-shell">
           {providers.length === 0 ? (
             <div className="empty-state compact-empty">
               {isLoading ? <Loader2 className="spin" /> : <PlugZap />}
@@ -410,86 +440,126 @@ export function ProviderSettings({
               <span>{t("No model presets match the current filters")}</span>
             </div>
           ) : (
-            filteredProviders.map((provider) => {
-              const providerMissingApiKey = providerNeedsSecret(provider) && !provider.apiKeyConfigured;
-              const providerSelectedForRun = provider.id === selectedProviderId;
-              return (
-                <article key={provider.id} className={provider.id === selectedProviderId ? "provider-row selected" : "provider-row"}>
-                  <div className="provider-row-main">
-                    <div className="provider-row-head">
-                      <strong>{provider.displayName}</strong>
-                      {!providerMissingApiKey ? (
-                        <span className={providerSelectedForRun ? "provider-state enabled" : "provider-state disabled"}>
-                          {providerSelectedForRun ? t("enabled") : t("disabled")}
+            <table className="provider-table">
+              <thead>
+                <tr>
+                  <th>{t("Name")}</th>
+                  <th>{t("Model")}</th>
+                  <th>{t("Base URL")}</th>
+                  <th>{t("API key status")}</th>
+                  <th>{t("Check status")}</th>
+                  <th>{t("Status")}</th>
+                  <th className="provider-table-action-head">{t("Actions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredProviders.map((provider) => {
+                  const providerMissingApiKey = providerNeedsSecret(provider) && !provider.apiKeyConfigured;
+                  const providerSelectedForRun = provider.id === selectedProviderId;
+                  const effectiveBaseUrl = providerEffectiveBaseUrl(provider, templates) || t("default endpoint");
+                  return (
+                    <tr key={provider.id} className={provider.id === selectedProviderId ? "provider-row selected" : "provider-row"}>
+                      <td className="provider-name-cell">
+                        <span className="provider-avatar" aria-hidden="true">{providerInitial(provider.displayName)}</span>
+                        <span className="provider-name-copy">
+                          <strong>{provider.displayName}</strong>
+                          <small>{provider.providerId}</small>
                         </span>
-                      ) : null}
-                      {providerMissingApiKey ? (
-                        <span className="provider-state key-missing">{t("API key missing")}</span>
-                      ) : (
-                        <>
+                      </td>
+                      <td>
+                        <span className="provider-model-name">{provider.model}</span>
+                        <div className="provider-meta-line provider-table-compat-line">
+                          <span>{t("Model")}: {provider.model}</span>
+                          <span>{t("API protocol")}: {provider.api}</span>
+                          <span>{provider.lastCheck ? t("last check {time}", { time: formatDateTime(provider.lastCheck.checkedAt) }) : t("not checked")}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="provider-meta-line mono provider-endpoint-cell">
+                          <span><span className="provider-endpoint-label">{t("Base URL")}: </span>{effectiveBaseUrl}</span>
+                        </div>
+                      </td>
+                      <td>
+                        {providerMissingApiKey ? (
+                          <span className="provider-state key-missing">{t("API key missing")}</span>
+                        ) : (
                           <span className={providerNeedsSecret(provider) ? "provider-state key-ok" : "provider-state check-unknown"}>
                             {providerNeedsSecret(provider) ? t("key ready") : t("no key required")}
                           </span>
-                          <span className={providerPreflightReady(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
+                        )}
+                      </td>
+                      <td>
+                        <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider, t)}>
+                          {providerLastCheckLabel(provider, t)}
+                        </span>
+                      </td>
+                      <td className="provider-status-cell">
+                        {providerMissingApiKey ? (
+                          <span className="provider-state check-unknown">{t("Needs config")}</span>
+                        ) : null}
+                        {!providerMissingApiKey ? (
+                          <span className={providerSelectedForRun ? "provider-state enabled" : "provider-state disabled"}>
+                            {providerSelectedForRun ? t("enabled") : t("disabled")}
+                          </span>
+                        ) : null}
+                        {!providerMissingApiKey ? (
+                          <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
                             {providerPreflightReady(provider) ? t("preflight ready") : canUseProviderForRun(provider) ? t("needs check") : providerRunBlockerLabel(provider, t)}
                           </span>
-                          <span className={providerPreflightReady(provider) ? "provider-state run-ready" : "provider-state run-blocked"}>
+                        ) : null}
+                        {!providerMissingApiKey ? (
+                          <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
                             {t("Coding task")}: {providerCodingTaskLabel(provider, t)}
                           </span>
-                          <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider, t)}>
-                            {providerLastCheckLabel(provider, t)}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                    <div className="provider-meta-line">
-                      <span>{t("Model")}: {provider.model}</span>
-                      <span>{t("API protocol")}: {provider.api}</span>
-                      <span>{provider.lastCheck ? t("last check {time}", { time: formatDateTime(provider.lastCheck.checkedAt) }) : t("not checked")}</span>
-                    </div>
-                    <div className="provider-meta-line mono">
-                      <span>{t("Base URL")}: {providerEffectiveBaseUrl(provider, templates) || t("default endpoint")}</span>
-                    </div>
-                    <div className="capability-list">
-                      {provider.capabilities.map((capability) => (
-                        <span key={capability}>{capability}</span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="provider-actions">
-                    <button
-                      className="secondary-button compact-button"
-                      type="button"
-                      disabled={!providerSelectedForRun && !providerPreflightReady(provider)}
-                      onClick={() => {
-                        if (providerSelectedForRun) {
-                          onStopUse();
-                          return;
-                        }
-                        onUse(provider);
-                      }}
-                    >
-                      {providerSelectedForRun ? <X size={14} /> : <Play size={14} />}
-                      {providerSelectedForRun ? t("Stop using") : t("Use")}
-                    </button>
-                    <button className="secondary-button compact-button" type="button" onClick={() => openEditProviderSheet(provider)}>
-                      <Pencil size={14} />
-                      {t("Edit")}
-                    </button>
-                    <button className="secondary-button compact-button" type="button" disabled={isCheckingProviders} onClick={() => onCheck(provider.id)}>
-                      {checkingProviderIds.includes(provider.id) ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                      {t("Check")}
-                    </button>
-                    <button className="secondary-button compact-button danger" type="button" onClick={() => onDelete(provider.id)}>
-                      <Trash2 size={14} />
-                      {t("Delete")}
-                    </button>
-                  </div>
-                </article>
-              );
-            })
+                        ) : null}
+                      </td>
+                      <td>
+                        <div className="provider-actions">
+                          <button
+                            className="secondary-button compact-button"
+                            type="button"
+                            disabled={!providerSelectedForRun && !providerPreflightReady(provider)}
+                            onClick={() => {
+                              if (providerSelectedForRun) {
+                                onStopUse();
+                                return;
+                              }
+                              onUse(provider);
+                            }}
+                          >
+                            {providerSelectedForRun ? <X size={14} /> : <Play size={14} />}
+                            {providerSelectedForRun ? t("Stop using") : t("Use")}
+                          </button>
+                          <button className="secondary-button compact-button" type="button" onClick={() => openEditProviderSheet(provider)}>
+                            <Pencil size={14} />
+                            {t("Edit")}
+                          </button>
+                          <button className="secondary-button compact-button" type="button" disabled={isCheckingProviders} onClick={() => onCheck(provider.id)}>
+                            {checkingProviderIds.includes(provider.id) ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                            {t("Check")}
+                          </button>
+                          <button className="secondary-button compact-button danger" type="button" onClick={() => onDelete(provider.id)}>
+                            <Trash2 size={14} />
+                            {t("Delete")}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
         </div>
+        {filteredProviders.length > 0 ? (
+          <div className="provider-table-footer" aria-label={t("Model preset table summary")}>
+            <span>{t("{count} model presets", { count: filteredProviders.length })}</span>
+            <span className="provider-table-pagination">
+              <button type="button" disabled>{t("Previous page")}</button>
+              <button type="button" disabled>{t("Next page")}</button>
+            </span>
+          </div>
+        ) : null}
       </section>
 
       {isEditorOpen ? (
@@ -497,7 +567,6 @@ export function ProviderSettings({
           <section className="panel provider-form-panel provider-sheet" aria-labelledby="provider-form-title" role="dialog" aria-modal="true">
         <div className="panel-title split provider-sheet-header">
           <span>
-            <Settings size={18} />
             <h2 id="provider-form-title">{editingProviderId ? t("Edit preset") : t("New preset")}</h2>
           </span>
           <button className="icon-button" type="button" onClick={closeProviderSheet} aria-label={t("Close model preset editor")}>
@@ -807,6 +876,14 @@ function ProviderNextAction({
 
 function normalizeProviderEndpoint(value: string): string {
   return value.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+function providerInitial(displayName: string): string {
+  const normalizedName = displayName.trim();
+  if (!normalizedName) {
+    return "#";
+  }
+  return normalizedName.slice(0, 1).toUpperCase();
 }
 
 function ProviderRunRepairPanel({

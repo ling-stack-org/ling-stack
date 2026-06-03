@@ -3197,17 +3197,19 @@ export function AppShell(): JSX.Element {
           />
         ) : (
           <>
-            <div className="workspace-head">
-              <div>
-                <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
-                <p>{selectedAiTeammate ? selectedAiTeammate.description : t(viewDescription(activeView))}</p>
+            {activeView === "providers" ? null : (
+              <div className="workspace-head">
+                <div>
+                  <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
+                  <p>{selectedAiTeammate ? selectedAiTeammate.description : t(viewDescription(activeView))}</p>
+                </div>
+                {activeView === "teammates" ? (
+                  <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
+                ) : (
+                  <StatusBadge status={latestStatus} />
+                )}
               </div>
-              {activeView === "teammates" ? (
-                <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
-              ) : activeView === "providers" ? null : (
-                <StatusBadge status={latestStatus} />
-              )}
-            </div>
+            )}
             {activeView === "teammates" && selectedAiTeammate ? (
               <TeammateWorkspace
                 cwd={form.cwd}
