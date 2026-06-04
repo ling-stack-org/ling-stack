@@ -1,0 +1,203 @@
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  DEFAULT_WORKSPACE_ID,
+  type ResourceLease,
+  type RuntimeInstance,
+  type RuntimeSemaphoreSlot,
+  type RunStore,
+  type WorkUnit,
+} from "@ling-stack/core";
+import type { ResolvedDaemonConfig } from "../config.js";
+import { HttpError } from "../errors.js";
+import { isRecord } from "../shared/validation.js";
+import { isStuckWorkUnit, listActiveWorkUnits, markWorkUnitStale } from "./work-units.js";
+
+const RUNTIME_SCHEMA_VERSION = 22;
+
+export class RuntimeSupervisor {
+  private readonly runtimesByCwd = new Map<string, RuntimeInstance>();
+  private readonly lockedCwds = new Set<string>();
+  private readonly reconciledCwds = new Set<string>();
+
+  constructor(private readonly config: ResolvedDaemonConfig) {}
+
+  getRuntime(cwd: string, store: RunStore): RuntimeInstance {
+    const existing = this.runtimesByCwd.get(cwd);
+    if (existing) {
+      return existing;
+    }
+
+    this.ensureRuntimeLock(cwd, store);
+    this.reconcileStartup(cwd, store);
+    const now = new Date().toISOString();
+    const runtime: RuntimeInstance = {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      runtimeInstanceId: `runtime_${randomUUID()}`,
+      pid: process.pid,
+      host: this.config.host,
+      port: this.config.port,
+      startedAt: now,
+      version: "0.0.0",
+      schemaVersion: RUNTIME_SCHEMA_VERSION,
+      status: "healthy",
+    };
+    this.runtimesByCwd.set(cwd, runtime);
+    this.writeRuntimeLock(store, runtime);
+    return runtime;
+  }
+
+  getDiagnostics(cwd: string, store: RunStore): {
+    readonly runtime: RuntimeInstance;
+    readonly active: readonly WorkUnit[];
+    readonly stuck: readonly WorkUnit[];
+    readonly queued: readonly WorkUnit[];
+    readonly stale: readonly WorkUnit[];
+    readonly leases: readonly ResourceLease[];
+    readonly semaphoreSlots: readonly RuntimeSemaphoreSlot[];
+  } {
+    const runtime = this.getRuntime(cwd, store);
+    const active = listActiveWorkUnits(store);
+    return {
+      runtime,
+      active,
+      stuck: active.filter((workUnit) => isStuckWorkUnit(workUnit, new Date())),
+      queued: store.listWorkUnits({ status: "queued", limit: 200 }),
+      stale: store.listWorkUnits({ status: "stale", limit: 200 }),
+      leases: store.listResourceLeases({ status: "active", limit: 500 }),
+      semaphoreSlots: store.listRuntimeSemaphoreSlots({ status: "active", limit: 500 }),
+    };
+  }
+
+  releaseAll(): void {
+    for (const [cwd, runtime] of this.runtimesByCwd.entries()) {
+      const lockPath = join(cwd, ".ling-stack", "runtime.lock");
+      try {
+        const current = parseRuntimeLock(readFileSync(lockPath, "utf8"));
+        if (current?.runtimeInstanceId === runtime.runtimeInstanceId) {
+          unlinkSync(lockPath);
+        }
+      } catch {
+        // Lock cleanup is best-effort; stale locks are reconciled on the next runtime start.
+      }
+    }
+    this.runtimesByCwd.clear();
+    this.lockedCwds.clear();
+    this.reconciledCwds.clear();
+  }
+
+  private ensureRuntimeLock(cwd: string, store: RunStore): void {
+    if (this.lockedCwds.has(cwd)) {
+      return;
+    }
+    const lockPath = join(store.paths.rootDir, "runtime.lock");
+    const lock = {
+      runtimeInstanceId: `runtime_lock_probe_${randomUUID()}`,
+      pid: process.pid,
+      host: this.config.host,
+      port: this.config.port,
+      cwd,
+      startedAt: new Date().toISOString(),
+    };
+    try {
+      writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
+      this.lockedCwds.add(cwd);
+      return;
+    } catch (error) {
+      if (!isFsErrorCode(error, "EEXIST")) {
+        throw error;
+      }
+    }
+
+    const existing = parseRuntimeLock(readFileSync(lockPath, "utf8"));
+    if (existing && isProcessAlive(existing.pid)) {
+      if (existing.pid !== process.pid || existing.port !== this.config.port || existing.host !== this.config.host) {
+        throw new HttpError(
+          409,
+          "runtime_already_running",
+          `Workspace runtime is already owned by pid ${existing.pid} at ${existing.host}:${existing.port}.`,
+        );
+      }
+      this.lockedCwds.add(cwd);
+      return;
+    }
+
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // If unlink races with another daemon, the following create will surface the correct error.
+    }
+    writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
+    this.lockedCwds.add(cwd);
+  }
+
+  private writeRuntimeLock(store: RunStore, runtime: RuntimeInstance): void {
+    const lockPath = join(store.paths.rootDir, "runtime.lock");
+    writeFileSync(
+      lockPath,
+      `${JSON.stringify(
+        {
+          runtimeInstanceId: runtime.runtimeInstanceId,
+          pid: runtime.pid,
+          host: runtime.host,
+          port: runtime.port,
+          cwd: store.paths.cwd,
+          startedAt: runtime.startedAt,
+          schemaVersion: runtime.schemaVersion,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
+
+  private reconcileStartup(cwd: string, store: RunStore): void {
+    if (this.reconciledCwds.has(cwd)) {
+      return;
+    }
+    this.reconciledCwds.add(cwd);
+    const now = new Date().toISOString();
+    const candidates = [
+      ...store.listWorkUnits({ status: "claimed", limit: 500 }),
+      ...store.listWorkUnits({ status: "running", limit: 500 }),
+      ...store.listWorkUnits({ status: "cancelling", limit: 500 }),
+    ];
+    for (const workUnit of candidates) {
+      markWorkUnitStale(store, workUnit, now, "runtime-startup-reconcile");
+    }
+  }
+}
+
+function parseRuntimeLock(value: string): { readonly runtimeInstanceId?: string; readonly pid: number; readonly host: string; readonly port: number } | undefined {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isRecord(parsed) || typeof parsed.pid !== "number" || typeof parsed.host !== "string" || typeof parsed.port !== "number") {
+      return undefined;
+    }
+    return {
+      runtimeInstanceId: typeof parsed.runtimeInstanceId === "string" ? parsed.runtimeInstanceId : undefined,
+      pid: parsed.pid,
+      host: parsed.host,
+      port: parsed.port,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function isFsErrorCode(error: unknown, code: string): boolean {
+  return isRecord(error) && error.code === code;
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
