@@ -52,7 +52,7 @@ test("builds URL query parameters for list endpoints", async () => {
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
 
   await client.listRuns("/repo path", 25);
-  await client.listChannelMessages("/repo", "channel 1", 15);
+  await client.listChannelMessages("/repo", "channel 1", { limit: 15 });
   await client.listChannelAttachments("/repo", "channel 1", 16);
   await client.listChannelLinkPreviews("/repo", "channel 1", 17);
   await client.getChannelBrief("/repo", "channel 1");
@@ -382,6 +382,30 @@ test("uses expected routes for delete, cancel, check, and artifact URLs", async 
   assert.equal(mock.calls[4].url, "http://daemon.test/link-previews/link%201/refresh?cwd=%2Frepo");
   assert.equal(client.artifactContentUrl("artifact 1", "/repo"), "http://daemon.test/artifacts/artifact%201/content?cwd=%2Frepo");
   assert.equal(client.attachmentContentUrl("attachment 1", "/repo"), "http://daemon.test/attachments/attachment%201/content?cwd=%2Frepo");
+});
+
+test("uses expected teammate private data lifecycle routes", async () => {
+  const mock = createFetchMock({ ok: true });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.hardDeleteAiTeammate("/repo", "teammate 1", { reason: "owner request" });
+  await client.streamTeammateDirectMessage("/repo", "teammate 1", { body: "hello", attachmentIds: ["att 1"] });
+  await client.listTeammatePrivateAttachments("/repo", "teammate 1", 12);
+  await client.createTeammatePrivateAttachment("/repo", "teammate 1", { fileName: "a.txt", contentBase64: "YQ==" });
+  await client.uploadTeammateAvatar("/repo", "teammate 1", { fileName: "a.png", contentBase64: "YQ==", scope: "teammate_profile_avatar" });
+  await client.deleteTeammateAvatar("/repo", "teammate 1");
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/teammates/teammate%201/hard-delete?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), { reason: "owner request" });
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/teammates/teammate%201/direct-messages/stream?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), { body: "hello", attachmentIds: ["att 1"] });
+  assert.equal(mock.calls[2].url, "http://daemon.test/teammates/teammate%201/direct-attachments?cwd=%2Frepo&limit=12");
+  assert.equal(mock.calls[3].url, "http://daemon.test/teammates/teammate%201/direct-attachments?cwd=%2Frepo");
+  assert.equal(mock.calls[4].url, "http://daemon.test/teammates/teammate%201/avatar?cwd=%2Frepo");
+  assert.equal(mock.calls[5].method, "DELETE");
+  assert.equal(mock.calls[5].url, "http://daemon.test/teammates/teammate%201/avatar?cwd=%2Frepo");
 });
 
 test("imports GitHub and Linear external work without transforming daemon responses", async () => {

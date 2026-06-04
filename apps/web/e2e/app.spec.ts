@@ -36,6 +36,8 @@ interface MockState {
   usedMemoryEvents: unknown[];
   teammateDirectThreads: Record<string, unknown>;
   teammateDirectMessages: unknown[];
+  teammatePrivateAttachments: unknown[];
+  retentionTombstones: unknown[];
   tasks: unknown[];
   runs: MockRun[];
   eventsByRun: Record<string, MockRunEvent[]>;
@@ -3720,12 +3722,27 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
   }
 
+  await page.locator(".teammate-chat-composer-actions input[type=file]").setInputFiles({
+    name: "private-notes.md",
+    mimeType: "text/markdown",
+    buffer: Buffer.from("# private notes"),
+  });
+  await expect.poll(() => state.teammatePrivateAttachments.length).toBe(1);
+
   await page.getByPlaceholder("Message this AI teammate privately").fill("Please refine the private workspace acceptance criteria.");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Please refine the private workspace acceptance criteria.")).toBeVisible();
   await expect(page.getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
+  const privateMessageRow = page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." });
+  await expect(privateMessageRow.getByRole("link", { name: "private-notes.md" })).toHaveAttribute("href", /\/attachments\/tpatt_1\/content/);
   await expect(page.getByLabel("Used memory").filter({ hasText: "Private acceptance memory" })).toBeVisible();
   await expect.poll(() => state.teammateDirectMessages.length).toBe(2);
+  await expect.poll(() => {
+    const message = state.teammateDirectMessages.find((item) =>
+      isRecord(item) && item.body === "Please refine the private workspace acceptance criteria."
+    );
+    return isRecord(message) && Array.isArray(message.attachmentIds) ? message.attachmentIds : [];
+  }).toEqual(["tpatt_1"]);
 
   await page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." }).getByRole("button", { name: "Create task" }).click();
   await expect(page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Tasks/ })).toHaveClass(/active/);
@@ -3847,6 +3864,37 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Renamed Engineer" }).click();
   await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 1 })).toBeVisible();
   await expect(page.getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
+
+  await page.locator(".teammate-workspace-tabs").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Avatar").locator("input[type=file]").setInputFiles({
+    name: "avatar.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("png"),
+  });
+  await expect.poll(() => {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+    return isRecord(teammate) ? teammate.avatarImageAttachmentId : undefined;
+  }).toBe("tpatt_2");
+  await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image")).toBeVisible();
+
+  await page.getByRole("button", { name: "Remove avatar" }).click();
+  await expect.poll(() => {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+    return isRecord(teammate) ? teammate.avatarImageAttachmentId : "missing";
+  }).toBeUndefined();
+  await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image")).toHaveCount(0);
+
+  await page.getByPlaceholder("Reason").fill("owner request");
+  page.once("dialog", (dialog) => {
+    expect(dialog.message()).toContain("Hard delete this teammate");
+    void dialog.accept();
+  });
+  await page.getByRole("button", { name: "Hard delete" }).click();
+  await expect.poll(() => state.retentionTombstones.length).toBe(1);
+  await expect.poll(() => state.aiTeammates.some((item) => isRecord(item) && item.id === teammateId)).toBe(false);
+  await expect.poll(() => state.teammatePrivateAttachments.some((item) => isRecord(item) && item.teammateId === teammateId)).toBe(false);
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Renamed Engineer" })).toHaveCount(0);
 });
 
 test("workspace path initializes from daemon default without showing the path field", async ({ page }) => {
@@ -5211,6 +5259,8 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     usedMemoryEvents: [],
     teammateDirectThreads: {},
     teammateDirectMessages: [],
+    teammatePrivateAttachments: [],
+    retentionTombstones: [],
     tasks: [
       {
         id: "task_inspect",
@@ -6285,7 +6335,7 @@ async function handleDaemonRoute(
     await route.fulfill({ status: 201, json: { teammate } });
     return;
   }
-  const teammateActionMatch = /^\/teammates\/([^/]+)(?:\/([^/]+))?$/.exec(path);
+  const teammateActionMatch = /^\/teammates\/([^/]+)(?:\/(.+))?$/.exec(path);
   if (teammateActionMatch) {
     const teammateId = decodeURIComponent(teammateActionMatch[1]);
     const action = teammateActionMatch[2];
@@ -6322,6 +6372,50 @@ async function handleDaemonRoute(
       const disabled = { ...teammate, status: "disabled", hidden: true, updatedAt: "2026-05-29T00:06:00.000Z" };
       state.aiTeammates[teammateIndex] = disabled;
       await route.fulfill({ json: { teammate: disabled } });
+      return;
+    }
+    if (action === "hard-delete" && request.method() === "POST") {
+      let body: Record<string, unknown> = {};
+      try {
+        body = request.postDataJSON() as Record<string, unknown>;
+      } catch {
+        body = {};
+      }
+      const deletedCounts = {
+        aiTeammates: 1,
+        directThreads: state.teammateDirectThreads[teammateId] ? 1 : 0,
+        directMessages: state.teammateDirectMessages.filter((item) => isRecord(item) && item.teammateId === teammateId).length,
+        privateAttachments: state.teammatePrivateAttachments.filter((item) => isRecord(item) && item.teammateId === teammateId).length,
+        memoryObjects: state.memoryObjects.filter((item) => isRecord(item) && item.scopeType === "teammate" && item.ownerId === teammateId).length,
+        usedMemoryEvents: state.usedMemoryEvents.filter((item) => isRecord(item) && item.teammateId === teammateId).length,
+      };
+      state.aiTeammates = state.aiTeammates.filter((item) => !isRecord(item) || item.id !== teammateId);
+      state.teammateChannelMemberships = state.teammateChannelMemberships.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
+      state.teammateSkillBindings = state.teammateSkillBindings.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
+      state.teammateMemoryScopes = state.teammateMemoryScopes.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
+      state.teammateMcpBindings = state.teammateMcpBindings.filter((item) => item.teammateId !== teammateId);
+      state.teammateDirectMessages = state.teammateDirectMessages.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
+      state.teammatePrivateAttachments = state.teammatePrivateAttachments.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
+      state.memoryObjects = state.memoryObjects.filter((item) => !isRecord(item) || item.scopeType !== "teammate" || item.ownerId !== teammateId);
+      state.usedMemoryEvents = state.usedMemoryEvents.filter((item) => !isRecord(item) || item.teammateId !== teammateId);
+      delete state.teammateDirectThreads[teammateId];
+      state.channels = state.channels.map((channel) =>
+        isRecord(channel) && channel.defaultTeammateId === teammateId ? { ...channel, defaultTeammateId: undefined } : channel,
+      );
+      state.tasks = state.tasks.map((task) =>
+        isRecord(task) && task.assigneeTeammateId === teammateId ? { ...task, assigneeTeammateId: undefined } : task,
+      );
+      const tombstone = {
+        id: `tomb_${state.retentionTombstones.length + 1}`,
+        workspaceId: "workspace_default",
+        entityType: "ai-teammate",
+        entityId: teammateId,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+        deletedCounts,
+        createdAt: "2026-06-04T00:00:00.000Z",
+      };
+      state.retentionTombstones.push(tombstone);
+      await route.fulfill({ json: { tombstone } });
       return;
     }
     if (action === "channels" && request.method() === "GET") {
@@ -6487,6 +6581,79 @@ async function handleDaemonRoute(
       });
       return;
     }
+    if (action === "direct-attachments") {
+      const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
+      if (request.method() === "GET") {
+        await route.fulfill({
+          json: {
+            cwd,
+            teammateId,
+            thread,
+            attachments: state.teammatePrivateAttachments.filter((item) =>
+              isRecord(item) &&
+              item.teammateId === teammateId &&
+              item.threadId === thread.id &&
+              item.scope === "teammate_direct_thread"
+            ),
+          },
+        });
+        return;
+      }
+      if (request.method() === "POST") {
+        const body = await request.postDataJSON() as Record<string, unknown>;
+        const attachment = {
+          id: `tpatt_${state.teammatePrivateAttachments.length + 1}`,
+          workspaceId: "workspace_default",
+          teammateId,
+          threadId: thread.id,
+          messageId: typeof body.messageId === "string" ? body.messageId : undefined,
+          scope: "teammate_direct_thread",
+          kind: "text",
+          fileName: typeof body.fileName === "string" ? body.fileName : "attachment.txt",
+          contentType: typeof body.contentType === "string" ? body.contentType : "text/plain",
+          sizeBytes: typeof body.contentBase64 === "string" ? Buffer.from(body.contentBase64, "base64").byteLength : 0,
+          path: `teammates/${teammateId}/direct/${thread.id}/mock`,
+          createdAt: "2026-06-04T00:10:00.000Z",
+        };
+        state.teammatePrivateAttachments.unshift(attachment);
+        await route.fulfill({ status: 201, json: { attachment } });
+        return;
+      }
+    }
+    if (action === "avatar") {
+      if (request.method() === "POST") {
+        const body = await request.postDataJSON() as Record<string, unknown>;
+        const previousAvatarId = typeof teammate.avatarImageAttachmentId === "string" ? teammate.avatarImageAttachmentId : undefined;
+        const attachment = {
+          id: `tpatt_${state.teammatePrivateAttachments.length + 1}`,
+          workspaceId: "workspace_default",
+          teammateId,
+          scope: "teammate_profile_avatar",
+          kind: "image",
+          fileName: typeof body.fileName === "string" ? body.fileName : "avatar.png",
+          contentType: typeof body.contentType === "string" ? body.contentType : "image/png",
+          sizeBytes: typeof body.contentBase64 === "string" ? Buffer.from(body.contentBase64, "base64").byteLength : 0,
+          path: `teammates/${teammateId}/avatar/mock`,
+          createdAt: "2026-06-04T00:11:00.000Z",
+        };
+        state.teammatePrivateAttachments = [
+          attachment,
+          ...state.teammatePrivateAttachments.filter((item) => !isRecord(item) || item.id !== previousAvatarId),
+        ];
+        const updated = { ...teammate, avatarImageAttachmentId: attachment.id, updatedAt: "2026-06-04T00:11:00.000Z" };
+        state.aiTeammates[teammateIndex] = updated;
+        await route.fulfill({ status: 201, json: { teammate: updated, attachment } });
+        return;
+      }
+      if (request.method() === "DELETE") {
+        const avatarId = typeof teammate.avatarImageAttachmentId === "string" ? teammate.avatarImageAttachmentId : undefined;
+        state.teammatePrivateAttachments = state.teammatePrivateAttachments.filter((item) => !isRecord(item) || item.id !== avatarId);
+        const updated = { ...teammate, avatarImageAttachmentId: undefined, updatedAt: "2026-06-04T00:12:00.000Z" };
+        state.aiTeammates[teammateIndex] = updated;
+        await route.fulfill({ json: { teammate: updated } });
+        return;
+      }
+    }
     if ((action === "direct-thread" || action === "direct-messages") && request.method() === "GET") {
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
       const messages = state.teammateDirectMessages.filter((item) => isRecord(item) && item.teammateId === teammateId && item.threadId === thread.id);
@@ -6494,6 +6661,65 @@ async function handleDaemonRoute(
         json: action === "direct-thread"
           ? { cwd, teammateId, thread }
           : { cwd, teammateId, thread, messages },
+      });
+      return;
+    }
+    if (action === "direct-messages/stream" && request.method() === "POST") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
+      const message = {
+        id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
+        workspaceId: "workspace_default",
+        threadId: thread.id,
+        teammateId,
+        authorType: "local-user",
+        authorId: "local-user",
+        body: typeof body.body === "string" ? body.body : "",
+        attachmentIds: Array.isArray(body.attachmentIds) ? body.attachmentIds : [],
+        status: "ready",
+        createdAt: "2026-06-04T00:20:00.000Z",
+        updatedAt: "2026-06-04T00:20:00.000Z",
+      };
+      state.teammateDirectMessages.push(message);
+      const providerPresetId = typeof body.providerPresetId === "string" ? body.providerPresetId : typeof teammate.providerPresetId === "string" ? teammate.providerPresetId : undefined;
+      const provider = providerPresetId ? state.providers.find((item) => isRecord(item) && item.id === providerPresetId) : undefined;
+      const blockedReason = teammate.status !== "active"
+        ? `Teammate status is ${String(teammate.status)}.`
+        : !providerPresetId
+          ? "No provider preset is selected for this teammate."
+          : !isRecord(provider) || !isRecord(provider.lastCheck) || provider.lastCheck.ok !== true
+            ? "Provider preflight is not ready."
+            : "";
+      const aiReply = {
+        id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
+        workspaceId: "workspace_default",
+        threadId: thread.id,
+        teammateId,
+        authorType: "ai-teammate",
+        authorId: teammateId,
+        body: blockedReason ? `AI teammate is blocked: ${blockedReason}` : "Private reply: I will refine this into a scoped task.",
+        attachmentIds: [],
+        status: blockedReason ? "blocked" : "ready",
+        errorMessage: blockedReason || undefined,
+        createdAt: "2026-06-04T00:20:01.000Z",
+        updatedAt: "2026-06-04T00:20:01.000Z",
+      };
+      state.teammateDirectMessages.push(aiReply);
+      const pendingReply = { ...aiReply, body: "", status: "pending", errorMessage: undefined };
+      const events = blockedReason
+        ? [
+          { event: "ready", data: { message, aiReply: pendingReply } },
+          { event: "blocked", data: { message, aiReply, error: blockedReason } },
+        ]
+        : [
+          { event: "ready", data: { message, aiReply: pendingReply } },
+          { event: "delta", data: { messageId: aiReply.id, delta: aiReply.body, body: aiReply.body } },
+          { event: "done", data: { message, aiReply } },
+        ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`).join(""),
       });
       return;
     }
@@ -6508,6 +6734,7 @@ async function handleDaemonRoute(
         authorType: "local-user",
         authorId: "local-user",
         body: typeof body.body === "string" ? body.body : "",
+        attachmentIds: Array.isArray(body.attachmentIds) ? body.attachmentIds : [],
         status: "ready",
         createdAt: "2026-05-29T00:10:00.000Z",
         updatedAt: "2026-05-29T00:10:00.000Z",
@@ -6531,6 +6758,7 @@ async function handleDaemonRoute(
             authorType: "ai-teammate",
             authorId: teammateId,
             body: blockedReason ? `AI teammate is blocked: ${blockedReason}` : "Private reply: I will refine this into a scoped task.",
+            attachmentIds: [],
             status: blockedReason ? "blocked" : "ready",
             errorMessage: blockedReason || undefined,
             createdAt: "2026-05-29T00:10:01.000Z",
@@ -7307,6 +7535,10 @@ async function handleDaemonRoute(
   if (attachmentMatch && request.method() === "DELETE") {
     const attachmentId = decodeURIComponent(attachmentMatch[1]);
     state.channelAttachments = state.channelAttachments.filter((attachment) => !isRecord(attachment) || attachment.id !== attachmentId);
+    state.teammatePrivateAttachments = state.teammatePrivateAttachments.filter((attachment) => !isRecord(attachment) || attachment.id !== attachmentId);
+    state.aiTeammates = state.aiTeammates.map((teammate) =>
+      isRecord(teammate) && teammate.avatarImageAttachmentId === attachmentId ? { ...teammate, avatarImageAttachmentId: undefined } : teammate,
+    );
     await route.fulfill({ json: { ok: true } });
     return;
   }

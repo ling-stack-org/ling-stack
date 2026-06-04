@@ -42,6 +42,7 @@ import type {
   CreateChannelRequest,
   CreateAiTeammateRequest,
   CreateTeammateDirectMessageRequest,
+  CreateTeammatePrivateAttachmentRequest,
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
@@ -81,6 +82,8 @@ import type {
   ExternalWorkStatusResponse,
   ExternalWorkWorkflowConfigureRequest,
   ExternalWorkWorkflowMutationResponse,
+  HardDeleteAiTeammateRequest,
+  HardDeleteAiTeammateResponse,
   ListApprovalsRequest,
   ListResourceLeasesRequest,
   ListStateTransitionsRequest,
@@ -142,6 +145,8 @@ import type {
   TeammateDirectMessageListResponse,
   TeammateDirectMessageMutationResponse,
   TeammateDirectThreadResponse,
+  TeammatePrivateAttachmentListResponse,
+  TeammatePrivateAttachmentMutationResponse,
   TeammateMcpBindingListResponse,
   TeammateMemoryScopeListResponse,
   TeammatePersonaDraftRequest,
@@ -407,6 +412,10 @@ export class LingDaemonClient {
     return this.request("DELETE", `/teammates/${encodeURIComponent(teammateId)}`, { cwd });
   }
 
+  async hardDeleteAiTeammate(cwd: string, teammateId: string, input: HardDeleteAiTeammateRequest = {}): Promise<HardDeleteAiTeammateResponse> {
+    return this.post(`/teammates/${encodeURIComponent(teammateId)}/hard-delete`, { cwd }, input);
+  }
+
   async listTeammateChannels(cwd: string, teammateId: string): Promise<TeammateChannelMembershipListResponse> {
     return this.get(`/teammates/${encodeURIComponent(teammateId)}/channels`, { cwd });
   }
@@ -477,6 +486,49 @@ export class LingDaemonClient {
     input: CreateTeammateDirectMessageRequest,
   ): Promise<TeammateDirectMessageMutationResponse> {
     return this.post(`/teammates/${encodeURIComponent(teammateId)}/direct-messages`, { cwd }, input);
+  }
+
+  async streamTeammateDirectMessage(
+    cwd: string,
+    teammateId: string,
+    input: CreateTeammateDirectMessageRequest,
+  ): Promise<Response> {
+    const response = await this.fetchImpl(this.url(`/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream`, { cwd }), {
+      method: "POST",
+      headers: {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
+    }
+    return response;
+  }
+
+  async listTeammatePrivateAttachments(cwd: string, teammateId: string, limit = 100): Promise<TeammatePrivateAttachmentListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-attachments`, { cwd, limit });
+  }
+
+  async createTeammatePrivateAttachment(
+    cwd: string,
+    teammateId: string,
+    input: CreateTeammatePrivateAttachmentRequest,
+  ): Promise<TeammatePrivateAttachmentMutationResponse> {
+    return this.post(`/teammates/${encodeURIComponent(teammateId)}/direct-attachments`, { cwd }, input);
+  }
+
+  async uploadTeammateAvatar(
+    cwd: string,
+    teammateId: string,
+    input: CreateTeammatePrivateAttachmentRequest,
+  ): Promise<AiTeammateMutationResponse & TeammatePrivateAttachmentMutationResponse> {
+    return this.post(`/teammates/${encodeURIComponent(teammateId)}/avatar`, { cwd }, input);
+  }
+
+  async deleteTeammateAvatar(cwd: string, teammateId: string): Promise<AiTeammateMutationResponse> {
+    return this.request("DELETE", `/teammates/${encodeURIComponent(teammateId)}/avatar`, { cwd });
   }
 
   async listTeammateTasks(cwd: string, teammateId: string, limit = 100): Promise<TaskListResponse> {

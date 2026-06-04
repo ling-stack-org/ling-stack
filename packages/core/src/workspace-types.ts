@@ -276,6 +276,7 @@ export interface TeammateDirectMessage {
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
   readonly body: string;
+  readonly attachmentIds: readonly string[];
   readonly status: TeammateDirectMessageStatus;
   readonly errorMessage?: string;
   readonly linkedTaskId?: string;
@@ -290,6 +291,7 @@ export interface CreateTeammateDirectMessageInput {
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
   readonly body: string;
+  readonly attachmentIds?: readonly string[];
   readonly status?: TeammateDirectMessageStatus;
   readonly errorMessage?: string;
   readonly linkedTaskId?: string;
@@ -300,6 +302,62 @@ export interface ListTeammateDirectMessagesOptions {
   readonly teammateId: string;
   readonly threadId?: string;
   readonly limit?: number;
+}
+
+export type TeammatePrivateAttachmentScope = "teammate_direct_thread" | "teammate_profile_avatar";
+
+export interface TeammatePrivateAttachment {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly teammateId: string;
+  readonly threadId?: string;
+  readonly messageId?: string;
+  readonly scope: TeammatePrivateAttachmentScope;
+  readonly kind: ChannelAttachmentKind;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  readonly path: string;
+  readonly createdAt: string;
+}
+
+export interface CreateTeammatePrivateAttachmentInput {
+  readonly teammateId: string;
+  readonly threadId?: string;
+  readonly messageId?: string;
+  readonly scope: TeammatePrivateAttachmentScope;
+  readonly kind: ChannelAttachmentKind;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  readonly path: string;
+  readonly createdAt?: string;
+}
+
+export interface ListTeammatePrivateAttachmentsOptions {
+  readonly teammateId: string;
+  readonly threadId?: string;
+  readonly scope?: TeammatePrivateAttachmentScope;
+  readonly limit?: number;
+}
+
+export interface RetentionTombstone {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly entityType: "ai-teammate";
+  readonly entityId: string;
+  readonly reason?: string;
+  readonly deletedCounts: Readonly<Record<string, number>>;
+  readonly createdAt: string;
+}
+
+export interface HardDeleteAiTeammateInput {
+  readonly reason?: string;
+}
+
+export interface HardDeleteAiTeammateResult {
+  readonly tombstone: RetentionTombstone;
+  readonly deletedAttachmentPaths: readonly string[];
 }
 
 export type ChannelMessageKind = "message" | "ai_reply" | "system" | "task_link";
@@ -884,6 +942,14 @@ export function createChannelExecutionProposalId(): string {
 
 export function createChannelAttachmentId(): string {
   return `att_${randomUUID()}`;
+}
+
+export function createTeammatePrivateAttachmentId(): string {
+  return `patt_${randomUUID()}`;
+}
+
+export function createRetentionTombstoneId(): string {
+  return `tombstone_${randomUUID().replaceAll("-", "")}`;
 }
 
 export function createChannelLinkPreviewId(): string {

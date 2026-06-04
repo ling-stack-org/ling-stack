@@ -7,8 +7,10 @@ import {
   ChevronRight,
   CheckCircle2,
   Hash,
+  Image,
   Loader2,
   MessageSquare,
+  Paperclip,
   Plus,
   RefreshCw,
   Save,
@@ -18,17 +20,22 @@ import {
   ShieldCheck,
   SquareTerminal,
   Trash2,
+  Upload,
   Wrench,
   X,
 } from "lucide-react";
 import type { SkillPack } from "@ling-stack/core/skill-types";
 import {
+  attachmentContentUrl,
+  attachmentContentUrlById,
   createTask,
-  createTeammateDirectMessage,
+  deleteAttachment,
+  deleteTeammateAvatar,
   listMemoryObjects,
   listTeammateActivity,
   listTeammateChannels,
   listTeammateDirectMessages,
+  listTeammatePrivateAttachments,
   listUsedMemoryEvents,
   listMcpServers,
   listMcpTools,
@@ -39,10 +46,14 @@ import {
   replaceTeammateChannels,
   replaceTeammateMcpBindings,
   replaceTeammateSkills,
+  streamTeammateDirectMessage,
+  uploadTeammateAvatar,
+  uploadTeammatePrivateAttachment,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
 import { providerPreflightReady } from "../../lib/providers.js";
+import { readSseResponse } from "../../sse.js";
 import {
   AvatarInitial,
   MetaRow,
@@ -65,6 +76,12 @@ import type {
   TeammateDirectThread,
   TeammateMcpBinding,
   TeammateMemoryScope,
+  TeammatePrivateAttachment,
+  TeammateDirectMessageStreamBlockedEvent,
+  TeammateDirectMessageStreamDeltaEvent,
+  TeammateDirectMessageStreamDoneEvent,
+  TeammateDirectMessageStreamErrorEvent,
+  TeammateDirectMessageStreamReadyEvent,
   TeammateSkillBinding,
   UpdateAiTeammateRequest,
   UsedMemoryEvent,
@@ -100,7 +117,9 @@ export function TeammateWorkspace({
   skillPack,
   onUpdateTeammate,
   onDisableTeammate,
+  onHardDeleteTeammate,
   onOpenProviders,
+  onRefreshTeammates,
   onRefreshChannels,
   onRefreshTasks,
 }: {
@@ -111,7 +130,9 @@ export function TeammateWorkspace({
   readonly skillPack: SkillPack | undefined;
   readonly onUpdateTeammate: (teammateId: string, input: UpdateAiTeammateRequest) => Promise<void>;
   readonly onDisableTeammate: (teammateId: string) => Promise<void>;
+  readonly onHardDeleteTeammate?: (teammateId: string, reason?: string) => Promise<void>;
   readonly onOpenProviders: () => void;
+  readonly onRefreshTeammates?: () => MaybePromise<void>;
   readonly onRefreshChannels?: () => MaybePromise<void>;
   readonly onRefreshTasks?: (channelId: string) => MaybePromise<void>;
 }): JSX.Element {
@@ -119,6 +140,8 @@ export function TeammateWorkspace({
   const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("chat");
   const [thread, setThread] = useState<TeammateDirectThread | undefined>();
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
+  const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
+  const [pendingAttachmentIds, setPendingAttachmentIds] = useState<readonly string[]>([]);
   const [memberships, setMemberships] = useState<readonly TeammateChannelMembership[]>([]);
   const [skillBindings, setSkillBindings] = useState<readonly TeammateSkillBinding[]>([]);
   const [effectiveSkills, setEffectiveSkills] = useState<readonly EffectiveTeammateSkill[]>([]);
@@ -140,8 +163,12 @@ export function TeammateWorkspace({
   const [savingChannels, setSavingChannels] = useState(false);
   const [savingSkills, setSavingSkills] = useState(false);
   const [savingMcp, setSavingMcp] = useState(false);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [hardDeleting, setHardDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
+  const [hardDeleteReason, setHardDeleteReason] = useState("");
   const [taskMessage, setTaskMessage] = useState("");
   const [channelMessage, setChannelMessage] = useState("");
   const [skillMessage, setSkillMessage] = useState("");
@@ -155,6 +182,8 @@ export function TeammateWorkspace({
   const bindingBySkillId = useMemo(() => new Map(skillBindings.map((binding) => [binding.skillId, binding])), [skillBindings]);
   const effectiveSkillById = useMemo(() => new Map(effectiveSkills.map((skill) => [skill.skillId, skill])), [effectiveSkills]);
   const memoryById = useMemo(() => new Map(memoryObjects.map((memory) => [memory.id, memory])), [memoryObjects]);
+  const privateAttachmentById = useMemo(() => new Map(privateAttachments.map((attachment) => [attachment.id, attachment])), [privateAttachments]);
+  const pendingAttachments = useMemo(() => pendingAttachmentIds.map((id) => privateAttachmentById.get(id)).filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment)), [pendingAttachmentIds, privateAttachmentById]);
   const enabledSkillCount = useMemo(() => skillBindings.filter((binding) => binding.enabled).length, [skillBindings]);
   const skillRows = useMemo(() => {
     const builtInRows = (skillPack?.skills ?? []).map((skill) => ({
@@ -226,6 +255,8 @@ export function TeammateWorkspace({
     setMcpToolSearchByServerId({});
     setMcpToolFilterByServerId({});
     setManualSkillInput("");
+    setPendingAttachmentIds([]);
+    setHardDeleteReason("");
     setTaskForm({ channelId: "", title: "", prompt: "" });
   }, [teammate.id]);
 
@@ -251,6 +282,7 @@ export function TeammateWorkspace({
       setWorkspaceError("");
       const [
         directResponse,
+        privateAttachmentsResponse,
         channelResponse,
         skillResponse,
         mcpServersResponse,
@@ -263,6 +295,7 @@ export function TeammateWorkspace({
         activityResponse,
       ] = await Promise.all([
         listTeammateDirectMessages(workspaceCwd, teammate.id),
+        listTeammatePrivateAttachments(workspaceCwd, teammate.id),
         listTeammateChannels(workspaceCwd, teammate.id),
         listTeammateSkills(workspaceCwd, teammate.id),
         listMcpServers(workspaceCwd),
@@ -276,6 +309,7 @@ export function TeammateWorkspace({
       ]);
       setThread(directResponse.thread);
       setMessages(directResponse.messages);
+      setPrivateAttachments(privateAttachmentsResponse.attachments);
       setMemberships(channelResponse.memberships);
       setSkillBindings(skillResponse.bindings);
       setEffectiveSkills(skillResponse.effectiveSkills ?? []);
@@ -296,23 +330,52 @@ export function TeammateWorkspace({
 
   async function sendPrivateMessage(): Promise<void> {
     const body = messageDraft.trim();
-    if (!body || sending) {
+    const attachmentIds = pendingAttachmentIds;
+    if ((!body && attachmentIds.length === 0) || sending) {
       return;
     }
     setSending(true);
     try {
       setWorkspaceError("");
-      const response = await createTeammateDirectMessage(cwd.trim(), teammate.id, {
+      setMessageDraft("");
+      setPendingAttachmentIds([]);
+      const response = await streamTeammateDirectMessage(cwd.trim(), teammate.id, {
         body,
-        requestAiReply: true,
+        attachmentIds,
         providerPresetId: teammate.providerPresetId,
       });
-      setMessages((current) => [
-        ...current,
-        response.message,
-        ...(response.aiReply ? [response.aiReply] : []),
-      ]);
-      setMessageDraft("");
+      await readSseResponse(response, (event) => {
+        if (event.event === "ready") {
+          const data = JSON.parse(event.data) as TeammateDirectMessageStreamReadyEvent;
+          setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
+          return;
+        }
+        if (event.event === "delta") {
+          const data = JSON.parse(event.data) as TeammateDirectMessageStreamDeltaEvent;
+          setMessages((current) => current.map((message) => message.id === data.messageId ? { ...message, body: data.body, status: "pending" } : message));
+          return;
+        }
+        if (event.event === "done") {
+          const data = JSON.parse(event.data) as TeammateDirectMessageStreamDoneEvent;
+          setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
+          return;
+        }
+        if (event.event === "blocked") {
+          const data = JSON.parse(event.data) as TeammateDirectMessageStreamBlockedEvent;
+          setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
+          return;
+        }
+        if (event.event === "error") {
+          const data = JSON.parse(event.data) as TeammateDirectMessageStreamErrorEvent;
+          const nextMessages = [data.message, data.aiReply].filter((message): message is TeammateDirectMessage => Boolean(message));
+          if (nextMessages.length > 0) {
+            setMessages((current) => upsertDirectMessages(current, nextMessages));
+          }
+          if (data.error) {
+            setWorkspaceError(data.error);
+          }
+        }
+      });
       const [activityResponse, usedMemoryResponse, memoryObjectsResponse] = await Promise.all([
         listTeammateActivity(cwd.trim(), teammate.id),
         listUsedMemoryEvents(cwd.trim(), { teammateId: teammate.id, limit: 100 }),
@@ -325,6 +388,87 @@ export function TeammateWorkspace({
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
       setSending(false);
+    }
+  }
+
+  async function uploadPrivateFiles(files: readonly File[]): Promise<void> {
+    if (files.length === 0 || uploadingAttachments) {
+      return;
+    }
+    setUploadingAttachments(true);
+    try {
+      setWorkspaceError("");
+      const responses = await Promise.all(files.map((file) => uploadTeammatePrivateAttachment(cwd.trim(), teammate.id, file)));
+      const uploaded = responses.map((response) => response.attachment);
+      setPrivateAttachments((current) => [...uploaded, ...current.filter((attachment) => !uploaded.some((item) => item.id === attachment.id))]);
+      setPendingAttachmentIds((current) => [...current, ...uploaded.map((attachment) => attachment.id)].slice(0, 10));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setUploadingAttachments(false);
+    }
+  }
+
+  async function removePendingAttachment(attachmentId: string): Promise<void> {
+    setPendingAttachmentIds((current) => current.filter((id) => id !== attachmentId));
+    try {
+      await deleteAttachment(cwd.trim(), attachmentId);
+      setPrivateAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function uploadAvatarFile(file: File | undefined): Promise<void> {
+    if (!file || uploadingAvatar) {
+      return;
+    }
+    setUploadingAvatar(true);
+    try {
+      setWorkspaceError("");
+      await uploadTeammateAvatar(cwd.trim(), teammate.id, file);
+      await onRefreshTeammates?.();
+      setSaveMessage(t("Saved"));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
+  async function removeAvatar(): Promise<void> {
+    if (uploadingAvatar) {
+      return;
+    }
+    setUploadingAvatar(true);
+    try {
+      setWorkspaceError("");
+      await deleteTeammateAvatar(cwd.trim(), teammate.id);
+      await onRefreshTeammates?.();
+      setSaveMessage(t("Saved"));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
+  async function hardDeleteTeammate(): Promise<void> {
+    if (!onHardDeleteTeammate || hardDeleting) {
+      return;
+    }
+    const confirmed = window.confirm(t("Hard delete this teammate's private data? This cannot be undone."));
+    if (!confirmed) {
+      return;
+    }
+    setHardDeleting(true);
+    try {
+      setWorkspaceError("");
+      await onHardDeleteTeammate(teammate.id, hardDeleteReason);
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setHardDeleting(false);
     }
   }
 
@@ -628,7 +772,7 @@ export function TeammateWorkspace({
     <div className="teammate-workspace">
       <section className="teammate-workspace-hero" aria-label={t("AI teammate private workspace")}>
         <div className="teammate-workspace-identity">
-          <AvatarInitial label={teammateInitialFromName(teammate.displayName)} tone={teammateAvatarTone(teammate)} />
+          <TeammateAvatar teammate={teammate} cwd={cwd} />
           <div>
             <span className="teammate-pack-label">{t(`role.${teammate.roleKey}`)}</span>
             <h2>{teammate.displayName}</h2>
@@ -689,7 +833,7 @@ export function TeammateWorkspace({
             ) : (
               messages.map((message) => (
                 <article key={message.id} className={`teammate-message-row ${message.authorType}`}>
-                  <AvatarInitial label={message.authorType === "ai-teammate" ? teammateInitialFromName(teammate.displayName) : "U"} tone={message.authorType === "ai-teammate" ? teammateAvatarTone(teammate) : "gray"} />
+                  {message.authorType === "ai-teammate" ? <TeammateAvatar teammate={teammate} cwd={cwd} compact /> : <AvatarInitial label="U" tone="gray" />}
                   <div>
                     <header>
                       <strong>{message.authorType === "ai-teammate" ? teammate.displayName : t("You")}</strong>
@@ -697,6 +841,12 @@ export function TeammateWorkspace({
                       <StatusBadge status={message.status} />
                     </header>
                     <p>{message.body}</p>
+                    {message.attachmentIds.length > 0 ? (
+                      <AttachmentChipList
+                        attachments={message.attachmentIds.map((id) => privateAttachmentById.get(id)).filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))}
+                        cwd={cwd}
+                      />
+                    ) : null}
                     <UsedMemorySummary
                       compact
                       events={filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id)}
@@ -720,16 +870,44 @@ export function TeammateWorkspace({
             )}
           </div>
           <div className="teammate-chat-composer">
+            {pendingAttachments.length > 0 ? (
+              <div className="teammate-pending-attachments">
+                {pendingAttachments.map((attachment) => (
+                  <span key={attachment.id} className="teammate-attachment-chip">
+                    <Paperclip size={13} />
+                    <span>{attachment.fileName}</span>
+                    <button type="button" onClick={() => void removePendingAttachment(attachment.id)} aria-label={t("Remove attachment")}>
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <textarea
               rows={3}
               value={messageDraft}
               onChange={(event) => setMessageDraft(event.target.value)}
               placeholder={t("Message this AI teammate privately")}
             />
-            <button className="primary-button" type="button" onClick={() => void sendPrivateMessage()} disabled={sending || !messageDraft.trim()}>
+            <div className="teammate-chat-composer-actions">
+              <label className="secondary-button compact-button">
+                {uploadingAttachments ? <Loader2 className="spin" size={14} /> : <Paperclip size={14} />}
+                {t("Attach")}
+                <input
+                  type="file"
+                  multiple
+                  onChange={(event) => {
+                    const files = Array.from(event.currentTarget.files ?? []);
+                    event.currentTarget.value = "";
+                    void uploadPrivateFiles(files);
+                  }}
+                />
+              </label>
+            <button className="primary-button" type="button" onClick={() => void sendPrivateMessage()} disabled={sending || (!messageDraft.trim() && pendingAttachmentIds.length === 0)}>
               {sending ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
               {sending ? t("Sending...") : t("Send")}
             </button>
+            </div>
           </div>
         </section>
       ) : null}
@@ -979,6 +1157,31 @@ export function TeammateWorkspace({
             </span>
             {saveMessage ? <small>{saveMessage}</small> : null}
           </div>
+          <section className="teammate-avatar-settings" aria-label={t("Avatar")}>
+            <div className="teammate-avatar-preview compact-preview">
+              <TeammateAvatar teammate={teammate} cwd={cwd} />
+              <span>{teammate.displayName}</span>
+            </div>
+            <div className="teammate-avatar-actions">
+              <label className="secondary-button">
+                {uploadingAvatar ? <Loader2 className="spin" size={15} /> : <Upload size={15} />}
+                {t("Upload avatar")}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0];
+                    event.currentTarget.value = "";
+                    void uploadAvatarFile(file);
+                  }}
+                />
+              </label>
+              <button className="secondary-button compact-button" type="button" onClick={() => void removeAvatar()} disabled={uploadingAvatar || !teammate.avatarImageAttachmentId}>
+                <Image size={14} />
+                {t("Remove avatar")}
+              </button>
+            </div>
+          </section>
           <div className="teammate-settings-grid">
             <label className="field">
               <span>{t("Teammate name")}</span>
@@ -1041,6 +1244,21 @@ export function TeammateWorkspace({
               {t("Save")}
             </button>
           </div>
+          <section className="teammate-danger-zone" aria-label={t("Danger zone")}>
+            <span>
+              <strong>{t("Hard delete private data")}</strong>
+              <small>{t("Deletes private chat, private attachments, avatar, teammate memory, and private bindings. Channel and run history keep a deleted teammate reference.")}</small>
+            </span>
+            <input
+              value={hardDeleteReason}
+              onChange={(event) => setHardDeleteReason(event.target.value)}
+              placeholder={t("Reason")}
+            />
+            <button className="secondary-button danger" type="button" onClick={() => void hardDeleteTeammate()} disabled={hardDeleting || !onHardDeleteTeammate}>
+              {hardDeleting ? <Loader2 className="spin" size={15} /> : <Trash2 size={15} />}
+              {t("Hard delete")}
+            </button>
+          </section>
         </section>
       ) : null}
 
@@ -1342,6 +1560,46 @@ function teammateToSettingsForm(teammate: AiTeammate): TeammateSettingsForm {
     hidden: teammate.hidden,
     systemPrompt: teammate.systemPrompt ?? "",
   };
+}
+
+function upsertDirectMessages(
+  current: readonly TeammateDirectMessage[],
+  nextMessages: readonly TeammateDirectMessage[],
+): readonly TeammateDirectMessage[] {
+  const byId = new Map(current.map((message) => [message.id, message]));
+  for (const message of nextMessages) {
+    byId.set(message.id, message);
+  }
+  return Array.from(byId.values()).sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+}
+
+function TeammateAvatar({ teammate, cwd, compact = false }: { readonly teammate: AiTeammate; readonly cwd: string; readonly compact?: boolean }): JSX.Element {
+  if (teammate.avatarImageAttachmentId) {
+    return (
+      <img
+        className={`teammate-avatar-image ${compact ? "compact" : ""}`}
+        src={attachmentContentUrlById(teammate.avatarImageAttachmentId, cwd.trim())}
+        alt=""
+      />
+    );
+  }
+  return <AvatarInitial label={teammateInitialFromName(teammate.displayName)} tone={teammateAvatarTone(teammate)} />;
+}
+
+function AttachmentChipList({ attachments, cwd }: { readonly attachments: readonly TeammatePrivateAttachment[]; readonly cwd: string }): JSX.Element | null {
+  if (attachments.length === 0) {
+    return null;
+  }
+  return (
+    <div className="teammate-message-attachments">
+      {attachments.map((attachment) => (
+        <a key={attachment.id} className="teammate-attachment-chip" href={attachmentContentUrl(attachment, cwd.trim())} target="_blank" rel="noreferrer">
+          <Paperclip size={13} />
+          <span>{attachment.fileName}</span>
+        </a>
+      ))}
+    </div>
+  );
 }
 
 function teammateAvatarTone(teammate: AiTeammate): "default" | "orange" | "teal" | "violet" | "blue" | "rose" | "gray" {

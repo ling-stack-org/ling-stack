@@ -2309,6 +2309,24 @@ export interface AiTeammateMutationResponse {
   readonly teammate: AiTeammate;
 }
 
+export interface RetentionTombstone {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly entityType: "ai-teammate";
+  readonly entityId: string;
+  readonly reason?: string;
+  readonly deletedCounts: Readonly<Record<string, number>>;
+  readonly createdAt: string;
+}
+
+export interface HardDeleteAiTeammateRequest {
+  readonly reason?: string;
+}
+
+export interface HardDeleteAiTeammateResponse {
+  readonly tombstone: RetentionTombstone;
+}
+
 export interface TeammateChannelMembership {
   readonly teammateId: string;
   readonly channelId: string;
@@ -2494,6 +2512,7 @@ export interface TeammateDirectMessage {
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
   readonly body: string;
+  readonly attachmentIds: readonly string[];
   readonly status: TeammateDirectMessageStatus;
   readonly errorMessage?: string;
   readonly linkedTaskId?: string;
@@ -2504,8 +2523,72 @@ export interface TeammateDirectMessage {
 
 export interface CreateTeammateDirectMessageRequest {
   readonly body: string;
+  readonly attachmentIds?: readonly string[];
   readonly requestAiReply?: boolean;
   readonly providerPresetId?: string;
+}
+
+export type TeammatePrivateAttachmentScope = "teammate_direct_thread" | "teammate_profile_avatar";
+
+export interface TeammatePrivateAttachment {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly teammateId: string;
+  readonly threadId?: string;
+  readonly messageId?: string;
+  readonly scope: TeammatePrivateAttachmentScope;
+  readonly kind: ChannelAttachmentKind;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  readonly path: string;
+  readonly createdAt: string;
+}
+
+export interface CreateTeammatePrivateAttachmentRequest {
+  readonly fileName: string;
+  readonly contentType?: string;
+  readonly contentBase64: string;
+  readonly scope?: TeammatePrivateAttachmentScope;
+  readonly messageId?: string;
+}
+
+export interface TeammatePrivateAttachmentListResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly thread: TeammateDirectThread;
+  readonly attachments: readonly TeammatePrivateAttachment[];
+}
+
+export interface TeammatePrivateAttachmentMutationResponse {
+  readonly attachment: TeammatePrivateAttachment;
+}
+
+export interface TeammateDirectMessageStreamReadyEvent {
+  readonly message: TeammateDirectMessage;
+  readonly aiReply: TeammateDirectMessage;
+}
+
+export interface TeammateDirectMessageStreamDeltaEvent {
+  readonly messageId: string;
+  readonly delta: string;
+  readonly body: string;
+}
+
+export interface TeammateDirectMessageStreamDoneEvent {
+  readonly message: TeammateDirectMessage;
+  readonly aiReply: TeammateDirectMessage;
+}
+
+export interface TeammateDirectMessageStreamBlockedEvent {
+  readonly message: TeammateDirectMessage;
+  readonly aiReply: TeammateDirectMessage;
+}
+
+export interface TeammateDirectMessageStreamErrorEvent {
+  readonly message?: TeammateDirectMessage;
+  readonly aiReply?: TeammateDirectMessage;
+  readonly error: string;
 }
 
 export interface TeammateDirectThreadResponse {

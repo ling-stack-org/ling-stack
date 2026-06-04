@@ -190,6 +190,7 @@ import {
   type TaskStatus,
   type TaskUpdateInput,
   type TeammateDirectMessage,
+  type TeammatePrivateAttachment,
   type UpdateChannelExecutionProposalInput,
   type WorkUnit,
   type WorkUnitAttempt,
@@ -374,6 +375,17 @@ interface ChannelAttachmentRequest {
   readonly contentType?: string;
   readonly contentBase64: string;
   readonly messageId?: string;
+}
+
+interface TeammateDirectMessageRequest {
+  readonly body: string;
+  readonly attachmentIds: readonly string[];
+  readonly requestAiReply: boolean;
+  readonly providerPresetId?: string;
+}
+
+interface TeammatePrivateAttachmentRequest extends ChannelAttachmentRequest {
+  readonly scope?: "teammate_direct_thread" | "teammate_profile_avatar";
 }
 
 interface ChannelLinkPreviewRequest {
@@ -3218,7 +3230,7 @@ async function handleTeammateRoute(
   storeRegistry: RunStoreRegistry,
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
-  route: { readonly teammateId: string; readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "tasks" | "activity" },
+  route: { readonly teammateId: string; readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "direct-messages-stream" | "direct-attachments" | "avatar" | "hard-delete" | "tasks" | "activity" },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -3414,6 +3426,7 @@ async function handleTeammateRoute(
             authorType: "local-user",
             authorId: "local-user",
             body: input.body,
+            attachmentIds: input.attachmentIds,
           },
           now,
         );
@@ -3432,6 +3445,106 @@ async function handleTeammateRoute(
         writeJson(response, 201, aiReply ? { message, aiReply } : { message });
         return;
       }
+    }
+
+    if (route.action === "direct-messages-stream") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate direct message stream` });
+        return;
+      }
+      await handleTeammateDirectMessageStream({
+        request,
+        response,
+        config,
+        runner,
+        store,
+        teammate,
+        runtimeSupervisor,
+        secretResolver,
+      });
+      return;
+    }
+
+    if (route.action === "direct-attachments") {
+      const thread = store.getOrCreateTeammateDirectThread(route.teammateId, new Date().toISOString());
+      if (request.method === "GET") {
+        writeJson(response, 200, {
+          cwd,
+          teammateId: route.teammateId,
+          thread,
+          attachments: store.listTeammatePrivateAttachments({
+            teammateId: route.teammateId,
+            threadId: thread.id,
+            scope: "teammate_direct_thread",
+            limit: readOptionalIntegerQuery(url, "limit", 1),
+          }),
+        });
+        return;
+      }
+      if (request.method === "POST") {
+        const body = await readJsonBody(request, Math.max(config.maxBodyBytes, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES));
+        const input = parseTeammatePrivateAttachmentRequest(body);
+        if (input.scope && input.scope !== "teammate_direct_thread") {
+          throw new HttpError(400, "invalid_attachment_scope", "direct-attachments only accepts teammate_direct_thread scope");
+        }
+        const attachment = persistTeammatePrivateAttachment(store, route.teammateId, {
+          ...input,
+          scope: "teammate_direct_thread",
+          threadId: thread.id,
+        });
+        writeJson(response, 201, { attachment });
+        return;
+      }
+    }
+
+    if (route.action === "avatar") {
+      if (request.method === "POST") {
+        const body = await readJsonBody(request, Math.max(config.maxBodyBytes, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES));
+        const input = parseTeammatePrivateAttachmentRequest(body);
+        const previousAvatarId = teammate.avatarImageAttachmentId;
+        const previousAvatar = previousAvatarId ? store.getTeammatePrivateAttachment(previousAvatarId) : undefined;
+        const attachment = persistTeammatePrivateAttachment(store, route.teammateId, {
+          ...input,
+          scope: "teammate_profile_avatar",
+        });
+        const updated = store.updateAiTeammate(route.teammateId, { avatarImageAttachmentId: attachment.id }, new Date().toISOString());
+        if (previousAvatar && previousAvatar.id !== attachment.id) {
+          deleteAttachmentContent(store, previousAvatar);
+          store.deleteTeammatePrivateAttachment(previousAvatar.id);
+        }
+        writeJson(response, 201, { teammate: updated, attachment });
+        return;
+      }
+      if (request.method === "DELETE") {
+        const avatarId = teammate.avatarImageAttachmentId;
+        const avatar = avatarId ? store.getTeammatePrivateAttachment(avatarId) : undefined;
+        const updated = store.updateAiTeammate(route.teammateId, { avatarImageAttachmentId: null }, new Date().toISOString());
+        if (avatar) {
+          deleteAttachmentContent(store, avatar);
+          store.deleteTeammatePrivateAttachment(avatar.id);
+        }
+        writeJson(response, 200, { teammate: updated });
+        return;
+      }
+    }
+
+    if (route.action === "hard-delete") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate hard delete` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseHardDeleteAiTeammateRequest(body);
+      const result = store.hardDeleteAiTeammate(route.teammateId, input, new Date().toISOString());
+      if (!result) {
+        writeJson(response, 404, { error: "teammate_not_found", message: `AI teammate not found: ${route.teammateId}` });
+        return;
+      }
+      for (const path of result.deletedAttachmentPaths) {
+        deleteAttachmentPath(store, path);
+      }
+      writeJson(response, 200, { tombstone: result.tombstone });
+      return;
     }
 
     if (route.action === "tasks" && request.method === "GET") {
@@ -3533,24 +3646,34 @@ async function handleChannelAttachmentItem(
   try {
     const store = storeRegistry.getStore(cwd);
     const attachment = store.getChannelAttachment(route.attachmentId);
-    if (!attachment) {
+    const privateAttachment = attachment ? undefined : store.getTeammatePrivateAttachment(route.attachmentId);
+    const resolvedAttachment = attachment ?? privateAttachment;
+    if (!resolvedAttachment) {
       writeJson(response, 404, { error: "attachment_not_found", message: `Attachment not found: ${route.attachmentId}` });
       return;
     }
 
     if (request.method === "GET" && route.action === "content") {
-      handleGetChannelAttachmentContent(response, store, attachment);
+      handleGetAttachmentContent(response, store, resolvedAttachment);
       return;
     }
 
     if (request.method === "GET" && !route.action) {
-      writeJson(response, 200, { attachment });
+      writeJson(response, 200, { attachment: resolvedAttachment });
       return;
     }
 
     if (request.method === "DELETE" && !route.action) {
-      deleteChannelAttachmentContent(store, attachment);
-      store.deleteChannelAttachment(route.attachmentId);
+      deleteAttachmentContent(store, resolvedAttachment);
+      if (attachment) {
+        store.deleteChannelAttachment(route.attachmentId);
+      } else if (privateAttachment) {
+        const owner = store.getAiTeammate(privateAttachment.teammateId);
+        if (owner?.avatarImageAttachmentId === privateAttachment.id) {
+          store.updateAiTeammate(owner.id, { avatarImageAttachmentId: null }, new Date().toISOString());
+        }
+        store.deleteTeammatePrivateAttachment(route.attachmentId);
+      }
       writeJson(response, 200, { ok: true });
       return;
     }
@@ -8230,6 +8353,70 @@ function finishDirectMessageWorkUnit(
   );
 }
 
+async function handleTeammateDirectMessageStream(input: {
+  readonly request: IncomingMessage;
+  readonly response: ServerResponse;
+  readonly config: ResolvedDaemonConfig;
+  readonly runner: RunnerAdapter;
+  readonly store: RunStore;
+  readonly teammate: AiTeammate;
+  readonly runtimeSupervisor: RuntimeSupervisor;
+  readonly secretResolver: SecretResolver;
+}): Promise<void> {
+  const thread = input.store.getOrCreateTeammateDirectThread(input.teammate.id, new Date().toISOString());
+  const body = await readJsonBody(input.request, input.config.maxBodyBytes);
+  const messageInput = parseTeammateDirectMessageRequest(body);
+  const now = new Date().toISOString();
+  const message = input.store.createTeammateDirectMessage(
+    {
+      threadId: thread.id,
+      teammateId: input.teammate.id,
+      authorType: "local-user",
+      authorId: "local-user",
+      body: messageInput.body,
+      attachmentIds: messageInput.attachmentIds,
+    },
+    now,
+  );
+  const abortController = new AbortController();
+  let closed = false;
+  input.response.on("close", () => {
+    closed = true;
+    abortController.abort();
+  });
+  const safeWriteSse = (event: string, data: unknown): void => {
+    if (!closed && !input.response.destroyed) {
+      writeSse(input.response, event, data);
+    }
+  };
+  writeSseHead(input.response);
+  try {
+    await createAiTeammateDirectReply({
+      runner: input.runner,
+      store: input.store,
+      teammate: input.teammate,
+      thread,
+      sourceMessage: message,
+      providerPresetId: messageInput.providerPresetId,
+      runtimeSupervisor: input.runtimeSupervisor,
+      secretResolver: input.secretResolver,
+      signal: abortController.signal,
+      stream: {
+        onReady: (aiReply) => safeWriteSse("ready", { message, aiReply }),
+        onDelta: (aiReply, delta) => safeWriteSse("delta", { messageId: aiReply.id, delta, body: aiReply.body }),
+        onDone: (aiReply) => safeWriteSse("done", { message, aiReply }),
+        onBlocked: (aiReply) => safeWriteSse(aiReply.status === "failed" ? "error" : "blocked", { message, aiReply, error: aiReply.errorMessage }),
+      },
+    });
+  } catch (error) {
+    safeWriteSse("error", { message, error: error instanceof Error ? error.message : String(error) });
+  } finally {
+    if (!closed && !input.response.destroyed) {
+      input.response.end();
+    }
+  }
+}
+
 async function createAiChannelReply(input: {
   readonly runner: RunnerAdapter;
   readonly store: RunStore;
@@ -8502,6 +8689,13 @@ async function createAiTeammateDirectReply(input: {
   readonly providerPresetId?: string;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
+  readonly signal?: AbortSignal;
+  readonly stream?: {
+    readonly onReady: (aiReply: TeammateDirectMessage) => void;
+    readonly onDelta: (aiReply: TeammateDirectMessage, delta: string) => void;
+    readonly onDone: (aiReply: TeammateDirectMessage) => void;
+    readonly onBlocked: (aiReply: TeammateDirectMessage) => void;
+  };
 }): Promise<ReturnType<RunStore["createTeammateDirectMessage"]>> {
   const providerPresetId = input.providerPresetId ?? input.teammate.providerPresetId;
   const now = new Date().toISOString();
@@ -8511,11 +8705,12 @@ async function createAiTeammateDirectReply(input: {
       teammateId: input.teammate.id,
       authorType: "ai-teammate",
       authorId: input.teammate.id,
-      body: "AI teammate is preparing a reply...",
+      body: "",
       status: "pending",
     },
     now,
   );
+  input.stream?.onReady(pending);
   const supervised = startMessageWorkUnit({
     store: input.store,
     runtimeSupervisor: input.runtimeSupervisor,
@@ -8533,19 +8728,23 @@ async function createAiTeammateDirectReply(input: {
     },
   });
   if (input.teammate.status !== "active") {
-    return finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
+    const blocked = finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
       body: `AI teammate is ${input.teammate.status}.`,
       status: "blocked",
       errorMessage: `Teammate status is ${input.teammate.status}.`,
     });
+    input.stream?.onBlocked(blocked);
+    return blocked;
   }
 
   if (!providerPresetId) {
-    return finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
+    const blocked = finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
       body: "AI teammate is blocked: no provider preset is selected.",
       status: "blocked",
       errorMessage: "No provider preset is selected for this teammate.",
     });
+    input.stream?.onBlocked(blocked);
+    return blocked;
   }
 
   const recentMessages = input.store.listTeammateDirectMessages({
@@ -8617,8 +8816,21 @@ async function createAiTeammateDirectReply(input: {
         });
         if (event.type === "assistant_text_delta") {
           textDeltas.push(event.text);
+          const updated = input.store.updateTeammateDirectMessageRuntime(
+            pending.id,
+            {
+              body: textDeltas.join(""),
+              status: "pending",
+              errorMessage: null,
+            },
+            new Date().toISOString(),
+          );
+          if (updated) {
+            input.stream?.onDelta(updated, event.text);
+          }
         }
       },
+      signal: input.signal,
     });
     const replyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
     const reply = finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
@@ -8626,6 +8838,7 @@ async function createAiTeammateDirectReply(input: {
       status: "ready",
       errorMessage: null,
     });
+    input.stream?.onDone(reply);
     if (memoryRecall.memories.length > 0) {
       input.store.recordUsedMemoryEvent(
         {
@@ -8642,11 +8855,13 @@ async function createAiTeammateDirectReply(input: {
     return reply;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
+    const blocked = finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
       body: `AI teammate is blocked: ${message}`,
       status: "blocked",
       errorMessage: message,
     });
+    input.stream?.onBlocked(blocked);
+    return blocked;
   } finally {
     input.store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
   }
@@ -9083,6 +9298,50 @@ function persistChannelAttachment(store: RunStore, channelId: string, input: Cha
   });
 }
 
+function persistTeammatePrivateAttachment(
+  store: RunStore,
+  teammateId: string,
+  input: TeammatePrivateAttachmentRequest & { readonly scope: "teammate_direct_thread" | "teammate_profile_avatar"; readonly threadId?: string },
+): TeammatePrivateAttachment {
+  const safeFileName = sanitizeAttachmentFileName(input.fileName);
+  const inferred = inferChannelAttachmentKind(safeFileName, input.contentType);
+  if (input.scope === "teammate_profile_avatar" && inferred.kind !== "image") {
+    throw new Error("Avatar upload must be an image attachment");
+  }
+  const content = Buffer.from(input.contentBase64, "base64");
+  if (content.byteLength === 0) {
+    throw new Error("Attachment content is empty");
+  }
+  if (content.byteLength > CHANNEL_ATTACHMENT_MAX_BYTES) {
+    throw new Error(`Attachment exceeds ${CHANNEL_ATTACHMENT_MAX_BYTES} bytes`);
+  }
+
+  const now = new Date().toISOString();
+  const storageName = `${formatTimestampSlug(now)}-${safeFileName}`;
+  const scopeDir = input.scope === "teammate_profile_avatar" ? "avatar" : `direct/${input.threadId ?? "thread"}`;
+  const relativePath = normalizeArtifactPath(join("teammates", teammateId, scopeDir, storageName));
+  const absoluteDir = resolvePath(store.paths.attachmentsDir, "teammates", teammateId, scopeDir);
+  const absolutePath = resolvePath(store.paths.attachmentsDir, relativePath);
+  if (!isPathInsideRoot(store.paths.attachmentsDir, absolutePath)) {
+    throw new Error("Attachment content path is outside .ling-stack/attachments");
+  }
+  mkdirSync(absoluteDir, { recursive: true });
+  writeFileSync(absolutePath, content);
+
+  return store.createTeammatePrivateAttachment({
+    teammateId,
+    threadId: input.threadId,
+    messageId: input.messageId,
+    scope: input.scope,
+    kind: inferred.kind,
+    fileName: safeFileName,
+    contentType: inferred.contentType,
+    sizeBytes: content.byteLength,
+    path: relativePath,
+    createdAt: now,
+  });
+}
+
 function sanitizeAttachmentFileName(fileName: string): string {
   const trimmed = fileName.trim();
   if (trimmed !== basename(trimmed) || trimmed.includes("\\") || trimmed.includes("/")) {
@@ -9149,10 +9408,10 @@ function textContentTypeForExtension(extension: string): string {
   return "text/plain; charset=utf-8";
 }
 
-function handleGetChannelAttachmentContent(response: ServerResponse, store: RunStore, attachment: ChannelAttachment): void {
+function handleGetAttachmentContent(response: ServerResponse, store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): void {
   let contentPath: string;
   try {
-    contentPath = resolveChannelAttachmentContentPath(store, attachment);
+    contentPath = resolveAttachmentContentPath(store, attachment);
   } catch (error) {
     writeJson(response, 403, {
       error: "attachment_outside_root",
@@ -9187,20 +9446,32 @@ function handleGetChannelAttachmentContent(response: ServerResponse, store: RunS
   }
 }
 
-function deleteChannelAttachmentContent(store: RunStore, attachment: ChannelAttachment): void {
+function deleteAttachmentContent(store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): void {
   try {
-    unlinkSync(resolveChannelAttachmentContentPath(store, attachment));
+    unlinkSync(resolveAttachmentContentPath(store, attachment));
   } catch {
     // Missing files should not block metadata cleanup.
   }
 }
 
-function resolveChannelAttachmentContentPath(store: RunStore, attachment: ChannelAttachment): string {
-  const absolutePath = isAbsolute(attachment.path)
-    ? attachment.path
-    : resolvePath(store.paths.attachmentsDir, attachment.path);
+function deleteAttachmentPath(store: RunStore, path: string): void {
+  try {
+    unlinkSync(resolveAttachmentPath(store, path));
+  } catch {
+    // Missing files should not block hard delete completion.
+  }
+}
+
+function resolveAttachmentContentPath(store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): string {
+  return resolveAttachmentPath(store, attachment.path);
+}
+
+function resolveAttachmentPath(store: RunStore, path: string): string {
+  const absolutePath = isAbsolute(path)
+    ? path
+    : resolvePath(store.paths.attachmentsDir, path);
   if (!isPathInsideRoot(store.paths.attachmentsDir, absolutePath)) {
-    throw new Error(`Attachment content path is outside .ling-stack/attachments: ${attachment.path}`);
+    throw new Error(`Attachment content path is outside .ling-stack/attachments: ${path}`);
   }
   return absolutePath;
 }
@@ -11444,7 +11715,7 @@ function parseTeammateRoute(
   pathname: string,
 ): {
   readonly teammateId: string;
-  readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "tasks" | "activity";
+  readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "direct-messages-stream" | "direct-attachments" | "avatar" | "hard-delete" | "tasks" | "activity";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "teammates") {
@@ -11461,11 +11732,22 @@ function parseTeammateRoute(
       segments[2] === "persona-draft" ||
       segments[2] === "direct-thread" ||
       segments[2] === "direct-messages" ||
+      segments[2] === "direct-attachments" ||
+      segments[2] === "avatar" ||
+      segments[2] === "hard-delete" ||
       segments[2] === "tasks" ||
       segments[2] === "activity"
     )
   ) {
     return { teammateId: segments[1], action: segments[2] };
+  }
+  if (
+    segments.length === 4 &&
+    segments[0] === "teammates" &&
+    segments[2] === "direct-messages" &&
+    segments[3] === "stream"
+  ) {
+    return { teammateId: segments[1], action: "direct-messages-stream" };
   }
   return undefined;
 }
@@ -12006,16 +12288,24 @@ function parseReplaceTeammateMcpBindingsRequest(value: unknown): readonly Replac
   });
 }
 
-function parseTeammateDirectMessageRequest(value: unknown): { readonly body: string; readonly requestAiReply: boolean; readonly providerPresetId?: string } {
+function parseTeammateDirectMessageRequest(value: unknown): TeammateDirectMessageRequest {
   if (!isRecord(value)) {
     throw new Error("Direct message request must be a JSON object");
   }
   const body = readString(value, "body");
-  return {
+  const input: TeammateDirectMessageRequest = {
     body,
+    attachmentIds: readOptionalStringArray(value, "attachmentIds") ?? [],
     requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
     providerPresetId: readOptionalString(value, "providerPresetId"),
   };
+  if (!input.body.trim() && input.attachmentIds.length === 0) {
+    throw new Error("body or attachmentIds is required");
+  }
+  if (input.attachmentIds.length > 10) {
+    throw new Error("A teammate direct message can reference at most 10 attachments");
+  }
+  return input;
 }
 
 function parseTeammatePersonaDraft(value: unknown, teammate: AiTeammate): {
@@ -12193,6 +12483,29 @@ function parseChannelAttachmentRequest(value: unknown): ChannelAttachmentRequest
     throw new Error("contentBase64 must be a non-empty string");
   }
   return input;
+}
+
+function parseTeammatePrivateAttachmentRequest(value: unknown): TeammatePrivateAttachmentRequest {
+  const input = parseChannelAttachmentRequest(value);
+  if (!isRecord(value)) {
+    throw new Error("Private attachment request must be a JSON object");
+  }
+  const scope = readOptionalString(value, "scope");
+  if (scope !== undefined && scope !== "teammate_direct_thread" && scope !== "teammate_profile_avatar") {
+    throw new Error("scope must be teammate_direct_thread or teammate_profile_avatar");
+  }
+  return { ...input, scope };
+}
+
+function parseHardDeleteAiTeammateRequest(value: unknown): { readonly reason?: string } {
+  if (value === undefined || value === null) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error("Hard delete request must be a JSON object");
+  }
+  const reason = readOptionalString(value, "reason")?.trim();
+  return reason ? { reason: reason.slice(0, 500) } : {};
 }
 
 function parseChannelLinkPreviewRequest(value: unknown): ChannelLinkPreviewRequest {

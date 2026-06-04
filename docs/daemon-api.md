@@ -250,13 +250,56 @@ POST /teammates?cwd=/path/to/project
 GET /teammates/:id?cwd=/path/to/project
 PATCH /teammates/:id?cwd=/path/to/project
 DELETE /teammates/:id?cwd=/path/to/project
+POST /teammates/:id/hard-delete?cwd=/path/to/project
 ```
 
 `PATCH` accepts partial identity, provider, prompt, allowed tool, approval profile,
-status, pin, and hidden fields. Nullable fields can be cleared with `null`.
+status, pin, hidden, and avatar reference fields. Nullable fields can be cleared with
+`null`. `avatarImageAttachmentId`, when set directly, must reference a
+`teammate_profile_avatar` private attachment owned by the same teammate.
 
-`DELETE` is a soft disable in this slice. It sets `status` to `disabled` and `hidden` to
-`true`; private history and related records remain available for retention/audit.
+`DELETE` is a soft disable. It sets `status` to `disabled` and `hidden` to `true`;
+private history and related records remain available for retention/audit.
+
+`POST /hard-delete` is the destructive retention path. It accepts an optional reason and
+returns a minimal tombstone. It deletes teammate private thread/messages, private
+attachments and avatar bytes, teammate-scope memory, related used-memory events, and
+teammate private bindings. It does not cascade-delete channel messages, tasks, or run
+history; those records clear teammate references or render as a deleted teammate.
+
+Request:
+
+```json
+{
+  "reason": "owner request"
+}
+```
+
+Response:
+
+```json
+{
+  "tombstone": {
+    "id": "tomb_...",
+    "workspaceId": "workspace_default",
+    "entityType": "ai-teammate",
+    "entityId": "teammate_...",
+    "reason": "owner request",
+    "deletedCounts": {
+      "aiTeammates": 1,
+      "directThreads": 1,
+      "directMessages": 8,
+      "privateAttachments": 2,
+      "memoryObjects": 1,
+      "usedMemoryEvents": 3
+    },
+    "createdAt": "2026-06-04T00:00:00.000Z"
+  }
+}
+```
+
+The tombstone intentionally omits message text, prompt text, persona text, snippets,
+file names, and attachment content.
 
 ### Channel Memberships
 
@@ -330,6 +373,7 @@ channel-brief, channel-decisions, private-chat-summary, private-notes
 GET /teammates/:id/direct-thread?cwd=/path/to/project
 GET /teammates/:id/direct-messages?cwd=/path/to/project&limit=100
 POST /teammates/:id/direct-messages?cwd=/path/to/project
+POST /teammates/:id/direct-messages/stream?cwd=/path/to/project
 ```
 
 `direct-thread` creates the one-to-one teammate thread if it does not exist. Private
@@ -340,6 +384,7 @@ daemon stores a blocked AI reply instead of dropping the user message.
 ```json
 {
   "body": "Can you help refine this task?",
+  "attachmentIds": ["tpatt_..."],
   "requestAiReply": true,
   "providerPresetId": "provider_..."
 }
@@ -352,6 +397,7 @@ Response:
   "message": {
     "id": "tdmsg_...",
     "authorType": "local-user",
+    "attachmentIds": ["tpatt_..."],
     "status": "ready"
   },
   "aiReply": {
@@ -365,6 +411,95 @@ Response:
 
 Private chat uses no tools and does not include channel messages, files, memory scopes, or
 web content unless a future explicit inclusion model adds that behavior.
+
+`POST /direct-messages/stream` uses the same request body and returns
+`text/event-stream`. The daemon first persists the local-user message, then creates a
+pending AI reply and updates that same record as deltas arrive.
+
+SSE events:
+
+```text
+ready
+delta
+done
+blocked
+error
+```
+
+Event payload shapes:
+
+```json
+{ "message": { "id": "tdmsg_user_..." }, "aiReply": { "id": "tdmsg_ai_...", "status": "pending" } }
+```
+
+```json
+{ "messageId": "tdmsg_ai_...", "delta": "partial text", "body": "full text so far" }
+```
+
+```json
+{ "message": { "id": "tdmsg_user_..." }, "aiReply": { "id": "tdmsg_ai_...", "status": "ready" } }
+```
+
+Provider preflight failures emit `blocked`; provider/runtime errors emit `error` and the
+AI reply is stored as `failed` when one exists. Client aborts stop streaming and abort the
+provider request; already persisted messages remain durable.
+
+### Private Attachments And Avatar
+
+Private attachments share the same file root and validation policy as channel
+attachments, but are scoped to a teammate private thread or teammate profile avatar.
+
+```http
+GET /teammates/:id/direct-attachments?cwd=/path/to/project&limit=100
+POST /teammates/:id/direct-attachments?cwd=/path/to/project
+POST /teammates/:id/avatar?cwd=/path/to/project
+DELETE /teammates/:id/avatar?cwd=/path/to/project
+GET /attachments/:id/content?cwd=/path/to/project
+DELETE /attachments/:id?cwd=/path/to/project
+```
+
+`POST /direct-attachments` accepts JSON with base64 content:
+
+```json
+{
+  "fileName": "notes.md",
+  "contentType": "text/markdown",
+  "contentBase64": "IyBOb3Rlcw=="
+}
+```
+
+Response:
+
+```json
+{
+  "attachment": {
+    "id": "tpatt_...",
+    "teammateId": "teammate_...",
+    "threadId": "tdthread_...",
+    "scope": "teammate_direct_thread",
+    "fileName": "notes.md",
+    "contentType": "text/markdown",
+    "sizeBytes": 7
+  }
+}
+```
+
+`GET /direct-attachments` lists only `teammate_direct_thread` attachments for that
+teammate's private thread. A private direct message can reference at most 10
+`attachmentIds`, and every id must belong to the same teammate private thread.
+
+`POST /avatar` stores a `teammate_profile_avatar` attachment, sets
+`avatarImageAttachmentId` on the teammate, and deletes the previous avatar file if it is
+being replaced. `DELETE /avatar` clears the field and deletes the avatar attachment bytes.
+Avatar upload uses the image subset of the same attachment validation policy.
+
+`GET /attachments/:id/content` and `DELETE /attachments/:id` resolve both channel
+attachments and teammate private attachments. Deleting a private avatar attachment also
+clears the owning teammate's avatar reference.
+
+Private attachments are user-provided context only. They do not automatically enter
+memory and are not automatically provided to AI; future AI file inclusion must use an
+explicit, auditable path.
 
 ### Teammate Read Models
 
@@ -414,6 +549,10 @@ POST /channels/:id/attachments?cwd=/path/to/project
 GET /attachments/:id/content?cwd=/path/to/project
 DELETE /attachments/:id?cwd=/path/to/project
 ```
+
+The shared content and delete routes resolve both channel attachments and private
+teammate attachments. Channel upload/list routes only manage channel-scoped
+attachments.
 
 `POST` uses JSON with base64 content:
 

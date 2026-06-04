@@ -47,9 +47,11 @@ import {
   createChannelMessageId,
   createChannelWorkflowId,
   createChannelWorkflowStepId,
+  createRetentionTombstoneId,
   createTeammateDirectMessageId,
   createTeammateDirectThreadId,
   createTeammateMemoryScopeId,
+  createTeammatePrivateAttachmentId,
   createTaskId,
   normalizeChannelRuntimePolicy,
   type AiTeammate,
@@ -94,7 +96,10 @@ import {
   type CreateChannelWorkflowInput,
   type CreateChannelWorkflowStepInput,
   type CreateTeammateDirectMessageInput,
+  type CreateTeammatePrivateAttachmentInput,
   type CreateTaskInput,
+  type HardDeleteAiTeammateInput,
+  type HardDeleteAiTeammateResult,
   type ListAiTeammatesOptions,
   type ListChannelAttachmentsOptions,
   type ListChannelContextSummariesOptions,
@@ -107,6 +112,7 @@ import {
   type ListChannelWorkflowsOptions,
   type ListChannelWorkflowStepsOptions,
   type ListTeammateDirectMessagesOptions,
+  type ListTeammatePrivateAttachmentsOptions,
   type ListTasksOptions,
   type ReplaceTeammateChannelMembershipInput,
   type ReplaceTeammateMemoryScopeInput,
@@ -121,6 +127,8 @@ import {
   type TeammateDirectThread,
   type TeammateMemoryScope,
   type TeammateMemoryScopeKind,
+  type TeammatePrivateAttachment,
+  type TeammatePrivateAttachmentScope,
   type TeammateSkillBinding,
   type TeammateSkillBindingSource,
   type UpdateChannelBriefInput,
@@ -318,6 +326,8 @@ const LING_MEMORY_MIGRATION_VERSION = 24;
 const LING_MEMORY_MIGRATION_NAME = "create_ling_memory_v1";
 const SKILL_AWARE_RUN_MIGRATION_VERSION = 25;
 const SKILL_AWARE_RUN_MIGRATION_NAME = "add_skill_aware_tasks_and_runs";
+const PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_VERSION = 26;
+const PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_NAME = "create_private_workspace_data_lifecycle";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -1901,6 +1911,12 @@ export class SqliteRunStore implements RunStore {
     if (!existing) {
       return undefined;
     }
+    if (input.avatarImageAttachmentId !== undefined && input.avatarImageAttachmentId !== null) {
+      const avatar = this.getTeammatePrivateAttachment(input.avatarImageAttachmentId);
+      if (!avatar || avatar.teammateId !== id || avatar.scope !== "teammate_profile_avatar" || avatar.kind !== "image") {
+        throw new Error(`Avatar image attachment does not belong to teammate profile: ${input.avatarImageAttachmentId}`);
+      }
+    }
 
     const next: AiTeammate = {
       ...existing,
@@ -1966,6 +1982,111 @@ export class SqliteRunStore implements RunStore {
 
   disableAiTeammate(id: string, now: string): AiTeammate | undefined {
     return this.updateAiTeammate(id, { status: "disabled", hidden: true }, now);
+  }
+
+  hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined {
+    const teammate = this.getAiTeammate(id);
+    if (!teammate) {
+      return undefined;
+    }
+    const privateAttachmentRows = this.database
+      .prepare("SELECT path FROM teammate_private_attachments WHERE workspace_id = ? AND teammate_id = ?")
+      .all(DEFAULT_WORKSPACE_ID, id) as Record<string, SQLOutputValue>[];
+    const deletedAttachmentPaths = privateAttachmentRows.map((row) => readString(row, "path"));
+    const memoryRows = this.database
+      .prepare("SELECT id FROM memory_objects WHERE workspace_id = ? AND scope_type = 'teammate' AND owner_id = ?")
+      .all(DEFAULT_WORKSPACE_ID, id) as Record<string, SQLOutputValue>[];
+    const memoryIds = memoryRows.map((row) => readString(row, "id"));
+    const usedMemoryRows = this.database
+      .prepare("SELECT id, memory_ids_json, teammate_id FROM memory_used_events WHERE workspace_id = ?")
+      .all(DEFAULT_WORKSPACE_ID) as Record<string, SQLOutputValue>[];
+    const usedMemoryEventIds = usedMemoryRows
+      .filter((row) => {
+        if (readNullableString(row, "teammate_id") === id) {
+          return true;
+        }
+        const eventMemoryIds = parseJsonStringArray(readString(row, "memory_ids_json"));
+        return memoryIds.some((memoryId) => eventMemoryIds.includes(memoryId));
+      })
+      .map((row) => readString(row, "id"));
+    const directThreadCount = countWhere(this.database, "teammate_direct_threads", "teammate_id = ?", [id]);
+    const directMessageCount = countWhere(this.database, "teammate_direct_messages", "teammate_id = ?", [id]);
+    const privateAttachmentCount = countWhere(this.database, "teammate_private_attachments", "teammate_id = ?", [id]);
+    const channelMembershipCount = countWhere(this.database, "teammate_channel_memberships", "teammate_id = ?", [id]);
+    const skillBindingCount = countWhere(this.database, "teammate_skill_bindings", "teammate_id = ?", [id]);
+    const memoryScopeCount = countWhere(this.database, "teammate_memory_scopes", "teammate_id = ?", [id]);
+    const mcpBindingCount = countWhere(this.database, "teammate_mcp_bindings", "teammate_id = ?", [id]);
+    const channelDefaultCount = countWhere(this.database, "channels", "default_teammate_id = ?", [id]);
+    const taskAssigneeCount = countWhere(this.database, "tasks", "assignee_teammate_id = ?", [id]);
+    const runSessionCount = countWhere(this.database, "run_sessions", "teammate_id = ?", [id]);
+    const tombstone = {
+      id: createRetentionTombstoneId(),
+      workspaceId: teammate.workspaceId,
+      entityType: "ai-teammate" as const,
+      entityId: id,
+      reason: input.reason,
+      deletedCounts: {
+        aiTeammates: 1,
+        directThreads: directThreadCount,
+        directMessages: directMessageCount,
+        privateAttachments: privateAttachmentCount,
+        memoryObjects: memoryIds.length,
+        usedMemoryEvents: usedMemoryEventIds.length,
+        channelMemberships: channelMembershipCount,
+        skillBindings: skillBindingCount,
+        memoryScopes: memoryScopeCount,
+        mcpBindings: mcpBindingCount,
+        channelDefaultsCleared: channelDefaultCount,
+        taskAssigneesCleared: taskAssigneeCount,
+        runTeammateRefsCleared: runSessionCount,
+      },
+      createdAt: now,
+    };
+
+    this.database.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      this.database
+        .prepare(`
+          INSERT INTO retention_tombstones (
+            id,
+            workspace_id,
+            entity_type,
+            entity_id,
+            reason,
+            deleted_counts_json,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          tombstone.id,
+          tombstone.workspaceId,
+          tombstone.entityType,
+          tombstone.entityId,
+          tombstone.reason ?? null,
+          stringifyJson(tombstone.deletedCounts),
+          tombstone.createdAt,
+        );
+      for (const eventId of usedMemoryEventIds) {
+        this.database.prepare("DELETE FROM memory_used_events WHERE id = ?").run(eventId);
+      }
+      this.database.prepare("DELETE FROM memory_objects WHERE workspace_id = ? AND scope_type = 'teammate' AND owner_id = ?").run(DEFAULT_WORKSPACE_ID, id);
+      this.database.prepare("DELETE FROM teammate_private_attachments WHERE teammate_id = ?").run(id);
+      this.database.prepare("DELETE FROM teammate_direct_messages WHERE teammate_id = ?").run(id);
+      this.database.prepare("DELETE FROM teammate_direct_threads WHERE teammate_id = ?").run(id);
+      this.database.prepare("DELETE FROM teammate_channel_memberships WHERE teammate_id = ?").run(id);
+      this.database.prepare("DELETE FROM teammate_skill_bindings WHERE teammate_id = ?").run(id);
+      this.database.prepare("DELETE FROM teammate_memory_scopes WHERE teammate_id = ?").run(id);
+      this.database.prepare("DELETE FROM teammate_mcp_bindings WHERE teammate_id = ?").run(id);
+      this.database.prepare("UPDATE channels SET default_teammate_id = NULL, updated_at = ? WHERE default_teammate_id = ?").run(now, id);
+      this.database.prepare("UPDATE tasks SET assignee_teammate_id = NULL, updated_at = ? WHERE assignee_teammate_id = ?").run(now, id);
+      this.database.prepare("UPDATE run_sessions SET teammate_id = NULL, updated_at = ? WHERE teammate_id = ?").run(now, id);
+      this.database.prepare("DELETE FROM ai_teammates WHERE id = ?").run(id);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return { tombstone, deletedAttachmentPaths };
   }
 
   listTeammateChannelMemberships(teammateId: string): TeammateChannelMembership[] {
@@ -2477,6 +2598,16 @@ export class SqliteRunStore implements RunStore {
     if (thread.id !== input.threadId) {
       throw new Error(`Direct thread does not belong to teammate: ${input.threadId}`);
     }
+    const attachmentIds = normalizeStringList(input.attachmentIds ?? []);
+    if (attachmentIds.length > 10) {
+      throw new Error("A teammate direct message can reference at most 10 attachments");
+    }
+    for (const attachmentId of attachmentIds) {
+      const attachment = this.getTeammatePrivateAttachment(attachmentId);
+      if (!attachment || attachment.teammateId !== input.teammateId || attachment.threadId !== input.threadId || attachment.scope !== "teammate_direct_thread") {
+        throw new Error(`Private attachment does not belong to teammate direct thread: ${attachmentId}`);
+      }
+    }
 
     const message: TeammateDirectMessage = {
       id: createTeammateDirectMessageId(),
@@ -2486,6 +2617,7 @@ export class SqliteRunStore implements RunStore {
       authorType: input.authorType,
       authorId: input.authorId,
       body: input.body,
+      attachmentIds,
       status: input.status ?? "ready",
       errorMessage: input.errorMessage,
       linkedTaskId: input.linkedTaskId,
@@ -2504,13 +2636,14 @@ export class SqliteRunStore implements RunStore {
           author_type,
           author_id,
           body,
+          attachment_ids_json,
           status,
           error_message,
           linked_task_id,
           linked_run_id,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         message.id,
@@ -2520,6 +2653,7 @@ export class SqliteRunStore implements RunStore {
         message.authorType,
         message.authorId ?? null,
         message.body,
+        stringifyJson(message.attachmentIds),
         message.status,
         message.errorMessage ?? null,
         message.linkedTaskId ?? null,
@@ -2571,6 +2705,110 @@ export class SqliteRunStore implements RunStore {
       );
     const updated = this.database.prepare(teammateDirectMessageSelectSql("WHERE id = ?")).get(id);
     return updated ? mapTeammateDirectMessage(updated) : undefined;
+  }
+
+  createTeammatePrivateAttachment(input: CreateTeammatePrivateAttachmentInput): TeammatePrivateAttachment {
+    const teammate = this.getAiTeammate(input.teammateId);
+    if (!teammate) {
+      throw new Error(`AI teammate not found: ${input.teammateId}`);
+    }
+    if (input.scope === "teammate_direct_thread") {
+      if (!input.threadId) {
+        throw new Error("threadId is required for teammate_direct_thread attachments");
+      }
+      const thread = this.getOrCreateTeammateDirectThread(input.teammateId, input.createdAt ?? new Date().toISOString());
+      if (thread.id !== input.threadId) {
+        throw new Error(`Direct thread does not belong to teammate: ${input.threadId}`);
+      }
+      if (input.messageId) {
+        const message = this.getTeammateDirectMessage(input.messageId);
+        if (!message || message.teammateId !== input.teammateId || message.threadId !== input.threadId) {
+          throw new Error(`Direct message does not belong to teammate direct thread: ${input.messageId}`);
+        }
+      }
+    }
+    if (input.scope === "teammate_profile_avatar" && input.kind !== "image") {
+      throw new Error("Avatar attachments must be images");
+    }
+    const attachment: TeammatePrivateAttachment = {
+      id: createTeammatePrivateAttachmentId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      teammateId: input.teammateId,
+      threadId: input.threadId,
+      messageId: input.messageId,
+      scope: input.scope,
+      kind: input.kind,
+      fileName: input.fileName,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      path: input.path,
+      createdAt: input.createdAt ?? new Date().toISOString(),
+    };
+    this.database
+      .prepare(`
+        INSERT INTO teammate_private_attachments (
+          id,
+          workspace_id,
+          teammate_id,
+          thread_id,
+          message_id,
+          scope,
+          kind,
+          file_name,
+          content_type,
+          size_bytes,
+          path,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        attachment.id,
+        attachment.workspaceId,
+        attachment.teammateId,
+        attachment.threadId ?? null,
+        attachment.messageId ?? null,
+        attachment.scope,
+        attachment.kind,
+        attachment.fileName,
+        attachment.contentType,
+        attachment.sizeBytes,
+        attachment.path,
+        attachment.createdAt,
+      );
+    const created = this.getTeammatePrivateAttachment(attachment.id);
+    if (!created) {
+      throw new Error(`Failed to create teammate private attachment: ${attachment.id}`);
+    }
+    return created;
+  }
+
+  getTeammatePrivateAttachment(id: string): TeammatePrivateAttachment | undefined {
+    const row = this.database.prepare(teammatePrivateAttachmentSelectSql("WHERE id = ?")).get(id);
+    return row ? mapTeammatePrivateAttachment(row) : undefined;
+  }
+
+  listTeammatePrivateAttachments(options: ListTeammatePrivateAttachmentsOptions): TeammatePrivateAttachment[] {
+    const clauses = ["workspace_id = ?", "teammate_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.teammateId];
+    if (options.threadId) {
+      clauses.push("thread_id = ?");
+      params.push(options.threadId);
+    }
+    if (options.scope) {
+      clauses.push("scope = ?");
+      params.push(options.scope);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${teammatePrivateAttachmentSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapTeammatePrivateAttachment);
+  }
+
+  deleteTeammatePrivateAttachment(id: string): boolean {
+    const result = this.database.prepare("DELETE FROM teammate_private_attachments WHERE id = ?").run(id);
+    return Number(result.changes) > 0;
   }
 
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage {
@@ -7196,6 +7434,61 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(SKILL_AWARE_RUN_MIGRATION_VERSION, SKILL_AWARE_RUN_MIGRATION_NAME);
       }
     }
+
+    const hasPrivateWorkspaceDataLifecycleMigration = this.hasMigration(PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_VERSION);
+    if (
+      !hasPrivateWorkspaceDataLifecycleMigration ||
+      !this.hasColumn("teammate_direct_messages", "attachment_ids_json") ||
+      !this.hasTable("teammate_private_attachments") ||
+      !this.hasTable("retention_tombstones")
+    ) {
+      if (!this.hasColumn("teammate_direct_messages", "attachment_ids_json")) {
+        this.database.exec("ALTER TABLE teammate_direct_messages ADD COLUMN attachment_ids_json TEXT NOT NULL DEFAULT '[]';");
+      }
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS teammate_private_attachments (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          teammate_id TEXT NOT NULL,
+          thread_id TEXT,
+          message_id TEXT,
+          scope TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          path TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE,
+          FOREIGN KEY(thread_id) REFERENCES teammate_direct_threads(id) ON DELETE CASCADE,
+          FOREIGN KEY(message_id) REFERENCES teammate_direct_messages(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_teammate_private_attachments_owner
+        ON teammate_private_attachments(teammate_id, scope, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_teammate_private_attachments_thread
+        ON teammate_private_attachments(thread_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS retention_tombstones (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          reason TEXT,
+          deleted_counts_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_retention_tombstones_entity
+        ON retention_tombstones(workspace_id, entity_type, entity_id, created_at);
+      `);
+      if (!hasPrivateWorkspaceDataLifecycleMigration) {
+        this.recordMigration(PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_VERSION, PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -7239,6 +7532,9 @@ export class SqliteRunStore implements RunStore {
     const now = new Date().toISOString();
     for (const template of listDefaultTeammateTemplates(GSTACK_DEFAULT_SKILL_PACK_ID)) {
       const teammateId = createBuiltinAiTeammateId(template.id);
+      if (this.hasRetentionTombstone("ai-teammate", teammateId)) {
+        continue;
+      }
       const existing = this.getAiTeammate(teammateId);
       if (existing) {
         if (this.listTeammateSkillBindings(teammateId).length === 0) {
@@ -7303,6 +7599,17 @@ export class SqliteRunStore implements RunStore {
       this.database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
         .get(tableName),
+    );
+  }
+
+  private hasRetentionTombstone(entityType: string, entityId: string): boolean {
+    if (!this.hasTable("retention_tombstones")) {
+      return false;
+    }
+    return Boolean(
+      this.database
+        .prepare("SELECT id FROM retention_tombstones WHERE workspace_id = ? AND entity_type = ? AND entity_id = ? LIMIT 1")
+        .get(DEFAULT_WORKSPACE_ID, entityType, entityId),
     );
   }
 
@@ -7692,12 +7999,30 @@ function mapTeammateDirectMessage(row: Record<string, SQLOutputValue>): Teammate
     authorType: readString(row, "author_type") as TeammateDirectMessageAuthorType,
     authorId: readNullableString(row, "author_id"),
     body: readString(row, "body"),
+    attachmentIds: parseJsonStringArray(readString(row, "attachment_ids_json")),
     status: readString(row, "status") as TeammateDirectMessageStatus,
     errorMessage: readNullableString(row, "error_message"),
     linkedTaskId: readNullableString(row, "linked_task_id"),
     linkedRunId: readNullableString(row, "linked_run_id"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapTeammatePrivateAttachment(row: Record<string, SQLOutputValue>): TeammatePrivateAttachment {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    teammateId: readString(row, "teammate_id"),
+    threadId: readNullableString(row, "thread_id"),
+    messageId: readNullableString(row, "message_id"),
+    scope: readString(row, "scope") as TeammatePrivateAttachmentScope,
+    kind: readString(row, "kind") as ChannelAttachmentKind,
+    fileName: readString(row, "file_name"),
+    contentType: readString(row, "content_type"),
+    sizeBytes: readNumber(row, "size_bytes"),
+    path: readString(row, "path"),
+    createdAt: readString(row, "created_at"),
   });
 }
 
@@ -8638,6 +8963,7 @@ function teammateDirectMessageSelectSql(whereClause: string): string {
       author_type,
       author_id,
       body,
+      attachment_ids_json,
       status,
       error_message,
       linked_task_id,
@@ -8645,6 +8971,26 @@ function teammateDirectMessageSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM teammate_direct_messages
+    ${whereClause}
+  `;
+}
+
+function teammatePrivateAttachmentSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      teammate_id,
+      thread_id,
+      message_id,
+      scope,
+      kind,
+      file_name,
+      content_type,
+      size_bytes,
+      path,
+      created_at
+    FROM teammate_private_attachments
     ${whereClause}
   `;
 }
@@ -9162,6 +9508,11 @@ function mediaJobSelectSql(whereClause: string): string {
 
 function stringifyJson(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function countWhere(database: DatabaseSync, table: string, whereClause: string, params: readonly (string | number)[]): number {
+  const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${whereClause}`).get(...params) as Record<string, SQLOutputValue> | undefined;
+  return row ? readNumber(row, "count") : 0;
 }
 
 function parseJson(value: string): unknown {

@@ -51,7 +51,10 @@ import type {
   CreateChannelMessageInput,
   CreateAiTeammateInput,
   CreateTeammateDirectMessageInput,
+  CreateTeammatePrivateAttachmentInput,
   CreateTaskInput,
+  HardDeleteAiTeammateInput,
+  HardDeleteAiTeammateResult,
   ListAiTeammatesOptions,
   ListChannelAttachmentsOptions,
   ListChannelContextSummariesOptions,
@@ -63,6 +66,7 @@ import type {
   ListChannelsOptions,
   ListChannelLinkPreviewsOptions,
   ListChannelMessagesOptions,
+  ListTeammatePrivateAttachmentsOptions,
   ListTeammateDirectMessagesOptions,
   ListTasksOptions,
   ReplaceTeammateChannelMembershipInput,
@@ -74,6 +78,7 @@ import type {
   TeammateDirectMessage,
   TeammateDirectThread,
   TeammateMemoryScope,
+  TeammatePrivateAttachment,
   TeammateSkillBinding,
   UpdateChannelBriefInput,
   UpdateChannelContextSummaryInput,
@@ -402,6 +407,7 @@ export interface RunStore {
   listAiTeammates(options?: ListAiTeammatesOptions): AiTeammate[];
   updateAiTeammate(id: string, input: AiTeammateUpdateInput, now: string): AiTeammate | undefined;
   disableAiTeammate(id: string, now: string): AiTeammate | undefined;
+  hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined;
   listTeammateChannelMemberships(teammateId: string): TeammateChannelMembership[];
   replaceTeammateChannelMemberships(
     teammateId: string,
@@ -441,6 +447,10 @@ export interface RunStore {
     },
     now: string,
   ): TeammateDirectMessage | undefined;
+  createTeammatePrivateAttachment(input: CreateTeammatePrivateAttachmentInput): TeammatePrivateAttachment;
+  getTeammatePrivateAttachment(id: string): TeammatePrivateAttachment | undefined;
+  listTeammatePrivateAttachments(options: ListTeammatePrivateAttachmentsOptions): TeammatePrivateAttachment[];
+  deleteTeammatePrivateAttachment(id: string): boolean;
   createChannelMessage(input: CreateChannelMessageInput, now: string): ChannelMessage;
   updateChannelMessageRuntime(
     id: string,
