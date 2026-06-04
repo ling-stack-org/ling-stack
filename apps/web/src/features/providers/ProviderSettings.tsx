@@ -460,10 +460,12 @@ export function ProviderSettings({
                   return (
                     <tr key={provider.id} className={provider.id === selectedProviderId ? "provider-row selected" : "provider-row"}>
                       <td className="provider-name-cell">
-                        <span className="provider-avatar" aria-hidden="true">{providerInitial(provider.displayName)}</span>
-                        <span className="provider-name-copy">
-                          <strong>{provider.displayName}</strong>
-                          <small>{provider.providerId}</small>
+                        <span className="provider-name-main">
+                          <span className="provider-avatar" aria-hidden="true">{providerInitial(provider.displayName)}</span>
+                          <span className="provider-name-copy">
+                            <strong>{provider.displayName}</strong>
+                            <small>{provider.providerId}</small>
+                          </span>
                         </span>
                       </td>
                       <td>
@@ -494,24 +496,26 @@ export function ProviderSettings({
                         </span>
                       </td>
                       <td className="provider-status-cell">
-                        {providerMissingApiKey ? (
-                          <span className="provider-state check-unknown">{t("Needs config")}</span>
-                        ) : null}
-                        {!providerMissingApiKey ? (
-                          <span className={providerSelectedForRun ? "provider-state enabled" : "provider-state disabled"}>
-                            {providerSelectedForRun ? t("enabled") : t("disabled")}
-                          </span>
-                        ) : null}
-                        {!providerMissingApiKey ? (
-                          <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
-                            {providerPreflightReady(provider) ? t("preflight ready") : canUseProviderForRun(provider) ? t("needs check") : providerRunBlockerLabel(provider, t)}
-                          </span>
-                        ) : null}
-                        {!providerMissingApiKey ? (
-                          <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
-                            {t("Coding task")}: {providerCodingTaskLabel(provider, t)}
-                          </span>
-                        ) : null}
+                        <span className="provider-status-stack">
+                          {providerMissingApiKey ? (
+                            <span className="provider-state check-unknown">{t("Needs config")}</span>
+                          ) : null}
+                          {!providerMissingApiKey ? (
+                            <span className={providerSelectedForRun ? "provider-state enabled" : "provider-state disabled"}>
+                              {providerSelectedForRun ? t("enabled") : t("disabled")}
+                            </span>
+                          ) : null}
+                          {!providerMissingApiKey ? (
+                            <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
+                              {providerPreflightReady(provider) ? t("preflight ready") : canUseProviderForRun(provider) ? t("needs check") : providerRunBlockerLabel(provider, t)}
+                            </span>
+                          ) : null}
+                          {!providerMissingApiKey ? (
+                            <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
+                              {t("Coding task")}: {providerCodingTaskLabel(provider, t)}
+                            </span>
+                          ) : null}
+                        </span>
                       </td>
                       <td>
                         <div className="provider-actions">

@@ -2996,6 +2996,24 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(page.getByRole("heading", { name: "模型工作台" })).toHaveCount(1);
   await expect(page.getByRole("heading", { name: "模型预设" })).toHaveCount(0);
   await expect(page.locator(".provider-table")).toBeVisible();
+  const workbenchBounds = await page.locator(".provider-workbench").evaluate((workbench) => {
+    const workspaceElement = workbench.closest(".workspace");
+    const workspace = workspaceElement?.getBoundingClientRect();
+    const rect = workbench.getBoundingClientRect();
+    const style = workspaceElement ? getComputedStyle(workspaceElement) : undefined;
+    const contentLeft = workspace && style ? workspace.left + Number.parseFloat(style.paddingLeft) : undefined;
+    const contentRight = workspace && style ? workspace.right - Number.parseFloat(style.paddingRight) : undefined;
+    return contentLeft !== undefined && contentRight !== undefined
+      ? {
+        workspaceContent: { left: contentLeft, right: contentRight },
+        workbench: { left: rect.left, right: rect.right },
+      }
+      : undefined;
+  });
+  expect(workbenchBounds).toBeDefined();
+  expect(workbenchBounds?.workbench.left).toBeGreaterThanOrEqual((workbenchBounds?.workspaceContent.left ?? 0) - 1.5);
+  expect(workbenchBounds?.workbench.right).toBeLessThanOrEqual((workbenchBounds?.workspaceContent.right ?? 0) + 1.5);
+  expect(workbenchBounds ? workbenchBounds.workspaceContent.right - workbenchBounds.workbench.right : 0).toBeLessThanOrEqual(1.5);
   await expect(page.locator(".workspace-head .status-badge")).toHaveCount(0);
   await expect(page.getByText("聊天能力")).toBeVisible();
   await expect(page.getByText("Chat-capable")).toHaveCount(0);
@@ -3010,6 +3028,30 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
   await expect(missingKeyGatewayRow.getByRole("button", { name: "启用" })).toBeVisible();
   await expect(missingKeyGatewayRow.getByRole("button", { name: "使用" })).toHaveCount(0);
+  const tableLayout = await missingKeyGatewayRow.evaluate((row) => {
+    const cells = Array.from(row.children).map((cell) => {
+      const rect = cell.getBoundingClientRect();
+      return { left: rect.left, right: rect.right };
+    });
+    return cells;
+  });
+  for (let index = 0; index < tableLayout.length - 1; index += 1) {
+    expect(tableLayout[index].right).toBeLessThanOrEqual(tableLayout[index + 1].left + 0.5);
+  }
+  await missingKeyGatewayRow.hover();
+  const actionLayout = await missingKeyGatewayRow.evaluate((row) => {
+    const actionCell = row.children[row.children.length - 1]?.getBoundingClientRect();
+    const actions = row.querySelector(".provider-actions")?.getBoundingClientRect();
+    return actionCell && actions
+      ? {
+        actionCell: { left: actionCell.left, right: actionCell.right },
+        actions: { left: actions.left, right: actions.right },
+      }
+      : undefined;
+  });
+  expect(actionLayout).toBeDefined();
+  expect(actionLayout?.actions.left).toBeGreaterThanOrEqual((actionLayout?.actionCell.left ?? 0) - 0.5);
+  expect(actionLayout?.actions.right).toBeLessThanOrEqual((actionLayout?.actionCell.right ?? 0) + 0.5);
 
   await page.getByRole("button", { name: "添加模型" }).first().click();
   const editor = page.getByRole("dialog", { name: "新建预设" });
