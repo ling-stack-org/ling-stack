@@ -69,12 +69,14 @@ import {
   listChannelWorkflows,
   listChannelWorkflowSteps,
   listAiTeammates,
+  listMemoryObjects,
   listApprovals,
   listMediaJobs,
   listProviders,
   listProviderTemplates,
   listRuns,
   listStateTransitions,
+  listUsedMemoryEvents,
   listTeammateChannels,
   listTasks,
   listWorkUnits,
@@ -135,6 +137,7 @@ import type {
   ExternalWorkStatusResponse,
   MediaJob,
   MediaJobFormState,
+  MemoryObject,
   McpServer,
   McpServerFormState,
   McpTool,
@@ -158,6 +161,7 @@ import type {
   TeammateChannelMembership,
   UpdateAiTeammateRequest,
   UpdateChannelBriefRequest,
+  UsedMemoryEvent,
   WorkUnit,
   WorkUnitDetailResponse,
 } from "../types.js";
@@ -339,6 +343,8 @@ export function AppShell(): JSX.Element {
     prompt: t(defaultTaskForm.prompt),
   }));
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
+  const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
+  const [usedMemoryEvents, setUsedMemoryEvents] = useState<readonly UsedMemoryEvent[]>([]);
   const [channelMessagesHasOlder, setChannelMessagesHasOlder] = useState(false);
   const [channelMessagesLoadingOlder, setChannelMessagesLoadingOlder] = useState(false);
   const [channelExecutionProposals, setChannelExecutionProposals] = useState<readonly ChannelExecutionProposal[]>([]);
@@ -831,6 +837,7 @@ export function AppShell(): JSX.Element {
   const providerRepairRun = providerRepairRunId ? runById.get(providerRepairRunId) : undefined;
   const taskRepairRun = taskRepairRunId ? runById.get(taskRepairRunId) : undefined;
   const approvalRepairRun = approvalRepairRunId ? runById.get(approvalRepairRunId) : undefined;
+  const memoryById = useMemo(() => new Map(memoryObjects.map((item) => [item.id, item])), [memoryObjects]);
 
   useEffect(() => {
     void refreshHealth();
@@ -845,9 +852,11 @@ export function AppShell(): JSX.Element {
       void refreshRuns();
       void refreshApprovals();
       void refreshExternalWorkCiTriage();
+      void refreshUsedMemoryAudit();
     }
     if (activeView === "runs") {
       void refreshRuns();
+      void refreshUsedMemoryAudit();
     }
     if (activeView === "providers") {
       void refreshProviderTemplates();
@@ -1025,6 +1034,7 @@ export function AppShell(): JSX.Element {
           refreshRuns(defaultWorkspaceCwd),
           refreshApprovals(defaultWorkspaceCwd),
           refreshRuntimeState(defaultWorkspaceCwd),
+          refreshUsedMemoryAudit(defaultWorkspaceCwd),
         ]).catch((error: unknown) => {
           setErrorMessage(error instanceof Error ? error.message : String(error));
         });
@@ -1087,6 +1097,7 @@ export function AppShell(): JSX.Element {
         await loadRun(streamedRunId, loadCwd);
         await refreshRuns(loadCwd);
         await refreshApprovals(loadCwd, streamedRunId);
+        await refreshUsedMemoryAudit(loadCwd);
         await afterRunLoaded?.(streamedRunId);
       }
     } catch (error) {
@@ -1202,6 +1213,26 @@ export function AppShell(): JSX.Element {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setRunsLoading(false);
+    }
+  }
+
+  async function refreshUsedMemoryAudit(cwd = form.cwd.trim()): Promise<void> {
+    if (!cwd) {
+      setMemoryObjects([]);
+      setUsedMemoryEvents([]);
+      return;
+    }
+
+    try {
+      const [memoryResponse, usedResponse] = await Promise.all([
+        listMemoryObjects(cwd),
+        listUsedMemoryEvents(cwd, { limit: 200 }),
+      ]);
+      setMemoryObjects(memoryResponse.memories);
+      setUsedMemoryEvents(usedResponse.events);
+    } catch {
+      setMemoryObjects([]);
+      setUsedMemoryEvents([]);
     }
   }
 
@@ -1774,6 +1805,7 @@ export function AppShell(): JSX.Element {
       refreshRuns(),
       refreshApprovals(),
       refreshExternalWorkCiTriage(form.cwd.trim(), channelId),
+      refreshUsedMemoryAudit(),
     ]);
     void refreshChannelActivityTransitions();
   }
@@ -1993,6 +2025,7 @@ export function AppShell(): JSX.Element {
       ]);
       if (response.aiReply) {
         await refreshChannelExecutionProposals(selectedChannelId);
+        await refreshUsedMemoryAudit(form.cwd.trim());
       }
       await refreshChannelFiles(selectedChannelId);
     } catch (error) {
@@ -2498,6 +2531,7 @@ export function AppShell(): JSX.Element {
         refreshTasks(proposal.channelId),
         refreshRuns(workspaceCwd),
         refreshChannelExecutionProposals(proposal.channelId),
+        refreshUsedMemoryAudit(workspaceCwd),
       ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -3325,6 +3359,8 @@ export function AppShell(): JSX.Element {
             tasks={tasks}
             taskForm={taskForm}
             channelMessages={channelMessages}
+            memoryById={memoryById}
+            usedMemoryEvents={usedMemoryEvents}
             channelExecutionProposals={channelExecutionProposals}
             channelAttachments={channelAttachments}
             channelLinkPreviews={channelLinkPreviews}
@@ -3492,6 +3528,8 @@ export function AppShell(): JSX.Element {
                 runs={runs}
                 selectedRunId={activeRunId}
                 selectedRun={run}
+                memoryById={memoryById}
+                usedMemoryEvents={usedMemoryEvents}
                 events={events}
                 artifacts={artifacts}
                 resourceLeases={resourceLeases}

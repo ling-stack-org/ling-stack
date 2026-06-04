@@ -25,9 +25,11 @@ import type { SkillPack } from "@ling-stack/core/skill-types";
 import {
   createTask,
   createTeammateDirectMessage,
+  listMemoryObjects,
   listTeammateActivity,
   listTeammateChannels,
   listTeammateDirectMessages,
+  listUsedMemoryEvents,
   listMcpServers,
   listMcpTools,
   listTeammateMcpBindings,
@@ -41,11 +43,18 @@ import {
 import { useI18n } from "../../i18n.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
 import { providerPreflightReady } from "../../lib/providers.js";
-import { AvatarInitial, MetaRow, StatusBadge } from "../../shared/components/index.js";
+import {
+  AvatarInitial,
+  MetaRow,
+  StatusBadge,
+  UsedMemorySummary,
+  filterUsedMemoryEventsByResponse,
+} from "../../shared/components/index.js";
 import type {
   AiTeammate,
   Channel,
   EffectiveTeammateSkill,
+  MemoryObject,
   McpServer,
   McpTool,
   ProviderPreset,
@@ -58,6 +67,7 @@ import type {
   TeammateMemoryScope,
   TeammateSkillBinding,
   UpdateAiTeammateRequest,
+  UsedMemoryEvent,
 } from "../../types.js";
 import { approvalProfileText, teammateInitialFromName, workflowPhaseLabel } from "./helpers.js";
 
@@ -116,6 +126,8 @@ export function TeammateWorkspace({
   const [mcpTools, setMcpTools] = useState<readonly McpTool[]>([]);
   const [mcpBindings, setMcpBindings] = useState<readonly TeammateMcpBinding[]>([]);
   const [memoryScopes, setMemoryScopes] = useState<readonly TeammateMemoryScope[]>([]);
+  const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
+  const [usedMemoryEvents, setUsedMemoryEvents] = useState<readonly UsedMemoryEvent[]>([]);
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [activityItems, setActivityItems] = useState<readonly TeammateActivityItem[]>([]);
   const [messageDraft, setMessageDraft] = useState("");
@@ -142,6 +154,7 @@ export function TeammateWorkspace({
   const skillById = useMemo(() => new Map((skillPack?.skills ?? []).map((skill) => [skill.id, skill])), [skillPack]);
   const bindingBySkillId = useMemo(() => new Map(skillBindings.map((binding) => [binding.skillId, binding])), [skillBindings]);
   const effectiveSkillById = useMemo(() => new Map(effectiveSkills.map((skill) => [skill.skillId, skill])), [effectiveSkills]);
+  const memoryById = useMemo(() => new Map(memoryObjects.map((memory) => [memory.id, memory])), [memoryObjects]);
   const enabledSkillCount = useMemo(() => skillBindings.filter((binding) => binding.enabled).length, [skillBindings]);
   const skillRows = useMemo(() => {
     const builtInRows = (skillPack?.skills ?? []).map((skill) => ({
@@ -244,6 +257,8 @@ export function TeammateWorkspace({
         mcpToolsResponse,
         mcpBindingsResponse,
         memoryResponse,
+        memoryObjectsResponse,
+        usedMemoryResponse,
         taskResponse,
         activityResponse,
       ] = await Promise.all([
@@ -254,6 +269,8 @@ export function TeammateWorkspace({
         listMcpTools(workspaceCwd),
         listTeammateMcpBindings(workspaceCwd, teammate.id),
         listTeammateMemoryScopes(workspaceCwd, teammate.id),
+        listMemoryObjects(workspaceCwd),
+        listUsedMemoryEvents(workspaceCwd, { teammateId: teammate.id, limit: 100 }),
         listTeammateTasks(workspaceCwd, teammate.id),
         listTeammateActivity(workspaceCwd, teammate.id),
       ]);
@@ -266,6 +283,8 @@ export function TeammateWorkspace({
       setMcpTools(mcpToolsResponse.tools);
       setMcpBindings(mcpBindingsResponse.bindings);
       setMemoryScopes(memoryResponse.scopes);
+      setMemoryObjects(memoryObjectsResponse.memories);
+      setUsedMemoryEvents(usedMemoryResponse.events);
       setTasks(taskResponse.tasks);
       setActivityItems(activityResponse.items);
     } catch (error) {
@@ -294,8 +313,14 @@ export function TeammateWorkspace({
         ...(response.aiReply ? [response.aiReply] : []),
       ]);
       setMessageDraft("");
-      const activityResponse = await listTeammateActivity(cwd.trim(), teammate.id);
+      const [activityResponse, usedMemoryResponse, memoryObjectsResponse] = await Promise.all([
+        listTeammateActivity(cwd.trim(), teammate.id),
+        listUsedMemoryEvents(cwd.trim(), { teammateId: teammate.id, limit: 100 }),
+        listMemoryObjects(cwd.trim()),
+      ]);
       setActivityItems(activityResponse.items);
+      setUsedMemoryEvents(usedMemoryResponse.events);
+      setMemoryObjects(memoryObjectsResponse.memories);
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -672,6 +697,11 @@ export function TeammateWorkspace({
                       <StatusBadge status={message.status} />
                     </header>
                     <p>{message.body}</p>
+                    <UsedMemorySummary
+                      compact
+                      events={filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id)}
+                      memoryById={memoryById}
+                    />
                     {message.errorMessage ? <small>{message.errorMessage}</small> : null}
                     <div className="teammate-message-actions">
                       <button

@@ -45,14 +45,18 @@ import {
   MetaRow,
   RunRepairHintBanner,
   StatusBadge,
+  UsedMemorySummary,
+  filterUsedMemoryEventsByResponse,
 } from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
+  MemoryObject,
   ResourceLease,
   RunArtifact,
   RunEventEnvelope,
   RunSession,
   StateTransitionEvent,
+  UsedMemoryEvent,
   WorkUnitDetailResponse,
 } from "../../types.js";
 
@@ -61,6 +65,8 @@ export function RunHistory({
   runs,
   selectedRunId,
   selectedRun,
+  memoryById,
+  usedMemoryEvents,
   events,
   artifacts,
   resourceLeases,
@@ -87,6 +93,8 @@ export function RunHistory({
   readonly runs: readonly RunSession[];
   readonly selectedRunId: string;
   readonly selectedRun: RunSession | undefined;
+  readonly memoryById: ReadonlyMap<string, MemoryObject>;
+  readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly events: readonly RunEventEnvelope[];
   readonly artifacts: readonly RunArtifact[];
   readonly resourceLeases: readonly ResourceLease[];
@@ -163,6 +171,8 @@ export function RunHistory({
 
       <RunDetailPanel
         run={selectedRun}
+        memoryById={memoryById}
+        usedMemoryEvents={usedMemoryEvents}
         events={events}
         artifacts={artifacts}
         resourceLeases={resourceLeases}
@@ -187,6 +197,8 @@ export function RunHistory({
 
 function RunDetailPanel({
   run,
+  memoryById,
+  usedMemoryEvents,
   events,
   artifacts,
   resourceLeases,
@@ -206,6 +218,8 @@ function RunDetailPanel({
   onEditTask,
 }: {
   readonly run: RunSession | undefined;
+  readonly memoryById: ReadonlyMap<string, MemoryObject>;
+  readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly events: readonly RunEventEnvelope[];
   readonly artifacts: readonly RunArtifact[];
   readonly resourceLeases: readonly ResourceLease[];
@@ -271,9 +285,15 @@ function RunDetailPanel({
             <MetaRow label={t("Status")} value={run.status} compact />
             <MetaRow label={t("Provider")} value={`${run.providerName}/${run.providerModel}`} compact />
             <MetaRow label={t("Work unit")} value={run.workUnitId ?? "-"} compact />
+            <MetaRow label={t("Selected skill")} value={run.selectedSkillId ?? "-"} compact />
             <MetaRow label={t("Created")} value={formatDateTime(run.createdAt)} compact />
             <MetaRow label={t("Ended")} value={run.endedAt ? formatDateTime(run.endedAt) : "-"} compact />
           </div>
+
+          <UsedMemorySummary
+            events={filterUsedMemoryEventsByResponse(usedMemoryEvents, run.id)}
+            memoryById={memoryById}
+          />
 
           {repairHint ? (
             <RunRepairHintBanner

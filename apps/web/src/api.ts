@@ -305,8 +305,19 @@ export async function recallMemory(cwd: string, input: MemoryRecallRequest): Pro
   return daemonClient.recallMemory(cwd, input);
 }
 
-export async function listUsedMemoryEvents(cwd: string): Promise<UsedMemoryListResponse> {
-  return daemonClient.listUsedMemoryEvents(cwd);
+export async function listUsedMemoryEvents(
+  cwd: string,
+  options: {
+    readonly teammateId?: string;
+    readonly channelId?: string;
+    readonly taskId?: string;
+    readonly runId?: string;
+    readonly responseId?: string;
+    readonly memoryId?: string;
+    readonly limit?: number;
+  } = {},
+): Promise<UsedMemoryListResponse> {
+  return daemonClient.listUsedMemoryEvents(cwd, options);
 }
 
 export async function createTeammatePersonaDraft(

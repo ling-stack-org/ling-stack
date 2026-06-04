@@ -4,3 +4,4 @@ export { LingStackLogo } from "./LingStackLogo.js";
 export { MetaRow } from "./MetaRow.js";
 export { RunRepairHintBanner } from "./RunRepairHintBanner.js";
 export { StatusBadge } from "./StatusBadge.js";
+export { UsedMemorySummary, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";
