@@ -69,6 +69,7 @@ import type {
   ExternalWorkStatusResponse,
   ExternalWorkWorkflowConfigureRequest,
   ExternalWorkWorkflowMutationResponse,
+  HardDeleteAiTeammateResponse,
   MediaJobFormState,
   MediaJobArtifactListResponse,
   MediaJobListResponse,
@@ -123,6 +124,9 @@ import type {
   TeammateDirectMessageListResponse,
   TeammateDirectMessageMutationResponse,
   TeammateDirectThreadResponse,
+  TeammatePrivateAttachment,
+  TeammatePrivateAttachmentListResponse,
+  TeammatePrivateAttachmentMutationResponse,
   TeammateMcpBindingListResponse,
   TeammateMemoryScopeListResponse,
   TeammatePersonaDraftRequest,
@@ -241,6 +245,10 @@ export async function disableAiTeammate(cwd: string, teammateId: string): Promis
   return daemonClient.disableAiTeammate(cwd, teammateId);
 }
 
+export async function hardDeleteAiTeammate(cwd: string, teammateId: string, reason?: string): Promise<HardDeleteAiTeammateResponse> {
+  return daemonClient.hardDeleteAiTeammate(cwd, teammateId, reason?.trim() ? { reason: reason.trim() } : {});
+}
+
 export async function listTeammateChannels(cwd: string, teammateId: string): Promise<TeammateChannelMembershipListResponse> {
   return daemonClient.listTeammateChannels(cwd, teammateId);
 }
@@ -344,6 +352,44 @@ export async function createTeammateDirectMessage(
   return daemonClient.createTeammateDirectMessage(cwd, teammateId, input);
 }
 
+export async function streamTeammateDirectMessage(
+  cwd: string,
+  teammateId: string,
+  input: CreateTeammateDirectMessageRequest,
+): Promise<Response> {
+  return daemonClient.streamTeammateDirectMessage(cwd, teammateId, input);
+}
+
+export async function listTeammatePrivateAttachments(cwd: string, teammateId: string): Promise<TeammatePrivateAttachmentListResponse> {
+  return daemonClient.listTeammatePrivateAttachments(cwd, teammateId);
+}
+
+export async function uploadTeammatePrivateAttachment(
+  cwd: string,
+  teammateId: string,
+  file: File,
+): Promise<TeammatePrivateAttachmentMutationResponse> {
+  return daemonClient.createTeammatePrivateAttachment(cwd, teammateId, {
+    fileName: file.name,
+    contentType: file.type || undefined,
+    contentBase64: await fileToBase64(file),
+    scope: "teammate_direct_thread",
+  });
+}
+
+export async function uploadTeammateAvatar(cwd: string, teammateId: string, file: File): Promise<AiTeammateMutationResponse & TeammatePrivateAttachmentMutationResponse> {
+  return daemonClient.uploadTeammateAvatar(cwd, teammateId, {
+    fileName: file.name,
+    contentType: file.type || undefined,
+    contentBase64: await fileToBase64(file),
+    scope: "teammate_profile_avatar",
+  });
+}
+
+export async function deleteTeammateAvatar(cwd: string, teammateId: string): Promise<AiTeammateMutationResponse> {
+  return daemonClient.deleteTeammateAvatar(cwd, teammateId);
+}
+
 export async function listTeammateTasks(cwd: string, teammateId: string): Promise<TaskListResponse> {
   return daemonClient.listTeammateTasks(cwd, teammateId);
 }
@@ -376,6 +422,18 @@ export async function deleteChannelAttachment(cwd: string, attachmentId: string)
 
 export function channelAttachmentContentUrl(attachment: ChannelAttachment, cwd?: string): string {
   return daemonClient.attachmentContentUrl(attachment.id, cwd);
+}
+
+export async function deleteAttachment(cwd: string, attachmentId: string): Promise<void> {
+  await daemonClient.deleteChannelAttachment(cwd, attachmentId);
+}
+
+export function attachmentContentUrl(attachment: ChannelAttachment | TeammatePrivateAttachment, cwd?: string): string {
+  return daemonClient.attachmentContentUrl(attachment.id, cwd);
+}
+
+export function attachmentContentUrlById(attachmentId: string, cwd?: string): string {
+  return daemonClient.attachmentContentUrl(attachmentId, cwd);
 }
 
 export async function listChannelLinkPreviews(cwd: string, channelId: string): Promise<ChannelLinkPreviewListResponse> {

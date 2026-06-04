@@ -569,6 +569,106 @@ test("teammate persona draft import returns warnings without mutating durable te
   }
 });
 
+test("teammate direct message stream emits ready delta and done events", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-stream-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Stream a private reply.", providerPresetId: provider.id }),
+    });
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+    assert.equal(events[1].data.delta, "Designer reply");
+    assert.equal(events[2].data.aiReply.body, "Designer reply");
+    const listed = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.messages.at(-1).body, "Designer reply");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("private attachments avatar and hard delete stay scoped to teammate private data", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachments-hard-delete-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const teammateId = "teammate_builtin_engineer";
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id, isDefault: true }],
+    });
+    const attachment = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-attachments?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "private-note.txt",
+      contentBase64: Buffer.from("private note", "utf8").toString("base64"),
+    });
+    const content = await fetch(`${daemon.url}/attachments/${encodeURIComponent(attachment.attachment.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(await content.text(), "private note");
+    const message = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "See the private note.",
+      attachmentIds: [attachment.attachment.id],
+    });
+    assert.deepEqual(message.message.attachmentIds, [attachment.attachment.id]);
+    const avatar = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/avatar?cwd=${encodeURIComponent(cwd)}`, {
+      fileName: "avatar.png",
+      contentBase64: Buffer.from("png", "utf8").toString("base64"),
+    });
+    assert.equal(avatar.teammate.avatarImageAttachmentId, avatar.attachment.id);
+    const crossScope = await fetch(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_designer")}/direct-messages?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "bad", attachmentIds: [attachment.attachment.id] }),
+    });
+    assert.equal(crossScope.status, 400);
+    assert.match((await crossScope.json()).message, /does not belong/i);
+
+    const memory = await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "teammate",
+      ownerId: teammateId,
+      title: "Hard delete private memory",
+      body: "This memory should disappear.",
+      sensitivity: "private",
+    });
+    const task = (await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      title: "Assigned before delete",
+      prompt: "Keep task history.",
+      assigneeTeammateId: teammateId,
+    })).task;
+
+    const deleted = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/hard-delete?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "test delete",
+    });
+    assert.equal(deleted.tombstone.entityId, teammateId);
+    assert.equal(deleted.tombstone.deletedCounts.privateAttachments, 2);
+    const missingMessages = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(missingMessages.status, 404);
+    const missingContent = await fetch(`${daemon.url}/attachments/${encodeURIComponent(attachment.attachment.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(missingContent.status, 404);
+    const updatedTask = (await getJson(`${daemon.url}/tasks/${encodeURIComponent(task.id)}?cwd=${encodeURIComponent(cwd)}`)).task;
+    assert.equal(updatedTask.assigneeTeammateId, undefined);
+    const recall = await postJson(`${daemon.url}/memory/recall?cwd=${encodeURIComponent(cwd)}`, {
+      teammateId,
+      intent: "private-chat",
+      query: "Hard delete private memory",
+      includePrivate: true,
+    });
+    assert.equal(recall.memories.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 class RecordingRunner {
   constructor() {
     this.runs = [];
@@ -576,6 +676,7 @@ class RecordingRunner {
 
   async runTask(options) {
     this.runs.push(options);
+    options.onEvent?.({ type: "assistant_text_delta", text: "Designer reply" });
     return {
       taskId: options.task.id,
       messages: ["Designer reply"],
@@ -639,6 +740,24 @@ async function postTaskRunAndReadReadyRunId(baseUrl, cwd, taskId, body) {
   const dataLine = text.split(/\r?\n/).find((line) => line.startsWith("data:") && line.includes("runId"));
   assert.ok(dataLine, text);
   return JSON.parse(dataLine.slice("data:".length).trim()).runId;
+}
+
+function parseSseEvents(text) {
+  return text
+    .split(/\n\n/)
+    .map((block) => {
+      const lines = block.split(/\r?\n/);
+      const eventLine = lines.find((line) => line.startsWith("event:"));
+      const dataLine = lines.find((line) => line.startsWith("data:"));
+      if (!eventLine || !dataLine) {
+        return undefined;
+      }
+      return {
+        event: eventLine.slice("event:".length).trim(),
+        data: JSON.parse(dataLine.slice("data:".length).trim()),
+      };
+    })
+    .filter(Boolean);
 }
 
 async function getJson(url) {

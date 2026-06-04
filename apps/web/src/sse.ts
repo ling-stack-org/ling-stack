@@ -21,6 +21,23 @@ export async function streamRun(
     throw new Error(await readErrorMessage(response));
   }
 
+  await readSseResponse(response, (parsed) => {
+    if (parsed.event === "ready") {
+      const data = JSON.parse(parsed.data) as { runId?: unknown };
+      if (typeof data.runId === "string") {
+        onMessage({ kind: "ready", runId: data.runId });
+      }
+      return;
+    }
+    onMessage({ kind: "event", event: JSON.parse(parsed.data) as RunEventEnvelope });
+  });
+}
+
+export async function readSseResponse(response: Response, onMessage: (message: { readonly event: string; readonly data: string }) => void): Promise<void> {
+  if (!response.body) {
+    throw new Error("Response did not include a stream body.");
+  }
+
   const decoder = new TextDecoder();
   const reader = response.body.getReader();
   let buffer = "";
@@ -28,6 +45,11 @@ export async function streamRun(
   for (;;) {
     const { done, value } = await reader.read();
     if (done) {
+      buffer += decoder.decode();
+      const parsed = parseSseBlock(buffer);
+      if (parsed) {
+        onMessage(parsed);
+      }
       break;
     }
     buffer += decoder.decode(value, { stream: true });
@@ -35,17 +57,9 @@ export async function streamRun(
     buffer = blocks.pop() ?? "";
     for (const block of blocks) {
       const parsed = parseSseBlock(block);
-      if (!parsed) {
-        continue;
+      if (parsed) {
+        onMessage(parsed);
       }
-      if (parsed.event === "ready") {
-        const data = JSON.parse(parsed.data) as { runId?: unknown };
-        if (typeof data.runId === "string") {
-          onMessage({ kind: "ready", runId: data.runId });
-        }
-        continue;
-      }
-      onMessage({ kind: "event", event: JSON.parse(parsed.data) as RunEventEnvelope });
     }
   }
 }

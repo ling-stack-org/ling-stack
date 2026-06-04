@@ -1,7 +1,7 @@
 # Helio-Inspired AI Teammate Private Workspace
 
-Status: Implemented first durable slice; editing polish and broader e2e remain follow-ups
-Date: 2026-05-29
+Status: Implemented durable private workspace plus private data lifecycle; editing polish and broader e2e remain follow-ups
+Date: 2026-06-04
 Scope: Web UI, daemon API, workspace storage, API client, docs, and e2e coverage
 
 ## Summary
@@ -43,15 +43,15 @@ Implemented in this slice:
 - API client and Web API wrappers for the teammate routes,
 - sidebar roster rows backed by daemon teammates,
 - `teammate:<id>` private workspace route with Chat, Tasks, Activity, Channels, Skills,
-  Memory, and Settings tabs.
+  Memory, and Settings tabs,
+- streaming private replies over SSE with durable pending AI message updates,
+- private teammate attachments and profile avatar uploads,
+- hard delete for teammate private data with minimal retention tombstones.
 
 Still deferred:
 
 - skill and memory editing controls inside the private workspace tabs,
-- private attachments and avatar uploads,
-- vector memory, automatic memory recall, and hidden ingestion,
-- streaming private replies,
-- hard delete and retention policy,
+- optional vector retrieval provider installation and hidden ingestion,
 - multi-party direct messages,
 - broad browser e2e coverage beyond the focused durable workspace flows.
 
@@ -124,7 +124,7 @@ Purpose: private human-to-teammate discussion.
 Behavior:
 
 - shows durable private messages for the selected teammate,
-- supports user messages and AI replies,
+- supports user messages, private attachments, and streamed AI replies,
 - uses the selected teammate provider preset by default,
 - shows blocked reply cards when provider preflight fails,
 - does not include channel files, channel history, or private memory unless explicitly
@@ -136,8 +136,9 @@ MVP composer:
 
 - multiline text input,
 - send button,
+- private attachment upload chips,
 - blocked/failed status,
-- no attachments until private attachment scope is designed.
+- pending AI bubble with incremental streamed text.
 
 Visual treatment:
 
@@ -234,7 +235,7 @@ Fields:
 
 - display name,
 - description,
-- avatar tone or image reference,
+- avatar tone or image upload,
 - template id,
 - role key,
 - provider preset,
@@ -248,7 +249,8 @@ Fields:
 Danger zone:
 
 - `Disable teammate` should hide the teammate from active surfaces but preserve history.
-- Hard delete is not part of the first slice.
+- `Hard delete teammate` physically deletes teammate private data and attachment bytes,
+  then leaves only a minimal tombstone audit record.
 
 ## Information Architecture
 
@@ -343,7 +345,7 @@ export interface TeammateDirectThread {
   readonly updatedAt: string;
 }
 
-export type TeammateDirectMessageStatus = "ready" | "blocked" | "failed";
+export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "failed";
 
 export interface TeammateDirectMessage {
   readonly id: string;
@@ -353,12 +355,42 @@ export interface TeammateDirectMessage {
   readonly authorType: "local-user" | "ai-teammate" | "system";
   readonly authorId?: string;
   readonly body: string;
+  readonly attachmentIds: readonly string[];
   readonly status: TeammateDirectMessageStatus;
   readonly errorMessage?: string;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export type TeammatePrivateAttachmentScope =
+  | "teammate_direct_thread"
+  | "teammate_profile_avatar";
+
+export interface TeammatePrivateAttachment {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly teammateId: string;
+  readonly threadId?: string;
+  readonly messageId?: string;
+  readonly scope: TeammatePrivateAttachmentScope;
+  readonly kind: "image" | "document" | "text" | "spreadsheet" | "presentation" | "other";
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  readonly path: string;
+  readonly createdAt: string;
+}
+
+export interface RetentionTombstone {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly entityType: "ai-teammate";
+  readonly entityId: string;
+  readonly reason?: string;
+  readonly deletedCounts: Readonly<Record<string, number>>;
+  readonly createdAt: string;
 }
 ```
 
@@ -454,6 +486,7 @@ CREATE TABLE teammate_direct_messages (
   author_type TEXT NOT NULL,
   author_id TEXT,
   body TEXT NOT NULL,
+  attachment_ids_json TEXT NOT NULL,
   status TEXT NOT NULL,
   error_message TEXT,
   linked_task_id TEXT,
@@ -467,6 +500,35 @@ CREATE TABLE teammate_direct_messages (
 
 CREATE INDEX idx_teammate_direct_messages_thread_created
   ON teammate_direct_messages(thread_id, created_at);
+
+CREATE TABLE teammate_private_attachments (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  teammate_id TEXT NOT NULL,
+  thread_id TEXT,
+  message_id TEXT,
+  scope TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_teammate_private_attachments_owner
+  ON teammate_private_attachments(teammate_id, scope, created_at);
+
+CREATE TABLE retention_tombstones (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  reason TEXT,
+  deleted_counts_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 ```
 
 ### Seeding Strategy
@@ -501,9 +563,10 @@ POST /teammates?cwd=/path/to/workspace
 GET /teammates/:id?cwd=/path/to/workspace
 PATCH /teammates/:id?cwd=/path/to/workspace
 DELETE /teammates/:id?cwd=/path/to/workspace
+POST /teammates/:id/hard-delete?cwd=/path/to/workspace
 ```
 
-`DELETE` soft-disables in the first slice:
+`DELETE` soft-disables:
 
 ```json
 {
@@ -512,7 +575,33 @@ DELETE /teammates/:id?cwd=/path/to/workspace
 }
 ```
 
-Hard delete should wait until retention and audit behavior is designed.
+`POST /hard-delete` physically deletes teammate private data and returns a minimal
+tombstone. It deletes private thread/messages, private attachments and avatar bytes,
+teammate-scope memory, related used-memory events, and private teammate bindings. It does
+not cascade-delete channel messages, tasks, or run history.
+
+```json
+{
+  "reason": "owner request"
+}
+```
+
+```json
+{
+  "tombstone": {
+    "id": "tomb_...",
+    "entityType": "ai-teammate",
+    "entityId": "teammate_...",
+    "reason": "owner request",
+    "deletedCounts": {
+      "directMessages": 12,
+      "privateAttachments": 2,
+      "memoryObjects": 3
+    },
+    "createdAt": "2026-06-04T00:00:00.000Z"
+  }
+}
+```
 
 ### Channel Memberships
 
@@ -551,6 +640,7 @@ until explicit inclusion rules are implemented.
 GET /teammates/:id/direct-thread?cwd=/path/to/workspace
 GET /teammates/:id/direct-messages?cwd=/path/to/workspace&limit=100
 POST /teammates/:id/direct-messages?cwd=/path/to/workspace
+POST /teammates/:id/direct-messages/stream?cwd=/path/to/workspace
 ```
 
 Request:
@@ -558,6 +648,7 @@ Request:
 ```json
 {
   "body": "Can you help refine this task?",
+  "attachmentIds": ["tpatt_..."],
   "requestAiReply": true,
   "providerPresetId": "provider_..."
 }
@@ -571,6 +662,31 @@ Response:
   "aiReply": { "id": "msg_...", "authorType": "ai-teammate", "status": "ready" }
 }
 ```
+
+The streaming endpoint uses the same request body, persists the local-user message first,
+creates a pending AI message, then emits `ready`, `delta`, `done`, `blocked`, or `error`
+SSE events while updating the same durable AI message.
+
+### Private Attachments And Avatar
+
+```http
+GET /teammates/:id/direct-attachments?cwd=/path/to/workspace&limit=100
+POST /teammates/:id/direct-attachments?cwd=/path/to/workspace
+POST /teammates/:id/avatar?cwd=/path/to/workspace
+DELETE /teammates/:id/avatar?cwd=/path/to/workspace
+GET /attachments/:id/content?cwd=/path/to/workspace
+DELETE /attachments/:id?cwd=/path/to/workspace
+```
+
+Private attachment scopes:
+
+- `teammate_direct_thread` for private chat attachments.
+- `teammate_profile_avatar` for avatar images.
+
+Private message `attachmentIds` must belong to the selected teammate's private thread and
+are capped at 10 ids. `PATCH /teammates/:id` may reference only avatar-scope attachments
+owned by the same teammate. Attachments are not automatically ingested into memory or
+given to AI; future inclusion must be explicit and auditable.
 
 ### Teammate Read Models
 
@@ -597,9 +713,11 @@ run, approval, and channel message stores rather than introducing duplicate dura
    - system prompt and append fragments,
    - recent private messages,
    - no channel or file content by default.
-8. Run the configured runner with `tools: []`.
-9. Persist an AI reply with `ready`, `blocked`, or `failed`.
-10. Return both message records.
+8. Create a pending AI reply record.
+9. Run the configured runner with `tools: []`.
+10. For streaming calls, append deltas to the pending AI message and emit SSE events.
+11. Persist the AI reply with `ready`, `blocked`, or `failed`.
+12. Return both message records, or close the SSE stream after the terminal event.
 
 Private chat currently uses the runner/provider path without creating a durable run
 session. It persists the local message first, then stores a ready or blocked AI reply.
@@ -635,6 +753,9 @@ Implemented API client changes:
 
 - added typed methods for teammate CRUD,
 - added typed methods for direct messages,
+- added streaming private reply support,
+- added private attachment and avatar upload methods,
+- added hard delete support,
 - added typed read models for tasks and activity,
 - expose blocked provider errors without throwing away the persisted message.
 
@@ -757,6 +878,34 @@ Docs:
 - [x] update `docs/design/web-ui-v0.1.md`,
 - [x] update `README.md` current status.
 
+### Slice 6: Private Data Lifecycle
+
+Files:
+
+- `packages/core/src/workspace-types.ts`
+- `packages/core/src/storage/sqlite-run-store.ts`
+- `packages/daemon/src/index.ts`
+- `packages/api-client/src/client.ts`
+- `apps/web/src/features/teammates/TeammateWorkspace.tsx`
+- `apps/web/src/styles/teammates.css`
+- `docs/daemon-api.md`
+
+Status: implemented.
+
+Work:
+
+- [x] add `POST /teammates/:id/direct-messages/stream`,
+- [x] stream `ready`, `delta`, `done`, `blocked`, and `error` events,
+- [x] persist pending AI replies and update the same message on deltas,
+- [x] add private attachment storage with `teammate_direct_thread` and
+  `teammate_profile_avatar` scopes,
+- [x] validate direct message attachment ids are same-teammate private attachments,
+- [x] support avatar upload, replacement, and removal,
+- [x] keep `DELETE /teammates/:id` as soft disable,
+- [x] add `POST /teammates/:id/hard-delete`,
+- [x] delete teammate private data and file bytes while preserving only minimal tombstone
+  metadata.
+
 ## Acceptance Criteria
 
 - [x] Selecting an AI teammate from the sidebar opens a real private workspace, not a
@@ -766,6 +915,8 @@ Docs:
 - [x] Default built-in teammates are durable workspace instances after bootstrap.
 - [x] Creating a custom teammate persists after page refresh and daemon restart.
 - [x] Private chat message history persists after page refresh and daemon restart.
+- [x] Private chat can show streamed AI replies from one durable pending AI bubble.
+- [x] Private chat can attach private files without exposing channel attachments.
 - [x] AI replies in private chat use the teammate's selected provider when one is ready.
 - [x] Provider failures create a visible blocked reply record.
 - [x] Private chat does not include channel messages, files, or memory unless a future scope
@@ -775,6 +926,8 @@ Docs:
   channel update logic.
 - [x] The Skills tab accurately shows template skill requirements and approval profiles.
 - [x] The Settings tab can rename, pause, hide, pin, and soft-disable a teammate.
+- [x] The Settings tab can upload/remove an avatar image.
+- [x] Hard delete removes teammate private data and leaves a minimal tombstone audit record.
 - [x] E2E covers selecting teammate, sending private chat, creating teammate-assigned tasks,
   editing channel membership/defaults, blocked provider state, settings persistence, and
   returning to channel workspace.
@@ -790,19 +943,20 @@ Docs:
 | Chat path bypasses approval policy | Private chat uses no tools; side effects require task/run path |
 | Provider failure loses user message | Persist local message before provider resolution and create blocked reply |
 | Migration breaks existing workspaces | Use additive tables and no destructive schema changes |
+| Hard delete removes too much shared history | Delete only teammate private data; clear references in channel/task/run history |
+| Tombstone leaks sensitive data | Store counts and ids only; do not retain body text, prompt, file names, persona text, or snippets |
+| Private attachments are mistaken for AI-readable context | Treat them as user-provided metadata/downloads until explicit inclusion exists |
 
 ## Open Decisions
 
 1. Should private chat create run sessions for audit, or use a lighter message-only
    record? Recommendation: message-only first, optional `linkedRunId` when the runner
    path already emits a session.
-2. Should custom avatar images use the existing attachment store? Recommendation: yes,
-   but defer image upload controls until after basic identity settings work.
-3. Should memory scopes affect prompt construction immediately? Recommendation: no. First
+2. Should memory scopes affect prompt construction immediately? Recommendation: no. First
    make scopes visible and editable; wire prompt inclusion in a later trust-reviewed
    slice.
-4. Should Files and Calendar tabs exist now? Recommendation: no. Files can appear after
-   private attachments or per-teammate artifacts exist. Calendar should wait for a
+3. Should Files and Calendar tabs exist now? Recommendation: no. Files can appear after
+   richer private attachment or per-teammate artifact workflows exist. Calendar should wait for a
    scheduled task/event model.
 
 ## First Implementation Target
@@ -811,9 +965,11 @@ Implemented first code slice:
 
 - durable teammate instances seeded from built-in templates,
 - private teammate thread and message persistence,
-- private chat tab with no-tools AI replies,
+- private chat tab with no-tools streamed AI replies,
+- private attachments and avatar upload,
+- soft disable plus hard delete with minimal tombstone audit,
 - tasks, skills, channels, memory, and settings tabs backed by real data or metadata,
 - docs updates and focused unit/daemon coverage.
 
-Calendar, private attachments, hard delete, custom skill-pack import, vector memory, and
-streaming private replies are intentionally deferred.
+Calendar, custom skill-pack import, optional vector retrieval provider installation, and
+multi-party direct messages remain deferred.

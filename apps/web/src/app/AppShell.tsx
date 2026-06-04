@@ -106,6 +106,7 @@ import {
   updateTask,
   updateTaskStatus,
   disableAiTeammate,
+  hardDeleteAiTeammate,
   updateMcpServer,
   updateProvider,
 } from "../api.js";
@@ -506,6 +507,23 @@ export function AppShell(): JSX.Element {
     try {
       setErrorMessage("");
       await disableAiTeammate(cwd, teammateId);
+      await refreshAiTeammates(cwd);
+      if (activeSidebarTarget === teammateSidebarTarget(teammateId)) {
+        openPlainView("teammates");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function hardDeleteAiTeammateAndRefresh(teammateId: string, reason?: string): Promise<void> {
+    const cwd = form.cwd.trim();
+    if (!cwd) {
+      return;
+    }
+    try {
+      setErrorMessage("");
+      await hardDeleteAiTeammate(cwd, teammateId, reason);
       await refreshAiTeammates(cwd);
       if (activeSidebarTarget === teammateSidebarTarget(teammateId)) {
         openPlainView("teammates");
@@ -3490,7 +3508,9 @@ export function AppShell(): JSX.Element {
                 skillPack={builtinSkillPack}
                 onUpdateTeammate={updateAiTeammateSettings}
                 onDisableTeammate={removeAiTeammate}
+                onHardDeleteTeammate={hardDeleteAiTeammateAndRefresh}
                 onOpenProviders={() => openPlainView("providers")}
+                onRefreshTeammates={() => refreshAiTeammates(form.cwd.trim())}
                 onRefreshChannels={() => refreshChannels()}
                 onRefreshTasks={(channelId) => refreshTasks(channelId)}
               />

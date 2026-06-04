@@ -1265,6 +1265,20 @@
   font-size: 17px;
 }
 
+.teammate-avatar-image {
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(33, 38, 42, 0.1);
+  border-radius: 999px;
+  object-fit: cover;
+  background: #f8faf8;
+}
+
+.teammate-avatar-image.compact {
+  width: 34px;
+  height: 34px;
+}
+
 .teammate-workspace-identity h2 {
   margin: 2px 0 4px;
   color: #17211f;
@@ -1285,6 +1299,55 @@
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.teammate-avatar-settings,
+.teammate-danger-zone {
+  display: grid;
+  grid-template-columns: minmax(160px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid rgba(37, 42, 45, 0.08);
+}
+
+.teammate-avatar-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.teammate-avatar-actions input,
+.teammate-chat-composer-actions input {
+  display: none;
+}
+
+.teammate-avatar-preview.compact-preview {
+  min-height: 92px;
+  padding: 10px;
+}
+
+.teammate-danger-zone {
+  margin-top: 10px;
+  border-top: 1px solid rgba(185, 28, 28, 0.16);
+  border-bottom: 0;
+  background: rgba(255, 247, 247, 0.7);
+}
+
+.teammate-danger-zone span {
+  display: grid;
+  gap: 3px;
+}
+
+.teammate-danger-zone small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.teammate-danger-zone input {
+  min-width: 0;
 }
 
 .teammate-mcp-panel {
@@ -1751,7 +1814,6 @@
 
 .teammate-chat-composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   padding: 12px;
   border-top: 1px solid rgba(33, 38, 42, 0.08);
@@ -1761,6 +1823,53 @@
 .teammate-chat-composer textarea {
   width: 100%;
   resize: vertical;
+}
+
+.teammate-chat-composer-actions,
+.teammate-pending-attachments,
+.teammate-message-attachments {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.teammate-chat-composer-actions {
+  justify-content: flex-end;
+}
+
+.teammate-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #34403c;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.teammate-attachment-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-attachment-chip button {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #64706b;
+  cursor: pointer;
 }
 
 .teammate-list-panel,
