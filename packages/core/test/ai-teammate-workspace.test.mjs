@@ -132,11 +132,13 @@ test("sqlite persists Ling Memory v1 objects, scoped lexical recall, and used-me
       intent: "channel-reply",
       query: "lexical recall model workbench",
     });
+    assert.deepEqual(workspaceMemory.sourceRefs, [{ type: "manual", id: workspaceMemory.id, label: "Manual memory" }]);
     const channelIds = channelRecall.memories.map((item) => item.memory.id);
     assert.ok(channelIds.includes(workspaceMemory.id));
     assert.ok(channelIds.includes(channelMemory.id));
+    assert.ok(channelIds.includes(privateMemory.id));
     assert.equal(channelIds.includes(otherChannelMemory.id), false);
-    assert.equal(channelIds.includes(privateMemory.id), false);
+    assert.equal(channelIds.includes(designerMemory.id), false);
 
     const privateRecall = store.recallMemory({
       teammateId: engineerId,

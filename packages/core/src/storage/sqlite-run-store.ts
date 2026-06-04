@@ -2111,15 +2111,16 @@ export class SqliteRunStore implements RunStore {
   }
 
   createMemoryObject(input: CreateMemoryObjectInput, now: string): MemoryObject {
+    const id = input.id ?? createMemoryObjectId();
     const memory: MemoryObject = {
-      id: input.id ?? createMemoryObjectId(),
+      id,
       workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
       scopeType: input.scopeType,
       ownerId: input.ownerId,
       title: input.title,
       body: input.body,
       tags: normalizeStringList(input.tags ?? []),
-      sourceRefs: normalizeMemorySourceRefs(input.sourceRefs ?? []),
+      sourceRefs: ensureMemorySourceRefs(id, normalizeMemorySourceRefs(input.sourceRefs ?? [])),
       reviewState: input.reviewState ?? "active",
       enabled: input.enabled ?? true,
       sensitivity: input.sensitivity ?? "normal",
@@ -2235,7 +2236,7 @@ export class SqliteRunStore implements RunStore {
       title: input.title ?? existing.title,
       body: input.body ?? existing.body,
       tags: input.tags ? normalizeStringList(input.tags) : existing.tags,
-      sourceRefs: input.sourceRefs ? normalizeMemorySourceRefs(input.sourceRefs) : existing.sourceRefs,
+      sourceRefs: input.sourceRefs ? ensureMemorySourceRefs(existing.id, normalizeMemorySourceRefs(input.sourceRefs)) : existing.sourceRefs,
       reviewState: input.reviewState ?? existing.reviewState,
       enabled: input.enabled ?? existing.enabled,
       sensitivity: input.sensitivity ?? existing.sensitivity,
@@ -7632,15 +7633,16 @@ function mapTeammateMemoryScope(row: Record<string, SQLOutputValue>): TeammateMe
 }
 
 function mapMemoryObject(row: Record<string, SQLOutputValue>): MemoryObject {
+  const id = readString(row, "id");
   return omitUndefined({
-    id: readString(row, "id"),
+    id,
     workspaceId: readString(row, "workspace_id"),
     scopeType: readString(row, "scope_type") as MemoryScopeType,
     ownerId: readString(row, "owner_id"),
     title: readString(row, "title"),
     body: readString(row, "body"),
     tags: parseJsonStringArray(readString(row, "tags_json")),
-    sourceRefs: parseMemorySourceRefs(readString(row, "source_refs_json")),
+    sourceRefs: ensureMemorySourceRefs(id, parseMemorySourceRefs(readString(row, "source_refs_json"))),
     reviewState: readString(row, "review_state") as MemoryReviewState,
     enabled: readBoolean(row, "enabled"),
     sensitivity: readString(row, "sensitivity") as MemorySensitivity,
@@ -9368,6 +9370,13 @@ function normalizeMemorySourceRefs(values: readonly unknown[]): MemorySourceRef[
   });
 }
 
+function ensureMemorySourceRefs(memoryId: string, sourceRefs: readonly MemorySourceRef[]): readonly MemorySourceRef[] {
+  if (sourceRefs.length > 0) {
+    return sourceRefs;
+  }
+  return [{ type: "manual", id: memoryId, label: "Manual memory" }];
+}
+
 function isMemorySourceType(value: unknown): value is MemorySourceRef["type"] {
   return (
     value === "manual" ||
@@ -9447,7 +9456,13 @@ function memoryAllowedForRecall(
   if (!input.includeSecretAdjacent && memory.sensitivity === "secret-adjacent") {
     return false;
   }
-  if (!input.includePrivate && memory.sensitivity === "private" && input.intent !== "private-chat" && input.intent !== "task-run") {
+  if (
+    !input.includePrivate &&
+    memory.sensitivity === "private" &&
+    input.intent !== "private-chat" &&
+    input.intent !== "channel-reply" &&
+    input.intent !== "task-run"
+  ) {
     return false;
   }
   return allowedScopes.some((scope) => scope.scopeType === memory.scopeType && scope.ownerId === memory.ownerId);

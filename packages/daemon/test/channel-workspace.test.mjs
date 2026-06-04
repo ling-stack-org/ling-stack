@@ -445,6 +445,20 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
       body: "Model Workbench should use the same horizontal width as other pages.",
       tags: ["model-workbench"],
     })).memory;
+    const teammateMemory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "teammate",
+      ownerId: "teammate_builtin_designer",
+      title: "Designer private width preference",
+      body: "Designer private memory says Model Workbench width should stay aligned.",
+      sensitivity: "private",
+    })).memory;
+    await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "teammate",
+      ownerId: "teammate_builtin_engineer",
+      title: "Engineer private width preference",
+      body: "Engineer private memory also mentions Model Workbench width.",
+      sensitivity: "private",
+    });
     await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
       scopeType: "channel",
       ownerId: otherChannel.id,
@@ -470,7 +484,9 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
       query: "model workbench width",
     });
     assert.ok(recall.memories.some((item) => item.memory.id === channelMemory.id));
+    assert.ok(recall.memories.some((item) => item.memory.id === teammateMemory.id));
     assert.equal(recall.memories.some((item) => item.memory.ownerId === otherChannel.id), false);
+    assert.equal(recall.memories.some((item) => item.memory.ownerId === "teammate_builtin_engineer"), false);
     assert.equal(recall.memories.some((item) => item.memory.sensitivity === "secret-adjacent"), false);
 
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
@@ -483,7 +499,8 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
     assert.match(runner.runs[0].systemPrompt, /Model Workbench width/);
 
     const used = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&responseId=${encodeURIComponent(created.aiReply.id)}`);
-    assert.deepEqual(used.events[0].memoryIds, [channelMemory.id]);
+    assert.ok(used.events[0].memoryIds.includes(channelMemory.id));
+    assert.ok(used.events[0].memoryIds.includes(teammateMemory.id));
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

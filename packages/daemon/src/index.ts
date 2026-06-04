@@ -8574,7 +8574,7 @@ async function createAiTeammateDirectReply(input: {
       ...input.teammate.appendSystemPrompt,
       "Reply concisely to the private conversation.",
       "This private chat has no tool access and cannot mutate files, send external messages, or inspect channel files.",
-      "Do not claim to see channel history, attachments, private memory, or web pages unless the user explicitly pasted that content in this chat.",
+      "Do not claim to see channel history, attachments, web pages, or memory beyond the explicit Used memory section unless the user pasted that content in this chat.",
       memoryPrompt,
     ].filter((line): line is string => Boolean(line)).join("\n");
     const provider = resolveProviderForRun(

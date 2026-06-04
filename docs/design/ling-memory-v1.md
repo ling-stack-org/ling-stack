@@ -218,8 +218,8 @@ request
   -> resolve current teammate, channel, task, and run
   -> resolve allowed memory scopes
   -> exclude disabled, rejected, expired, and forbidden sensitivity records
-  -> retrieve candidates
-  -> rerank
+  -> retrieve lexical candidates
+  -> optionally call an installed retrieval provider
   -> apply final policy filter
   -> return recall bundle with provenance
 ```
@@ -541,18 +541,18 @@ Ling Memory v1 is ready when:
 - the UI shows what memory was used,
 - every recalled item has source refs,
 - memory can be disabled without deleting source history,
-- channel memory can be promoted to shared memory through a reviewable path,
 - retrieval providers can be enabled without making provider results the source of truth.
+
+Promotion from channel or task/run memory into shared workspace memory is a later Phase 4
+flow, not part of the first v1 skeleton.
 
 ## Open Decisions
 
-1. Should the first memory object API use one shared table or separate tables per scope?
-   Recommendation: one table with `scopeType` and `ownerId`.
-2. Should private chat memory be summarized automatically?
+1. Should private chat memory be summarized automatically?
    Recommendation: create candidates automatically, but require narrow auto-accept policy
    or user review before active use.
-3. Which embedding provider should be first?
+2. Which embedding provider should be first?
    Recommendation: none in v1. Ship the retrieval provider interface first, keep lexical
    recall as the default, and let customers install providers later.
-4. Should memory source excerpts be stored inline?
+3. Should memory source excerpts be stored inline?
    Recommendation: store short excerpts plus source refs and hashes, not full source copies.
