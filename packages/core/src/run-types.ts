@@ -194,7 +194,26 @@ export type RunEventType =
   | "approval_expired"
   | "approval_cancelled"
   | "artifact_created"
+  | "run_intervention_created"
+  | "run_followup_queued"
+  | "run_interrupt_requested"
+  | "run_continuation_starting"
+  | "run_continuation_started"
+  | "run_intervention_failed"
   | "result";
+
+export const runInterventionModes = ["queue_followup", "interrupt_redirect"] as const;
+export type RunInterventionMode = (typeof runInterventionModes)[number];
+
+export const runInterventionStatuses = [
+  "queued",
+  "cancelling_source",
+  "starting_continuation",
+  "started",
+  "failed",
+  "cancelled",
+] as const;
+export type RunInterventionStatus = (typeof runInterventionStatuses)[number];
 
 export interface RunSession {
   readonly id: string;
@@ -212,6 +231,9 @@ export interface RunSession {
   readonly requestSnapshot: unknown;
   readonly eventLogPath: string;
   readonly workUnitId?: string;
+  readonly parentRunId?: string;
+  readonly interventionId?: string;
+  readonly continuationReason?: string;
   readonly summaryPath?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;
@@ -243,7 +265,60 @@ export interface CreateRunInput {
   readonly providerSnapshot: unknown;
   readonly requestSnapshot: unknown;
   readonly workUnitId?: string;
+  readonly parentRunId?: string;
+  readonly interventionId?: string;
+  readonly continuationReason?: string;
   readonly createdAt: string;
+}
+
+export interface RunIntervention {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly sourceRunId: string;
+  readonly sourceWorkUnitId?: string;
+  readonly sourceAttemptId?: string;
+  readonly continuationRunId?: string;
+  readonly continuationWorkUnitId?: string;
+  readonly mode: RunInterventionMode;
+  readonly status: RunInterventionStatus;
+  readonly instruction: string;
+  readonly requestedBy: "local-user" | "system";
+  readonly idempotencyKey: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly failureReason?: string;
+}
+
+export interface CreateRunInterventionInput {
+  readonly id?: string;
+  readonly workspaceId?: string;
+  readonly sourceRunId: string;
+  readonly sourceWorkUnitId?: string;
+  readonly sourceAttemptId?: string;
+  readonly mode: RunInterventionMode;
+  readonly instruction: string;
+  readonly requestedBy?: RunIntervention["requestedBy"];
+  readonly idempotencyKey: string;
+}
+
+export interface ListRunInterventionsOptions {
+  readonly sourceRunId?: string;
+  readonly status?: RunInterventionStatus;
+  readonly mode?: RunInterventionMode;
+  readonly limit?: number;
+}
+
+export interface UpdateRunInterventionStatusInput {
+  readonly interventionId: string;
+  readonly status: RunInterventionStatus;
+  readonly continuationRunId?: string | null;
+  readonly continuationWorkUnitId?: string | null;
+  readonly startedAt?: string | null;
+  readonly completedAt?: string | null;
+  readonly failureReason?: string | null;
+  readonly now: string;
 }
 
 export interface ListRunEventsOptions {
@@ -310,6 +385,11 @@ export interface RunStore {
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
   countEvents(runId: string): number;
+  createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention;
+  getRunIntervention(interventionId: string): RunIntervention | undefined;
+  listRunInterventions(options?: ListRunInterventionsOptions): RunIntervention[];
+  updateRunInterventionStatus(input: UpdateRunInterventionStatusInput): RunIntervention | undefined;
+  cancelRunIntervention(interventionId: string, now: string, reason?: string): RunIntervention | undefined;
   createWorkUnit(input: CreateWorkUnitInput): WorkUnit;
   getWorkUnit(workUnitId: string): WorkUnit | undefined;
   listWorkUnits(options?: ListWorkUnitsOptions): WorkUnit[];
@@ -619,4 +699,8 @@ export function createEventId(): string {
 
 export function createArtifactId(): string {
   return `artifact_${randomUUID()}`;
+}
+
+export function createRunInterventionId(): string {
+  return `rint_${randomUUID()}`;
 }

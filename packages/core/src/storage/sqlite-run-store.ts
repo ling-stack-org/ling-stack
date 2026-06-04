@@ -158,17 +158,24 @@ import {
 import {
   createArtifactId,
   createEventId,
+  createRunInterventionId,
   type ArtifactType,
   type CreateRunArtifactInput,
+  type CreateRunInterventionInput,
   type CreateRunInput,
+  type ListRunInterventionsOptions,
   type ListRunEventsOptions,
   type ListRunsOptions,
   type RunArtifact,
   type RunEventEnvelope,
   type RunEventType,
+  type RunIntervention,
+  type RunInterventionMode,
+  type RunInterventionStatus,
   type RunSession,
   type RunStore,
   type RunStatus,
+  type UpdateRunInterventionStatusInput,
 } from "../run-types.js";
 import {
   createRuntimeEventId,
@@ -343,6 +350,8 @@ const PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_VERSION = 26;
 const PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_NAME = "create_private_workspace_data_lifecycle";
 const SKILL_REGISTRY_MIGRATION_VERSION = 27;
 const SKILL_REGISTRY_MIGRATION_NAME = "create_skill_registry";
+const RUN_INTERVENTIONS_MIGRATION_VERSION = 28;
+const RUN_INTERVENTIONS_MIGRATION_NAME = "create_run_interventions";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -394,13 +403,16 @@ export class SqliteRunStore implements RunStore {
           request_snapshot_json,
           event_log_path,
           work_unit_id,
+          parent_run_id,
+          intervention_id,
+          continuation_reason,
           summary_path,
           error_message,
           created_at,
           started_at,
           ended_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.id,
@@ -418,6 +430,9 @@ export class SqliteRunStore implements RunStore {
         stringifyJson(redactedRequestSnapshot),
         eventLogPath,
         input.workUnitId ?? null,
+        input.parentRunId ?? null,
+        input.interventionId ?? null,
+        input.continuationReason ?? null,
         null,
         null,
         input.createdAt,
@@ -499,6 +514,9 @@ export class SqliteRunStore implements RunStore {
             request_snapshot_json,
             event_log_path,
             work_unit_id,
+            parent_run_id,
+            intervention_id,
+            continuation_reason,
             summary_path,
             error_message,
             created_at,
@@ -545,6 +563,9 @@ export class SqliteRunStore implements RunStore {
         request_snapshot_json,
         event_log_path,
         work_unit_id,
+        parent_run_id,
+        intervention_id,
+        continuation_reason,
         summary_path,
         error_message,
         created_at,
@@ -580,6 +601,147 @@ export class SqliteRunStore implements RunStore {
   countEvents(runId: string): number {
     const row = this.database.prepare("SELECT COUNT(*) AS count FROM run_events WHERE run_id = ?").get(runId);
     return readNumber(row, "count");
+  }
+
+  createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention {
+    const existing = this.database
+      .prepare(runInterventionSelectSql("WHERE source_run_id = ? AND idempotency_key = ?"))
+      .get(input.sourceRunId, input.idempotencyKey);
+    if (existing) {
+      return mapRunIntervention(existing);
+    }
+    if (!this.getRun(input.sourceRunId)) {
+      throw new Error(`Source run not found: ${input.sourceRunId}`);
+    }
+    const id = input.id ?? createRunInterventionId();
+    const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
+    this.database
+      .prepare(`
+        INSERT INTO run_interventions (
+          id,
+          workspace_id,
+          source_run_id,
+          source_work_unit_id,
+          source_attempt_id,
+          continuation_run_id,
+          continuation_work_unit_id,
+          mode,
+          status,
+          instruction,
+          requested_by,
+          idempotency_key,
+          created_at,
+          updated_at,
+          started_at,
+          completed_at,
+          failure_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        workspaceId,
+        input.sourceRunId,
+        input.sourceWorkUnitId ?? null,
+        input.sourceAttemptId ?? null,
+        null,
+        null,
+        input.mode,
+        "queued",
+        input.instruction,
+        input.requestedBy ?? "local-user",
+        input.idempotencyKey,
+        now,
+        now,
+        null,
+        null,
+        null,
+      );
+    const created = this.getRunIntervention(id);
+    if (!created) {
+      throw new Error(`Failed to create run intervention: ${id}`);
+    }
+    return created;
+  }
+
+  getRunIntervention(interventionId: string): RunIntervention | undefined {
+    const row = this.database.prepare(runInterventionSelectSql("WHERE id = ?")).get(interventionId);
+    return row ? mapRunIntervention(row) : undefined;
+  }
+
+  listRunInterventions(options: ListRunInterventionsOptions = {}): RunIntervention[] {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.sourceRunId) {
+      clauses.push("source_run_id = ?");
+      params.push(options.sourceRunId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.mode) {
+      clauses.push("mode = ?");
+      params.push(options.mode);
+    }
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    params.push(limit);
+    return this.database
+      .prepare(`${runInterventionSelectSql(whereClause)} ORDER BY created_at ASC, id ASC LIMIT ?`)
+      .all(...params)
+      .map(mapRunIntervention);
+  }
+
+  updateRunInterventionStatus(input: UpdateRunInterventionStatusInput): RunIntervention | undefined {
+    const existing = this.getRunIntervention(input.interventionId);
+    if (!existing) {
+      return undefined;
+    }
+    const continuationRunId = input.continuationRunId === undefined ? existing.continuationRunId ?? null : input.continuationRunId;
+    const continuationWorkUnitId = input.continuationWorkUnitId === undefined ? existing.continuationWorkUnitId ?? null : input.continuationWorkUnitId;
+    const startedAt = input.startedAt === undefined ? existing.startedAt ?? null : input.startedAt;
+    const completedAt = input.completedAt === undefined ? existing.completedAt ?? null : input.completedAt;
+    const failureReason = input.failureReason === undefined ? existing.failureReason ?? null : input.failureReason;
+    this.database
+      .prepare(`
+        UPDATE run_interventions
+        SET status = ?,
+            continuation_run_id = ?,
+            continuation_work_unit_id = ?,
+            updated_at = ?,
+            started_at = ?,
+            completed_at = ?,
+            failure_reason = ?
+        WHERE id = ?
+      `)
+      .run(
+        input.status,
+        continuationRunId,
+        continuationWorkUnitId,
+        input.now,
+        startedAt,
+        completedAt,
+        failureReason,
+        input.interventionId,
+      );
+    return this.getRunIntervention(input.interventionId);
+  }
+
+  cancelRunIntervention(interventionId: string, now: string, reason?: string): RunIntervention | undefined {
+    const existing = this.getRunIntervention(interventionId);
+    if (!existing) {
+      return undefined;
+    }
+    if (existing.status === "started" || existing.status === "cancelled" || existing.status === "failed") {
+      return existing;
+    }
+    return this.updateRunInterventionStatus({
+      interventionId,
+      status: "cancelled",
+      completedAt: now,
+      failureReason: reason ?? "cancelled",
+      now,
+    });
   }
 
   createWorkUnit(input: CreateWorkUnitInput): WorkUnit {
@@ -6087,6 +6249,9 @@ export class SqliteRunStore implements RunStore {
           provider_snapshot_json TEXT NOT NULL,
           request_snapshot_json TEXT NOT NULL,
           event_log_path TEXT NOT NULL,
+          parent_run_id TEXT,
+          intervention_id TEXT,
+          continuation_reason TEXT,
           summary_path TEXT,
           error_message TEXT,
           created_at TEXT NOT NULL,
@@ -7776,6 +7941,67 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(SKILL_REGISTRY_MIGRATION_VERSION, SKILL_REGISTRY_MIGRATION_NAME);
       }
     }
+
+    const hasRunInterventionsMigration = this.hasMigration(RUN_INTERVENTIONS_MIGRATION_VERSION);
+    if (
+      !hasRunInterventionsMigration ||
+      !this.hasTable("run_interventions") ||
+      !this.hasColumn("run_sessions", "parent_run_id") ||
+      !this.hasColumn("run_sessions", "intervention_id") ||
+      !this.hasColumn("run_sessions", "continuation_reason")
+    ) {
+      if (!this.hasColumn("run_sessions", "parent_run_id")) {
+        this.database.exec("ALTER TABLE run_sessions ADD COLUMN parent_run_id TEXT;");
+      }
+      if (!this.hasColumn("run_sessions", "intervention_id")) {
+        this.database.exec("ALTER TABLE run_sessions ADD COLUMN intervention_id TEXT;");
+      }
+      if (!this.hasColumn("run_sessions", "continuation_reason")) {
+        this.database.exec("ALTER TABLE run_sessions ADD COLUMN continuation_reason TEXT;");
+      }
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS run_interventions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          source_run_id TEXT NOT NULL,
+          source_work_unit_id TEXT,
+          source_attempt_id TEXT,
+          continuation_run_id TEXT,
+          continuation_work_unit_id TEXT,
+          mode TEXT NOT NULL,
+          status TEXT NOT NULL,
+          instruction TEXT NOT NULL,
+          requested_by TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT,
+          failure_reason TEXT,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_run_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
+          FOREIGN KEY(continuation_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_run_interventions_idempotency
+        ON run_interventions(source_run_id, idempotency_key);
+
+        CREATE INDEX IF NOT EXISTS idx_run_interventions_source_status
+        ON run_interventions(source_run_id, status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_run_interventions_continuation
+        ON run_interventions(continuation_run_id);
+
+        CREATE INDEX IF NOT EXISTS idx_run_sessions_parent_run
+        ON run_sessions(parent_run_id);
+
+        CREATE INDEX IF NOT EXISTS idx_run_sessions_intervention
+        ON run_sessions(intervention_id);
+      `);
+      if (!hasRunInterventionsMigration) {
+        this.recordMigration(RUN_INTERVENTIONS_MIGRATION_VERSION, RUN_INTERVENTIONS_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -8118,12 +8344,37 @@ function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
     requestSnapshot: parseJson(readString(row, "request_snapshot_json")),
     eventLogPath: readString(row, "event_log_path"),
     workUnitId: readNullableString(row, "work_unit_id"),
+    parentRunId: readNullableString(row, "parent_run_id"),
+    interventionId: readNullableString(row, "intervention_id"),
+    continuationReason: readNullableString(row, "continuation_reason"),
     summaryPath: readNullableString(row, "summary_path"),
     errorMessage: readNullableString(row, "error_message"),
     createdAt: readString(row, "created_at"),
     startedAt: readNullableString(row, "started_at"),
     endedAt: readNullableString(row, "ended_at"),
     updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapRunIntervention(row: Record<string, SQLOutputValue>): RunIntervention {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    sourceRunId: readString(row, "source_run_id"),
+    sourceWorkUnitId: readNullableString(row, "source_work_unit_id"),
+    sourceAttemptId: readNullableString(row, "source_attempt_id"),
+    continuationRunId: readNullableString(row, "continuation_run_id"),
+    continuationWorkUnitId: readNullableString(row, "continuation_work_unit_id"),
+    mode: readString(row, "mode") as RunInterventionMode,
+    status: readString(row, "status") as RunInterventionStatus,
+    instruction: readString(row, "instruction"),
+    requestedBy: readString(row, "requested_by") as RunIntervention["requestedBy"],
+    idempotencyKey: readString(row, "idempotency_key"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    startedAt: readNullableString(row, "started_at"),
+    completedAt: readNullableString(row, "completed_at"),
+    failureReason: readNullableString(row, "failure_reason"),
   });
 }
 
@@ -8136,6 +8387,31 @@ function mapRunEvent(row: Record<string, SQLOutputValue>): RunEventEnvelope {
     type: readString(row, "type") as RunEventType,
     data: parseJson(readString(row, "data_json")),
   };
+}
+
+function runInterventionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      source_run_id,
+      source_work_unit_id,
+      source_attempt_id,
+      continuation_run_id,
+      continuation_work_unit_id,
+      mode,
+      status,
+      instruction,
+      requested_by,
+      idempotency_key,
+      created_at,
+      updated_at,
+      started_at,
+      completed_at,
+      failure_reason
+    FROM run_interventions
+    ${whereClause}
+  `;
 }
 
 function mapChannel(row: Record<string, SQLOutputValue>): Channel {

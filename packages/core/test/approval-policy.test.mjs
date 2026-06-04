@@ -8,6 +8,7 @@ import {
   createSqliteRunStore,
   defaultAllowedWritePaths,
   defaultApprovalToolDecisions,
+  resolveSessionRunPolicy,
 } from "../dist/index.js";
 
 test("sqlite store creates the default approval policy", async () => {
@@ -66,6 +67,33 @@ test("sqlite store merges and persists approval policy updates", async () => {
   }
 });
 
+test("session permission policy snapshots structured risk notes without relaxing deny rules", () => {
+  const policyUpdatedAt = "2026-06-04T00:00:00.000Z";
+  const result = resolveSessionRunPolicy({
+    workspacePolicy: {
+      workspaceId: "workspace_default",
+      toolDecisions: {
+        ...defaultApprovalToolDecisions,
+        bash: "deny",
+        write: "deny",
+      },
+      allowedWritePaths: ["docs"],
+      createdAt: policyUpdatedAt,
+      updatedAt: policyUpdatedAt,
+    },
+    permissionMode: "full_access",
+  });
+
+  assert.equal(result.approvalPolicy.toolDecisions.bash, "deny");
+  assert.equal(result.approvalPolicy.toolDecisions.write, "deny");
+  assert.deepEqual(result.snapshot.allowedWritePaths, ["/"]);
+  assert.equal(result.snapshot.workspacePolicyUpdatedAt, policyUpdatedAt);
+  assert.deepEqual(
+    result.snapshot.riskNotes.filter((note) => note.code === "session_mode_denied_by_workspace_policy").map((note) => note.tool),
+    ["bash", "write"],
+  );
+});
+
 test("sqlite store persists run artifacts", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-artifacts-"));
   const now = "2026-05-22T00:00:00.000Z";
@@ -112,6 +140,114 @@ test("sqlite store persists run artifacts", async () => {
     assert.ok(fetched);
     assert.equal(fetched.path, "run_artifact_test/result.md");
     assert.deepEqual(store.listArtifacts("run_artifact_test"), [fetched]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite store persists run interventions, idempotency, FIFO order, cancellation, and lineage", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-run-interventions-"));
+  const now = "2026-06-04T03:00:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_source",
+      cwd,
+      taskId: "task_guided",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_guided", title: "Guided task", prompt: "Build the feature." },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd, permissionMode: "balanced", requestedSkillId: "implement" },
+      workUnitId: "wu_source",
+      createdAt: now,
+    });
+
+    const first = store.createRunIntervention(
+      {
+        sourceRunId: "run_source",
+        sourceWorkUnitId: "wu_source",
+        mode: "queue_followup",
+        instruction: "After this finishes, check the settings page.",
+        idempotencyKey: "guidance-1",
+        requestedBy: "local-user",
+      },
+      "2026-06-04T03:01:00.000Z",
+    );
+    const duplicate = store.createRunIntervention(
+      {
+        sourceRunId: "run_source",
+        sourceWorkUnitId: "wu_source",
+        mode: "queue_followup",
+        instruction: "Duplicate should not create another row.",
+        idempotencyKey: "guidance-1",
+        requestedBy: "local-user",
+      },
+      "2026-06-04T03:01:05.000Z",
+    );
+    const second = store.createRunIntervention(
+      {
+        sourceRunId: "run_source",
+        mode: "interrupt_redirect",
+        instruction: "Stop and use the daemon API path.",
+        idempotencyKey: "redirect-1",
+        requestedBy: "local-user",
+      },
+      "2026-06-04T03:02:00.000Z",
+    );
+
+    assert.equal(duplicate.id, first.id);
+    assert.equal(store.listRunInterventions({ sourceRunId: "run_source" }).length, 2);
+    assert.deepEqual(
+      store.listRunInterventions({ sourceRunId: "run_source" }).map((intervention) => intervention.id),
+      [first.id, second.id],
+    );
+
+    const cancelled = store.cancelRunIntervention(first.id, "2026-06-04T03:03:00.000Z", "user_cancelled");
+    assert.equal(cancelled?.status, "cancelled");
+    assert.equal(cancelled?.failureReason, "user_cancelled");
+
+    store.createRun({
+      id: "run_continuation",
+      cwd,
+      taskId: "task_guided",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_guided", title: "Guided task" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd, continuation: true },
+      parentRunId: "run_source",
+      interventionId: second.id,
+      continuationReason: "interrupt_redirect",
+      workUnitId: "wu_continuation",
+      createdAt: "2026-06-04T03:04:00.000Z",
+    });
+
+    const started = store.updateRunInterventionStatus({
+      interventionId: second.id,
+      status: "started",
+      continuationRunId: "run_continuation",
+      continuationWorkUnitId: "wu_continuation",
+      startedAt: "2026-06-04T03:04:00.000Z",
+      completedAt: "2026-06-04T03:04:00.000Z",
+      now: "2026-06-04T03:04:00.000Z",
+    });
+    assert.equal(started?.continuationRunId, "run_continuation");
+  } finally {
+    store.close();
+  }
+
+  store = createSqliteRunStore(cwd);
+  try {
+    const interventions = store.listRunInterventions({ sourceRunId: "run_source" });
+    assert.equal(interventions.length, 2);
+    assert.equal(interventions[0].status, "cancelled");
+    assert.equal(interventions[1].continuationRunId, "run_continuation");
+    const continuation = store.getRun("run_continuation");
+    assert.equal(continuation?.parentRunId, "run_source");
+    assert.equal(continuation?.interventionId, interventions[1].id);
+    assert.equal(continuation?.continuationReason, "interrupt_redirect");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

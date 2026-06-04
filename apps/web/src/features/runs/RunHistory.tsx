@@ -16,7 +16,9 @@ import {
   SquareTerminal,
   Workflow,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { ApprovalCard, type ApprovalResolution } from "../approvals/index.js";
+import { cancelRunIntervention, createRunIntervention, listRunInterventions } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import {
   formatEventData,
@@ -61,6 +63,7 @@ import type {
   ResourceLease,
   RunArtifact,
   RunEventEnvelope,
+  RunIntervention,
   RunSession,
   StateTransitionEvent,
   UsedMemoryEvent,
@@ -203,6 +206,7 @@ export function RunHistory({
         onOpenProviders={onOpenProviders}
         onOpenApprovals={onOpenApprovals}
         onEditTask={onEditTask}
+        cwd={cwd}
       />
     </div>
   );
@@ -231,6 +235,7 @@ function RunDetailPanel({
   onOpenProviders,
   onOpenApprovals,
   onEditTask,
+  cwd,
 }: {
   readonly run: RunSession | undefined;
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
@@ -254,6 +259,7 @@ function RunDetailPanel({
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onEditTask: (run: RunSession) => void;
+  readonly cwd: string;
 }): JSX.Element {
   const { t } = useI18n();
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
@@ -352,6 +358,13 @@ function RunDetailPanel({
               onReload={onRefresh}
             />
           ) : null}
+
+          <RunGuidancePanel
+            cwd={cwd}
+            run={run}
+            canRedirect={runCancellable}
+            onRefreshRun={onRefresh}
+          />
 
           <div className="run-detail-section approval-state-section">
             <div className="panel-title tight split">
@@ -517,6 +530,198 @@ function RunDetailPanel({
 
 function runCanBeStopped(run: RunSession): boolean {
   return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+}
+
+function RunGuidancePanel({
+  cwd,
+  run,
+  canRedirect,
+  onRefreshRun,
+}: {
+  readonly cwd: string;
+  readonly run: RunSession;
+  readonly canRedirect: boolean;
+  readonly onRefreshRun: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [instruction, setInstruction] = useState("");
+  const [interventions, setInterventions] = useState<readonly RunIntervention[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [submittingMode, setSubmittingMode] = useState<RunIntervention["mode"] | "">("");
+  const [cancellingId, setCancellingId] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const loadInterventions = async (): Promise<void> => {
+    setIsLoading(true);
+    setErrorMessage("");
+    try {
+      const response = await listRunInterventions(cwd, run.parentRunId ?? run.id, 100);
+      setInterventions(response.interventions);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadInterventions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cwd, run.id, run.parentRunId]);
+
+  const submitGuidance = async (mode: RunIntervention["mode"]): Promise<void> => {
+    const trimmed = instruction.trim();
+    if (!trimmed) {
+      setErrorMessage(t("Please enter guidance first."));
+      return;
+    }
+    setSubmittingMode(mode);
+    setErrorMessage("");
+    try {
+      const response = await createRunIntervention(cwd, run.parentRunId ?? run.id, {
+        mode,
+        instruction: trimmed,
+        idempotencyKey: `web:${run.id}:${mode}:${Date.now()}`,
+      });
+      setInterventions((current) => {
+        const next = current.filter((item) => item.id !== response.intervention.id);
+        return [...next, response.intervention].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      });
+      setInstruction("");
+      onRefreshRun();
+      if (mode === "interrupt_redirect") {
+        window.setTimeout(() => {
+          void loadInterventions();
+          onRefreshRun();
+        }, 800);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSubmittingMode("");
+    }
+  };
+
+  const cancelGuidance = async (interventionId: string): Promise<void> => {
+    setCancellingId(interventionId);
+    setErrorMessage("");
+    try {
+      const response = await cancelRunIntervention(cwd, interventionId);
+      setInterventions((current) => current.map((item) => item.id === response.intervention.id ? response.intervention : item));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCancellingId("");
+    }
+  };
+
+  const sourceRunId = run.parentRunId ?? run.id;
+  const visibleInterventions = interventions.filter((item) => item.sourceRunId === sourceRunId);
+
+  return (
+    <div className="run-detail-section run-guidance-panel">
+      <div className="panel-title tight split">
+        <span>
+          <Pencil size={16} />
+          <h3>{t("Run guidance")}</h3>
+        </span>
+        <span className="run-guidance-actions">
+          {isLoading ? <Loader2 className="spin" size={14} /> : null}
+          <button className="secondary-button compact-button" type="button" onClick={() => void loadInterventions()} disabled={isLoading}>
+            <RefreshCw size={14} />
+            {t("Refresh")}
+          </button>
+        </span>
+      </div>
+      {run.parentRunId ? (
+        <div className="run-lineage-banner">
+          <Workflow size={15} />
+          <span>{t("Continuing from previous run")} <code>{run.parentRunId}</code></span>
+        </div>
+      ) : null}
+      <p className="muted">{t("Add guidance while the run is active. Ling Stack records it and starts continuation runs in order.")}</p>
+      <textarea
+        className="run-guidance-input"
+        value={instruction}
+        onChange={(event) => setInstruction(event.target.value)}
+        placeholder={t("Tell this run what to do next...")}
+        rows={3}
+      />
+      <div className="run-guidance-submit-row">
+        <button
+          className="secondary-button compact-button"
+          type="button"
+          onClick={() => void submitGuidance("queue_followup")}
+          disabled={submittingMode !== "" || !instruction.trim()}
+        >
+          {submittingMode === "queue_followup" ? <Loader2 className="spin" size={14} /> : <Clock3 size={14} />}
+          {t("Queue guidance")}
+        </button>
+        <button
+          className="secondary-button danger compact-button"
+          type="button"
+          aria-label={t("Redirect current run")}
+          onClick={() => void submitGuidance("interrupt_redirect")}
+          disabled={submittingMode !== "" || !instruction.trim() || !canRedirect}
+        >
+          {submittingMode === "interrupt_redirect" ? <Loader2 className="spin" size={14} /> : <Square size={14} />}
+          {t("Stop and redirect")}
+        </button>
+      </div>
+      {errorMessage ? (
+        <div className="inline-error">
+          <CircleAlert size={16} />
+          {errorMessage}
+        </div>
+      ) : null}
+      <div className="run-guidance-list">
+        {visibleInterventions.length === 0 ? (
+          <div className="empty-state compact-empty">
+            <Clock3 />
+            <span>{t("No guidance queued for this run")}</span>
+          </div>
+        ) : (
+          visibleInterventions.map((item) => (
+            <div key={item.id} className="run-guidance-row">
+              <StatusBadge status={runInterventionStatusLabel(item.status, t)} />
+              <span className="run-guidance-row-main">
+                <strong>{item.mode === "interrupt_redirect" ? t("Stop and redirect") : t("Queue guidance")}</strong>
+                <small>{item.instruction}</small>
+              </span>
+              <span className="run-guidance-row-meta">
+                {item.continuationRunId ? <code>{t("Continuation")} {item.continuationRunId}</code> : null}
+                {item.status === "queued" ? (
+                  <button className="secondary-button compact-button" type="button" onClick={() => void cancelGuidance(item.id)} disabled={cancellingId === item.id}>
+                    {cancellingId === item.id ? <Loader2 className="spin" size={13} /> : null}
+                    {t("Cancel")}
+                  </button>
+                ) : null}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function runInterventionStatusLabel(status: RunIntervention["status"], t: (key: string, values?: Record<string, string | number>) => string): string {
+  if (status === "cancelling_source") {
+    return t("Stopping source");
+  }
+  if (status === "starting_continuation") {
+    return t("Starting continuation");
+  }
+  if (status === "started") {
+    return t("Started");
+  }
+  if (status === "cancelled") {
+    return t("Cancelled");
+  }
+  if (status === "failed") {
+    return t("Failed");
+  }
+  return t("Queued");
 }
 
 function RuntimeAuditBlock({

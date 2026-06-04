@@ -14,7 +14,6 @@ import {
   buildRunRequest,
   buildTaskRunRequest,
   cancelWorkUnit,
-  cancelRun,
   cancelExternalWorkAction,
   checkProvider,
   checkProviderDraft,
@@ -215,6 +214,7 @@ import {
   readRunProviderPresetId,
   readRunWorkspaceCwd,
 } from "../lib/run-evidence.js";
+import { useRunControl } from "../lib/use-run-control.js";
 import { defaultTools } from "../lib/tools.js";
 import {
   canBatchCheckProvider,
@@ -417,7 +417,6 @@ export function AppShell(): JSX.Element {
   const [runtimeLoading, setRuntimeLoading] = useState(false);
   const [runtimeActionWorkUnitId, setRuntimeActionWorkUnitId] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  const [cancellingRunId, setCancellingRunId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
   const [selectedMediaJobId, setSelectedMediaJobId] = useState("");
@@ -428,6 +427,22 @@ export function AppShell(): JSX.Element {
   const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
+  const { cancellingRunId, cancelRunOrWorkUnit } = useRunControl({
+    defaultCwd: form.cwd.trim(),
+    activeRunId,
+    currentRun: run,
+    runs,
+    abortCurrentRun: () => abortRef.current?.abort(),
+    setRun,
+    setEvents,
+    setIsRunning,
+    setErrorMessage,
+    refreshRuns,
+    refreshApprovals,
+    refreshRuntimeState,
+    refreshHealth,
+    readRunWorkspaceCwd,
+  });
 
   useEffect(() => {
     if (!providerSaveMessage) {
@@ -1081,14 +1096,29 @@ export function AppShell(): JSX.Element {
     await runWithRequest(buildRunRequest(form), form.cwd.trim());
   }
 
-  async function confirmFullAccessRunIfNeeded(requestBody: unknown): Promise<boolean> {
+  async function confirmFullAccessRunIfNeeded(requestBody: unknown): Promise<unknown | undefined> {
     if (readRequestPermissionMode(requestBody) !== "full_access") {
-      return true;
+      return requestBody;
     }
     setFullAccessConfirmOpen(true);
-    return await new Promise<boolean>((resolve) => {
+    const confirmed = await new Promise<boolean>((resolve) => {
       fullAccessConfirmResolveRef.current = resolve;
     });
+    if (!confirmed) {
+      return undefined;
+    }
+    if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody)) {
+      return requestBody;
+    }
+    return {
+      ...requestBody,
+      permissionConfirmation: {
+        mode: "full_access",
+        confirmed: true,
+        confirmedAt: new Date().toISOString(),
+        reason: "user_confirmed_full_access",
+      },
+    };
   }
 
   function resolveFullAccessConfirmation(approved: boolean): void {
@@ -1111,7 +1141,8 @@ export function AppShell(): JSX.Element {
     loadCwd: string,
     afterRunLoaded?: (runId: string) => Promise<void>,
   ): Promise<void> {
-    if (!(await confirmFullAccessRunIfNeeded(requestBody))) {
+    const confirmedRequestBody = await confirmFullAccessRunIfNeeded(requestBody);
+    if (!confirmedRequestBody) {
       return;
     }
     abortRef.current?.abort();
@@ -1129,7 +1160,7 @@ export function AppShell(): JSX.Element {
       let streamedRunId = "";
       await streamRun(
         url,
-        requestBody,
+        confirmedRequestBody,
         (message) => {
           if (message.kind === "ready") {
             streamedRunId = message.runId;
@@ -3299,47 +3330,6 @@ export function AppShell(): JSX.Element {
     setSelectedTaskId(runToRepair.taskId);
   }
 
-  async function cancelActiveRun(targetRun?: RunSession): Promise<void> {
-    const targetRunId = targetRun?.id || activeRunId;
-    if (!targetRunId || cancellingRunId) {
-      setIsRunning(false);
-      return;
-    }
-
-    const cancelCwd = targetRun ? readRunWorkspaceCwd(targetRun, form.cwd.trim()) : form.cwd.trim();
-    const target = targetRun ?? (run?.id === targetRunId ? run : runs.find((item) => item.id === targetRunId));
-    setCancellingRunId(targetRunId);
-    try {
-      setErrorMessage("");
-      if (target?.workUnitId) {
-        const response = await cancelWorkUnit(cancelCwd, target.workUnitId);
-        if (response.workUnit.linkedRunId) {
-          const cancelledRun = await getRun(response.workUnit.linkedRunId, cancelCwd);
-          setRun(cancelledRun);
-        }
-      } else {
-        const response = await cancelRun(cancelCwd, targetRunId);
-        if (response.run) {
-          setRun(response.run);
-        }
-      }
-      abortRef.current?.abort();
-      const eventResult = await getRunEvents(targetRunId, cancelCwd);
-      setEvents(eventResult.events);
-      await Promise.all([
-        refreshRuns(cancelCwd),
-        refreshApprovals(cancelCwd, targetRunId),
-        refreshRuntimeState(cancelCwd, target),
-      ]);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsRunning(false);
-      setCancellingRunId("");
-      await refreshHealth();
-    }
-  }
-
   async function runWorkUnitAction(workUnitId: string, action: "cancel" | "retry" | "reconcile"): Promise<void> {
     const cwd = form.cwd.trim();
     if (!cwd || runtimeActionWorkUnitId) {
@@ -3520,6 +3510,11 @@ export function AppShell(): JSX.Element {
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
             onRunActivityTriageAction={runActivityTriageAction}
             onLoadOlderChannelMessages={loadOlderChannelMessages}
+            onRefreshChannelMessages={() => void Promise.all([
+              refreshChannelMessages(),
+              refreshChannelExecutionProposals(),
+              refreshUsedMemoryAudit(form.cwd.trim()),
+            ])}
             onRefreshChannelActivity={() => void refreshChannelActivity()}
             onRefreshExternalWorkCiTriage={() => void refreshExternalWorkCiTriage()}
             onRefreshChannelProtocol={() => void refreshChannelProtocol()}
@@ -3530,7 +3525,7 @@ export function AppShell(): JSX.Element {
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
             onRunTask={(task) => void runPersistedTask(task)}
             onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode }))}
-            onCancelActiveRun={(targetRun) => void cancelActiveRun(targetRun)}
+            onCancelActiveRun={(targetRun) => void cancelRunOrWorkUnit(targetRun)}
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
             onRefreshRunApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
@@ -3624,7 +3619,7 @@ export function AppShell(): JSX.Element {
                 onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
                 onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
-                onCancelRun={(sourceRun) => void cancelActiveRun(sourceRun)}
+                onCancelRun={(sourceRun) => void cancelRunOrWorkUnit(sourceRun)}
                 onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
                 onOpenProviders={(sourceRun) => openProvidersFromRun(sourceRun)}
                 onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}

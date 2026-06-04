@@ -55,7 +55,7 @@ export function readEffectivePolicySnapshot(snapshot: unknown): EffectiveRunPoli
     ? policy.allowedWritePaths.filter((item): item is string => typeof item === "string")
     : [];
   const riskNotes = Array.isArray(policy?.riskNotes)
-    ? policy.riskNotes.filter((item): item is string => typeof item === "string")
+    ? policy.riskNotes.flatMap((item): EffectiveRunPolicySnapshot["riskNotes"][number][] => normalizeRiskNote(item))
     : [];
   const toolDecisions = readRecord(policy?.toolDecisions);
   if (!mode || !toolDecisions) {
@@ -65,6 +65,7 @@ export function readEffectivePolicySnapshot(snapshot: unknown): EffectiveRunPoli
     mode,
     toolDecisions: toolDecisions as EffectiveRunPolicySnapshot["toolDecisions"],
     allowedWritePaths,
+    workspacePolicyUpdatedAt: typeof policy?.workspacePolicyUpdatedAt === "string" ? policy.workspacePolicyUpdatedAt : undefined,
     riskNotes,
   };
 }
@@ -79,6 +80,7 @@ export function summarizeEffectivePolicySnapshot(snapshot: EffectiveRunPolicySna
     t("Write scope: {paths}", { paths: snapshot.allowedWritePaths.length > 0 ? snapshot.allowedWritePaths.join(", ") : t("workspace policy") }),
     t("{count} operations ask for approval", { count: askCount }),
     t("{count} operations are blocked by policy", { count: denyCount }),
+    ...snapshot.riskNotes.map((note) => note.message),
   ];
 }
 
@@ -88,4 +90,19 @@ function isSessionPermissionMode(value: string | undefined): value is SessionPer
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function normalizeRiskNote(value: unknown): EffectiveRunPolicySnapshot["riskNotes"][number][] {
+  if (typeof value === "string") {
+    return [{ code: "legacy_risk_note", message: value }];
+  }
+  const record = readRecord(value);
+  if (!record || typeof record.message !== "string") {
+    return [];
+  }
+  return [{
+    code: typeof record.code === "string" ? record.code : "risk_note",
+    message: record.message,
+    tool: typeof record.tool === "string" ? record.tool as EffectiveRunPolicySnapshot["riskNotes"][number]["tool"] : undefined,
+  }];
 }

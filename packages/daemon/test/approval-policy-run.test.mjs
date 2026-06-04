@@ -123,16 +123,51 @@ test("session permission mode snapshots the effective run policy without relaxin
     const { runId } = await postRunAndCollectEvents(daemon.url, {
       ...runBody(cwd, "task_session_policy_snapshot"),
       permissionMode: "full_access",
+      permissionConfirmation: {
+        mode: "full_access",
+        confirmed: true,
+        confirmedAt: "2026-06-04T00:00:00.000Z",
+        reason: "test_confirmed_full_access",
+      },
     });
 
     const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(run.requestSnapshot.permissionMode, "full_access");
+    assert.equal(run.requestSnapshot.permissionConfirmation.reason, "test_confirmed_full_access");
     assert.equal(run.requestSnapshot.effectivePolicySnapshot.mode, "full_access");
+    assert.equal(typeof run.requestSnapshot.effectivePolicySnapshot.workspacePolicyUpdatedAt, "string");
     assert.equal(run.requestSnapshot.effectivePolicySnapshot.toolDecisions.bash, "deny");
     assert.equal(run.requestSnapshot.effectivePolicySnapshot.toolDecisions.write, "deny");
     assert.deepEqual(run.requestSnapshot.effectivePolicySnapshot.allowedWritePaths, ["/"]);
-    assert.ok(run.requestSnapshot.effectivePolicySnapshot.riskNotes.some((note) => /workspace policy denied/.test(note)));
+    assert.ok(run.requestSnapshot.effectivePolicySnapshot.riskNotes.some((note) =>
+      note.code === "session_mode_denied_by_workspace_policy" && /workspace policy denied/.test(note.message)
+    ));
     assert.equal(runner.decisions[0].approved, false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("full access permission mode requires explicit confirmation before creating a run", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-session-policy-confirm-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_full_access_confirm",
+    toolName: "write",
+    input: { path: "notes/session.md", content: "mode snapshot" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const rejected = await postRunExpectError(daemon.url, {
+      ...runBody(cwd, "task_full_access_missing_confirmation"),
+      permissionMode: "full_access",
+    });
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.body.error, "full_access_confirmation_required");
+
+    const runs = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(runs.runs.length, 0);
+    assert.equal(runner.decisions.length, 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1562,6 +1597,153 @@ test("run cancel cancels pending approvals for a waiting run", async () => {
     const pending = await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}&status=pending&runId=${encodeURIComponent(runId)}`);
     assert.deepEqual(pending.approvals, []);
   } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("queued run guidance starts FIFO continuation after the source run finishes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-guidance-"));
+  const runner = new BlockingRunner();
+  const daemon = await startDaemonForTest(runner);
+  let sse;
+  let sseDrained = false;
+  try {
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const task = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      title: "Guided task",
+      prompt: "Build the initial result.",
+    });
+
+    const response = await postTaskRunStream(daemon.url, cwd, task.task.id, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["read", "write"],
+      permissionMode: "balanced",
+      idempotencyKey: "guidance-source",
+    });
+    sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const sourceRunId = ready.data.runId;
+    await runner.waitUntilStarted();
+
+    const first = await postJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "queue_followup",
+      instruction: "After that, verify the memory audit UI.",
+      idempotencyKey: "guidance-1",
+    });
+    const second = await postJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "queue_followup",
+      instruction: "Then summarize remaining risk.",
+      idempotencyKey: "guidance-2",
+    });
+    assert.equal(first.intervention.status, "queued");
+    assert.equal(second.intervention.status, "queued");
+
+    const listed = await getJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(listed.interventions.map((item) => item.id), [first.intervention.id, second.intervention.id]);
+    assert.equal(runner.runs.length, 1);
+
+    runner.release();
+    await sse.collectRemaining();
+    sseDrained = true;
+    await runner.waitUntilStarted(3);
+
+    const updatedFirst = await getJson(`${daemon.url}/run-interventions/${encodeURIComponent(first.intervention.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(updatedFirst.intervention.status, "started");
+    assert.ok(updatedFirst.intervention.continuationRunId);
+
+    const continuation = await getJson(`${daemon.url}/runs/${encodeURIComponent(updatedFirst.intervention.continuationRunId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(continuation.parentRunId, sourceRunId);
+    assert.equal(continuation.interventionId, first.intervention.id);
+    assert.equal(continuation.requestSnapshot.permissionMode, "balanced");
+    assert.match(continuation.requestSnapshot.task.prompt, /After that, verify the memory audit UI/);
+
+    const updatedSecond = await getJson(`${daemon.url}/run-interventions/${encodeURIComponent(second.intervention.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(updatedSecond.intervention.status, "started");
+    assert.ok(updatedSecond.intervention.continuationRunId);
+    const secondContinuation = await getJson(`${daemon.url}/runs/${encodeURIComponent(updatedSecond.intervention.continuationRunId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(secondContinuation.parentRunId, sourceRunId);
+    assert.equal(secondContinuation.interventionId, second.intervention.id);
+    assert.match(secondContinuation.requestSnapshot.task.prompt, /Then summarize remaining risk/);
+  } finally {
+    runner.release();
+    if (sse && !sseDrained) {
+      await sse.collectRemaining().catch(() => {});
+    }
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("interrupt redirect cancels the source run and starts a linked continuation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-redirect-"));
+  const runner = new BlockingRunner();
+  const daemon = await startDaemonForTest(runner);
+  let sse;
+  let sseDrained = false;
+  try {
+    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      boundPath: cwd,
+      allowedTools: ["read", "write"],
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const task = await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.channel.id,
+      title: "Redirect task",
+      prompt: "Start in the wrong direction.",
+    });
+
+    const response = await postTaskRunStream(daemon.url, cwd, task.task.id, {
+      providerPresetId: provider.provider.id,
+      skipProviderPreflight: true,
+      tools: ["read", "write"],
+      idempotencyKey: "redirect-source",
+    });
+    sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const sourceRunId = ready.data.runId;
+    await runner.waitUntilStarted();
+
+    const redirect = await postJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}/interventions?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "interrupt_redirect",
+      instruction: "Stop and use the daemon API path instead.",
+      idempotencyKey: "redirect-1",
+    });
+    assert.equal(redirect.intervention.mode, "interrupt_redirect");
+    assert.equal(redirect.run.status, "cancelled");
+    assert.equal(redirect.intervention.status, "cancelling_source");
+
+    runner.release();
+    await sse.collectRemaining();
+    sseDrained = true;
+    await runner.waitUntilStarted(2);
+
+    const source = await getJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(source.status, "cancelled");
+    const intervention = await getJson(`${daemon.url}/run-interventions/${encodeURIComponent(redirect.intervention.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(intervention.intervention.status, "started");
+    assert.ok(intervention.intervention.continuationRunId);
+
+    const continuation = await getJson(`${daemon.url}/runs/${encodeURIComponent(intervention.intervention.continuationRunId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(continuation.parentRunId, sourceRunId);
+    assert.equal(continuation.interventionId, redirect.intervention.id);
+    assert.equal(continuation.continuationReason, "interrupt_redirect");
+    assert.match(continuation.requestSnapshot.task.prompt, /Stop and use the daemon API path instead/);
+  } finally {
+    runner.release();
+    if (sse && !sseDrained) {
+      await sse.collectRemaining().catch(() => {});
+    }
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }

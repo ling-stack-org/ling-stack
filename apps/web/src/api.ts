@@ -47,6 +47,7 @@ import type {
   CreateChannelWorkflowStepRequest,
   CreateMemoryObjectRequest,
   CreateMediaJobRequest,
+  CreateRunInterventionRequest,
   DaemonHealthResponse,
   ExternalWorkActionCancelRequest,
   ExternalWorkActionDetailResponse,
@@ -105,6 +106,8 @@ import type {
   RunCancelResponse,
   RunArtifactListResponse,
   RunEventsResponse,
+  RunInterventionListResponse,
+  RunInterventionResponse,
   RunFormState,
   RunListResponse,
   RunSession,
@@ -188,6 +191,26 @@ export async function getRun(runId: string, cwd?: string): Promise<RunSession> {
 
 export async function listRuns(cwd: string, limit = 50): Promise<RunListResponse> {
   return daemonClient.listRuns(cwd, limit);
+}
+
+export async function listRunInterventions(cwd: string, runId: string, limit = 100): Promise<RunInterventionListResponse> {
+  return daemonClient.listRunInterventions(cwd, runId, limit);
+}
+
+export async function createRunIntervention(
+  cwd: string,
+  runId: string,
+  input: CreateRunInterventionRequest,
+): Promise<RunInterventionResponse> {
+  return daemonClient.createRunIntervention(cwd, runId, input);
+}
+
+export async function getRunIntervention(cwd: string, interventionId: string): Promise<RunInterventionResponse> {
+  return daemonClient.getRunIntervention(cwd, interventionId);
+}
+
+export async function cancelRunIntervention(cwd: string, interventionId: string): Promise<RunInterventionResponse> {
+  return daemonClient.cancelRunIntervention(cwd, interventionId);
 }
 
 export async function listProviders(cwd: string): Promise<ProviderListResponse> {

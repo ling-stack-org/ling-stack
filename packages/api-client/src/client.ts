@@ -48,6 +48,7 @@ import type {
   CreateChannelWorkflowStepRequest,
   CreateMemoryObjectRequest,
   CreateMediaJobRequest,
+  CreateRunInterventionRequest,
   CreateTaskRequest,
   DaemonHealthResponse,
   ExternalGitHubImportRequest,
@@ -117,6 +118,8 @@ import type {
   RunArtifactListResponse,
   RunCancelResponse,
   RunEventsResponse,
+  RunInterventionListResponse,
+  RunInterventionResponse,
   RunListResponse,
   RunSession,
   SecretPurpose,
@@ -249,6 +252,22 @@ export class LingDaemonClient {
 
   async cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {
     return this.post(`/runs/${encodeURIComponent(runId)}/cancel`, { cwd });
+  }
+
+  async listRunInterventions(cwd: string, runId: string, limit = 100): Promise<RunInterventionListResponse> {
+    return this.get(`/runs/${encodeURIComponent(runId)}/interventions`, { cwd, limit });
+  }
+
+  async createRunIntervention(cwd: string, runId: string, input: CreateRunInterventionRequest): Promise<RunInterventionResponse> {
+    return this.post(`/runs/${encodeURIComponent(runId)}/interventions`, { cwd }, input);
+  }
+
+  async getRunIntervention(cwd: string, interventionId: string): Promise<RunInterventionResponse> {
+    return this.get(`/run-interventions/${encodeURIComponent(interventionId)}`, { cwd });
+  }
+
+  async cancelRunIntervention(cwd: string, interventionId: string): Promise<RunInterventionResponse> {
+    return this.post(`/run-interventions/${encodeURIComponent(interventionId)}/cancel`, { cwd }, {});
   }
 
   async listMemoryObjects(

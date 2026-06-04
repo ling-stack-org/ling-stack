@@ -147,7 +147,6 @@ type ChannelDrawerRootView = Extract<ChannelSidePanelView, "progress" | "files" 
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
-type AiReplyState = "idle" | "replying" | "failed";
 type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
 type MessageBubbleTone = "chat" | "chat-blocked" | "system" | "work" | "approval" | "protocol" | "runtime";
 type ChannelNotificationLevel = "all" | "mentions" | "muted";
@@ -323,6 +322,7 @@ export function WorkspaceClientView({
   onCreateTaskFromContextSummary,
   onRunActivityTriageAction,
   onLoadOlderChannelMessages,
+  onRefreshChannelMessages,
   onRefreshChannelActivity,
   onRefreshExternalWorkCiTriage,
   onRefreshChannelProtocol,
@@ -446,6 +446,7 @@ export function WorkspaceClientView({
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onRunActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
   readonly onLoadOlderChannelMessages: () => void;
+  readonly onRefreshChannelMessages: () => void;
   readonly onRefreshChannelActivity: () => void;
   readonly onRefreshExternalWorkCiTriage: () => void;
   readonly onRefreshChannelProtocol: () => void;
@@ -506,7 +507,6 @@ export function WorkspaceClientView({
   const [composerBusy, setComposerBusy] = useState(false);
   const [sendState, setSendState] = useState<ComposerSendState>("idle");
   const [sendError, setSendError] = useState("");
-  const [aiReplyState, setAiReplyState] = useState<AiReplyState>("idle");
   const [activeThreadId, setActiveThreadId] = useState("");
   const [threadReplyDraft, setThreadReplyDraft] = useState("");
   const [threadReplyPending, setThreadReplyPending] = useState(false);
@@ -952,7 +952,6 @@ export function WorkspaceClientView({
     autoPreviewUrlsRef.current.clear();
     setSendState("idle");
     setSendError("");
-    setAiReplyState("idle");
     setActivitySearch("");
     setActivityCategoryFilter("all");
     setActivityAttentionFilter("all");
@@ -977,6 +976,18 @@ export function WorkspaceClientView({
     messageFeedOlderLoadSnapshotRef.current = undefined;
     setMessageFeedLatestButtonVisible(false);
   }, [selectedChannelId]);
+
+  useEffect(() => {
+    const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");
+    if (!selectedChannelId || !hasPendingReply) {
+      return undefined;
+    }
+    const intervalId = globalThis.setInterval(() => {
+      onRefreshChannelMessages();
+      onRefreshChannelActivity();
+    }, 1_000);
+    return () => globalThis.clearInterval(intervalId);
+  }, [channelMessages, onRefreshChannelActivity, onRefreshChannelMessages, selectedChannelId]);
 
   useEffect(() => {
     if (sidePanelOpen && sidePanelView === "files") {
@@ -1633,7 +1644,6 @@ export function WorkspaceClientView({
     setComposerBusy(true);
     setSendState("sending");
     setSendError("");
-    setAiReplyState(shouldRequestAi ? "replying" : "idle");
     try {
       for (const url of pastedUrls) {
         if (!pendingPreviewRecords.some((preview) => preview.normalizedUrl === url || preview.url === url)) {
@@ -1667,12 +1677,10 @@ export function WorkspaceClientView({
       autoPreviewUrlsRef.current.clear();
       setSendState("idle");
       setSendError("");
-      setAiReplyState("idle");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setSendState("failed");
       setSendError(message);
-      setAiReplyState(shouldRequestAi ? "failed" : "idle");
     } finally {
       setComposerBusy(false);
     }
@@ -1763,6 +1771,7 @@ export function WorkspaceClientView({
     if (item.kind === "message") {
       const message = item.record;
       const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
+      const pendingAiReply = message.kind === "ai_reply" && message.status === "pending";
       const executionProposals = executionProposalsByMessageId.get(message.id) ?? [];
       const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
       const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
@@ -1780,7 +1789,8 @@ export function WorkspaceClientView({
             author={messageAuthorLabel(message, teammateOptions)}
             tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
             time={formatDateTime(message.createdAt)}
-            body={message.body}
+            body={pendingAiReply ? t("AI teammate is replying...") : message.body}
+            pending={pendingAiReply}
             metaAction={plainChatMessage ? (
               <button className="message-reply-button" type="button" onClick={() => openThreadForMessage(message)} aria-label={t("Reply in topic")} data-tooltip={t("Reply in topic")}>
                 <Reply size={11} />
@@ -2194,39 +2204,24 @@ export function WorkspaceClientView({
           {sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
         </button>
       </div>
-      {sendState !== "idle" || aiReplyState !== "idle" ? (
+      {sendState === "failed" ? (
         <div className="composer-status-list" aria-live="polite">
-          {sendState === "sending" ? (
-            <div className="composer-status-row loading">
-              <Loader2 className="spin" size={14} />
-              <span>{t("Sending message...")}</span>
-            </div>
-          ) : null}
-          {aiReplyState === "replying" ? (
-            <div className="composer-status-row loading">
-              <Loader2 className="spin" size={14} />
-              <span>{t("AI teammate is replying...")}</span>
-            </div>
-          ) : null}
-          {sendState === "failed" ? (
-            <div className="composer-status-row failed">
-              <CircleAlert size={14} />
-              <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
-              <button className="secondary-button compact-button" type="button" onClick={() => {
-                void sendMessage();
-              }}>
-                <RefreshCw size={13} />
-                {t("Retry")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => {
-                setSendState("idle");
-                setSendError("");
-                setAiReplyState("idle");
-              }}>
-                {t("Dismiss")}
-              </button>
-            </div>
-          ) : null}
+          <div className="composer-status-row failed">
+            <CircleAlert size={14} />
+            <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
+            <button className="secondary-button compact-button" type="button" onClick={() => {
+              void sendMessage();
+            }}>
+              <RefreshCw size={13} />
+              {t("Retry")}
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={() => {
+              setSendState("idle");
+              setSendError("");
+            }}>
+              {t("Dismiss")}
+            </button>
+          </div>
         </div>
       ) : null}
     </section>
@@ -4224,6 +4219,7 @@ function MessageBubble({
   tag,
   time,
   body,
+  pending = false,
   metaAction,
   action,
 }: {
@@ -4234,6 +4230,7 @@ function MessageBubble({
   readonly tag?: string;
   readonly time: string;
   readonly body: string;
+  readonly pending?: boolean;
   readonly metaAction?: JSX.Element;
   readonly action?: JSX.Element;
 }): JSX.Element {
@@ -4243,7 +4240,7 @@ function MessageBubble({
   const peerMessage = inlineAuthor && side === "start";
   const showTime = !inlineAuthor && time.length > 0;
   return (
-    <article className={`message-bubble message-bubble-${tone}${inlineAuthor ? " message-bubble-inline" : ""}${sideClass}`}>
+    <article className={`message-bubble message-bubble-${tone}${inlineAuthor ? " message-bubble-inline" : ""}${sideClass}${pending ? " message-bubble-pending" : ""}`}>
       {!inlineAuthor || peerMessage ? avatar : null}
       <div className={metaAction ? "message-content has-floating-action" : "message-content"}>
         {ownMessage ? (
@@ -4256,7 +4253,7 @@ function MessageBubble({
             {metaAction ? <span className="message-meta-action">{metaAction}</span> : null}
           </div>
         )}
-        <p>{renderMessageBody(body)}</p>
+        <p>{pending ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}{renderMessageBody(body)}</p>
         {action ? <div className="message-action">{action}</div> : null}
       </div>
       {inlineAuthor && side === "end" ? avatar : null}

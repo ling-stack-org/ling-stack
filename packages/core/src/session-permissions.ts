@@ -21,11 +21,25 @@ export const sessionPermissionModes = [
 
 export type SessionPermissionMode = (typeof sessionPermissionModes)[number];
 
+export interface PermissionConfirmation {
+  readonly mode: "full_access";
+  readonly confirmed: true;
+  readonly confirmedAt: string;
+  readonly reason: string;
+}
+
+export interface EffectiveRunPolicyRiskNote {
+  readonly code: string;
+  readonly message: string;
+  readonly tool?: RunTool;
+}
+
 export interface EffectiveRunPolicySnapshot {
   readonly mode: SessionPermissionMode;
   readonly toolDecisions: ApprovalToolDecisions;
   readonly allowedWritePaths: readonly string[];
-  readonly riskNotes: readonly string[];
+  readonly workspacePolicyUpdatedAt: string;
+  readonly riskNotes: readonly EffectiveRunPolicyRiskNote[];
 }
 
 export interface ResolveSessionRunPolicyInput {
@@ -46,7 +60,7 @@ export function isSessionPermissionMode(value: string): value is SessionPermissi
 
 export function resolveSessionRunPolicy(input: ResolveSessionRunPolicyInput): ResolveSessionRunPolicyResult {
   const mode = input.permissionMode ?? "custom";
-  const riskNotes: string[] = [];
+  const riskNotes: EffectiveRunPolicyRiskNote[] = [];
   const toolDecisions = applyPermissionModeToToolDecisions(input.workspacePolicy.toolDecisions, mode, riskNotes);
   const profiledDecisions = applyApprovalProfileToToolDecisions(toolDecisions, input.approvalProfile, riskNotes);
   const allowedWritePaths = allowedWritePathsForMode(input.workspacePolicy.allowedWritePaths, mode, input.channelBoundPath);
@@ -63,6 +77,7 @@ export function resolveSessionRunPolicy(input: ResolveSessionRunPolicyInput): Re
       mode,
       toolDecisions: profiledDecisions,
       allowedWritePaths,
+      workspacePolicyUpdatedAt: input.workspacePolicy.updatedAt,
       riskNotes,
     },
   };
@@ -71,7 +86,7 @@ export function resolveSessionRunPolicy(input: ResolveSessionRunPolicyInput): Re
 function applyPermissionModeToToolDecisions(
   workspaceDecisions: ApprovalToolDecisions,
   mode: SessionPermissionMode,
-  riskNotes: string[],
+  riskNotes: EffectiveRunPolicyRiskNote[],
 ): ApprovalToolDecisions {
   const next: Partial<Record<RunTool, ApprovalToolDecision>> = {};
   for (const tool of runTools) {
@@ -109,7 +124,7 @@ function applyPermissionModeToToolDecisions(
 function applyApprovalProfileToToolDecisions(
   decisions: ApprovalToolDecisions,
   profile: SkillApprovalProfile | undefined,
-  riskNotes: string[],
+  riskNotes: EffectiveRunPolicyRiskNote[],
 ): ApprovalToolDecisions {
   if (!profile || profile.mode === "none") {
     return decisions;
@@ -133,7 +148,11 @@ function applyApprovalProfileToToolDecisions(
 
   for (const tool of requiredTools) {
     if (next[tool] === "deny") {
-      riskNotes.push(`AI teammate approval profile requested ${tool}, but workspace policy denied it.`);
+      riskNotes.push({
+        code: "approval_profile_denied_by_workspace_policy",
+        message: `AI teammate approval profile requested ${tool}, but workspace policy denied it.`,
+        tool,
+      });
       continue;
     }
     next[tool] = "ask";
@@ -159,10 +178,14 @@ function preserveDeny(
   workspaceDecision: ApprovalToolDecision | undefined,
   requestedDecision: ApprovalToolDecision,
   tool: RunTool,
-  riskNotes: string[],
+  riskNotes: EffectiveRunPolicyRiskNote[],
 ): ApprovalToolDecision {
   if (workspaceDecision === "deny") {
-    riskNotes.push(`Session permission mode requested ${tool}, but workspace policy denied it.`);
+    riskNotes.push({
+      code: "session_mode_denied_by_workspace_policy",
+      message: `Session permission mode requested ${tool}, but workspace policy denied it.`,
+      tool,
+    });
     return "deny";
   }
   return requestedDecision;
