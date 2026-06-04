@@ -25,9 +25,11 @@ import type { SkillPack } from "@ling-stack/core/skill-types";
 import {
   createTask,
   createTeammateDirectMessage,
+  listMemoryObjects,
   listTeammateActivity,
   listTeammateChannels,
   listTeammateDirectMessages,
+  listUsedMemoryEvents,
   listMcpServers,
   listMcpTools,
   listTeammateMcpBindings,
@@ -41,10 +43,18 @@ import {
 import { useI18n } from "../../i18n.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
 import { providerPreflightReady } from "../../lib/providers.js";
-import { AvatarInitial, MetaRow, StatusBadge } from "../../shared/components/index.js";
+import {
+  AvatarInitial,
+  MetaRow,
+  StatusBadge,
+  UsedMemorySummary,
+  filterUsedMemoryEventsByResponse,
+} from "../../shared/components/index.js";
 import type {
   AiTeammate,
   Channel,
+  EffectiveTeammateSkill,
+  MemoryObject,
   McpServer,
   McpTool,
   ProviderPreset,
@@ -57,6 +67,7 @@ import type {
   TeammateMemoryScope,
   TeammateSkillBinding,
   UpdateAiTeammateRequest,
+  UsedMemoryEvent,
 } from "../../types.js";
 import { approvalProfileText, teammateInitialFromName, workflowPhaseLabel } from "./helpers.js";
 
@@ -110,10 +121,13 @@ export function TeammateWorkspace({
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
   const [memberships, setMemberships] = useState<readonly TeammateChannelMembership[]>([]);
   const [skillBindings, setSkillBindings] = useState<readonly TeammateSkillBinding[]>([]);
+  const [effectiveSkills, setEffectiveSkills] = useState<readonly EffectiveTeammateSkill[]>([]);
   const [mcpServers, setMcpServers] = useState<readonly McpServer[]>([]);
   const [mcpTools, setMcpTools] = useState<readonly McpTool[]>([]);
   const [mcpBindings, setMcpBindings] = useState<readonly TeammateMcpBinding[]>([]);
   const [memoryScopes, setMemoryScopes] = useState<readonly TeammateMemoryScope[]>([]);
+  const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
+  const [usedMemoryEvents, setUsedMemoryEvents] = useState<readonly UsedMemoryEvent[]>([]);
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [activityItems, setActivityItems] = useState<readonly TeammateActivityItem[]>([]);
   const [messageDraft, setMessageDraft] = useState("");
@@ -139,12 +153,15 @@ export function TeammateWorkspace({
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   const skillById = useMemo(() => new Map((skillPack?.skills ?? []).map((skill) => [skill.id, skill])), [skillPack]);
   const bindingBySkillId = useMemo(() => new Map(skillBindings.map((binding) => [binding.skillId, binding])), [skillBindings]);
+  const effectiveSkillById = useMemo(() => new Map(effectiveSkills.map((skill) => [skill.skillId, skill])), [effectiveSkills]);
+  const memoryById = useMemo(() => new Map(memoryObjects.map((memory) => [memory.id, memory])), [memoryObjects]);
   const enabledSkillCount = useMemo(() => skillBindings.filter((binding) => binding.enabled).length, [skillBindings]);
   const skillRows = useMemo(() => {
     const builtInRows = (skillPack?.skills ?? []).map((skill) => ({
       id: skill.id,
       skill,
       binding: bindingBySkillId.get(skill.id),
+      effectiveSkill: effectiveSkillById.get(skill.id),
     }));
     const unknownRows = skillBindings
       .filter((binding) => !skillById.has(binding.skillId))
@@ -152,9 +169,10 @@ export function TeammateWorkspace({
         id: binding.skillId,
         skill: undefined,
         binding,
+        effectiveSkill: effectiveSkillById.get(binding.skillId),
       }));
     return [...builtInRows, ...unknownRows];
-  }, [bindingBySkillId, skillBindings, skillById, skillPack]);
+  }, [bindingBySkillId, effectiveSkillById, skillBindings, skillById, skillPack]);
   const channelsById = useMemo(() => new Map(channels.map((channel) => [channel.id, channel])), [channels]);
   const membershipByChannelId = useMemo(() => new Map(memberships.map((membership) => [membership.channelId, membership])), [memberships]);
   const mcpToolsByServerId = useMemo(() => {
@@ -239,6 +257,8 @@ export function TeammateWorkspace({
         mcpToolsResponse,
         mcpBindingsResponse,
         memoryResponse,
+        memoryObjectsResponse,
+        usedMemoryResponse,
         taskResponse,
         activityResponse,
       ] = await Promise.all([
@@ -249,6 +269,8 @@ export function TeammateWorkspace({
         listMcpTools(workspaceCwd),
         listTeammateMcpBindings(workspaceCwd, teammate.id),
         listTeammateMemoryScopes(workspaceCwd, teammate.id),
+        listMemoryObjects(workspaceCwd),
+        listUsedMemoryEvents(workspaceCwd, { teammateId: teammate.id, limit: 100 }),
         listTeammateTasks(workspaceCwd, teammate.id),
         listTeammateActivity(workspaceCwd, teammate.id),
       ]);
@@ -256,10 +278,13 @@ export function TeammateWorkspace({
       setMessages(directResponse.messages);
       setMemberships(channelResponse.memberships);
       setSkillBindings(skillResponse.bindings);
+      setEffectiveSkills(skillResponse.effectiveSkills ?? []);
       setMcpServers(mcpServersResponse.servers);
       setMcpTools(mcpToolsResponse.tools);
       setMcpBindings(mcpBindingsResponse.bindings);
       setMemoryScopes(memoryResponse.scopes);
+      setMemoryObjects(memoryObjectsResponse.memories);
+      setUsedMemoryEvents(usedMemoryResponse.events);
       setTasks(taskResponse.tasks);
       setActivityItems(activityResponse.items);
     } catch (error) {
@@ -288,8 +313,14 @@ export function TeammateWorkspace({
         ...(response.aiReply ? [response.aiReply] : []),
       ]);
       setMessageDraft("");
-      const activityResponse = await listTeammateActivity(cwd.trim(), teammate.id);
+      const [activityResponse, usedMemoryResponse, memoryObjectsResponse] = await Promise.all([
+        listTeammateActivity(cwd.trim(), teammate.id),
+        listUsedMemoryEvents(cwd.trim(), { teammateId: teammate.id, limit: 100 }),
+        listMemoryObjects(cwd.trim()),
+      ]);
       setActivityItems(activityResponse.items);
+      setUsedMemoryEvents(usedMemoryResponse.events);
+      setMemoryObjects(memoryObjectsResponse.memories);
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -416,6 +447,7 @@ export function TeammateWorkspace({
       setSkillMessage("");
       const response = await replaceTeammateSkills(workspaceCwd, teammate.id, nextBindings);
       setSkillBindings(response.bindings);
+      setEffectiveSkills(response.effectiveSkills ?? []);
       setSkillMessage(message);
       return true;
     } catch (error) {
@@ -665,6 +697,11 @@ export function TeammateWorkspace({
                       <StatusBadge status={message.status} />
                     </header>
                     <p>{message.body}</p>
+                    <UsedMemorySummary
+                      compact
+                      events={filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id)}
+                      memoryById={memoryById}
+                    />
                     {message.errorMessage ? <small>{message.errorMessage}</small> : null}
                     <div className="teammate-message-actions">
                       <button
@@ -857,7 +894,7 @@ export function TeammateWorkspace({
             </div>
           ) : (
             <div className="teammate-data-list">
-              {skillRows.map(({ id, skill, binding }) => {
+              {skillRows.map(({ id, skill, binding, effectiveSkill }) => {
                 const enabled = Boolean(binding?.enabled);
                 const sourceLabel = binding
                   ? binding.source === "template"
@@ -865,13 +902,16 @@ export function TeammateWorkspace({
                     : t("User skill")
                   : t("Available skill");
                 const canDelete = binding?.source === "user";
+                const executable = effectiveSkill?.executable ?? false;
+                const blockedLabel = effectiveSkill?.blockedReasons.map((reason) => t(reason.code)).join(", ");
                 return (
-                  <article key={id} className={`teammate-data-row teammate-skill-row ${enabled ? "enabled" : ""}`}>
+                  <article key={id} className={`teammate-data-row teammate-skill-row ${enabled ? "enabled" : ""} ${executable ? "executable" : "blocked"}`}>
                     <span>
                       <strong>{skill ? t(skill.name) : id}</strong>
-                      <small>{skill ? t(skill.summary) : t("Custom skill binding")}</small>
+                      <small>{blockedLabel || (skill ? t(skill.summary) : t("Custom skill binding"))}</small>
                     </span>
                     <div className="teammate-skill-actions">
+                      <StatusBadge status={executable ? "executable" : enabled ? "blocked" : "disabled"} />
                       <span className="skill-binding-source">{sourceLabel}</span>
                       <span className={`phase-token ${skill?.workflowPhase ?? "operate"}`}>{skill ? workflowPhaseLabel(skill.workflowPhase, t) : t("Custom")}</span>
                       <button className="secondary-button compact-button" type="button" onClick={() => void toggleSkillBinding(id)} disabled={savingSkills}>
@@ -894,21 +934,40 @@ export function TeammateWorkspace({
       ) : null}
 
       {activeTab === "memory" ? (
-        <TeammateListSection
-          icon={<Bot size={16} />}
-          title={t("Memory")}
-          emptyLabel={t("No memory scopes enabled")}
-          items={memoryScopes}
-          renderItem={(scope) => (
-            <article key={scope.id} className="teammate-data-row">
-              <span>
-                <strong>{t(scope.kind)}</strong>
-                <small>{scope.channelId ? channelsById.get(scope.channelId)?.name ?? scope.channelId : t("Private workspace")}</small>
-              </span>
-              <StatusBadge status={scope.enabled ? "active" : "paused"} />
-            </article>
+        <section className="teammate-list-panel teammate-memory-panel" aria-label={t("Memory")}>
+          <div className="panel-title split">
+            <span>
+              <Bot size={16} />
+              <h2>{t("Memory")}</h2>
+            </span>
+            <small>{memoryScopes.length}</small>
+          </div>
+          <article className="teammate-data-row">
+            <span>
+              <strong>{t("Vector retrieval")}</strong>
+              <small>{t("Not installed / Optional")}</small>
+            </span>
+            <StatusBadge status="optional" />
+          </article>
+          {memoryScopes.length === 0 ? (
+            <div className="client-empty-state teammate-empty">
+              <Bot size={18} />
+              <span>{t("No memory scopes enabled")}</span>
+            </div>
+          ) : (
+            <div className="teammate-data-list">
+              {memoryScopes.map((scope) => (
+                <article key={scope.id} className="teammate-data-row">
+                  <span>
+                    <strong>{t(scope.kind)}</strong>
+                    <small>{scope.channelId ? channelsById.get(scope.channelId)?.name ?? scope.channelId : t("Private workspace")}</small>
+                  </span>
+                  <StatusBadge status={scope.enabled ? "active" : "paused"} />
+                </article>
+              ))}
+            </div>
           )}
-        />
+        </section>
       ) : null}
 
       {activeTab === "settings" ? (

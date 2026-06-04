@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import {
+  buildEffectiveTeammateSkills,
   createBuiltinAiTeammateId,
   createSqliteRunStore,
+  GSTACK_DEFAULT_SKILL_PACK_ID,
+  listDefaultSkills,
 } from "../dist/index.js";
 
 test("sqlite seeds durable builtin AI teammates and migrates legacy template references", async () => {
@@ -38,6 +41,170 @@ test("sqlite seeds durable builtin AI teammates and migrates legacy template ref
     if (!closed) {
       store.close();
     }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite persists Ling Memory v1 objects, scoped lexical recall, and used-memory events", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-v1-"));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-06-04T01:00:00.000Z";
+  const engineerId = createBuiltinAiTeammateId("engineer");
+  const designerId = createBuiltinAiTeammateId("designer");
+  try {
+    const engineering = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
+    const design = store.createChannel({ name: "Design", boundPath: cwd }, now);
+    const workspaceMemory = store.createMemoryObject(
+      {
+        scopeType: "workspace",
+        ownerId: "workspace_default",
+        title: "Workspace baseline",
+        body: "Model Workbench uses the same shell width as the other pages.",
+        tags: ["model-workbench", "layout"],
+      },
+      now,
+    );
+    const channelMemory = store.createMemoryObject(
+      {
+        scopeType: "channel",
+        ownerId: engineering.id,
+        title: "Engineering channel decision",
+        body: "The channel agreed to keep lexical recall scoped by channel.",
+        tags: ["recall"],
+        sourceRefs: [{ type: "decision", id: "decision_1", label: "Recall scope" }],
+      },
+      now,
+    );
+    const otherChannelMemory = store.createMemoryObject(
+      {
+        scopeType: "channel",
+        ownerId: design.id,
+        title: "Design-only channel memory",
+        body: "This unrelated channel memory mentions lexical recall too.",
+      },
+      now,
+    );
+    const privateMemory = store.createMemoryObject(
+      {
+        scopeType: "teammate",
+        ownerId: engineerId,
+        title: "Private engineer preference",
+        body: "Use lexical recall for Model Workbench implementation notes.",
+        sensitivity: "private",
+      },
+      now,
+    );
+    const designerMemory = store.createMemoryObject(
+      {
+        scopeType: "teammate",
+        ownerId: designerId,
+        title: "Designer private memory",
+        body: "Designer memory also mentions Model Workbench.",
+        sensitivity: "private",
+      },
+      now,
+    );
+    store.createMemoryObject(
+      {
+        scopeType: "workspace",
+        ownerId: "workspace_default",
+        title: "Secret-adjacent memory",
+        body: "Secret-adjacent Model Workbench token detail.",
+        sensitivity: "secret-adjacent",
+      },
+      now,
+    );
+    const disabled = store.createMemoryObject(
+      {
+        scopeType: "workspace",
+        ownerId: "workspace_default",
+        title: "Disabled memory",
+        body: "Disabled lexical recall note.",
+        enabled: false,
+      },
+      now,
+    );
+    store.updateMemoryObject(disabled.id, { reviewState: "archived" }, "2026-06-04T01:01:00.000Z");
+
+    const channelRecall = store.recallMemory({
+      teammateId: engineerId,
+      channelId: engineering.id,
+      intent: "channel-reply",
+      query: "lexical recall model workbench",
+    });
+    assert.deepEqual(workspaceMemory.sourceRefs, [{ type: "manual", id: workspaceMemory.id, label: "Manual memory" }]);
+    const channelIds = channelRecall.memories.map((item) => item.memory.id);
+    assert.ok(channelIds.includes(workspaceMemory.id));
+    assert.ok(channelIds.includes(channelMemory.id));
+    assert.ok(channelIds.includes(privateMemory.id));
+    assert.equal(channelIds.includes(otherChannelMemory.id), false);
+    assert.equal(channelIds.includes(designerMemory.id), false);
+
+    const privateRecall = store.recallMemory({
+      teammateId: engineerId,
+      intent: "private-chat",
+      query: "model workbench",
+      includePrivate: true,
+    });
+    const privateIds = privateRecall.memories.map((item) => item.memory.id);
+    assert.ok(privateIds.includes(privateMemory.id));
+    assert.equal(privateIds.includes(designerMemory.id), false);
+    assert.equal(channelIds.includes(disabled.id), false);
+
+    const used = store.recordUsedMemoryEvent(
+      {
+        memoryIds: [workspaceMemory.id, channelMemory.id],
+        intent: "channel-reply",
+        recallQuery: channelRecall.request.query,
+        teammateId: engineerId,
+        channelId: engineering.id,
+        responseId: "message_1",
+        policyVersion: channelRecall.policyVersion,
+      },
+      "2026-06-04T01:02:00.000Z",
+    );
+    assert.equal(used.memoryIds.length, 2);
+    assert.deepEqual(store.listUsedMemoryEvents({ responseId: "message_1" }).map((event) => event.id), [used.id]);
+    assert.equal(store.getMemoryObject(workspaceMemory.id).lastUsedAt, "2026-06-04T01:02:00.000Z");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("effective teammate skills expose blocked reasons", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-effective-skills-"));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-06-04T02:00:00.000Z";
+  const engineerId = createBuiltinAiTeammateId("engineer");
+  try {
+    const engineer = store.getAiTeammate(engineerId);
+    assert.ok(engineer);
+    const bindings = store.replaceTeammateSkillBindings(
+      engineerId,
+      [
+        { skillId: "implement", source: "template", enabled: true },
+        { skillId: "qa", source: "user", enabled: false },
+      ],
+      now,
+    );
+    const effective = buildEffectiveTeammateSkills({
+      teammate: engineer,
+      bindings,
+      skills: listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID),
+      channelAllowedTools: ["read"],
+      providerCapabilities: ["chat"],
+    });
+    const implement = effective.find((item) => item.skillId === "implement");
+    assert.ok(implement);
+    assert.equal(implement.executable, false);
+    assert.ok(implement.blockedReasons.some((reason) => reason.code === "channel_policy"));
+    assert.ok(implement.blockedReasons.some((reason) => reason.code === "missing_provider_capability"));
+    const qa = effective.find((item) => item.skillId === "qa");
+    assert.ok(qa);
+    assert.ok(qa.blockedReasons.some((reason) => reason.code === "disabled_binding"));
+  } finally {
+    store.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });

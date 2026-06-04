@@ -805,6 +805,77 @@ textarea {
   justify-content: flex-start;
 }
 
+.used-memory-summary {
+  display: grid;
+  gap: 6px;
+  width: min(100%, 520px);
+  padding: 8px 10px;
+  border: 1px solid var(--info-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--info-soft) 34%, var(--surface-panel-strong));
+  color: var(--text);
+}
+
+.used-memory-summary.compact {
+  padding: 7px 9px;
+}
+
+.used-memory-summary-head,
+.used-memory-summary-head span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.used-memory-summary-head {
+  justify-content: space-between;
+}
+
+.used-memory-summary-head strong {
+  color: var(--text-strong);
+  font-size: 11px;
+}
+
+.used-memory-summary-head small,
+.used-memory-summary li small,
+.used-memory-overflow {
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+.used-memory-summary ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.used-memory-summary li {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  gap: 5px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel);
+}
+
+.used-memory-summary li span {
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 11px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .channel-execution-proposal {
   display: grid;
   gap: 8px;

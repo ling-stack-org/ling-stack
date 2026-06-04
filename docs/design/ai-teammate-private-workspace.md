@@ -55,6 +55,10 @@ Still deferred:
 - multi-party direct messages,
 - broad browser e2e coverage beyond the focused durable workspace flows.
 
+The broader platform direction lives in [Ling Framework](ling-framework.md). The target
+memory design for private, channel, shared, and task/run recall lives in
+[Ling Memory v1](ling-memory-v1.md).
+
 ## Product Principles
 
 1. AI teammates are workspace members, not decorative model presets.

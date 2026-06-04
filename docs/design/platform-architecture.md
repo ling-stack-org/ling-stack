@@ -20,6 +20,10 @@ web app, SQLite schema, or one agent runtime.
 Ling Stack should become a local AI workspace platform with a small hard kernel and many
 replaceable extensions.
 
+The top-level product and platform map lives in [Ling Framework](ling-framework.md). This
+document focuses on the kernel, extension, and package boundaries that make that framework
+safe to implement.
+
 ```text
 clients
 -> shared API client
@@ -332,6 +336,10 @@ Tools must declare:
 ### Memory Extensions
 
 Memory extensions attach context to work without becoming hidden authority.
+
+The target memory product is [Ling Memory v1](ling-memory-v1.md): workspace shared memory,
+channel memory, teammate private memory, task/run working memory, scoped automatic recall,
+and used-memory audit.
 
 Examples:
 

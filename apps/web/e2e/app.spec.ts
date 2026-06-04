@@ -32,6 +32,8 @@ interface MockState {
   teammateChannelMemberships: unknown[];
   teammateSkillBindings: unknown[];
   teammateMemoryScopes: unknown[];
+  memoryObjects: unknown[];
+  usedMemoryEvents: unknown[];
   teammateDirectThreads: Record<string, unknown>;
   teammateDirectMessages: unknown[];
   tasks: unknown[];
@@ -2779,6 +2781,37 @@ test("channel activity hides the attention queue when no items need attention", 
 
 test("run detail renders state transitions from daemon timeline API", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
+  state.memoryObjects = [
+    {
+      id: "memory_run_scope",
+      workspaceId: "workspace_default",
+      scopeType: "run",
+      ownerId: "run_failed",
+      title: "Run acceptance memory",
+      body: "Run detail should show memory provenance.",
+      tags: ["run-detail"],
+      sourceRefs: [],
+      reviewState: "active",
+      enabled: true,
+      sensitivity: "normal",
+      createdAt: "2026-05-22T00:00:00.000Z",
+      updatedAt: "2026-05-22T00:00:00.000Z",
+    },
+  ];
+  state.usedMemoryEvents = [
+    {
+      id: "used_memory_run_detail",
+      workspaceId: "workspace_default",
+      memoryIds: ["memory_run_scope"],
+      intent: "task-run",
+      recallQuery: "inspect workspace",
+      taskId: "task_inspect",
+      runId: "run_failed",
+      responseId: "run_failed",
+      policyVersion: "ling-memory-v1-lexical",
+      createdAt: "2026-05-22T00:00:30.000Z",
+    },
+  ];
   state.stateTransitions = [
     {
       id: "transition_task_claim",
@@ -2809,6 +2842,7 @@ test("run detail renders state transitions from daemon timeline API", async ({ p
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
+  await expect(page.getByLabel("Used memory").filter({ hasText: "Run acceptance memory" })).toBeVisible();
   await page.locator(".run-detail-panel").getByText("Debug details").click();
   await expect(page.getByRole("heading", { name: "State machine" })).toBeVisible();
   await expect(page.getByText("runner_failed: running -> failed")).toBeVisible();
@@ -3611,6 +3645,36 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
       updatedAt: "2026-05-29T00:00:00.000Z",
     },
   ];
+  state.memoryObjects = [
+    {
+      id: "memory_private_acceptance",
+      workspaceId: "workspace_default",
+      scopeType: "teammate",
+      ownerId: teammateId,
+      title: "Private acceptance memory",
+      body: "Private workspace replies should keep acceptance criteria concise.",
+      tags: ["private-chat"],
+      sourceRefs: [],
+      reviewState: "active",
+      enabled: true,
+      sensitivity: "private",
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:00.000Z",
+    },
+  ];
+  state.usedMemoryEvents = [
+    {
+      id: "used_memory_private_acceptance",
+      workspaceId: "workspace_default",
+      memoryIds: ["memory_private_acceptance"],
+      intent: "private-chat",
+      recallQuery: "private workspace acceptance criteria",
+      teammateId,
+      responseId: "tdmsg_2",
+      policyVersion: "ling-memory-v1-lexical",
+      createdAt: "2026-05-29T00:10:01.000Z",
+    },
+  ];
   state.tasks = [
     {
       id: "task_teammate",
@@ -3660,6 +3724,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Please refine the private workspace acceptance criteria.")).toBeVisible();
   await expect(page.getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
+  await expect(page.getByLabel("Used memory").filter({ hasText: "Private acceptance memory" })).toBeVisible();
   await expect.poll(() => state.teammateDirectMessages.length).toBe(2);
 
   await page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." }).getByRole("button", { name: "Create task" }).click();
@@ -5142,6 +5207,8 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     teammateChannelMemberships: [],
     teammateSkillBindings: [],
     teammateMemoryScopes: [],
+    memoryObjects: [],
+    usedMemoryEvents: [],
     teammateDirectThreads: {},
     teammateDirectMessages: [],
     tasks: [
@@ -6078,6 +6145,29 @@ async function handleDaemonRoute(
   }
   if (request.method() === "GET" && path === "/providers") {
     await route.fulfill({ json: { cwd, providers: state.providers } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/memory") {
+    await route.fulfill({
+      json: {
+        cwd,
+        memories: state.memoryObjects,
+        vectorRetrieval: { status: "not_installed", optional: true },
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/memory/used") {
+    const teammateId = url.searchParams.get("teammateId");
+    const responseId = url.searchParams.get("responseId");
+    const runId = url.searchParams.get("runId");
+    const events = state.usedMemoryEvents.filter((event) =>
+      isRecord(event) &&
+      (!teammateId || event.teammateId === teammateId) &&
+      (!responseId || event.responseId === responseId) &&
+      (!runId || event.runId === runId)
+    );
+    await route.fulfill({ json: { cwd, events } });
     return;
   }
   if (request.method() === "GET" && path === "/mcp/servers") {

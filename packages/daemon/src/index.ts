@@ -36,9 +36,13 @@ import {
   syncExternalWorkActionForApproval,
   updateExternalWorkflowSecretRef,
   buildExternalWorkCiTriageView,
+  buildEffectiveTeammateSkills,
   triageGitHubExternalWorkCi,
+  getEffectiveTeammateSkill,
   listBuiltinSkillPackExtensions,
+  listDefaultSkills,
   listBuiltinToolExtensions,
+  GSTACK_DEFAULT_SKILL_PACK_ID,
   isSupportedSecretRef,
   mediaJobStatuses,
   mediaOperations,
@@ -100,6 +104,12 @@ import {
   type MediaJob,
   type MediaJobStatus,
   type MediaOperation,
+  type MemoryObjectUpdateInput,
+  type MemoryRecallIntent,
+  type MemoryScopeType,
+  type MemorySensitivity,
+  type MemoryReviewState,
+  type MemorySourceRef,
   type McpServer,
   type McpServerStatus,
   type McpStreamableHttpTransport,
@@ -319,6 +329,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly providerPresetId?: string;
   readonly provider?: PiRunnerProviderConfig;
   readonly teammateId?: string;
+  readonly requestedSkillId?: string;
   readonly tools?: readonly RunTool[];
   readonly approvalProfile?: SkillApprovalProfile;
   readonly skipProviderPreflight?: boolean;
@@ -1365,6 +1376,27 @@ async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/memory") {
+    await handleMemoryCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/memory/recall") {
+    await handleMemoryRecall(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/memory/used") {
+    handleListUsedMemoryEvents(response, url, storeRegistry);
+    return;
+  }
+
+  const memoryRoute = matchSingleSegmentRoute(url.pathname, "/memory");
+  if (memoryRoute) {
+    await handleMemoryItem(request, response, config, storeRegistry, memoryRoute);
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/runtime/leases") {
     handleListResourceLeases(response, url, storeRegistry);
     return;
@@ -1630,6 +1662,161 @@ function handleSecretStatus(response: ServerResponse, url: URL, secretResolver: 
   writeJson(response, 200, { status });
 }
 
+async function handleMemoryCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        memories: store.listMemoryObjects({
+          scopeType: readOptionalMemoryScopeTypeQuery(url),
+          ownerId: url.searchParams.get("ownerId") ?? undefined,
+          reviewState: readOptionalMemoryReviewStateQuery(url),
+          enabled: readOptionalBooleanQuery(url, "enabled"),
+          sensitivity: readOptionalMemorySensitivityQuery(url),
+          tag: url.searchParams.get("tag") ?? undefined,
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+        vectorRetrieval: {
+          status: "not_installed",
+          optional: true,
+        },
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const memory = store.createMemoryObject(parseCreateMemoryObjectInput(body), new Date().toISOString());
+      writeJson(response, 201, { memory });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /memory` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleMemoryItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  memoryId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const memory = store.getMemoryObject(memoryId);
+    if (!memory) {
+      writeJson(response, 404, { error: "memory_not_found", message: `Memory object not found: ${memoryId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, { memory });
+      return;
+    }
+
+    if (request.method === "PATCH") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const updated = store.updateMemoryObject(memoryId, parseMemoryObjectUpdateInput(body), new Date().toISOString());
+      writeJson(response, 200, { memory: updated ?? memory });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for memory item` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleMemoryRecall(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /memory/recall` });
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const result = storeRegistry.getStore(cwd).recallMemory(parseMemoryRecallRequest(body));
+    writeJson(response, 200, {
+      cwd,
+      memories: result.memories,
+      policyVersion: result.policyVersion,
+    });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function handleListUsedMemoryEvents(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    writeJson(response, 200, {
+      cwd,
+      events: store.listUsedMemoryEvents({
+        teammateId: url.searchParams.get("teammateId") ?? undefined,
+        channelId: url.searchParams.get("channelId") ?? undefined,
+        taskId: url.searchParams.get("taskId") ?? undefined,
+        runId: url.searchParams.get("runId") ?? undefined,
+        responseId: url.searchParams.get("responseId") ?? undefined,
+        memoryId: url.searchParams.get("memoryId") ?? undefined,
+        limit: readOptionalIntegerQuery(url, "limit", 1),
+      }),
+    });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function handleRun(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1676,6 +1863,9 @@ async function executeRunRequest(
   let preparedConcurrency: PreparedRunConcurrency = { taskExists: false, leases: [] };
   let resolvedSecretValues: readonly (string | undefined)[] = [];
   let resolvedProvider: PiRunnerProviderConfig | undefined;
+  let memoryRecall: ReturnType<RunStore["recallMemory"]> | undefined;
+  let selectedSkill: ReturnType<typeof getEffectiveTeammateSkill> | undefined;
+  let runtimeApprovalProfile: SkillApprovalProfile | undefined;
   let runId = "";
   let createdAt = "";
   let workspaceCwd = "";
@@ -1684,17 +1874,63 @@ async function executeRunRequest(
     store = storeRegistry.getStore(workspaceCwd);
     runtime = runtimeSupervisor.getRuntime(workspaceCwd, store);
     resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver);
+    const skillChannel = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
+    const skillTeammate = runRequest.teammateId ? resolveAiTeammateReference(store, runRequest.teammateId) : undefined;
+    const skillProviderPreset = runRequest.providerPresetId ? store.getProviderPreset(runRequest.providerPresetId) : undefined;
+    if (runRequest.requestedSkillId) {
+      if (!skillTeammate) {
+        throw new HttpError(400, "skill_teammate_required", "requestedSkillId requires a resolved teammateId.");
+      }
+      const effectiveSkills = buildEffectiveTeammateSkills({
+        teammate: skillTeammate,
+        bindings: store.listTeammateSkillBindings(skillTeammate.id),
+        skills: listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID),
+        channelAllowedTools: skillChannel?.allowedTools,
+        providerCapabilities: skillProviderPreset?.capabilities,
+      });
+      selectedSkill = getEffectiveTeammateSkill(effectiveSkills, runRequest.requestedSkillId);
+      if (!selectedSkill) {
+        throw new HttpError(400, "skill_not_bound", `Skill is not bound to teammate: ${runRequest.requestedSkillId}`);
+      }
+      if (!selectedSkill.executable) {
+        throw new HttpError(
+          400,
+          "skill_not_executable",
+          `Skill is not executable: ${selectedSkill.blockedReasons.map((reason) => reason.code).join(", ")}`,
+        );
+      }
+    }
     const mcpToolAccess = resolveMcpToolAccessForRun(store, runRequest);
     const mcpTools = createPiRunnerMcpToolDefinitions(mcpToolAccess);
+    memoryRecall = store.recallMemory({
+      teammateId: runRequest.teammateId,
+      channelId: runRequest.task.channelId,
+      taskId: runRequest.task.id,
+      intent: "task-run",
+      query: `${runRequest.task.title}\n${runRequest.task.prompt}`,
+      maxResults: 6,
+    });
+    const memoryPrompt = renderUsedMemoryPrompt(memoryRecall.memories);
+    const appendSystemPrompt = [
+      ...(runRequest.appendSystemPrompt ?? []),
+      ...(selectedSkill?.promptFragments ?? []),
+      ...(memoryPrompt ? [memoryPrompt] : []),
+    ];
+    const runtimeTools = selectedSkill
+      ? mergeRunTools(runRequest.tools ?? [], selectedSkill.requiredTools)
+      : runRequest.tools;
+    runtimeApprovalProfile = selectedSkill
+      ? mergeApprovalProfiles(runRequest.approvalProfile, selectedSkill.skill.approvalProfile)
+      : runRequest.approvalProfile;
     runnerRequest = {
       cwd: runRequest.cwd,
       task: runRequest.task,
       provider: resolvedProvider,
-      tools: runRequest.tools,
+      tools: runtimeTools,
       mcpTools,
       thinkingLevel: runRequest.thinkingLevel,
       systemPrompt: runRequest.systemPrompt,
-      appendSystemPrompt: runRequest.appendSystemPrompt,
+      appendSystemPrompt: appendSystemPrompt.length > 0 ? appendSystemPrompt : undefined,
       agentDir: runRequest.agentDir,
       onMcpToolCall: mcpTools.length > 0 ? createMcpToolCallHandler(store, mcpBroker, mcpTools) : undefined,
     };
@@ -1727,7 +1963,7 @@ async function executeRunRequest(
       runnerId: DEFAULT_RUNNER_ID,
       idempotencyKey,
       createdByActor: "user",
-      request: { ...runRequest, workspaceCwd, provider: resolvedProvider, mcpToolAccess },
+      request: { ...runRequest, workspaceCwd, provider: resolvedProvider, selectedSkillId: selectedSkill?.skillId, mcpToolAccess },
       now: createdAt,
     });
     store.appendRuntimeEvent({
@@ -1802,17 +2038,34 @@ async function executeRunRequest(
       taskId: runRequest.task.id,
       channelId: preparedConcurrency.channel?.id ?? runRequest.task.channelId,
       teammateId: mcpToolAccess.teammateId ?? runRequest.teammateId,
+      selectedSkillId: selectedSkill?.skillId,
       providerPresetId: runRequest.providerPresetId,
       providerName: resolvedProvider.provider,
       providerModel: resolvedProvider.model,
       taskSnapshot: runRequest.task,
       providerSnapshot: { providerPresetId: runRequest.providerPresetId, ...resolvedProvider },
-      requestSnapshot: { ...runRequest, workspaceCwd, provider: resolvedProvider, mcpToolAccess },
+      requestSnapshot: { ...runRequest, workspaceCwd, provider: resolvedProvider, selectedSkillId: selectedSkill?.skillId, mcpToolAccess },
       workUnitId: workUnit.id,
       createdAt,
     });
     store.linkRunToWorkUnit(run.id, workUnit.id, createdAt);
     storeRegistry.rememberRun(run.id, store);
+    if (memoryRecall.memories.length > 0) {
+      store.recordUsedMemoryEvent(
+        {
+          memoryIds: memoryRecall.memories.map((item) => item.memory.id),
+          intent: "task-run",
+          recallQuery: memoryRecall.request.query,
+          teammateId: run.teammateId,
+          channelId: run.channelId,
+          taskId: run.taskId,
+          runId: run.id,
+          responseId: run.id,
+          policyVersion: memoryRecall.policyVersion,
+        },
+        createdAt,
+      );
+    }
     store.appendEvent(run.id, "run_created", {
       taskId: run.taskId,
       workUnitId: workUnit.id,
@@ -1821,6 +2074,7 @@ async function executeRunRequest(
       providerName: run.providerName,
       providerModel: run.providerModel,
       teammateId: run.teammateId,
+      selectedSkillId: run.selectedSkillId,
       mcpToolAccess: {
         serverCount: mcpToolAccess.servers.length,
         toolCount: mcpToolAccess.totalToolCount,
@@ -1847,6 +2101,7 @@ async function executeRunRequest(
         attempt,
         channel: error.channel ?? preparedConcurrency.channel,
         provider: resolvedProvider,
+        selectedSkillId: selectedSkill?.skillId,
         queuedAt,
         reason: error.code,
         message: error.message,
@@ -2104,7 +2359,7 @@ async function executeRunRequest(
         throw new Error(`Task transition failed: ${taskStartTransition.code}`);
       }
     }
-    const approvalPolicy = mergeApprovalPolicyWithProfile(store.getApprovalPolicy(), runRequest.approvalProfile);
+    const approvalPolicy = mergeApprovalPolicyWithProfile(store.getApprovalPolicy(), runtimeApprovalProfile);
 
     const result = await runner.runTask({
       ...runnerRequest,
@@ -2301,6 +2556,7 @@ function createQueuedRunForConflict(input: {
   readonly attempt: WorkUnitAttempt;
   readonly channel?: Channel;
   readonly provider: PiRunnerProviderConfig;
+  readonly selectedSkillId?: string;
   readonly queuedAt: string;
   readonly reason: QueueableRunConflictCode;
   readonly message: string;
@@ -2310,6 +2566,8 @@ function createQueuedRunForConflict(input: {
     cwd: input.runRequest.cwd,
     taskId: input.runRequest.task.id,
     channelId: input.channel?.id ?? input.runRequest.task.channelId,
+    teammateId: input.runRequest.teammateId,
+    selectedSkillId: input.selectedSkillId,
     providerPresetId: input.runRequest.providerPresetId,
     providerName: input.provider.provider,
     providerModel: input.provider.model,
@@ -2319,6 +2577,7 @@ function createQueuedRunForConflict(input: {
       ...input.runRequest,
       workspaceCwd: input.workspaceCwd,
       provider: input.provider,
+      selectedSkillId: input.selectedSkillId,
       queued: true,
       queueReason: input.reason,
     },
@@ -2334,6 +2593,8 @@ function createQueuedRunForConflict(input: {
     cwd: run.cwd,
     providerName: run.providerName,
     providerModel: run.providerModel,
+    teammateId: run.teammateId,
+    selectedSkillId: run.selectedSkillId,
     queued: true,
     queueReason: input.reason,
     message: input.message,
@@ -2957,7 +3218,7 @@ async function handleTeammateRoute(
   storeRegistry: RunStoreRegistry,
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
-  route: { readonly teammateId: string; readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "direct-thread" | "direct-messages" | "tasks" | "activity" },
+  route: { readonly teammateId: string; readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "tasks" | "activity" },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -3017,10 +3278,22 @@ async function handleTeammateRoute(
 
     if (route.action === "skills") {
       if (request.method === "GET") {
+        const channelId = url.searchParams.get("channelId") ?? undefined;
+        const channel = channelId ? store.getChannel(channelId) : undefined;
+        const providerPresetId = teammate.providerPresetId ?? channel?.defaultProviderPresetId;
+        const providerPreset = providerPresetId ? store.getProviderPreset(providerPresetId) : undefined;
+        const bindings = store.listTeammateSkillBindings(route.teammateId);
         writeJson(response, 200, {
           cwd,
           teammateId: route.teammateId,
-          bindings: store.listTeammateSkillBindings(route.teammateId),
+          bindings,
+          effectiveSkills: buildEffectiveTeammateSkills({
+            teammate,
+            bindings,
+            skills: listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID),
+            channelAllowedTools: channel?.allowedTools,
+            providerCapabilities: providerPreset?.capabilities,
+          }),
         });
         return;
       }
@@ -3031,7 +3304,22 @@ async function handleTeammateRoute(
           parseReplaceTeammateSkillBindingsRequest(body),
           new Date().toISOString(),
         );
-        writeJson(response, 200, { cwd, teammateId: route.teammateId, bindings });
+        const channelId = url.searchParams.get("channelId") ?? undefined;
+        const channel = channelId ? store.getChannel(channelId) : undefined;
+        const providerPresetId = teammate.providerPresetId ?? channel?.defaultProviderPresetId;
+        const providerPreset = providerPresetId ? store.getProviderPreset(providerPresetId) : undefined;
+        writeJson(response, 200, {
+          cwd,
+          teammateId: route.teammateId,
+          bindings,
+          effectiveSkills: buildEffectiveTeammateSkills({
+            teammate,
+            bindings,
+            skills: listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID),
+            channelAllowedTools: channel?.allowedTools,
+            providerCapabilities: providerPreset?.capabilities,
+          }),
+        });
         return;
       }
     }
@@ -3076,6 +3364,20 @@ async function handleTeammateRoute(
         writeJson(response, 200, { cwd, teammateId: route.teammateId, bindings });
         return;
       }
+    }
+
+    if (route.action === "persona-draft") {
+      if (request.method === "POST") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        writeJson(response, 200, {
+          cwd,
+          teammateId: route.teammateId,
+          draft: parseTeammatePersonaDraft(body, teammate),
+        });
+        return;
+      }
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate persona draft` });
+      return;
     }
 
     if (route.action === "direct-thread") {
@@ -4531,6 +4833,7 @@ async function handleTaskRunRequest(
       writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${task.channelId}` });
       return;
     }
+    const requestedSkillId = readOptionalString(body, "requestedSkillId") ?? task.requestedSkillId;
 
     await executeRunRequest(
       {
@@ -4538,6 +4841,7 @@ async function handleTaskRunRequest(
         cwd: channel.boundPath ?? workspaceCwd,
         providerPresetId,
         teammateId: task.assigneeTeammateId ?? channel.defaultTeammateId,
+        requestedSkillId,
         skipProviderPreflight: readOptionalBoolean(body, "skipProviderPreflight") ?? false,
         idempotencyKey: readOptionalString(body, "idempotencyKey"),
         task: {
@@ -7994,6 +8298,25 @@ async function createAiChannelReply(input: {
 
   const textDeltas: string[] = [];
   try {
+    const memoryRecall = input.store.recallMemory({
+      teammateId: canonicalTeammateId,
+      channelId: input.channel.id,
+      intent: "channel-reply",
+      query: input.sourceMessage.body,
+      maxResults: 6,
+    });
+    const memoryPrompt = renderUsedMemoryPrompt(memoryRecall.memories);
+    const systemPrompt = [
+      "You are an AI teammate inside a Ling Stack channel.",
+      "Reply concisely and only to the current channel discussion.",
+      "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
+      "Do not perform tool use or side effects.",
+      "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
+      `Use exact teammate ids in proposal JSON. Default assigneeTeammateId and collaboration teammateId to "${canonicalTeammateId}" unless the user explicitly selected another teammate id.`,
+      `<ling_task_proposal>{"title":"...","prompt":"...","assigneeTeammateId":"${canonicalTeammateId}","acceptanceCriteria":["..."],"collaborationSteps":[{"teammateId":"${canonicalTeammateId}","action":"coordinated","summary":"..."}],"requiredTools":["read"],"riskSummary":"..."}</ling_task_proposal>`,
+      "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
+      memoryPrompt,
+    ].filter((line): line is string => Boolean(line)).join("\n");
     const provider = resolveProviderForRun(
       input.store,
       {
@@ -8008,16 +8331,7 @@ async function createAiChannelReply(input: {
         providerPresetId,
         tools: [],
         thinkingLevel: "medium",
-        systemPrompt: [
-          "You are an AI teammate inside a Ling Stack channel.",
-          "Reply concisely and only to the current channel discussion.",
-          "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
-          "Do not perform tool use or side effects.",
-          "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
-          `Use exact teammate ids in proposal JSON. Default assigneeTeammateId and collaboration teammateId to "${canonicalTeammateId}" unless the user explicitly selected another teammate id.`,
-          `<ling_task_proposal>{"title":"...","prompt":"...","assigneeTeammateId":"${canonicalTeammateId}","acceptanceCriteria":["..."],"collaborationSteps":[{"teammateId":"${canonicalTeammateId}","action":"coordinated","summary":"..."}],"requiredTools":["read"],"riskSummary":"..."}</ling_task_proposal>`,
-          "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
-        ].join("\n"),
+        systemPrompt,
       },
       input.secretResolver,
     );
@@ -8042,16 +8356,7 @@ async function createAiChannelReply(input: {
       provider,
       tools: [],
       thinkingLevel: "medium",
-      systemPrompt: [
-        "You are an AI teammate inside a Ling Stack channel.",
-        "Reply concisely and only to the current channel discussion.",
-        "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
-        "Do not perform tool use or side effects.",
-        "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
-        `Use exact teammate ids in proposal JSON. Default assigneeTeammateId and collaboration teammateId to "${canonicalTeammateId}" unless the user explicitly selected another teammate id.`,
-        `<ling_task_proposal>{"title":"...","prompt":"...","assigneeTeammateId":"${canonicalTeammateId}","acceptanceCriteria":["..."],"collaborationSteps":[{"teammateId":"${canonicalTeammateId}","action":"coordinated","summary":"..."}],"requiredTools":["read"],"riskSummary":"..."}</ling_task_proposal>`,
-        "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
-      ].join("\n"),
+      systemPrompt,
       onEvent: (event) => {
         input.store.appendRuntimeEvent({
           workUnitId: supervised.workUnit.id,
@@ -8074,6 +8379,20 @@ async function createAiChannelReply(input: {
       status: "ready",
       errorMessage: null,
     });
+    if (memoryRecall.memories.length > 0) {
+      input.store.recordUsedMemoryEvent(
+        {
+          memoryIds: memoryRecall.memories.map((item) => item.memory.id),
+          intent: "channel-reply",
+          recallQuery: memoryRecall.request.query,
+          teammateId: canonicalTeammateId,
+          channelId: input.channel.id,
+          responseId: reply.id,
+          policyVersion: memoryRecall.policyVersion,
+        },
+        new Date().toISOString(),
+      );
+    }
     if (extractedProposal) {
       input.store.createChannelExecutionProposal(
         {
@@ -8242,13 +8561,22 @@ async function createAiTeammateDirectReply(input: {
       prompt: formatTeammateDirectPrompt(input.teammate, recentMessages),
       channelId: "private",
     };
+    const memoryRecall = input.store.recallMemory({
+      teammateId: input.teammate.id,
+      intent: "private-chat",
+      query: input.sourceMessage.body,
+      maxResults: 6,
+      includePrivate: true,
+    });
+    const memoryPrompt = renderUsedMemoryPrompt(memoryRecall.memories);
     const systemPrompt = [
       input.teammate.systemPrompt ?? `You are ${input.teammate.displayName}, an AI teammate inside Ling Stack.`,
       ...input.teammate.appendSystemPrompt,
       "Reply concisely to the private conversation.",
       "This private chat has no tool access and cannot mutate files, send external messages, or inspect channel files.",
-      "Do not claim to see channel history, attachments, private memory, or web pages unless the user explicitly pasted that content in this chat.",
-    ].join("\n");
+      "Do not claim to see channel history, attachments, web pages, or memory beyond the explicit Used memory section unless the user pasted that content in this chat.",
+      memoryPrompt,
+    ].filter((line): line is string => Boolean(line)).join("\n");
     const provider = resolveProviderForRun(
       input.store,
       {
@@ -8293,11 +8621,25 @@ async function createAiTeammateDirectReply(input: {
       },
     });
     const replyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
-    return finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
+    const reply = finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
       body: replyText,
       status: "ready",
       errorMessage: null,
     });
+    if (memoryRecall.memories.length > 0) {
+      input.store.recordUsedMemoryEvent(
+        {
+          memoryIds: memoryRecall.memories.map((item) => item.memory.id),
+          intent: "private-chat",
+          recallQuery: memoryRecall.request.query,
+          teammateId: input.teammate.id,
+          responseId: reply.id,
+          policyVersion: memoryRecall.policyVersion,
+        },
+        new Date().toISOString(),
+      );
+    }
+    return reply;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
@@ -8321,6 +8663,28 @@ function formatChannelDiscussionPrompt(channel: Channel, message: ChannelMessage
     message.body,
     "",
     "Reply as the channel AI teammate. Keep the response actionable and brief.",
+  ].join("\n");
+}
+
+function renderUsedMemoryPrompt(memories: ReturnType<RunStore["recallMemory"]>["memories"]): string | undefined {
+  if (memories.length === 0) {
+    return undefined;
+  }
+  const lines = memories.slice(0, 8).flatMap((item, index) => {
+    const source = item.memory.sourceRefs.length > 0
+      ? item.memory.sourceRefs.map((ref) => `${ref.type}:${ref.label ?? ref.id}`).join(", ")
+      : "manual";
+    const tags = item.memory.tags.length > 0 ? ` tags=${item.memory.tags.join(",")}` : "";
+    return [
+      `Memory ${index + 1}: ${item.memory.title}`,
+      `Scope: ${item.memory.scopeType}:${item.memory.ownerId}; Source: ${source}; Sensitivity: ${item.memory.sensitivity};${tags}`,
+      item.excerpt,
+    ];
+  });
+  return [
+    "Used memory:",
+    "Use only the following scoped Ling Memory items when they are relevant. Do not infer permissions, tools, secrets, or unseen files from memory.",
+    ...lines,
   ].join("\n");
 }
 
@@ -9915,6 +10279,46 @@ function mergeApprovalPolicyWithProfile(policy: ApprovalPolicy, profile: SkillAp
   return { ...policy, toolDecisions };
 }
 
+function mergeRunTools(base: readonly RunTool[], required: readonly RunTool[]): RunTool[] {
+  const tools = new Set<RunTool>(base);
+  for (const tool of required) {
+    tools.add(tool);
+  }
+  return [...tools];
+}
+
+function mergeApprovalProfiles(
+  base: SkillApprovalProfile | undefined,
+  required: SkillApprovalProfile,
+): SkillApprovalProfile {
+  if (!base || approvalModeRank(required.mode) > approvalModeRank(base.mode)) {
+    return {
+      ...required,
+      requiredForTools: mergeRunTools(base?.requiredForTools ?? [], required.requiredForTools ?? []),
+      requiredForActions: mergeStringList(base?.requiredForActions ?? [], required.requiredForActions ?? []),
+    };
+  }
+  return {
+    ...base,
+    requiredForTools: mergeRunTools(base.requiredForTools ?? [], required.requiredForTools ?? []),
+    requiredForActions: mergeStringList(base.requiredForActions ?? [], required.requiredForActions ?? []),
+  };
+}
+
+function mergeStringList<T extends string>(base: readonly T[], required: readonly T[]): T[] {
+  return [...new Set([...base, ...required])];
+}
+
+function approvalModeRank(mode: SkillApprovalProfile["mode"]): number {
+  if (mode === "strict") {
+    return 2;
+  }
+  if (mode === "standard") {
+    return 1;
+  }
+  return 0;
+}
+
 function toCreateApprovalRequestInput(run: RunSession, request: PiRunnerApprovalRequest): CreateApprovalRequestInput {
   const payload = toApprovalPayload(request);
   const risk = classifyApprovalRisk(request, payload);
@@ -10886,6 +11290,7 @@ function parseRunRequest(value: unknown): RunRequest {
   const provider = value.provider;
   const providerPresetId = readOptionalString(value, "providerPresetId");
   const teammateId = readOptionalString(value, "teammateId");
+  const requestedSkillId = readOptionalString(value, "requestedSkillId");
   const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
   const idempotencyKey = readOptionalString(value, "idempotencyKey");
 
@@ -10907,6 +11312,7 @@ function parseRunRequest(value: unknown): RunRequest {
     workspaceCwd,
     providerPresetId,
     teammateId,
+    requestedSkillId,
     skipProviderPreflight,
     idempotencyKey,
     task: {
@@ -11038,7 +11444,7 @@ function parseTeammateRoute(
   pathname: string,
 ): {
   readonly teammateId: string;
-  readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "direct-thread" | "direct-messages" | "tasks" | "activity";
+  readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "tasks" | "activity";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "teammates") {
@@ -11052,6 +11458,7 @@ function parseTeammateRoute(
       segments[2] === "skills" ||
       segments[2] === "memory-scopes" ||
       segments[2] === "mcp" ||
+      segments[2] === "persona-draft" ||
       segments[2] === "direct-thread" ||
       segments[2] === "direct-messages" ||
       segments[2] === "tasks" ||
@@ -11326,6 +11733,7 @@ function parseCreateTaskInput(value: unknown): CreateTaskInput {
     prompt: readString(value, "prompt"),
     status: readOptionalTaskStatus(value, "status"),
     assigneeTeammateId: readOptionalString(value, "assigneeTeammateId"),
+    requestedSkillId: readOptionalString(value, "requestedSkillId"),
   };
   validateTaskInput(input);
   return input;
@@ -11341,6 +11749,7 @@ function parseTaskUpdateInput(value: unknown): TaskUpdateInput {
     prompt: readOptionalString(value, "prompt"),
     status: readOptionalTaskStatus(value, "status"),
     assigneeTeammateId: readNullableString(value, "assigneeTeammateId"),
+    requestedSkillId: readNullableString(value, "requestedSkillId"),
     currentRunId: readNullableString(value, "currentRunId"),
   };
   validateTaskInput(input);
@@ -11356,6 +11765,113 @@ function validateTaskInput(input: TaskUpdateInput): void {
   }
   if (input.prompt !== undefined && input.prompt.trim().length === 0) {
     throw new Error("prompt must be a non-empty string");
+  }
+  if (input.requestedSkillId !== undefined && input.requestedSkillId !== null && input.requestedSkillId.trim().length === 0) {
+    throw new Error("requestedSkillId must be a non-empty string");
+  }
+}
+
+function parseCreateMemoryObjectInput(value: unknown): {
+  readonly scopeType: MemoryScopeType;
+  readonly ownerId: string;
+  readonly title: string;
+  readonly body: string;
+  readonly tags?: readonly string[];
+  readonly sourceRefs?: readonly MemorySourceRef[];
+  readonly reviewState?: MemoryReviewState;
+  readonly enabled?: boolean;
+  readonly sensitivity?: MemorySensitivity;
+  readonly retrievalProviderId?: string;
+  readonly retrievalHandle?: string;
+  readonly createdBy?: string;
+} {
+  if (!isRecord(value)) {
+    throw new Error("Memory request must be a JSON object");
+  }
+  const input = {
+    scopeType: readMemoryScopeType(value, "scopeType"),
+    ownerId: readString(value, "ownerId"),
+    title: readString(value, "title"),
+    body: readString(value, "body"),
+    tags: readOptionalStringArray(value, "tags"),
+    sourceRefs: readOptionalMemorySourceRefs(value, "sourceRefs"),
+    reviewState: readOptionalMemoryReviewState(value, "reviewState"),
+    enabled: readOptionalBoolean(value, "enabled"),
+    sensitivity: readOptionalMemorySensitivity(value, "sensitivity"),
+    retrievalProviderId: readOptionalString(value, "retrievalProviderId"),
+    retrievalHandle: readOptionalString(value, "retrievalHandle"),
+    createdBy: readOptionalString(value, "createdBy"),
+  };
+  validateMemoryInput(input);
+  return input;
+}
+
+function parseMemoryObjectUpdateInput(value: unknown): MemoryObjectUpdateInput {
+  if (!isRecord(value)) {
+    throw new Error("Memory update must be a JSON object");
+  }
+  const input: MemoryObjectUpdateInput = {
+    scopeType: readOptionalMemoryScopeType(value, "scopeType"),
+    ownerId: readOptionalString(value, "ownerId"),
+    title: readOptionalString(value, "title"),
+    body: readOptionalString(value, "body"),
+    tags: readOptionalStringArray(value, "tags"),
+    sourceRefs: readOptionalMemorySourceRefs(value, "sourceRefs"),
+    reviewState: readOptionalMemoryReviewState(value, "reviewState"),
+    enabled: readOptionalBoolean(value, "enabled"),
+    sensitivity: readOptionalMemorySensitivity(value, "sensitivity"),
+    retrievalProviderId: readNullableString(value, "retrievalProviderId"),
+    retrievalHandle: readNullableString(value, "retrievalHandle"),
+    createdBy: readNullableString(value, "createdBy"),
+    lastUsedAt: readNullableString(value, "lastUsedAt"),
+  };
+  validateMemoryInput(input);
+  return input;
+}
+
+function parseMemoryRecallRequest(value: unknown): {
+  readonly teammateId?: string;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly runId?: string;
+  readonly intent: MemoryRecallIntent;
+  readonly query: string;
+  readonly tags?: readonly string[];
+  readonly maxResults?: number;
+  readonly includePrivate?: boolean;
+  readonly includeDisabled?: boolean;
+  readonly includeSecretAdjacent?: boolean;
+} {
+  if (!isRecord(value)) {
+    throw new Error("Memory recall request must be a JSON object");
+  }
+  return {
+    teammateId: readOptionalString(value, "teammateId"),
+    channelId: readOptionalString(value, "channelId"),
+    taskId: readOptionalString(value, "taskId"),
+    runId: readOptionalString(value, "runId"),
+    intent: readMemoryRecallIntent(value, "intent"),
+    query: readStringAllowEmpty(value, "query"),
+    tags: readOptionalStringArray(value, "tags"),
+    maxResults: readOptionalNumber(value, "maxResults"),
+    includePrivate: readOptionalBoolean(value, "includePrivate"),
+    includeDisabled: readOptionalBoolean(value, "includeDisabled"),
+    includeSecretAdjacent: readOptionalBoolean(value, "includeSecretAdjacent"),
+  };
+}
+
+function validateMemoryInput(input: Partial<Pick<MemoryObjectUpdateInput, "ownerId" | "title" | "body" | "tags">>): void {
+  if (input.ownerId !== undefined && input.ownerId.trim().length === 0) {
+    throw new Error("ownerId must be a non-empty string");
+  }
+  if (input.title !== undefined && input.title.trim().length === 0) {
+    throw new Error("title must be a non-empty string");
+  }
+  if (input.body !== undefined && input.body.trim().length === 0) {
+    throw new Error("body must be a non-empty string");
+  }
+  if (input.tags?.some((tag) => !tag.trim())) {
+    throw new Error("tags entries must be non-empty strings");
   }
 }
 
@@ -11500,6 +12016,75 @@ function parseTeammateDirectMessageRequest(value: unknown): { readonly body: str
     requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
     providerPresetId: readOptionalString(value, "providerPresetId"),
   };
+}
+
+function parseTeammatePersonaDraft(value: unknown, teammate: AiTeammate): {
+  readonly teammateId: string;
+  readonly sourceKind: "agents-md" | "persona-md" | "markdown";
+  readonly sourcePath?: string;
+  readonly displayName: string;
+  readonly description: string;
+  readonly systemPrompt: string;
+  readonly appendSystemPrompt: readonly string[];
+  readonly warnings: readonly string[];
+} {
+  if (!isRecord(value)) {
+    throw new Error("Persona draft request must be a JSON object");
+  }
+  const content = readString(value, "content");
+  const sourcePath = readOptionalString(value, "sourcePath");
+  const sourceKind = inferPersonaSourceKind(sourcePath);
+  const title = extractMarkdownTitle(content);
+  const trimmedContent = content.trim();
+  const systemPrompt = trimmedContent.length > 12_000 ? `${trimmedContent.slice(0, 12_000)}\n\n[truncated]` : trimmedContent;
+  const warnings = [
+    "Persona draft was not applied to the durable teammate.",
+    "Persona text can influence behavior, but cannot grant tools, approvals, secrets, provider capability, external-send, or file-system permissions.",
+    ...personaPermissionWarnings(content),
+    ...(trimmedContent.length > 12_000 ? ["Content was truncated to 12000 characters for the draft prompt."] : []),
+  ];
+  return {
+    teammateId: teammate.id,
+    sourceKind,
+    sourcePath,
+    displayName: title ?? teammate.displayName,
+    description: title ? `Draft imported from ${sourceKind}.` : teammate.description,
+    systemPrompt,
+    appendSystemPrompt: [],
+    warnings,
+  };
+}
+
+function inferPersonaSourceKind(sourcePath: string | undefined): "agents-md" | "persona-md" | "markdown" {
+  const name = sourcePath ? basename(sourcePath).toLowerCase() : "";
+  if (name === "agents.md" || name === "agent.md") {
+    return "agents-md";
+  }
+  if (name === "persona.md") {
+    return "persona-md";
+  }
+  return "markdown";
+}
+
+function extractMarkdownTitle(content: string): string | undefined {
+  const line = content.split(/\r?\n/).find((item) => /^#\s+\S/.test(item));
+  const title = line?.replace(/^#\s+/, "").trim();
+  return title || undefined;
+}
+
+function personaPermissionWarnings(content: string): readonly string[] {
+  const lower = content.toLowerCase();
+  const warnings: string[] = [];
+  if (/\b(tool|tools|bash|write|edit|approval|approvals|permission|permissions)\b/.test(lower)) {
+    warnings.push("Draft mentions tools, approvals, or permissions; those fields are ignored for capability grants.");
+  }
+  if (/\b(secret|secrets|token|api key|credential|credentials)\b/.test(lower)) {
+    warnings.push("Draft mentions secrets or credentials; secret access must remain configured through explicit secret policy.");
+  }
+  if (/\b(external-send|send externally|slack|github comment|deploy|push)\b/.test(lower)) {
+    warnings.push("Draft mentions external sends, deploys, or pushes; external side effects still require explicit policy and approvals.");
+  }
+  return warnings;
 }
 
 function parseChannelMessageRequest(value: unknown): ChannelMessageRequest {
@@ -12926,6 +13511,86 @@ function readNullableStringArray(record: Record<string, unknown>, key: string): 
   return readOptionalStringArray(record, key);
 }
 
+function readMemoryScopeType(record: Record<string, unknown>, key: string): MemoryScopeType {
+  return requireMemoryScopeType(readString(record, key), key);
+}
+
+function readOptionalMemoryScopeType(record: Record<string, unknown>, key: string): MemoryScopeType | undefined {
+  const value = readOptionalString(record, key);
+  return value === undefined ? undefined : requireMemoryScopeType(value, key);
+}
+
+function requireMemoryScopeType(value: string, key: string): MemoryScopeType {
+  if (value !== "workspace" && value !== "channel" && value !== "teammate" && value !== "task" && value !== "run") {
+    throw new Error(`${key} must be one of: workspace, channel, teammate, task, run`);
+  }
+  return value;
+}
+
+function readOptionalMemoryReviewState(record: Record<string, unknown>, key: string): MemoryReviewState | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "candidate" && value !== "active" && value !== "disabled" && value !== "archived" && value !== "rejected") {
+    throw new Error(`${key} must be one of: candidate, active, disabled, archived, rejected`);
+  }
+  return value;
+}
+
+function readOptionalMemorySensitivity(record: Record<string, unknown>, key: string): MemorySensitivity | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "normal" && value !== "private" && value !== "secret-adjacent") {
+    throw new Error(`${key} must be one of: normal, private, secret-adjacent`);
+  }
+  return value;
+}
+
+function readMemoryRecallIntent(record: Record<string, unknown>, key: string): MemoryRecallIntent {
+  const value = readString(record, key);
+  if (value !== "private-chat" && value !== "channel-reply" && value !== "task-run" && value !== "review" && value !== "search") {
+    throw new Error(`${key} must be one of: private-chat, channel-reply, task-run, review, search`);
+  }
+  return value;
+}
+
+function readOptionalMemorySourceRefs(record: Record<string, unknown>, key: string): MemorySourceRef[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be an array`);
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`${key}[${index}] must be an object`);
+    }
+    const type = readString(item, "type");
+    if (
+      type !== "manual" &&
+      type !== "message" &&
+      type !== "decision" &&
+      type !== "doc" &&
+      type !== "attachment" &&
+      type !== "run-event" &&
+      type !== "artifact" &&
+      type !== "import"
+    ) {
+      throw new Error(`${key}[${index}].type is not supported`);
+    }
+    return removeUndefined({
+      type,
+      id: readString(item, "id"),
+      label: readOptionalString(item, "label"),
+      url: readOptionalString(item, "url"),
+    }) as MemorySourceRef;
+  });
+}
+
 function readMcpServerTransport(record: Record<string, unknown>, key: string): McpServerTransport {
   const value = record[key];
   if (!isRecord(value)) {
@@ -13474,6 +14139,33 @@ function readOptionalTaskStatusQuery(url: URL): TaskStatus | undefined {
     throw new Error(`status must be one of: ${taskStatuses.join(", ")}`);
   }
   return value as TaskStatus;
+}
+
+function readOptionalMemoryScopeTypeQuery(url: URL): MemoryScopeType | undefined {
+  const value = url.searchParams.get("scopeType");
+  return value === null ? undefined : requireMemoryScopeType(value, "scopeType");
+}
+
+function readOptionalMemoryReviewStateQuery(url: URL): MemoryReviewState | undefined {
+  const value = url.searchParams.get("reviewState");
+  if (value === null) {
+    return undefined;
+  }
+  if (value !== "candidate" && value !== "active" && value !== "disabled" && value !== "archived" && value !== "rejected") {
+    throw new Error("reviewState must be one of: candidate, active, disabled, archived, rejected");
+  }
+  return value;
+}
+
+function readOptionalMemorySensitivityQuery(url: URL): MemorySensitivity | undefined {
+  const value = url.searchParams.get("sensitivity");
+  if (value === null) {
+    return undefined;
+  }
+  if (value !== "normal" && value !== "private" && value !== "secret-adjacent") {
+    throw new Error("sensitivity must be one of: normal, private, secret-adjacent");
+  }
+  return value;
 }
 
 function readOptionalChannelExecutionProposalStatusQuery(url: URL): ChannelExecutionProposalStatus | undefined {

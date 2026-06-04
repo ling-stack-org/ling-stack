@@ -45,6 +45,7 @@ import type {
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
+  CreateMemoryObjectRequest,
   CreateMediaJobRequest,
   CreateTaskRequest,
   DaemonHealthResponse,
@@ -87,6 +88,10 @@ import type {
   MediaJobArtifactListResponse,
   MediaJobListResponse,
   MediaJobMutationResponse,
+  MemoryListResponse,
+  MemoryMutationResponse,
+  MemoryRecallRequest,
+  MemoryRecallResponse,
   McpServerListResponse,
   McpServerMutationRequest,
   McpServerMutationResponse,
@@ -125,6 +130,7 @@ import type {
   UpdateChannelWorkflowRequest,
   UpdateChannelWorkflowStepRequest,
   UpdateChannelRequest,
+  UpdateMemoryObjectRequest,
   UpdateTaskRequest,
   StartChannelWorkflowStepRequest,
   ReplaceTeammateChannelMembershipRequest,
@@ -138,8 +144,11 @@ import type {
   TeammateDirectThreadResponse,
   TeammateMcpBindingListResponse,
   TeammateMemoryScopeListResponse,
+  TeammatePersonaDraftRequest,
+  TeammatePersonaDraftResponse,
   TeammateSkillBindingListResponse,
   UpdateAiTeammateRequest,
+  UsedMemoryListResponse,
   WorkUnitDetailResponse,
   WorkUnitEventsResponse,
   WorkUnitKind,
@@ -210,6 +219,48 @@ export class LingDaemonClient {
 
   async cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {
     return this.post(`/runs/${encodeURIComponent(runId)}/cancel`, { cwd });
+  }
+
+  async listMemoryObjects(
+    cwd: string,
+    options: {
+      readonly scopeType?: string;
+      readonly ownerId?: string;
+      readonly reviewState?: string;
+      readonly enabled?: boolean;
+      readonly sensitivity?: string;
+      readonly tag?: string;
+      readonly limit?: number;
+    } = {},
+  ): Promise<MemoryListResponse> {
+    return this.get("/memory", { cwd, ...options });
+  }
+
+  async createMemoryObject(cwd: string, input: CreateMemoryObjectRequest): Promise<MemoryMutationResponse> {
+    return this.post("/memory", { cwd }, input);
+  }
+
+  async updateMemoryObject(cwd: string, memoryId: string, input: UpdateMemoryObjectRequest): Promise<MemoryMutationResponse> {
+    return this.patch(`/memory/${encodeURIComponent(memoryId)}`, { cwd }, input);
+  }
+
+  async recallMemory(cwd: string, input: MemoryRecallRequest): Promise<MemoryRecallResponse> {
+    return this.post("/memory/recall", { cwd }, input);
+  }
+
+  async listUsedMemoryEvents(
+    cwd: string,
+    options: {
+      readonly teammateId?: string;
+      readonly channelId?: string;
+      readonly taskId?: string;
+      readonly runId?: string;
+      readonly responseId?: string;
+      readonly memoryId?: string;
+      readonly limit?: number;
+    } = {},
+  ): Promise<UsedMemoryListResponse> {
+    return this.get("/memory/used", { cwd, ...options });
   }
 
   async getRuntime(cwd: string): Promise<RuntimeResponse> {
@@ -402,6 +453,14 @@ export class LingDaemonClient {
     input: ReplaceTeammateMemoryScopesRequest,
   ): Promise<TeammateMemoryScopeListResponse> {
     return this.put(`/teammates/${encodeURIComponent(teammateId)}/memory-scopes`, { cwd }, input);
+  }
+
+  async createTeammatePersonaDraft(
+    cwd: string,
+    teammateId: string,
+    input: TeammatePersonaDraftRequest,
+  ): Promise<TeammatePersonaDraftResponse> {
+    return this.post(`/teammates/${encodeURIComponent(teammateId)}/persona-draft`, { cwd }, input);
   }
 
   async getTeammateDirectThread(cwd: string, teammateId: string): Promise<TeammateDirectThreadResponse> {

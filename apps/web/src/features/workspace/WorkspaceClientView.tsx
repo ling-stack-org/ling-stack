@@ -89,7 +89,15 @@ import {
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
 import { CiTriageAuditPanel } from "../external-work/CiTriageAuditPanel.js";
-import { ArtifactRow, AvatarInitial, MetaRow, RunRepairHintBanner, StatusBadge } from "../../shared/components/index.js";
+import {
+  ArtifactRow,
+  AvatarInitial,
+  MetaRow,
+  RunRepairHintBanner,
+  StatusBadge,
+  UsedMemorySummary,
+  filterUsedMemoryEventsByResponse,
+} from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -108,6 +116,7 @@ import type {
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
   ExternalWorkCiTriageView,
+  MemoryObject,
   ProviderPreset,
   ResourceLease,
   RuntimeDiagnosticsResponse,
@@ -119,6 +128,7 @@ import type {
   TaskRunActionState,
   TeammateChannelMembership,
   UpdateChannelBriefRequest,
+  UsedMemoryEvent,
   WorkUnit,
 } from "../../types.js";
 import { ApprovalCard, type ApprovalResolution } from "../approvals/index.js";
@@ -222,6 +232,8 @@ export function WorkspaceClientView({
   tasks,
   taskForm,
   channelMessages,
+  memoryById,
+  usedMemoryEvents,
   channelExecutionProposals,
   channelAttachments,
   channelLinkPreviews,
@@ -332,6 +344,8 @@ export function WorkspaceClientView({
   readonly tasks: readonly Task[];
   readonly taskForm: TaskFormState;
   readonly channelMessages: readonly ChannelMessage[];
+  readonly memoryById: ReadonlyMap<string, MemoryObject>;
+  readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly channelExecutionProposals: readonly ChannelExecutionProposal[];
   readonly channelAttachments: readonly ChannelAttachment[];
   readonly channelLinkPreviews: readonly ChannelLinkPreview[];
@@ -1731,6 +1745,13 @@ export function WorkspaceClientView({
       const message = item.record;
       const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
       const executionProposals = executionProposalsByMessageId.get(message.id) ?? [];
+      const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
+      const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
+        <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
+      ) : undefined;
+      const nonChatAction = message.linkedTaskId
+        ? activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
+        : activityActionRow(item.id);
       return (
         <div className="message-group">
           <MessageBubble
@@ -1746,11 +1767,7 @@ export function WorkspaceClientView({
                 <Reply size={11} />
               </button>
             ) : undefined}
-            action={
-              plainChatMessage ? undefined : message.linkedTaskId ? (
-                activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
-              ) : activityActionRow(item.id)
-            }
+            action={plainChatMessage ? usedMemorySummary : nonChatAction}
           />
           {executionProposals.map((proposal) => (
             <ChannelExecutionProposalCard
@@ -2779,6 +2796,8 @@ export function WorkspaceClientView({
                     rootMessage={activeThreadRoot}
                     replies={activeThreadMessages}
                     teammates={teammateOptions}
+                    memoryById={memoryById}
+                    usedMemoryEvents={usedMemoryEvents}
                     draft={threadReplyDraft}
                     pending={threadReplyPending}
                     error={threadReplyError}
@@ -4308,6 +4327,8 @@ function ThreadReplyPanel({
   rootMessage,
   replies,
   teammates,
+  memoryById,
+  usedMemoryEvents,
   draft,
   pending,
   error,
@@ -4318,6 +4339,8 @@ function ThreadReplyPanel({
   readonly rootMessage: ChannelMessage;
   readonly replies: readonly ChannelMessage[];
   readonly teammates: readonly ChannelMention[];
+  readonly memoryById: ReadonlyMap<string, MemoryObject>;
+  readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly draft: string;
   readonly pending: boolean;
   readonly error: string;
@@ -4344,6 +4367,11 @@ function ThreadReplyPanel({
           <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates) })}</small>
         )}
         <p>{renderMessageBody(rootMessage.body)}</p>
+        <UsedMemorySummary
+          compact
+          events={filterUsedMemoryEventsByResponse(usedMemoryEvents, rootMessage.id)}
+          memoryById={memoryById}
+        />
       </div>
       <div className="thread-reply-list" aria-label={t("Replies")}>
         {replies.length === 0 ? (
@@ -4359,6 +4387,11 @@ function ThreadReplyPanel({
                 </div>
               )}
               <p>{renderMessageBody(reply.body)}</p>
+              <UsedMemorySummary
+                compact
+                events={filterUsedMemoryEventsByResponse(usedMemoryEvents, reply.id)}
+                memoryById={memoryById}
+              />
             </article>
           );
         })}

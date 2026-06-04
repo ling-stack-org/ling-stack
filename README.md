@@ -9,6 +9,8 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 ## Documentation
 
 - [Product design](docs/product-design.md)
+- [Ling Framework](docs/design/ling-framework.md)
+- [Ling Memory v1](docs/design/ling-memory-v1.md)
 - [Architecture](docs/architecture.md)
 - [v0.1 detailed design](docs/v0.1-detailed-design.md)
 - [Architecture Decision Records](docs/adr/README.md)

@@ -12,6 +12,9 @@ Tools are atomic capabilities such as `read`, `grep`, `bash`, `edit`, and `write
 - Leave room for future `AGENTS.md` and custom user-defined skill packs.
 - Ensure every skill execution still goes through allowed tools, provider capability checks, approval policy, and workflow state machines.
 
+This design sits under the broader [Ling Framework](ling-framework.md). Memory-specific
+behavior for teammates is covered by [Ling Memory v1](ling-memory-v1.md).
+
 ## Model
 
 ```ts
@@ -69,6 +72,30 @@ choose role template or blank
 This proves the product interaction for per-teammate model selection, channel binding, and
 scoped memory metadata without giving skills execution authority or bypassing the
 coordinator/state-machine path.
+
+## Teammate Persona Sources
+
+The current implementation stores a thin `systemPrompt` on each durable teammate and lets
+the private workspace settings edit it. That is the first persona layer.
+
+The target model should allow per-teammate profile sources such as `AGENT.md` or
+`persona.md`. These files can define role, behavior, tone, working preferences, and
+long-term persona anchors. They should import into reviewed teammate profile drafts before
+changing the durable teammate record.
+
+Persona sources do not grant permission. The effective execution boundary remains:
+
+```text
+teammate policy
++ channel policy
++ provider capability
++ allowed tools
++ approval policy
++ state-machine legality
+```
+
+This keeps imported markdown from becoming an implicit tool, approval, or external-send
+grant.
 
 ## Built-In Pack: `gstack-default`
 
