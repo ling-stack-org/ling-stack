@@ -87,6 +87,12 @@ import type {
   MediaJobArtifactListResponse,
   MediaJobListResponse,
   MediaJobMutationResponse,
+  McpServerListResponse,
+  McpServerMutationRequest,
+  McpServerMutationResponse,
+  McpServerSecretResponse,
+  McpServerToolSyncResponse,
+  McpToolListResponse,
   ProviderCheckResult,
   ProviderDraftCheckRequest,
   ProviderListResponse,
@@ -123,12 +129,14 @@ import type {
   StartChannelWorkflowStepRequest,
   ReplaceTeammateChannelMembershipRequest,
   ReplaceTeammateMemoryScopesRequest,
+  ReplaceTeammateMcpBindingsRequest,
   ReplaceTeammateSkillBindingsRequest,
   TeammateActivityListResponse,
   TeammateChannelMembershipListResponse,
   TeammateDirectMessageListResponse,
   TeammateDirectMessageMutationResponse,
   TeammateDirectThreadResponse,
+  TeammateMcpBindingListResponse,
   TeammateMemoryScopeListResponse,
   TeammateSkillBindingListResponse,
   UpdateAiTeammateRequest,
@@ -370,6 +378,18 @@ export class LingDaemonClient {
     input: ReplaceTeammateSkillBindingsRequest,
   ): Promise<TeammateSkillBindingListResponse> {
     return this.put(`/teammates/${encodeURIComponent(teammateId)}/skills`, { cwd }, input);
+  }
+
+  async listTeammateMcpBindings(cwd: string, teammateId: string): Promise<TeammateMcpBindingListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/mcp`, { cwd });
+  }
+
+  async replaceTeammateMcpBindings(
+    cwd: string,
+    teammateId: string,
+    input: ReplaceTeammateMcpBindingsRequest,
+  ): Promise<TeammateMcpBindingListResponse> {
+    return this.put(`/teammates/${encodeURIComponent(teammateId)}/mcp`, { cwd }, input);
   }
 
   async listTeammateMemoryScopes(cwd: string, teammateId: string): Promise<TeammateMemoryScopeListResponse> {
@@ -667,6 +687,38 @@ export class LingDaemonClient {
 
   async listProviderModels(cwd: string, input: ProviderModelListRequest): Promise<ProviderModelListResponse> {
     return this.post("/provider-models", { cwd }, input);
+  }
+
+  async listMcpServers(cwd: string): Promise<McpServerListResponse> {
+    return this.get("/mcp/servers", { cwd });
+  }
+
+  async createMcpServer(cwd: string, input: McpServerMutationRequest): Promise<McpServerMutationResponse> {
+    return this.post("/mcp/servers", { cwd }, input);
+  }
+
+  async updateMcpServer(cwd: string, serverId: string, input: McpServerMutationRequest): Promise<McpServerMutationResponse> {
+    return this.patch(`/mcp/servers/${encodeURIComponent(serverId)}`, { cwd }, input);
+  }
+
+  async getMcpServerSecret(cwd: string, serverId: string, secretName: string): Promise<McpServerSecretResponse> {
+    return this.get(`/mcp/servers/${encodeURIComponent(serverId)}/secret`, { cwd, name: secretName });
+  }
+
+  async deleteMcpServer(cwd: string, serverId: string): Promise<void> {
+    await this.request("DELETE", `/mcp/servers/${encodeURIComponent(serverId)}`, { cwd });
+  }
+
+  async checkMcpServer(cwd: string, serverId: string): Promise<McpServerMutationResponse> {
+    return this.post(`/mcp/servers/${encodeURIComponent(serverId)}/check`, { cwd });
+  }
+
+  async syncMcpServerTools(cwd: string, serverId: string): Promise<McpServerToolSyncResponse> {
+    return this.post(`/mcp/servers/${encodeURIComponent(serverId)}/sync-tools`, { cwd });
+  }
+
+  async listMcpTools(cwd: string, serverId?: string): Promise<McpToolListResponse> {
+    return this.get("/mcp/tools", { cwd, serverId });
   }
 
   async listApprovals(cwd: string, options: ListApprovalsRequest = {}): Promise<ApprovalListResponse> {

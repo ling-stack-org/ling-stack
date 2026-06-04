@@ -18,6 +18,7 @@ export * from "./external-work.js";
 export * from "./external-work-actions.js";
 export * from "./external-work-ci-triage.js";
 export * from "./external-work-scheduler.js";
+export * from "./mcp-types.js";
 export * from "./workspace-types.js";
 export * from "./storage/event-log.js";
 export * from "./storage/sqlite-run-store.js";

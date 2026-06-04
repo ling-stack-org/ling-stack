@@ -12,6 +12,7 @@ import {
   Settings,
   ShieldCheck,
   Users,
+  Wrench,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
@@ -80,6 +81,7 @@ export function SidebarNavigation({
       <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label="Ling Stack navigation">
       <nav className="primary-nav">
         <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeSidebarTarget === "providers"} onClick={() => onOpenView("providers")} />
+        <NavItem icon={<Wrench />} label={t("Tool Access")} active={activeSidebarTarget === "mcp"} onClick={() => onOpenView("mcp")} />
         <NavItem icon={<History />} label={t("Runs")} active={activeSidebarTarget === "runs"} onClick={() => onOpenView("runs")} />
         <NavItem icon={<Inbox />} label={t("Inbox")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
         <NavItem icon={<Database />} label={t("Media Jobs")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />

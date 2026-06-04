@@ -856,7 +856,8 @@ export function WorkspaceClientView({
     if (!feed) {
       return undefined;
     }
-    const animationFrame = globalThis.requestAnimationFrame(() => {
+    const frameIds: number[] = [];
+    const scrollToLatest = (attempt: number): void => {
       if (messageFeedItems.length > 0) {
         messageFeedVirtualizer.scrollToIndex(messageFeedItems.length - 1, { align: "end" });
       } else {
@@ -864,8 +865,16 @@ export function WorkspaceClientView({
       }
       messageFeedPinnedToLatestRef.current = true;
       setMessageFeedLatestButtonVisible(false);
-    });
-    return () => globalThis.cancelAnimationFrame(animationFrame);
+      if (attempt < 4) {
+        const frameId = globalThis.requestAnimationFrame(() => scrollToLatest(attempt + 1));
+        frameIds.push(frameId);
+      }
+    };
+    const frameId = globalThis.requestAnimationFrame(() => scrollToLatest(0));
+    frameIds.push(frameId);
+    return () => {
+      frameIds.forEach((scheduledFrameId) => globalThis.cancelAnimationFrame(scheduledFrameId));
+    };
   }, [
     channelMessagesLoading,
     channelProtocolLoading,
@@ -1370,7 +1379,13 @@ export function WorkspaceClientView({
   }
 
   function commitMention(option: ChannelMention): void {
-    const inserted = insertMentionToken(messageDraft, mentionPicker, option.label);
+    const textarea = composerTextareaRef.current;
+    const liveValue = textarea?.value ?? messageDraft;
+    const liveCaret = textarea?.selectionStart ?? liveValue.length;
+    const livePicker = findActiveMention(liveValue, liveCaret);
+    const endOfDraftPicker = findActiveMention(liveValue, liveValue.length);
+    const picker = chooseMostSpecificMentionPicker([mentionPicker, livePicker, endOfDraftPicker]);
+    const inserted = insertMentionToken(liveValue, picker, option.label);
     setMessageDraft(inserted.value);
     setSendState("idle");
     setSendError("");
@@ -5413,6 +5428,12 @@ function insertMentionToken(value: string, picker: ActiveMentionPicker | undefin
     value: `${prefix}${mention}${suffix ? ` ${suffix}` : " "}`,
     caret: prefix.length + mention.length + 1,
   };
+}
+
+function chooseMostSpecificMentionPicker(candidates: readonly (ActiveMentionPicker | undefined)[]): ActiveMentionPicker | undefined {
+  return candidates
+    .filter((candidate): candidate is ActiveMentionPicker => Boolean(candidate))
+    .sort((left, right) => (right.end - right.start) - (left.end - left.start))[0];
 }
 
 function pendingAssetLabel(state: PendingAssetState): string {

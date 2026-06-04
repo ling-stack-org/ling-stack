@@ -72,6 +72,13 @@ import type {
   MediaJobArtifactListResponse,
   MediaJobListResponse,
   MediaJobMutationResponse,
+  McpServerFormState,
+  McpServerListResponse,
+  McpServerMutationRequest,
+  McpServerMutationResponse,
+  McpServerSecretResponse,
+  McpServerToolSyncResponse,
+  McpToolListResponse,
   ProviderCheckResult,
   ProviderFormState,
   ProviderListResponse,
@@ -84,6 +91,7 @@ import type {
   ResourceLeaseListResponse,
   ReplaceTeammateChannelMembershipRequest,
   ReplaceTeammateMemoryScopesRequest,
+  ReplaceTeammateMcpBindingsRequest,
   ReplaceTeammateSkillBindingsRequest,
   RuntimeDiagnosticsResponse,
   RuntimeResponse,
@@ -110,6 +118,7 @@ import type {
   TeammateDirectMessageListResponse,
   TeammateDirectMessageMutationResponse,
   TeammateDirectThreadResponse,
+  TeammateMcpBindingListResponse,
   TeammateMemoryScopeListResponse,
   TeammateSkillBindingListResponse,
   UpdateAiTeammateRequest,
@@ -245,6 +254,18 @@ export async function replaceTeammateSkills(
   bindings: ReplaceTeammateSkillBindingsRequest["bindings"],
 ): Promise<TeammateSkillBindingListResponse> {
   return daemonClient.replaceTeammateSkills(cwd, teammateId, { bindings });
+}
+
+export async function listTeammateMcpBindings(cwd: string, teammateId: string): Promise<TeammateMcpBindingListResponse> {
+  return daemonClient.listTeammateMcpBindings(cwd, teammateId);
+}
+
+export async function replaceTeammateMcpBindings(
+  cwd: string,
+  teammateId: string,
+  bindings: ReplaceTeammateMcpBindingsRequest["bindings"],
+): Promise<TeammateMcpBindingListResponse> {
+  return daemonClient.replaceTeammateMcpBindings(cwd, teammateId, { bindings });
 }
 
 export async function listTeammateMemoryScopes(cwd: string, teammateId: string): Promise<TeammateMemoryScopeListResponse> {
@@ -583,6 +604,38 @@ export async function listProviderModels(cwd: string, form: ProviderFormState): 
   });
 }
 
+export async function listMcpServers(cwd: string): Promise<McpServerListResponse> {
+  return daemonClient.listMcpServers(cwd);
+}
+
+export async function createMcpServer(cwd: string, form: McpServerFormState): Promise<McpServerMutationResponse> {
+  return daemonClient.createMcpServer(cwd, mcpServerFormToPayload(form));
+}
+
+export async function updateMcpServer(cwd: string, serverId: string, form: McpServerFormState): Promise<McpServerMutationResponse> {
+  return daemonClient.updateMcpServer(cwd, serverId, mcpServerFormToPayload(form));
+}
+
+export async function getMcpServerSecret(cwd: string, serverId: string, secretName: string): Promise<McpServerSecretResponse> {
+  return daemonClient.getMcpServerSecret(cwd, serverId, secretName);
+}
+
+export async function deleteMcpServer(cwd: string, serverId: string): Promise<void> {
+  await daemonClient.deleteMcpServer(cwd, serverId);
+}
+
+export async function checkMcpServer(cwd: string, serverId: string): Promise<McpServerMutationResponse> {
+  return daemonClient.checkMcpServer(cwd, serverId);
+}
+
+export async function syncMcpServerTools(cwd: string, serverId: string): Promise<McpServerToolSyncResponse> {
+  return daemonClient.syncMcpServerTools(cwd, serverId);
+}
+
+export async function listMcpTools(cwd: string, serverId?: string): Promise<McpToolListResponse> {
+  return daemonClient.listMcpTools(cwd, serverId);
+}
+
 export async function listApprovals(
   cwd: string,
   options: { readonly status?: string; readonly runId?: string; readonly mediaJobId?: string } = {},
@@ -853,6 +906,48 @@ function providerFormToPayload(form: ProviderFormState): ProviderMutationRequest
   };
 }
 
+function mcpServerFormToPayload(form: McpServerFormState): McpServerMutationRequest {
+  const secretNames = [
+    form.transportType === "streamable-http" ? form.headerName.trim() : "",
+    form.transportType === "stdio" ? form.envName.trim() : "",
+  ].filter(Boolean);
+  const secrets = Object.fromEntries([
+    form.transportType === "streamable-http" && form.headerName.trim() && form.headerValue.trim()
+      ? [form.headerName.trim(), form.headerValue.trim()]
+      : undefined,
+    form.transportType === "stdio" && form.envName.trim() && form.envValue.trim()
+      ? [form.envName.trim(), form.envValue.trim()]
+      : undefined,
+  ].filter((entry): entry is [string, string] => Boolean(entry)));
+
+  return {
+    id: form.serverId.trim() || undefined,
+    displayName: form.displayName.trim(),
+    transport: form.transportType === "stdio"
+      ? {
+        type: "stdio",
+        command: form.command.trim(),
+        args: splitShellishArgs(form.argsText),
+        cwd: form.cwd.trim() || undefined,
+        env: {},
+        secretEnvNames: secretNames,
+      }
+      : {
+        type: "streamable-http",
+        url: form.url.trim(),
+        headers: {},
+        envHeaders: {},
+        secretHeaderNames: secretNames,
+      },
+    enabled: form.enabled,
+    required: form.required,
+    startupTimeoutSec: form.startupTimeoutSec ? Number(form.startupTimeoutSec) : undefined,
+    toolTimeoutSec: form.toolTimeoutSec ? Number(form.toolTimeoutSec) : undefined,
+    secrets,
+    clearSecretNames: form.clearSecretNames,
+  };
+}
+
 function channelFormToPayload(form: ChannelFormState): CreateChannelRequest {
   return {
     name: form.name.trim(),
@@ -916,6 +1011,13 @@ function splitCsv(value: string): string[] {
 function splitLines(value: string): string[] {
   return value
     .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function splitShellishArgs(value: string): string[] {
+  return value
+    .split(/\s+/)
     .map((item) => item.trim())
     .filter(Boolean);
 }

@@ -4,6 +4,7 @@ import type {
   ApprovalToolDecision,
   ChannelRuntimePolicy,
   ChannelStatus,
+  McpServerTransportType,
   MediaOperation,
   ProviderApi,
   ProviderKind,
@@ -57,6 +58,25 @@ export interface ProviderModelListFormState {
   readonly apiKey: string;
   readonly apiKeyRef: string;
   readonly authHeader: boolean;
+}
+
+export interface McpServerFormState {
+  readonly displayName: string;
+  readonly serverId: string;
+  readonly transportType: McpServerTransportType;
+  readonly command: string;
+  readonly argsText: string;
+  readonly cwd: string;
+  readonly url: string;
+  readonly headerName: string;
+  readonly headerValue: string;
+  readonly envName: string;
+  readonly envValue: string;
+  readonly clearSecretNames: readonly string[];
+  readonly startupTimeoutSec: string;
+  readonly toolTimeoutSec: string;
+  readonly enabled: boolean;
+  readonly required: boolean;
 }
 
 export interface ChannelFormState {

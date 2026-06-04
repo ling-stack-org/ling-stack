@@ -13,6 +13,10 @@ const defaultRuntimePolicy = {
 interface MockState {
   providers: unknown[];
   providerSecrets: Record<string, string>;
+  mcpServers: MockMcpServer[];
+  mcpTools: MockMcpTool[];
+  mcpServerSecrets: Record<string, Record<string, string>>;
+  teammateMcpBindings: MockTeammateMcpBinding[];
   channels: unknown[];
   channelMessages: unknown[];
   channelExecutionProposals: unknown[];
@@ -298,6 +302,60 @@ interface MockRuntimeSemaphoreSlot {
   acquiredAt: string;
   lastRenewedAt: string;
   expiresAt: string;
+}
+
+interface MockMcpServer {
+  id: string;
+  workspaceId: string;
+  displayName: string;
+  serverKey: string;
+  transport: "stdio" | "http" | "sse";
+  command?: string;
+  args: string[];
+  url?: string;
+  env: Record<string, string>;
+  headers: Record<string, string>;
+  secretNames: string[];
+  enabled: boolean;
+  status: "unknown" | "ready" | "failed" | "disabled";
+  lastCheck?: {
+    ok: boolean;
+    message: string;
+    checkedAt: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface MockMcpTool {
+  id: string;
+  serverId: string;
+  name: string;
+  rawName: string;
+  displayName: string;
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+  callableNamespace: string;
+  callableName: string;
+  sideEffectLevel: string;
+  defaultApproval: string;
+  enabled: boolean;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  discoveredAt: string;
+  updatedAt: string;
+}
+
+interface MockTeammateMcpBinding {
+  teammateId: string;
+  serverId: string;
+  mode: "selected" | "all_current_tools";
+  selectedToolNames: string[];
+  approvalOverrides: Record<string, string>;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 test("workspace opens as a task workbench with task context in the inspector", async ({ page }) => {
@@ -3096,6 +3154,285 @@ test("model workbench save validates before persisting and keeps errors inside t
   ).toBe(false);
 });
 
+test("MCP tool access page creates servers without exposing secret values", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工具接入" }).click();
+  await expect(page.getByRole("heading", { name: "工具接入", level: 1 })).toBeVisible();
+  await expect(page.getByText("统一管理 MCP 工具服务，并按 AI 队友单独授权。").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "添加 MCP 服务" })).toBeVisible();
+  await expect(page.getByText("没有 MCP 服务")).toBeVisible();
+
+  await page.getByRole("button", { name: "添加 MCP 服务" }).click();
+  const sheet = page.getByRole("dialog", { name: "添加 MCP 服务" });
+  await expect(sheet).toBeVisible();
+  await sheet.getByLabel("服务名称").fill("GitHub MCP");
+  await sheet.getByLabel("服务标识").fill("github");
+  await sheet.getByLabel("传输方式").selectOption("streamable-http");
+  await sheet.getByLabel("服务地址").fill("https://api.githubcopilot.com/mcp");
+  await sheet.getByLabel("Header 密钥名称").fill("X-Goog-Api-Key");
+  await sheet.getByLabel("Header 密钥值").fill("AQ.test-secret-token");
+  await sheet.getByRole("button", { name: "保存服务" }).click();
+
+  const serverRow = page.locator(".mcp-server-row").filter({ hasText: "GitHub MCP" });
+  await expect(serverRow).toBeVisible();
+  await expect(serverRow).toContainText("HTTP");
+  await expect(serverRow).toContainText("密钥已配置");
+  await expect(page.locator("body")).not.toContainText("AQ.test-secret-token");
+  await expect.poll(() => state.mcpServerSecrets.github?.["X-Goog-Api-Key"]).toBe("AQ.test-secret-token");
+
+  await serverRow.getByRole("button", { name: "检查连接" }).click();
+  await expect(serverRow).toContainText("就绪");
+  await expect(serverRow).toContainText("连接检查成功");
+  await expect.poll(async () => {
+    const box = await serverRow.boundingBox();
+    return box?.height ?? 0;
+  }).toBeLessThan(180);
+
+  await serverRow.getByRole("button", { name: "编辑" }).click();
+  const editSheet = page.getByRole("dialog", { name: "编辑 MCP 服务" });
+  await expect(editSheet).toBeVisible();
+  await expect(editSheet.getByText("Required for assigned teammates")).toHaveCount(0);
+  await expect(editSheet.getByRole("switch", { name: "启用服务" })).toBeVisible();
+  const secretInput = editSheet.getByLabel("Header 密钥值", { exact: true });
+  await expect(secretInput).toHaveAttribute("placeholder", "粘贴密钥");
+  await expect(secretInput).toHaveAttribute("type", "password");
+  await expect(secretInput).toHaveValue("AQ.test-secret-token");
+  await editSheet.getByRole("button", { name: "显示 Header 密钥值" }).click();
+  await expect(secretInput).toHaveAttribute("type", "text");
+  await editSheet.getByRole("button", { name: "隐藏 Header 密钥值" }).click();
+  await expect(secretInput).toHaveAttribute("type", "password");
+  await editSheet.getByText("高级设置").click();
+  await expect(editSheet.getByText("设为关键依赖")).toBeVisible();
+  await expect(editSheet.getByText("开启后，已授权队友在该服务不可用时将停止执行，避免缺少关键工具时继续运行。")).toBeVisible();
+  await editSheet.getByRole("button", { name: "清除输入" }).click();
+  await expect(secretInput).toHaveValue("");
+  await editSheet.getByRole("button", { name: "保存服务" }).click();
+  await expect.poll(() => state.mcpServerSecrets.github?.["X-Goog-Api-Key"]).toBeUndefined();
+  await expect(serverRow).toContainText("未配置密钥");
+
+  await expect(page.locator(".mcp-tool-row").filter({ hasText: "Search repositories" })).toHaveCount(0);
+  await serverRow.getByRole("button", { name: "同步工具列表" }).click();
+  await expect(serverRow).toContainText("工具列表已同步");
+  await expect(page.locator(".mcp-tool-row").filter({ hasText: "Search repositories" })).toBeVisible();
+  await serverRow.getByRole("button", { name: "收起工具" }).click();
+  await expect(page.locator(".mcp-tool-row").filter({ hasText: "Search repositories" })).toHaveCount(0);
+  await serverRow.getByRole("button", { name: "展开工具" }).click();
+  await expect(page.locator(".mcp-tool-row").filter({ hasText: "Search repositories" })).toBeVisible();
+});
+
+test("AI teammate MCP tab groups tools by server with filters", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [createMockTeammate({ id: "teammate_engineer", displayName: "工程队友" })];
+  state.mcpServers = [createMockMcpServer({ id: "mcp_github", displayName: "GitHub MCP", serverKey: "github" })];
+  state.mcpTools = [
+    createMockMcpTool({ id: "mcp_tool_search", serverId: "mcp_github", name: "search_repositories", title: "Search repositories" }),
+    createMockMcpTool({ id: "mcp_tool_issue", serverId: "mcp_github", name: "create_issue", title: "Create issue", sideEffectLevel: "write" }),
+    ...Array.from({ length: 32 }, (_, index) =>
+      createMockMcpTool({
+        id: `mcp_tool_extra_${index + 1}`,
+        serverId: "mcp_github",
+        name: `extra_tool_${index + 1}`,
+        title: `Extra tool ${index + 1}`,
+      })
+    ),
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工程队友" }).click();
+  const tabNames = await page.getByLabel("AI 队友工作区标签").getByRole("button").evaluateAll((buttons) =>
+    buttons.map((button) =>
+      Array.from(button.childNodes)
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent ?? "")
+        .join("")
+        .trim()
+    )
+  );
+  expect(tabNames.slice(-2)).toEqual(["设置", "MCP"]);
+
+  await page.getByLabel("AI 队友工作区标签").getByRole("button", { name: "设置" }).click();
+  const settingsPanel = page.getByLabel("队友设置");
+  await expect(settingsPanel).toBeVisible();
+  await expect(settingsPanel).not.toContainText("MCP 工具授权");
+
+  await page.getByLabel("AI 队友工作区标签").getByRole("button", { name: "MCP" }).click();
+  const mcpPanel = page.getByLabel("MCP 工具授权");
+  await expect(mcpPanel).toBeVisible();
+  await expect(mcpPanel).toContainText("只授权这个队友确实需要的 MCP 工具");
+  const githubServer = mcpPanel.locator(".teammate-mcp-server-row").filter({ hasText: "GitHub MCP" });
+  await expect(githubServer).toBeVisible();
+  await expect(githubServer).toContainText("34 个工具");
+  await expect(githubServer).toContainText("0 个已授权");
+  await expect(mcpPanel.getByLabel("Search repositories")).toHaveCount(0);
+  const collapsedMcpLayout = await page.evaluate(() => {
+    const pageScroller = document.scrollingElement ?? document.documentElement;
+    const panel = document.querySelector(".teammate-mcp-panel");
+    const serverRow = document.querySelector(".teammate-mcp-server-row");
+    return {
+      pageScrolls: pageScroller.scrollHeight > pageScroller.clientHeight + 2,
+      panelBackground: panel ? getComputedStyle(panel).backgroundColor : "",
+      panelBorderWidth: panel ? getComputedStyle(panel).borderTopWidth : "",
+      panelHeight: panel ? Math.round(panel.getBoundingClientRect().height) : 0,
+      serverRowHeight: serverRow ? Math.round(serverRow.getBoundingClientRect().height) : 0,
+    };
+  });
+  expect(collapsedMcpLayout.pageScrolls).toBe(false);
+  expect(collapsedMcpLayout.panelBackground).toBe("rgba(0, 0, 0, 0)");
+  expect(collapsedMcpLayout.panelBorderWidth).toBe("0px");
+  expect(collapsedMcpLayout.panelHeight).toBeLessThan(180);
+  expect(collapsedMcpLayout.serverRowHeight).toBeLessThan(72);
+  await githubServer.getByRole("button", { name: "展开工具" }).click();
+  await expect(mcpPanel.getByLabel("Search repositories")).toBeVisible();
+  await expect(githubServer.locator(".teammate-toggle.inline-toggle")).toHaveCount(0);
+  await expect(githubServer.locator(".teammate-mcp-tool-row")).toHaveCount(34);
+  await expect(githubServer.locator(".teammate-mcp-tool-check")).toHaveCount(34);
+  const mcpLayout = await page.evaluate(() => {
+    const pageScroller = document.scrollingElement ?? document.documentElement;
+    const workspace = document.querySelector(".teammate-workspace");
+    const list = document.querySelector(".teammate-mcp-server-list");
+    const toolTree = document.querySelector(".teammate-mcp-tool-tree");
+    const toolList = document.querySelector(".teammate-mcp-tool-list");
+    const serverRow = document.querySelector(".teammate-mcp-server-row");
+    const serverHeader = document.querySelector(".teammate-mcp-server-header");
+    const firstTool = document.querySelector(".teammate-mcp-tool-row");
+    const serverHeaderLeft = serverHeader?.getBoundingClientRect().left ?? 0;
+    const firstToolLeft = firstTool?.getBoundingClientRect().left ?? 0;
+    return {
+      pageScrolls: pageScroller.scrollHeight > pageScroller.clientHeight + 2,
+      workspaceOverflow: workspace ? getComputedStyle(workspace).overflow : "",
+      listOverflowY: list ? getComputedStyle(list).overflowY : "",
+      listScrolls: list ? list.scrollHeight > list.clientHeight + 2 : false,
+      toolTreeBorderLeftWidth: toolTree ? getComputedStyle(toolTree).borderLeftWidth : "",
+      toolIndent: Math.round(firstToolLeft - serverHeaderLeft),
+      toolListOverflowY: toolList ? getComputedStyle(toolList).overflowY : "",
+      toolListScrolls: toolList ? toolList.scrollHeight > toolList.clientHeight + 2 : false,
+      serverRowHeight: serverRow ? Math.round(serverRow.getBoundingClientRect().height) : 0,
+    };
+  });
+  expect(mcpLayout.pageScrolls).toBe(false);
+  expect(mcpLayout.workspaceOverflow).toBe("hidden");
+  expect(mcpLayout.listOverflowY).toBe("auto");
+  expect(mcpLayout.toolTreeBorderLeftWidth).toBe("1px");
+  expect(mcpLayout.toolIndent).toBeGreaterThanOrEqual(40);
+  expect(mcpLayout.toolListOverflowY).toBe("auto");
+  expect(mcpLayout.toolListScrolls).toBe(true);
+  expect(mcpLayout.serverRowHeight).toBeLessThan(500);
+  const checkboxLayout = await githubServer.locator(".teammate-mcp-tool-row").evaluateAll((rows) =>
+    rows.slice(0, 5).map((row) => {
+      const cell = row.querySelector(".teammate-mcp-tool-check");
+      const checkbox = row.querySelector("input[type='checkbox']");
+      const visual = row.querySelector(".teammate-mcp-tool-check-visual");
+      const cellBox = cell?.getBoundingClientRect();
+      const checkboxBox = checkbox?.getBoundingClientRect();
+      const visualBox = visual?.getBoundingClientRect();
+      const visualStyle = visual ? getComputedStyle(visual) : undefined;
+      return {
+        cellWidth: cellBox?.width ?? 0,
+        cellHeight: cellBox?.height ?? 0,
+        checkboxWidth: checkboxBox?.width ?? 0,
+        checkboxHeight: checkboxBox?.height ?? 0,
+        visualWidth: visualBox?.width ?? 0,
+        visualHeight: visualBox?.height ?? 0,
+        visualBorderWidth: visualStyle?.borderTopWidth ?? "",
+        visualBackground: visualStyle?.backgroundColor ?? "",
+        checkboxInsideCell: Boolean(cellBox && checkboxBox &&
+          checkboxBox.left >= cellBox.left &&
+          checkboxBox.top >= cellBox.top &&
+          checkboxBox.right <= cellBox.right &&
+          checkboxBox.bottom <= cellBox.bottom),
+        visualInsideCell: Boolean(cellBox && visualBox &&
+          visualBox.left >= cellBox.left &&
+          visualBox.top >= cellBox.top &&
+          visualBox.right <= cellBox.right &&
+          visualBox.bottom <= cellBox.bottom),
+      };
+    })
+  );
+  for (const item of checkboxLayout) {
+    expect(item.cellWidth).toBeGreaterThanOrEqual(24);
+    expect(item.cellHeight).toBeGreaterThanOrEqual(24);
+    expect(item.checkboxWidth).toBeGreaterThanOrEqual(16);
+    expect(item.checkboxHeight).toBeGreaterThanOrEqual(16);
+    expect(item.checkboxInsideCell).toBe(true);
+    expect(item.visualWidth).toBeGreaterThanOrEqual(16);
+    expect(item.visualHeight).toBeGreaterThanOrEqual(16);
+    expect(item.visualBorderWidth).toBe("1px");
+    expect(item.visualBackground).toBe("rgb(255, 255, 255)");
+    expect(item.visualInsideCell).toBe(true);
+  }
+  await githubServer.getByRole("button", { name: "全选当前 MCP" }).click();
+  await expect(githubServer).toContainText("34 个已授权");
+  await expect(githubServer.locator(".teammate-mcp-tool-row input:checked")).toHaveCount(34);
+  const selectedCheckboxLayout = await githubServer.locator(".teammate-mcp-tool-row.selected").evaluateAll((rows) =>
+    rows.slice(0, 5).map((row) => {
+      const cell = row.querySelector(".teammate-mcp-tool-check");
+      const checkbox = row.querySelector("input[type='checkbox']");
+      const visual = row.querySelector(".teammate-mcp-tool-check-visual");
+      const cellBox = cell?.getBoundingClientRect();
+      const checkboxBox = checkbox?.getBoundingClientRect();
+      const visualBox = visual?.getBoundingClientRect();
+      const visualStyle = visual ? getComputedStyle(visual) : undefined;
+      const tolerance = 0.5;
+      return Boolean(checkbox instanceof HTMLInputElement &&
+        checkbox.checked &&
+        cellBox &&
+        checkboxBox &&
+        visualBox &&
+        checkboxBox.left >= cellBox.left - tolerance &&
+        checkboxBox.top >= cellBox.top - tolerance &&
+        checkboxBox.right <= cellBox.right + tolerance &&
+        checkboxBox.bottom <= cellBox.bottom + tolerance &&
+        visualBox.left >= cellBox.left - tolerance &&
+        visualBox.top >= cellBox.top - tolerance &&
+        visualBox.right <= cellBox.right + tolerance &&
+        visualBox.bottom <= cellBox.bottom + tolerance &&
+        visualStyle?.backgroundColor === "rgb(14, 122, 99)");
+    })
+  );
+  expect(selectedCheckboxLayout.every(Boolean)).toBe(true);
+  await githubServer.getByRole("button", { name: "清空授权" }).click();
+  await expect(githubServer).toContainText("0 个已授权");
+  await expect(githubServer.locator(".teammate-mcp-tool-row input:checked")).toHaveCount(0);
+  await mcpPanel.getByLabel("Search repositories").check();
+  await expect(githubServer).toContainText("1 个已授权");
+  await githubServer.getByRole("button", { name: "全选当前 MCP" }).click();
+  await expect(githubServer).toContainText("34 个已授权");
+  await githubServer.getByRole("button", { name: "清空授权" }).click();
+  await expect(githubServer).toContainText("0 个已授权");
+  await mcpPanel.getByLabel("Search repositories").check();
+  await expect(githubServer).toContainText("1 个已授权");
+  await githubServer.getByRole("button", { name: "已授权" }).click();
+  await expect(mcpPanel.getByLabel("Search repositories")).toBeVisible();
+  await expect(mcpPanel.getByLabel("Create issue")).toHaveCount(0);
+  await githubServer.getByRole("button", { name: "写入或外部动作" }).click();
+  await expect(mcpPanel.getByLabel("Search repositories")).toHaveCount(0);
+  await expect(mcpPanel.getByLabel("Create issue")).toBeVisible();
+  await githubServer.getByRole("button", { name: "全部" }).click();
+  await mcpPanel.getByRole("button", { name: "更新工具授权" }).click();
+
+  await expect(mcpPanel).toContainText("已保存");
+  await expect.poll(() =>
+    state.teammateMcpBindings.some((binding) =>
+      binding.teammateId === "teammate_engineer" &&
+      binding.serverId === "mcp_github" &&
+      binding.mode === "selected" &&
+      binding.selectedToolNames.includes("search_repositories") &&
+      binding.enabled
+    )
+  ).toBe(true);
+  expect(state.teammateMcpBindings.some((binding) => binding.selectedToolNames.includes("create_issue"))).toBe(false);
+});
+
 test("AI teammates page creates a durable teammate and opens its private workspace", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -4676,6 +5013,10 @@ async function openChannelChatTools(page: Page): Promise<void> {
     await page.locator(".channel-more-button").click();
     await page.locator(".channel-more-item").filter({ hasText: /Activity filters|动态筛选/ }).click();
   }
+  if ((await filters.count()) === 0 || !(await filters.isVisible().catch(() => false))) {
+    await page.locator(".channel-more-button").click();
+    await page.locator(".channel-more-item").filter({ hasText: /Activity filters|动态筛选/ }).click();
+  }
   await expect(filters).toBeVisible();
 }
 
@@ -4726,6 +5067,10 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
   return {
     providers: [],
     providerSecrets: {},
+    mcpServers: [],
+    mcpTools: [],
+    mcpServerSecrets: {},
+    teammateMcpBindings: [],
     channels: [
       {
         id: "channel_engineering",
@@ -5390,6 +5735,143 @@ function createProviderTemplate(overrides: Record<string, unknown>): Record<stri
   };
 }
 
+function createMockMcpServer(overrides: Partial<MockMcpServer> = {}): MockMcpServer {
+  return {
+    id: "mcp_server_default",
+    workspaceId: "workspace_default",
+    displayName: "Filesystem MCP",
+    serverKey: "filesystem",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", cwd],
+    url: undefined,
+    env: {},
+    headers: {},
+    secretNames: [],
+    enabled: true,
+    status: "ready",
+    lastCheck: {
+      ok: true,
+      message: "MCP server is reachable.",
+      checkedAt: "2026-06-03T00:08:00.000Z",
+    },
+    createdAt: "2026-06-03T00:00:00.000Z",
+    updatedAt: "2026-06-03T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createMockMcpTool(overrides: Partial<MockMcpTool>): MockMcpTool {
+  const rawName = overrides.rawName ?? overrides.name ?? "read_file";
+  const displayName = overrides.displayName ?? overrides.title ?? rawName;
+  return {
+    id: "mcp_tool_default",
+    serverId: "mcp_server_default",
+    name: rawName,
+    rawName,
+    displayName,
+    title: displayName,
+    description: "Read a file through MCP.",
+    inputSchema: { type: "object" },
+    callableNamespace: "mcp",
+    callableName: rawName,
+    sideEffectLevel: "read",
+    defaultApproval: "ask",
+    enabled: true,
+    firstSeenAt: "2026-06-03T00:00:00.000Z",
+    lastSeenAt: "2026-06-03T00:00:00.000Z",
+    discoveredAt: "2026-06-03T00:00:00.000Z",
+    updatedAt: "2026-06-03T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createMockMcpServerFromBody(body: Record<string, unknown>, id: string, existing?: MockMcpServer): MockMcpServer {
+  const transportRecord = isRecord(body.transport) ? body.transport : {};
+  const transportType = transportRecord.type === "streamable-http"
+    ? "http"
+    : transportRecord.type === "stdio"
+      ? "stdio"
+      : existing?.transport ?? "stdio";
+  const serverKey = typeof body.id === "string" && body.id.trim()
+    ? body.id.trim()
+    : existing?.serverKey ?? id;
+  return createMockMcpServer({
+    ...existing,
+    id,
+    displayName: typeof body.displayName === "string" && body.displayName.trim()
+      ? body.displayName.trim()
+      : existing?.displayName ?? "MCP Server",
+    serverKey,
+    transport: transportType,
+    command: typeof transportRecord.command === "string" ? transportRecord.command : existing?.command,
+    args: Array.isArray(transportRecord.args) ? transportRecord.args.filter((item): item is string => typeof item === "string") : existing?.args ?? [],
+    url: typeof transportRecord.url === "string" && transportRecord.url.trim() ? transportRecord.url.trim() : existing?.url,
+    env: isRecord(transportRecord.env) ? Object.fromEntries(Object.entries(transportRecord.env).filter(([, value]) => typeof value === "string")) as Record<string, string> : existing?.env ?? {},
+    headers: isRecord(transportRecord.headers) ? Object.fromEntries(Object.entries(transportRecord.headers).filter(([, value]) => typeof value === "string")) as Record<string, string> : existing?.headers ?? {},
+    secretNames: Array.isArray(transportRecord.secretHeaderNames)
+      ? transportRecord.secretHeaderNames.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : Array.isArray(transportRecord.secretEnvNames)
+        ? transportRecord.secretEnvNames.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        : existing?.secretNames ?? [],
+    enabled: typeof body.enabled === "boolean" ? body.enabled : existing?.enabled ?? true,
+    status: typeof body.enabled === "boolean" && !body.enabled ? "disabled" : existing?.status ?? "unknown",
+    lastCheck: existing?.lastCheck,
+    updatedAt: "2026-06-03T00:08:00.000Z",
+  });
+}
+
+function collectMockMcpSecrets(state: MockState, serverId: string, serverKey: string, body: Record<string, unknown>): void {
+  const secrets = isRecord(body.secrets)
+    ? Object.fromEntries(Object.entries(body.secrets).filter(([, value]) => typeof value === "string" && value.trim().length > 0)) as Record<string, string>
+    : {};
+  if (Object.keys(secrets).length === 0) {
+    return;
+  }
+  state.mcpServerSecrets[serverId] = { ...(state.mcpServerSecrets[serverId] ?? {}), ...secrets };
+  state.mcpServerSecrets[serverKey] = state.mcpServerSecrets[serverId];
+}
+
+function toPublicMockMcpServer(server: MockMcpServer, state: MockState): Record<string, unknown> {
+  const configuredSecrets = state.mcpServerSecrets[server.id] ?? state.mcpServerSecrets[server.serverKey] ?? {};
+  const transport = server.transport === "stdio"
+    ? {
+      type: "stdio",
+      command: server.command ?? "",
+      args: server.args,
+      env: server.env,
+      secretEnvNames: server.secretNames,
+    }
+    : {
+      type: "streamable-http",
+      url: server.url ?? "",
+      headers: server.headers,
+      envHeaders: {},
+      secretHeaderNames: server.secretNames,
+    };
+  return {
+    id: server.id,
+    workspaceId: server.workspaceId,
+    displayName: server.displayName,
+    transport,
+    enabled: server.enabled,
+    required: false,
+    status: {
+      kind: server.status,
+      message: server.lastCheck?.message,
+      checkedAt: server.lastCheck?.checkedAt,
+    },
+    startupTimeoutSec: 30,
+    toolTimeoutSec: 60,
+    enabledTools: undefined,
+    disabledTools: [],
+    createdAt: server.createdAt,
+    updatedAt: server.updatedAt,
+    secretNames: [...new Set([...server.secretNames, ...Object.keys(configuredSecrets)])],
+    secretConfigured: Object.fromEntries(Object.keys(configuredSecrets).map((key) => [key, true])),
+  };
+}
+
 function createProviderFromBody(body: Record<string, unknown>, id: string, existing: Record<string, unknown> = {}): Record<string, unknown> {
   const apiKeyRef = typeof body.apiKey === "string" && body.apiKey.trim()
     ? `local:${id}`
@@ -5556,6 +6038,103 @@ async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, providers: state.providers } });
     return;
   }
+  if (request.method() === "GET" && path === "/mcp/servers") {
+    await route.fulfill({ json: { cwd, servers: state.mcpServers.map((server) => toPublicMockMcpServer(server, state)) } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/mcp/servers") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const serverId = typeof body.id === "string" && body.id.trim() ? body.id.trim() : `mcp_server_${state.mcpServers.length + 1}`;
+    const server = createMockMcpServerFromBody(body, serverId);
+    state.mcpServers.push(server);
+    collectMockMcpSecrets(state, server.id, server.serverKey, body);
+    await route.fulfill({ status: 201, json: { server: toPublicMockMcpServer(server, state) } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/mcp/tools") {
+    const serverId = url.searchParams.get("serverId");
+    await route.fulfill({
+      json: {
+        cwd,
+        serverId: serverId ?? undefined,
+        tools: state.mcpTools.filter((tool) => !serverId || tool.serverId === serverId),
+      },
+    });
+    return;
+  }
+  const mcpServerMatch = /^\/mcp\/servers\/([^/]+)(?:\/([^/]+))?$/.exec(path);
+  if (mcpServerMatch) {
+    const serverId = decodeURIComponent(mcpServerMatch[1]);
+    const action = mcpServerMatch[2];
+    const serverIndex = state.mcpServers.findIndex((server) => server.id === serverId || server.serverKey === serverId);
+    const server = serverIndex >= 0 ? state.mcpServers[serverIndex] : undefined;
+    if (!server) {
+      await route.fulfill({ status: 404, json: { error: "mcp_server_not_found" } });
+      return;
+    }
+    if (!action && request.method() === "GET") {
+      await route.fulfill({ json: { server: toPublicMockMcpServer(server, state) } });
+      return;
+    }
+    if (!action && request.method() === "PATCH") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const updated = createMockMcpServerFromBody(body, server.id, server);
+      state.mcpServers[serverIndex] = updated;
+      const clearSecretNames = Array.isArray(body.clearSecretNames)
+        ? body.clearSecretNames.filter((item): item is string => typeof item === "string")
+        : [];
+      for (const secretName of clearSecretNames) {
+        delete state.mcpServerSecrets[updated.id]?.[secretName];
+        delete state.mcpServerSecrets[updated.serverKey]?.[secretName];
+      }
+      collectMockMcpSecrets(state, updated.id, updated.serverKey, body);
+      await route.fulfill({ json: { server: toPublicMockMcpServer(updated, state) } });
+      return;
+    }
+    if (!action && request.method() === "DELETE") {
+      state.mcpServers = state.mcpServers.filter((item) => item.id !== server.id);
+      state.mcpTools = state.mcpTools.filter((tool) => tool.serverId !== server.id);
+      state.teammateMcpBindings = state.teammateMcpBindings.filter((binding) => binding.serverId !== server.id);
+      delete state.mcpServerSecrets[server.id];
+      delete state.mcpServerSecrets[server.serverKey];
+      await route.fulfill({ status: 204, body: "" });
+      return;
+    }
+    if (action === "check" && request.method() === "POST") {
+      server.status = server.enabled ? "ready" : "disabled";
+      server.lastCheck = {
+        ok: server.enabled,
+        message: server.enabled ? "MCP server is reachable." : "MCP server is disabled.",
+        checkedAt: "2026-06-03T00:09:00.000Z",
+      };
+      server.updatedAt = server.lastCheck.checkedAt;
+      await route.fulfill({ json: { server: toPublicMockMcpServer(server, state) } });
+      return;
+    }
+    if (action === "sync-tools" && request.method() === "POST") {
+      const discovered = [
+        createMockMcpTool({ id: `${server.id}_search_repositories`, serverId: server.id, name: "search_repositories", title: "Search repositories" }),
+        createMockMcpTool({ id: `${server.id}_create_issue`, serverId: server.id, name: "create_issue", title: "Create issue" }),
+      ];
+      state.mcpTools = [...state.mcpTools.filter((tool) => tool.serverId !== server.id), ...discovered];
+      await route.fulfill({ json: { server: toPublicMockMcpServer(server, state), tools: discovered } });
+      return;
+    }
+    if (action === "secret" && request.method() === "GET") {
+      const secretName = url.searchParams.get("name") ?? "";
+      const configuredSecrets = state.mcpServerSecrets[server.id] ?? state.mcpServerSecrets[server.serverKey] ?? {};
+      const secretValue = configuredSecrets[secretName] ?? "";
+      await route.fulfill({
+        json: {
+          serverId: server.id,
+          secretName,
+          secretValue,
+          configured: secretValue.length > 0,
+        },
+      });
+      return;
+    }
+  }
   if (request.method() === "GET" && path === "/teammates") {
     const includeHidden = url.searchParams.get("includeHidden") === "true";
     const includeDisabled = url.searchParams.get("includeDisabled") === "true";
@@ -5693,6 +6272,48 @@ async function handleDaemonRoute(
           cwd,
           teammateId,
           bindings: state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId),
+        },
+      });
+      return;
+    }
+    if (action === "mcp" && request.method() === "GET") {
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId,
+          bindings: state.teammateMcpBindings.filter((item) => item.teammateId === teammateId),
+        },
+      });
+      return;
+    }
+    if (action === "mcp" && request.method() === "PUT") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      state.teammateMcpBindings = state.teammateMcpBindings.filter((item) => item.teammateId !== teammateId);
+      const bindings = Array.isArray(body.bindings) ? body.bindings : [];
+      for (const binding of bindings) {
+        if (!isRecord(binding) || typeof binding.serverId !== "string") {
+          continue;
+        }
+        state.teammateMcpBindings.push({
+          teammateId,
+          serverId: binding.serverId,
+          mode: binding.mode === "all_current_tools" ? "all_current_tools" : "selected",
+          selectedToolNames: Array.isArray(binding.selectedToolNames)
+            ? binding.selectedToolNames.filter((item): item is string => typeof item === "string")
+            : [],
+          approvalOverrides: isRecord(binding.approvalOverrides)
+            ? Object.fromEntries(Object.entries(binding.approvalOverrides).filter(([, value]) => typeof value === "string")) as Record<string, string>
+            : {},
+          enabled: binding.enabled !== false,
+          createdAt: "2026-06-03T00:08:00.000Z",
+          updatedAt: "2026-06-03T00:08:00.000Z",
+        });
+      }
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId,
+          bindings: state.teammateMcpBindings.filter((item) => item.teammateId === teammateId),
         },
       });
       return;

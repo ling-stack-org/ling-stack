@@ -137,6 +137,18 @@ import type {
   UpdateExternalWorkSchedulerStateInput,
   UpsertExternalWorkSchedulerStateInput,
 } from "./external-work-types.js";
+import type {
+  CreateMcpServerInput,
+  ListMcpServersOptions,
+  ListMcpToolsOptions,
+  McpServer,
+  McpServerStatus,
+  McpTool,
+  ReplaceMcpServerToolInput,
+  ReplaceTeammateMcpBindingInput,
+  TeammateMcpBinding,
+  UpdateMcpServerInput,
+} from "./mcp-types.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
@@ -532,6 +544,24 @@ export interface RunStore {
     input: UpdateExternalWorkSchedulerStateInput,
     now: string,
   ): ExternalWorkSchedulerState | undefined;
+  createMcpServer(input: CreateMcpServerInput, now: string): McpServer;
+  getMcpServer(id: string): McpServer | undefined;
+  listMcpServers(options?: ListMcpServersOptions): McpServer[];
+  updateMcpServer(id: string, input: UpdateMcpServerInput, now: string): McpServer | undefined;
+  updateMcpServerStatus(id: string, status: McpServerStatus, now: string): McpServer | undefined;
+  deleteMcpServer(id: string): boolean;
+  setMcpServerSecret(serverId: string, secretName: string, secretValue: string, now: string): void;
+  getMcpServerSecret(serverId: string, secretName: string): string | undefined;
+  hasMcpServerSecret(serverId: string, secretName: string): boolean;
+  deleteMcpServerSecret(serverId: string, secretName: string): boolean;
+  replaceMcpServerTools(serverId: string, tools: readonly ReplaceMcpServerToolInput[], now: string): McpTool[];
+  listMcpTools(options?: ListMcpToolsOptions): McpTool[];
+  replaceTeammateMcpBindings(
+    teammateId: string,
+    bindings: readonly ReplaceTeammateMcpBindingInput[],
+    now: string,
+  ): TeammateMcpBinding[];
+  listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[];
   close(): void;
 }
 

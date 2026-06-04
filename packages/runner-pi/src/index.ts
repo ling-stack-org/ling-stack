@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import type { Api, Model, ModelThinkingLevel, OpenAICompletionsCompat } from "@earendil-works/pi-ai";
-import type { RunnerExtensionMetadata } from "@ling-stack/plugin-sdk";
+import type { Api, ImageContent, Model, ModelThinkingLevel, OpenAICompletionsCompat, TextContent } from "@earendil-works/pi-ai";
+import type { RunnerExtensionMetadata, ToolDefaultApproval, ToolSideEffectLevel } from "@ling-stack/plugin-sdk";
 import {
   AuthStorage,
   createAgentSession,
@@ -11,10 +11,12 @@ import {
   type AgentSessionEvent,
   type ExtensionFactory,
   type ResourceLoader,
+  type ToolDefinition,
   type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 
-export type PiRunnerToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
+export type PiRunnerBuiltinToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
+export type PiRunnerToolName = PiRunnerBuiltinToolName | string;
 export type PiRunnerApprovalToolName = PiRunnerToolName;
 
 export type PiRunnerProviderApi =
@@ -53,6 +55,7 @@ export interface PiRunnerApprovalRequest {
   readonly input: unknown;
   readonly task: PiRunnerTask;
   readonly cwd: string;
+  readonly defaultApproval?: ToolDefaultApproval;
 }
 
 export interface PiRunnerApprovalDecision {
@@ -66,6 +69,7 @@ export interface PiRunnerRunOptions {
   readonly task: PiRunnerTask;
   readonly provider: PiRunnerProviderConfig;
   readonly tools?: readonly PiRunnerToolName[];
+  readonly mcpTools?: readonly PiRunnerMcpToolDefinition[];
   readonly thinkingLevel?: ModelThinkingLevel;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
@@ -75,6 +79,35 @@ export interface PiRunnerRunOptions {
   readonly onApprovalRequired?: (
     request: PiRunnerApprovalRequest,
   ) => PiRunnerApprovalDecision | Promise<PiRunnerApprovalDecision>;
+  readonly onMcpToolCall?: (request: PiRunnerMcpToolCallRequest) => PiRunnerMcpToolCallResult | Promise<PiRunnerMcpToolCallResult>;
+}
+
+export interface PiRunnerMcpToolDefinition {
+  readonly registeredName: string;
+  readonly serverId: string;
+  readonly rawName: string;
+  readonly displayName: string;
+  readonly description?: string;
+  readonly inputSchema: unknown;
+  readonly sideEffectLevel: ToolSideEffectLevel;
+  readonly defaultApproval: ToolDefaultApproval;
+}
+
+export interface PiRunnerMcpToolCallRequest {
+  readonly toolCallId: string;
+  readonly registeredName: string;
+  readonly serverId: string;
+  readonly rawName: string;
+  readonly input: unknown;
+  readonly task: PiRunnerTask;
+  readonly cwd: string;
+  readonly defaultApproval: ToolDefaultApproval;
+}
+
+export interface PiRunnerMcpToolCallResult {
+  readonly content: readonly (TextContent | ImageContent | { readonly type: "text"; readonly text: string } | { readonly type: "image"; readonly data: string; readonly mimeType: string })[];
+  readonly details?: unknown;
+  readonly isError?: boolean;
 }
 
 export type PiRunnerEvent =
@@ -96,7 +129,7 @@ export interface PiRunnerResult {
   readonly messages: readonly unknown[];
 }
 
-const DEFAULT_TOOLS: readonly PiRunnerToolName[] = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const DEFAULT_TOOLS: readonly PiRunnerBuiltinToolName[] = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const SUPPORTED_PROVIDER_APIS: readonly PiRunnerProviderApi[] = [
   "openai-completions",
   "openai-responses",
@@ -180,6 +213,10 @@ export class PiRunnerAdapter {
       retry: { enabled: true, maxRetries: 1 },
     });
     const resourceLoader = await createLingStackResourceLoader(options, agentDir, settingsManager);
+    const activeTools = [
+      ...(options.tools ?? DEFAULT_TOOLS),
+      ...(options.mcpTools?.map((tool) => tool.registeredName) ?? []),
+    ];
 
     const { session } = await createAgentSession({
       cwd,
@@ -188,7 +225,7 @@ export class PiRunnerAdapter {
       modelRegistry,
       model,
       thinkingLevel: options.thinkingLevel ?? "medium",
-      tools: [...(options.tools ?? DEFAULT_TOOLS)],
+      tools: activeTools,
       resourceLoader,
       sessionManager: SessionManager.inMemory(cwd),
       settingsManager,
@@ -309,7 +346,10 @@ async function createLingStackResourceLoader(
     noContextFiles: true,
     systemPrompt: getLingStackSystemPrompt(options),
     appendSystemPrompt: [...(options.appendSystemPrompt ?? [])],
-    extensionFactories: [createLingStackApprovalExtension(options)],
+    extensionFactories: [
+      createLingStackApprovalExtension(options),
+      ...(options.mcpTools?.length ? [createLingStackMcpProxyExtension(options)] : []),
+    ],
   });
   await resourceLoader.reload();
   return resourceLoader;
@@ -359,8 +399,100 @@ function createLingStackApprovalExtension(options: PiRunnerRunOptions): Extensio
   };
 }
 
+function createLingStackMcpProxyExtension(options: PiRunnerRunOptions): ExtensionFactory {
+  return (pi) => {
+    for (const tool of options.mcpTools ?? []) {
+      const definition: ToolDefinition = {
+        name: tool.registeredName,
+        label: tool.displayName,
+        description: tool.description ?? `Call MCP tool ${tool.rawName} from ${tool.serverId}.`,
+        promptSnippet: `Call MCP tool ${tool.displayName}`,
+        parameters: normalizeMcpToolParameters(tool.inputSchema),
+        executionMode: tool.sideEffectLevel === "read" ? "parallel" : "sequential",
+        execute: async (toolCallId, params, signal) => {
+          if (!options.onMcpToolCall) {
+            throw new Error(`MCP tool ${tool.rawName} is not connected in this runner.`);
+          }
+          if (options.onApprovalRequired) {
+            const decision = await options.onApprovalRequired({
+              toolCallId,
+              toolName: tool.registeredName,
+              input: params,
+              task: options.task,
+              cwd: options.cwd,
+              defaultApproval: tool.defaultApproval,
+            });
+            if (!decision.approved) {
+              throw new Error(decision.reason ?? `MCP tool ${tool.rawName} was denied by Ling Stack approval policy.`);
+            }
+          } else if (tool.defaultApproval !== "allow") {
+            throw new Error(`MCP tool ${tool.rawName} requires approval but no approval handler is configured.`);
+          }
+
+          const result = await options.onMcpToolCall({
+            toolCallId,
+            registeredName: tool.registeredName,
+            serverId: tool.serverId,
+            rawName: tool.rawName,
+            input: params,
+            task: options.task,
+            cwd: options.cwd,
+            defaultApproval: tool.defaultApproval,
+          });
+          if (result.isError) {
+            throw new Error(formatMcpToolError(result));
+          }
+          return {
+            content: normalizeMcpToolResultContent(result.content),
+            details: {
+              serverId: tool.serverId,
+              rawName: tool.rawName,
+              result: result.details,
+            },
+          };
+        },
+      };
+      pi.registerTool(definition);
+    }
+  };
+}
+
 function isApprovalToolName(toolName: string): toolName is PiRunnerApprovalToolName {
   return APPROVAL_REQUIRED_TOOLS.has(toolName);
+}
+
+function normalizeMcpToolParameters(inputSchema: unknown): ToolDefinition["parameters"] {
+  if (isRecord(inputSchema) && inputSchema.type === "object") {
+    return inputSchema as ToolDefinition["parameters"];
+  }
+  return {
+    type: "object",
+    properties: {},
+    required: [],
+  } as ToolDefinition["parameters"];
+}
+
+function normalizeMcpToolResultContent(
+  content: PiRunnerMcpToolCallResult["content"],
+): (TextContent | ImageContent)[] {
+  const normalized: (TextContent | ImageContent)[] = [];
+  for (const item of content) {
+    if (item.type === "text") {
+      normalized.push({ type: "text", text: item.text });
+    } else if (item.type === "image") {
+      normalized.push({ type: "image", data: item.data, mimeType: item.mimeType });
+    }
+  }
+  return normalized.length > 0 ? normalized : [{ type: "text", text: "MCP tool completed without textual output." }];
+}
+
+function formatMcpToolError(result: PiRunnerMcpToolCallResult): string {
+  const text = result.content
+    .filter((item): item is TextContent => item.type === "text")
+    .map((item) => item.text)
+    .join("\n")
+    .trim();
+  return text || "MCP tool returned an error.";
 }
 
 function getLingStackSystemPrompt(options: PiRunnerRunOptions): string {
@@ -373,6 +505,10 @@ function getLingStackSystemPrompt(options: PiRunnerRunOptions): string {
       "Keep outputs concise and leave an auditable trail through tool calls.",
     ].join("\n")
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function formatTaskPrompt(task: PiRunnerTask): string {
