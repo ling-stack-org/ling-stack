@@ -4,6 +4,29 @@ export type RunTool = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write
 
 export type RunThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
+export type SessionPermissionMode = "ask_everything" | "balanced" | "workspace_write" | "full_access" | "custom";
+
+export interface PermissionConfirmation {
+  readonly mode: "full_access";
+  readonly confirmed: true;
+  readonly confirmedAt: string;
+  readonly reason: string;
+}
+
+export interface EffectiveRunPolicyRiskNote {
+  readonly code: string;
+  readonly message: string;
+  readonly tool?: RunTool;
+}
+
+export interface EffectiveRunPolicySnapshot {
+  readonly mode: SessionPermissionMode;
+  readonly toolDecisions: Record<RunTool, ApprovalToolDecision>;
+  readonly allowedWritePaths: readonly string[];
+  readonly workspacePolicyUpdatedAt?: string;
+  readonly riskNotes: readonly EffectiveRunPolicyRiskNote[];
+}
+
 export interface DaemonHealthResponse {
   readonly ok: boolean;
   readonly service?: string;
@@ -232,7 +255,14 @@ export type RunEventType =
   | "approval_approved"
   | "approval_denied"
   | "approval_expired"
+  | "approval_cancelled"
   | "artifact_created"
+  | "run_intervention_created"
+  | "run_followup_queued"
+  | "run_interrupt_requested"
+  | "run_continuation_starting"
+  | "run_continuation_started"
+  | "run_intervention_failed"
   | "result";
 
 export interface RunEventEnvelope {
@@ -260,6 +290,9 @@ export interface RunSession {
   readonly requestSnapshot: unknown;
   readonly eventLogPath: string;
   readonly workUnitId?: string;
+  readonly parentRunId?: string;
+  readonly interventionId?: string;
+  readonly continuationReason?: RunInterventionMode;
   readonly summaryPath?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;
@@ -282,6 +315,54 @@ export interface RunListResponse {
 export interface RunCancelResponse {
   readonly cancelled: boolean;
   readonly active: boolean;
+  readonly run?: RunSession;
+  readonly event?: RunEventEnvelope;
+}
+
+export type RunInterventionMode = "queue_followup" | "interrupt_redirect";
+
+export type RunInterventionStatus =
+  | "queued"
+  | "cancelling_source"
+  | "starting_continuation"
+  | "started"
+  | "failed"
+  | "cancelled";
+
+export interface RunIntervention {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly sourceRunId: string;
+  readonly sourceWorkUnitId?: string;
+  readonly sourceAttemptId?: string;
+  readonly continuationRunId?: string;
+  readonly continuationWorkUnitId?: string;
+  readonly mode: RunInterventionMode;
+  readonly status: RunInterventionStatus;
+  readonly instruction: string;
+  readonly requestedBy: "local-user" | "system";
+  readonly idempotencyKey: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly failureReason?: string;
+}
+
+export interface CreateRunInterventionRequest {
+  readonly mode: RunInterventionMode;
+  readonly instruction: string;
+  readonly idempotencyKey?: string;
+}
+
+export interface RunInterventionListResponse {
+  readonly cwd: string;
+  readonly interventions: readonly RunIntervention[];
+}
+
+export interface RunInterventionResponse {
+  readonly cwd: string;
+  readonly intervention: RunIntervention;
   readonly run?: RunSession;
   readonly event?: RunEventEnvelope;
 }

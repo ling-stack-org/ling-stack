@@ -45,6 +45,7 @@ interface MockState {
   tasks: unknown[];
   runs: MockRun[];
   eventsByRun: Record<string, MockRunEvent[]>;
+  runInterventions: MockRunIntervention[];
   nextStreamEvents?: MockRunEvent[];
   providerCheckDelayMs?: number;
   runResponseDelayMs?: number;
@@ -52,6 +53,7 @@ interface MockState {
   failNextChannelMessage?: boolean;
   lastChannelMessageRequest?: Record<string, unknown>;
   channelMessageQueries?: Record<string, unknown>[];
+  pendingChannelAiReplies?: Record<string, string>;
   failNextTaskCreate?: boolean;
   linkPreviewDelayMs?: number;
   approvals: MockApproval[];
@@ -74,6 +76,7 @@ interface MockState {
   lastExternalWorkWorkflowConfigure?: Record<string, unknown>;
   mediaJobs: MockMediaJob[];
   workUnits: MockWorkUnit[];
+  workUnitActionDelayMs?: number;
   runtimeSemaphoreSlots: MockRuntimeSemaphoreSlot[];
   runtimeEventsByWorkUnit: Record<string, MockRuntimeEvent[]>;
   workUnitAttemptsByWorkUnit: Record<string, MockWorkUnitAttempt[]>;
@@ -97,10 +100,33 @@ interface MockRun {
   requestSnapshot: unknown;
   eventLogPath: string;
   workUnitId?: string;
+  parentRunId?: string;
+  interventionId?: string;
+  continuationReason?: string;
   summaryPath?: string;
   errorMessage?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+interface MockRunIntervention {
+  id: string;
+  workspaceId: string;
+  sourceRunId: string;
+  sourceWorkUnitId?: string;
+  sourceAttemptId?: string;
+  continuationRunId?: string;
+  continuationWorkUnitId?: string;
+  mode: "queue_followup" | "interrupt_redirect";
+  status: "queued" | "cancelling_source" | "starting_continuation" | "started" | "failed" | "cancelled";
+  instruction: string;
+  requestedBy: "local-user" | "system";
+  idempotencyKey: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  failureReason?: string;
 }
 
 interface MockRunEvent {
@@ -1105,10 +1131,12 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(page.locator(".composer-preview-thumbnail[alt='shot.png']")).toBeVisible();
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Send" })).toBeEnabled();
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText("Sending message...")).toBeVisible();
-  await expect(page.getByText("AI teammate is replying...")).toBeVisible();
 
   await expect(page.getByText("@Engineer please refine the channel requirements")).toBeVisible();
+  await expect(page.locator(".channel-composer .composer-status-row.loading")).toHaveCount(0);
+  const pendingReply = page.locator(".message-bubble").filter({ hasText: "AI teammate is replying..." });
+  await expect(pendingReply).toBeVisible();
+  await expect(pendingReply).toHaveClass(/message-bubble-peer/);
   await expect(page.getByText("收到，我会按频道上下文推进。")).toBeVisible();
   await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
   await expect.poll(() => state.lastChannelMessageRequest?.providerPresetId).toBe("provider_local");
@@ -1490,7 +1518,7 @@ test("channel activity keeps the composer visible while the message feed scrolls
   const latestButtonBox = await latestButton.boundingBox();
   expect(latestButtonBox?.width ?? 0).toBeGreaterThanOrEqual(40);
   expect(latestButtonBox?.height ?? 0).toBeGreaterThanOrEqual(40);
-  await latestButton.click();
+  await latestButton.click({ force: true });
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   await expect(latestButton).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
@@ -3726,6 +3754,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     expect(surface.maxChannel, `${surface.selector} should stay on dark console tokens`).toBeLessThanOrEqual(45);
   }
 
+  await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0);
   await page.locator(".teammate-chat-composer-actions input[type=file]").setInputFiles({
     name: "private-notes.md",
     mimeType: "text/markdown",
@@ -4681,6 +4710,34 @@ test("run detail keeps debug event timeline contained", async ({ page }) => {
   await expect.poll(() => readHorizontalOverflow(page, ".run-detail-events, .tool-event-list, .debug-details")).toEqual([]);
 });
 
+test("run detail can queue guidance and cancel queued intervention", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs = state.runs.map((run) => ({
+    ...run,
+    status: "running",
+    endedAt: undefined,
+    errorMessage: undefined,
+  }));
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await page.getByRole("button", { name: /Inspect workspace/ }).click();
+
+  const guidancePanel = page.locator(".run-guidance-panel");
+  await expect(guidancePanel.getByRole("heading", { name: "Run guidance" })).toBeVisible();
+  await guidancePanel.getByPlaceholder("Tell this run what to do next...").fill("After this finishes, inspect the memory audit UI.");
+  await guidancePanel.getByRole("button", { name: "Queue guidance" }).click();
+
+  await expect.poll(() => state.runInterventions.length).toBe(1);
+  await expect(guidancePanel).toContainText("After this finishes, inspect the memory audit UI.");
+  await expect(guidancePanel).toContainText("Queued");
+
+  await guidancePanel.getByRole("button", { name: "Cancel" }).click();
+  await expect.poll(() => state.runInterventions[0]?.status).toBe("cancelled");
+  await expect(guidancePanel).toContainText("Cancelled");
+});
+
 test("save and check enables a disabled provider before checking", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
@@ -4969,6 +5026,145 @@ test("run detail renders artifact rows from the daemon API", async ({ page }) =>
   await expect(downloadLink).toHaveAttribute("download", "003-seedream-image.png");
 });
 
+test("workspace task run sends the selected session permission mode", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Relay",
+      lastCheck: { ok: true, code: "ready", message: "ready", checkedAt: "2026-05-25T00:11:00.000Z" },
+    }),
+  ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel
+  );
+  state.runs = [];
+  state.tasks = state.tasks.map((task) =>
+    isRecord(task) && task.id === "task_inspect"
+      ? { ...task, status: "todo", currentRunId: undefined }
+      : task
+  );
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
+  const taskDetail = page.locator("article.task-detail");
+  await expect(taskDetail.getByLabel("Permission mode")).toBeVisible();
+  await taskDetail.getByLabel("Permission mode").selectOption("workspace_write");
+  await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
+
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.permissionMode : undefined;
+  }).toBe("workspace_write");
+});
+
+test("workspace full access task run requires confirmation and sends confirmation evidence", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Relay",
+      lastCheck: { ok: true, code: "ready", message: "ready", checkedAt: "2026-05-25T00:11:00.000Z" },
+    }),
+  ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) ? { ...channel, defaultProviderPresetId: "provider_ready" } : channel
+  );
+  state.runs = [];
+  state.tasks = state.tasks.map((task) =>
+    isRecord(task) && task.id === "task_inspect"
+      ? { ...task, status: "todo", currentRunId: undefined }
+      : task
+  );
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await openTaskFromAttentionQueue(page, "Inspect workspace");
+  const taskDetail = page.locator("article.task-detail");
+  await taskDetail.getByLabel("Permission mode").selectOption("full_access");
+  await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
+
+  const confirmSheet = page.getByRole("dialog", { name: "Confirm full access" });
+  await expect(confirmSheet).toBeVisible();
+  await confirmSheet.getByRole("button", { name: "Cancel" }).last().click();
+  await expect(confirmSheet).toHaveCount(0);
+  expect(state.runs).toHaveLength(0);
+
+  await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
+  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Start with full access" }).click();
+
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.permissionConfirmation : undefined;
+  }).toMatchObject({
+    mode: "full_access",
+    confirmed: true,
+    reason: "user_confirmed_full_access",
+  });
+});
+
+test("run detail can stop an active run and keeps the permission snapshot visible", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.workUnitActionDelayMs = 1_000;
+  state.runs = state.runs.map((run) => ({
+    ...run,
+    status: "running",
+    workUnitId: "wu_running",
+    errorMessage: undefined,
+    requestSnapshot: {
+      ...(isRecord(run.requestSnapshot) ? run.requestSnapshot : {}),
+      permissionMode: "workspace_write",
+      effectivePolicySnapshot: {
+        mode: "workspace_write",
+        label: "Workspace write",
+        allowedWritePaths: [cwd],
+        toolDecisions: { read: "allow", bash: "ask", write: "allow" },
+        approvalRequiredFor: ["bash"],
+        mcpToolCount: 0,
+        riskNotes: ["Writes stay inside the channel path."],
+      },
+    },
+  }));
+  state.workUnits = [
+    {
+      id: "wu_running",
+      workspaceId: "workspace_default",
+      kind: "run",
+      ownerType: "task",
+      ownerId: "task_inspect",
+      channelId: "channel_engineering",
+      taskId: "task_inspect",
+      providerPresetId: "provider_local",
+      idempotencyKey: "test-running-unit",
+      status: "running",
+      priority: 0,
+      attemptCount: 1,
+      activeAttemptId: "attempt_running",
+      createdByActor: "local-user",
+      request: {},
+      timeoutPolicy: { claimTtlMs: 60_000, heartbeatTtlMs: 60_000, cancelGraceMs: 15_000 },
+      linkedRunId: "run_failed",
+      createdAt: "2026-05-22T00:00:00.000Z",
+      updatedAt: "2026-05-22T00:01:00.000Z",
+      startedAt: "2026-05-22T00:01:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await page.getByRole("button", { name: /Inspect workspace/ }).click();
+
+  const detail = page.getByLabel("Run detail");
+  await expect(detail).toContainText("Workspace write");
+  await detail.getByRole("button", { name: "Stop" }).click();
+  await expect(detail.getByRole("button", { name: "Stopping" })).toBeVisible();
+  await expect.poll(() => state.workUnits.find((unit) => unit.id === "wu_running")?.status).toBe("cancelled");
+  await expect.poll(() => state.runs.find((run) => run.id === "run_failed")?.status).toBe("cancelled");
+  await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_1")?.status).toBe("cancelled");
+});
+
 test("media jobs page lists, runs, and creates media jobs", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
@@ -5220,16 +5416,16 @@ async function openChannelSidePanel(page: Page, name: "Progress" | "Files" | "Co
 }
 
 async function openChannelChatTools(page: Page): Promise<void> {
-  const filters = page.locator(".activity-filter-toolbar");
-  if ((await filters.count()) === 0 || !(await filters.isVisible().catch(() => false))) {
+  const searchInput = page.getByPlaceholder(/Search activity|搜索动态/).first();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await searchInput.isVisible().catch(() => false)) {
+      return;
+    }
     await page.locator(".channel-more-button").click();
     await page.locator(".channel-more-item").filter({ hasText: /Activity filters|动态筛选/ }).click();
+    await page.waitForTimeout(50);
   }
-  if ((await filters.count()) === 0 || !(await filters.isVisible().catch(() => false))) {
-    await page.locator(".channel-more-button").click();
-    await page.locator(".channel-more-item").filter({ hasText: /Activity filters|动态筛选/ }).click();
-  }
-  await expect(filters).toBeVisible();
+  await expect(searchInput).toBeVisible();
 }
 
 async function readScrollState(page: Page, selector: string): Promise<{ readonly atBottom: boolean; readonly top: number; readonly max: number }> {
@@ -5335,6 +5531,7 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     ],
     runs: [run],
     eventsByRun: {},
+    runInterventions: [],
     approvals: [
       {
         id: "approval_1",
@@ -7211,6 +7408,19 @@ async function handleDaemonRoute(
         const rightCreatedAt = typeof right.createdAt === "string" ? right.createdAt : "";
         return leftCreatedAt.localeCompare(rightCreatedAt);
       });
+    const pendingReplyById = state.pendingChannelAiReplies ?? {};
+    for (const message of messages) {
+      if (!isRecord(message) || message.status !== "pending") {
+        continue;
+      }
+      const readyBody = typeof message.id === "string" ? pendingReplyById[message.id] : undefined;
+      if (readyBody) {
+        message.body = readyBody;
+        message.status = "ready";
+        message.updatedAt = "2026-05-25T00:18:02.000Z";
+        delete pendingReplyById[message.id];
+      }
+    }
     const beforeIndex = beforeMessageId
       ? messages.findIndex((message) => isRecord(message) && message.id === beforeMessageId)
       : messages.length;
@@ -7274,17 +7484,19 @@ async function handleDaemonRoute(
           intent: "discuss",
           authorType: "ai-teammate",
           authorId: "engineer",
-          body: "收到，我会按频道上下文推进。",
+          body: "AI teammate is preparing a reply...",
           mentions: [],
           attachmentIds: [],
           linkPreviewIds: [],
-          status: "ready",
+          status: "pending",
           createdAt: "2026-05-25T00:18:01.000Z",
           updatedAt: "2026-05-25T00:18:01.000Z",
         }
       : undefined;
     if (aiReply) {
       state.channelMessages.push(aiReply);
+      state.pendingChannelAiReplies ??= {};
+      state.pendingChannelAiReplies[aiReply.id] = "收到，我会按频道上下文推进。";
     }
     await route.fulfill({ status: 201, json: aiReply ? { message, aiReply } : { message } });
     return;
@@ -7895,6 +8107,29 @@ async function handleDaemonRoute(
       const now = "2026-05-25T00:31:00.000Z";
       const updated = { ...workUnit, status: nextStatus, updatedAt: now, endedAt: action === "retry" ? undefined : now };
       state.workUnits = state.workUnits.map((unit) => unit.id === workUnitId ? updated : unit);
+      if (action === "cancel" && workUnit.linkedRunId) {
+        state.runs = state.runs.map((run) =>
+          run.id === workUnit.linkedRunId
+            ? { ...run, status: "cancelled", updatedAt: now, endedAt: now, errorMessage: undefined }
+            : run
+        );
+        state.approvals = state.approvals.map((approval) =>
+          approval.runId === workUnit.linkedRunId && approval.status === "pending"
+            ? { ...approval, status: "cancelled", resolvedAt: now, resolvedBy: "local-user", decisionReason: "Run cancelled from Web" }
+            : approval
+        );
+        state.eventsByRun[workUnit.linkedRunId] = [
+          ...(state.eventsByRun[workUnit.linkedRunId] ?? []),
+          {
+            id: `evt_${workUnit.linkedRunId}_cancelled`,
+            runId: workUnit.linkedRunId,
+            seq: (state.eventsByRun[workUnit.linkedRunId]?.length ?? 0) + 1,
+            ts: now,
+            type: "run_cancelled",
+            data: { status: "cancelled", reason: "Run cancelled from Web" },
+          },
+        ];
+      }
       const event = {
         id: `runtime_event_${workUnitId}_${(state.runtimeEventsByWorkUnit[workUnitId]?.length ?? 0) + 1}`,
         workUnitId,
@@ -7906,6 +8141,9 @@ async function handleDaemonRoute(
         data: { action },
       };
       state.runtimeEventsByWorkUnit[workUnitId] = [...(state.runtimeEventsByWorkUnit[workUnitId] ?? []), event];
+      if (state.workUnitActionDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, state.workUnitActionDelayMs));
+      }
       await route.fulfill({ json: { cwd, workUnit: updated, event } });
       return;
     }
@@ -8442,10 +8680,108 @@ async function handleDaemonRoute(
     return;
   }
 
+  const runInterventionsMatch = /^\/runs\/([^/]+)\/interventions$/.exec(path);
+  if (runInterventionsMatch) {
+    const sourceRunId = decodeURIComponent(runInterventionsMatch[1]);
+    if (request.method() === "GET") {
+      await route.fulfill({
+        json: {
+          cwd,
+          interventions: state.runInterventions
+            .filter((item) => item.sourceRunId === sourceRunId)
+            .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+        },
+      });
+      return;
+    }
+    if (request.method() === "POST") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const mode = body.mode === "interrupt_redirect" ? "interrupt_redirect" : "queue_followup";
+      const now = "2026-05-25T00:32:00.000Z";
+      const sourceRun = state.runs.find((item) => item.id === sourceRunId);
+      if (!sourceRun) {
+        await route.fulfill({ status: 404, json: { error: "run_not_found" } });
+        return;
+      }
+      const intervention: MockRunIntervention = {
+        id: `intervention_${state.runInterventions.length + 1}`,
+        workspaceId: "workspace_default",
+        sourceRunId,
+        sourceWorkUnitId: sourceRun.workUnitId,
+        mode,
+        status: mode === "interrupt_redirect" ? "cancelling_source" : "queued",
+        instruction: typeof body.instruction === "string" ? body.instruction : "",
+        requestedBy: "local-user",
+        idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : `mock_${state.runInterventions.length + 1}`,
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.runInterventions.push(intervention);
+      if (mode === "interrupt_redirect") {
+        const updatedRun = { ...sourceRun, status: "cancelled", updatedAt: now, endedAt: now };
+        state.runs = state.runs.map((item) => item.id === sourceRunId ? updatedRun : item);
+        await route.fulfill({ status: 201, json: { cwd, intervention, run: updatedRun } });
+        return;
+      }
+      await route.fulfill({ status: 201, json: { cwd, intervention } });
+      return;
+    }
+  }
+
+  const runInterventionMatch = /^\/run-interventions\/([^/]+)(?:\/cancel)?$/.exec(path);
+  if (runInterventionMatch) {
+    const interventionId = decodeURIComponent(runInterventionMatch[1]);
+    const intervention = state.runInterventions.find((item) => item.id === interventionId);
+    if (!intervention) {
+      await route.fulfill({ status: 404, json: { error: "run_intervention_not_found" } });
+      return;
+    }
+    if (request.method() === "POST" && path.endsWith("/cancel")) {
+      intervention.status = "cancelled";
+      intervention.updatedAt = "2026-05-25T00:33:00.000Z";
+      intervention.completedAt = intervention.updatedAt;
+      intervention.failureReason = "cancelled_by_user";
+    }
+    await route.fulfill({ json: { cwd, intervention } });
+    return;
+  }
+
   const runMatch = /^\/runs\/([^/]+)$/.exec(path);
   if (request.method() === "GET" && runMatch) {
     const run = state.runs.find((item) => item.id === decodeURIComponent(runMatch[1]));
     await route.fulfill({ status: run ? 200 : 404, json: run ?? { error: "not_found" } });
+    return;
+  }
+
+  const runCancelMatch = /^\/runs\/([^/]+)\/cancel$/.exec(path);
+  if (request.method() === "POST" && runCancelMatch) {
+    const runId = decodeURIComponent(runCancelMatch[1]);
+    const now = "2026-05-25T00:31:00.000Z";
+    const run = state.runs.find((item) => item.id === runId);
+    if (!run) {
+      await route.fulfill({ status: 404, json: { error: "run_not_found" } });
+      return;
+    }
+    const updated = { ...run, status: "cancelled", updatedAt: now, endedAt: now, errorMessage: undefined };
+    state.runs = state.runs.map((item) => item.id === runId ? updated : item);
+    state.approvals = state.approvals.map((approval) =>
+      approval.runId === runId && approval.status === "pending"
+        ? { ...approval, status: "cancelled", resolvedAt: now, resolvedBy: "local-user", decisionReason: "Run cancelled from Web" }
+        : approval
+    );
+    const event = {
+      id: `evt_${runId}_cancelled`,
+      runId,
+      seq: (state.eventsByRun[runId]?.length ?? 0) + 1,
+      ts: now,
+      type: "run_cancelled",
+      data: { status: "cancelled", reason: "Run cancelled from Web" },
+    };
+    state.eventsByRun[runId] = [...(state.eventsByRun[runId] ?? []), event];
+    if (state.workUnitActionDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.workUnitActionDelayMs));
+    }
+    await route.fulfill({ json: { cancelled: true, active: false, run: updated, event } });
     return;
   }
 

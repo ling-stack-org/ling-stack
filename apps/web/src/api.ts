@@ -47,6 +47,7 @@ import type {
   CreateChannelWorkflowStepRequest,
   CreateMemoryObjectRequest,
   CreateMediaJobRequest,
+  CreateRunInterventionRequest,
   DaemonHealthResponse,
   ExternalWorkActionCancelRequest,
   ExternalWorkActionDetailResponse,
@@ -105,6 +106,8 @@ import type {
   RunCancelResponse,
   RunArtifactListResponse,
   RunEventsResponse,
+  RunInterventionListResponse,
+  RunInterventionResponse,
   RunFormState,
   RunListResponse,
   RunSession,
@@ -188,6 +191,26 @@ export async function getRun(runId: string, cwd?: string): Promise<RunSession> {
 
 export async function listRuns(cwd: string, limit = 50): Promise<RunListResponse> {
   return daemonClient.listRuns(cwd, limit);
+}
+
+export async function listRunInterventions(cwd: string, runId: string, limit = 100): Promise<RunInterventionListResponse> {
+  return daemonClient.listRunInterventions(cwd, runId, limit);
+}
+
+export async function createRunIntervention(
+  cwd: string,
+  runId: string,
+  input: CreateRunInterventionRequest,
+): Promise<RunInterventionResponse> {
+  return daemonClient.createRunIntervention(cwd, runId, input);
+}
+
+export async function getRunIntervention(cwd: string, interventionId: string): Promise<RunInterventionResponse> {
+  return daemonClient.getRunIntervention(cwd, interventionId);
+}
+
+export async function cancelRunIntervention(cwd: string, interventionId: string): Promise<RunInterventionResponse> {
+  return daemonClient.cancelRunIntervention(cwd, interventionId);
 }
 
 export async function listProviders(cwd: string): Promise<ProviderListResponse> {
@@ -929,6 +952,7 @@ export function buildRunRequest(form: RunFormState): unknown {
       },
       providerPresetId: form.providerPresetId,
       tools: form.tools.filter(isRunnerTool),
+      permissionMode: form.permissionMode,
       thinkingLevel: "medium",
     };
   }
@@ -951,6 +975,7 @@ export function buildRunRequest(form: RunFormState): unknown {
       input: ["text"],
     },
     tools: form.tools.filter(isRunnerTool),
+    permissionMode: form.permissionMode,
     thinkingLevel: "medium",
   };
 }
@@ -963,6 +988,7 @@ export function buildTaskRunRequest(
   options: {
     readonly tools?: readonly ToolName[];
     readonly approvalProfile?: SkillApprovalProfile;
+    readonly permissionMode?: RunFormState["permissionMode"];
   } = {},
 ): unknown {
   const fallbackTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
@@ -978,6 +1004,7 @@ export function buildTaskRunRequest(
     providerPresetId,
     tools: (options.tools && options.tools.length > 0 ? options.tools : channel.allowedTools.length > 0 ? channel.allowedTools : fallbackTools).filter(isRunnerTool),
     approvalProfile: options.approvalProfile,
+    permissionMode: options.permissionMode,
     thinkingLevel: "medium",
   };
 }
@@ -995,6 +1022,7 @@ export function buildRerunRequest(run: RunSession): unknown {
     task: readRunTask(run),
     providerPresetId,
     tools: readToolArray(snapshot, "tools"),
+    permissionMode: readOptionalString(snapshot, "permissionMode"),
     thinkingLevel: readOptionalString(snapshot, "thinkingLevel") ?? "medium",
     systemPrompt: readOptionalString(snapshot, "systemPrompt"),
     appendSystemPrompt: readStringArray(snapshot, "appendSystemPrompt"),

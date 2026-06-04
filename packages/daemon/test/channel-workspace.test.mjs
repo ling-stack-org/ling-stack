@@ -30,9 +30,9 @@ test("channel messages persist and AI blocker replies do not drop the user messa
       requestAiReply: true,
     });
     assert.equal(created.message.body, "请 @Engineer 完善频道需求");
-    assert.equal(created.aiReply.status, "blocked");
+    assert.equal(created.aiReply.status, "pending");
 
-    const listed = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "blocked");
     assert.deepEqual(listed.messages.map((message) => message.id), [created.message.id, created.aiReply.id]);
   } finally {
     await daemon.close();
@@ -63,11 +63,52 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
       requestAiReply: true,
     });
 
-    assert.equal(created.aiReply.status, "ready");
+    assert.equal(created.aiReply.status, "pending");
     assert.equal(created.aiReply.authorId, teammateId);
-    assert.equal(created.aiReply.body, "Designer reply");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(finalReply.body, "Designer reply");
     assert.equal(runner.runs.length, 1);
   } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel AI replies return pending message before runner finishes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-ai-reply-pending-"));
+  const runner = new DelayedRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Designer async please",
+      mentions: [{ id: teammateId, label: "Designer", kind: "ai-teammate" }],
+      requestAiReply: true,
+      providerPresetId: provider.id,
+      teammateId,
+    });
+
+    assert.equal(created.aiReply.status, "pending");
+    await waitForCondition(() => runner.runs.length === 1, "runner to start channel AI reply");
+    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.completed, false);
+    const pending = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(pending.messages.find((message) => message.id === created.aiReply.id).status, "pending");
+
+    runner.resolve("Delayed reply");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(finalReply.body, "Delayed reply");
+  } finally {
+    runner.resolve("cleanup");
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
@@ -494,7 +535,8 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
       mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
       requestAiReply: true,
     });
-    assert.equal(created.aiReply.status, "ready");
+    assert.equal(created.aiReply.status, "pending");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     assert.match(runner.runs[0].systemPrompt, /Used memory:/);
     assert.match(runner.runs[0].systemPrompt, /Model Workbench width/);
 
@@ -733,6 +775,33 @@ class RecordingRunner {
   }
 }
 
+class DelayedRunner {
+  constructor() {
+    this.runs = [];
+    this.completed = false;
+    this.pending = undefined;
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    const text = await new Promise((resolve) => {
+      this.pending = resolve;
+    });
+    this.completed = true;
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return {
+      taskId: options.task.id,
+      messages: [text],
+      events: [],
+    };
+  }
+
+  resolve(text) {
+    this.pending?.(text);
+    this.pending = undefined;
+  }
+}
+
 async function startDaemonForTest(runner) {
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, runner ? { runner } : undefined);
   await daemon.start();
@@ -814,6 +883,31 @@ async function getJson(url) {
     assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
   }
   return await response.json();
+}
+
+async function waitForChannelMessageStatus(baseUrl, cwd, channelId, messageId, status) {
+  const deadline = Date.now() + 2_000;
+  let latest;
+  while (Date.now() < deadline) {
+    latest = await getJson(`${baseUrl}/channels/${encodeURIComponent(channelId)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    const message = latest.messages.find((item) => item.id === messageId);
+    if (message?.status === status) {
+      return latest;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail(`Timed out waiting for channel message ${messageId} to become ${status}. Latest: ${JSON.stringify(latest)}`);
+}
+
+async function waitForCondition(predicate, label) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail(`Timed out waiting for ${label}.`);
 }
 
 async function postJson(url, body) {

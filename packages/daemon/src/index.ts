@@ -11,6 +11,7 @@ import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotoc
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport as McpTransport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Tool as SdkMcpTool } from "@modelcontextprotocol/sdk/types.js";
+import { RunControlService } from "./run-control.js";
 import {
   approvalToolDecisions,
   approvalStatuses,
@@ -51,7 +52,9 @@ import {
   providerKinds,
   redactSecrets,
   readOnlyRunTools,
-  riskyRunTools,
+  resolveSessionRunPolicy,
+  runInterventionModes,
+  sessionPermissionModes,
   createCompositeSecretResolver,
   secretPurposes,
   taskStatuses,
@@ -129,6 +132,7 @@ import {
   type ProviderPresetInput,
   type ProviderPresetUpdateInput,
   type PublicProviderPreset,
+  type PermissionConfirmation,
   type RunArtifact,
   type ExternalWorkImportResponse,
   type ExternalWorkBackgroundListResponse,
@@ -168,11 +172,14 @@ import {
   type ExternalWorkflowDefinition,
   type RunEventEnvelope,
   type RunEventType,
+  type RunIntervention,
+  type RunInterventionMode,
   type RunTool,
   type RunSession,
   type RunStore,
   type RunSummary,
   type RunStatus,
+  type EffectiveRunPolicySnapshot,
   type RuntimeEvent,
   type RuntimeInstance,
   type RuntimeSemaphoreSlot,
@@ -185,6 +192,7 @@ import {
   type ResolvedSecret,
   type SecretPurpose,
   type SecretResolver,
+  type SessionPermissionMode,
   type SkillApprovalProfile,
   type SkillDefinition,
   type SkillImportWarning,
@@ -329,6 +337,7 @@ const CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES = 40 * 1024 * 1024;
 const CHANNEL_LINK_PREVIEW_TIMEOUT_MS = 5_000;
 const CHANNEL_LINK_PREVIEW_MAX_BYTES = 192 * 1024;
 const CHANNEL_LINK_PREVIEW_MAX_REDIRECTS = 3;
+const runControlService = new RunControlService();
 
 export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider" | "tools" | "mcpTools" | "onMcpToolCall"> {
   readonly workspaceCwd?: string;
@@ -338,12 +347,28 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly requestedSkillId?: string;
   readonly tools?: readonly RunTool[];
   readonly approvalProfile?: SkillApprovalProfile;
+  readonly permissionMode?: SessionPermissionMode;
+  readonly permissionConfirmation?: PermissionConfirmation;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
+  readonly parentRunId?: string;
+  readonly interventionId?: string;
+  readonly continuationReason?: RunInterventionMode;
 }
 
 interface ExecuteRunRequestOptions {
   readonly onRunReady?: (runId: string) => void;
+  readonly afterRunTerminal?: (run: RunSession) => void;
+}
+
+interface RunExecutionSink {
+  readonly kind: "sse" | "detached";
+  onClose(listener: () => void): void;
+  isClosed(): boolean;
+  writeReady(data: unknown): void;
+  writeEvent(event: string, data: unknown): void;
+  writeError(statusCode: number, body: unknown): void;
+  end(): void;
 }
 
 interface ChannelMessageRequest {
@@ -1474,6 +1499,22 @@ async function routeRequest(
     handleCancelRun(response, url, storeRegistry, activeRuns, runRoute.runId);
     return;
   }
+  if ((request.method === "POST" || request.method === "GET") && runRoute?.kind === "interventions") {
+    await handleRunInterventions(
+      request,
+      response,
+      config,
+      url,
+      runner,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      runRoute.runId,
+    );
+    return;
+  }
   if (request.method === "GET" && runRoute?.kind === "run") {
     handleGetRun(response, url, storeRegistry, runRoute.runId);
     return;
@@ -1484,6 +1525,12 @@ async function routeRequest(
   }
   if (request.method === "GET" && runRoute?.kind === "artifacts") {
     handleListRunArtifacts(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+
+  const runInterventionRoute = parseRunInterventionRoute(url.pathname);
+  if (runInterventionRoute) {
+    handleRunInterventionItem(request, response, url, storeRegistry, runInterventionRoute);
     return;
   }
 
@@ -1989,12 +2036,12 @@ async function handleRun(
     return;
   }
 
-  await executeRunRequest(runRequest, response, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker);
+  await executeRunRequest(runRequest, createSseRunExecutionSink(response), runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker);
 }
 
 async function executeRunRequest(
   runRequest: RunRequest,
-  response: ServerResponse,
+  sink: RunExecutionSink,
   runner: RunnerAdapter,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
@@ -2015,12 +2062,15 @@ async function executeRunRequest(
   let memoryRecall: ReturnType<RunStore["recallMemory"]> | undefined;
   let selectedSkill: ReturnType<typeof getEffectiveTeammateSkill> | undefined;
   let runtimeApprovalProfile: SkillApprovalProfile | undefined;
+  let effectivePolicySnapshot: EffectiveRunPolicySnapshot | undefined;
+  let approvalPolicy: ApprovalPolicy | undefined;
   let runId = "";
   let createdAt = "";
   let workspaceCwd = "";
   try {
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
     store = storeRegistry.getStore(workspaceCwd);
+    assertFullAccessPermissionConfirmed(runRequest);
     runtime = runtimeSupervisor.getRuntime(workspaceCwd, store);
     resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver);
     const skillChannel = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
@@ -2071,6 +2121,15 @@ async function executeRunRequest(
     runtimeApprovalProfile = selectedSkill
       ? mergeApprovalProfiles(runRequest.approvalProfile, selectedSkill.skill.approvalProfile)
       : runRequest.approvalProfile;
+    const channelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
+    const sessionPolicy = resolveSessionRunPolicy({
+      workspacePolicy: store.getApprovalPolicy(),
+      permissionMode: runRequest.permissionMode,
+      channelBoundPath: channelForPolicy?.boundPath || runRequest.cwd,
+      approvalProfile: runtimeApprovalProfile,
+    });
+    approvalPolicy = sessionPolicy.approvalPolicy;
+    effectivePolicySnapshot = sessionPolicy.snapshot;
     runnerRequest = {
       cwd: runRequest.cwd,
       task: runRequest.task,
@@ -2112,7 +2171,15 @@ async function executeRunRequest(
       runnerId: DEFAULT_RUNNER_ID,
       idempotencyKey,
       createdByActor: "user",
-      request: { ...runRequest, workspaceCwd, provider: resolvedProvider, selectedSkillId: selectedSkill?.skillId, mcpToolAccess },
+      request: {
+        ...runRequest,
+        permissionMode: effectivePolicySnapshot.mode,
+        effectivePolicySnapshot,
+        workspaceCwd,
+        provider: resolvedProvider,
+        selectedSkillId: selectedSkill?.skillId,
+        mcpToolAccess,
+      },
       now: createdAt,
     });
     store.appendRuntimeEvent({
@@ -2193,8 +2260,19 @@ async function executeRunRequest(
       providerModel: resolvedProvider.model,
       taskSnapshot: runRequest.task,
       providerSnapshot: { providerPresetId: runRequest.providerPresetId, ...resolvedProvider },
-      requestSnapshot: { ...runRequest, workspaceCwd, provider: resolvedProvider, selectedSkillId: selectedSkill?.skillId, mcpToolAccess },
+      requestSnapshot: {
+        ...runRequest,
+        permissionMode: effectivePolicySnapshot.mode,
+        effectivePolicySnapshot,
+        workspaceCwd,
+        provider: resolvedProvider,
+        selectedSkillId: selectedSkill?.skillId,
+        mcpToolAccess,
+      },
       workUnitId: workUnit.id,
+      parentRunId: runRequest.parentRunId,
+      interventionId: runRequest.interventionId,
+      continuationReason: runRequest.continuationReason,
       createdAt,
     });
     store.linkRunToWorkUnit(run.id, workUnit.id, createdAt);
@@ -2224,6 +2302,9 @@ async function executeRunRequest(
       providerModel: run.providerModel,
       teammateId: run.teammateId,
       selectedSkillId: run.selectedSkillId,
+      parentRunId: run.parentRunId,
+      interventionId: run.interventionId,
+      continuationReason: run.continuationReason,
       mcpToolAccess: {
         serverCount: mcpToolAccess.servers.length,
         toolCount: mcpToolAccess.totalToolCount,
@@ -2251,6 +2332,7 @@ async function executeRunRequest(
         channel: error.channel ?? preparedConcurrency.channel,
         provider: resolvedProvider,
         selectedSkillId: selectedSkill?.skillId,
+        effectivePolicySnapshot,
         queuedAt,
         reason: error.code,
         message: error.message,
@@ -2260,15 +2342,14 @@ async function executeRunRequest(
       } catch {
         // The queued run is durable; auxiliary link updates must not corrupt SSE.
       }
-      writeSseHead(response);
-      writeSse(response, "ready", {
+      sink.writeReady({
         ok: true,
         runId: run.id,
         workUnitId: workUnit.id,
         queued: true,
         queueReason: error.code,
       });
-      response.end();
+      sink.end();
       return run.id;
     }
     if (preparedConcurrency.leases.length > 0) {
@@ -2308,13 +2389,12 @@ async function executeRunRequest(
       } catch {
         // The run itself is already known; auxiliary link updates must not corrupt SSE.
       }
-      writeSseHead(response);
-      writeSse(response, "ready", { ok: true, runId: error.runId, duplicate: true });
-      response.end();
+      sink.writeReady({ ok: true, runId: error.runId, duplicate: true });
+      sink.end();
       return error.runId;
     }
     const statusCode = error instanceof HttpError ? error.statusCode : 500;
-    writeJson(response, statusCode, {
+    sink.writeError(statusCode, {
       error: error instanceof HttpError ? error.code : "run_storage_unavailable",
       message: error instanceof Error ? error.message : String(error),
     });
@@ -2322,12 +2402,11 @@ async function executeRunRequest(
   }
 
   if (!store || !run || !workUnit || !attempt || !runtime) {
-    writeJson(response, 500, { error: "run_storage_unavailable", message: "Run was not initialized." });
+    sink.writeError(500, { error: "run_storage_unavailable", message: "Run was not initialized." });
     return undefined;
   }
 
-  writeSseHead(response);
-  writeSse(response, "ready", { ok: true, runId: run.id });
+  sink.writeReady({ ok: true, runId: run.id });
   try {
     options.onRunReady?.(run.id);
   } catch {
@@ -2335,19 +2414,16 @@ async function executeRunRequest(
   }
 
   const abortController = new AbortController();
-  let clientClosed = false;
   let runStartedAt: string | undefined;
   let persistedRunError = false;
   let persistenceError: unknown;
   let extractedArtifactCounter = 0;
   const toolStartArgsById = new Map<string, unknown>();
-  response.on("close", () => {
-    clientClosed = true;
-  });
+  sink.onClose(() => {});
 
   const streamEnvelope = (envelope: RunEventEnvelope): void => {
-    if (!clientClosed) {
-      writeSse(response, envelope.type, envelope);
+    if (!sink.isClosed()) {
+      sink.writeEvent(envelope.type, envelope);
     }
   };
 
@@ -2508,14 +2584,12 @@ async function executeRunRequest(
         throw new Error(`Task transition failed: ${taskStartTransition.code}`);
       }
     }
-    const approvalPolicy = mergeApprovalPolicyWithProfile(store.getApprovalPolicy(), runtimeApprovalProfile);
-
     const result = await runner.runTask({
       ...runnerRequest,
       onApprovalRequired: createRunApprovalHandler({
         store,
         run,
-        approvalPolicy,
+        approvalPolicy: approvalPolicy ?? store.getApprovalPolicy(),
         appendAndMaybeStream,
         streamEnvelope,
         signal: abortController.signal,
@@ -2558,8 +2632,8 @@ async function executeRunRequest(
       throw persistenceError;
     }
     if (store.getRun(run.id)?.status === "cancelled") {
-      if (!clientClosed) {
-        response.end();
+      if (!sink.isClosed()) {
+        sink.end();
       }
       return run.id;
     }
@@ -2614,23 +2688,19 @@ async function executeRunRequest(
       });
     }
 
-    if (!clientClosed) {
-      response.end();
+    if (!sink.isClosed()) {
+      sink.end();
     }
   } catch (error) {
     if (isAbortError(error) || store.getRun(run.id)?.status === "cancelled") {
-      ensureRunCancelled({
+      runControlService.cancelRun({
         store,
         runId: run.id,
-        taskId: run.taskId,
-        startedAt: runStartedAt,
         reason: "cancelled",
-        active: false,
-        streamEnvelope,
+        activeRun: { abortController, streamEnvelope },
       });
-      transitionWorkUnitCancelled(store, workUnit.id, attempt.id, "cancelled");
-      if (!clientClosed) {
-        response.end();
+      if (!sink.isClosed()) {
+        sink.end();
       }
       return run.id;
     }
@@ -2638,7 +2708,7 @@ async function executeRunRequest(
     const endedAt = new Date().toISOString();
     const failureEvent = persistedRunError
       ? undefined
-      : appendFailureEvent(store, run.id, message, clientClosed, response);
+      : appendFailureEvent(store, run.id, message, sink);
     const summaryPath = writeTerminalSummary(getRunSummaryPath(store.paths, run.id), {
       runId: run.id,
       status: "failed",
@@ -2682,8 +2752,8 @@ async function executeRunRequest(
       });
     }
 
-    if (!clientClosed) {
-      response.end();
+    if (!sink.isClosed()) {
+      sink.end();
     }
   } finally {
     clearInterval(heartbeatTimer);
@@ -2691,6 +2761,21 @@ async function executeRunRequest(
     store.releaseResourceLeasesForOwner("run", run.id, new Date().toISOString());
     store.releaseRuntimeSemaphoreSlotsForOwner(attempt.id, new Date().toISOString(), "run-finished");
     activeRuns.delete(run.id);
+    const terminalRun = store.getRun(run.id);
+    if (terminalRun && isTerminalRunStatus(terminalRun.status)) {
+      const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
+      void maybeStartNextRunInterventionContinuation({
+        sourceRunId,
+        store,
+        runner,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        mcpBroker,
+      });
+      options.afterRunTerminal?.(terminalRun);
+    }
   }
   return run.id;
 }
@@ -2706,6 +2791,7 @@ function createQueuedRunForConflict(input: {
   readonly channel?: Channel;
   readonly provider: PiRunnerProviderConfig;
   readonly selectedSkillId?: string;
+  readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
   readonly queuedAt: string;
   readonly reason: QueueableRunConflictCode;
   readonly message: string;
@@ -2724,6 +2810,12 @@ function createQueuedRunForConflict(input: {
     providerSnapshot: { providerPresetId: input.runRequest.providerPresetId, ...input.provider },
     requestSnapshot: {
       ...input.runRequest,
+      ...(input.effectivePolicySnapshot
+        ? {
+            permissionMode: input.effectivePolicySnapshot.mode,
+            effectivePolicySnapshot: input.effectivePolicySnapshot,
+          }
+        : {}),
       workspaceCwd: input.workspaceCwd,
       provider: input.provider,
       selectedSkillId: input.selectedSkillId,
@@ -2731,6 +2823,9 @@ function createQueuedRunForConflict(input: {
       queueReason: input.reason,
     },
     workUnitId: input.workUnit.id,
+    parentRunId: input.runRequest.parentRunId,
+    interventionId: input.runRequest.interventionId,
+    continuationReason: input.runRequest.continuationReason,
     createdAt: input.queuedAt,
   });
   input.store.linkRunToWorkUnit(run.id, input.workUnit.id, input.queuedAt);
@@ -2744,6 +2839,9 @@ function createQueuedRunForConflict(input: {
     providerModel: run.providerModel,
     teammateId: run.teammateId,
     selectedSkillId: run.selectedSkillId,
+    parentRunId: run.parentRunId,
+    interventionId: run.interventionId,
+    continuationReason: run.continuationReason,
     queued: true,
     queueReason: input.reason,
     message: input.message,
@@ -3184,19 +3282,18 @@ async function handleChannelMessagesCollection(
         now,
       );
 
-      let aiReply: ChannelMessage | undefined;
-      if (input.requestAiReply) {
-        aiReply = await createAiChannelReply({
-          runner,
-          store,
-          channel,
-          sourceMessage: message,
-          providerPresetId: input.providerPresetId,
-          teammateId: input.teammateId,
-          runtimeSupervisor,
-          secretResolver,
-        });
-      }
+      const aiReply = input.requestAiReply
+        ? channelAiReplyService.enqueue({
+            runner,
+            store,
+            channel,
+            sourceMessage: message,
+            providerPresetId: input.providerPresetId,
+            teammateId: input.teammateId,
+            runtimeSupervisor,
+            secretResolver,
+          })
+        : undefined;
 
       writeJson(response, 201, aiReply ? { message, aiReply } : { message });
       return;
@@ -4546,7 +4643,16 @@ async function handleChannelWorkflowStepStart(
     return;
   }
 
-  const runId = await executeRunRequest(started.runRequest, response, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker);
+  const runId = await executeRunRequest(
+    started.runRequest,
+    createSseRunExecutionSink(response),
+    runner,
+    storeRegistry,
+    activeRuns,
+    runtimeSupervisor,
+    secretResolver,
+    mcpBroker,
+  );
   const completedAt = new Date().toISOString();
   if (!runId) {
     store.transitionChannelWorkflowStepStatus({
@@ -5114,12 +5220,14 @@ async function handleTaskRunRequest(
         },
         tools: readOptionalRunTools(body, "tools") ?? channel.allowedTools,
         approvalProfile: readOptionalApprovalProfile(body, "approvalProfile"),
+        permissionMode: readOptionalSessionPermissionMode(body, "permissionMode"),
+        permissionConfirmation: readOptionalPermissionConfirmation(body, "permissionConfirmation"),
         thinkingLevel: readOptionalThinkingLevel(body, "thinkingLevel"),
         systemPrompt: readOptionalString(body, "systemPrompt"),
         appendSystemPrompt: readOptionalStringArray(body, "appendSystemPrompt"),
         agentDir: readOptionalString(body, "agentDir"),
       },
-      response,
+      createSseRunExecutionSink(response),
       runner,
       storeRegistry,
       activeRuns,
@@ -7075,7 +7183,7 @@ async function handleExternalWorkCiTriageRun(
         appendSystemPrompt: input.appendSystemPrompt,
         agentDir: input.agentDir,
       },
-      response,
+      createSseRunExecutionSink(response),
       runner,
       storeRegistry,
       activeRuns,
@@ -8030,29 +8138,15 @@ function handleWorkUnitRoute(
 
   if (route.kind === "cancel") {
     const runId = workUnit.linkedRunId;
-    if (runId) {
-      const activeRun = activeRuns.get(runId);
-      const run = resolved.store.getRun(runId);
-      if (run) {
-        ensureRunCancelled({
-          store: resolved.store,
-          runId,
-          taskId: run.taskId,
-          startedAt: run.startedAt,
-          reason: "work_unit_cancel_requested",
-          active: Boolean(activeRun),
-          streamEnvelope: activeRun?.streamEnvelope,
-        });
-      } else {
-        cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
-      }
-      activeRun?.abortController.abort();
-    } else {
-      cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
-    }
+    const result = runControlService.cancelWorkUnit({
+      store: resolved.store,
+      workUnit,
+      reason: "work_unit_cancel_requested",
+      activeRun: runId ? activeRuns.get(runId) : undefined,
+    });
     writeJson(response, 200, {
       cwd: resolved.cwd,
-      workUnit: resolved.store.getWorkUnit(workUnit.id) ?? workUnit,
+      workUnit: result.workUnit,
     });
     return;
   }
@@ -8119,36 +8213,6 @@ function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: Wor
     semaphoreSlots: store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, limit: 500 }),
     run: workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined,
   });
-}
-
-function cancelStandaloneWorkUnit(store: RunStore, workUnit: WorkUnit, reason: string): WorkUnit {
-  const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
-  if (attemptId) {
-    transitionWorkUnitCancelled(store, workUnit.id, attemptId, reason);
-  } else if (!isTerminalWorkUnitStatus(workUnit.status) && workUnit.status !== "stale") {
-    const now = new Date().toISOString();
-    const cancelling = store.transitionWorkUnitStatus({
-      workUnitId: workUnit.id,
-      expectedStatus: workUnit.status,
-      event: "cancel",
-      actor: "local-user",
-      reason,
-      now,
-    });
-    if (cancelling.ok) {
-      store.transitionWorkUnitStatus({
-        workUnitId: workUnit.id,
-        expectedStatus: "cancelling",
-        event: "runner_cancelled",
-        actor: "system",
-        reason,
-        now,
-        endedAt: now,
-      });
-    }
-  }
-  releaseWorkUnitRuntimeResources(store, workUnit, new Date().toISOString(), "cancelled");
-  return store.getWorkUnit(workUnit.id) ?? workUnit;
 }
 
 function releaseWorkUnitRuntimeResources(store: RunStore, workUnit: WorkUnit, now: string, releaseReason: string): WorkUnit {
@@ -8556,198 +8620,227 @@ async function handleTeammateDirectMessageStream(input: {
   }
 }
 
-async function createAiChannelReply(input: {
-  readonly runner: RunnerAdapter;
-  readonly store: RunStore;
-  readonly channel: Channel;
-  readonly sourceMessage: ChannelMessage;
-  readonly providerPresetId?: string;
-  readonly teammateId?: string;
-  readonly runtimeSupervisor: RuntimeSupervisor;
-  readonly secretResolver: SecretResolver;
-}): Promise<ChannelMessage> {
-  const teammateId =
-    input.teammateId ??
-    input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
-    input.channel.defaultTeammateId ??
-    "ai-teammate";
-  const teammate = resolveAiTeammateReference(input.store, teammateId);
-  const canonicalTeammateId = teammate?.id ?? teammateId;
-  const providerPresetId = input.providerPresetId ?? teammate?.providerPresetId ?? input.channel.defaultProviderPresetId;
-  const now = new Date().toISOString();
-  const pending = input.store.createChannelMessage(
-    {
-      channelId: input.channel.id,
-      threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: canonicalTeammateId,
-      body: "AI teammate is preparing a reply...",
-      status: "pending",
-    },
-    now,
-  );
-  const supervised = startMessageWorkUnit({
-    store: input.store,
-    runtimeSupervisor: input.runtimeSupervisor,
-    kind: "channel_ai_reply",
-    ownerType: "channel_message",
-    ownerId: input.sourceMessage.id,
-    channelId: input.channel.id,
-    teammateId: canonicalTeammateId,
-    providerPresetId,
-    linkedMessageId: pending.id,
-    idempotencyKey: `channel_ai_reply:${input.sourceMessage.id}:${pending.id}`,
-    request: {
-      sourceMessageId: input.sourceMessage.id,
-      providerPresetId,
-      teammateId: canonicalTeammateId,
-    },
-  });
-
-  if (teammate && teammate.status !== "active") {
-    return finishChannelMessageWorkUnit(input.store, supervised, pending.id, {
-      body: `AI teammate is ${teammate.status}.`,
-      status: "blocked",
-      errorMessage: `Teammate status is ${teammate.status}.`,
-    });
-  }
-
-  if (!providerPresetId) {
-    return finishChannelMessageWorkUnit(input.store, supervised, pending.id, {
-      body: "AI teammate is not configured for this channel.",
-      status: "blocked",
-      errorMessage: "No provider preset is selected for this channel discussion.",
-    });
-  }
-
-  const textDeltas: string[] = [];
-  try {
-    const memoryRecall = input.store.recallMemory({
-      teammateId: canonicalTeammateId,
-      channelId: input.channel.id,
-      intent: "channel-reply",
-      query: input.sourceMessage.body,
-      maxResults: 6,
-    });
-    const memoryPrompt = renderUsedMemoryPrompt(memoryRecall.memories);
-    const systemPrompt = [
-      "You are an AI teammate inside a Ling Stack channel.",
-      "Reply concisely and only to the current channel discussion.",
-      "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
-      "Do not perform tool use or side effects.",
-      "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
-      `Use exact teammate ids in proposal JSON. Default assigneeTeammateId and collaboration teammateId to "${canonicalTeammateId}" unless the user explicitly selected another teammate id.`,
-      `<ling_task_proposal>{"title":"...","prompt":"...","assigneeTeammateId":"${canonicalTeammateId}","acceptanceCriteria":["..."],"collaborationSteps":[{"teammateId":"${canonicalTeammateId}","action":"coordinated","summary":"..."}],"requiredTools":["read"],"riskSummary":"..."}</ling_task_proposal>`,
-      "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
-      memoryPrompt,
-    ].filter((line): line is string => Boolean(line)).join("\n");
-    const provider = resolveProviderForRun(
-      input.store,
+class ChannelAiReplyService {
+  enqueue(input: {
+    readonly runner: RunnerAdapter;
+    readonly store: RunStore;
+    readonly channel: Channel;
+    readonly sourceMessage: ChannelMessage;
+    readonly providerPresetId?: string;
+    readonly teammateId?: string;
+    readonly runtimeSupervisor: RuntimeSupervisor;
+    readonly secretResolver: SecretResolver;
+  }): ChannelMessage {
+    const teammateId =
+      input.teammateId ??
+      input.sourceMessage.mentions.find((mention) => mention.kind === "ai-teammate")?.id ??
+      input.channel.defaultTeammateId ??
+      "ai-teammate";
+    const teammate = resolveAiTeammateReference(input.store, teammateId);
+    const canonicalTeammateId = teammate?.id ?? teammateId;
+    const providerPresetId = input.providerPresetId ?? teammate?.providerPresetId ?? input.channel.defaultProviderPresetId;
+    const now = new Date().toISOString();
+    const pending = input.store.createChannelMessage(
       {
-        cwd: input.store.paths.cwd,
-        workspaceCwd: input.store.paths.cwd,
-        task: {
-          id: input.sourceMessage.id,
-          title: `Channel discussion in ${input.channel.name}`,
-          prompt: formatChannelDiscussionPrompt(input.channel, input.sourceMessage),
-          channelId: input.channel.id,
-        },
-        providerPresetId,
-        tools: [],
-        thinkingLevel: "medium",
-        systemPrompt,
+        channelId: input.channel.id,
+        threadId: input.sourceMessage.threadId ?? input.sourceMessage.id,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: canonicalTeammateId,
+        body: "AI teammate is preparing a reply...",
+        status: "pending",
       },
-      input.secretResolver,
-    );
-
-    acquireRunRuntimeSemaphores({
-      store: input.store,
-      workUnit: supervised.workUnit,
-      attempt: supervised.attempt,
-      channel: input.channel,
-      providerKey: providerPresetId,
       now,
+    );
+    const supervised = startMessageWorkUnit({
+      store: input.store,
+      runtimeSupervisor: input.runtimeSupervisor,
+      kind: "channel_ai_reply",
+      ownerType: "channel_message",
+      ownerId: input.sourceMessage.id,
+      channelId: input.channel.id,
+      teammateId: canonicalTeammateId,
+      providerPresetId,
+      linkedMessageId: pending.id,
+      idempotencyKey: `channel_ai_reply:${input.sourceMessage.id}:${pending.id}`,
+      request: {
+        sourceMessageId: input.sourceMessage.id,
+        providerPresetId,
+        teammateId: canonicalTeammateId,
+      },
     });
 
-    const result = await input.runner.runTask({
-      cwd: input.store.paths.cwd,
-      task: {
+    setTimeout(() => {
+      void this.execute({
+        ...input,
+        teammate,
+        canonicalTeammateId,
+        providerPresetId,
+        pending,
+        supervised,
+      });
+    }, 0);
+
+    return pending;
+  }
+
+  private async execute(input: {
+    readonly runner: RunnerAdapter;
+    readonly store: RunStore;
+    readonly channel: Channel;
+    readonly sourceMessage: ChannelMessage;
+    readonly providerPresetId?: string;
+    readonly teammate?: AiTeammate;
+    readonly canonicalTeammateId: string;
+    readonly runtimeSupervisor: RuntimeSupervisor;
+    readonly secretResolver: SecretResolver;
+    readonly pending: ChannelMessage;
+    readonly supervised: { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt };
+  }): Promise<void> {
+    const now = new Date().toISOString();
+    if (input.teammate && input.teammate.status !== "active") {
+      finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+        body: `AI teammate is ${input.teammate.status}.`,
+        status: "blocked",
+        errorMessage: `Teammate status is ${input.teammate.status}.`,
+      });
+      return;
+    }
+
+    if (!input.providerPresetId) {
+      finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+        body: "AI teammate is not configured for this channel.",
+        status: "blocked",
+        errorMessage: "No provider preset is selected for this channel discussion.",
+      });
+      return;
+    }
+
+    const textDeltas: string[] = [];
+    try {
+      const memoryRecall = input.store.recallMemory({
+        teammateId: input.canonicalTeammateId,
+        channelId: input.channel.id,
+        intent: "channel-reply",
+        query: input.sourceMessage.body,
+        maxResults: 6,
+      });
+      const memoryPrompt = renderUsedMemoryPrompt(memoryRecall.memories);
+      const systemPrompt = [
+        "You are an AI teammate inside a Ling Stack channel.",
+        "Reply concisely and only to the current channel discussion.",
+        "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
+        "Do not perform tool use or side effects.",
+        "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
+        `Use exact teammate ids in proposal JSON. Default assigneeTeammateId and collaboration teammateId to "${input.canonicalTeammateId}" unless the user explicitly selected another teammate id.`,
+        `<ling_task_proposal>{"title":"...","prompt":"...","assigneeTeammateId":"${input.canonicalTeammateId}","acceptanceCriteria":["..."],"collaborationSteps":[{"teammateId":"${input.canonicalTeammateId}","action":"coordinated","summary":"..."}],"requiredTools":["read"],"riskSummary":"..."}</ling_task_proposal>`,
+        "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
+        memoryPrompt,
+      ].filter((line): line is string => Boolean(line)).join("\n");
+      const task = {
         id: input.sourceMessage.id,
         title: `Channel discussion in ${input.channel.name}`,
         prompt: formatChannelDiscussionPrompt(input.channel, input.sourceMessage),
         channelId: input.channel.id,
-      },
-      provider,
-      tools: [],
-      thinkingLevel: "medium",
-      systemPrompt,
-      onEvent: (event) => {
-        input.store.appendRuntimeEvent({
-          workUnitId: supervised.workUnit.id,
-          attemptId: supervised.attempt.id,
-          type: "work_unit_progress",
-          actor: "runner",
-          ts: new Date().toISOString(),
-          data: { runnerEventType: event.type },
-        });
-        if (event.type === "assistant_text_delta") {
-          textDeltas.push(event.text);
-        }
-      },
-    });
-    const rawReplyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
-    const extractedProposal = extractChannelExecutionProposal(rawReplyText, canonicalTeammateId);
-    const replyText = extractedProposal?.visibleBody || rawReplyText;
-    const reply = finishChannelMessageWorkUnit(input.store, supervised, pending.id, {
-      body: replyText,
-      status: "ready",
-      errorMessage: null,
-    });
-    if (memoryRecall.memories.length > 0) {
-      input.store.recordUsedMemoryEvent(
+      };
+      const provider = resolveProviderForRun(
+        input.store,
         {
-          memoryIds: memoryRecall.memories.map((item) => item.memory.id),
-          intent: "channel-reply",
-          recallQuery: memoryRecall.request.query,
-          teammateId: canonicalTeammateId,
-          channelId: input.channel.id,
-          responseId: reply.id,
-          policyVersion: memoryRecall.policyVersion,
+          cwd: input.store.paths.cwd,
+          workspaceCwd: input.store.paths.cwd,
+          task,
+          providerPresetId: input.providerPresetId,
+          tools: [],
+          thinkingLevel: "medium",
+          systemPrompt,
         },
-        new Date().toISOString(),
+        input.secretResolver,
       );
-    }
-    if (extractedProposal) {
-      input.store.createChannelExecutionProposal(
-        {
-          channelId: input.channel.id,
-          sourceMessageId: pending.id,
-          proposedByTeammateId: canonicalTeammateId,
-          title: extractedProposal.title,
-          prompt: extractedProposal.prompt,
-          assigneeTeammateId: extractedProposal.assigneeTeammateId,
-          acceptanceCriteria: extractedProposal.acceptanceCriteria,
-          collaborationSteps: extractedProposal.collaborationSteps,
-          requiredTools: extractedProposal.requiredTools,
-          riskSummary: extractedProposal.riskSummary,
+
+      acquireRunRuntimeSemaphores({
+        store: input.store,
+        workUnit: input.supervised.workUnit,
+        attempt: input.supervised.attempt,
+        channel: input.channel,
+        providerKey: input.providerPresetId,
+        now,
+      });
+
+      const result = await input.runner.runTask({
+        cwd: input.store.paths.cwd,
+        task,
+        provider,
+        tools: [],
+        thinkingLevel: "medium",
+        systemPrompt,
+        onEvent: (event) => {
+          input.store.appendRuntimeEvent({
+            workUnitId: input.supervised.workUnit.id,
+            attemptId: input.supervised.attempt.id,
+            type: "work_unit_progress",
+            actor: "runner",
+            ts: new Date().toISOString(),
+            data: { runnerEventType: event.type },
+          });
+          if (event.type === "assistant_text_delta") {
+            textDeltas.push(event.text);
+          }
         },
-        new Date().toISOString(),
-      );
+      });
+      const rawReplyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
+      const extractedProposal = extractChannelExecutionProposal(rawReplyText, input.canonicalTeammateId);
+      const replyText = extractedProposal?.visibleBody || rawReplyText;
+      if (memoryRecall.memories.length > 0) {
+        input.store.recordUsedMemoryEvent(
+          {
+            memoryIds: memoryRecall.memories.map((item) => item.memory.id),
+            intent: "channel-reply",
+            recallQuery: memoryRecall.request.query,
+            teammateId: input.canonicalTeammateId,
+            channelId: input.channel.id,
+            responseId: input.pending.id,
+            policyVersion: memoryRecall.policyVersion,
+          },
+          new Date().toISOString(),
+        );
+      }
+      if (extractedProposal) {
+        input.store.createChannelExecutionProposal(
+          {
+            channelId: input.channel.id,
+            sourceMessageId: input.pending.id,
+            proposedByTeammateId: input.canonicalTeammateId,
+            title: extractedProposal.title,
+            prompt: extractedProposal.prompt,
+            assigneeTeammateId: extractedProposal.assigneeTeammateId,
+            acceptanceCriteria: extractedProposal.acceptanceCriteria,
+            collaborationSteps: extractedProposal.collaborationSteps,
+            requiredTools: extractedProposal.requiredTools,
+            riskSummary: extractedProposal.riskSummary,
+          },
+          new Date().toISOString(),
+        );
+      }
+      input.store.releaseRuntimeSemaphoreSlotsForOwner(input.supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
+      finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+        body: replyText,
+        status: "ready",
+        errorMessage: null,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      input.store.releaseRuntimeSemaphoreSlotsForOwner(input.supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
+      finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
+        body: `AI teammate is blocked: ${message}`,
+        status: "blocked",
+        errorMessage: message,
+      });
     }
-    return reply;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return finishChannelMessageWorkUnit(input.store, supervised, pending.id, {
-      body: `AI teammate is blocked: ${message}`,
-      status: "blocked",
-      errorMessage: message,
-    });
-  } finally {
-    input.store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
   }
 }
+
+const channelAiReplyService = new ChannelAiReplyService();
 
 function resolveAiTeammateReference(store: RunStore, teammateId: string): AiTeammate | undefined {
   return store.getAiTeammate(teammateId) ?? store.getAiTeammate(createBuiltinAiTeammateId(teammateId));
@@ -8817,6 +8910,80 @@ function isChannelExecutionProposalStepAction(value: string): value is ChannelEx
 
 function isRunTool(value: unknown): value is RunTool {
   return value === "read" || value === "grep" || value === "find" || value === "ls" || value === "bash" || value === "edit" || value === "write";
+}
+
+function readRunInterventionMode(record: Record<string, unknown>, key: string): RunInterventionMode {
+  const value = readString(record, key);
+  if (!runInterventionModes.includes(value as RunInterventionMode)) {
+    throw new Error(`${key} must be one of: ${runInterventionModes.join(", ")}`);
+  }
+  return value as RunInterventionMode;
+}
+
+function readOptionalRunInterventionMode(record: Record<string, unknown>, key: string): RunInterventionMode | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !runInterventionModes.includes(value as RunInterventionMode)) {
+    throw new Error(`${key} must be one of: ${runInterventionModes.join(", ")}`);
+  }
+  return value as RunInterventionMode;
+}
+
+function readSnapshotString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function readSnapshotBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readSnapshotStringArray(record: Record<string, unknown>, key: string): string[] | undefined {
+  const value = record[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+}
+
+function readSnapshotRunTools(record: Record<string, unknown>, key: string): RunTool[] | undefined {
+  const value = record[key];
+  return Array.isArray(value) ? value.filter(isRunTool) : undefined;
+}
+
+function readSnapshotSessionPermissionMode(record: Record<string, unknown>, key: string): SessionPermissionMode | undefined {
+  const value = record[key];
+  return typeof value === "string" && sessionPermissionModes.includes(value as SessionPermissionMode)
+    ? value as SessionPermissionMode
+    : undefined;
+}
+
+function readSnapshotPermissionConfirmation(record: Record<string, unknown>, key: string): PermissionConfirmation | undefined {
+  const value = record[key];
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  if (
+    value.mode !== "full_access" ||
+    value.confirmed !== true ||
+    typeof value.confirmedAt !== "string" ||
+    typeof value.reason !== "string" ||
+    !value.reason.trim() ||
+    Number.isNaN(Date.parse(value.confirmedAt))
+  ) {
+    return undefined;
+  }
+  return {
+    mode: "full_access",
+    confirmed: true,
+    confirmedAt: value.confirmedAt,
+    reason: value.reason,
+  };
+}
+
+function readSnapshotThinkingLevel(record: Record<string, unknown>, key: string): RunRequest["thinkingLevel"] {
+  const value = record[key];
+  return typeof value === "string" && (value === "low" || value === "medium" || value === "high") ? value : undefined;
 }
 
 async function createAiTeammateDirectReply(input: {
@@ -9853,104 +10020,351 @@ function handleCancelRun(
     return;
   }
 
-  if (run.status === "cancelled") {
-    writeJson(response, 200, { cancelled: true, active: false, run });
-    return;
-  }
+  const activeRun = activeRuns.get(runId);
+  const cancelled = runControlService.cancelRun({
+    store,
+    runId,
+    reason: "user_requested",
+    activeRun,
+  });
+  writeJson(response, 200, cancelled);
+}
 
-  if (isTerminalRunStatus(run.status)) {
-    writeJson(response, 409, {
-      error: "run_not_cancellable",
-      message: `Run ${runId} is already ${run.status}.`,
-      run,
+async function handleRunInterventions(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  url: URL,
+  runner: RunnerAdapter,
+  storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
+  secretResolver: SecretResolver,
+  mcpBroker: McpBroker,
+  sourceRunId: string,
+): Promise<void> {
+  const store = storeRegistry.findStoreForRun(sourceRunId, url.searchParams.get("cwd") ?? undefined);
+  const sourceRun = store?.getRun(sourceRunId);
+  if (!store || !sourceRun) {
+    writeJson(response, 404, {
+      error: "run_not_found",
+      message: "Run was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
     });
     return;
   }
 
-  const activeRun = activeRuns.get(runId);
-  const cancelled = ensureRunCancelled({
-    store,
-    runId,
-    taskId: run.taskId,
-    startedAt: run.startedAt,
-    reason: "user_requested",
-    active: Boolean(activeRun),
-    streamEnvelope: activeRun?.streamEnvelope,
-  });
-  activeRun?.abortController.abort();
+  if (request.method === "GET") {
+    writeJson(response, 200, {
+      cwd: store.paths.cwd,
+      interventions: store.listRunInterventions({ sourceRunId, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+    });
+    return;
+  }
 
-  writeJson(response, 200, {
-    cancelled: true,
-    active: Boolean(activeRun),
-    run: store.getRun(runId),
-    event: cancelled.event,
+  let input: { readonly mode: RunInterventionMode; readonly instruction: string; readonly idempotencyKey: string };
+  try {
+    input = parseRunInterventionCreateRequest(await readJsonBody(request, config.maxBodyBytes));
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+
+  if (input.mode === "interrupt_redirect" && isTerminalRunStatus(sourceRun.status)) {
+    writeJson(response, 409, { error: "run_not_cancellable", message: `Run ${sourceRun.id} is already ${sourceRun.status}.`, run: sourceRun });
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const sourceWorkUnit = sourceRun.workUnitId ? store.getWorkUnit(sourceRun.workUnitId) : undefined;
+  const intervention = store.createRunIntervention({
+    sourceRunId,
+    sourceWorkUnitId: sourceRun.workUnitId,
+    sourceAttemptId: sourceWorkUnit?.activeAttemptId ?? (sourceRun.workUnitId ? store.listWorkUnitAttempts(sourceRun.workUnitId).at(-1)?.id : undefined),
+    mode: input.mode,
+    instruction: input.instruction,
+    requestedBy: "local-user",
+    idempotencyKey: input.idempotencyKey,
+  }, now);
+  streamRunEventIfPossible(store, activeRuns, sourceRunId, "run_intervention_created", {
+    interventionId: intervention.id,
+    mode: intervention.mode,
+    status: intervention.status,
+  });
+
+  if (input.mode === "queue_followup") {
+    streamRunEventIfPossible(store, activeRuns, sourceRunId, "run_followup_queued", {
+      interventionId: intervention.id,
+      instruction: intervention.instruction,
+    });
+    if (isTerminalRunStatus(sourceRun.status)) {
+      void maybeStartNextRunInterventionContinuation({
+        sourceRunId,
+        store,
+        runner,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        mcpBroker,
+      });
+    }
+    writeJson(response, 201, { cwd: store.paths.cwd, intervention: store.getRunIntervention(intervention.id) ?? intervention });
+    return;
+  }
+
+  const updated = store.updateRunInterventionStatus({
+    interventionId: intervention.id,
+    status: "cancelling_source",
+    now,
+  }) ?? intervention;
+  streamRunEventIfPossible(store, activeRuns, sourceRunId, "run_interrupt_requested", {
+    interventionId: updated.id,
+    instruction: updated.instruction,
+  });
+
+  const activeRun = activeRuns.get(sourceRunId);
+  const cancellation = runControlService.cancelRunForRedirect({
+    store,
+    run: sourceRun,
+    activeRun,
+  });
+
+  writeJson(response, 201, {
+    cwd: store.paths.cwd,
+    intervention: store.getRunIntervention(intervention.id) ?? updated,
+    run: store.getRun(sourceRunId),
+    event: cancellation.event,
   });
 }
 
-function ensureRunCancelled(input: {
-  readonly store: RunStore;
-  readonly runId: string;
-  readonly taskId: string;
-  readonly startedAt?: string;
-  readonly reason: string;
-  readonly active: boolean;
-  readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
-}): { readonly event?: RunEventEnvelope } {
-  const current = input.store.getRun(input.runId);
-  if (!current || current.status === "cancelled") {
-    return {};
+function handleRunInterventionItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  route: NonNullable<ReturnType<typeof parseRunInterventionRoute>>,
+): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
   }
-  if (isTerminalRunStatus(current.status)) {
-    return {};
+  const intervention = resolved.store.getRunIntervention(route.interventionId);
+  if (!intervention) {
+    writeJson(response, 404, { error: "run_intervention_not_found", message: `Run intervention not found: ${route.interventionId}` });
+    return;
   }
-
-  const endedAt = new Date().toISOString();
-  const event = input.store.appendEvent(input.runId, "run_cancelled", {
-    reason: input.reason,
-    active: input.active,
-  });
-  input.streamEnvelope?.(event);
-  const summaryPath = writeTerminalSummary(getRunSummaryPath(input.store.paths, input.runId), {
-    runId: input.runId,
-    status: "cancelled",
-    taskId: input.taskId,
-    eventCount: event.seq,
-    startedAt: input.startedAt,
-    endedAt,
-    errorMessage: null,
-  });
-  input.store.transitionRunStatus({
-    runId: input.runId,
-    expectedStatus: current.status,
-    event: "cancel",
-    actor: "local-user",
-    reason: input.reason,
-    now: endedAt,
-    endedAt,
-    summaryPath,
-    errorMessage: null,
-  });
-  const task = input.store.getTask(input.taskId);
-  if (task && task.status !== "done" && task.status !== "cancelled") {
-    input.store.transitionTaskStatus({
-      taskId: input.taskId,
-      expectedStatus: task.status,
-      event: "cancel",
-      actor: "local-user",
-      reason: input.reason,
-      now: endedAt,
-      currentRunId: input.runId,
-    });
-  }
-  input.store.releaseResourceLeasesForOwner("run", input.runId, endedAt);
-  if (current.workUnitId) {
-    const workUnit = input.store.getWorkUnit(current.workUnitId);
-    const attemptId = workUnit?.activeAttemptId ?? input.store.listWorkUnitAttempts(current.workUnitId).at(-1)?.id;
-    if (attemptId) {
-      transitionWorkUnitCancelled(input.store, current.workUnitId, attemptId, input.reason);
+  if (route.kind === "detail") {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for run intervention detail` });
+      return;
     }
+    writeJson(response, 200, { cwd: resolved.cwd, intervention });
+    return;
   }
-  return { event };
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for run intervention cancel` });
+    return;
+  }
+  const cancelled = resolved.store.cancelRunIntervention(route.interventionId, new Date().toISOString(), "cancelled_by_user");
+  writeJson(response, 200, { cwd: resolved.cwd, intervention: cancelled ?? intervention });
+}
+
+function parseRunInterventionCreateRequest(value: unknown): {
+  readonly mode: RunInterventionMode;
+  readonly instruction: string;
+  readonly idempotencyKey: string;
+} {
+  if (!isRecord(value)) {
+    throw new Error("Run intervention request must be a JSON object");
+  }
+  const mode = readRunInterventionMode(value, "mode");
+  const instruction = readString(value, "instruction").trim();
+  if (!instruction) {
+    throw new Error("instruction is required");
+  }
+  const idempotencyKey = readOptionalString(value, "idempotencyKey") ?? `run_intervention:${randomUUID()}`;
+  return { mode, instruction, idempotencyKey };
+}
+
+function maybeStartNextRunInterventionContinuation(input: {
+  readonly sourceRunId: string;
+  readonly store: RunStore;
+  readonly runner: RunnerAdapter;
+  readonly storeRegistry: RunStoreRegistry;
+  readonly activeRuns: ActiveRunRegistry;
+  readonly runtimeSupervisor: RuntimeSupervisor;
+  readonly secretResolver: SecretResolver;
+  readonly mcpBroker: McpBroker;
+}): void {
+  const sourceRun = input.store.getRun(input.sourceRunId);
+  if (!sourceRun || !isTerminalRunStatus(sourceRun.status)) {
+    return;
+  }
+  const next = input.store
+    .listRunInterventions({ sourceRunId: input.sourceRunId, limit: 100 })
+    .find((intervention) => intervention.status === "cancelling_source" || intervention.status === "queued");
+  if (!next) {
+    return;
+  }
+  const now = new Date().toISOString();
+  const starting = input.store.updateRunInterventionStatus({
+    interventionId: next.id,
+    status: "starting_continuation",
+    startedAt: now,
+    now,
+  });
+  if (!starting) {
+    return;
+  }
+  streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_starting", {
+    interventionId: starting.id,
+    mode: starting.mode,
+  });
+  const continuationRequest = buildRunInterventionContinuationRequest(sourceRun, starting);
+  void (async () => {
+    const continuationRunId = await executeRunRequest(
+      continuationRequest,
+      createDetachedRunExecutionSink(),
+      input.runner,
+      input.storeRegistry,
+      input.activeRuns,
+      input.runtimeSupervisor,
+      input.secretResolver,
+      input.mcpBroker,
+      {
+        onRunReady: (runId) => {
+          const run = input.store.getRun(runId);
+          const updated = input.store.updateRunInterventionStatus({
+            interventionId: starting.id,
+            status: "started",
+            continuationRunId: runId,
+            continuationWorkUnitId: run?.workUnitId ?? null,
+            now: new Date().toISOString(),
+          });
+          streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_started", {
+            interventionId: starting.id,
+            continuationRunId: runId,
+            continuationWorkUnitId: run?.workUnitId,
+          });
+          void updated;
+        },
+      },
+    );
+    if (!continuationRunId) {
+      input.store.updateRunInterventionStatus({
+        interventionId: starting.id,
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        failureReason: "Continuation run failed to start.",
+        now: new Date().toISOString(),
+      });
+      streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_intervention_failed", {
+        interventionId: starting.id,
+        message: "Continuation run failed to start.",
+      });
+    }
+  })();
+}
+
+function buildRunInterventionContinuationRequest(sourceRun: RunSession, intervention: RunIntervention): RunRequest {
+  const snapshot = isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {};
+  const taskSnapshot = isRecord(sourceRun.taskSnapshot) ? sourceRun.taskSnapshot : {};
+  const originalTitle = readSnapshotString(taskSnapshot, "title") ?? readSnapshotString(isRecord(snapshot.task) ? snapshot.task : {}, "title") ?? sourceRun.taskId;
+  const originalPrompt = readSnapshotString(taskSnapshot, "prompt") ?? readSnapshotString(isRecord(snapshot.task) ? snapshot.task : {}, "prompt") ?? "";
+  const channelId =
+    readSnapshotString(taskSnapshot, "channelId") ??
+    readSnapshotString(isRecord(snapshot.task) ? snapshot.task : {}, "channelId") ??
+    sourceRun.channelId;
+  const permissionMode = readSnapshotSessionPermissionMode(snapshot, "permissionMode");
+  const permissionConfirmation = readSnapshotPermissionConfirmation(snapshot, "permissionConfirmation");
+  const requestedSkillId = readSnapshotString(snapshot, "requestedSkillId") ?? sourceRun.selectedSkillId;
+  const providerPresetId = readSnapshotString(snapshot, "providerPresetId") ?? sourceRun.providerPresetId;
+  const inlineProvider = providerPresetId ? undefined : isRecord(snapshot.provider) ? snapshot.provider as unknown as PiRunnerProviderConfig : undefined;
+  const tools = readSnapshotRunTools(snapshot, "tools");
+  const appendSystemPrompt = readSnapshotStringArray(snapshot, "appendSystemPrompt");
+  return {
+    workspaceCwd: readSnapshotString(snapshot, "workspaceCwd") ?? sourceRun.cwd,
+    cwd: readSnapshotString(snapshot, "cwd") ?? sourceRun.cwd,
+    providerPresetId,
+    provider: inlineProvider,
+    teammateId: readSnapshotString(snapshot, "teammateId") ?? sourceRun.teammateId,
+    requestedSkillId,
+    skipProviderPreflight: readSnapshotBoolean(snapshot, "skipProviderPreflight") ?? false,
+    idempotencyKey: `run_intervention:${intervention.id}`,
+    task: {
+      id: `continuation_${intervention.id}`,
+      title: `继续自上次运行: ${originalTitle}`,
+      prompt: renderRunInterventionContinuationPrompt({
+        sourceRun,
+        originalTitle,
+        originalPrompt,
+        sourceStatus: sourceRun.status,
+        instruction: intervention.instruction,
+        mode: intervention.mode,
+      }),
+      channelId,
+    },
+    tools,
+    approvalProfile: isRecord(snapshot.approvalProfile) ? snapshot.approvalProfile as unknown as SkillApprovalProfile : undefined,
+    permissionMode,
+    permissionConfirmation,
+    thinkingLevel: readSnapshotThinkingLevel(snapshot, "thinkingLevel"),
+    systemPrompt: readSnapshotString(snapshot, "systemPrompt"),
+    appendSystemPrompt,
+    agentDir: readSnapshotString(snapshot, "agentDir"),
+    parentRunId: sourceRun.id,
+    interventionId: intervention.id,
+    continuationReason: intervention.mode,
+  };
+}
+
+function renderRunInterventionContinuationPrompt(input: {
+  readonly sourceRun: RunSession;
+  readonly originalTitle: string;
+  readonly originalPrompt: string;
+  readonly sourceStatus: RunStatus;
+  readonly instruction: string;
+  readonly mode: RunInterventionMode;
+}): string {
+  return [
+    "Continue a Ling Stack supervised run from preserved context.",
+    "",
+    "Original task:",
+    `Title: ${input.originalTitle}`,
+    input.originalPrompt,
+    "",
+    "Source run:",
+    `Run id: ${input.sourceRun.id}`,
+    `Status: ${input.sourceStatus}`,
+    `Provider: ${input.sourceRun.providerName}/${input.sourceRun.providerModel}`,
+    input.sourceRun.selectedSkillId ? `Selected skill: ${input.sourceRun.selectedSkillId}` : undefined,
+    input.sourceRun.startedAt ? `Started at: ${input.sourceRun.startedAt}` : undefined,
+    input.sourceRun.endedAt ? `Ended at: ${input.sourceRun.endedAt}` : undefined,
+    "",
+    input.mode === "interrupt_redirect" ? "User redirect:" : "Queued user guidance:",
+    input.instruction,
+    "",
+    "Constraints:",
+    "- Continue from durable source run context; do not assume unseen state.",
+    "- The user guidance does not grant extra tools, approvals, secrets, MCP access, or external-send rights.",
+    "- Re-check files or external state before repeating side effects that may have already happened.",
+  ].filter((line): line is string => line !== undefined).join("\n");
+}
+
+function streamRunEventIfPossible(
+  store: RunStore,
+  activeRuns: ActiveRunRegistry,
+  runId: string,
+  type: RunEventType,
+  data: unknown,
+): RunEventEnvelope | undefined {
+  try {
+    const envelope = store.appendEvent(runId, type, data);
+    activeRuns.get(runId)?.streamEnvelope(envelope);
+    return envelope;
+  } catch {
+    return undefined;
+  }
 }
 
 function syncWorkUnitForRunEvent(
@@ -10094,43 +10508,6 @@ function transitionWorkUnitTerminal(
   });
 }
 
-function transitionWorkUnitCancelled(store: RunStore, workUnitId: string, attemptId: string, reason: string): void {
-  const current = store.getWorkUnit(workUnitId);
-  if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
-    return;
-  }
-  const now = new Date().toISOString();
-  const cancelling =
-    current.status === "cancelling"
-      ? { ok: true as const, from: current.status, to: current.status }
-      : store.transitionWorkUnitStatus({
-          workUnitId,
-          expectedStatus: current.status,
-          event: "cancel",
-          actor: "local-user",
-          reason,
-          now,
-        });
-  if (!cancelling.ok) {
-    return;
-  }
-  const latest = store.getWorkUnit(workUnitId);
-  if (!latest || latest.status !== "cancelling") {
-    return;
-  }
-  transitionWorkUnitTerminal(store, {
-    workUnitId,
-    attemptId,
-    event: "runner_cancelled",
-    attemptStatus: "cancelled",
-    runtimeEventType: "work_unit_cancelled",
-    actor: "runner",
-    now,
-    errorCode: "cancelled",
-    errorMessage: reason,
-  });
-}
-
 function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
@@ -10175,13 +10552,12 @@ function appendFailureEvent(
   store: RunStore,
   runId: string,
   message: string,
-  clientClosed: boolean,
-  response: ServerResponse,
+  sink: RunExecutionSink,
 ): RunEventEnvelope | undefined {
   try {
     const envelope = store.appendEvent(runId, "run_error", { message });
-    if (!clientClosed) {
-      writeSse(response, envelope.type, envelope);
+    if (!sink.isClosed()) {
+      sink.writeEvent(envelope.type, envelope);
     }
     return envelope;
   } catch {
@@ -10655,38 +11031,6 @@ function evaluateApprovalPolicy(
     decision: "ask",
     reason: `Ling Stack policy requires approval for ${request.toolName}.`,
   };
-}
-
-function mergeApprovalPolicyWithProfile(policy: ApprovalPolicy, profile: SkillApprovalProfile | undefined): ApprovalPolicy {
-  if (!profile || profile.mode === "none") {
-    return policy;
-  }
-
-  const requiredTools = new Set<RunTool>();
-  for (const tool of profile.requiredForTools ?? []) {
-    requiredTools.add(tool);
-  }
-  for (const action of profile.requiredForActions ?? []) {
-    if (isRunTool(action)) {
-      requiredTools.add(action);
-    }
-  }
-  if (profile.mode === "strict") {
-    for (const tool of riskyRunTools) {
-      requiredTools.add(tool);
-    }
-  }
-  if (requiredTools.size === 0) {
-    return policy;
-  }
-
-  const toolDecisions = { ...policy.toolDecisions };
-  for (const tool of requiredTools) {
-    if (toolDecisions[tool] !== "deny") {
-      toolDecisions[tool] = "ask";
-    }
-  }
-  return { ...policy, toolDecisions };
 }
 
 function mergeRunTools(base: readonly RunTool[], required: readonly RunTool[]): RunTool[] {
@@ -11734,13 +12078,38 @@ function parseRunRequest(value: unknown): RunRequest {
     provider: provider ? parseInlineProvider(provider) : undefined,
     tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]) ?? [...readOnlyRunTools],
     approvalProfile: readOptionalApprovalProfile(value, "approvalProfile"),
+    permissionMode: readOptionalSessionPermissionMode(value, "permissionMode"),
+    permissionConfirmation: readOptionalPermissionConfirmation(value, "permissionConfirmation"),
     thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
     systemPrompt: readOptionalString(value, "systemPrompt"),
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     agentDir: readOptionalString(value, "agentDir"),
+    parentRunId: readOptionalString(value, "parentRunId"),
+    interventionId: readOptionalString(value, "interventionId"),
+    continuationReason: readOptionalRunInterventionMode(value, "continuationReason"),
   };
 
   return runRequest;
+}
+
+function assertFullAccessPermissionConfirmed(runRequest: RunRequest): void {
+  if (runRequest.permissionMode !== "full_access") {
+    return;
+  }
+  const confirmation = runRequest.permissionConfirmation;
+  if (
+    !confirmation ||
+    confirmation.mode !== "full_access" ||
+    confirmation.confirmed !== true ||
+    !confirmation.reason.trim() ||
+    Number.isNaN(Date.parse(confirmation.confirmedAt))
+  ) {
+    throw new HttpError(
+      400,
+      "full_access_confirmation_required",
+      "Full access runs require explicit permission confirmation.",
+    );
+  }
 }
 
 function parseInlineProvider(provider: Record<string, unknown>): PiRunnerProviderConfig {
@@ -11763,7 +12132,13 @@ function parseInlineProvider(provider: Record<string, unknown>): PiRunnerProvide
 
 function parseRunRoute(
   pathname: string,
-): { kind: "run"; runId: string } | { kind: "events"; runId: string } | { kind: "artifacts"; runId: string } | { kind: "cancel"; runId: string } | undefined {
+):
+  | { kind: "run"; runId: string }
+  | { kind: "events"; runId: string }
+  | { kind: "artifacts"; runId: string }
+  | { kind: "cancel"; runId: string }
+  | { kind: "interventions"; runId: string }
+  | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "runs") {
     return { kind: "run", runId: segments[1] };
@@ -11776,6 +12151,22 @@ function parseRunRoute(
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "cancel") {
     return { kind: "cancel", runId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "interventions") {
+    return { kind: "interventions", runId: segments[1] };
+  }
+  return undefined;
+}
+
+function parseRunInterventionRoute(
+  pathname: string,
+): { readonly kind: "detail"; readonly interventionId: string } | { readonly kind: "cancel"; readonly interventionId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "run-interventions") {
+    return { kind: "detail", interventionId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "run-interventions" && segments[2] === "cancel") {
+    return { kind: "cancel", interventionId: segments[1] };
   }
   return undefined;
 }
@@ -14088,6 +14479,67 @@ function writeSse(response: ServerResponse, event: string, data: unknown): void 
   response.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+function createSseRunExecutionSink(response: ServerResponse): RunExecutionSink {
+  let closed = false;
+  let sseStarted = false;
+  const closeListeners: (() => void)[] = [];
+  response.on("close", () => {
+    closed = true;
+    for (const listener of closeListeners.splice(0)) {
+      listener();
+    }
+  });
+  const ensureSseStarted = (): void => {
+    if (!sseStarted) {
+      writeSseHead(response);
+      sseStarted = true;
+    }
+  };
+  return {
+    kind: "sse",
+    onClose(listener) {
+      closeListeners.push(listener);
+    },
+    isClosed() {
+      return closed;
+    },
+    writeReady(data) {
+      ensureSseStarted();
+      writeSse(response, "ready", data);
+    },
+    writeEvent(event, data) {
+      ensureSseStarted();
+      writeSse(response, event, data);
+    },
+    writeError(statusCode, body) {
+      if (!response.headersSent) {
+        writeJson(response, statusCode, body);
+      }
+    },
+    end() {
+      if (!closed) {
+        response.end();
+      }
+    },
+  };
+}
+
+function createDetachedRunExecutionSink(): RunExecutionSink {
+  return {
+    kind: "detached",
+    onClose() {
+      // Detached continuation runs are daemon-owned and are not tied to a browser stream.
+    },
+    isClosed() {
+      return false;
+    },
+    writeReady() {},
+    writeEvent() {},
+    writeError() {},
+    end() {},
+  };
+}
+
 function setCorsHeaders(response: ServerResponse): void {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
@@ -14545,6 +14997,49 @@ function readOptionalApprovalProfile(record: Record<string, unknown>, key: strin
     throw new Error(`${key} must be an object`);
   }
   return parseApprovalProfileObject(value, key);
+}
+
+function readOptionalSessionPermissionMode(record: Record<string, unknown>, key: string): SessionPermissionMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!sessionPermissionModes.includes(value as SessionPermissionMode)) {
+    throw new Error(`${key} must be one of: ${sessionPermissionModes.join(", ")}`);
+  }
+  return value as SessionPermissionMode;
+}
+
+function readOptionalPermissionConfirmation(record: Record<string, unknown>, key: string): PermissionConfirmation | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  const mode = readString(value, "mode");
+  const confirmed = value.confirmed;
+  const confirmedAt = readString(value, "confirmedAt");
+  const reason = readString(value, "reason");
+  if (mode !== "full_access") {
+    throw new Error(`${key}.mode must be full_access`);
+  }
+  if (confirmed !== true) {
+    throw new Error(`${key}.confirmed must be true`);
+  }
+  if (!reason.trim()) {
+    throw new Error(`${key}.reason is required`);
+  }
+  if (Number.isNaN(Date.parse(confirmedAt))) {
+    throw new Error(`${key}.confirmedAt must be an ISO date string`);
+  }
+  return {
+    mode: "full_access",
+    confirmed: true,
+    confirmedAt,
+    reason,
+  };
 }
 
 function parseApprovalProfileObject(value: Record<string, unknown>, key: string): SkillApprovalProfile {

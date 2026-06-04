@@ -35,6 +35,7 @@ import {
   Send,
   ShieldCheck,
   SlidersHorizontal,
+  Square,
   SquareTerminal,
   Trash2,
   UserPlus,
@@ -83,6 +84,11 @@ import { formatDateTime } from "../../lib/formatting.js";
 import { buildRunRepairHint, displayLinkedRunStatus, readRunWorkspaceCwd } from "../../lib/run-evidence.js";
 import { defaultTools, riskyTools } from "../../lib/tools.js";
 import {
+  sessionPermissionModeDescription,
+  sessionPermissionModeLabel,
+  sessionPermissionModeOptions,
+} from "../../lib/session-permissions.js";
+import {
   canUseProviderForRun,
   isMediaProvider,
   providerPreflightReady,
@@ -122,6 +128,7 @@ import type {
   RuntimeDiagnosticsResponse,
   RunArtifact,
   RunSession,
+  SessionPermissionMode,
   StateTransitionEvent,
   Task,
   TaskFormState,
@@ -140,7 +147,6 @@ type ChannelDrawerRootView = Extract<ChannelSidePanelView, "progress" | "files" 
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
-type AiReplyState = "idle" | "replying" | "failed";
 type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
 type MessageBubbleTone = "chat" | "chat-blocked" | "system" | "work" | "approval" | "protocol" | "runtime";
 type ChannelNotificationLevel = "all" | "mentions" | "muted";
@@ -281,6 +287,8 @@ export function WorkspaceClientView({
   activeRunId,
   latestStatus,
   isRunning,
+  isCancellingRun,
+  permissionMode,
   activeTaskRunAction,
   runningWorkflowStepId,
   errorMessage,
@@ -314,6 +322,7 @@ export function WorkspaceClientView({
   onCreateTaskFromContextSummary,
   onRunActivityTriageAction,
   onLoadOlderChannelMessages,
+  onRefreshChannelMessages,
   onRefreshChannelActivity,
   onRefreshExternalWorkCiTriage,
   onRefreshChannelProtocol,
@@ -323,6 +332,8 @@ export function WorkspaceClientView({
   onSelectTask,
   onCheckThenRunTask,
   onRunTask,
+  onPermissionModeChange,
+  onCancelActiveRun,
   onOpenRun,
   onOpenApprovals,
   onRefreshRunApprovals,
@@ -393,6 +404,8 @@ export function WorkspaceClientView({
   readonly activeRunId: string;
   readonly latestStatus: string;
   readonly isRunning: boolean;
+  readonly isCancellingRun: boolean;
+  readonly permissionMode: SessionPermissionMode;
   readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly runningWorkflowStepId: string;
   readonly errorMessage: string;
@@ -433,6 +446,7 @@ export function WorkspaceClientView({
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onRunActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
   readonly onLoadOlderChannelMessages: () => void;
+  readonly onRefreshChannelMessages: () => void;
   readonly onRefreshChannelActivity: () => void;
   readonly onRefreshExternalWorkCiTriage: () => void;
   readonly onRefreshChannelProtocol: () => void;
@@ -442,6 +456,8 @@ export function WorkspaceClientView({
   readonly onSelectTask: (taskId: string) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
+  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
+  readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onRefreshRunApprovals: () => void;
@@ -491,7 +507,6 @@ export function WorkspaceClientView({
   const [composerBusy, setComposerBusy] = useState(false);
   const [sendState, setSendState] = useState<ComposerSendState>("idle");
   const [sendError, setSendError] = useState("");
-  const [aiReplyState, setAiReplyState] = useState<AiReplyState>("idle");
   const [activeThreadId, setActiveThreadId] = useState("");
   const [threadReplyDraft, setThreadReplyDraft] = useState("");
   const [threadReplyPending, setThreadReplyPending] = useState(false);
@@ -937,7 +952,6 @@ export function WorkspaceClientView({
     autoPreviewUrlsRef.current.clear();
     setSendState("idle");
     setSendError("");
-    setAiReplyState("idle");
     setActivitySearch("");
     setActivityCategoryFilter("all");
     setActivityAttentionFilter("all");
@@ -962,6 +976,18 @@ export function WorkspaceClientView({
     messageFeedOlderLoadSnapshotRef.current = undefined;
     setMessageFeedLatestButtonVisible(false);
   }, [selectedChannelId]);
+
+  useEffect(() => {
+    const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");
+    if (!selectedChannelId || !hasPendingReply) {
+      return undefined;
+    }
+    const intervalId = globalThis.setInterval(() => {
+      onRefreshChannelMessages();
+      onRefreshChannelActivity();
+    }, 1_000);
+    return () => globalThis.clearInterval(intervalId);
+  }, [channelMessages, onRefreshChannelActivity, onRefreshChannelMessages, selectedChannelId]);
 
   useEffect(() => {
     if (sidePanelOpen && sidePanelView === "files") {
@@ -1243,6 +1269,8 @@ export function WorkspaceClientView({
       activeTaskRunAction={activeTaskRunAction}
       taskActionPending={taskActionPending}
       activeLeaseCount={activeLeaseCount}
+      isCancellingRun={isCancellingRun}
+      permissionMode={permissionMode}
       decisions={channelDecisions}
       contextSummaries={channelContextSummaries}
       workflows={channelWorkflows}
@@ -1251,6 +1279,8 @@ export function WorkspaceClientView({
       onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
       onCheckThenRunTask={onCheckThenRunTask}
       onRunTask={onRunTask}
+      onPermissionModeChange={onPermissionModeChange}
+      onCancelActiveRun={onCancelActiveRun}
       onOpenRun={openRunInPanel}
       onOpenApprovals={onOpenApprovals}
       onRefreshRunApprovals={onRefreshRunApprovals}
@@ -1614,7 +1644,6 @@ export function WorkspaceClientView({
     setComposerBusy(true);
     setSendState("sending");
     setSendError("");
-    setAiReplyState(shouldRequestAi ? "replying" : "idle");
     try {
       for (const url of pastedUrls) {
         if (!pendingPreviewRecords.some((preview) => preview.normalizedUrl === url || preview.url === url)) {
@@ -1648,12 +1677,10 @@ export function WorkspaceClientView({
       autoPreviewUrlsRef.current.clear();
       setSendState("idle");
       setSendError("");
-      setAiReplyState("idle");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setSendState("failed");
       setSendError(message);
-      setAiReplyState(shouldRequestAi ? "failed" : "idle");
     } finally {
       setComposerBusy(false);
     }
@@ -1744,6 +1771,7 @@ export function WorkspaceClientView({
     if (item.kind === "message") {
       const message = item.record;
       const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
+      const pendingAiReply = message.kind === "ai_reply" && message.status === "pending";
       const executionProposals = executionProposalsByMessageId.get(message.id) ?? [];
       const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
       const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
@@ -1761,7 +1789,8 @@ export function WorkspaceClientView({
             author={messageAuthorLabel(message, teammateOptions)}
             tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
             time={formatDateTime(message.createdAt)}
-            body={message.body}
+            body={pendingAiReply ? t("AI teammate is replying...") : message.body}
+            pending={pendingAiReply}
             metaAction={plainChatMessage ? (
               <button className="message-reply-button" type="button" onClick={() => openThreadForMessage(message)} aria-label={t("Reply in topic")} data-tooltip={t("Reply in topic")}>
                 <Reply size={11} />
@@ -2175,39 +2204,24 @@ export function WorkspaceClientView({
           {sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
         </button>
       </div>
-      {sendState !== "idle" || aiReplyState !== "idle" ? (
+      {sendState === "failed" ? (
         <div className="composer-status-list" aria-live="polite">
-          {sendState === "sending" ? (
-            <div className="composer-status-row loading">
-              <Loader2 className="spin" size={14} />
-              <span>{t("Sending message...")}</span>
-            </div>
-          ) : null}
-          {aiReplyState === "replying" ? (
-            <div className="composer-status-row loading">
-              <Loader2 className="spin" size={14} />
-              <span>{t("AI teammate is replying...")}</span>
-            </div>
-          ) : null}
-          {sendState === "failed" ? (
-            <div className="composer-status-row failed">
-              <CircleAlert size={14} />
-              <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
-              <button className="secondary-button compact-button" type="button" onClick={() => {
-                void sendMessage();
-              }}>
-                <RefreshCw size={13} />
-                {t("Retry")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => {
-                setSendState("idle");
-                setSendError("");
-                setAiReplyState("idle");
-              }}>
-                {t("Dismiss")}
-              </button>
-            </div>
-          ) : null}
+          <div className="composer-status-row failed">
+            <CircleAlert size={14} />
+            <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
+            <button className="secondary-button compact-button" type="button" onClick={() => {
+              void sendMessage();
+            }}>
+              <RefreshCw size={13} />
+              {t("Retry")}
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={() => {
+              setSendState("idle");
+              setSendError("");
+            }}>
+              {t("Dismiss")}
+            </button>
+          </div>
         </div>
       ) : null}
     </section>
@@ -3938,6 +3952,8 @@ function TaskDetailPanel({
   activeTaskRunAction,
   taskActionPending,
   activeLeaseCount,
+  isCancellingRun,
+  permissionMode,
   decisions,
   contextSummaries,
   workflows,
@@ -3946,6 +3962,8 @@ function TaskDetailPanel({
   onCreateTaskFromContextSummary,
   onCheckThenRunTask,
   onRunTask,
+  onPermissionModeChange,
+  onCancelActiveRun,
   onOpenRun,
   onOpenApprovals,
   onRefreshRunApprovals,
@@ -3967,6 +3985,8 @@ function TaskDetailPanel({
   readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly taskActionPending: boolean;
   readonly activeLeaseCount: number;
+  readonly isCancellingRun: boolean;
+  readonly permissionMode: SessionPermissionMode;
   readonly decisions: readonly ChannelDecision[];
   readonly contextSummaries: readonly ChannelContextSummary[];
   readonly workflows: readonly ChannelWorkflow[];
@@ -3975,6 +3995,8 @@ function TaskDetailPanel({
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
+  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
+  readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onRefreshRunApprovals: () => void;
@@ -3992,6 +4014,12 @@ function TaskDetailPanel({
   const checkRunLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
   const runLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "run";
   const taskActionsDisabled = isRunning || taskActionPending;
+  const linkedRunCancellable = Boolean(linkedRun && runCanBeStopped(linkedRun));
+  const stopLinkedRun = (): void => {
+    if (linkedRun) {
+      onCancelActiveRun(linkedRun);
+    }
+  };
   const taskSummaries = contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === task.id);
   const activeDecisions = decisions.filter((decision) => decision.status === "active");
   const sourceWorkflowStep = workflowSteps.find((step) => step.taskId === task.id);
@@ -4038,6 +4066,12 @@ function TaskDetailPanel({
             {linkedRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
             {linkedRunSucceeded ? t("View result") : t("Open run")}
           </button>
+          {linkedRunCancellable ? (
+            <button className="secondary-button danger compact-button" type="button" onClick={stopLinkedRun} disabled={isCancellingRun}>
+              {isCancellingRun ? <Loader2 className="spin" size={14} /> : <Square size={13} />}
+              {isCancellingRun ? t("Stopping") : t("Stop")}
+            </button>
+          ) : null}
         </div>
       ) : null}
       {task.currentRunId && repairHint ? (
@@ -4086,6 +4120,23 @@ function TaskDetailPanel({
           </span>
         </div>
       ) : null}
+      <label className="session-permission-control">
+        <span>
+          <ShieldCheck size={14} />
+          {t("Permission mode")}
+        </span>
+        <select
+          aria-label={t("Permission mode")}
+          value={permissionMode}
+          onChange={(event) => onPermissionModeChange(event.target.value as SessionPermissionMode)}
+          disabled={isRunning || taskActionPending}
+        >
+          {sessionPermissionModeOptions.map((mode) => (
+            <option key={mode} value={mode}>{sessionPermissionModeLabel(mode, t)}</option>
+          ))}
+        </select>
+        <small>{sessionPermissionModeDescription(permissionMode, t)}</small>
+      </label>
       <div className="task-actions">
         <button className="secondary-button compact-button" type="button" onClick={() => onCreateHandoffFromTask(task)}>
           <Workflow size={14} />
@@ -4156,6 +4207,10 @@ function MessageFeedVirtualRow({
   );
 }
 
+function runCanBeStopped(run: RunSession): boolean {
+  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+}
+
 function MessageBubble({
   tone = "chat",
   side = "start",
@@ -4164,6 +4219,7 @@ function MessageBubble({
   tag,
   time,
   body,
+  pending = false,
   metaAction,
   action,
 }: {
@@ -4174,6 +4230,7 @@ function MessageBubble({
   readonly tag?: string;
   readonly time: string;
   readonly body: string;
+  readonly pending?: boolean;
   readonly metaAction?: JSX.Element;
   readonly action?: JSX.Element;
 }): JSX.Element {
@@ -4183,7 +4240,7 @@ function MessageBubble({
   const peerMessage = inlineAuthor && side === "start";
   const showTime = !inlineAuthor && time.length > 0;
   return (
-    <article className={`message-bubble message-bubble-${tone}${inlineAuthor ? " message-bubble-inline" : ""}${sideClass}`}>
+    <article className={`message-bubble message-bubble-${tone}${inlineAuthor ? " message-bubble-inline" : ""}${sideClass}${pending ? " message-bubble-pending" : ""}`}>
       {!inlineAuthor || peerMessage ? avatar : null}
       <div className={metaAction ? "message-content has-floating-action" : "message-content"}>
         {ownMessage ? (
@@ -4196,7 +4253,7 @@ function MessageBubble({
             {metaAction ? <span className="message-meta-action">{metaAction}</span> : null}
           </div>
         )}
-        <p>{renderMessageBody(body)}</p>
+        <p>{pending ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}{renderMessageBody(body)}</p>
         {action ? <div className="message-action">{action}</div> : null}
       </div>
       {inlineAuthor && side === "end" ? avatar : null}
