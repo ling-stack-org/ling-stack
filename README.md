@@ -42,6 +42,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Secrets / Keychain](docs/design/secrets-keychain.md)
 - [State machines and recovery](docs/design/state-machine-recovery.md)
 - [Multi-channel concurrency](docs/design/multi-channel-concurrency.md)
+- [Run interruption and continuation](docs/design/run-interruption-continuation.md)
 - [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
 
 ## UI Direction

@@ -394,6 +394,7 @@ The framework has hard boundaries:
 - `AGENT.md` teammate profile source support.
 - `AGENTS.md` and skill directory import as reviewed drafts.
 - Streaming private replies.
+- Run interruption and continuation.
 - Private attachments.
 
 ### Framework v2

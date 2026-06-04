@@ -471,7 +471,9 @@ error_message = "Daemon stopped before the run reached a terminal state."
 
 Also append a `run_error` event if no terminal event exists.
 
-This is conservative. A later cancellation/resume design can introduce `interrupted` or resumable sessions.
+This is conservative. The later
+[Run Interruption And Continuation](run-interruption-continuation.md) design can
+introduce `interrupted` or linked continuation sessions.
 
 ## Client Disconnect Behavior
 

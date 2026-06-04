@@ -603,6 +603,10 @@ The key design constraint is that Pi CLI may execute the work, but it does not o
 runtime truth. The daemon supervisor owns identity, state, leases, cancellation,
 heartbeats, retries, and diagnostics.
 
+Human course correction for active runs is a separate follow-up design:
+[Run Interruption And Continuation](run-interruption-continuation.md). It builds on the
+supervisor and does not inject prompt text into an already-active runner call.
+
 ## Unified Execution Paths
 
 All of these must become work units:
