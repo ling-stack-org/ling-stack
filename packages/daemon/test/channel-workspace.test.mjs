@@ -569,6 +569,54 @@ test("teammate persona draft import returns warnings without mutating durable te
   }
 });
 
+test("skill import draft publishes registry skills and teammate bindings use effective model", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-import-api-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const initialSkills = await getJson(`${daemon.url}/skills?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(initialSkills.skills.some((skill) => skill.id === "implement" && skill.source === "builtin"));
+
+    const draft = await postJson(`${daemon.url}/skills/import-draft?cwd=${encodeURIComponent(cwd)}`, {
+      source: "custom",
+      sourcePath: "SKILL.md",
+      content: [
+        "---",
+        "name: Custom QA Review",
+        "description: Run a focused QA pass. Do not grant bash approvals or secrets.",
+        "---",
+        "",
+        "Review the target surface and report concrete failures first.",
+      ].join("\n"),
+    });
+    assert.equal(draft.draft.definitions.length, 1);
+    assert.equal(draft.draft.definitions[0].definition.id, "custom-qa-review");
+    assert.ok(draft.draft.definitions[0].warnings.some((warning) => warning.code === "permission_like_instruction"));
+
+    const published = await postJson(`${daemon.url}/skills/import-drafts/${encodeURIComponent(draft.draft.id)}/publish?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(published.skills[0].id, "custom-qa-review");
+    const listed = await getJson(`${daemon.url}/skills?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(listed.skills.some((skill) => skill.id === "custom-qa-review" && skill.source === "custom"));
+
+    const teammateId = "teammate_builtin_engineer";
+    const updated = await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/skills?cwd=${encodeURIComponent(cwd)}`, {
+      bindings: [{ skillId: "custom-qa-review", source: "user", enabled: true }],
+    });
+    const customEffective = updated.effectiveSkills.find((skill) => skill.skillId === "custom-qa-review");
+    assert.ok(customEffective);
+    assert.equal(customEffective.executable, true);
+
+    const unknownResponse = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/skills?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bindings: [{ skillId: "missing-new-skill", source: "user", enabled: true }] }),
+    });
+    assert.equal(unknownResponse.status, 400);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("teammate direct message stream emits ready delta and done events", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-stream-"));
   const runner = new RecordingRunner();

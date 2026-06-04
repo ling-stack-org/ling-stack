@@ -96,6 +96,7 @@ import {
   type CreateAiTeammateInput,
   type ChannelUpdateInput,
   type Channel,
+  type CreateSkillImportDraftInput,
   type CreateMediaJobInput,
   type CreateMcpServerInput,
   type CreateChannelInput,
@@ -185,6 +186,10 @@ import {
   type SecretPurpose,
   type SecretResolver,
   type SkillApprovalProfile,
+  type SkillDefinition,
+  type SkillImportWarning,
+  type SkillPackSource,
+  type SkillRegistryEntry,
   type SecretStatus,
   type Task,
   type TaskStatus,
@@ -1388,6 +1393,12 @@ async function routeRequest(
     return;
   }
 
+  const skillRoute = parseSkillRoute(url.pathname);
+  if (url.pathname === "/skills" || url.pathname === "/skills/import-draft" || skillRoute) {
+    await handleSkillRoute(request, response, config, storeRegistry, skillRoute);
+    return;
+  }
+
   if (url.pathname === "/memory") {
     await handleMemoryCollection(request, response, config, storeRegistry);
     return;
@@ -1725,6 +1736,132 @@ async function handleMemoryCollection(
   }
 }
 
+async function handleSkillRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  route: ReturnType<typeof parseSkillRoute>,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (url.pathname === "/skills") {
+      if (request.method !== "GET") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills` });
+        return;
+      }
+      writeJson(response, 200, { cwd, skills: listEffectiveSkillRegistryEntries(store) });
+      return;
+    }
+
+    if (url.pathname === "/skills/import-draft") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/import-draft` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const draftInput = parseSkillImportDraftRequest(body, listEffectiveSkillRegistryEntries(store));
+      const draft = store.createSkillImportDraft(draftInput, new Date().toISOString());
+      writeJson(response, 201, { cwd, draft });
+      return;
+    }
+
+    if (!route) {
+      writeJson(response, 404, { error: "not_found", message: `No route for ${request.method} ${url.pathname}` });
+      return;
+    }
+
+    if (route.kind === "draft") {
+      if (request.method === "GET") {
+        const draft = store.getSkillImportDraft(route.draftId);
+        if (!draft) {
+          writeJson(response, 404, { error: "skill_import_draft_not_found", message: `Skill import draft not found: ${route.draftId}` });
+          return;
+        }
+        writeJson(response, 200, { cwd, draft });
+        return;
+      }
+      if (request.method === "POST" && route.action === "publish") {
+        const skills = store.publishSkillImportDraft(route.draftId, new Date().toISOString());
+        writeJson(response, 200, { cwd, draftId: route.draftId, skills });
+        return;
+      }
+    }
+
+    if (route.kind === "skill" && request.method === "DELETE") {
+      const archived = store.archiveSkillRegistryEntry(route.skillId, new Date().toISOString());
+      if (!archived) {
+        writeJson(response, 404, { error: "skill_not_found", message: `Skill not found: ${route.skillId}` });
+        return;
+      }
+      writeJson(response, 200, { cwd, skill: archived });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for skill route` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function listEffectiveSkillRegistryEntries(store: RunStore): SkillRegistryEntry[] {
+  const builtInTimestamp = new Date(0).toISOString();
+  const builtInEntries = listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID).map((definition): SkillRegistryEntry => ({
+    id: definition.id,
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    packId: GSTACK_DEFAULT_SKILL_PACK_ID,
+    source: "builtin",
+    version: "builtin",
+    definition,
+    visibility: {
+      workspaceVisible: true,
+      promotableToWorkspace: false,
+    },
+    reviewStatus: "builtin",
+    createdAt: builtInTimestamp,
+    updatedAt: builtInTimestamp,
+  }));
+  const customEntries = store.listSkillRegistryEntries();
+  const seen = new Set<string>();
+  return [...builtInEntries, ...customEntries].filter((entry) => {
+    if (seen.has(entry.id)) {
+      return false;
+    }
+    seen.add(entry.id);
+    return true;
+  });
+}
+
+function listExecutableSkillDefinitions(store: RunStore): readonly SkillDefinition[] {
+  return listEffectiveSkillRegistryEntries(store)
+    .filter((entry) => entry.reviewStatus === "builtin" || entry.reviewStatus === "published")
+    .map((entry) => entry.definition);
+}
+
+function validateTeammateSkillBindings(
+  store: RunStore,
+  teammateId: string,
+  bindings: readonly ReplaceTeammateSkillBindingInput[],
+): void {
+  const knownSkillIds = new Set(listExecutableSkillDefinitions(store).map((skill) => skill.id));
+  const existingSkillIds = new Set(store.listTeammateSkillBindings(teammateId).map((binding) => binding.skillId));
+  for (const binding of bindings) {
+    if (!knownSkillIds.has(binding.skillId) && !existingSkillIds.has(binding.skillId)) {
+      throw new HttpError(400, "skill_not_found", `Skill definition not found: ${binding.skillId}`);
+    }
+  }
+}
+
 async function handleMemoryItem(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1896,7 +2033,7 @@ async function executeRunRequest(
       const effectiveSkills = buildEffectiveTeammateSkills({
         teammate: skillTeammate,
         bindings: store.listTeammateSkillBindings(skillTeammate.id),
-        skills: listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID),
+        skills: listExecutableSkillDefinitions(store),
         channelAllowedTools: skillChannel?.allowedTools,
         providerCapabilities: skillProviderPreset?.capabilities,
       });
@@ -3302,7 +3439,7 @@ async function handleTeammateRoute(
           effectiveSkills: buildEffectiveTeammateSkills({
             teammate,
             bindings,
-            skills: listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID),
+            skills: listExecutableSkillDefinitions(store),
             channelAllowedTools: channel?.allowedTools,
             providerCapabilities: providerPreset?.capabilities,
           }),
@@ -3311,9 +3448,11 @@ async function handleTeammateRoute(
       }
       if (request.method === "PUT") {
         const body = await readJsonBody(request, config.maxBodyBytes);
+        const nextBindings = parseReplaceTeammateSkillBindingsRequest(body);
+        validateTeammateSkillBindings(store, route.teammateId, nextBindings);
         const bindings = store.replaceTeammateSkillBindings(
           route.teammateId,
-          parseReplaceTeammateSkillBindingsRequest(body),
+          nextBindings,
           new Date().toISOString(),
         );
         const channelId = url.searchParams.get("channelId") ?? undefined;
@@ -3327,7 +3466,7 @@ async function handleTeammateRoute(
           effectiveSkills: buildEffectiveTeammateSkills({
             teammate,
             bindings,
-            skills: listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID),
+            skills: listExecutableSkillDefinitions(store),
             channelAllowedTools: channel?.allowedTools,
             providerCapabilities: providerPreset?.capabilities,
           }),
@@ -11641,6 +11780,22 @@ function parseRunRoute(
   return undefined;
 }
 
+function parseSkillRoute(
+  pathname: string,
+): { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" } | { readonly kind: "skill"; readonly skillId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "skills" && segments[1] === "import-drafts") {
+    return { kind: "draft", draftId: segments[2] };
+  }
+  if (segments.length === 4 && segments[0] === "skills" && segments[1] === "import-drafts" && segments[3] === "publish") {
+    return { kind: "draft", draftId: segments[2], action: "publish" };
+  }
+  if (segments.length === 2 && segments[0] === "skills") {
+    return { kind: "skill", skillId: segments[1] };
+  }
+  return undefined;
+}
+
 function parseWorkUnitRoute(
   pathname: string,
 ):
@@ -12155,6 +12310,327 @@ function validateMemoryInput(input: Partial<Pick<MemoryObjectUpdateInput, "owner
   if (input.tags?.some((tag) => !tag.trim())) {
     throw new Error("tags entries must be non-empty strings");
   }
+}
+
+function parseSkillImportDraftRequest(
+  value: unknown,
+  existingSkills: readonly SkillRegistryEntry[],
+): CreateSkillImportDraftInput {
+  if (!isRecord(value)) {
+    throw new Error("Skill import draft request must be a JSON object");
+  }
+  const content = readString(value, "content");
+  const sourcePath = readOptionalString(value, "sourcePath");
+  const source = readOptionalSkillPackSource(value, "source") ?? inferSkillImportSource(sourcePath, content);
+  const requestedName = readOptionalString(value, "name");
+  const knownSkillIds = new Set(existingSkills.map((skill) => skill.id));
+  const parsed = parseSkillImportContent(content, sourcePath, requestedName);
+  const seenDraftSkillIds = new Set<string>();
+  const definitions = parsed.definitions.map((item) => {
+    const warnings = [...(item.warnings ?? [])];
+    if (knownSkillIds.has(item.definition.id) || seenDraftSkillIds.has(item.definition.id)) {
+      warnings.push({
+        code: "duplicate_skill_id",
+        severity: "error",
+        message: `Skill id already exists or appears more than once: ${item.definition.id}`,
+      });
+    }
+    seenDraftSkillIds.add(item.definition.id);
+    return { ...item, warnings };
+  });
+  const warnings: SkillImportWarning[] = [
+    ...parsed.warnings,
+    ...(definitions.length === 0 ? [{
+      code: "missing_metadata" as const,
+      severity: "error" as const,
+      message: "No skill definitions could be parsed from the import source.",
+    }] : []),
+  ];
+  return {
+    source,
+    sourcePath,
+    packId: parsed.packId,
+    name: requestedName ?? parsed.name,
+    version: parsed.version,
+    description: parsed.description,
+    definitions,
+    warnings,
+  };
+}
+
+function parseSkillImportContent(
+  content: string,
+  sourcePath: string | undefined,
+  requestedName: string | undefined,
+): Pick<CreateSkillImportDraftInput, "packId" | "name" | "version" | "description" | "definitions"> & { readonly warnings: SkillImportWarning[] } {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return {
+      name: requestedName ?? "Imported skills",
+      description: "",
+      definitions: [],
+      warnings: [{ code: "missing_metadata", severity: "error", message: "Import content is empty." }],
+    };
+  }
+  if (trimmed.startsWith("{")) {
+    return parseJsonSkillImport(trimmed, requestedName);
+  }
+  return parseMarkdownSkillImport(trimmed, sourcePath, requestedName);
+}
+
+function parseJsonSkillImport(content: string, requestedName: string | undefined): ReturnType<typeof parseSkillImportContent> {
+  const parsed = JSON.parse(content) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error("Skill import JSON must be an object");
+  }
+  const rawSkills = Array.isArray(parsed.skills) ? parsed.skills : [parsed];
+  const definitions = rawSkills
+    .filter(isRecord)
+    .map((raw, index) => normalizeJsonSkillDefinition(raw, `skills[${index}]`));
+  const name = requestedName ?? readOptionalString(parsed, "name") ?? "Imported skill pack";
+  return {
+    packId: readOptionalString(parsed, "id"),
+    name,
+    version: readOptionalString(parsed, "version"),
+    description: readOptionalString(parsed, "description") ?? `Draft imported from ${name}.`,
+    definitions,
+    warnings: skillPermissionWarnings(content),
+  };
+}
+
+function normalizeJsonSkillDefinition(
+  raw: Record<string, unknown>,
+  location: string,
+): { readonly definition: SkillDefinition; readonly warnings: readonly SkillImportWarning[] } {
+  const warnings: SkillImportWarning[] = [];
+  const id = readOptionalString(raw, "id") ?? slugSkillId(readOptionalString(raw, "name") ?? "custom-skill");
+  const name = readOptionalString(raw, "name") ?? id;
+  if (!raw.name || !raw.summary) {
+    warnings.push({
+      code: "missing_metadata",
+      severity: "warning",
+      message: "Skill definition is missing name or summary metadata.",
+      location,
+    });
+  }
+  const requiredTools = readStringArrayWithWarnings(raw, "requiredTools", supportedRunToolNames(), "unknown_tool", warnings, location) ?? [...readOnlyRunTools];
+  const requiredProviderCapabilities = readStringArrayWithWarnings(
+    raw,
+    "requiredProviderCapabilities",
+    [...providerCapabilities],
+    "unknown_provider_capability",
+    warnings,
+    location,
+  ) ?? ["chat", "reasoning"];
+  return {
+    definition: {
+      id,
+      name,
+      summary: readOptionalString(raw, "summary") ?? `Custom skill ${name}.`,
+      roleAffinity: readStringArrayWithWarnings(raw, "roleAffinity", supportedRoleKeys(), "unsupported_section", warnings, location) ?? ["custom"],
+      workflowPhase: readSkillWorkflowPhase(raw, "workflowPhase", warnings, location),
+      promptFragments: readOptionalStringArray(raw, "promptFragments") ?? [readOptionalString(raw, "prompt") ?? readOptionalString(raw, "description") ?? ""].filter(Boolean),
+      requiredTools,
+      requiredProviderCapabilities,
+      approvalProfile: isRecord(raw.approvalProfile) ? parseApprovalProfileObject(raw.approvalProfile, `${location}.approvalProfile`) : { mode: "none" },
+      stateEffects: readStringArrayWithWarnings(raw, "stateEffects", supportedSkillStateEffects(), "unsupported_section", warnings, location) ?? [],
+    },
+    warnings: [...warnings, ...skillPermissionWarnings(JSON.stringify(raw)).map((warning) => ({ ...warning, location }))],
+  };
+}
+
+function parseMarkdownSkillImport(
+  content: string,
+  sourcePath: string | undefined,
+  requestedName: string | undefined,
+): ReturnType<typeof parseSkillImportContent> {
+  const frontmatter = parseMarkdownFrontmatter(content);
+  const title = extractMarkdownTitle(content) ?? frontmatter.name ?? requestedName ?? (sourcePath ? basename(sourcePath, extname(sourcePath)) : "Custom Skill");
+  const name = requestedName ?? title;
+  const summary = frontmatter.description ?? firstMarkdownParagraph(content) ?? `Draft imported from ${sourcePath ?? "markdown"}.`;
+  const id = slugSkillId(frontmatter.id ?? frontmatter.name ?? title);
+  const warnings: SkillImportWarning[] = [
+    ...skillPermissionWarnings(content),
+    ...(!frontmatter.name && !extractMarkdownTitle(content) ? [{
+      code: "missing_metadata" as const,
+      severity: "warning" as const,
+      message: "Markdown did not include a title or name; generated a skill name from the source.",
+    }] : []),
+  ];
+  return {
+    name,
+    description: summary,
+    definitions: [{
+      definition: {
+        id,
+        name,
+        summary,
+        roleAffinity: ["custom"],
+        workflowPhase: "operate",
+        promptFragments: [content.slice(0, 12_000)],
+        requiredTools: [...readOnlyRunTools],
+        requiredProviderCapabilities: ["chat", "reasoning"],
+        approvalProfile: { mode: "none" },
+        stateEffects: [],
+      },
+      warnings,
+    }],
+    warnings: [{
+      code: "unsupported_section",
+      severity: "info",
+      message: "Markdown imports are treated as workflow prompt drafts; tool and approval claims are ignored.",
+    }],
+  };
+}
+
+function readOptionalSkillPackSource(record: Record<string, unknown>, key: string): SkillPackSource | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!["builtin", "gstack", "workspace", "skill-directory", "agents-md", "custom"].includes(value)) {
+    throw new Error(`${key} must be a supported skill source`);
+  }
+  return value as SkillPackSource;
+}
+
+function inferSkillImportSource(sourcePath: string | undefined, content: string): SkillPackSource {
+  const name = sourcePath ? basename(sourcePath).toLowerCase() : "";
+  if (name === "agents.md" || name === "agent.md") {
+    return "agents-md";
+  }
+  if (name === "skill.md" || content.includes("---\nname:")) {
+    return "skill-directory";
+  }
+  return "custom";
+}
+
+function readStringArrayWithWarnings<T extends string>(
+  record: Record<string, unknown>,
+  key: string,
+  allowed: readonly T[],
+  warningCode: SkillImportWarning["code"],
+  warnings: SkillImportWarning[],
+  location: string,
+): T[] | undefined {
+  const values = readOptionalStringArray(record, key);
+  if (!values) {
+    return undefined;
+  }
+  const allowedSet = new Set<string>(allowed);
+  const accepted: T[] = [];
+  for (const value of values) {
+    if (allowedSet.has(value)) {
+      accepted.push(value as T);
+    } else {
+      warnings.push({
+        code: warningCode,
+        severity: "error",
+        message: `${key} contains unsupported value: ${value}`,
+        location,
+      });
+    }
+  }
+  return accepted;
+}
+
+function readSkillWorkflowPhase(
+  record: Record<string, unknown>,
+  key: string,
+  warnings: SkillImportWarning[],
+  location: string,
+): SkillDefinition["workflowPhase"] {
+  const value = readOptionalString(record, key);
+  if (!value) {
+    return "operate";
+  }
+  const allowed = supportedWorkflowPhases();
+  if (!allowed.includes(value as SkillDefinition["workflowPhase"])) {
+    warnings.push({
+      code: "unsupported_section",
+      severity: "error",
+      message: `${key} contains unsupported workflow phase: ${value}`,
+      location,
+    });
+    return "operate";
+  }
+  return value as SkillDefinition["workflowPhase"];
+}
+
+function skillPermissionWarnings(content: string): SkillImportWarning[] {
+  const lower = content.toLowerCase();
+  const warnings: SkillImportWarning[] = [];
+  if (/\b(grant|enable|allow|bypass).*\b(tool|tools|bash|write|edit|approval|permission|permissions)\b/.test(lower)) {
+    warnings.push({
+      code: "permission_like_instruction",
+      severity: "warning",
+      message: "Import mentions granting tools, permissions, or approvals; those claims are ignored.",
+    });
+  }
+  if (/\b(secret|secrets|token|api key|credential|credentials)\b/.test(lower)) {
+    warnings.push({
+      code: "secret_reference",
+      severity: "warning",
+      message: "Import mentions secrets or credentials; secret access must be configured separately.",
+    });
+  }
+  if (/\b(external-send|send externally|slack|github comment|deploy|push)\b/.test(lower)) {
+    warnings.push({
+      code: "external_send_claim",
+      severity: "warning",
+      message: "Import mentions external sends, deploys, or pushes; side effects still require policy and approvals.",
+    });
+  }
+  return warnings;
+}
+
+function parseMarkdownFrontmatter(content: string): Record<string, string> {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+  if (!match) {
+    return {};
+  }
+  const result: Record<string, string> = {};
+  for (const line of match[1].split(/\r?\n/)) {
+    const parsed = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+    if (parsed) {
+      result[parsed[1] ?? ""] = (parsed[2] ?? "").replace(/^["']|["']$/g, "").trim();
+    }
+  }
+  return result;
+}
+
+function firstMarkdownParagraph(content: string): string | undefined {
+  return content
+    .replace(/^---\r?\n[\s\S]*?\r?\n---/, "")
+    .split(/\r?\n\r?\n/)
+    .map((block) => block.replace(/^#+\s+.*/gm, "").trim())
+    .find((block) => block.length > 0)
+    ?.slice(0, 300);
+}
+
+function slugSkillId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || `custom-skill-${randomUUID().slice(0, 8)}`;
+}
+
+function supportedRunToolNames(): readonly RunTool[] {
+  return [...readOnlyRunTools, "bash", "edit", "write"] as const;
+}
+
+function supportedRoleKeys(): readonly SkillDefinition["roleAffinity"][number][] {
+  return ["product", "architect", "engineer", "designer", "qa", "security", "release", "docs", "custom"];
+}
+
+function supportedWorkflowPhases(): readonly SkillDefinition["workflowPhase"][] {
+  return ["discover", "plan", "design", "implement", "review", "test", "secure", "ship", "document", "operate"];
+}
+
+function supportedSkillStateEffects(): readonly SkillDefinition["stateEffects"][number][] {
+  return ["creates_plan", "updates_plan", "creates_task", "updates_task", "starts_run", "requests_approval", "creates_artifact", "updates_docs", "prepares_release"];
 }
 
 function parseCreateAiTeammateInput(value: unknown): CreateAiTeammateInput {

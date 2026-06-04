@@ -42,6 +42,7 @@ docs:
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Ling Memory v1](ling-memory-v1.md)
+- [Ling Skill Import v1](ling-skill-import-v1.md)
 - [Runtime Supervisor](runtime-supervisor.md)
 - [Provider Presets](provider-presets.md)
 - [Approval Policy](approval-policy.md)
@@ -292,8 +293,14 @@ or live verification for volatile facts.
 
 Skills are templates. They are not permission.
 
-Future `AGENTS.md`, `.agents`, skill directory, and custom pack imports should enter as
-reviewed drafts:
+Ling uses one registry for built-in, workspace custom, imported directory, and
+teammate-scoped skill definitions. A skill can exist in the registry without being bound
+to any teammate. Bindings assign possible use; the Effective Skill read model decides
+whether a bound skill can actually execute in the current teammate, channel, provider,
+tool, approval, and state-machine context.
+
+`AGENTS.md`, `AGENT.md`, `persona.md`, skill directory, and custom pack imports should
+enter as reviewed drafts:
 
 ```text
 import source
@@ -309,6 +316,8 @@ import source
 Imported skills must not execute immediately. A user or policy must bind them to a
 teammate, and the effective skill read model must still validate tools, provider
 capabilities, approvals, and state-machine legality.
+
+The concrete next slice is defined in [Ling Skill Import v1](ling-skill-import-v1.md).
 
 ## Execution Model
 
@@ -383,25 +392,29 @@ The framework has hard boundaries:
 - Built-in `gstack-default` templates.
 - Skill binding metadata.
 - Memory scope metadata.
+- Skill Import v1 registry for built-in and workspace custom skills.
+- Skill import drafts, publish-to-registry, and archive for custom/imported skills.
+- `AGENTS.md`, `AGENT.md`, and `persona.md` teammate profile draft import.
+- Private Workspace Skills tab as import, bind, disable, and blocked-reason surface.
+- Effective Skills read model for built-in and custom skills.
+- Skill-aware run validation and run `selectedSkillId` audit.
+- Teammate workspace task creation with `requestedSkillId`.
+- Streaming private replies.
+- Private attachments, avatar upload, and hard-delete tombstones.
 
 ### Framework v1
 
 - Ling Memory v1 with scoped lexical recall.
 - Used-memory UI.
 - Memory retrieval provider interface only; no default vector model, embedding worker, or vector database.
-- Effective Skills read model.
-- Skill-aware task starts.
-- `AGENT.md` teammate profile source support.
-- `AGENTS.md` and skill directory import as reviewed drafts.
-- Streaming private replies.
+- Broader skill editing beyond import draft, publish, archive, and binding.
+- Skill-aware task controls outside the teammate private workspace.
+- Blocked-run UI polish across task detail and run start surfaces.
 - Run interruption and continuation.
-- Private attachments.
 
 ### Framework v2
 
 - Multi-agent workflow graph.
-- Custom skill-pack persistence and review workflow.
-- Retention and hard-delete policy.
 - Desktop and keychain-first distribution.
 - External channel sources such as Slack, Feishu, email, and support queues.
 

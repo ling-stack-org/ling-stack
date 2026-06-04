@@ -143,6 +143,12 @@ import type {
   UpsertExternalWorkSchedulerStateInput,
 } from "./external-work-types.js";
 import type {
+  CreateSkillImportDraftInput,
+  ListSkillRegistryOptions,
+  SkillImportDraft,
+  SkillRegistryEntry,
+} from "./skill-types.js";
+import type {
   CreateMcpServerInput,
   ListMcpServersOptions,
   ListMcpToolsOptions,
@@ -592,6 +598,12 @@ export interface RunStore {
     now: string,
   ): TeammateMcpBinding[];
   listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[];
+  listSkillRegistryEntries(options?: ListSkillRegistryOptions): SkillRegistryEntry[];
+  getSkillRegistryEntry(id: string): SkillRegistryEntry | undefined;
+  createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft;
+  getSkillImportDraft(id: string): SkillImportDraft | undefined;
+  publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
+  archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined;
   close(): void;
 }
 

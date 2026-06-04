@@ -1963,6 +1963,41 @@
   background: rgba(248, 247, 243, 0.5);
 }
 
+.teammate-import-panel {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(248, 247, 243, 0.5);
+}
+
+.teammate-import-panel h3 {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.teammate-import-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.teammate-warning {
+  display: block;
+  color: #6b5b18;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.teammate-warning.error {
+  color: #9d1f1f;
+}
+
+.teammate-warning.info {
+  color: #5f6b74;
+}
+
 .teammate-skill-row {
   grid-template-columns: minmax(0, 1fr) minmax(250px, auto);
 }

@@ -121,6 +121,11 @@ import type {
   RunSession,
   SecretPurpose,
   SecretStatusResponse,
+  SkillImportDraftRequest,
+  SkillImportDraftResponse,
+  SkillImportPublishResponse,
+  SkillRegistryListResponse,
+  SkillRegistryMutationResponse,
   StateTransitionListResponse,
   TaskListResponse,
   TaskMutationResponse,
@@ -204,6 +209,26 @@ export class LingDaemonClient {
       service: typeof body.service === "string" ? body.service : undefined,
       defaultWorkspaceCwd: typeof body.defaultWorkspaceCwd === "string" ? body.defaultWorkspaceCwd : undefined,
     };
+  }
+
+  async listSkills(cwd: string): Promise<SkillRegistryListResponse> {
+    return this.get("/skills", { cwd });
+  }
+
+  async createSkillImportDraft(cwd: string, input: SkillImportDraftRequest): Promise<SkillImportDraftResponse> {
+    return this.post("/skills/import-draft", { cwd }, input);
+  }
+
+  async getSkillImportDraft(cwd: string, draftId: string): Promise<SkillImportDraftResponse> {
+    return this.get(`/skills/import-drafts/${encodeURIComponent(draftId)}`, { cwd });
+  }
+
+  async publishSkillImportDraft(cwd: string, draftId: string): Promise<SkillImportPublishResponse> {
+    return this.post(`/skills/import-drafts/${encodeURIComponent(draftId)}/publish`, { cwd }, {});
+  }
+
+  async archiveSkill(cwd: string, skillId: string): Promise<SkillRegistryMutationResponse> {
+    return this.request("DELETE", `/skills/${encodeURIComponent(skillId)}`, { cwd });
   }
 
   async listRuns(cwd: string, limit = 50): Promise<RunListResponse> {

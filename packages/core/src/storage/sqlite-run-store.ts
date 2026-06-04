@@ -141,7 +141,20 @@ import {
   type UpdateChannelWorkflowStepInput,
 } from "../workspace-types.js";
 import { GSTACK_DEFAULT_SKILL_PACK_ID, listDefaultTeammateTemplates } from "../builtin-skill-packs.js";
-import type { AiTeammateRoleKey, SkillApprovalProfile } from "../skill-types.js";
+import {
+  createSkillImportDraftId,
+  createSkillPackId,
+  type AiTeammateRoleKey,
+  type CreateSkillImportDraftInput,
+  type ListSkillRegistryOptions,
+  type SkillApprovalProfile,
+  type SkillImportDraft,
+  type SkillImportDraftDefinition,
+  type SkillPackSource,
+  type SkillRegistryEntry,
+  type SkillRegistryReviewStatus,
+  type SkillVisibility,
+} from "../skill-types.js";
 import {
   createArtifactId,
   createEventId,
@@ -328,6 +341,8 @@ const SKILL_AWARE_RUN_MIGRATION_VERSION = 25;
 const SKILL_AWARE_RUN_MIGRATION_NAME = "add_skill_aware_tasks_and_runs";
 const PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_VERSION = 26;
 const PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_NAME = "create_private_workspace_data_lifecycle";
+const SKILL_REGISTRY_MIGRATION_VERSION = 27;
+const SKILL_REGISTRY_MIGRATION_NAME = "create_skill_registry";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -2182,6 +2197,202 @@ export class SqliteRunStore implements RunStore {
     }
 
     return this.listTeammateSkillBindings(teammateId);
+  }
+
+  listSkillRegistryEntries(options: ListSkillRegistryOptions = {}): SkillRegistryEntry[] {
+    const conditions = ["workspace_id = ?"];
+    const params: string[] = [DEFAULT_WORKSPACE_ID];
+    if (!options.includeArchived) {
+      conditions.push("review_status != 'archived'");
+    }
+    if (!options.includeDisabled) {
+      conditions.push("review_status != 'disabled'");
+    }
+    return this.database
+      .prepare(`${skillRegistryEntrySelectSql(`WHERE ${conditions.join(" AND ")}`)} ORDER BY source ASC, id ASC`)
+      .all(...params)
+      .map(mapSkillRegistryEntry);
+  }
+
+  getSkillRegistryEntry(id: string): SkillRegistryEntry | undefined {
+    const row = this.database
+      .prepare(skillRegistryEntrySelectSql("WHERE workspace_id = ? AND id = ?"))
+      .get(DEFAULT_WORKSPACE_ID, id);
+    return row ? mapSkillRegistryEntry(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft {
+    const id = input.id ?? createSkillImportDraftId();
+    const draft: SkillImportDraft = omitUndefined({
+      id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      source: input.source,
+      sourcePath: input.sourcePath,
+      packId: input.packId,
+      name: input.name,
+      version: input.version,
+      description: input.description,
+      definitions: input.definitions,
+      warnings: input.warnings ?? [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.database
+      .prepare(`
+        INSERT INTO skill_import_drafts (
+          id,
+          workspace_id,
+          source,
+          source_path,
+          draft_json,
+          warnings_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        draft.id,
+        DEFAULT_WORKSPACE_ID,
+        draft.source,
+        draft.sourcePath ?? null,
+        stringifyJson({
+          packId: draft.packId,
+          name: draft.name,
+          version: draft.version,
+          description: draft.description,
+          definitions: draft.definitions,
+        }),
+        stringifyJson(draft.warnings),
+        now,
+        now,
+      );
+    return draft;
+  }
+
+  getSkillImportDraft(id: string): SkillImportDraft | undefined {
+    const row = this.database
+      .prepare(skillImportDraftSelectSql("WHERE workspace_id = ? AND id = ?"))
+      .get(DEFAULT_WORKSPACE_ID, id);
+    return row ? mapSkillImportDraft(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[] {
+    const draft = this.getSkillImportDraft(id);
+    if (!draft) {
+      throw new Error(`Skill import draft not found: ${id}`);
+    }
+    const allWarnings = [
+      ...draft.warnings,
+      ...draft.definitions.flatMap((definition) => definition.warnings ?? []),
+    ];
+    if (allWarnings.some((warning) => warning.severity === "error")) {
+      throw new Error("Skill import draft has error warnings and cannot be published");
+    }
+    const packId = draft.packId ?? createSkillPackId();
+    this.database.exec("BEGIN");
+    try {
+      this.database
+        .prepare(`
+          INSERT INTO skill_packs (
+            id,
+            workspace_id,
+            source,
+            name,
+            version,
+            description,
+            source_path,
+            checksum,
+            review_status,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            source = excluded.source,
+            name = excluded.name,
+            version = excluded.version,
+            description = excluded.description,
+            source_path = excluded.source_path,
+            checksum = excluded.checksum,
+            review_status = excluded.review_status,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          packId,
+          DEFAULT_WORKSPACE_ID,
+          draft.source,
+          draft.name,
+          draft.version ?? null,
+          draft.description,
+          draft.sourcePath ?? null,
+          null,
+          "published",
+          now,
+          now,
+        );
+      const insertDefinition = this.database.prepare(`
+        INSERT INTO skill_definitions (
+          id,
+          workspace_id,
+          pack_id,
+          source,
+          source_path,
+          version,
+          checksum,
+          definition_json,
+          visibility_json,
+          review_status,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          pack_id = excluded.pack_id,
+          source = excluded.source,
+          source_path = excluded.source_path,
+          version = excluded.version,
+          checksum = excluded.checksum,
+          definition_json = excluded.definition_json,
+          visibility_json = excluded.visibility_json,
+          review_status = excluded.review_status,
+          updated_at = excluded.updated_at
+      `);
+      for (const item of draft.definitions) {
+        insertDefinition.run(
+          item.definition.id,
+          DEFAULT_WORKSPACE_ID,
+          packId,
+          draft.source,
+          draft.sourcePath ?? null,
+          draft.version ?? null,
+          null,
+          stringifyJson(item.definition),
+          stringifyJson(item.visibility ?? defaultSkillVisibility()),
+          "published",
+          now,
+          now,
+        );
+      }
+      this.database
+        .prepare("UPDATE skill_import_drafts SET updated_at = ? WHERE workspace_id = ? AND id = ?")
+        .run(now, DEFAULT_WORKSPACE_ID, id);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return draft.definitions
+      .map((item) => this.getSkillRegistryEntry(item.definition.id))
+      .filter((entry): entry is SkillRegistryEntry => Boolean(entry));
+  }
+
+  archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined {
+    const existing = this.getSkillRegistryEntry(id);
+    if (!existing) {
+      return undefined;
+    }
+    this.database
+      .prepare("UPDATE skill_definitions SET review_status = 'archived', updated_at = ? WHERE workspace_id = ? AND id = ?")
+      .run(now, DEFAULT_WORKSPACE_ID, id);
+    return this.getSkillRegistryEntry(id);
   }
 
   listTeammateMemoryScopes(teammateId: string): TeammateMemoryScope[] {
@@ -7489,6 +7700,72 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_VERSION, PRIVATE_WORKSPACE_DATA_LIFECYCLE_MIGRATION_NAME);
       }
     }
+
+    const hasSkillRegistryMigration = this.hasMigration(SKILL_REGISTRY_MIGRATION_VERSION);
+    if (
+      !hasSkillRegistryMigration ||
+      !this.hasTable("skill_packs") ||
+      !this.hasTable("skill_definitions") ||
+      !this.hasTable("skill_import_drafts")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS skill_packs (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          name TEXT NOT NULL,
+          version TEXT,
+          description TEXT NOT NULL,
+          source_path TEXT,
+          checksum TEXT,
+          review_status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_packs_workspace_status
+        ON skill_packs(workspace_id, review_status, updated_at);
+
+        CREATE TABLE IF NOT EXISTS skill_definitions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          pack_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          source_path TEXT,
+          version TEXT,
+          checksum TEXT,
+          definition_json TEXT NOT NULL,
+          visibility_json TEXT NOT NULL,
+          review_status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(pack_id) REFERENCES skill_packs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_definitions_workspace_status
+        ON skill_definitions(workspace_id, review_status, source, id);
+
+        CREATE TABLE IF NOT EXISTS skill_import_drafts (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          source_path TEXT,
+          draft_json TEXT NOT NULL,
+          warnings_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_import_drafts_workspace_updated
+        ON skill_import_drafts(workspace_id, updated_at);
+      `);
+      if (!hasSkillRegistryMigration) {
+        this.recordMigration(SKILL_REGISTRY_MIGRATION_VERSION, SKILL_REGISTRY_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -7924,6 +8201,57 @@ function mapTeammateSkillBinding(row: Record<string, SQLOutputValue>): TeammateS
     enabled: readBoolean(row, "enabled"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
+  };
+}
+
+function mapSkillRegistryEntry(row: Record<string, SQLOutputValue>): SkillRegistryEntry {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    packId: readString(row, "pack_id"),
+    source: readString(row, "source") as SkillPackSource,
+    sourcePath: readNullableString(row, "source_path"),
+    version: readNullableString(row, "version"),
+    checksum: readNullableString(row, "checksum"),
+    definition: parseJson(readString(row, "definition_json")) as SkillRegistryEntry["definition"],
+    visibility: parseSkillVisibility(readString(row, "visibility_json")),
+    reviewStatus: readString(row, "review_status") as SkillRegistryReviewStatus,
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapSkillImportDraft(row: Record<string, SQLOutputValue>): SkillImportDraft {
+  const draft = parseJsonObject(readString(row, "draft_json"));
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    source: readString(row, "source") as SkillPackSource,
+    sourcePath: readNullableString(row, "source_path"),
+    packId: typeof draft.packId === "string" ? draft.packId : undefined,
+    name: typeof draft.name === "string" ? draft.name : "Imported skills",
+    version: typeof draft.version === "string" ? draft.version : undefined,
+    description: typeof draft.description === "string" ? draft.description : "",
+    definitions: Array.isArray(draft.definitions) ? draft.definitions as SkillImportDraftDefinition[] : [],
+    warnings: parseJson(readString(row, "warnings_json")) as SkillImportDraft["warnings"],
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function parseSkillVisibility(value: string): SkillVisibility {
+  const parsed = parseJsonObject(value);
+  return omitUndefined({
+    workspaceVisible: typeof parsed.workspaceVisible === "boolean" ? parsed.workspaceVisible : true,
+    ownerTeammateId: typeof parsed.ownerTeammateId === "string" ? parsed.ownerTeammateId : undefined,
+    promotableToWorkspace: typeof parsed.promotableToWorkspace === "boolean" ? parsed.promotableToWorkspace : true,
+  });
+}
+
+function defaultSkillVisibility(): SkillVisibility {
+  return {
+    workspaceVisible: true,
+    promotableToWorkspace: true,
   };
 }
 
@@ -8875,6 +9203,42 @@ function teammateSkillBindingSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM teammate_skill_bindings
+    ${whereClause}
+  `;
+}
+
+function skillRegistryEntrySelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      pack_id,
+      source,
+      source_path,
+      version,
+      checksum,
+      definition_json,
+      visibility_json,
+      review_status,
+      created_at,
+      updated_at
+    FROM skill_definitions
+    ${whereClause}
+  `;
+}
+
+function skillImportDraftSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      source,
+      source_path,
+      draft_json,
+      warnings_json,
+      created_at,
+      updated_at
+    FROM skill_import_drafts
     ${whereClause}
   `;
 }
