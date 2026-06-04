@@ -840,9 +840,8 @@
 .provider-workbench.provider-list-panel {
   display: grid;
   grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
-  width: min(100%, 1200px);
+  width: 100%;
   min-height: min(780px, calc(100vh - 44px));
-  margin: 0 auto;
   overflow: visible;
   border: 0;
   border-radius: 0;
@@ -1052,7 +1051,7 @@
 
 .provider-table {
   width: 100%;
-  min-width: 880px;
+  min-width: 1180px;
   border-collapse: collapse;
   table-layout: fixed;
   color: #111111;
@@ -1086,38 +1085,37 @@
 
 .provider-table th:nth-child(1),
 .provider-table td:nth-child(1) {
-  width: 18%;
+  width: 210px;
 }
 
 .provider-table th:nth-child(2),
 .provider-table td:nth-child(2) {
-  width: 17%;
+  width: 190px;
 }
 
 .provider-table th:nth-child(3),
 .provider-table td:nth-child(3) {
-  width: 25%;
+  width: 280px;
 }
 
 .provider-table th:nth-child(4),
 .provider-table td:nth-child(4),
 .provider-table th:nth-child(5),
 .provider-table td:nth-child(5) {
-  width: 12%;
+  width: 130px;
 }
 
 .provider-table th:nth-child(6),
 .provider-table td:nth-child(6) {
-  width: 8%;
+  width: 100px;
 }
 
 .provider-table th:nth-child(7),
 .provider-table td:nth-child(7) {
-  width: 16%;
+  width: 280px;
 }
 
 .provider-table td:nth-child(7) {
-  position: relative;
   height: 44px;
   text-align: right;
 }
@@ -1149,10 +1147,11 @@
   min-width: 190px;
 }
 
-.provider-table .provider-name-cell {
+.provider-name-main {
   display: flex;
   align-items: center;
   gap: 9px;
+  min-width: 0;
 }
 
 .provider-avatar {
@@ -1265,10 +1264,15 @@
 }
 
 .provider-workbench .provider-status-cell {
-  display: flex;
+  display: table-cell;
+}
+
+.provider-status-stack {
+  display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
+  min-width: 0;
 }
 
 .provider-workbench .provider-state,
@@ -1308,15 +1312,14 @@
 }
 
 .provider-workbench .provider-actions {
-  position: absolute;
-  top: 50%;
-  right: 10px;
+  display: inline-flex;
+  position: static;
   flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 6px;
-  max-width: none;
+  max-width: 100%;
   opacity: 0;
-  transform: translateY(-50%);
+  transform: none;
   transition: opacity 120ms ease;
 }
 

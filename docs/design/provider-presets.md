@@ -90,6 +90,8 @@ Default workbench layout:
 - Status filters are UI-only; they do not change provider persistence semantics.
 - Row actions appear on hover/focus and keep the existing actions: use/stop using, edit,
   check, and delete.
+- The workbench uses the same full-width content frame as other plain workspace pages.
+  Do not center the provider table in a narrower max-width container.
 
 Add/edit uses a right-side sheet. The sheet owns template selection, API key entry, Base
 URL, API protocol, model discovery, capability flags, and save validation. Closing or
