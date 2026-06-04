@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PanelRightClose,
   PanelRightOpen,
+  ShieldCheck,
 } from "lucide-react";
 import {
   GSTACK_DEFAULT_SKILL_PACK_ID,
@@ -153,6 +154,7 @@ import type {
   RunEventEnvelope,
   RunFormState,
   RunSession,
+  SessionPermissionMode,
   StateEntityType,
   StateTransitionEvent,
   Task,
@@ -253,6 +255,7 @@ const defaultForm: RunFormState = {
   apiKey: "",
   api: "openai-completions",
   tools: defaultTools,
+  permissionMode: "balanced",
 };
 
 const defaultTaskForm: TaskFormState = {
@@ -414,13 +417,17 @@ export function AppShell(): JSX.Element {
   const [runtimeLoading, setRuntimeLoading] = useState(false);
   const [runtimeActionWorkUnitId, setRuntimeActionWorkUnitId] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const [cancellingRunId, setCancellingRunId] = useState("");
+  const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
   const [selectedMediaJobId, setSelectedMediaJobId] = useState("");
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const abortRef = useRef<AbortController | undefined>(undefined);
+  const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
+  const channelEditFormSyncKeyRef = useRef("");
 
   useEffect(() => {
     if (!providerSaveMessage) {
@@ -969,11 +976,19 @@ export function AppShell(): JSX.Element {
   }, [activeView, events.length, form.cwd, isRunning, run?.id, workspaceTimelineRunId]);
 
   useEffect(() => {
+    const syncKey = `${form.cwd}::${selectedChannelId}`;
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
     if (!selectedChannel) {
+      if (!selectedChannelId) {
+        channelEditFormSyncKeyRef.current = "";
+      }
       setChannelEditForm(defaultChannelEditForm);
       return;
     }
+    if (channelEditFormSyncKeyRef.current === syncKey) {
+      return;
+    }
+    channelEditFormSyncKeyRef.current = syncKey;
     setChannelEditForm(channelToForm(selectedChannel, form.cwd));
   }, [channels, form.cwd, selectedChannelId]);
 
@@ -1066,6 +1081,22 @@ export function AppShell(): JSX.Element {
     await runWithRequest(buildRunRequest(form), form.cwd.trim());
   }
 
+  async function confirmFullAccessRunIfNeeded(requestBody: unknown): Promise<boolean> {
+    if (readRequestPermissionMode(requestBody) !== "full_access") {
+      return true;
+    }
+    setFullAccessConfirmOpen(true);
+    return await new Promise<boolean>((resolve) => {
+      fullAccessConfirmResolveRef.current = resolve;
+    });
+  }
+
+  function resolveFullAccessConfirmation(approved: boolean): void {
+    setFullAccessConfirmOpen(false);
+    fullAccessConfirmResolveRef.current?.(approved);
+    fullAccessConfirmResolveRef.current = undefined;
+  }
+
   async function runWithRequest(
     requestBody: unknown,
     loadCwd: string,
@@ -1080,6 +1111,9 @@ export function AppShell(): JSX.Element {
     loadCwd: string,
     afterRunLoaded?: (runId: string) => Promise<void>,
   ): Promise<void> {
+    if (!(await confirmFullAccessRunIfNeeded(requestBody))) {
+      return;
+    }
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -2288,7 +2322,8 @@ export function AppShell(): JSX.Element {
         prompt: buildContextTaskPrompt(summary, channelDecisions),
         assigneeTeammateId: selectedChannel?.defaultTeammateId,
       });
-      setSelectedTaskId(response.task.id);
+      setSelectedTaskId("");
+      setTasks((current) => [response.task, ...current.filter((task) => task.id !== response.task.id)]);
       await refreshTasks(selectedChannelId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -2613,6 +2648,7 @@ export function AppShell(): JSX.Element {
       await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId, {
         tools: options.toolsOverride,
         approvalProfile: options.approvalProfileOverride,
+        permissionMode: form.permissionMode,
       }), runCwd, async (runId) => {
         await refreshTasks(task.channelId);
         await options.afterRunLoaded?.(runId);
@@ -3263,26 +3299,43 @@ export function AppShell(): JSX.Element {
     setSelectedTaskId(runToRepair.taskId);
   }
 
-  async function cancelActiveRun(): Promise<void> {
-    abortRef.current?.abort();
-    if (!activeRunId) {
+  async function cancelActiveRun(targetRun?: RunSession): Promise<void> {
+    const targetRunId = targetRun?.id || activeRunId;
+    if (!targetRunId || cancellingRunId) {
       setIsRunning(false);
       return;
     }
 
+    const cancelCwd = targetRun ? readRunWorkspaceCwd(targetRun, form.cwd.trim()) : form.cwd.trim();
+    const target = targetRun ?? (run?.id === targetRunId ? run : runs.find((item) => item.id === targetRunId));
+    setCancellingRunId(targetRunId);
     try {
       setErrorMessage("");
-      const response = await cancelRun(form.cwd.trim(), activeRunId);
-      if (response.run) {
-        setRun(response.run);
+      if (target?.workUnitId) {
+        const response = await cancelWorkUnit(cancelCwd, target.workUnitId);
+        if (response.workUnit.linkedRunId) {
+          const cancelledRun = await getRun(response.workUnit.linkedRunId, cancelCwd);
+          setRun(cancelledRun);
+        }
+      } else {
+        const response = await cancelRun(cancelCwd, targetRunId);
+        if (response.run) {
+          setRun(response.run);
+        }
       }
-      const eventResult = await getRunEvents(activeRunId, form.cwd.trim());
+      abortRef.current?.abort();
+      const eventResult = await getRunEvents(targetRunId, cancelCwd);
       setEvents(eventResult.events);
-      await refreshRuns();
+      await Promise.all([
+        refreshRuns(cancelCwd),
+        refreshApprovals(cancelCwd, targetRunId),
+        refreshRuntimeState(cancelCwd, target),
+      ]);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setIsRunning(false);
+      setCancellingRunId("");
       await refreshHealth();
     }
   }
@@ -3426,6 +3479,8 @@ export function AppShell(): JSX.Element {
             activeRunId={activeRunId}
             latestStatus={latestStatus}
             isRunning={isRunning}
+            isCancellingRun={Boolean(cancellingRunId)}
+            permissionMode={form.permissionMode}
             activeTaskRunAction={activeTaskRunAction}
             runningWorkflowStepId={runningWorkflowStepId}
             errorMessage={errorMessage}
@@ -3474,6 +3529,8 @@ export function AppShell(): JSX.Element {
             onSelectTask={setSelectedTaskId}
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
             onRunTask={(task) => void runPersistedTask(task)}
+            onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode }))}
+            onCancelActiveRun={(targetRun) => void cancelActiveRun(targetRun)}
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
             onRefreshRunApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
@@ -3561,11 +3618,13 @@ export function AppShell(): JSX.Element {
                 resolvingApprovals={resolvingApprovals}
                 isLoading={runsLoading}
                 isRunning={isRunning}
+                cancellingRunId={cancellingRunId}
                 errorMessage={errorMessage}
                 onRefresh={() => void refreshRuns()}
                 onRefreshSelected={() => void loadRun(activeRunId || lookupRunId)}
                 onRefreshApprovals={() => void refreshApprovals(form.cwd.trim(), activeRunId || undefined)}
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
+                onCancelRun={(sourceRun) => void cancelActiveRun(sourceRun)}
                 onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
                 onOpenProviders={(sourceRun) => openProvidersFromRun(sourceRun)}
                 onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
@@ -3752,6 +3811,35 @@ export function AppShell(): JSX.Element {
           ) : null}
         </aside>
       ) : null}
+      {fullAccessConfirmOpen ? (
+        <div className="provider-sheet-backdrop" role="presentation">
+          <section className="provider-form-panel provider-sheet session-permission-confirm-sheet" role="dialog" aria-modal="true" aria-label={t("Confirm full access")}>
+            <header className="provider-sheet-header panel-title split">
+              <span>
+                <ShieldCheck size={18} />
+                <h2>{t("Confirm full access")}</h2>
+              </span>
+              <button className="secondary-button compact-button" type="button" onClick={() => resolveFullAccessConfirmation(false)}>
+                {t("Cancel")}
+              </button>
+            </header>
+            <div className="provider-sheet-body session-permission-confirm-body">
+              <p>{t("Full access can read and write outside the workspace and use network or tool actions allowed by this session.")}</p>
+              <p>{t("Use it only for trusted workspaces. Denied tools in workspace policy still stay blocked.")}</p>
+            </div>
+            <footer className="provider-sheet-footer">
+              <div className="action-row">
+                <button className="secondary-button" type="button" onClick={() => resolveFullAccessConfirmation(false)}>
+                  {t("Cancel")}
+                </button>
+                <button className="primary-button danger" type="button" onClick={() => resolveFullAccessConfirmation(true)}>
+                  {t("Start with full access")}
+                </button>
+              </div>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -3896,6 +3984,16 @@ function isContractApprovalAction(
     value === "credential_change" ||
     value === "provider_change"
   );
+}
+
+function readRequestPermissionMode(requestBody: unknown): SessionPermissionMode | undefined {
+  if (!requestBody || typeof requestBody !== "object") {
+    return undefined;
+  }
+  const value = (requestBody as { readonly permissionMode?: unknown }).permissionMode;
+  return value === "ask_everything" || value === "balanced" || value === "workspace_write" || value === "full_access" || value === "custom"
+    ? value
+    : undefined;
 }
 
 interface ChannelTransitionEntity {

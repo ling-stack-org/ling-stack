@@ -5965,6 +5965,10 @@ export class SqliteRunStore implements RunStore {
     return this.resolveApprovalRequest(id, "expired", input, now);
   }
 
+  cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
+    return this.resolveApprovalRequest(id, "cancelled", input, now);
+  }
+
   getApprovalPolicy(): ApprovalPolicy {
     const row = this.database.prepare(approvalPolicySelectSql("WHERE workspace_id = ?")).get(DEFAULT_WORKSPACE_ID);
     if (row) {
@@ -6025,7 +6029,7 @@ export class SqliteRunStore implements RunStore {
 
   private resolveApprovalRequest(
     id: string,
-    status: Extract<ApprovalStatus, "approved" | "denied" | "expired">,
+    status: Extract<ApprovalStatus, "approved" | "denied" | "expired" | "cancelled">,
     input: ResolveApprovalRequestInput,
     now: string,
   ): ApprovalRequest | undefined {
@@ -6047,7 +6051,13 @@ export class SqliteRunStore implements RunStore {
           decision_reason = ?
         WHERE id = ?
       `)
-      .run(status, now, status === "expired" ? (input.resolvedBy ?? null) : (input.resolvedBy ?? "local-user"), input.reason ?? null, id);
+      .run(
+        status,
+        now,
+        status === "expired" ? (input.resolvedBy ?? null) : (input.resolvedBy ?? "local-user"),
+        input.reason ?? null,
+        id,
+      );
 
     return this.getApprovalRequest(id);
   }

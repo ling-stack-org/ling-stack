@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Search,
   ShieldCheck,
+  Square,
   SquareTerminal,
   Workflow,
 } from "lucide-react";
@@ -27,6 +28,12 @@ import {
   truncatePreview,
 } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
+import {
+  readEffectivePolicySnapshot,
+  readSessionPermissionModeFromSnapshot,
+  sessionPermissionModeLabel,
+  summarizeEffectivePolicySnapshot,
+} from "../../lib/session-permissions.js";
 import {
   buildAssistantOutputPreview,
   buildRunRepairHint,
@@ -78,11 +85,13 @@ export function RunHistory({
   resolvingApprovals,
   isLoading,
   isRunning,
+  cancellingRunId,
   errorMessage,
   onRefresh,
   onRefreshSelected,
   onRefreshApprovals,
   onRerun,
+  onCancelRun,
   onResolveApproval,
   onOpenProviders,
   onOpenApprovals,
@@ -106,11 +115,13 @@ export function RunHistory({
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly isLoading: boolean;
   readonly isRunning: boolean;
+  readonly cancellingRunId: string;
   readonly errorMessage: string;
   readonly onRefresh: () => void;
   readonly onRefreshSelected: () => void;
   readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
+  readonly onCancelRun: (run: RunSession) => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly onOpenApprovals: (runId?: string) => void;
@@ -183,9 +194,11 @@ export function RunHistory({
         approvalsLoading={approvalsLoading}
         resolvingApprovals={resolvingApprovals}
         isRunning={isRunning}
+        cancellingRunId={cancellingRunId}
         onRefresh={onRefreshSelected}
         onRefreshApprovals={onRefreshApprovals}
         onRerun={onRerun}
+        onCancelRun={onCancelRun}
         onResolveApproval={onResolveApproval}
         onOpenProviders={onOpenProviders}
         onOpenApprovals={onOpenApprovals}
@@ -209,9 +222,11 @@ function RunDetailPanel({
   approvalsLoading,
   resolvingApprovals,
   isRunning,
+  cancellingRunId,
   onRefresh,
   onRefreshApprovals,
   onRerun,
+  onCancelRun,
   onResolveApproval,
   onOpenProviders,
   onOpenApprovals,
@@ -230,9 +245,11 @@ function RunDetailPanel({
   readonly approvalsLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly isRunning: boolean;
+  readonly cancellingRunId: string;
   readonly onRefresh: () => void;
   readonly onRefreshApprovals: () => void;
   readonly onRerun: (run: RunSession) => void;
+  readonly onCancelRun: (run: RunSession) => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly onOpenApprovals: (runId?: string) => void;
@@ -243,6 +260,11 @@ function RunDetailPanel({
   const terminalEvent = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));
   const workspaceCwd = run ? readDataString(run.requestSnapshot, "workspaceCwd") || run.cwd : "-";
   const providerPresetId = run ? readRunProviderPresetId(run) : "";
+  const permissionMode = run ? readSessionPermissionModeFromSnapshot(run.requestSnapshot) : undefined;
+  const effectivePolicySnapshot = run ? readEffectivePolicySnapshot(run.requestSnapshot) : undefined;
+  const effectivePolicySummary = summarizeEffectivePolicySnapshot(effectivePolicySnapshot, t);
+  const runCancellable = Boolean(run && runCanBeStopped(run));
+  const runStopping = Boolean(run && cancellingRunId === run.id);
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
   const repairHint = run ? buildRunRepairHint(run, pendingApprovals.length, run.status, readRunEventIssueText(terminalEvent), t) : undefined;
   const runtimeRepairRun = run && run.status === "failed" && repairHint?.target === "run" ? run : undefined;
@@ -267,6 +289,12 @@ function RunDetailPanel({
             <RefreshCw size={15} />
             {t("Reload")}
           </button>
+          {runCancellable ? (
+            <button className="secondary-button danger compact-button" type="button" onClick={() => run && onCancelRun(run)} disabled={!run || runStopping}>
+              {runStopping ? <Loader2 className="spin" size={15} /> : <Square size={14} />}
+              {runStopping ? t("Stopping") : t("Stop")}
+            </button>
+          ) : null}
           <button className="primary-button compact-button" type="button" onClick={() => run && onRerun(run)} disabled={!run || isRunning || !providerPresetId}>
             {isRunning ? <Loader2 className="spin" size={15} /> : <RotateCcw size={15} />}
             {t("Rerun snapshot")}
@@ -284,6 +312,7 @@ function RunDetailPanel({
           <div className="run-detail-summary">
             <MetaRow label={t("Status")} value={run.status} compact />
             <MetaRow label={t("Provider")} value={`${run.providerName}/${run.providerModel}`} compact />
+            <MetaRow label={t("Permission mode")} value={sessionPermissionModeLabel(permissionMode, t)} compact />
             <MetaRow label={t("Work unit")} value={run.workUnitId ?? "-"} compact />
             <MetaRow label={t("Selected skill")} value={run.selectedSkillId ?? "-"} compact />
             <MetaRow label={t("Created")} value={formatDateTime(run.createdAt)} compact />
@@ -397,6 +426,18 @@ function RunDetailPanel({
             </div>
             <RuntimeAuditBlock leases={runLeases} transitions={relevantTransitions} workUnitDetail={workUnitDetail} />
             <div className="run-detail-section">
+              <div className="panel-title tight">
+                <ShieldCheck size={16} />
+                <h3>{t("Effective permissions")}</h3>
+              </div>
+              <div className="run-evidence-grid">
+                <MetaRow label={t("Permission mode")} value={sessionPermissionModeLabel(effectivePolicySnapshot?.mode ?? permissionMode, t)} compact />
+                {effectivePolicySummary.map((summary, index) => (
+                  <MetaRow key={`${index}:${summary}`} label={index === 0 ? t("Summary") : t("Rule")} value={summary} compact />
+                ))}
+              </div>
+            </div>
+            <div className="run-detail-section">
               <div className="panel-title tight split">
                 <span>
                   <SquareTerminal size={16} />
@@ -472,6 +513,10 @@ function RunDetailPanel({
       )}
     </section>
   );
+}
+
+function runCanBeStopped(run: RunSession): boolean {
+  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
 }
 
 function RuntimeAuditBlock({

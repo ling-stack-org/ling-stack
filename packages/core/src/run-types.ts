@@ -192,6 +192,7 @@ export type RunEventType =
   | "approval_approved"
   | "approval_denied"
   | "approval_expired"
+  | "approval_cancelled"
   | "artifact_created"
   | "result";
 
@@ -551,6 +552,7 @@ export interface RunStore {
   approveApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   expireApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
+  cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   getApprovalPolicy(): ApprovalPolicy;
   updateApprovalPolicy(input: ApprovalPolicyUpdateInput, now: string): ApprovalPolicy;
   createOrReuseExternalWorkWorkflow(input: CreateExternalWorkWorkflowInput, now: string): ExternalWorkWorkflowResult;

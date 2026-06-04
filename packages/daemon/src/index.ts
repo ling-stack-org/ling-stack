@@ -51,7 +51,8 @@ import {
   providerKinds,
   redactSecrets,
   readOnlyRunTools,
-  riskyRunTools,
+  resolveSessionRunPolicy,
+  sessionPermissionModes,
   createCompositeSecretResolver,
   secretPurposes,
   taskStatuses,
@@ -173,6 +174,7 @@ import {
   type RunStore,
   type RunSummary,
   type RunStatus,
+  type EffectiveRunPolicySnapshot,
   type RuntimeEvent,
   type RuntimeInstance,
   type RuntimeSemaphoreSlot,
@@ -185,6 +187,7 @@ import {
   type ResolvedSecret,
   type SecretPurpose,
   type SecretResolver,
+  type SessionPermissionMode,
   type SkillApprovalProfile,
   type SkillDefinition,
   type SkillImportWarning,
@@ -338,6 +341,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly requestedSkillId?: string;
   readonly tools?: readonly RunTool[];
   readonly approvalProfile?: SkillApprovalProfile;
+  readonly permissionMode?: SessionPermissionMode;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
 }
@@ -2015,6 +2019,8 @@ async function executeRunRequest(
   let memoryRecall: ReturnType<RunStore["recallMemory"]> | undefined;
   let selectedSkill: ReturnType<typeof getEffectiveTeammateSkill> | undefined;
   let runtimeApprovalProfile: SkillApprovalProfile | undefined;
+  let effectivePolicySnapshot: EffectiveRunPolicySnapshot | undefined;
+  let approvalPolicy: ApprovalPolicy | undefined;
   let runId = "";
   let createdAt = "";
   let workspaceCwd = "";
@@ -2071,6 +2077,15 @@ async function executeRunRequest(
     runtimeApprovalProfile = selectedSkill
       ? mergeApprovalProfiles(runRequest.approvalProfile, selectedSkill.skill.approvalProfile)
       : runRequest.approvalProfile;
+    const channelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
+    const sessionPolicy = resolveSessionRunPolicy({
+      workspacePolicy: store.getApprovalPolicy(),
+      permissionMode: runRequest.permissionMode,
+      channelBoundPath: channelForPolicy?.boundPath || runRequest.cwd,
+      approvalProfile: runtimeApprovalProfile,
+    });
+    approvalPolicy = sessionPolicy.approvalPolicy;
+    effectivePolicySnapshot = sessionPolicy.snapshot;
     runnerRequest = {
       cwd: runRequest.cwd,
       task: runRequest.task,
@@ -2112,7 +2127,15 @@ async function executeRunRequest(
       runnerId: DEFAULT_RUNNER_ID,
       idempotencyKey,
       createdByActor: "user",
-      request: { ...runRequest, workspaceCwd, provider: resolvedProvider, selectedSkillId: selectedSkill?.skillId, mcpToolAccess },
+      request: {
+        ...runRequest,
+        permissionMode: effectivePolicySnapshot.mode,
+        effectivePolicySnapshot,
+        workspaceCwd,
+        provider: resolvedProvider,
+        selectedSkillId: selectedSkill?.skillId,
+        mcpToolAccess,
+      },
       now: createdAt,
     });
     store.appendRuntimeEvent({
@@ -2193,7 +2216,15 @@ async function executeRunRequest(
       providerModel: resolvedProvider.model,
       taskSnapshot: runRequest.task,
       providerSnapshot: { providerPresetId: runRequest.providerPresetId, ...resolvedProvider },
-      requestSnapshot: { ...runRequest, workspaceCwd, provider: resolvedProvider, selectedSkillId: selectedSkill?.skillId, mcpToolAccess },
+      requestSnapshot: {
+        ...runRequest,
+        permissionMode: effectivePolicySnapshot.mode,
+        effectivePolicySnapshot,
+        workspaceCwd,
+        provider: resolvedProvider,
+        selectedSkillId: selectedSkill?.skillId,
+        mcpToolAccess,
+      },
       workUnitId: workUnit.id,
       createdAt,
     });
@@ -2251,6 +2282,7 @@ async function executeRunRequest(
         channel: error.channel ?? preparedConcurrency.channel,
         provider: resolvedProvider,
         selectedSkillId: selectedSkill?.skillId,
+        effectivePolicySnapshot,
         queuedAt,
         reason: error.code,
         message: error.message,
@@ -2508,14 +2540,12 @@ async function executeRunRequest(
         throw new Error(`Task transition failed: ${taskStartTransition.code}`);
       }
     }
-    const approvalPolicy = mergeApprovalPolicyWithProfile(store.getApprovalPolicy(), runtimeApprovalProfile);
-
     const result = await runner.runTask({
       ...runnerRequest,
       onApprovalRequired: createRunApprovalHandler({
         store,
         run,
-        approvalPolicy,
+        approvalPolicy: approvalPolicy ?? store.getApprovalPolicy(),
         appendAndMaybeStream,
         streamEnvelope,
         signal: abortController.signal,
@@ -2706,6 +2736,7 @@ function createQueuedRunForConflict(input: {
   readonly channel?: Channel;
   readonly provider: PiRunnerProviderConfig;
   readonly selectedSkillId?: string;
+  readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
   readonly queuedAt: string;
   readonly reason: QueueableRunConflictCode;
   readonly message: string;
@@ -2724,6 +2755,12 @@ function createQueuedRunForConflict(input: {
     providerSnapshot: { providerPresetId: input.runRequest.providerPresetId, ...input.provider },
     requestSnapshot: {
       ...input.runRequest,
+      ...(input.effectivePolicySnapshot
+        ? {
+            permissionMode: input.effectivePolicySnapshot.mode,
+            effectivePolicySnapshot: input.effectivePolicySnapshot,
+          }
+        : {}),
       workspaceCwd: input.workspaceCwd,
       provider: input.provider,
       selectedSkillId: input.selectedSkillId,
@@ -5114,6 +5151,7 @@ async function handleTaskRunRequest(
         },
         tools: readOptionalRunTools(body, "tools") ?? channel.allowedTools,
         approvalProfile: readOptionalApprovalProfile(body, "approvalProfile"),
+        permissionMode: readOptionalSessionPermissionMode(body, "permissionMode"),
         thinkingLevel: readOptionalThinkingLevel(body, "thinkingLevel"),
         systemPrompt: readOptionalString(body, "systemPrompt"),
         appendSystemPrompt: readOptionalStringArray(body, "appendSystemPrompt"),
@@ -9905,6 +9943,7 @@ function ensureRunCancelled(input: {
   }
 
   const endedAt = new Date().toISOString();
+  cancelPendingApprovalsForRun(input.store, input.runId, endedAt, `Run cancelled: ${input.reason}`, input.streamEnvelope);
   const event = input.store.appendEvent(input.runId, "run_cancelled", {
     reason: input.reason,
     active: input.active,
@@ -9951,6 +9990,29 @@ function ensureRunCancelled(input: {
     }
   }
   return { event };
+}
+
+function cancelPendingApprovalsForRun(
+  store: RunStore,
+  runId: string,
+  now: string,
+  reason: string,
+  streamEnvelope?: (envelope: RunEventEnvelope) => void,
+): void {
+  const pendingApprovals = store.listApprovalRequests({ runId, status: "pending", limit: 500 });
+  for (const approval of pendingApprovals) {
+    const cancelled = store.cancelApprovalRequest(approval.id, { reason, resolvedBy: "local-user" }, now);
+    if (!cancelled) {
+      continue;
+    }
+    const event = store.appendEvent(runId, "approval_cancelled", {
+      approvalId: cancelled.id,
+      status: cancelled.status,
+      resolvedBy: cancelled.resolvedBy,
+      decisionReason: cancelled.decisionReason,
+    });
+    streamEnvelope?.(event);
+  }
 }
 
 function syncWorkUnitForRunEvent(
@@ -10655,38 +10717,6 @@ function evaluateApprovalPolicy(
     decision: "ask",
     reason: `Ling Stack policy requires approval for ${request.toolName}.`,
   };
-}
-
-function mergeApprovalPolicyWithProfile(policy: ApprovalPolicy, profile: SkillApprovalProfile | undefined): ApprovalPolicy {
-  if (!profile || profile.mode === "none") {
-    return policy;
-  }
-
-  const requiredTools = new Set<RunTool>();
-  for (const tool of profile.requiredForTools ?? []) {
-    requiredTools.add(tool);
-  }
-  for (const action of profile.requiredForActions ?? []) {
-    if (isRunTool(action)) {
-      requiredTools.add(action);
-    }
-  }
-  if (profile.mode === "strict") {
-    for (const tool of riskyRunTools) {
-      requiredTools.add(tool);
-    }
-  }
-  if (requiredTools.size === 0) {
-    return policy;
-  }
-
-  const toolDecisions = { ...policy.toolDecisions };
-  for (const tool of requiredTools) {
-    if (toolDecisions[tool] !== "deny") {
-      toolDecisions[tool] = "ask";
-    }
-  }
-  return { ...policy, toolDecisions };
 }
 
 function mergeRunTools(base: readonly RunTool[], required: readonly RunTool[]): RunTool[] {
@@ -11734,6 +11764,7 @@ function parseRunRequest(value: unknown): RunRequest {
     provider: provider ? parseInlineProvider(provider) : undefined,
     tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]) ?? [...readOnlyRunTools],
     approvalProfile: readOptionalApprovalProfile(value, "approvalProfile"),
+    permissionMode: readOptionalSessionPermissionMode(value, "permissionMode"),
     thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
     systemPrompt: readOptionalString(value, "systemPrompt"),
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
@@ -14545,6 +14576,17 @@ function readOptionalApprovalProfile(record: Record<string, unknown>, key: strin
     throw new Error(`${key} must be an object`);
   }
   return parseApprovalProfileObject(value, key);
+}
+
+function readOptionalSessionPermissionMode(record: Record<string, unknown>, key: string): SessionPermissionMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!sessionPermissionModes.includes(value as SessionPermissionMode)) {
+    throw new Error(`${key} must be one of: ${sessionPermissionModes.join(", ")}`);
+  }
+  return value as SessionPermissionMode;
 }
 
 function parseApprovalProfileObject(value: Record<string, unknown>, key: string): SkillApprovalProfile {

@@ -4,6 +4,15 @@ export type RunTool = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write
 
 export type RunThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
+export type SessionPermissionMode = "ask_everything" | "balanced" | "workspace_write" | "full_access" | "custom";
+
+export interface EffectiveRunPolicySnapshot {
+  readonly mode: SessionPermissionMode;
+  readonly toolDecisions: Record<RunTool, ApprovalToolDecision>;
+  readonly allowedWritePaths: readonly string[];
+  readonly riskNotes: readonly string[];
+}
+
 export interface DaemonHealthResponse {
   readonly ok: boolean;
   readonly service?: string;

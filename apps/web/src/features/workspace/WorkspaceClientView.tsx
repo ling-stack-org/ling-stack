@@ -35,6 +35,7 @@ import {
   Send,
   ShieldCheck,
   SlidersHorizontal,
+  Square,
   SquareTerminal,
   Trash2,
   UserPlus,
@@ -83,6 +84,11 @@ import { formatDateTime } from "../../lib/formatting.js";
 import { buildRunRepairHint, displayLinkedRunStatus, readRunWorkspaceCwd } from "../../lib/run-evidence.js";
 import { defaultTools, riskyTools } from "../../lib/tools.js";
 import {
+  sessionPermissionModeDescription,
+  sessionPermissionModeLabel,
+  sessionPermissionModeOptions,
+} from "../../lib/session-permissions.js";
+import {
   canUseProviderForRun,
   isMediaProvider,
   providerPreflightReady,
@@ -122,6 +128,7 @@ import type {
   RuntimeDiagnosticsResponse,
   RunArtifact,
   RunSession,
+  SessionPermissionMode,
   StateTransitionEvent,
   Task,
   TaskFormState,
@@ -281,6 +288,8 @@ export function WorkspaceClientView({
   activeRunId,
   latestStatus,
   isRunning,
+  isCancellingRun,
+  permissionMode,
   activeTaskRunAction,
   runningWorkflowStepId,
   errorMessage,
@@ -323,6 +332,8 @@ export function WorkspaceClientView({
   onSelectTask,
   onCheckThenRunTask,
   onRunTask,
+  onPermissionModeChange,
+  onCancelActiveRun,
   onOpenRun,
   onOpenApprovals,
   onRefreshRunApprovals,
@@ -393,6 +404,8 @@ export function WorkspaceClientView({
   readonly activeRunId: string;
   readonly latestStatus: string;
   readonly isRunning: boolean;
+  readonly isCancellingRun: boolean;
+  readonly permissionMode: SessionPermissionMode;
   readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly runningWorkflowStepId: string;
   readonly errorMessage: string;
@@ -442,6 +455,8 @@ export function WorkspaceClientView({
   readonly onSelectTask: (taskId: string) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
+  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
+  readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onRefreshRunApprovals: () => void;
@@ -1243,6 +1258,8 @@ export function WorkspaceClientView({
       activeTaskRunAction={activeTaskRunAction}
       taskActionPending={taskActionPending}
       activeLeaseCount={activeLeaseCount}
+      isCancellingRun={isCancellingRun}
+      permissionMode={permissionMode}
       decisions={channelDecisions}
       contextSummaries={channelContextSummaries}
       workflows={channelWorkflows}
@@ -1251,6 +1268,8 @@ export function WorkspaceClientView({
       onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
       onCheckThenRunTask={onCheckThenRunTask}
       onRunTask={onRunTask}
+      onPermissionModeChange={onPermissionModeChange}
+      onCancelActiveRun={onCancelActiveRun}
       onOpenRun={openRunInPanel}
       onOpenApprovals={onOpenApprovals}
       onRefreshRunApprovals={onRefreshRunApprovals}
@@ -3938,6 +3957,8 @@ function TaskDetailPanel({
   activeTaskRunAction,
   taskActionPending,
   activeLeaseCount,
+  isCancellingRun,
+  permissionMode,
   decisions,
   contextSummaries,
   workflows,
@@ -3946,6 +3967,8 @@ function TaskDetailPanel({
   onCreateTaskFromContextSummary,
   onCheckThenRunTask,
   onRunTask,
+  onPermissionModeChange,
+  onCancelActiveRun,
   onOpenRun,
   onOpenApprovals,
   onRefreshRunApprovals,
@@ -3967,6 +3990,8 @@ function TaskDetailPanel({
   readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly taskActionPending: boolean;
   readonly activeLeaseCount: number;
+  readonly isCancellingRun: boolean;
+  readonly permissionMode: SessionPermissionMode;
   readonly decisions: readonly ChannelDecision[];
   readonly contextSummaries: readonly ChannelContextSummary[];
   readonly workflows: readonly ChannelWorkflow[];
@@ -3975,6 +4000,8 @@ function TaskDetailPanel({
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
+  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
+  readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onRefreshRunApprovals: () => void;
@@ -3992,6 +4019,12 @@ function TaskDetailPanel({
   const checkRunLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
   const runLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "run";
   const taskActionsDisabled = isRunning || taskActionPending;
+  const linkedRunCancellable = Boolean(linkedRun && runCanBeStopped(linkedRun));
+  const stopLinkedRun = (): void => {
+    if (linkedRun) {
+      onCancelActiveRun(linkedRun);
+    }
+  };
   const taskSummaries = contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === task.id);
   const activeDecisions = decisions.filter((decision) => decision.status === "active");
   const sourceWorkflowStep = workflowSteps.find((step) => step.taskId === task.id);
@@ -4038,6 +4071,12 @@ function TaskDetailPanel({
             {linkedRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
             {linkedRunSucceeded ? t("View result") : t("Open run")}
           </button>
+          {linkedRunCancellable ? (
+            <button className="secondary-button danger compact-button" type="button" onClick={stopLinkedRun} disabled={isCancellingRun}>
+              {isCancellingRun ? <Loader2 className="spin" size={14} /> : <Square size={13} />}
+              {isCancellingRun ? t("Stopping") : t("Stop")}
+            </button>
+          ) : null}
         </div>
       ) : null}
       {task.currentRunId && repairHint ? (
@@ -4086,6 +4125,23 @@ function TaskDetailPanel({
           </span>
         </div>
       ) : null}
+      <label className="session-permission-control">
+        <span>
+          <ShieldCheck size={14} />
+          {t("Permission mode")}
+        </span>
+        <select
+          aria-label={t("Permission mode")}
+          value={permissionMode}
+          onChange={(event) => onPermissionModeChange(event.target.value as SessionPermissionMode)}
+          disabled={isRunning || taskActionPending}
+        >
+          {sessionPermissionModeOptions.map((mode) => (
+            <option key={mode} value={mode}>{sessionPermissionModeLabel(mode, t)}</option>
+          ))}
+        </select>
+        <small>{sessionPermissionModeDescription(permissionMode, t)}</small>
+      </label>
       <div className="task-actions">
         <button className="secondary-button compact-button" type="button" onClick={() => onCreateHandoffFromTask(task)}>
           <Workflow size={14} />
@@ -4154,6 +4210,10 @@ function MessageFeedVirtualRow({
       {children}
     </div>
   );
+}
+
+function runCanBeStopped(run: RunSession): boolean {
+  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
 }
 
 function MessageBubble({

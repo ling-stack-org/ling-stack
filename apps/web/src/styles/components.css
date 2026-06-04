@@ -593,6 +593,38 @@ code,
   justify-content: flex-start;
 }
 
+.session-permission-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 220px);
+  gap: 6px 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-panel);
+}
+
+.session-permission-control > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.session-permission-control select {
+  width: 100%;
+  min-width: 0;
+}
+
+.session-permission-control small {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .task-run-summary strong {
   color: var(--success);
 }

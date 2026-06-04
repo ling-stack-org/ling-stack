@@ -104,6 +104,41 @@ test("assignee approval profile tightens workspace approval policy", async () =>
   }
 });
 
+test("session permission mode snapshots the effective run policy without relaxing deny rules", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-session-policy-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_write_session_policy",
+    toolName: "write",
+    input: { path: "notes/session.md", content: "mode snapshot" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await patchPolicy(daemon.url, cwd, {
+      toolDecisions: {
+        bash: "deny",
+        write: "deny",
+      },
+      allowedWritePaths: ["docs"],
+    });
+    const { runId } = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_session_policy_snapshot"),
+      permissionMode: "full_access",
+    });
+
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.requestSnapshot.permissionMode, "full_access");
+    assert.equal(run.requestSnapshot.effectivePolicySnapshot.mode, "full_access");
+    assert.equal(run.requestSnapshot.effectivePolicySnapshot.toolDecisions.bash, "deny");
+    assert.equal(run.requestSnapshot.effectivePolicySnapshot.toolDecisions.write, "deny");
+    assert.deepEqual(run.requestSnapshot.effectivePolicySnapshot.allowedWritePaths, ["/"]);
+    assert.ok(run.requestSnapshot.effectivePolicySnapshot.riskNotes.some((note) => /workspace policy denied/.test(note)));
+    assert.equal(runner.decisions[0].approved, false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("bash=deny records an immediately denied approval request", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-"));
   const runner = new ApprovalProbeRunner({
@@ -1490,6 +1525,42 @@ test("work unit cancel cancels a linked active run without late success overwrit
     assert.equal(finalRun.status, "cancelled");
     const detail = await getJson(`${daemon.url}/work-units/${encodeURIComponent(run.workUnitId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(detail.events.some((event) => event.type === "work_unit_cancelled"), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("run cancel cancels pending approvals for a waiting run", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-cancel-approval-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_cancel_waiting_approval",
+    toolName: "bash",
+    input: { command: "echo waiting" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_cancel_waiting_approval"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    const cancelled = await postJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/cancel?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cancelled.cancelled, true);
+    assert.equal(cancelled.run.status, "cancelled");
+
+    const approvals = await listApprovals(daemon.url, cwd, runId);
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].id, approvalId);
+    assert.equal(approvals[0].status, "cancelled");
+    assert.match(approvals[0].decisionReason, /cancelled/i);
+
+    const pending = await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}&status=pending&runId=${encodeURIComponent(runId)}`);
+    assert.deepEqual(pending.approvals, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

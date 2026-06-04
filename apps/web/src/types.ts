@@ -8,6 +8,7 @@ import type {
   MediaOperation,
   ProviderApi,
   ProviderKind,
+  SessionPermissionMode,
   TaskStatus,
   ToolName,
 } from "@ling-stack/contracts";
@@ -29,6 +30,7 @@ export interface RunFormState {
   readonly apiKey: string;
   readonly api: string;
   readonly tools: readonly ToolName[];
+  readonly permissionMode: SessionPermissionMode;
 }
 
 export interface ProviderFormState {
