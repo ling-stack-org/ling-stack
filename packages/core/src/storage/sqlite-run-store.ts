@@ -248,6 +248,23 @@ import {
   type TeammateMcpBinding,
   type UpdateMcpServerInput,
 } from "../mcp-types.js";
+import {
+  createMemoryObjectId,
+  createUsedMemoryEventId,
+  type CreateMemoryObjectInput,
+  type CreateUsedMemoryEventInput,
+  type ListMemoryObjectsOptions,
+  type ListUsedMemoryEventsOptions,
+  type MemoryObject,
+  type MemoryObjectUpdateInput,
+  type MemoryRecallRequest,
+  type MemoryRecallResult,
+  type MemoryReviewState,
+  type MemoryScopeType,
+  type MemorySensitivity,
+  type MemorySourceRef,
+  type UsedMemoryEvent,
+} from "../memory-types.js";
 import { redactSecrets } from "../redaction.js";
 import { appendEventLogLine } from "./event-log.js";
 
@@ -297,6 +314,10 @@ const RUNTIME_SUPERVISOR_MIGRATION_VERSION = 22;
 const RUNTIME_SUPERVISOR_MIGRATION_NAME = "create_runtime_supervisor";
 const MCP_TOOL_MANAGEMENT_MIGRATION_VERSION = 23;
 const MCP_TOOL_MANAGEMENT_MIGRATION_NAME = "create_mcp_tool_management";
+const LING_MEMORY_MIGRATION_VERSION = 24;
+const LING_MEMORY_MIGRATION_NAME = "create_ling_memory_v1";
+const SKILL_AWARE_RUN_MIGRATION_VERSION = 25;
+const SKILL_AWARE_RUN_MIGRATION_NAME = "add_skill_aware_tasks_and_runs";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -339,6 +360,7 @@ export class SqliteRunStore implements RunStore {
           task_id,
           channel_id,
           teammate_id,
+          selected_skill_id,
           provider_preset_id,
           provider_name,
           provider_model,
@@ -353,7 +375,7 @@ export class SqliteRunStore implements RunStore {
           started_at,
           ended_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.id,
@@ -362,6 +384,7 @@ export class SqliteRunStore implements RunStore {
         input.taskId,
         input.channelId ?? null,
         input.teammateId ?? null,
+        input.selectedSkillId ?? null,
         input.providerPresetId ?? null,
         input.providerName,
         input.providerModel,
@@ -442,6 +465,7 @@ export class SqliteRunStore implements RunStore {
             task_id,
             channel_id,
             teammate_id,
+            selected_skill_id,
             provider_preset_id,
             provider_name,
             provider_model,
@@ -487,6 +511,7 @@ export class SqliteRunStore implements RunStore {
         task_id,
         channel_id,
         teammate_id,
+        selected_skill_id,
         provider_preset_id,
         provider_name,
         provider_model,
@@ -1651,6 +1676,7 @@ export class SqliteRunStore implements RunStore {
       prompt: input.prompt,
       status: input.status ?? "todo",
       assigneeTeammateId: input.assigneeTeammateId,
+      requestedSkillId: input.requestedSkillId,
       createdAt: now,
       updatedAt: now,
     };
@@ -1665,10 +1691,11 @@ export class SqliteRunStore implements RunStore {
           prompt,
           status,
           assignee_teammate_id,
+          requested_skill_id,
           current_run_id,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         task.id,
@@ -1678,6 +1705,7 @@ export class SqliteRunStore implements RunStore {
         task.prompt,
         task.status,
         task.assigneeTeammateId ?? null,
+        task.requestedSkillId ?? null,
         task.currentRunId ?? null,
         task.createdAt,
         task.updatedAt,
@@ -1731,6 +1759,7 @@ export class SqliteRunStore implements RunStore {
       prompt: input.prompt ?? existing.prompt,
       status: input.status ?? existing.status,
       assigneeTeammateId: nullableUpdate(input.assigneeTeammateId, existing.assigneeTeammateId),
+      requestedSkillId: nullableUpdate(input.requestedSkillId, existing.requestedSkillId),
       currentRunId: nullableUpdate(input.currentRunId, existing.currentRunId),
       updatedAt: now,
     };
@@ -1744,6 +1773,7 @@ export class SqliteRunStore implements RunStore {
           prompt = ?,
           status = ?,
           assignee_teammate_id = ?,
+          requested_skill_id = ?,
           current_run_id = ?,
           updated_at = ?
         WHERE id = ?
@@ -1754,6 +1784,7 @@ export class SqliteRunStore implements RunStore {
         next.prompt,
         next.status,
         next.assigneeTeammateId ?? null,
+        next.requestedSkillId ?? null,
         next.currentRunId ?? null,
         next.updatedAt,
         id,
@@ -2077,6 +2108,307 @@ export class SqliteRunStore implements RunStore {
     }
 
     return this.listTeammateMemoryScopes(teammateId);
+  }
+
+  createMemoryObject(input: CreateMemoryObjectInput, now: string): MemoryObject {
+    const memory: MemoryObject = {
+      id: input.id ?? createMemoryObjectId(),
+      workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      scopeType: input.scopeType,
+      ownerId: input.ownerId,
+      title: input.title,
+      body: input.body,
+      tags: normalizeStringList(input.tags ?? []),
+      sourceRefs: normalizeMemorySourceRefs(input.sourceRefs ?? []),
+      reviewState: input.reviewState ?? "active",
+      enabled: input.enabled ?? true,
+      sensitivity: input.sensitivity ?? "normal",
+      retrievalProviderId: input.retrievalProviderId,
+      retrievalHandle: input.retrievalHandle,
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+    validateMemoryObject(memory);
+
+    this.database
+      .prepare(`
+        INSERT INTO memory_objects (
+          id,
+          workspace_id,
+          scope_type,
+          owner_id,
+          title,
+          body,
+          tags_json,
+          source_refs_json,
+          review_state,
+          enabled,
+          sensitivity,
+          retrieval_provider_id,
+          retrieval_handle,
+          created_by,
+          created_at,
+          updated_at,
+          last_used_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        memory.id,
+        memory.workspaceId,
+        memory.scopeType,
+        memory.ownerId,
+        memory.title,
+        memory.body,
+        stringifyJson(memory.tags),
+        stringifyJson(memory.sourceRefs),
+        memory.reviewState,
+        memory.enabled ? 1 : 0,
+        memory.sensitivity,
+        memory.retrievalProviderId ?? null,
+        memory.retrievalHandle ?? null,
+        memory.createdBy ?? null,
+        memory.createdAt,
+        memory.updatedAt,
+        memory.lastUsedAt ?? null,
+      );
+
+    const created = this.getMemoryObject(memory.id);
+    if (!created) {
+      throw new Error(`Failed to create memory object: ${memory.id}`);
+    }
+    return created;
+  }
+
+  getMemoryObject(id: string): MemoryObject | undefined {
+    const row = this.database.prepare(memoryObjectSelectSql("WHERE id = ?")).get(id);
+    return row ? mapMemoryObject(row) : undefined;
+  }
+
+  listMemoryObjects(options: ListMemoryObjectsOptions = {}): MemoryObject[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    clauses.push("workspace_id = ?");
+    params.push(options.workspaceId ?? DEFAULT_WORKSPACE_ID);
+    if (options.scopeType) {
+      clauses.push("scope_type = ?");
+      params.push(options.scopeType);
+    }
+    if (options.ownerId) {
+      clauses.push("owner_id = ?");
+      params.push(options.ownerId);
+    }
+    if (options.reviewState) {
+      clauses.push("review_state = ?");
+      params.push(options.reviewState);
+    }
+    if (options.enabled !== undefined) {
+      clauses.push("enabled = ?");
+      params.push(options.enabled ? 1 : 0);
+    }
+    if (options.sensitivity) {
+      clauses.push("sensitivity = ?");
+      params.push(options.sensitivity);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    const memories = this.database
+      .prepare(`${memoryObjectSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapMemoryObject);
+    if (!options.tag) {
+      return memories;
+    }
+    const tag = options.tag.toLowerCase();
+    return memories.filter((memory) => memory.tags.some((item) => item.toLowerCase() === tag));
+  }
+
+  updateMemoryObject(id: string, input: MemoryObjectUpdateInput, now: string): MemoryObject | undefined {
+    const existing = this.getMemoryObject(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: MemoryObject = {
+      ...existing,
+      scopeType: input.scopeType ?? existing.scopeType,
+      ownerId: input.ownerId ?? existing.ownerId,
+      title: input.title ?? existing.title,
+      body: input.body ?? existing.body,
+      tags: input.tags ? normalizeStringList(input.tags) : existing.tags,
+      sourceRefs: input.sourceRefs ? normalizeMemorySourceRefs(input.sourceRefs) : existing.sourceRefs,
+      reviewState: input.reviewState ?? existing.reviewState,
+      enabled: input.enabled ?? existing.enabled,
+      sensitivity: input.sensitivity ?? existing.sensitivity,
+      retrievalProviderId: nullableUpdate(input.retrievalProviderId, existing.retrievalProviderId),
+      retrievalHandle: nullableUpdate(input.retrievalHandle, existing.retrievalHandle),
+      createdBy: nullableUpdate(input.createdBy, existing.createdBy),
+      lastUsedAt: nullableUpdate(input.lastUsedAt, existing.lastUsedAt),
+      updatedAt: now,
+    };
+    validateMemoryObject(next);
+
+    this.database
+      .prepare(`
+        UPDATE memory_objects
+        SET
+          scope_type = ?,
+          owner_id = ?,
+          title = ?,
+          body = ?,
+          tags_json = ?,
+          source_refs_json = ?,
+          review_state = ?,
+          enabled = ?,
+          sensitivity = ?,
+          retrieval_provider_id = ?,
+          retrieval_handle = ?,
+          created_by = ?,
+          updated_at = ?,
+          last_used_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.scopeType,
+        next.ownerId,
+        next.title,
+        next.body,
+        stringifyJson(next.tags),
+        stringifyJson(next.sourceRefs),
+        next.reviewState,
+        next.enabled ? 1 : 0,
+        next.sensitivity,
+        next.retrievalProviderId ?? null,
+        next.retrievalHandle ?? null,
+        next.createdBy ?? null,
+        next.updatedAt,
+        next.lastUsedAt ?? null,
+        id,
+      );
+
+    return this.getMemoryObject(id);
+  }
+
+  recallMemory(input: MemoryRecallRequest): MemoryRecallResult {
+    const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
+    const maxResults = Math.min(Math.max(input.maxResults ?? 8, 1), 20);
+    const allowedScopes = memoryRecallAllowedScopes(input, workspaceId);
+    if (allowedScopes.length === 0) {
+      return { request: { ...input, workspaceId }, memories: [], policyVersion: "ling-memory-v1-lexical" };
+    }
+
+    const listOptions: ListMemoryObjectsOptions = {
+      workspaceId,
+      limit: 500,
+    };
+    const candidates = this.listMemoryObjects(input.includeDisabled ? listOptions : { ...listOptions, enabled: true })
+      .filter((memory) => memoryAllowedForRecall(memory, input, allowedScopes));
+    const queryTerms = tokenizeMemoryQuery([input.query, ...(input.tags ?? [])].join(" "));
+    const requestedTags = new Set((input.tags ?? []).map((tag) => tag.toLowerCase()));
+    const memories = candidates
+      .map((memory) => scoreMemoryForRecall(memory, queryTerms, requestedTags))
+      .filter((item) => item.score > 0)
+      .sort((left, right) => right.score - left.score || right.memory.updatedAt.localeCompare(left.memory.updatedAt))
+      .slice(0, maxResults);
+    return {
+      request: { ...input, workspaceId },
+      memories,
+      policyVersion: "ling-memory-v1-lexical",
+    };
+  }
+
+  recordUsedMemoryEvent(input: CreateUsedMemoryEventInput, now: string): UsedMemoryEvent {
+    const event: UsedMemoryEvent = {
+      id: input.id ?? createUsedMemoryEventId(),
+      workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      memoryIds: normalizeStringList(input.memoryIds),
+      intent: input.intent,
+      recallQuery: input.recallQuery,
+      teammateId: input.teammateId,
+      channelId: input.channelId,
+      taskId: input.taskId,
+      runId: input.runId,
+      responseId: input.responseId,
+      policyVersion: input.policyVersion,
+      createdAt: now,
+    };
+    if (event.memoryIds.length === 0) {
+      throw new Error("memoryIds must contain at least one memory id");
+    }
+
+    this.database
+      .prepare(`
+        INSERT INTO memory_used_events (
+          id,
+          workspace_id,
+          memory_ids_json,
+          intent,
+          recall_query,
+          teammate_id,
+          channel_id,
+          task_id,
+          run_id,
+          response_id,
+          policy_version,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        event.id,
+        event.workspaceId,
+        stringifyJson(event.memoryIds),
+        event.intent,
+        event.recallQuery,
+        event.teammateId ?? null,
+        event.channelId ?? null,
+        event.taskId ?? null,
+        event.runId ?? null,
+        event.responseId ?? null,
+        event.policyVersion,
+        event.createdAt,
+      );
+    for (const memoryId of event.memoryIds) {
+      this.database
+        .prepare("UPDATE memory_objects SET last_used_at = ?, updated_at = ? WHERE id = ?")
+        .run(now, now, memoryId);
+    }
+    return event;
+  }
+
+  listUsedMemoryEvents(options: ListUsedMemoryEventsOptions = {}): UsedMemoryEvent[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    clauses.push("workspace_id = ?");
+    params.push(options.workspaceId ?? DEFAULT_WORKSPACE_ID);
+    if (options.teammateId) {
+      clauses.push("teammate_id = ?");
+      params.push(options.teammateId);
+    }
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.taskId) {
+      clauses.push("task_id = ?");
+      params.push(options.taskId);
+    }
+    if (options.runId) {
+      clauses.push("run_id = ?");
+      params.push(options.runId);
+    }
+    if (options.responseId) {
+      clauses.push("response_id = ?");
+      params.push(options.responseId);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    const events = this.database
+      .prepare(`${memoryUsedEventSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapUsedMemoryEvent);
+    if (!options.memoryId) {
+      return events;
+    }
+    return events.filter((event) => event.memoryIds.includes(options.memoryId as string));
   }
 
   getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread {
@@ -6775,6 +7107,94 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(MCP_TOOL_MANAGEMENT_MIGRATION_VERSION, MCP_TOOL_MANAGEMENT_MIGRATION_NAME);
       }
     }
+
+    const hasLingMemoryMigration = this.hasMigration(LING_MEMORY_MIGRATION_VERSION);
+    if (!hasLingMemoryMigration || !this.hasTable("memory_objects") || !this.hasTable("memory_used_events")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS memory_objects (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          scope_type TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL,
+          tags_json TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          review_state TEXT NOT NULL,
+          enabled INTEGER NOT NULL,
+          sensitivity TEXT NOT NULL,
+          retrieval_provider_id TEXT,
+          retrieval_handle TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_used_at TEXT,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_objects_scope
+        ON memory_objects(workspace_id, scope_type, owner_id, review_state, enabled);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_objects_updated
+        ON memory_objects(workspace_id, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_objects_last_used
+        ON memory_objects(workspace_id, last_used_at);
+
+        CREATE TABLE IF NOT EXISTS memory_used_events (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          memory_ids_json TEXT NOT NULL,
+          intent TEXT NOT NULL,
+          recall_query TEXT NOT NULL,
+          teammate_id TEXT,
+          channel_id TEXT,
+          task_id TEXT,
+          run_id TEXT,
+          response_id TEXT,
+          policy_version TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_used_events_run
+        ON memory_used_events(workspace_id, run_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_used_events_response
+        ON memory_used_events(workspace_id, response_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_used_events_teammate_channel
+        ON memory_used_events(workspace_id, teammate_id, channel_id, created_at);
+      `);
+
+      if (!hasLingMemoryMigration) {
+        this.recordMigration(LING_MEMORY_MIGRATION_VERSION, LING_MEMORY_MIGRATION_NAME);
+      }
+    }
+
+    const hasSkillAwareRunMigration = this.hasMigration(SKILL_AWARE_RUN_MIGRATION_VERSION);
+    if (
+      !hasSkillAwareRunMigration ||
+      !this.hasColumn("tasks", "requested_skill_id") ||
+      !this.hasColumn("run_sessions", "selected_skill_id")
+    ) {
+      if (!this.hasColumn("tasks", "requested_skill_id")) {
+        this.database.exec("ALTER TABLE tasks ADD COLUMN requested_skill_id TEXT;");
+      }
+      if (!this.hasColumn("run_sessions", "selected_skill_id")) {
+        this.database.exec("ALTER TABLE run_sessions ADD COLUMN selected_skill_id TEXT;");
+      }
+      this.database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_tasks_requested_skill
+        ON tasks(requested_skill_id);
+
+        CREATE INDEX IF NOT EXISTS idx_run_sessions_selected_skill
+        ON run_sessions(selected_skill_id);
+      `);
+      if (!hasSkillAwareRunMigration) {
+        this.recordMigration(SKILL_AWARE_RUN_MIGRATION_VERSION, SKILL_AWARE_RUN_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -7094,6 +7514,7 @@ function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
     taskId: readString(row, "task_id"),
     channelId: readNullableString(row, "channel_id"),
     teammateId: readNullableString(row, "teammate_id"),
+    selectedSkillId: readNullableString(row, "selected_skill_id"),
     providerPresetId: readNullableString(row, "provider_preset_id"),
     providerName: readString(row, "provider_name"),
     providerModel: readString(row, "provider_model"),
@@ -7147,6 +7568,7 @@ function mapTask(row: Record<string, SQLOutputValue>): Task {
     prompt: readString(row, "prompt"),
     status: readString(row, "status") as TaskStatus,
     assigneeTeammateId: readNullableString(row, "assignee_teammate_id"),
+    requestedSkillId: readNullableString(row, "requested_skill_id"),
     currentRunId: readNullableString(row, "current_run_id"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
@@ -7206,6 +7628,45 @@ function mapTeammateMemoryScope(row: Record<string, SQLOutputValue>): TeammateMe
     enabled: readBoolean(row, "enabled"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapMemoryObject(row: Record<string, SQLOutputValue>): MemoryObject {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    scopeType: readString(row, "scope_type") as MemoryScopeType,
+    ownerId: readString(row, "owner_id"),
+    title: readString(row, "title"),
+    body: readString(row, "body"),
+    tags: parseJsonStringArray(readString(row, "tags_json")),
+    sourceRefs: parseMemorySourceRefs(readString(row, "source_refs_json")),
+    reviewState: readString(row, "review_state") as MemoryReviewState,
+    enabled: readBoolean(row, "enabled"),
+    sensitivity: readString(row, "sensitivity") as MemorySensitivity,
+    retrievalProviderId: readNullableString(row, "retrieval_provider_id"),
+    retrievalHandle: readNullableString(row, "retrieval_handle"),
+    createdBy: readNullableString(row, "created_by"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    lastUsedAt: readNullableString(row, "last_used_at"),
+  });
+}
+
+function mapUsedMemoryEvent(row: Record<string, SQLOutputValue>): UsedMemoryEvent {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    memoryIds: parseJsonStringArray(readString(row, "memory_ids_json")),
+    intent: readString(row, "intent") as UsedMemoryEvent["intent"],
+    recallQuery: readString(row, "recall_query"),
+    teammateId: readNullableString(row, "teammate_id"),
+    channelId: readNullableString(row, "channel_id"),
+    taskId: readNullableString(row, "task_id"),
+    runId: readNullableString(row, "run_id"),
+    responseId: readNullableString(row, "response_id"),
+    policyVersion: readString(row, "policy_version"),
+    createdAt: readString(row, "created_at"),
   });
 }
 
@@ -8029,6 +8490,7 @@ function taskSelectSql(whereClause: string): string {
       prompt,
       status,
       assignee_teammate_id,
+      requested_skill_id,
       current_run_id,
       created_at,
       updated_at
@@ -8101,6 +8563,51 @@ function teammateMemoryScopeSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM teammate_memory_scopes
+    ${whereClause}
+  `;
+}
+
+function memoryObjectSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      scope_type,
+      owner_id,
+      title,
+      body,
+      tags_json,
+      source_refs_json,
+      review_state,
+      enabled,
+      sensitivity,
+      retrieval_provider_id,
+      retrieval_handle,
+      created_by,
+      created_at,
+      updated_at,
+      last_used_at
+    FROM memory_objects
+    ${whereClause}
+  `;
+}
+
+function memoryUsedEventSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      memory_ids_json,
+      intent,
+      recall_query,
+      teammate_id,
+      channel_id,
+      task_id,
+      run_id,
+      response_id,
+      policy_version,
+      created_at
+    FROM memory_used_events
     ${whereClause}
   `;
 }
@@ -8785,6 +9292,14 @@ function parseChannelMentions(value: string): ChannelMessage["mentions"] {
   });
 }
 
+function parseMemorySourceRefs(value: string): MemorySourceRef[] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Expected memory source refs array from SQLite");
+  }
+  return normalizeMemorySourceRefs(parsed);
+}
+
 function parseChannelExecutionProposalSteps(value: string): ChannelExecutionProposal["collaborationSteps"] {
   const parsed = parseJson(value);
   if (!Array.isArray(parsed)) {
@@ -8816,6 +9331,202 @@ function parseApprovalProfile(value: string): SkillApprovalProfile {
     throw new Error("Expected approval profile mode from SQLite");
   }
   return parsed as unknown as SkillApprovalProfile;
+}
+
+function normalizeStringList(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const value of values) {
+    const item = value.trim();
+    if (!item || seen.has(item.toLowerCase())) {
+      continue;
+    }
+    seen.add(item.toLowerCase());
+    normalized.push(item);
+  }
+  return normalized;
+}
+
+function normalizeMemorySourceRefs(values: readonly unknown[]): MemorySourceRef[] {
+  return values.map((value, index) => {
+    if (!isJsonRecord(value)) {
+      throw new Error(`sourceRefs[${index}] must be an object`);
+    }
+    const type = value.type;
+    if (!isMemorySourceType(type)) {
+      throw new Error(`sourceRefs[${index}].type is not supported`);
+    }
+    if (typeof value.id !== "string" || value.id.trim().length === 0) {
+      throw new Error(`sourceRefs[${index}].id must be a non-empty string`);
+    }
+    return omitUndefined({
+      type,
+      id: value.id.trim(),
+      label: typeof value.label === "string" && value.label.trim() ? value.label.trim() : undefined,
+      url: typeof value.url === "string" && value.url.trim() ? value.url.trim() : undefined,
+    });
+  });
+}
+
+function isMemorySourceType(value: unknown): value is MemorySourceRef["type"] {
+  return (
+    value === "manual" ||
+    value === "message" ||
+    value === "decision" ||
+    value === "doc" ||
+    value === "attachment" ||
+    value === "run-event" ||
+    value === "artifact" ||
+    value === "import"
+  );
+}
+
+function validateMemoryObject(memory: MemoryObject): void {
+  if (!isMemoryScopeType(memory.scopeType)) {
+    throw new Error("scopeType is not supported");
+  }
+  if (!memory.ownerId.trim()) {
+    throw new Error("ownerId must be a non-empty string");
+  }
+  if (!memory.title.trim()) {
+    throw new Error("title must be a non-empty string");
+  }
+  if (!memory.body.trim()) {
+    throw new Error("body must be a non-empty string");
+  }
+  if (!isMemoryReviewState(memory.reviewState)) {
+    throw new Error("reviewState is not supported");
+  }
+  if (!isMemorySensitivity(memory.sensitivity)) {
+    throw new Error("sensitivity is not supported");
+  }
+}
+
+function isMemoryScopeType(value: unknown): value is MemoryScopeType {
+  return value === "workspace" || value === "channel" || value === "teammate" || value === "task" || value === "run";
+}
+
+function isMemoryReviewState(value: unknown): value is MemoryReviewState {
+  return value === "candidate" || value === "active" || value === "disabled" || value === "archived" || value === "rejected";
+}
+
+function isMemorySensitivity(value: unknown): value is MemorySensitivity {
+  return value === "normal" || value === "private" || value === "secret-adjacent";
+}
+
+function memoryRecallAllowedScopes(
+  input: MemoryRecallRequest,
+  workspaceId: string,
+): readonly { readonly scopeType: MemoryScopeType; readonly ownerId: string }[] {
+  const scopes: Array<{ readonly scopeType: MemoryScopeType; readonly ownerId: string }> = [
+    { scopeType: "workspace", ownerId: workspaceId },
+  ];
+  if (input.channelId) {
+    scopes.push({ scopeType: "channel", ownerId: input.channelId });
+  }
+  if (input.teammateId) {
+    scopes.push({ scopeType: "teammate", ownerId: input.teammateId });
+  }
+  if (input.taskId) {
+    scopes.push({ scopeType: "task", ownerId: input.taskId });
+  }
+  if (input.runId) {
+    scopes.push({ scopeType: "run", ownerId: input.runId });
+  }
+  return scopes;
+}
+
+function memoryAllowedForRecall(
+  memory: MemoryObject,
+  input: MemoryRecallRequest,
+  allowedScopes: readonly { readonly scopeType: MemoryScopeType; readonly ownerId: string }[],
+): boolean {
+  if (!input.includeDisabled && (!memory.enabled || memory.reviewState !== "active")) {
+    return false;
+  }
+  if (!input.includeSecretAdjacent && memory.sensitivity === "secret-adjacent") {
+    return false;
+  }
+  if (!input.includePrivate && memory.sensitivity === "private" && input.intent !== "private-chat" && input.intent !== "task-run") {
+    return false;
+  }
+  return allowedScopes.some((scope) => scope.scopeType === memory.scopeType && scope.ownerId === memory.ownerId);
+}
+
+function tokenizeMemoryQuery(query: string): readonly string[] {
+  const terms = query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}_-]+/u)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2);
+  return [...new Set(terms)].slice(0, 32);
+}
+
+function scoreMemoryForRecall(
+  memory: MemoryObject,
+  queryTerms: readonly string[],
+  requestedTags: ReadonlySet<string>,
+): MemoryRecallResult["memories"][number] {
+  const title = memory.title.toLowerCase();
+  const body = memory.body.toLowerCase();
+  const tags = memory.tags.map((tag) => tag.toLowerCase());
+  const sourceLabels = memory.sourceRefs
+    .map((ref) => [ref.type, ref.id, ref.label, ref.url].filter((item): item is string => typeof item === "string").join(" ").toLowerCase())
+    .join(" ");
+  const matchedTerms = new Set<string>();
+  let score = 0;
+
+  for (const term of queryTerms) {
+    if (title.includes(term)) {
+      score += 8;
+      matchedTerms.add(term);
+    }
+    if (tags.some((tag) => tag.includes(term))) {
+      score += 6;
+      matchedTerms.add(term);
+    }
+    if (sourceLabels.includes(term)) {
+      score += 3;
+      matchedTerms.add(term);
+    }
+    if (body.includes(term)) {
+      score += 2;
+      matchedTerms.add(term);
+    }
+  }
+
+  for (const tag of requestedTags) {
+    if (tags.includes(tag)) {
+      score += 10;
+      matchedTerms.add(tag);
+    }
+  }
+
+  if (queryTerms.length === 0 && requestedTags.size === 0) {
+    score = 1;
+  }
+
+  return {
+    memory,
+    score,
+    matchedTerms: [...matchedTerms],
+    excerpt: excerptMemoryBody(memory.body, queryTerms),
+  };
+}
+
+function excerptMemoryBody(body: string, queryTerms: readonly string[]): string {
+  const normalized = body.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 240) {
+    return normalized;
+  }
+  const lower = normalized.toLowerCase();
+  const firstIndex = queryTerms
+    .map((term) => lower.indexOf(term))
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0] ?? 0;
+  const start = Math.max(0, firstIndex - 80);
+  const excerpt = normalized.slice(start, start + 240);
+  return `${start > 0 ? "..." : ""}${excerpt}${start + 240 < normalized.length ? "..." : ""}`;
 }
 
 function dedupeMembershipInputs(

@@ -45,6 +45,7 @@ import type {
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
+  CreateMemoryObjectRequest,
   CreateMediaJobRequest,
   DaemonHealthResponse,
   ExternalWorkActionCancelRequest,
@@ -72,6 +73,10 @@ import type {
   MediaJobArtifactListResponse,
   MediaJobListResponse,
   MediaJobMutationResponse,
+  MemoryListResponse,
+  MemoryMutationResponse,
+  MemoryRecallRequest,
+  MemoryRecallResponse,
   McpServerFormState,
   McpServerListResponse,
   McpServerMutationRequest,
@@ -120,6 +125,8 @@ import type {
   TeammateDirectThreadResponse,
   TeammateMcpBindingListResponse,
   TeammateMemoryScopeListResponse,
+  TeammatePersonaDraftRequest,
+  TeammatePersonaDraftResponse,
   TeammateSkillBindingListResponse,
   UpdateAiTeammateRequest,
   UpdateChannelBriefRequest,
@@ -130,8 +137,10 @@ import type {
   UpdateChannelWorkflowRequest,
   UpdateChannelWorkflowStepRequest,
   UpdateChannelRequest,
+  UpdateMemoryObjectRequest,
   UpdateTaskRequest,
   StartChannelWorkflowStepRequest,
+  UsedMemoryListResponse,
   WorkUnitDetailResponse,
   WorkUnitEventsResponse,
   WorkUnitKind,
@@ -278,6 +287,34 @@ export async function replaceTeammateMemoryScopes(
   scopes: ReplaceTeammateMemoryScopesRequest["scopes"],
 ): Promise<TeammateMemoryScopeListResponse> {
   return daemonClient.replaceTeammateMemoryScopes(cwd, teammateId, { scopes });
+}
+
+export async function listMemoryObjects(cwd: string): Promise<MemoryListResponse> {
+  return daemonClient.listMemoryObjects(cwd);
+}
+
+export async function createMemoryObject(cwd: string, input: CreateMemoryObjectRequest): Promise<MemoryMutationResponse> {
+  return daemonClient.createMemoryObject(cwd, input);
+}
+
+export async function updateMemoryObject(cwd: string, memoryId: string, input: UpdateMemoryObjectRequest): Promise<MemoryMutationResponse> {
+  return daemonClient.updateMemoryObject(cwd, memoryId, input);
+}
+
+export async function recallMemory(cwd: string, input: MemoryRecallRequest): Promise<MemoryRecallResponse> {
+  return daemonClient.recallMemory(cwd, input);
+}
+
+export async function listUsedMemoryEvents(cwd: string): Promise<UsedMemoryListResponse> {
+  return daemonClient.listUsedMemoryEvents(cwd);
+}
+
+export async function createTeammatePersonaDraft(
+  cwd: string,
+  teammateId: string,
+  input: TeammatePersonaDraftRequest,
+): Promise<TeammatePersonaDraftResponse> {
+  return daemonClient.createTeammatePersonaDraft(cwd, teammateId, input);
 }
 
 export async function getTeammateDirectThread(cwd: string, teammateId: string): Promise<TeammateDirectThreadResponse> {

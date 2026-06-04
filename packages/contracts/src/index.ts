@@ -251,6 +251,7 @@ export interface RunSession {
   readonly taskId: string;
   readonly channelId?: string;
   readonly teammateId?: string;
+  readonly selectedSkillId?: string;
   readonly providerPresetId?: string;
   readonly providerName: string;
   readonly providerModel: string;
@@ -1067,6 +1068,7 @@ export interface Task {
   readonly prompt: string;
   readonly status: TaskStatus;
   readonly assigneeTeammateId?: string;
+  readonly requestedSkillId?: string;
   readonly currentRunId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -1086,6 +1088,7 @@ export interface CreateTaskRequest {
   readonly title: string;
   readonly prompt: string;
   readonly assigneeTeammateId?: string;
+  readonly requestedSkillId?: string;
 }
 
 export interface UpdateTaskRequest {
@@ -1094,6 +1097,165 @@ export interface UpdateTaskRequest {
   readonly prompt?: string;
   readonly status?: TaskStatus;
   readonly assigneeTeammateId?: string | null;
+  readonly requestedSkillId?: string | null;
+}
+
+export type MemoryScopeType = "workspace" | "channel" | "teammate" | "task" | "run";
+
+export type MemorySourceType =
+  | "manual"
+  | "message"
+  | "decision"
+  | "doc"
+  | "attachment"
+  | "run-event"
+  | "artifact"
+  | "import";
+
+export type MemoryReviewState = "candidate" | "active" | "disabled" | "archived" | "rejected";
+
+export type MemorySensitivity = "normal" | "private" | "secret-adjacent";
+
+export interface MemorySourceRef {
+  readonly type: MemorySourceType;
+  readonly id: string;
+  readonly label?: string;
+  readonly url?: string;
+}
+
+export interface MemoryObject {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly scopeType: MemoryScopeType;
+  readonly ownerId: string;
+  readonly title: string;
+  readonly body: string;
+  readonly tags: readonly string[];
+  readonly sourceRefs: readonly MemorySourceRef[];
+  readonly reviewState: MemoryReviewState;
+  readonly enabled: boolean;
+  readonly sensitivity: MemorySensitivity;
+  readonly retrievalProviderId?: string;
+  readonly retrievalHandle?: string;
+  readonly createdBy?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly lastUsedAt?: string;
+}
+
+export interface CreateMemoryObjectRequest {
+  readonly scopeType: MemoryScopeType;
+  readonly ownerId: string;
+  readonly title: string;
+  readonly body: string;
+  readonly tags?: readonly string[];
+  readonly sourceRefs?: readonly MemorySourceRef[];
+  readonly reviewState?: MemoryReviewState;
+  readonly enabled?: boolean;
+  readonly sensitivity?: MemorySensitivity;
+  readonly retrievalProviderId?: string;
+  readonly retrievalHandle?: string;
+  readonly createdBy?: string;
+}
+
+export interface UpdateMemoryObjectRequest {
+  readonly scopeType?: MemoryScopeType;
+  readonly ownerId?: string;
+  readonly title?: string;
+  readonly body?: string;
+  readonly tags?: readonly string[];
+  readonly sourceRefs?: readonly MemorySourceRef[];
+  readonly reviewState?: MemoryReviewState;
+  readonly enabled?: boolean;
+  readonly sensitivity?: MemorySensitivity;
+  readonly retrievalProviderId?: string | null;
+  readonly retrievalHandle?: string | null;
+  readonly createdBy?: string | null;
+  readonly lastUsedAt?: string | null;
+}
+
+export interface MemoryListResponse {
+  readonly cwd: string;
+  readonly memories: readonly MemoryObject[];
+  readonly vectorRetrieval: {
+    readonly status: "not_installed";
+    readonly optional: true;
+  };
+}
+
+export interface MemoryMutationResponse {
+  readonly memory: MemoryObject;
+}
+
+export type MemoryRecallIntent = "private-chat" | "channel-reply" | "task-run" | "review" | "search";
+
+export interface MemoryRecallRequest {
+  readonly teammateId?: string;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly runId?: string;
+  readonly intent: MemoryRecallIntent;
+  readonly query: string;
+  readonly tags?: readonly string[];
+  readonly maxResults?: number;
+  readonly includePrivate?: boolean;
+  readonly includeDisabled?: boolean;
+  readonly includeSecretAdjacent?: boolean;
+}
+
+export interface RecalledMemory {
+  readonly memory: MemoryObject;
+  readonly score: number;
+  readonly matchedTerms: readonly string[];
+  readonly excerpt: string;
+}
+
+export interface MemoryRecallResponse {
+  readonly cwd: string;
+  readonly memories: readonly RecalledMemory[];
+  readonly policyVersion: string;
+}
+
+export interface UsedMemoryEvent {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly memoryIds: readonly string[];
+  readonly intent: MemoryRecallIntent;
+  readonly recallQuery: string;
+  readonly teammateId?: string;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly runId?: string;
+  readonly responseId?: string;
+  readonly policyVersion: string;
+  readonly createdAt: string;
+}
+
+export interface UsedMemoryListResponse {
+  readonly cwd: string;
+  readonly events: readonly UsedMemoryEvent[];
+}
+
+export interface TeammatePersonaDraftRequest {
+  readonly content: string;
+  readonly sourcePath?: string;
+}
+
+export interface TeammatePersonaDraft {
+  readonly teammateId: string;
+  readonly sourceKind: "agents-md" | "persona-md" | "markdown";
+  readonly sourcePath?: string;
+  readonly displayName: string;
+  readonly description: string;
+  readonly systemPrompt: string;
+  readonly appendSystemPrompt: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+export interface TeammatePersonaDraftResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly draft: TeammatePersonaDraft;
 }
 
 export type ChannelMessageKind = "message" | "ai_reply" | "system" | "task_link";
@@ -2179,6 +2341,67 @@ export interface TeammateSkillBinding {
   readonly updatedAt: string;
 }
 
+export type SkillWorkflowPhase =
+  | "discover"
+  | "plan"
+  | "design"
+  | "implement"
+  | "review"
+  | "test"
+  | "secure"
+  | "ship"
+  | "document"
+  | "operate";
+
+export type SkillStateEffect =
+  | "creates_plan"
+  | "updates_plan"
+  | "creates_task"
+  | "updates_task"
+  | "starts_run"
+  | "requests_approval"
+  | "creates_artifact"
+  | "updates_docs"
+  | "prepares_release";
+
+export interface SkillDefinition {
+  readonly id: string;
+  readonly name: string;
+  readonly summary: string;
+  readonly roleAffinity: readonly AiTeammateRoleKey[];
+  readonly workflowPhase: SkillWorkflowPhase;
+  readonly promptFragments: readonly string[];
+  readonly requiredTools: readonly ToolName[];
+  readonly requiredProviderCapabilities: readonly ProviderCapability[];
+  readonly approvalProfile: SkillApprovalProfile;
+  readonly stateEffects: readonly SkillStateEffect[];
+}
+
+export type EffectiveSkillBlockedReasonCode =
+  | "disabled_binding"
+  | "missing_tools"
+  | "missing_provider_capability"
+  | "channel_policy"
+  | "approval_mismatch";
+
+export interface EffectiveSkillBlockedReason {
+  readonly code: EffectiveSkillBlockedReasonCode;
+  readonly message: string;
+  readonly missing?: readonly string[];
+}
+
+export interface EffectiveTeammateSkill {
+  readonly teammateId: string;
+  readonly skillId: string;
+  readonly skill: SkillDefinition;
+  readonly binding: TeammateSkillBinding;
+  readonly executable: boolean;
+  readonly blockedReasons: readonly EffectiveSkillBlockedReason[];
+  readonly promptFragments: readonly string[];
+  readonly requiredTools: readonly ToolName[];
+  readonly requiredProviderCapabilities: readonly ProviderCapability[];
+}
+
 export interface ReplaceTeammateSkillBindingsRequest {
   readonly bindings: readonly {
     readonly skillId: string;
@@ -2191,6 +2414,7 @@ export interface TeammateSkillBindingListResponse {
   readonly cwd: string;
   readonly teammateId: string;
   readonly bindings: readonly TeammateSkillBinding[];
+  readonly effectiveSkills?: readonly EffectiveTeammateSkill[];
 }
 
 export type TeammateMcpBindingMode = "selected" | "all_current_tools";

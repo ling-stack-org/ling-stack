@@ -149,6 +149,17 @@ import type {
   TeammateMcpBinding,
   UpdateMcpServerInput,
 } from "./mcp-types.js";
+import type {
+  CreateMemoryObjectInput,
+  CreateUsedMemoryEventInput,
+  ListMemoryObjectsOptions,
+  ListUsedMemoryEventsOptions,
+  MemoryObject,
+  MemoryObjectUpdateInput,
+  MemoryRecallRequest,
+  MemoryRecallResult,
+  UsedMemoryEvent,
+} from "./memory-types.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
@@ -180,6 +191,7 @@ export interface RunSession {
   readonly taskId: string;
   readonly channelId?: string;
   readonly teammateId?: string;
+  readonly selectedSkillId?: string;
   readonly providerPresetId?: string;
   readonly providerName: string;
   readonly providerModel: string;
@@ -211,6 +223,7 @@ export interface CreateRunInput {
   readonly taskId: string;
   readonly channelId?: string;
   readonly teammateId?: string;
+  readonly selectedSkillId?: string;
   readonly providerPresetId?: string;
   readonly providerName: string;
   readonly providerModel: string;
@@ -407,6 +420,13 @@ export interface RunStore {
     scopes: readonly ReplaceTeammateMemoryScopeInput[],
     now: string,
   ): TeammateMemoryScope[];
+  createMemoryObject(input: CreateMemoryObjectInput, now: string): MemoryObject;
+  getMemoryObject(id: string): MemoryObject | undefined;
+  listMemoryObjects(options?: ListMemoryObjectsOptions): MemoryObject[];
+  updateMemoryObject(id: string, input: MemoryObjectUpdateInput, now: string): MemoryObject | undefined;
+  recallMemory(input: MemoryRecallRequest): MemoryRecallResult;
+  recordUsedMemoryEvent(input: CreateUsedMemoryEventInput, now: string): UsedMemoryEvent;
+  listUsedMemoryEvents(options?: ListUsedMemoryEventsOptions): UsedMemoryEvent[];
   getOrCreateTeammateDirectThread(teammateId: string, now: string): TeammateDirectThread;
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[];
   getTeammateDirectMessage(id: string): TeammateDirectMessage | undefined;

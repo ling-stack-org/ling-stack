@@ -103,6 +103,7 @@ export interface Task {
   readonly prompt: string;
   readonly status: TaskStatus;
   readonly assigneeTeammateId?: string;
+  readonly requestedSkillId?: string;
   readonly currentRunId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -114,6 +115,7 @@ export interface CreateTaskInput {
   readonly prompt: string;
   readonly status?: TaskStatus;
   readonly assigneeTeammateId?: string;
+  readonly requestedSkillId?: string;
 }
 
 export interface TaskUpdateInput {
@@ -122,6 +124,7 @@ export interface TaskUpdateInput {
   readonly prompt?: string;
   readonly status?: TaskStatus;
   readonly assigneeTeammateId?: string | null;
+  readonly requestedSkillId?: string | null;
   readonly currentRunId?: string | null;
 }
 

@@ -425,6 +425,133 @@ test("AI teammate private workspace endpoints persist roster, setup, private mes
   }
 });
 
+test("memory API scopes lexical recall and channel replies audit used memory", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-api-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const otherChannel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    const check = await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(check.ok, true);
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_designer")}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    const channelMemory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "channel",
+      ownerId: channel.id,
+      title: "Model Workbench width",
+      body: "Model Workbench should use the same horizontal width as other pages.",
+      tags: ["model-workbench"],
+    })).memory;
+    await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "channel",
+      ownerId: otherChannel.id,
+      title: "Other channel width",
+      body: "Other channel also mentions Model Workbench width.",
+    });
+    await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "workspace",
+      ownerId: "workspace_default",
+      title: "Secret memory",
+      body: "Secret-adjacent Model Workbench token.",
+      sensitivity: "secret-adjacent",
+    });
+
+    const listed = await getJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.vectorRetrieval.status, "not_installed");
+    assert.equal(listed.vectorRetrieval.optional, true);
+
+    const recall = await postJson(`${daemon.url}/memory/recall?cwd=${encodeURIComponent(cwd)}`, {
+      teammateId: "teammate_builtin_designer",
+      channelId: channel.id,
+      intent: "channel-reply",
+      query: "model workbench width",
+    });
+    assert.ok(recall.memories.some((item) => item.memory.id === channelMemory.id));
+    assert.equal(recall.memories.some((item) => item.memory.ownerId === otherChannel.id), false);
+    assert.equal(recall.memories.some((item) => item.memory.sensitivity === "secret-adjacent"), false);
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Designer fix Model Workbench width",
+      mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+    assert.equal(created.aiReply.status, "ready");
+    assert.match(runner.runs[0].systemPrompt, /Used memory:/);
+    assert.match(runner.runs[0].systemPrompt, /Model Workbench width/);
+
+    const used = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&responseId=${encodeURIComponent(created.aiReply.id)}`);
+    assert.deepEqual(used.events[0].memoryIds, [channelMemory.id]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("task run validates requestedSkillId and records the selected skill", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-aware-run-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_engineer",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+      runtimePolicy: {
+        maxConcurrentRuns: 1,
+        executionMode: "serial",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    const task = (await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      title: "Implement skill-aware run",
+      prompt: "Use the implement skill.",
+      assigneeTeammateId: "teammate_builtin_engineer",
+      requestedSkillId: "implement",
+    })).task;
+    const runId = await postTaskRunAndReadReadyRunId(daemon.url, cwd, task.id, {
+      providerPresetId: provider.id,
+      skipProviderPreflight: true,
+    });
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.selectedSkillId, "implement");
+    assert.equal(runner.runs[0].tools.includes("edit"), true);
+    assert.ok(runner.runs[0].appendSystemPrompt.some((line) => /Implement only the approved slice/.test(line)));
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("teammate persona draft import returns warnings without mutating durable teammate", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-persona-draft-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const teammateId = "teammate_builtin_engineer";
+    const before = (await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`)).teammate;
+    const draft = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/persona-draft?cwd=${encodeURIComponent(cwd)}`, {
+      sourcePath: "AGENTS.md",
+      content: "# Senior Engineer\n\nCan use bash tools and external-send secrets.",
+    });
+    assert.equal(draft.draft.sourceKind, "agents-md");
+    assert.equal(draft.draft.displayName, "Senior Engineer");
+    assert.ok(draft.draft.warnings.some((warning) => /cannot grant tools/i.test(warning)));
+    const after = (await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`)).teammate;
+    assert.equal(after.displayName, before.displayName);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 class RecordingRunner {
   constructor() {
     this.runs = [];
@@ -480,6 +607,21 @@ async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
     enabled: true,
     ...overrides,
   });
+}
+
+async function postTaskRunAndReadReadyRunId(baseUrl, cwd, taskId, body) {
+  const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}/run?cwd=${encodeURIComponent(cwd)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
+  }
+  const text = await response.text();
+  const dataLine = text.split(/\r?\n/).find((line) => line.startsWith("data:") && line.includes("runId"));
+  assert.ok(dataLine, text);
+  return JSON.parse(dataLine.slice("data:".length).trim()).runId;
 }
 
 async function getJson(url) {

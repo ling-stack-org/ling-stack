@@ -45,6 +45,7 @@ import { AvatarInitial, MetaRow, StatusBadge } from "../../shared/components/ind
 import type {
   AiTeammate,
   Channel,
+  EffectiveTeammateSkill,
   McpServer,
   McpTool,
   ProviderPreset,
@@ -110,6 +111,7 @@ export function TeammateWorkspace({
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
   const [memberships, setMemberships] = useState<readonly TeammateChannelMembership[]>([]);
   const [skillBindings, setSkillBindings] = useState<readonly TeammateSkillBinding[]>([]);
+  const [effectiveSkills, setEffectiveSkills] = useState<readonly EffectiveTeammateSkill[]>([]);
   const [mcpServers, setMcpServers] = useState<readonly McpServer[]>([]);
   const [mcpTools, setMcpTools] = useState<readonly McpTool[]>([]);
   const [mcpBindings, setMcpBindings] = useState<readonly TeammateMcpBinding[]>([]);
@@ -139,12 +141,14 @@ export function TeammateWorkspace({
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   const skillById = useMemo(() => new Map((skillPack?.skills ?? []).map((skill) => [skill.id, skill])), [skillPack]);
   const bindingBySkillId = useMemo(() => new Map(skillBindings.map((binding) => [binding.skillId, binding])), [skillBindings]);
+  const effectiveSkillById = useMemo(() => new Map(effectiveSkills.map((skill) => [skill.skillId, skill])), [effectiveSkills]);
   const enabledSkillCount = useMemo(() => skillBindings.filter((binding) => binding.enabled).length, [skillBindings]);
   const skillRows = useMemo(() => {
     const builtInRows = (skillPack?.skills ?? []).map((skill) => ({
       id: skill.id,
       skill,
       binding: bindingBySkillId.get(skill.id),
+      effectiveSkill: effectiveSkillById.get(skill.id),
     }));
     const unknownRows = skillBindings
       .filter((binding) => !skillById.has(binding.skillId))
@@ -152,9 +156,10 @@ export function TeammateWorkspace({
         id: binding.skillId,
         skill: undefined,
         binding,
+        effectiveSkill: effectiveSkillById.get(binding.skillId),
       }));
     return [...builtInRows, ...unknownRows];
-  }, [bindingBySkillId, skillBindings, skillById, skillPack]);
+  }, [bindingBySkillId, effectiveSkillById, skillBindings, skillById, skillPack]);
   const channelsById = useMemo(() => new Map(channels.map((channel) => [channel.id, channel])), [channels]);
   const membershipByChannelId = useMemo(() => new Map(memberships.map((membership) => [membership.channelId, membership])), [memberships]);
   const mcpToolsByServerId = useMemo(() => {
@@ -256,6 +261,7 @@ export function TeammateWorkspace({
       setMessages(directResponse.messages);
       setMemberships(channelResponse.memberships);
       setSkillBindings(skillResponse.bindings);
+      setEffectiveSkills(skillResponse.effectiveSkills ?? []);
       setMcpServers(mcpServersResponse.servers);
       setMcpTools(mcpToolsResponse.tools);
       setMcpBindings(mcpBindingsResponse.bindings);
@@ -416,6 +422,7 @@ export function TeammateWorkspace({
       setSkillMessage("");
       const response = await replaceTeammateSkills(workspaceCwd, teammate.id, nextBindings);
       setSkillBindings(response.bindings);
+      setEffectiveSkills(response.effectiveSkills ?? []);
       setSkillMessage(message);
       return true;
     } catch (error) {
@@ -857,7 +864,7 @@ export function TeammateWorkspace({
             </div>
           ) : (
             <div className="teammate-data-list">
-              {skillRows.map(({ id, skill, binding }) => {
+              {skillRows.map(({ id, skill, binding, effectiveSkill }) => {
                 const enabled = Boolean(binding?.enabled);
                 const sourceLabel = binding
                   ? binding.source === "template"
@@ -865,13 +872,16 @@ export function TeammateWorkspace({
                     : t("User skill")
                   : t("Available skill");
                 const canDelete = binding?.source === "user";
+                const executable = effectiveSkill?.executable ?? false;
+                const blockedLabel = effectiveSkill?.blockedReasons.map((reason) => t(reason.code)).join(", ");
                 return (
-                  <article key={id} className={`teammate-data-row teammate-skill-row ${enabled ? "enabled" : ""}`}>
+                  <article key={id} className={`teammate-data-row teammate-skill-row ${enabled ? "enabled" : ""} ${executable ? "executable" : "blocked"}`}>
                     <span>
                       <strong>{skill ? t(skill.name) : id}</strong>
-                      <small>{skill ? t(skill.summary) : t("Custom skill binding")}</small>
+                      <small>{blockedLabel || (skill ? t(skill.summary) : t("Custom skill binding"))}</small>
                     </span>
                     <div className="teammate-skill-actions">
+                      <StatusBadge status={executable ? "executable" : enabled ? "blocked" : "disabled"} />
                       <span className="skill-binding-source">{sourceLabel}</span>
                       <span className={`phase-token ${skill?.workflowPhase ?? "operate"}`}>{skill ? workflowPhaseLabel(skill.workflowPhase, t) : t("Custom")}</span>
                       <button className="secondary-button compact-button" type="button" onClick={() => void toggleSkillBinding(id)} disabled={savingSkills}>
@@ -894,21 +904,40 @@ export function TeammateWorkspace({
       ) : null}
 
       {activeTab === "memory" ? (
-        <TeammateListSection
-          icon={<Bot size={16} />}
-          title={t("Memory")}
-          emptyLabel={t("No memory scopes enabled")}
-          items={memoryScopes}
-          renderItem={(scope) => (
-            <article key={scope.id} className="teammate-data-row">
-              <span>
-                <strong>{t(scope.kind)}</strong>
-                <small>{scope.channelId ? channelsById.get(scope.channelId)?.name ?? scope.channelId : t("Private workspace")}</small>
-              </span>
-              <StatusBadge status={scope.enabled ? "active" : "paused"} />
-            </article>
+        <section className="teammate-list-panel teammate-memory-panel" aria-label={t("Memory")}>
+          <div className="panel-title split">
+            <span>
+              <Bot size={16} />
+              <h2>{t("Memory")}</h2>
+            </span>
+            <small>{memoryScopes.length}</small>
+          </div>
+          <article className="teammate-data-row">
+            <span>
+              <strong>{t("Vector retrieval")}</strong>
+              <small>{t("Not installed / Optional")}</small>
+            </span>
+            <StatusBadge status="optional" />
+          </article>
+          {memoryScopes.length === 0 ? (
+            <div className="client-empty-state teammate-empty">
+              <Bot size={18} />
+              <span>{t("No memory scopes enabled")}</span>
+            </div>
+          ) : (
+            <div className="teammate-data-list">
+              {memoryScopes.map((scope) => (
+                <article key={scope.id} className="teammate-data-row">
+                  <span>
+                    <strong>{t(scope.kind)}</strong>
+                    <small>{scope.channelId ? channelsById.get(scope.channelId)?.name ?? scope.channelId : t("Private workspace")}</small>
+                  </span>
+                  <StatusBadge status={scope.enabled ? "active" : "paused"} />
+                </article>
+              ))}
+            </div>
           )}
-        />
+        </section>
       ) : null}
 
       {activeTab === "settings" ? (
