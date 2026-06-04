@@ -14,7 +14,8 @@ export type ApprovalActionType =
   | "deploy"
   | "media_cost"
   | "credential_change"
-  | "provider_change";
+  | "provider_change"
+  | "mcp_tool_call";
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 
@@ -41,6 +42,12 @@ export type ApprovalPayload =
   | {
       readonly type: "tool_call";
       readonly toolName: "read" | "grep" | "find" | "ls";
+      readonly cwd: string;
+      readonly input: unknown;
+    }
+  | {
+      readonly type: "mcp_tool_call";
+      readonly toolName: string;
       readonly cwd: string;
       readonly input: unknown;
     }
@@ -143,6 +150,7 @@ export const approvalActionTypes: readonly ApprovalActionType[] = [
   "media_cost",
   "credential_change",
   "provider_change",
+  "mcp_tool_call",
 ];
 
 export function createApprovalRequestId(): string {

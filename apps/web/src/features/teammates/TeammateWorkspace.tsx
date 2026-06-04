@@ -3,6 +3,8 @@ import {
   Activity,
   Bot,
   Brain,
+  ChevronDown,
+  ChevronRight,
   CheckCircle2,
   Hash,
   Loader2,
@@ -10,11 +12,13 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   Settings,
   ShieldCheck,
   SquareTerminal,
   Trash2,
+  Wrench,
   X,
 } from "lucide-react";
 import type { SkillPack } from "@ling-stack/core/skill-types";
@@ -24,10 +28,14 @@ import {
   listTeammateActivity,
   listTeammateChannels,
   listTeammateDirectMessages,
+  listMcpServers,
+  listMcpTools,
+  listTeammateMcpBindings,
   listTeammateMemoryScopes,
   listTeammateSkills,
   listTeammateTasks,
   replaceTeammateChannels,
+  replaceTeammateMcpBindings,
   replaceTeammateSkills,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
@@ -37,19 +45,23 @@ import { AvatarInitial, MetaRow, StatusBadge } from "../../shared/components/ind
 import type {
   AiTeammate,
   Channel,
+  McpServer,
+  McpTool,
   ProviderPreset,
   Task,
   TeammateActivityItem,
   TeammateChannelMembership,
   TeammateDirectMessage,
   TeammateDirectThread,
+  TeammateMcpBinding,
   TeammateMemoryScope,
   TeammateSkillBinding,
   UpdateAiTeammateRequest,
 } from "../../types.js";
 import { approvalProfileText, teammateInitialFromName, workflowPhaseLabel } from "./helpers.js";
 
-type TeammateWorkspaceTab = "chat" | "tasks" | "activity" | "channels" | "skills" | "memory" | "settings";
+type TeammateWorkspaceTab = "chat" | "tasks" | "activity" | "channels" | "skills" | "memory" | "settings" | "mcp";
+type McpToolFilter = "all" | "authorized" | "read" | "write-or-external";
 
 interface TeammateSettingsForm {
   readonly displayName: string;
@@ -98,6 +110,9 @@ export function TeammateWorkspace({
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
   const [memberships, setMemberships] = useState<readonly TeammateChannelMembership[]>([]);
   const [skillBindings, setSkillBindings] = useState<readonly TeammateSkillBinding[]>([]);
+  const [mcpServers, setMcpServers] = useState<readonly McpServer[]>([]);
+  const [mcpTools, setMcpTools] = useState<readonly McpTool[]>([]);
+  const [mcpBindings, setMcpBindings] = useState<readonly TeammateMcpBinding[]>([]);
   const [memoryScopes, setMemoryScopes] = useState<readonly TeammateMemoryScope[]>([]);
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [activityItems, setActivityItems] = useState<readonly TeammateActivityItem[]>([]);
@@ -110,11 +125,16 @@ export function TeammateWorkspace({
   const [creatingTask, setCreatingTask] = useState(false);
   const [savingChannels, setSavingChannels] = useState(false);
   const [savingSkills, setSavingSkills] = useState(false);
+  const [savingMcp, setSavingMcp] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [taskMessage, setTaskMessage] = useState("");
   const [channelMessage, setChannelMessage] = useState("");
   const [skillMessage, setSkillMessage] = useState("");
+  const [mcpMessage, setMcpMessage] = useState("");
+  const [expandedMcpServerIds, setExpandedMcpServerIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [mcpToolSearchByServerId, setMcpToolSearchByServerId] = useState<Readonly<Record<string, string>>>({});
+  const [mcpToolFilterByServerId, setMcpToolFilterByServerId] = useState<Readonly<Record<string, McpToolFilter>>>({});
   const [workspaceError, setWorkspaceError] = useState("");
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   const skillById = useMemo(() => new Map((skillPack?.skills ?? []).map((skill) => [skill.id, skill])), [skillPack]);
@@ -137,6 +157,14 @@ export function TeammateWorkspace({
   }, [bindingBySkillId, skillBindings, skillById, skillPack]);
   const channelsById = useMemo(() => new Map(channels.map((channel) => [channel.id, channel])), [channels]);
   const membershipByChannelId = useMemo(() => new Map(memberships.map((membership) => [membership.channelId, membership])), [memberships]);
+  const mcpToolsByServerId = useMemo(() => {
+    const grouped = new Map<string, McpTool[]>();
+    for (const tool of mcpTools) {
+      grouped.set(tool.serverId, [...(grouped.get(tool.serverId) ?? []), tool]);
+    }
+    return grouped;
+  }, [mcpTools]);
+  const mcpBindingByServerId = useMemo(() => new Map(mcpBindings.map((binding) => [binding.serverId, binding])), [mcpBindings]);
   const taskChannelOptions = useMemo(() => {
     const seen = new Set<string>();
     const ordered: Channel[] = [];
@@ -163,6 +191,7 @@ export function TeammateWorkspace({
     { id: "skills", label: t("Skills"), count: enabledSkillCount },
     { id: "memory", label: t("Memory"), count: memoryScopes.length },
     { id: "settings", label: t("Settings") },
+    { id: "mcp", label: t("MCP") },
   ];
 
   useEffect(() => {
@@ -174,6 +203,10 @@ export function TeammateWorkspace({
     setTaskMessage("");
     setChannelMessage("");
     setSkillMessage("");
+    setMcpMessage("");
+    setExpandedMcpServerIds(new Set());
+    setMcpToolSearchByServerId({});
+    setMcpToolFilterByServerId({});
     setManualSkillInput("");
     setTaskForm({ channelId: "", title: "", prompt: "" });
   }, [teammate.id]);
@@ -198,10 +231,23 @@ export function TeammateWorkspace({
     setLoading(true);
     try {
       setWorkspaceError("");
-      const [directResponse, channelResponse, skillResponse, memoryResponse, taskResponse, activityResponse] = await Promise.all([
+      const [
+        directResponse,
+        channelResponse,
+        skillResponse,
+        mcpServersResponse,
+        mcpToolsResponse,
+        mcpBindingsResponse,
+        memoryResponse,
+        taskResponse,
+        activityResponse,
+      ] = await Promise.all([
         listTeammateDirectMessages(workspaceCwd, teammate.id),
         listTeammateChannels(workspaceCwd, teammate.id),
         listTeammateSkills(workspaceCwd, teammate.id),
+        listMcpServers(workspaceCwd),
+        listMcpTools(workspaceCwd),
+        listTeammateMcpBindings(workspaceCwd, teammate.id),
         listTeammateMemoryScopes(workspaceCwd, teammate.id),
         listTeammateTasks(workspaceCwd, teammate.id),
         listTeammateActivity(workspaceCwd, teammate.id),
@@ -210,6 +256,9 @@ export function TeammateWorkspace({
       setMessages(directResponse.messages);
       setMemberships(channelResponse.memberships);
       setSkillBindings(skillResponse.bindings);
+      setMcpServers(mcpServersResponse.servers);
+      setMcpTools(mcpToolsResponse.tools);
+      setMcpBindings(mcpBindingsResponse.bindings);
       setMemoryScopes(memoryResponse.scopes);
       setTasks(taskResponse.tasks);
       setActivityItems(activityResponse.items);
@@ -427,6 +476,113 @@ export function TeammateWorkspace({
       .filter((item) => item.skillId !== skillId)
       .map((item) => ({ skillId: item.skillId, source: item.source, enabled: item.enabled }));
     await saveSkillBindings(nextBindings, t("Skill deleted"));
+  }
+
+  function toggleMcpTool(serverId: string, toolName: string): void {
+    setMcpMessage("");
+    setMcpBindings((current) => {
+      const existing = current.find((binding) => binding.serverId === serverId);
+      const currentTools = new Set(existing?.mode === "all_current_tools"
+        ? (mcpToolsByServerId.get(serverId) ?? []).map((tool) => tool.rawName)
+        : existing?.selectedToolNames ?? []);
+      if (currentTools.has(toolName)) {
+        currentTools.delete(toolName);
+      } else {
+        currentTools.add(toolName);
+      }
+      const nextBinding: TeammateMcpBinding | undefined = currentTools.size > 0
+        ? {
+          teammateId: teammate.id,
+          serverId,
+          mode: "selected",
+          selectedToolNames: [...currentTools].sort(),
+          approvalOverrides: existing?.approvalOverrides ?? {},
+          enabled: true,
+          createdAt: existing?.createdAt ?? new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+        : undefined;
+      return [
+        ...current.filter((binding) => binding.serverId !== serverId),
+        ...(nextBinding ? [nextBinding] : []),
+      ];
+    });
+  }
+
+  function setMcpServerSelectedTools(serverId: string, toolNames: readonly string[]): void {
+    setMcpMessage("");
+    const nextToolNames = [...new Set(toolNames)].sort();
+    setMcpBindings((current) => {
+      const existing = current.find((binding) => binding.serverId === serverId);
+      const nextBinding: TeammateMcpBinding | undefined = nextToolNames.length > 0
+        ? {
+          teammateId: teammate.id,
+          serverId,
+          mode: "selected",
+          selectedToolNames: nextToolNames,
+          approvalOverrides: existing?.approvalOverrides ?? {},
+          enabled: true,
+          createdAt: existing?.createdAt ?? new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+        : undefined;
+      return [
+        ...current.filter((binding) => binding.serverId !== serverId),
+        ...(nextBinding ? [nextBinding] : []),
+      ];
+    });
+  }
+
+  function toggleMcpServerExpanded(serverId: string): void {
+    setExpandedMcpServerIds((current) => {
+      const next = new Set(current);
+      if (next.has(serverId)) {
+        next.delete(serverId);
+      } else {
+        next.add(serverId);
+      }
+      return next;
+    });
+  }
+
+  function updateMcpToolSearch(serverId: string, value: string): void {
+    setMcpToolSearchByServerId((current) => ({ ...current, [serverId]: value }));
+  }
+
+  function updateMcpToolFilter(serverId: string, filter: McpToolFilter): void {
+    setMcpToolFilterByServerId((current) => ({ ...current, [serverId]: filter }));
+  }
+
+  async function saveMcpBindings(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setWorkspaceError(t("Workspace path is required."));
+      return;
+    }
+    setSavingMcp(true);
+    try {
+      setWorkspaceError("");
+      setMcpMessage("");
+      const response = await replaceTeammateMcpBindings(
+        workspaceCwd,
+        teammate.id,
+        mcpBindings
+          .filter((binding) => binding.enabled && (binding.mode === "all_current_tools" || binding.selectedToolNames.length > 0))
+          .map((binding) => ({
+            serverId: binding.serverId,
+            mode: binding.mode,
+            selectedToolNames: binding.mode === "selected" ? binding.selectedToolNames : undefined,
+            approvalOverrides: binding.approvalOverrides,
+            enabled: binding.enabled,
+          })),
+      );
+      setMcpBindings(response.bindings);
+      setMcpMessage(t("Saved"));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingMcp(false);
+    }
   }
 
   function resolvePreferredTaskChannelId(channelId: string): string {
@@ -828,6 +984,155 @@ export function TeammateWorkspace({
           </div>
         </section>
       ) : null}
+
+      {activeTab === "mcp" ? (
+        <section className="teammate-mcp-panel" aria-label={t("MCP tool authorization")}>
+          <div className="teammate-mcp-toolbar">
+            <div className="panel-title">
+              <span>
+                <Wrench size={16} />
+                <h2>{t("MCP tool authorization")}</h2>
+              </span>
+            </div>
+            <span className="teammate-mcp-save-status">{savingMcp ? t("Saving...") : mcpMessage || t("Explicit assignment only")}</span>
+            <button className="secondary-button compact-button" type="button" onClick={() => void saveMcpBindings()} disabled={savingMcp || mcpServers.length === 0}>
+              {savingMcp ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
+              {t("Update MCP authorization")}
+            </button>
+          </div>
+          <p className="teammate-mcp-note">{t("Only authorize MCP tools this teammate actually needs.")}</p>
+          {mcpServers.length === 0 ? (
+            <div className="client-empty-state teammate-empty">
+              <Wrench size={18} />
+              <span>{t("No MCP servers configured")}</span>
+            </div>
+          ) : (
+            <div className="teammate-mcp-server-list">
+              {mcpServers.map((server) => {
+                const serverTools = mcpToolsByServerId.get(server.id) ?? [];
+                const binding = mcpBindingByServerId.get(server.id);
+                const selectedTools = new Set(binding?.mode === "all_current_tools"
+                  ? serverTools.map((tool) => tool.rawName)
+                  : binding?.selectedToolNames ?? []);
+                const expanded = expandedMcpServerIds.has(server.id);
+                const searchQuery = mcpToolSearchByServerId[server.id] ?? "";
+                const toolFilter = mcpToolFilterByServerId[server.id] ?? "all";
+                const filteredTools = filterMcpTools(serverTools, selectedTools, searchQuery, toolFilter);
+                const allToolNames = serverTools.map((tool) => tool.rawName);
+                return (
+                  <article key={server.id} className={expanded ? "teammate-mcp-server-row expanded" : "teammate-mcp-server-row"}>
+                    <header className="teammate-mcp-server-header">
+                      <span className="teammate-mcp-server-title">
+                        <Wrench size={15} />
+                        <span>
+                          <strong>{server.displayName}</strong>
+                          <small>{server.enabled ? t("Enabled") : t("Disabled")} · {server.status.kind === "ready" ? t("Ready") : t("Not ready")}</small>
+                        </span>
+                      </span>
+                      <span className="teammate-mcp-server-summary">
+                        <StatusBadge status={server.status.kind} />
+                        <span className="status-badge neutral">{t("{count} tools", { count: serverTools.length })}</span>
+                        <span className="status-badge neutral">{t("{count} authorized", { count: selectedTools.size })}</span>
+                        <button
+                          className="secondary-button compact-button"
+                          type="button"
+                          onClick={() => setMcpServerSelectedTools(server.id, allToolNames)}
+                          disabled={savingMcp || !server.enabled || allToolNames.length === 0 || selectedTools.size === allToolNames.length}
+                        >
+                          {t("Select all current MCP")}
+                        </button>
+                        <button
+                          className="secondary-button compact-button"
+                          type="button"
+                          onClick={() => setMcpServerSelectedTools(server.id, [])}
+                          disabled={savingMcp || selectedTools.size === 0}
+                        >
+                          {t("Clear authorization")}
+                        </button>
+                        <button
+                          className="secondary-button compact-button"
+                          type="button"
+                          aria-expanded={expanded}
+                          onClick={() => toggleMcpServerExpanded(server.id)}
+                          disabled={serverTools.length === 0}
+                        >
+                          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          {expanded ? t("Hide tools") : t("Show tools")}
+                        </button>
+                      </span>
+                    </header>
+                    {serverTools.length === 0 ? (
+                      <small className="teammate-mcp-inline-hint">{t("No tools discovered yet. Sync tools from Tool Access first.")}</small>
+                    ) : null}
+                    {expanded && serverTools.length > 0 ? (
+                      <div className="teammate-mcp-tool-tree">
+                        <div className="teammate-mcp-tool-controls">
+                          <label className="field teammate-mcp-search">
+                            <span>{t("Search tools")}</span>
+                            <span className="teammate-mcp-search-input">
+                              <Search size={14} />
+                              <input
+                                aria-label={t("Search tools")}
+                                value={searchQuery}
+                                onChange={(event) => updateMcpToolSearch(server.id, event.target.value)}
+                                placeholder={t("Search tools")}
+                              />
+                            </span>
+                          </label>
+                          <div className="teammate-mcp-filter-tabs" role="group" aria-label={t("MCP tool filters")}>
+                            {(["all", "authorized", "read", "write-or-external"] as const).map((filter) => (
+                              <button
+                                key={filter}
+                                type="button"
+                                className={toolFilter === filter ? "active" : ""}
+                                onClick={() => updateMcpToolFilter(server.id, filter)}
+                              >
+                                {mcpToolFilterLabel(filter, t)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="teammate-mcp-tool-list">
+                          {filteredTools.length === 0 ? (
+                            <div className="client-empty-state teammate-empty compact">
+                              <span>{t("No tools match filters")}</span>
+                            </div>
+                          ) : null}
+                          {filteredTools.map((tool) => {
+                            const toolLabel = tool.displayName || tool.rawName;
+                            return (
+                              <label
+                                key={`${tool.serverId}:${tool.rawName}`}
+                                className={selectedTools.has(tool.rawName) ? "teammate-mcp-tool-row selected" : "teammate-mcp-tool-row"}
+                              >
+                                <span className="teammate-mcp-tool-check">
+                                  <input
+                                    type="checkbox"
+                                    aria-label={toolLabel}
+                                    checked={selectedTools.has(tool.rawName)}
+                                    onChange={() => toggleMcpTool(server.id, tool.rawName)}
+                                    disabled={savingMcp || !server.enabled}
+                                  />
+                                  <span className="teammate-mcp-tool-check-visual" aria-hidden="true" />
+                                </span>
+                                <span className="teammate-mcp-tool-name">
+                                  <strong>{toolLabel}</strong>
+                                </span>
+                                <span className="status-badge neutral teammate-mcp-effect">{mcpToolEffectLabel(tool.sideEffectLevel, t)}</span>
+                                <small className="teammate-mcp-tool-description">{tool.description || tool.rawName}</small>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -864,6 +1169,82 @@ function TeammateListSection<T>({
       )}
     </section>
   );
+}
+
+function filterMcpTools(
+  tools: readonly McpTool[],
+  selectedTools: ReadonlySet<string>,
+  searchQuery: string,
+  filter: McpToolFilter,
+): readonly McpTool[] {
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  return tools.filter((tool) => {
+    if (filter === "authorized" && !selectedTools.has(tool.rawName)) {
+      return false;
+    }
+    if (filter === "read" && tool.sideEffectLevel !== "read" && tool.sideEffectLevel !== "none") {
+      return false;
+    }
+    if (filter === "write-or-external" && !isWriteOrExternalMcpTool(tool.sideEffectLevel)) {
+      return false;
+    }
+    if (!normalizedQuery) {
+      return true;
+    }
+    const searchable = [
+      tool.rawName,
+      tool.displayName,
+      tool.description ?? "",
+      tool.callableName,
+    ].join(" ").toLowerCase();
+    return searchable.includes(normalizedQuery);
+  });
+}
+
+function isWriteOrExternalMcpTool(sideEffectLevel: McpTool["sideEffectLevel"]): boolean {
+  return sideEffectLevel === "write" ||
+    sideEffectLevel === "write-network" ||
+    sideEffectLevel === "external" ||
+    sideEffectLevel === "credential" ||
+    sideEffectLevel === "deploy";
+}
+
+function mcpToolFilterLabel(filter: McpToolFilter, t: (key: string) => string): string {
+  if (filter === "authorized") {
+    return t("Authorized");
+  }
+  if (filter === "read") {
+    return t("Read tools");
+  }
+  if (filter === "write-or-external") {
+    return t("Write or external actions");
+  }
+  return t("All");
+}
+
+function mcpToolEffectLabel(sideEffectLevel: McpTool["sideEffectLevel"], t: (key: string) => string): string {
+  if (sideEffectLevel === "none") {
+    return t("No side effects");
+  }
+  if (sideEffectLevel === "read") {
+    return t("Read");
+  }
+  if (sideEffectLevel === "write") {
+    return t("Write");
+  }
+  if (sideEffectLevel === "write-network") {
+    return t("Write network");
+  }
+  if (sideEffectLevel === "external") {
+    return t("External action");
+  }
+  if (sideEffectLevel === "credential") {
+    return t("Credential");
+  }
+  if (sideEffectLevel === "deploy") {
+    return t("Deploy");
+  }
+  return sideEffectLevel;
 }
 
 function normalizeManualSkillId(value: string): string {

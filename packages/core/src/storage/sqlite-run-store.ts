@@ -234,6 +234,20 @@ import {
   type MediaJobStatus,
   type UpdateMediaJobStatusInput,
 } from "../media-types.js";
+import {
+  createMcpServerId,
+  type CreateMcpServerInput,
+  type ListMcpServersOptions,
+  type ListMcpToolsOptions,
+  type McpServer,
+  type McpServerStatus,
+  type McpServerTransport,
+  type McpTool,
+  type ReplaceMcpServerToolInput,
+  type ReplaceTeammateMcpBindingInput,
+  type TeammateMcpBinding,
+  type UpdateMcpServerInput,
+} from "../mcp-types.js";
 import { redactSecrets } from "../redaction.js";
 import { appendEventLogLine } from "./event-log.js";
 
@@ -281,6 +295,8 @@ const CHANNEL_EXECUTION_PROPOSALS_MIGRATION_VERSION = 21;
 const CHANNEL_EXECUTION_PROPOSALS_MIGRATION_NAME = "create_channel_execution_proposals";
 const RUNTIME_SUPERVISOR_MIGRATION_VERSION = 22;
 const RUNTIME_SUPERVISOR_MIGRATION_NAME = "create_runtime_supervisor";
+const MCP_TOOL_MANAGEMENT_MIGRATION_VERSION = 23;
+const MCP_TOOL_MANAGEMENT_MIGRATION_NAME = "create_mcp_tool_management";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -4636,6 +4652,297 @@ export class SqliteRunStore implements RunStore {
     return Number(result.changes) > 0;
   }
 
+  createMcpServer(input: CreateMcpServerInput, now: string): McpServer {
+    const server: McpServer = {
+      id: input.id ?? createMcpServerId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      displayName: input.displayName,
+      transport: normalizeMcpServerTransport(input.transport),
+      enabled: input.enabled ?? true,
+      required: input.required ?? false,
+      status: input.status ?? { kind: "unknown" },
+      startupTimeoutSec: input.startupTimeoutSec,
+      toolTimeoutSec: input.toolTimeoutSec,
+      enabledTools: input.enabledTools,
+      disabledTools: input.disabledTools ?? [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO mcp_servers (
+          id,
+          workspace_id,
+          display_name,
+          transport_json,
+          enabled,
+          required,
+          status_json,
+          startup_timeout_sec,
+          tool_timeout_sec,
+          enabled_tools_json,
+          disabled_tools_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        server.id,
+        server.workspaceId,
+        server.displayName,
+        stringifyJson(server.transport),
+        server.enabled ? 1 : 0,
+        server.required ? 1 : 0,
+        stringifyJson(server.status),
+        server.startupTimeoutSec ?? null,
+        server.toolTimeoutSec ?? null,
+        server.enabledTools ? stringifyJson(server.enabledTools) : null,
+        stringifyJson(server.disabledTools),
+        server.createdAt,
+        server.updatedAt,
+      );
+
+    const created = this.getMcpServer(server.id);
+    if (!created) {
+      throw new Error(`Failed to create MCP server: ${server.id}`);
+    }
+    return created;
+  }
+
+  getMcpServer(id: string): McpServer | undefined {
+    const row = this.database.prepare(mcpServerSelectSql("WHERE id = ?")).get(id);
+    return row ? mapMcpServer(row) : undefined;
+  }
+
+  listMcpServers(options: ListMcpServersOptions = {}): McpServer[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.enabled !== undefined) {
+      clauses.push("enabled = ?");
+      params.push(options.enabled ? 1 : 0);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${mcpServerSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC LIMIT ?`)
+      .all(...params)
+      .map(mapMcpServer);
+  }
+
+  updateMcpServer(id: string, input: UpdateMcpServerInput, now: string): McpServer | undefined {
+    const existing = this.getMcpServer(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: McpServer = {
+      ...existing,
+      displayName: input.displayName ?? existing.displayName,
+      transport: input.transport ? normalizeMcpServerTransport(input.transport) : existing.transport,
+      enabled: input.enabled ?? existing.enabled,
+      required: input.required ?? existing.required,
+      status: input.status ?? existing.status,
+      startupTimeoutSec: nullableUpdate(input.startupTimeoutSec, existing.startupTimeoutSec),
+      toolTimeoutSec: nullableUpdate(input.toolTimeoutSec, existing.toolTimeoutSec),
+      enabledTools: nullableUpdate(input.enabledTools, existing.enabledTools),
+      disabledTools: input.disabledTools ?? existing.disabledTools,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        UPDATE mcp_servers
+        SET
+          display_name = ?,
+          transport_json = ?,
+          enabled = ?,
+          required = ?,
+          status_json = ?,
+          startup_timeout_sec = ?,
+          tool_timeout_sec = ?,
+          enabled_tools_json = ?,
+          disabled_tools_json = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.displayName,
+        stringifyJson(next.transport),
+        next.enabled ? 1 : 0,
+        next.required ? 1 : 0,
+        stringifyJson(next.status),
+        next.startupTimeoutSec ?? null,
+        next.toolTimeoutSec ?? null,
+        next.enabledTools ? stringifyJson(next.enabledTools) : null,
+        stringifyJson(next.disabledTools),
+        next.updatedAt,
+        id,
+      );
+
+    return this.getMcpServer(id);
+  }
+
+  updateMcpServerStatus(id: string, status: McpServerStatus, now: string): McpServer | undefined {
+    return this.updateMcpServer(id, { status }, now);
+  }
+
+  deleteMcpServer(id: string): boolean {
+    const result = this.database.prepare("DELETE FROM mcp_servers WHERE id = ?").run(id);
+    return Number(result.changes) > 0;
+  }
+
+  setMcpServerSecret(serverId: string, secretName: string, secretValue: string, now: string): void {
+    if (!this.getMcpServer(serverId)) {
+      throw new Error(`MCP server not found: ${serverId}`);
+    }
+    this.database
+      .prepare(`
+        INSERT INTO mcp_server_secrets (
+          server_id,
+          secret_name,
+          secret_value,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(server_id, secret_name) DO UPDATE SET
+          secret_value = excluded.secret_value,
+          updated_at = excluded.updated_at
+      `)
+      .run(serverId, secretName, secretValue, now, now);
+  }
+
+  getMcpServerSecret(serverId: string, secretName: string): string | undefined {
+    const row = this.database
+      .prepare("SELECT secret_value FROM mcp_server_secrets WHERE server_id = ? AND secret_name = ?")
+      .get(serverId, secretName);
+    return row ? readString(row, "secret_value") : undefined;
+  }
+
+  hasMcpServerSecret(serverId: string, secretName: string): boolean {
+    return Boolean(
+      this.database
+        .prepare("SELECT 1 AS found FROM mcp_server_secrets WHERE server_id = ? AND secret_name = ?")
+        .get(serverId, secretName),
+    );
+  }
+
+  deleteMcpServerSecret(serverId: string, secretName: string): boolean {
+    const result = this.database
+      .prepare("DELETE FROM mcp_server_secrets WHERE server_id = ? AND secret_name = ?")
+      .run(serverId, secretName);
+    return Number(result.changes) > 0;
+  }
+
+  replaceMcpServerTools(serverId: string, tools: readonly ReplaceMcpServerToolInput[], now: string): McpTool[] {
+    if (!this.getMcpServer(serverId)) {
+      throw new Error(`MCP server not found: ${serverId}`);
+    }
+    const existingTools = new Map(this.listMcpTools({ serverId }).map((tool) => [tool.rawName, tool]));
+    this.database.prepare("DELETE FROM mcp_tools WHERE server_id = ?").run(serverId);
+    const insert = this.database.prepare(`
+      INSERT INTO mcp_tools (
+        server_id,
+        raw_name,
+        display_name,
+        description,
+        input_schema_json,
+        callable_namespace,
+        callable_name,
+        side_effect_level,
+        default_approval,
+        enabled,
+        first_seen_at,
+        last_seen_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const tool of dedupeMcpToolInputs(tools)) {
+      const existing = existingTools.get(tool.rawName);
+      insert.run(
+        serverId,
+        tool.rawName,
+        tool.displayName,
+        tool.description ?? null,
+        stringifyJson(tool.inputSchema),
+        tool.callableNamespace,
+        tool.callableName,
+        tool.sideEffectLevel,
+        tool.defaultApproval,
+        tool.enabled === false ? 0 : 1,
+        existing?.firstSeenAt ?? now,
+        now,
+        now,
+      );
+    }
+    return this.listMcpTools({ serverId, limit: 500 });
+  }
+
+  listMcpTools(options: ListMcpToolsOptions = {}): McpTool[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.serverId) {
+      clauses.push("server_id = ?");
+      params.push(options.serverId);
+    }
+    if (options.enabled !== undefined) {
+      clauses.push("enabled = ?");
+      params.push(options.enabled ? 1 : 0);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 500);
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.database
+      .prepare(`${mcpToolSelectSql(whereClause)} ORDER BY server_id ASC, raw_name ASC LIMIT ?`)
+      .all(...params)
+      .map(mapMcpTool);
+  }
+
+  replaceTeammateMcpBindings(
+    teammateId: string,
+    bindings: readonly ReplaceTeammateMcpBindingInput[],
+    now: string,
+  ): TeammateMcpBinding[] {
+    if (!this.getAiTeammate(teammateId)) {
+      throw new Error(`AI teammate not found: ${teammateId}`);
+    }
+    this.database.prepare("DELETE FROM teammate_mcp_bindings WHERE teammate_id = ?").run(teammateId);
+    const insert = this.database.prepare(`
+      INSERT INTO teammate_mcp_bindings (
+        teammate_id,
+        server_id,
+        mode,
+        selected_tool_names_json,
+        approval_overrides_json,
+        enabled,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const binding of dedupeTeammateMcpBindingInputs(bindings)) {
+      if (!this.getMcpServer(binding.serverId)) {
+        throw new Error(`MCP server not found: ${binding.serverId}`);
+      }
+      insert.run(
+        teammateId,
+        binding.serverId,
+        binding.mode,
+        stringifyJson(binding.selectedToolNames ?? []),
+        stringifyJson(binding.approvalOverrides ?? {}),
+        binding.enabled === false ? 0 : 1,
+        now,
+        now,
+      );
+    }
+    return this.listTeammateMcpBindings(teammateId);
+  }
+
+  listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[] {
+    return this.database
+      .prepare(`${teammateMcpBindingSelectSql("WHERE teammate_id = ?")} ORDER BY server_id ASC`)
+      .all(teammateId)
+      .map(mapTeammateMcpBinding);
+  }
+
   createMediaJob(input: CreateMediaJobInput, now: string): MediaJob {
     const job: MediaJob = {
       id: createMediaJobId(),
@@ -6385,6 +6692,89 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(RUNTIME_SUPERVISOR_MIGRATION_VERSION, RUNTIME_SUPERVISOR_MIGRATION_NAME);
       }
     }
+
+    const hasMcpToolManagementMigration = this.hasMigration(MCP_TOOL_MANAGEMENT_MIGRATION_VERSION);
+    if (
+      !hasMcpToolManagementMigration ||
+      !this.hasTable("mcp_servers") ||
+      !this.hasTable("mcp_server_secrets") ||
+      !this.hasTable("mcp_tools") ||
+      !this.hasTable("teammate_mcp_bindings")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS mcp_servers (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          transport_json TEXT NOT NULL,
+          enabled INTEGER NOT NULL,
+          required INTEGER NOT NULL,
+          status_json TEXT NOT NULL,
+          startup_timeout_sec INTEGER,
+          tool_timeout_sec INTEGER,
+          enabled_tools_json TEXT,
+          disabled_tools_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_servers_workspace
+        ON mcp_servers(workspace_id, enabled, created_at);
+
+        CREATE TABLE IF NOT EXISTS mcp_server_secrets (
+          server_id TEXT NOT NULL,
+          secret_name TEXT NOT NULL,
+          secret_value TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(server_id, secret_name),
+          FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS mcp_tools (
+          server_id TEXT NOT NULL,
+          raw_name TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          description TEXT,
+          input_schema_json TEXT NOT NULL,
+          callable_namespace TEXT NOT NULL,
+          callable_name TEXT NOT NULL,
+          side_effect_level TEXT NOT NULL,
+          default_approval TEXT NOT NULL,
+          enabled INTEGER NOT NULL,
+          first_seen_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(server_id, raw_name),
+          FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_tools_server_enabled
+        ON mcp_tools(server_id, enabled, raw_name);
+
+        CREATE TABLE IF NOT EXISTS teammate_mcp_bindings (
+          teammate_id TEXT NOT NULL,
+          server_id TEXT NOT NULL,
+          mode TEXT NOT NULL,
+          selected_tool_names_json TEXT NOT NULL,
+          approval_overrides_json TEXT NOT NULL,
+          enabled INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(teammate_id, server_id),
+          FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE,
+          FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_teammate_mcp_bindings_server
+        ON teammate_mcp_bindings(server_id, enabled);
+      `);
+
+      if (!hasMcpToolManagementMigration) {
+        this.recordMigration(MCP_TOOL_MANAGEMENT_MIGRATION_VERSION, MCP_TOOL_MANAGEMENT_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -7069,6 +7459,55 @@ function mapProviderPreset(row: Record<string, SQLOutputValue>): ProviderPreset 
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
+}
+
+function mapMcpServer(row: Record<string, SQLOutputValue>): McpServer {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    displayName: readString(row, "display_name"),
+    transport: parseMcpServerTransport(readString(row, "transport_json")),
+    enabled: readBoolean(row, "enabled"),
+    required: readBoolean(row, "required"),
+    status: parseMcpServerStatus(readString(row, "status_json")),
+    startupTimeoutSec: readNullableNumber(row, "startup_timeout_sec"),
+    toolTimeoutSec: readNullableNumber(row, "tool_timeout_sec"),
+    enabledTools: parseNullableJsonStringArray(readNullableString(row, "enabled_tools_json")),
+    disabledTools: parseJsonStringArray(readString(row, "disabled_tools_json")),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapMcpTool(row: Record<string, SQLOutputValue>): McpTool {
+  return omitUndefined({
+    serverId: readString(row, "server_id"),
+    rawName: readString(row, "raw_name"),
+    displayName: readString(row, "display_name"),
+    description: readNullableString(row, "description"),
+    inputSchema: parseJson(readString(row, "input_schema_json")),
+    callableNamespace: readString(row, "callable_namespace"),
+    callableName: readString(row, "callable_name"),
+    sideEffectLevel: readString(row, "side_effect_level") as McpTool["sideEffectLevel"],
+    defaultApproval: readString(row, "default_approval") as McpTool["defaultApproval"],
+    enabled: readBoolean(row, "enabled"),
+    firstSeenAt: readString(row, "first_seen_at"),
+    lastSeenAt: readString(row, "last_seen_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapTeammateMcpBinding(row: Record<string, SQLOutputValue>): TeammateMcpBinding {
+  return {
+    teammateId: readString(row, "teammate_id"),
+    serverId: readString(row, "server_id"),
+    mode: readString(row, "mode") as TeammateMcpBinding["mode"],
+    selectedToolNames: parseJsonStringArray(readString(row, "selected_tool_names_json")),
+    approvalOverrides: parseMcpApprovalOverrides(readString(row, "approval_overrides_json")),
+    enabled: readBoolean(row, "enabled"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  };
 }
 
 function mapApprovalRequest(row: Record<string, SQLOutputValue>): ApprovalRequest {
@@ -7983,6 +8422,64 @@ function approvalRequestSelectSql(whereClause: string): string {
   `;
 }
 
+function mcpServerSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      display_name,
+      transport_json,
+      enabled,
+      required,
+      status_json,
+      startup_timeout_sec,
+      tool_timeout_sec,
+      enabled_tools_json,
+      disabled_tools_json,
+      created_at,
+      updated_at
+    FROM mcp_servers
+    ${whereClause}
+  `;
+}
+
+function mcpToolSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      server_id,
+      raw_name,
+      display_name,
+      description,
+      input_schema_json,
+      callable_namespace,
+      callable_name,
+      side_effect_level,
+      default_approval,
+      enabled,
+      first_seen_at,
+      last_seen_at,
+      updated_at
+    FROM mcp_tools
+    ${whereClause}
+  `;
+}
+
+function teammateMcpBindingSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      teammate_id,
+      server_id,
+      mode,
+      selected_tool_names_json,
+      approval_overrides_json,
+      enabled,
+      created_at,
+      updated_at
+    FROM teammate_mcp_bindings
+    ${whereClause}
+  `;
+}
+
 function approvalPolicySelectSql(whereClause: string): string {
   return `
     SELECT
@@ -8190,6 +8687,84 @@ function parseJsonStringArray(value: string): string[] {
   return parsed as string[];
 }
 
+function parseNullableJsonStringArray(value: string | undefined): string[] | undefined {
+  return value ? parseJsonStringArray(value) : undefined;
+}
+
+function parseMcpServerTransport(value: string): McpServerTransport {
+  return normalizeMcpServerTransport(parseJson(value) as McpServerTransport);
+}
+
+function normalizeMcpServerTransport(transport: McpServerTransport): McpServerTransport {
+  if (transport.type === "stdio") {
+    if (typeof transport.command !== "string" || transport.command.length === 0) {
+      throw new Error("Expected MCP stdio command");
+    }
+    const normalized = omitUndefined({
+      type: "stdio",
+      command: transport.command,
+      args: [...(transport.args ?? [])],
+      env: { ...(transport.env ?? {}) },
+      cwd: transport.cwd,
+      secretEnvNames: [...(transport.secretEnvNames ?? [])],
+    });
+    return normalized as McpServerTransport;
+  }
+  if (transport.type === "streamable-http") {
+    if (typeof transport.url !== "string" || transport.url.length === 0) {
+      throw new Error("Expected MCP streamable HTTP URL");
+    }
+    const normalized = omitUndefined({
+      type: "streamable-http",
+      url: transport.url,
+      bearerTokenEnvVar: transport.bearerTokenEnvVar,
+      headers: { ...(transport.headers ?? {}) },
+      envHeaders: { ...(transport.envHeaders ?? {}) },
+      secretHeaderNames: [...(transport.secretHeaderNames ?? [])],
+      oauthClientId: transport.oauthClientId,
+      oauthResource: transport.oauthResource,
+    });
+    return normalized as McpServerTransport;
+  }
+  throw new Error("Expected MCP server transport from SQLite");
+}
+
+function parseMcpServerStatus(value: string): McpServerStatus {
+  const parsed = parseJsonObject(value);
+  if (
+    parsed.kind !== "unknown" &&
+    parsed.kind !== "checking" &&
+    parsed.kind !== "ready" &&
+    parsed.kind !== "failed" &&
+    parsed.kind !== "disabled"
+  ) {
+    throw new Error("Expected MCP server status kind from SQLite");
+  }
+  if (parsed.message !== undefined && typeof parsed.message !== "string") {
+    throw new Error("Expected MCP server status message from SQLite");
+  }
+  if (parsed.checkedAt !== undefined && typeof parsed.checkedAt !== "string") {
+    throw new Error("Expected MCP server status checkedAt from SQLite");
+  }
+  return omitUndefined({
+    kind: parsed.kind,
+    message: parsed.message,
+    checkedAt: parsed.checkedAt,
+  }) as McpServerStatus;
+}
+
+function parseMcpApprovalOverrides(value: string): TeammateMcpBinding["approvalOverrides"] {
+  const parsed = parseJsonObject(value);
+  const result: Record<string, McpTool["defaultApproval"]> = {};
+  for (const [toolName, decision] of Object.entries(parsed)) {
+    if (decision !== "allow" && decision !== "ask" && decision !== "deny") {
+      throw new Error("Expected MCP approval override decision from SQLite");
+    }
+    result[toolName] = decision;
+  }
+  return result;
+}
+
 function parseChannelMentions(value: string): ChannelMessage["mentions"] {
   const parsed = parseJson(value);
   if (!Array.isArray(parsed)) {
@@ -8261,6 +8836,24 @@ function dedupeSkillBindingInputs(
     bySkill.set(binding.skillId, binding);
   }
   return [...bySkill.values()];
+}
+
+function dedupeMcpToolInputs(tools: readonly ReplaceMcpServerToolInput[]): readonly ReplaceMcpServerToolInput[] {
+  const byRawName = new Map<string, ReplaceMcpServerToolInput>();
+  for (const tool of tools) {
+    byRawName.set(tool.rawName, tool);
+  }
+  return [...byRawName.values()];
+}
+
+function dedupeTeammateMcpBindingInputs(
+  bindings: readonly ReplaceTeammateMcpBindingInput[],
+): readonly ReplaceTeammateMcpBindingInput[] {
+  const byServer = new Map<string, ReplaceTeammateMcpBindingInput>();
+  for (const binding of bindings) {
+    byServer.set(binding.serverId, binding);
+  }
+  return [...byServer.values()];
 }
 
 function protectDefaultSkillBindings(

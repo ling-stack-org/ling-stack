@@ -5,7 +5,12 @@ import { mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileS
 import { isIP } from "node:net";
 import { hostname } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
+import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport as McpTransport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Tool as SdkMcpTool } from "@modelcontextprotocol/sdk/types.js";
 import {
   approvalToolDecisions,
   approvalStatuses,
@@ -88,12 +93,20 @@ import {
   type ChannelUpdateInput,
   type Channel,
   type CreateMediaJobInput,
+  type CreateMcpServerInput,
   type CreateChannelInput,
   type CreateChannelExecutionProposalInput,
   type CreateTaskInput,
   type MediaJob,
   type MediaJobStatus,
   type MediaOperation,
+  type McpServer,
+  type McpServerStatus,
+  type McpStreamableHttpTransport,
+  type McpServerTransport,
+  type McpTool,
+  type RunMcpServerAccessSnapshot,
+  type RunMcpToolAccessSnapshot,
   type ProviderApi,
   type ProviderCapability,
   type ProviderCheckResult,
@@ -153,6 +166,8 @@ import {
   type RuntimeInstance,
   type RuntimeSemaphoreSlot,
   type ResourceLease,
+  type ReplaceMcpServerToolInput,
+  type ReplaceTeammateMcpBindingInput,
   type ReplaceTeammateChannelMembershipInput,
   type ReplaceTeammateMemoryScopeInput,
   type ReplaceTeammateSkillBindingInput,
@@ -176,6 +191,8 @@ import {
   getPiRunnerExtension,
   type PiRunnerApprovalRequest,
   type PiRunnerEvent,
+  type PiRunnerMcpToolCallResult,
+  type PiRunnerMcpToolDefinition,
   type PiRunnerProviderConfig,
   type PiRunnerResult,
   type PiRunnerRunOptions,
@@ -215,6 +232,23 @@ export interface RunnerAdapter {
 
 export type RunStoreFactory = (cwd: string) => RunStore;
 
+export interface McpBroker {
+  checkServer(
+    server: McpServer,
+    secrets: Readonly<Record<string, string>>,
+  ): Promise<{ readonly status: McpServerStatus }>;
+  listTools(
+    server: McpServer,
+    secrets: Readonly<Record<string, string>>,
+  ): Promise<readonly ReplaceMcpServerToolInput[]>;
+  callTool(
+    server: McpServer,
+    secrets: Readonly<Record<string, string>>,
+    toolName: string,
+    input: unknown,
+  ): Promise<PiRunnerMcpToolCallResult>;
+}
+
 export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly storeFactory?: RunStoreFactory;
@@ -222,6 +256,7 @@ export interface DaemonDependencies {
   readonly secretResolver?: SecretResolver;
   readonly externalSecretStore?: ExternalSecretStore;
   readonly externalWorkFetch?: typeof globalThis.fetch;
+  readonly mcpBroker?: McpBroker;
 }
 
 export interface ExternalSecretStore extends SecretResolver {
@@ -279,10 +314,12 @@ const CHANNEL_LINK_PREVIEW_TIMEOUT_MS = 5_000;
 const CHANNEL_LINK_PREVIEW_MAX_BYTES = 192 * 1024;
 const CHANNEL_LINK_PREVIEW_MAX_REDIRECTS = 3;
 
-export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider"> {
+export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired" | "onEvent" | "provider" | "tools" | "mcpTools" | "onMcpToolCall"> {
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
   readonly provider?: PiRunnerProviderConfig;
+  readonly teammateId?: string;
+  readonly tools?: readonly RunTool[];
   readonly approvalProfile?: SkillApprovalProfile;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
@@ -520,6 +557,7 @@ export function createDaemonServer(
   const externalSecretStore = dependencies.externalSecretStore ?? createSystemKeychainSecretStore();
   const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
   const externalWorkFetch = dependencies.externalWorkFetch;
+  const mcpBroker = dependencies.mcpBroker ?? createDefaultMcpBroker();
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore);
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
@@ -536,6 +574,7 @@ export function createDaemonServer(
         runtimeSupervisor,
         secretResolver,
         externalSecretStore,
+        mcpBroker,
         externalWorkFetch,
         backgroundSchedulers,
       );
@@ -611,6 +650,331 @@ export function getLocalChannelSourceExtension(): ChannelSourceExtensionMetadata
     sourceKind: "local",
     eventTypes: ["web", "cli", "local"],
   };
+}
+
+function createDefaultMcpBroker(): McpBroker {
+  return {
+    async checkServer(server: McpServer, secrets: Readonly<Record<string, string>>): Promise<{ readonly status: McpServerStatus }> {
+      if (!server.enabled) {
+        return {
+          status: {
+            kind: "disabled",
+            message: "MCP server is disabled.",
+            checkedAt: new Date().toISOString(),
+          },
+        };
+      }
+      const timeoutMs = (server.startupTimeoutSec ?? 30) * 1000;
+      const serverName = await withMcpClient(server, secrets, async (client) => {
+        await client.ping({ timeout: timeoutMs });
+        return client.getServerVersion()?.name;
+      });
+      return {
+        status: {
+          kind: "ready",
+          message: serverName ? `Connected to ${serverName}.` : `Connected to MCP ${server.transport.type} server.`,
+          checkedAt: new Date().toISOString(),
+        },
+      };
+    },
+    async listTools(server: McpServer, secrets: Readonly<Record<string, string>>): Promise<readonly ReplaceMcpServerToolInput[]> {
+      const timeoutMs = (server.toolTimeoutSec ?? server.startupTimeoutSec ?? 30) * 1000;
+      try {
+        return await withMcpClient(server, secrets, async (client) => {
+          const tools: ReplaceMcpServerToolInput[] = [];
+          let cursor: string | undefined;
+          do {
+            const page = await client.listTools(cursor ? { cursor } : undefined, { timeout: timeoutMs });
+            tools.push(...page.tools.map((tool) => mcpSdkToolToStoreInput(server, tool)));
+            cursor = page.nextCursor;
+          } while (cursor);
+          return tools;
+        });
+      } catch (error) {
+        if (server.transport.type !== "streamable-http") {
+          throw error;
+        }
+        const httpServer = server as McpServer & { readonly transport: McpStreamableHttpTransport };
+        return rawListMcpToolsOverHttp(httpServer, secrets, timeoutMs);
+      }
+    },
+    async callTool(
+      server: McpServer,
+      secrets: Readonly<Record<string, string>>,
+      toolName: string,
+      input: unknown,
+    ): Promise<PiRunnerMcpToolCallResult> {
+      const timeoutMs = (server.toolTimeoutSec ?? server.startupTimeoutSec ?? 30) * 1000;
+      return withMcpClient(server, secrets, async (client) => {
+        const result = await client.callTool(
+          {
+            name: toolName,
+            arguments: isRecord(input) ? input : {},
+          },
+          undefined,
+          { timeout: timeoutMs },
+        );
+        return mcpSdkCallToolResultToRunnerResult(result);
+      });
+    },
+  };
+}
+
+async function withMcpClient<T>(
+  server: McpServer,
+  secrets: Readonly<Record<string, string>>,
+  callback: (client: McpClient) => Promise<T>,
+): Promise<T> {
+  const client = new McpClient({ name: "ling-stack-daemon", version: "0.1.0" });
+  const transport = createMcpTransport(server, secrets);
+  try {
+    await client.connect(transport, { timeout: (server.startupTimeoutSec ?? 30) * 1000 });
+    return await callback(client);
+  } finally {
+    try {
+      await client.close();
+    } catch {
+      // Closing a failed MCP connection is best-effort cleanup.
+    }
+  }
+}
+
+function createMcpTransport(server: McpServer, secrets: Readonly<Record<string, string>>): McpTransport {
+  if (server.transport.type === "stdio") {
+    const env = {
+      ...getDefaultEnvironment(),
+      ...server.transport.env,
+    };
+    for (const secretName of server.transport.secretEnvNames) {
+      const value = secrets[secretName];
+      if (value !== undefined) {
+        env[secretName] = value;
+      }
+    }
+    return new StdioClientTransport({
+      command: server.transport.command,
+      args: [...server.transport.args],
+      env,
+      cwd: server.transport.cwd,
+      stderr: "pipe",
+    });
+  }
+
+  const httpServer = server as McpServer & { readonly transport: McpStreamableHttpTransport };
+  const headers = buildMcpHttpHeaders(httpServer, secrets);
+  return new StreamableHTTPClientTransport(new URL(httpServer.transport.url), {
+    requestInit: { headers },
+  });
+}
+
+function buildMcpHttpHeaders(server: McpServer & { readonly transport: McpStreamableHttpTransport }, secrets: Readonly<Record<string, string>>): Record<string, string> {
+  const headers: Record<string, string> = { ...server.transport.headers };
+  for (const [headerName, envName] of Object.entries(server.transport.envHeaders)) {
+    const value = process.env[envName];
+    if (value !== undefined) {
+      headers[headerName] = value;
+    }
+  }
+  if (server.transport.bearerTokenEnvVar) {
+    const value = process.env[server.transport.bearerTokenEnvVar];
+    if (value !== undefined && headers.Authorization === undefined) {
+      headers.Authorization = `Bearer ${value}`;
+    }
+  }
+  for (const secretName of server.transport.secretHeaderNames) {
+    const value = secrets[secretName];
+    if (value !== undefined) {
+      headers[secretName] = value;
+    }
+  }
+  return headers;
+}
+
+async function rawListMcpToolsOverHttp(
+  server: McpServer & { readonly transport: McpStreamableHttpTransport },
+  secrets: Readonly<Record<string, string>>,
+  timeoutMs: number,
+): Promise<readonly ReplaceMcpServerToolInput[]> {
+  const tools: ReplaceMcpServerToolInput[] = [];
+  let cursor: string | undefined;
+  do {
+    const response = await fetch(server.transport.url, {
+      method: "POST",
+      headers: {
+        ...buildMcpHttpHeaders(server, secrets),
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: randomUUID(),
+        method: "tools/list",
+        params: cursor ? { cursor } : {},
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const bodyText = await readLimitedResponseText(response, 1024 * 1024);
+    if (!response.ok) {
+      throw new Error(`MCP tools/list failed with HTTP ${response.status}: ${bodyText}`);
+    }
+    const payload = parseMcpJsonRpcHttpPayload(bodyText);
+    if (!isRecord(payload)) {
+      throw new Error("MCP tools/list response must be a JSON-RPC object.");
+    }
+    if (isRecord(payload.error)) {
+      throw new Error(`MCP tools/list failed: ${readOptionalString(payload.error, "message") ?? JSON.stringify(payload.error)}`);
+    }
+    if (!isRecord(payload.result)) {
+      throw new Error("MCP tools/list response is missing result.");
+    }
+    const rawTools = payload.result.tools;
+    if (!Array.isArray(rawTools)) {
+      throw new Error("MCP tools/list result.tools must be an array.");
+    }
+    tools.push(...rawTools.map((tool) => rawMcpToolToStoreInput(server, tool)));
+    cursor = readOptionalString(payload.result, "nextCursor");
+  } while (cursor);
+  return tools;
+}
+
+function parseMcpJsonRpcHttpPayload(bodyText: string): unknown {
+  const trimmed = bodyText.trim();
+  if (trimmed.startsWith("{")) {
+    return JSON.parse(trimmed);
+  }
+  const dataLines = trimmed
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trim())
+    .filter(Boolean);
+  if (dataLines.length === 0) {
+    throw new Error("MCP HTTP response did not contain JSON data.");
+  }
+  return JSON.parse(dataLines[dataLines.length - 1] ?? "");
+}
+
+function rawMcpToolToStoreInput(server: McpServer, value: unknown): ReplaceMcpServerToolInput {
+  if (!isRecord(value)) {
+    throw new Error("MCP tool entry must be an object.");
+  }
+  const rawName = readString(value, "name");
+  const annotations = isRecord(value.annotations) ? value.annotations : undefined;
+  const sideEffectLevel = inferRawMcpToolSideEffectLevel(annotations);
+  return {
+    rawName,
+    displayName: readOptionalString(value, "title") ?? (annotations ? readOptionalString(annotations, "title") : undefined) ?? rawName,
+    description: readOptionalString(value, "description"),
+    inputSchema: value.inputSchema ?? { type: "object", additionalProperties: true },
+    callableNamespace: server.id,
+    callableName: rawName,
+    sideEffectLevel,
+    defaultApproval: sideEffectLevel === "read" ? "allow" : "ask",
+    enabled: true,
+  };
+}
+
+function inferRawMcpToolSideEffectLevel(annotations: Record<string, unknown> | undefined): ReplaceMcpServerToolInput["sideEffectLevel"] {
+  if (annotations?.readOnlyHint === true && annotations.destructiveHint !== true) {
+    return "read";
+  }
+  if (annotations?.destructiveHint === true) {
+    return annotations.openWorldHint === true ? "external" : "write";
+  }
+  if (annotations?.openWorldHint === true) {
+    return "external";
+  }
+  return "external";
+}
+
+function mcpSdkToolToStoreInput(server: McpServer, tool: SdkMcpTool): ReplaceMcpServerToolInput {
+  const sideEffectLevel = inferMcpToolSideEffectLevel(tool);
+  return {
+    rawName: tool.name,
+    displayName: tool.title ?? tool.annotations?.title ?? tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    callableNamespace: server.id,
+    callableName: tool.name,
+    sideEffectLevel,
+    defaultApproval: sideEffectLevel === "read" ? "allow" : "ask",
+    enabled: true,
+  };
+}
+
+function inferMcpToolSideEffectLevel(tool: SdkMcpTool): ReplaceMcpServerToolInput["sideEffectLevel"] {
+  if (tool.annotations?.readOnlyHint === true && tool.annotations.destructiveHint !== true) {
+    return "read";
+  }
+  if (tool.annotations?.destructiveHint === true) {
+    return tool.annotations.openWorldHint === true ? "external" : "write";
+  }
+  if (tool.annotations?.openWorldHint === true) {
+    return "external";
+  }
+  return "external";
+}
+
+function mcpSdkCallToolResultToRunnerResult(result: Awaited<ReturnType<McpClient["callTool"]>>): PiRunnerMcpToolCallResult {
+  if ("toolResult" in result) {
+    return {
+      content: [{ type: "text", text: formatUnknownForToolText(result.toolResult) }],
+      details: result,
+    };
+  }
+  return {
+    content: result.content.flatMap((item) => mcpSdkContentToRunnerContent(item as McpSdkContentLike)),
+    details: {
+      structuredContent: result.structuredContent,
+      meta: result._meta,
+    },
+    isError: result.isError,
+  };
+}
+
+type McpSdkContentLike = Readonly<Record<string, unknown>> & {
+  readonly type?: string;
+  readonly text?: string;
+  readonly data?: string;
+  readonly mimeType?: string;
+  readonly resource?: unknown;
+  readonly uri?: string;
+  readonly name?: string;
+  readonly title?: string;
+};
+
+function mcpSdkContentToRunnerContent(item: McpSdkContentLike): PiRunnerMcpToolCallResult["content"][number][] {
+  if (item.type === "text") {
+    return [{ type: "text", text: item.text ?? "" }];
+  }
+  if (item.type === "image") {
+    return [{ type: "image", data: item.data ?? "", mimeType: item.mimeType ?? "image/png" }];
+  }
+  if (item.type === "resource") {
+    if (isRecord(item.resource) && typeof item.resource.text === "string") {
+      return [{ type: "text", text: item.resource.text }];
+    }
+    const uri = isRecord(item.resource) && typeof item.resource.uri === "string" ? item.resource.uri : "resource";
+    const mimeType = isRecord(item.resource) && typeof item.resource.mimeType === "string" ? item.resource.mimeType : "binary content";
+    return [{ type: "text", text: `Resource ${uri} returned ${mimeType}.` }];
+  }
+  if (item.type === "resource_link") {
+    return [{ type: "text", text: item.title ?? item.name ?? item.uri ?? "resource link" }];
+  }
+  if (item.type === "audio") {
+    return [{ type: "text", text: `Audio output (${item.mimeType ?? "unknown"}) is not rendered in this runner.` }];
+  }
+  return [{ type: "text", text: formatUnknownForToolText(item) }];
+}
+
+function formatUnknownForToolText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function createSystemKeychainSecretStore(): ExternalSecretStore {
@@ -797,6 +1161,7 @@ async function routeRequest(
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   externalSecretStore: ExternalSecretStore,
+  mcpBroker: McpBroker,
   externalWorkFetch?: typeof globalThis.fetch,
   backgroundSchedulers?: ExternalWorkBackgroundSchedulerRegistry,
 ): Promise<void> {
@@ -836,6 +1201,16 @@ async function routeRequest(
 
   if (url.pathname === "/providers") {
     await handleProvidersCollection(request, response, config, storeRegistry, secretResolver);
+    return;
+  }
+
+  if (url.pathname === "/mcp/servers") {
+    await handleMcpServersCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/mcp/tools") {
+    handleMcpToolsCollection(request, response, url, storeRegistry);
     return;
   }
 
@@ -932,6 +1307,7 @@ async function routeRequest(
       activeRuns,
       runtimeSupervisor,
       secretResolver,
+      mcpBroker,
       externalWorkCiTriageRunRoute.triageId,
     );
     return;
@@ -1030,7 +1406,7 @@ async function routeRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/runs") {
-    await handleRun(request, response, config, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver);
+    await handleRun(request, response, config, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker);
     return;
   }
   if (request.method === "GET" && url.pathname === "/runs") {
@@ -1119,6 +1495,7 @@ async function routeRequest(
         activeRuns,
         runtimeSupervisor,
         secretResolver,
+        mcpBroker,
         workflowRoute.workflowStepId,
         workflowRoute.action,
       );
@@ -1188,7 +1565,7 @@ async function routeRequest(
   const taskRoute = parseTaskRoute(url.pathname);
   if (taskRoute) {
     if (request.method === "POST" && taskRoute.action === "run") {
-      await handleTaskRunRequest(request, response, config, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, taskRoute.taskId);
+      await handleTaskRunRequest(request, response, config, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, taskRoute.taskId);
       return;
     }
     if (taskRoute.action) {
@@ -1202,6 +1579,12 @@ async function routeRequest(
   const providerRoute = parseProviderRoute(url.pathname);
   if (providerRoute) {
     await handleProviderItem(request, response, config, storeRegistry, secretResolver, providerRoute);
+    return;
+  }
+
+  const mcpServerRoute = parseMcpServerRoute(url.pathname);
+  if (mcpServerRoute) {
+    await handleMcpServerItem(request, response, config, storeRegistry, mcpBroker, mcpServerRoute);
     return;
   }
 
@@ -1256,6 +1639,7 @@ async function handleRun(
   activeRuns: ActiveRunRegistry,
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
+  mcpBroker: McpBroker,
 ): Promise<void> {
   let runRequest: RunRequest;
   try {
@@ -1269,7 +1653,7 @@ async function handleRun(
     return;
   }
 
-  await executeRunRequest(runRequest, response, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver);
+  await executeRunRequest(runRequest, response, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker);
 }
 
 async function executeRunRequest(
@@ -1280,6 +1664,7 @@ async function executeRunRequest(
   activeRuns: ActiveRunRegistry,
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
+  mcpBroker: McpBroker,
   options: ExecuteRunRequestOptions = {},
 ): Promise<string | undefined> {
   let store: RunStore | undefined;
@@ -1299,17 +1684,21 @@ async function executeRunRequest(
     store = storeRegistry.getStore(workspaceCwd);
     runtime = runtimeSupervisor.getRuntime(workspaceCwd, store);
     resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver);
+    const mcpToolAccess = resolveMcpToolAccessForRun(store, runRequest);
+    const mcpTools = createPiRunnerMcpToolDefinitions(mcpToolAccess);
     runnerRequest = {
       cwd: runRequest.cwd,
       task: runRequest.task,
       provider: resolvedProvider,
       tools: runRequest.tools,
+      mcpTools,
       thinkingLevel: runRequest.thinkingLevel,
       systemPrompt: runRequest.systemPrompt,
       appendSystemPrompt: runRequest.appendSystemPrompt,
       agentDir: runRequest.agentDir,
+      onMcpToolCall: mcpTools.length > 0 ? createMcpToolCallHandler(store, mcpBroker, mcpTools) : undefined,
     };
-    resolvedSecretValues = [resolvedProvider.apiKey];
+    resolvedSecretValues = [resolvedProvider.apiKey, ...collectMcpSecretValuesForAccess(store, mcpToolAccess)];
     runId = createRunId();
     createdAt = new Date().toISOString();
     const idempotencyKey = runRequest.idempotencyKey ?? `run:${runId}`;
@@ -1338,7 +1727,7 @@ async function executeRunRequest(
       runnerId: DEFAULT_RUNNER_ID,
       idempotencyKey,
       createdByActor: "user",
-      request: { ...runRequest, workspaceCwd, provider: resolvedProvider },
+      request: { ...runRequest, workspaceCwd, provider: resolvedProvider, mcpToolAccess },
       now: createdAt,
     });
     store.appendRuntimeEvent({
@@ -1412,12 +1801,13 @@ async function executeRunRequest(
       cwd: runRequest.cwd,
       taskId: runRequest.task.id,
       channelId: preparedConcurrency.channel?.id ?? runRequest.task.channelId,
+      teammateId: mcpToolAccess.teammateId ?? runRequest.teammateId,
       providerPresetId: runRequest.providerPresetId,
       providerName: resolvedProvider.provider,
       providerModel: resolvedProvider.model,
       taskSnapshot: runRequest.task,
       providerSnapshot: { providerPresetId: runRequest.providerPresetId, ...resolvedProvider },
-      requestSnapshot: { ...runRequest, workspaceCwd, provider: resolvedProvider },
+      requestSnapshot: { ...runRequest, workspaceCwd, provider: resolvedProvider, mcpToolAccess },
       workUnitId: workUnit.id,
       createdAt,
     });
@@ -1430,6 +1820,11 @@ async function executeRunRequest(
       cwd: run.cwd,
       providerName: run.providerName,
       providerModel: run.providerModel,
+      teammateId: run.teammateId,
+      mcpToolAccess: {
+        serverCount: mcpToolAccess.servers.length,
+        toolCount: mcpToolAccess.totalToolCount,
+      },
       leases: preparedConcurrency.leases.map((lease) => ({
         id: lease.id,
         resourceType: lease.resourceType,
@@ -2562,7 +2957,7 @@ async function handleTeammateRoute(
   storeRegistry: RunStoreRegistry,
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
-  route: { readonly teammateId: string; readonly action?: "channels" | "skills" | "memory-scopes" | "direct-thread" | "direct-messages" | "tasks" | "activity" },
+  route: { readonly teammateId: string; readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "direct-thread" | "direct-messages" | "tasks" | "activity" },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -2658,6 +3053,27 @@ async function handleTeammateRoute(
           new Date().toISOString(),
         );
         writeJson(response, 200, { cwd, teammateId: route.teammateId, scopes });
+        return;
+      }
+    }
+
+    if (route.action === "mcp") {
+      if (request.method === "GET") {
+        writeJson(response, 200, {
+          cwd,
+          teammateId: route.teammateId,
+          bindings: store.listTeammateMcpBindings(route.teammateId),
+        });
+        return;
+      }
+      if (request.method === "PUT") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const bindings = store.replaceTeammateMcpBindings(
+          route.teammateId,
+          parseReplaceTeammateMcpBindingsRequest(body),
+          new Date().toISOString(),
+        );
+        writeJson(response, 200, { cwd, teammateId: route.teammateId, bindings });
         return;
       }
     }
@@ -3455,6 +3871,7 @@ async function handleChannelWorkflowStepItem(
   activeRuns: ActiveRunRegistry,
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
+  mcpBroker: McpBroker,
   workflowStepId: string,
   action?: "start",
 ): Promise<void> {
@@ -3473,7 +3890,7 @@ async function handleChannelWorkflowStepItem(
       return;
     }
     if (action === "start") {
-      await handleChannelWorkflowStepStart(request, response, config, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, cwd, existing.id);
+      await handleChannelWorkflowStepStart(request, response, config, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, cwd, existing.id);
       return;
     }
     if (request.method === "GET") {
@@ -3518,6 +3935,7 @@ async function handleChannelWorkflowStepStart(
   activeRuns: ActiveRunRegistry,
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
+  mcpBroker: McpBroker,
   cwd: string,
   workflowStepId: string,
 ): Promise<void> {
@@ -3564,7 +3982,7 @@ async function handleChannelWorkflowStepStart(
     return;
   }
 
-  const runId = await executeRunRequest(started.runRequest, response, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver);
+  const runId = await executeRunRequest(started.runRequest, response, runner, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker);
   const completedAt = new Date().toISOString();
   if (!runId) {
     store.transitionChannelWorkflowStepStatus({
@@ -3707,10 +4125,12 @@ function prepareWorkflowStepStart(
   const providerPresetId = input.providerPresetId ?? channel.defaultProviderPresetId;
   const taskTitle = input.taskTitle ?? step.title;
   const taskPrompt = input.taskPrompt ?? formatWorkflowStepTaskPrompt(step.prompt, workflow.objective);
+  const assigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const runRequestBase: RunRequest = {
     workspaceCwd: cwd,
     cwd: channel.boundPath ?? cwd,
     providerPresetId,
+    teammateId: assigneeTeammateId,
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     idempotencyKey: input.idempotencyKey ?? `workflow-step:${step.id}`,
     task: {
@@ -3739,7 +4159,7 @@ function prepareWorkflowStepStart(
       channelId: channel.id,
       title: taskTitle,
       prompt: taskPrompt,
-      assigneeTeammateId: input.assigneeTeammateId ?? step.toParticipantId,
+      assigneeTeammateId,
     },
     new Date().toISOString(),
   );
@@ -4084,6 +4504,7 @@ async function handleTaskRunRequest(
   activeRuns: ActiveRunRegistry,
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
+  mcpBroker: McpBroker,
   taskId: string,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -4116,6 +4537,7 @@ async function handleTaskRunRequest(
         workspaceCwd,
         cwd: channel.boundPath ?? workspaceCwd,
         providerPresetId,
+        teammateId: task.assigneeTeammateId ?? channel.defaultTeammateId,
         skipProviderPreflight: readOptionalBoolean(body, "skipProviderPreflight") ?? false,
         idempotencyKey: readOptionalString(body, "idempotencyKey"),
         task: {
@@ -4137,6 +4559,7 @@ async function handleTaskRunRequest(
       activeRuns,
       runtimeSupervisor,
       secretResolver,
+      mcpBroker,
     );
   } catch (error) {
     writeJson(response, 400, {
@@ -4187,6 +4610,208 @@ async function handleProvidersCollection(
   }
 
   writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /providers` });
+}
+
+async function handleMcpServersCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd,
+        servers: store.listMcpServers({
+          enabled: readOptionalBooleanQuery(url, "enabled"),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }).map((server) => toPublicMcpServer(store, server)),
+      });
+      return;
+    }
+
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseMcpServerCreateRequest(body);
+      const now = new Date().toISOString();
+      const server = store.createMcpServer(input.serverInput, now);
+      for (const [secretName, secretValue] of Object.entries(input.secrets)) {
+        store.setMcpServerSecret(server.id, secretName, secretValue, now);
+      }
+      writeJson(response, 201, { server: toPublicMcpServer(store, server) });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /mcp/servers` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function handleMcpToolsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+): void {
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /mcp/tools` });
+    return;
+  }
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    writeJson(response, 200, {
+      cwd,
+      tools: store.listMcpTools({
+        serverId: url.searchParams.get("serverId") ?? undefined,
+        enabled: readOptionalBooleanQuery(url, "enabled"),
+        limit: readOptionalIntegerQuery(url, "limit", 1),
+      }),
+    });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleMcpServerItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  mcpBroker: McpBroker,
+  route: { readonly serverId: string; readonly action?: "check" | "sync-tools" | "secret" },
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const server = store.getMcpServer(route.serverId);
+    if (!server) {
+      writeJson(response, 404, { error: "mcp_server_not_found", message: `MCP server not found: ${route.serverId}` });
+      return;
+    }
+
+    if (request.method === "GET" && route.action === "secret") {
+      const secretName = url.searchParams.get("name")?.trim();
+      if (!secretName) {
+        writeJson(response, 400, { error: "bad_request", message: "name query parameter is required" });
+        return;
+      }
+      const secretValue = store.getMcpServerSecret(server.id, secretName) ?? "";
+      writeJson(response, 200, {
+        serverId: server.id,
+        secretName,
+        secretValue,
+        configured: secretValue.length > 0,
+      });
+      return;
+    }
+
+    if (request.method === "POST" && route.action === "check") {
+      const now = new Date().toISOString();
+      try {
+        const result = await mcpBroker.checkServer(server, collectMcpServerSecrets(store, server));
+        const updated = store.updateMcpServerStatus(server.id, result.status, now) ?? server;
+        writeJson(response, 200, { server: toPublicMcpServer(store, updated) });
+      } catch (error) {
+        const updated = store.updateMcpServerStatus(server.id, {
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error),
+          checkedAt: now,
+        }, now) ?? server;
+        writeJson(response, 400, {
+          error: "mcp_check_failed",
+          message: error instanceof Error ? error.message : String(error),
+          server: toPublicMcpServer(store, updated),
+        });
+      }
+      return;
+    }
+
+    if (request.method === "POST" && route.action === "sync-tools") {
+      const now = new Date().toISOString();
+      try {
+        const tools = await mcpBroker.listTools(server, collectMcpServerSecrets(store, server));
+        const cached = store.replaceMcpServerTools(server.id, tools, now);
+        writeJson(response, 200, { server: toPublicMcpServer(store, server), tools: cached });
+      } catch (error) {
+        const updated = store.updateMcpServerStatus(server.id, {
+          kind: "failed",
+          message: error instanceof Error ? error.message : String(error),
+          checkedAt: now,
+        }, now) ?? server;
+        writeJson(response, 400, {
+          error: "mcp_tool_sync_failed",
+          message: error instanceof Error ? error.message : String(error),
+          server: toPublicMcpServer(store, updated),
+        });
+      }
+      return;
+    }
+
+    if (route.action) {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for MCP server ${route.action}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      writeJson(response, 200, { server: toPublicMcpServer(store, server) });
+      return;
+    }
+
+    if (request.method === "PATCH") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseMcpServerUpdateRequest(body);
+      const now = new Date().toISOString();
+      let updated = store.updateMcpServer(server.id, input.serverInput, now) ?? server;
+      for (const secretName of input.clearSecretNames) {
+        store.deleteMcpServerSecret(server.id, secretName);
+      }
+      for (const [secretName, secretValue] of Object.entries(input.secrets)) {
+        store.setMcpServerSecret(server.id, secretName, secretValue, now);
+      }
+      updated = store.getMcpServer(server.id) ?? updated;
+      writeJson(response, 200, { server: toPublicMcpServer(store, updated) });
+      return;
+    }
+
+    if (request.method === "DELETE") {
+      store.deleteMcpServer(server.id);
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for MCP server` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function handleProviderDraftCheck(
@@ -5821,6 +6446,7 @@ async function handleExternalWorkCiTriageRun(
   activeRuns: ActiveRunRegistry,
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
+  mcpBroker: McpBroker,
   triageId: string,
 ): Promise<void> {
   if (request.method !== "POST") {
@@ -5868,6 +6494,7 @@ async function handleExternalWorkCiTriageRun(
         workspaceCwd: cwd,
         cwd: channel.boundPath ?? cwd,
         providerPresetId: input.providerPresetId,
+        teammateId: task.assigneeTeammateId ?? channel.defaultTeammateId,
         skipProviderPreflight: input.skipProviderPreflight ?? false,
         idempotencyKey: input.idempotencyKey ?? `external_work_ci_triage_run:${triage.id}:${triage.taskId}:${triage.headSha}`,
         task: {
@@ -5888,6 +6515,7 @@ async function handleExternalWorkCiTriageRun(
       activeRuns,
       runtimeSupervisor,
       secretResolver,
+      mcpBroker,
       {
         onRunReady: (runId) => {
           store.updateExternalWorkCiTriage(triage.id, { status: "run_requested", runId }, new Date().toISOString());
@@ -8787,6 +9415,155 @@ function appendFailureEvent(
   }
 }
 
+function resolveMcpToolAccessForRun(store: RunStore, runRequest: RunRequest): RunMcpToolAccessSnapshot {
+  if (!runRequest.teammateId) {
+    return { servers: [], totalToolCount: 0 };
+  }
+
+  const teammate = resolveAiTeammateReference(store, runRequest.teammateId);
+  const teammateId = teammate?.id ?? runRequest.teammateId;
+  const servers: RunMcpServerAccessSnapshot[] = [];
+  let totalToolCount = 0;
+
+  for (const binding of store.listTeammateMcpBindings(teammateId)) {
+    if (!binding.enabled) {
+      continue;
+    }
+    const server = store.getMcpServer(binding.serverId);
+    if (!server?.enabled) {
+      continue;
+    }
+    const tools = store
+      .listMcpTools({ serverId: server.id, enabled: true, limit: 500 })
+      .filter((tool) => isMcpToolAuthorizedForRun(server, binding, tool))
+      .map((tool) => {
+        const approval = binding.approvalOverrides[tool.rawName] ?? tool.defaultApproval;
+        return removeUndefined({
+          rawName: tool.rawName,
+          registeredName: createMcpRunnerToolName(server.id, tool.rawName),
+          displayName: tool.displayName,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          callableNamespace: tool.callableNamespace,
+          callableName: tool.callableName,
+          sideEffectLevel: tool.sideEffectLevel,
+          approval,
+        });
+      });
+    if (tools.length === 0) {
+      continue;
+    }
+
+    const configuredSecretNames: string[] = [];
+    const missingSecretNames: string[] = [];
+    for (const secretName of mcpServerSecretNames(server)) {
+      if (store.hasMcpServerSecret(server.id, secretName)) {
+        configuredSecretNames.push(secretName);
+      } else {
+        missingSecretNames.push(secretName);
+      }
+    }
+    totalToolCount += tools.length;
+    servers.push({
+      serverId: server.id,
+      displayName: server.displayName,
+      transportType: server.transport.type,
+      required: server.required,
+      status: server.status,
+      configuredSecretNames,
+      missingSecretNames,
+      tools,
+    });
+  }
+
+  return {
+    teammateId,
+    servers,
+    totalToolCount,
+  };
+}
+
+function createPiRunnerMcpToolDefinitions(access: RunMcpToolAccessSnapshot): PiRunnerMcpToolDefinition[] {
+  return access.servers.flatMap((server) =>
+    server.tools.map((tool) => ({
+      registeredName: tool.registeredName,
+      serverId: server.serverId,
+      rawName: tool.rawName,
+      displayName: tool.displayName,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      sideEffectLevel: tool.sideEffectLevel,
+      defaultApproval: tool.approval,
+    })),
+  );
+}
+
+function createMcpToolCallHandler(
+  store: RunStore,
+  mcpBroker: McpBroker,
+  tools: readonly PiRunnerMcpToolDefinition[],
+): NonNullable<PiRunnerRunOptions["onMcpToolCall"]> {
+  const byRegisteredName = new Map(tools.map((tool) => [tool.registeredName, tool]));
+  return async (request) => {
+    const tool = byRegisteredName.get(request.registeredName);
+    if (!tool) {
+      throw new Error(`MCP tool is not authorized for this run: ${request.registeredName}`);
+    }
+    const server = store.getMcpServer(tool.serverId);
+    if (!server?.enabled) {
+      throw new Error(`MCP server is disabled or missing: ${tool.serverId}`);
+    }
+    const cachedTool = store.listMcpTools({ serverId: server.id, enabled: true, limit: 500 }).find((item) => item.rawName === tool.rawName);
+    if (!cachedTool || !isMcpToolEnabledForServer(server, cachedTool)) {
+      throw new Error(`MCP tool is disabled or missing: ${tool.rawName}`);
+    }
+    return mcpBroker.callTool(server, collectMcpServerSecrets(store, server), tool.rawName, request.input);
+  };
+}
+
+function collectMcpSecretValuesForAccess(store: RunStore, access: RunMcpToolAccessSnapshot): readonly (string | undefined)[] {
+  return access.servers.flatMap((serverAccess) => {
+    const server = store.getMcpServer(serverAccess.serverId);
+    if (!server) {
+      return [];
+    }
+    return Object.values(collectMcpServerSecrets(store, server));
+  });
+}
+
+function isMcpToolAuthorizedForRun(
+  server: McpServer,
+  binding: ReturnType<RunStore["listTeammateMcpBindings"]>[number],
+  tool: McpTool,
+): boolean {
+  if (!tool.enabled) {
+    return false;
+  }
+  if (!isMcpToolEnabledForServer(server, tool)) {
+    return false;
+  }
+  if (binding.mode === "all_current_tools") {
+    return true;
+  }
+  return binding.selectedToolNames.includes(tool.rawName);
+}
+
+function isMcpToolEnabledForServer(server: McpServer, tool: Pick<McpTool, "rawName" | "enabled">): boolean {
+  if (!tool.enabled) {
+    return false;
+  }
+  if (server.enabledTools && !server.enabledTools.includes(tool.rawName)) {
+    return false;
+  }
+  return !server.disabledTools.includes(tool.rawName);
+}
+
+function createMcpRunnerToolName(serverId: string, rawName: string): string {
+  const stem = `${serverId}_${rawName}`.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_").slice(0, 64);
+  const hash = createHash("sha1").update(`${serverId}:${rawName}`).digest("hex").slice(0, 8);
+  return `mcp_${stem}_${hash}`;
+}
+
 function resolveProviderForRun(store: RunStore, runRequest: RunRequest, secretResolver: SecretResolver): PiRunnerProviderConfig {
   if (runRequest.providerPresetId && runRequest.provider) {
     throw new HttpError(400, "bad_request", "providerPresetId and inline provider cannot both be supplied");
@@ -9076,7 +9853,9 @@ function evaluateApprovalPolicy(
   request: PiRunnerApprovalRequest,
   payload: ApprovalPayload,
 ): { readonly decision: ApprovalToolDecision; readonly reason: string } {
-  const toolDecision = policy.toolDecisions[request.toolName] ?? defaultApprovalToolDecisions[request.toolName];
+  const toolDecision = isRunTool(request.toolName)
+    ? policy.toolDecisions[request.toolName] ?? defaultApprovalToolDecisions[request.toolName]
+    : request.defaultApproval ?? "ask";
   if (toolDecision === "deny") {
     return {
       decision: "deny",
@@ -9144,7 +9923,7 @@ function toCreateApprovalRequestInput(run: RunSession, request: PiRunnerApproval
     taskId: run.taskId,
     channelId: run.channelId,
     toolCallId: request.toolCallId,
-    actionType: request.toolName,
+    actionType: isRunTool(request.toolName) ? request.toolName : "mcp_tool_call",
     risk,
     title: approvalTitle(request.toolName, risk),
     description: approvalDescription(request.toolName, payload),
@@ -9175,7 +9954,21 @@ function toApprovalPayload(request: PiRunnerApprovalRequest): ApprovalPayload {
     };
   }
 
-  if (request.toolName !== "edit") {
+  if (!isRunTool(request.toolName)) {
+    return {
+      type: "mcp_tool_call",
+      toolName: request.toolName,
+      cwd: request.cwd,
+      input: request.input,
+    };
+  }
+
+  if (
+    request.toolName === "read" ||
+    request.toolName === "grep" ||
+    request.toolName === "find" ||
+    request.toolName === "ls"
+  ) {
     return {
       type: "tool_call",
       toolName: request.toolName,
@@ -9209,6 +10002,10 @@ function classifyApprovalRisk(request: PiRunnerApprovalRequest, payload: Approva
     return "low";
   }
 
+  if (payload.type === "mcp_tool_call") {
+    return "medium";
+  }
+
   return "medium";
 }
 
@@ -9221,6 +10018,9 @@ function approvalTitle(toolName: PiRunnerApprovalRequest["toolName"], risk: Appr
   }
   if (toolName === "edit") {
     return "Approve file edit";
+  }
+  if (!isRunTool(toolName)) {
+    return "Approve MCP tool call";
   }
   return `Approve ${toolName}`;
 }
@@ -9237,6 +10037,9 @@ function approvalDescription(toolName: PiRunnerApprovalRequest["toolName"], payl
   }
   if (payload.type === "tool_call") {
     return `The agent requested ${payload.toolName}.`;
+  }
+  if (payload.type === "mcp_tool_call") {
+    return `The agent requested MCP tool ${payload.toolName}.`;
   }
   return `The agent requested ${toolName}.`;
 }
@@ -10082,6 +10885,7 @@ function parseRunRequest(value: unknown): RunRequest {
   const task = value.task;
   const provider = value.provider;
   const providerPresetId = readOptionalString(value, "providerPresetId");
+  const teammateId = readOptionalString(value, "teammateId");
   const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
   const idempotencyKey = readOptionalString(value, "idempotencyKey");
 
@@ -10102,6 +10906,7 @@ function parseRunRequest(value: unknown): RunRequest {
     cwd,
     workspaceCwd,
     providerPresetId,
+    teammateId,
     skipProviderPreflight,
     idempotencyKey,
     task: {
@@ -10111,11 +10916,11 @@ function parseRunRequest(value: unknown): RunRequest {
       channelId: readOptionalString(task, "channelId"),
     },
     provider: provider ? parseInlineProvider(provider) : undefined,
-      tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]) ?? [...readOnlyRunTools],
-      approvalProfile: readOptionalApprovalProfile(value, "approvalProfile"),
-      thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
-      systemPrompt: readOptionalString(value, "systemPrompt"),
-      appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
+    tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]) ?? [...readOnlyRunTools],
+    approvalProfile: readOptionalApprovalProfile(value, "approvalProfile"),
+    thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
+    systemPrompt: readOptionalString(value, "systemPrompt"),
+    appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     agentDir: readOptionalString(value, "agentDir"),
   };
 
@@ -10233,7 +11038,7 @@ function parseTeammateRoute(
   pathname: string,
 ): {
   readonly teammateId: string;
-  readonly action?: "channels" | "skills" | "memory-scopes" | "direct-thread" | "direct-messages" | "tasks" | "activity";
+  readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "direct-thread" | "direct-messages" | "tasks" | "activity";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "teammates") {
@@ -10246,6 +11051,7 @@ function parseTeammateRoute(
       segments[2] === "channels" ||
       segments[2] === "skills" ||
       segments[2] === "memory-scopes" ||
+      segments[2] === "mcp" ||
       segments[2] === "direct-thread" ||
       segments[2] === "direct-messages" ||
       segments[2] === "tasks" ||
@@ -10253,6 +11059,24 @@ function parseTeammateRoute(
     )
   ) {
     return { teammateId: segments[1], action: segments[2] };
+  }
+  return undefined;
+}
+
+function parseMcpServerRoute(
+  pathname: string,
+): { readonly serverId: string; readonly action?: "check" | "sync-tools" | "secret" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "mcp" && segments[1] === "servers") {
+    return { serverId: segments[2] };
+  }
+  if (
+    segments.length === 4 &&
+    segments[0] === "mcp" &&
+    segments[1] === "servers" &&
+    (segments[3] === "check" || segments[3] === "sync-tools" || segments[3] === "secret")
+  ) {
+    return { serverId: segments[2], action: segments[3] };
   }
   return undefined;
 }
@@ -10639,6 +11463,28 @@ function parseReplaceTeammateMemoryScopesRequest(value: unknown): readonly Repla
       id: readOptionalString(item, "id"),
       kind: readTeammateMemoryScopeKind(item, "kind"),
       channelId: readOptionalString(item, "channelId"),
+      enabled: readOptionalBoolean(item, "enabled"),
+    };
+  });
+}
+
+function parseReplaceTeammateMcpBindingsRequest(value: unknown): readonly ReplaceTeammateMcpBindingInput[] {
+  if (!isRecord(value) || !Array.isArray(value.bindings)) {
+    throw new Error("bindings must be an array");
+  }
+  return value.bindings.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`bindings[${index}] must be an object`);
+    }
+    const mode = readString(item, "mode");
+    if (mode !== "selected" && mode !== "all_current_tools") {
+      throw new Error(`bindings[${index}].mode must be selected or all_current_tools`);
+    }
+    return {
+      serverId: readString(item, "serverId"),
+      mode,
+      selectedToolNames: readOptionalStringArray(item, "selectedToolNames"),
+      approvalOverrides: readOptionalMcpApprovalOverrides(item, "approvalOverrides"),
       enabled: readOptionalBoolean(item, "enabled"),
     };
   });
@@ -11057,6 +11903,27 @@ interface ProviderPresetCreateRequest {
   readonly apiKey?: string;
 }
 
+interface McpServerCreateRequest {
+  readonly serverInput: CreateMcpServerInput;
+  readonly secrets: Readonly<Record<string, string>>;
+}
+
+interface McpServerUpdateRequest {
+  readonly serverInput: {
+    readonly displayName?: string;
+    readonly transport?: McpServerTransport;
+    readonly enabled?: boolean;
+    readonly required?: boolean;
+    readonly status?: McpServerStatus;
+    readonly startupTimeoutSec?: number | null;
+    readonly toolTimeoutSec?: number | null;
+    readonly enabledTools?: readonly string[] | null;
+    readonly disabledTools?: readonly string[];
+  };
+  readonly secrets: Readonly<Record<string, string>>;
+  readonly clearSecretNames: readonly string[];
+}
+
 interface ProviderPresetUpdateRequest {
   readonly updateInput: ProviderPresetUpdateInput;
   readonly apiKey?: string;
@@ -11070,6 +11937,48 @@ function parseProviderPresetCreateRequest(value: unknown): ProviderPresetCreateR
   return {
     presetInput: parseProviderPresetInput(value),
     apiKey: readOptionalApiKey(value),
+  };
+}
+
+function parseMcpServerCreateRequest(value: unknown): McpServerCreateRequest {
+  if (!isRecord(value)) {
+    throw new Error("MCP server request must be a JSON object");
+  }
+  return {
+    serverInput: {
+      id: readOptionalString(value, "id"),
+      displayName: readString(value, "displayName"),
+      transport: readMcpServerTransport(value, "transport"),
+      enabled: readOptionalBoolean(value, "enabled"),
+      required: readOptionalBoolean(value, "required"),
+      status: readOptionalMcpServerStatus(value, "status"),
+      startupTimeoutSec: readOptionalNumber(value, "startupTimeoutSec"),
+      toolTimeoutSec: readOptionalNumber(value, "toolTimeoutSec"),
+      enabledTools: readOptionalStringArray(value, "enabledTools"),
+      disabledTools: readOptionalStringArray(value, "disabledTools"),
+    },
+    secrets: readOptionalStringRecord(value, "secrets") ?? {},
+  };
+}
+
+function parseMcpServerUpdateRequest(value: unknown): McpServerUpdateRequest {
+  if (!isRecord(value)) {
+    throw new Error("MCP server update must be a JSON object");
+  }
+  return {
+    serverInput: {
+      displayName: readOptionalString(value, "displayName"),
+      transport: value.transport === undefined ? undefined : readMcpServerTransport(value, "transport"),
+      enabled: readOptionalBoolean(value, "enabled"),
+      required: readOptionalBoolean(value, "required"),
+      status: readOptionalMcpServerStatus(value, "status"),
+      startupTimeoutSec: readNullableNumber(value, "startupTimeoutSec"),
+      toolTimeoutSec: readNullableNumber(value, "toolTimeoutSec"),
+      enabledTools: readNullableStringArray(value, "enabledTools"),
+      disabledTools: readOptionalStringArray(value, "disabledTools"),
+    },
+    secrets: readOptionalStringRecord(value, "secrets") ?? {},
+    clearSecretNames: readOptionalStringArray(value, "clearSecretNames") ?? [],
   };
 }
 
@@ -11329,6 +12238,38 @@ function toPublicProviderPreset(store: RunStore, preset: ProviderPreset, secretR
     apiKeyConfigured: apiKeyStatus?.configured ?? false,
     apiKeyStatus,
   };
+}
+
+function toPublicMcpServer(
+  store: RunStore,
+  server: McpServer,
+): McpServer & { readonly secretConfigured: Readonly<Record<string, boolean>> } {
+  const secretConfigured: Record<string, boolean> = {};
+  for (const secretName of mcpServerSecretNames(server)) {
+    secretConfigured[secretName] = store.hasMcpServerSecret(server.id, secretName);
+  }
+  return {
+    ...server,
+    secretConfigured,
+  };
+}
+
+function collectMcpServerSecrets(store: RunStore, server: McpServer): Readonly<Record<string, string>> {
+  const secrets: Record<string, string> = {};
+  for (const secretName of mcpServerSecretNames(server)) {
+    const secret = store.getMcpServerSecret(server.id, secretName);
+    if (secret !== undefined) {
+      secrets[secretName] = secret;
+    }
+  }
+  return secrets;
+}
+
+function mcpServerSecretNames(server: McpServer): readonly string[] {
+  if (server.transport.type === "stdio") {
+    return server.transport.secretEnvNames;
+  }
+  return server.transport.secretHeaderNames;
 }
 
 function toProviderSecretResponse(store: RunStore, preset: ProviderPreset): { readonly providerId: string; readonly apiKey: string; readonly apiKeyRef?: string; readonly configured: boolean } {
@@ -11974,6 +12915,90 @@ function readOptionalStringArray<T extends string = string>(
   });
 }
 
+function readNullableStringArray(record: Record<string, unknown>, key: string): string[] | null | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  return readOptionalStringArray(record, key);
+}
+
+function readMcpServerTransport(record: Record<string, unknown>, key: string): McpServerTransport {
+  const value = record[key];
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  const type = readString(value, "type");
+  if (type === "stdio") {
+    return {
+      type,
+      command: readString(value, "command"),
+      args: readOptionalStringArray(value, "args") ?? [],
+      env: readOptionalStringRecord(value, "env") ?? {},
+      cwd: readOptionalString(value, "cwd"),
+      secretEnvNames: readOptionalStringArray(value, "secretEnvNames") ?? [],
+    };
+  }
+  if (type === "streamable-http") {
+    const url = readString(value, "url");
+    validateUrl(url, `${key}.url`);
+    return {
+      type,
+      url,
+      bearerTokenEnvVar: readOptionalString(value, "bearerTokenEnvVar"),
+      headers: readOptionalStringRecord(value, "headers") ?? {},
+      envHeaders: readOptionalStringRecord(value, "envHeaders") ?? {},
+      secretHeaderNames: readOptionalStringArray(value, "secretHeaderNames") ?? [],
+      oauthClientId: readOptionalString(value, "oauthClientId"),
+      oauthResource: readOptionalString(value, "oauthResource"),
+    };
+  }
+  throw new Error(`${key}.type must be stdio or streamable-http`);
+}
+
+function readOptionalMcpServerStatus(record: Record<string, unknown>, key: string): McpServerStatus | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  const kind = readString(value, "kind");
+  if (kind !== "unknown" && kind !== "checking" && kind !== "ready" && kind !== "failed" && kind !== "disabled") {
+    throw new Error(`${key}.kind must be unknown, checking, ready, failed, or disabled`);
+  }
+  return removeUndefined({
+    kind,
+    message: readOptionalString(value, "message"),
+    checkedAt: readOptionalString(value, "checkedAt"),
+  }) as McpServerStatus;
+}
+
+function readOptionalMcpApprovalOverrides(
+  record: Record<string, unknown>,
+  key: string,
+): ReplaceTeammateMcpBindingInput["approvalOverrides"] {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  const result: Record<string, McpTool["defaultApproval"]> = {};
+  for (const [toolName, decision] of Object.entries(value)) {
+    if (decision !== "allow" && decision !== "ask" && decision !== "deny") {
+      throw new Error(`${key}.${toolName} must be allow, ask, or deny`);
+    }
+    result[toolName] = decision;
+  }
+  return result;
+}
+
 function readOptionalRunTools(record: Record<string, unknown>, key: string): RunTool[] | undefined {
   return readOptionalStringArray(record, key, [...readOnlyRunTools, "bash", "edit", "write"] as const);
 }
@@ -12084,6 +13109,7 @@ function parseApprovalProfileObject(value: Record<string, unknown>, key: string)
     "media_cost",
     "credential_change",
     "provider_change",
+    "mcp_tool_call",
   ] as const);
   const risk = readOptionalString(value, "risk");
   if (risk !== undefined && risk !== "low" && risk !== "medium" && risk !== "high" && risk !== "critical") {
@@ -12415,6 +13441,17 @@ function readOptionalIntegerQuery(url: URL, key: string, minValue: number): numb
     throw new Error(`${key} must be an integer greater than or equal to ${minValue}`);
   }
   return value;
+}
+
+function readOptionalBooleanQuery(url: URL, key: string): boolean | undefined {
+  const rawValue = url.searchParams.get(key);
+  if (rawValue === null) {
+    return undefined;
+  }
+  if (rawValue !== "true" && rawValue !== "false") {
+    throw new Error(`${key} must be true or false`);
+  }
+  return rawValue === "true";
 }
 
 function readOptionalRunStatusQuery(url: URL): RunStatus | undefined {

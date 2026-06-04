@@ -17,6 +17,7 @@
     "@ling-stack/core": "workspace:*",
     "@ling-stack/plugin-sdk": "workspace:*",
     "@ling-stack/providers": "workspace:*",
-    "@ling-stack/runner-pi": "workspace:*"
+    "@ling-stack/runner-pi": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.25.2"
   }
 }

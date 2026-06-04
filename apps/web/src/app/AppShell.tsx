@@ -17,6 +17,7 @@ import {
   cancelExternalWorkAction,
   checkProvider,
   checkProviderDraft,
+  checkMcpServer,
   channelAttachmentContentUrl,
   configureExternalWorkWorkflow,
   configureExternalWorkSecret,
@@ -29,12 +30,14 @@ import {
   createChannelWorkflowFromHandoff,
   createAiTeammate,
   createMediaJob,
+  createMcpServer,
   createProvider,
   createTask,
   daemonBaseUrl,
   denyApproval,
   deleteChannelAttachment,
   deleteChannel,
+  deleteMcpServer,
   deleteExternalWorkSecret,
   deleteTask,
   deleteProvider,
@@ -51,6 +54,8 @@ import {
   getRunEvents,
   getWorkUnit,
   listMediaJobArtifacts,
+  listMcpServers,
+  listMcpTools,
   listRunArtifacts,
   listResourceLeases,
   listChannelAttachments,
@@ -82,6 +87,7 @@ import {
   replaceTeammateChannels,
   replaceTeammateMemoryScopes,
   replaceTeammateSkills,
+  syncMcpServerTools,
   startChannelWorkflowStep,
   startGitHubExternalWorkBackground,
   stopExternalWorkBackground,
@@ -98,6 +104,7 @@ import {
   updateTask,
   updateTaskStatus,
   disableAiTeammate,
+  updateMcpServer,
   updateProvider,
 } from "../api.js";
 import { useI18n } from "../i18n.js";
@@ -128,6 +135,9 @@ import type {
   ExternalWorkStatusResponse,
   MediaJob,
   MediaJobFormState,
+  McpServer,
+  McpServerFormState,
+  McpTool,
   ProviderCheckResult,
   ProviderFormState,
   ProviderPreset,
@@ -164,6 +174,7 @@ import {
 import { ApprovalsPage, type ApprovalResolution } from "../features/approvals/index.js";
 import { PageInspector } from "../features/inspector/PageInspector.js";
 import { MediaJobsPage } from "../features/media/index.js";
+import { McpToolsPage } from "../features/mcp/index.js";
 import { SidebarNavigation, type SidebarNotification } from "../features/navigation/SidebarNavigation.js";
 import { ProviderSettings, type ProviderBatchResult } from "../features/providers/index.js";
 import { RunHistory } from "../features/runs/index.js";
@@ -299,6 +310,11 @@ export function AppShell(): JSX.Element {
   const [providers, setProviders] = useState<readonly ProviderPreset[]>([]);
   const [providerTemplates, setProviderTemplates] = useState<readonly ProviderTemplate[]>([]);
   const [providersLoading, setProvidersLoading] = useState(false);
+  const [mcpServers, setMcpServers] = useState<readonly McpServer[]>([]);
+  const [mcpTools, setMcpTools] = useState<readonly McpTool[]>([]);
+  const [mcpLoading, setMcpLoading] = useState(false);
+  const [mcpBusyServerId, setMcpBusyServerId] = useState("");
+  const [mcpBusyAction, setMcpBusyAction] = useState<"check" | "sync" | "delete" | "save" | undefined>();
   const [channels, setChannels] = useState<readonly Channel[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
   const [selectedChannelId, setSelectedChannelId] = useState("");
@@ -837,10 +853,14 @@ export function AppShell(): JSX.Element {
       void refreshProviderTemplates();
       void refreshProviders();
     }
+    if (activeView === "mcp") {
+      void refreshMcp();
+    }
     if (activeView === "teammates") {
       void refreshAiTeammates();
       void refreshChannels();
       void refreshProviders();
+      void refreshMcp();
     }
     if (activeView === "media") {
       void refreshProviders();
@@ -1001,6 +1021,7 @@ export function AppShell(): JSX.Element {
           refreshProviders(defaultWorkspaceCwd),
           refreshChannels(defaultWorkspaceCwd),
           refreshAiTeammates(defaultWorkspaceCwd),
+          refreshMcp(defaultWorkspaceCwd),
           refreshRuns(defaultWorkspaceCwd),
           refreshApprovals(defaultWorkspaceCwd),
           refreshRuntimeState(defaultWorkspaceCwd),
@@ -1208,6 +1229,29 @@ export function AppShell(): JSX.Element {
       setProviderTemplates(response.templates);
     } catch {
       setProviderTemplates([]);
+    }
+  }
+
+  async function refreshMcp(cwd = form.cwd.trim()): Promise<void> {
+    if (!cwd) {
+      setMcpServers([]);
+      setMcpTools([]);
+      return;
+    }
+
+    setMcpLoading(true);
+    try {
+      setErrorMessage("");
+      const [serversResponse, toolsResponse] = await Promise.all([
+        listMcpServers(cwd),
+        listMcpTools(cwd),
+      ]);
+      setMcpServers(serversResponse.servers);
+      setMcpTools(toolsResponse.tools);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMcpLoading(false);
     }
   }
 
@@ -2788,6 +2832,111 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function addMcpServer(formState: McpServerFormState): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      throw new Error(t("Local workspace is not ready."));
+    }
+    setMcpBusyAction("save");
+    setMcpBusyServerId("");
+    try {
+      setErrorMessage("");
+      const response = await createMcpServer(workspaceCwd, formState);
+      setMcpServers((current) => [response.server, ...current.filter((server) => server.id !== response.server.id)]);
+      await refreshMcp(workspaceCwd);
+    } finally {
+      setMcpBusyAction(undefined);
+      setMcpBusyServerId("");
+    }
+  }
+
+  async function saveMcpServer(serverId: string, formState: McpServerFormState): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      throw new Error(t("Local workspace is not ready."));
+    }
+    setMcpBusyAction("save");
+    setMcpBusyServerId(serverId);
+    try {
+      setErrorMessage("");
+      const response = await updateMcpServer(workspaceCwd, serverId, formState);
+      setMcpServers((current) => current.map((server) => (server.id === response.server.id ? response.server : server)));
+      await refreshMcp(workspaceCwd);
+    } finally {
+      setMcpBusyAction(undefined);
+      setMcpBusyServerId("");
+    }
+  }
+
+  async function runMcpServerCheck(serverId: string): Promise<boolean> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage(t("Local workspace is not ready."));
+      return false;
+    }
+    setMcpBusyAction("check");
+    setMcpBusyServerId(serverId);
+    try {
+      setErrorMessage("");
+      const response = await checkMcpServer(workspaceCwd, serverId);
+      setMcpServers((current) => current.map((server) => (server.id === response.server.id ? response.server : server)));
+      return true;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setMcpBusyAction(undefined);
+      setMcpBusyServerId("");
+    }
+  }
+
+  async function syncMcpTools(serverId: string): Promise<boolean> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage(t("Local workspace is not ready."));
+      return false;
+    }
+    setMcpBusyAction("sync");
+    setMcpBusyServerId(serverId);
+    try {
+      setErrorMessage("");
+      const response = await syncMcpServerTools(workspaceCwd, serverId);
+      setMcpServers((current) => current.map((server) => (server.id === response.server.id ? response.server : server)));
+      setMcpTools((current) => [
+        ...current.filter((tool) => tool.serverId !== serverId),
+        ...response.tools,
+      ]);
+      return true;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setMcpBusyAction(undefined);
+      setMcpBusyServerId("");
+    }
+  }
+
+  async function removeMcpServer(serverId: string): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage(t("Local workspace is not ready."));
+      return;
+    }
+    setMcpBusyAction("delete");
+    setMcpBusyServerId(serverId);
+    try {
+      setErrorMessage("");
+      await deleteMcpServer(workspaceCwd, serverId);
+      setMcpServers((current) => current.filter((server) => server.id !== serverId));
+      setMcpTools((current) => current.filter((tool) => tool.serverId !== serverId));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMcpBusyAction(undefined);
+      setMcpBusyServerId("");
+    }
+  }
+
   async function saveProviderWithPreflight(): Promise<{ readonly ok: boolean; readonly errorMessage?: string }> {
     const workspaceCwd = form.cwd.trim();
     if (!workspaceCwd) {
@@ -3122,7 +3271,7 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  const showInspector = !["workspace", "providers", "teammates", "runs", "approvals", "media", "settings"].includes(activeView);
+  const showInspector = !["workspace", "providers", "mcp", "teammates", "runs", "approvals", "media", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
@@ -3291,7 +3440,7 @@ export function AppShell(): JSX.Element {
                 </div>
                 {activeView === "teammates" ? (
                   <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
-                ) : (
+                ) : activeView === "mcp" ? null : (
                   <StatusBadge status={latestStatus} />
                 )}
               </div>
@@ -3320,6 +3469,22 @@ export function AppShell(): JSX.Element {
                 onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
                 onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
                 onOpenProviders={() => openPlainView("providers")}
+              />
+            ) : activeView === "mcp" ? (
+              <McpToolsPage
+                servers={mcpServers}
+                tools={mcpTools}
+                isLoading={mcpLoading}
+                busyServerId={mcpBusyServerId}
+                busyAction={mcpBusyAction}
+                errorMessage={errorMessage}
+                cwd={form.cwd}
+                onRefresh={() => void refreshMcp()}
+                onCreate={addMcpServer}
+                onUpdate={saveMcpServer}
+                onDelete={(serverId) => void removeMcpServer(serverId)}
+                onCheck={runMcpServerCheck}
+                onSyncTools={syncMcpTools}
               />
             ) : activeView === "runs" ? (
               <RunHistory

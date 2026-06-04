@@ -1874,6 +1874,113 @@ export interface ProviderMutationRequest {
   readonly enabled?: boolean;
 }
 
+export type McpServerTransportType = "stdio" | "streamable-http";
+
+export interface McpStdioTransport {
+  readonly type: "stdio";
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: Record<string, string>;
+  readonly cwd?: string;
+  readonly secretEnvNames: readonly string[];
+}
+
+export interface McpStreamableHttpTransport {
+  readonly type: "streamable-http";
+  readonly url: string;
+  readonly bearerTokenEnvVar?: string;
+  readonly headers: Record<string, string>;
+  readonly envHeaders: Record<string, string>;
+  readonly secretHeaderNames: readonly string[];
+  readonly oauthClientId?: string;
+  readonly oauthResource?: string;
+}
+
+export type McpServerTransport = McpStdioTransport | McpStreamableHttpTransport;
+export type McpServerStatusKind = "unknown" | "checking" | "ready" | "failed" | "disabled";
+
+export interface McpServerStatus {
+  readonly kind: McpServerStatusKind;
+  readonly message?: string;
+  readonly checkedAt?: string;
+}
+
+export interface McpServer {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly displayName: string;
+  readonly transport: McpServerTransport;
+  readonly enabled: boolean;
+  readonly required: boolean;
+  readonly status: McpServerStatus;
+  readonly startupTimeoutSec?: number;
+  readonly toolTimeoutSec?: number;
+  readonly enabledTools?: readonly string[];
+  readonly disabledTools: readonly string[];
+  readonly secretConfigured: Readonly<Record<string, boolean>>;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type McpToolSideEffectLevel = "none" | "read" | "write" | "write-network" | "external" | "credential" | "deploy";
+export type McpToolDefaultApproval = "allow" | "ask" | "deny";
+
+export interface McpTool {
+  readonly serverId: string;
+  readonly rawName: string;
+  readonly displayName: string;
+  readonly description?: string;
+  readonly inputSchema: unknown;
+  readonly callableNamespace: string;
+  readonly callableName: string;
+  readonly sideEffectLevel: McpToolSideEffectLevel;
+  readonly defaultApproval: McpToolDefaultApproval;
+  readonly enabled: boolean;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+  readonly updatedAt: string;
+}
+
+export interface McpServerListResponse {
+  readonly cwd: string;
+  readonly servers: readonly McpServer[];
+}
+
+export interface McpServerMutationRequest {
+  readonly id?: string;
+  readonly displayName?: string;
+  readonly transport?: McpServerTransport;
+  readonly enabled?: boolean;
+  readonly required?: boolean;
+  readonly startupTimeoutSec?: number | null;
+  readonly toolTimeoutSec?: number | null;
+  readonly enabledTools?: readonly string[] | null;
+  readonly disabledTools?: readonly string[];
+  readonly secrets?: Record<string, string>;
+  readonly clearSecretNames?: readonly string[];
+}
+
+export interface McpServerMutationResponse {
+  readonly server: McpServer;
+}
+
+export interface McpServerSecretResponse {
+  readonly serverId: string;
+  readonly secretName: string;
+  readonly secretValue: string;
+  readonly configured: boolean;
+}
+
+export interface McpToolListResponse {
+  readonly cwd: string;
+  readonly tools: readonly McpTool[];
+}
+
+export interface McpServerToolSyncResponse {
+  readonly server: McpServer;
+  readonly tools: readonly McpTool[];
+}
+
 export type ApprovalActionType =
   | "write"
   | "edit"
@@ -1884,7 +1991,8 @@ export type ApprovalActionType =
   | "deploy"
   | "media_cost"
   | "credential_change"
-  | "provider_change";
+  | "provider_change"
+  | "mcp_tool_call";
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 
@@ -2083,6 +2191,35 @@ export interface TeammateSkillBindingListResponse {
   readonly cwd: string;
   readonly teammateId: string;
   readonly bindings: readonly TeammateSkillBinding[];
+}
+
+export type TeammateMcpBindingMode = "selected" | "all_current_tools";
+
+export interface TeammateMcpBinding {
+  readonly teammateId: string;
+  readonly serverId: string;
+  readonly mode: TeammateMcpBindingMode;
+  readonly selectedToolNames: readonly string[];
+  readonly approvalOverrides: Readonly<Record<string, McpToolDefaultApproval>>;
+  readonly enabled: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ReplaceTeammateMcpBindingsRequest {
+  readonly bindings: readonly {
+    readonly serverId: string;
+    readonly mode: TeammateMcpBindingMode;
+    readonly selectedToolNames?: readonly string[];
+    readonly approvalOverrides?: Readonly<Record<string, McpToolDefaultApproval>>;
+    readonly enabled?: boolean;
+  }[];
+}
+
+export interface TeammateMcpBindingListResponse {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly bindings: readonly TeammateMcpBinding[];
 }
 
 export type TeammateMemoryScopeKind = "channel-brief" | "channel-decisions" | "private-chat-summary" | "private-notes";
