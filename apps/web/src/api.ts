@@ -110,6 +110,11 @@ import type {
   RunSession,
   SecretPurpose,
   SecretStatusResponse,
+  SkillImportDraftRequest,
+  SkillImportDraftResponse,
+  SkillImportPublishResponse,
+  SkillRegistryListResponse,
+  SkillRegistryMutationResponse,
   SkillApprovalProfile,
   StateEntityType,
   StateTransitionListResponse,
@@ -159,6 +164,22 @@ const daemonClient = new LingDaemonClient({ baseUrl: daemonBaseUrl });
 
 export async function getDaemonHealth(): Promise<DaemonHealthResponse> {
   return daemonClient.getHealth();
+}
+
+export async function listSkills(cwd: string): Promise<SkillRegistryListResponse> {
+  return daemonClient.listSkills(cwd);
+}
+
+export async function createSkillImportDraft(cwd: string, input: SkillImportDraftRequest): Promise<SkillImportDraftResponse> {
+  return daemonClient.createSkillImportDraft(cwd, input);
+}
+
+export async function publishSkillImportDraft(cwd: string, draftId: string): Promise<SkillImportPublishResponse> {
+  return daemonClient.publishSkillImportDraft(cwd, draftId);
+}
+
+export async function archiveSkill(cwd: string, skillId: string): Promise<SkillRegistryMutationResponse> {
+  return daemonClient.archiveSkill(cwd, skillId);
 }
 
 export async function getRun(runId: string, cwd?: string): Promise<RunSession> {
@@ -594,6 +615,7 @@ export async function createTask(cwd: string, channelId: string, form: TaskFormS
     title: form.title,
     prompt: form.prompt,
     assigneeTeammateId: form.assigneeTeammateId,
+    requestedSkillId: form.requestedSkillId,
   });
 }
 

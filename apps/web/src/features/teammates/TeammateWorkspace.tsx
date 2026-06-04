@@ -26,12 +26,16 @@ import {
 } from "lucide-react";
 import type { SkillPack } from "@ling-stack/core/skill-types";
 import {
+  archiveSkill,
   attachmentContentUrl,
   attachmentContentUrlById,
+  createSkillImportDraft,
   createTask,
+  createTeammatePersonaDraft,
   deleteAttachment,
   deleteTeammateAvatar,
   listMemoryObjects,
+  listSkills,
   listTeammateActivity,
   listTeammateChannels,
   listTeammateDirectMessages,
@@ -43,6 +47,7 @@ import {
   listTeammateMemoryScopes,
   listTeammateSkills,
   listTeammateTasks,
+  publishSkillImportDraft,
   replaceTeammateChannels,
   replaceTeammateMcpBindings,
   replaceTeammateSkills,
@@ -69,7 +74,11 @@ import type {
   McpServer,
   McpTool,
   ProviderPreset,
+  SkillImportDraft,
+  SkillPackSource,
+  SkillRegistryEntry,
   Task,
+  TeammatePersonaDraft,
   TeammateActivityItem,
   TeammateChannelMembership,
   TeammateDirectMessage,
@@ -103,8 +112,21 @@ interface TeammateSettingsForm {
 
 interface TeammateTaskCreateForm {
   readonly channelId: string;
+  readonly requestedSkillId: string;
   readonly title: string;
   readonly prompt: string;
+}
+
+interface SkillImportForm {
+  readonly name: string;
+  readonly sourcePath: string;
+  readonly source: SkillPackSource;
+  readonly content: string;
+}
+
+interface PersonaImportForm {
+  readonly sourcePath: string;
+  readonly content: string;
 }
 
 type MaybePromise<T> = T | Promise<T>;
@@ -143,6 +165,7 @@ export function TeammateWorkspace({
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
   const [pendingAttachmentIds, setPendingAttachmentIds] = useState<readonly string[]>([]);
   const [memberships, setMemberships] = useState<readonly TeammateChannelMembership[]>([]);
+  const [skillRegistryEntries, setSkillRegistryEntries] = useState<readonly SkillRegistryEntry[]>([]);
   const [skillBindings, setSkillBindings] = useState<readonly TeammateSkillBinding[]>([]);
   const [effectiveSkills, setEffectiveSkills] = useState<readonly EffectiveTeammateSkill[]>([]);
   const [mcpServers, setMcpServers] = useState<readonly McpServer[]>([]);
@@ -155,7 +178,13 @@ export function TeammateWorkspace({
   const [activityItems, setActivityItems] = useState<readonly TeammateActivityItem[]>([]);
   const [messageDraft, setMessageDraft] = useState("");
   const [manualSkillInput, setManualSkillInput] = useState("");
-  const [taskForm, setTaskForm] = useState<TeammateTaskCreateForm>({ channelId: "", title: "", prompt: "" });
+  const [taskForm, setTaskForm] = useState<TeammateTaskCreateForm>({ channelId: "", requestedSkillId: "", title: "", prompt: "" });
+  const [skillImportForm, setSkillImportForm] = useState<SkillImportForm>({ name: "", sourcePath: "", source: "custom", content: "" });
+  const [skillImportDraft, setSkillImportDraft] = useState<SkillImportDraft | undefined>();
+  const [importingSkill, setImportingSkill] = useState(false);
+  const [personaImportForm, setPersonaImportForm] = useState<PersonaImportForm>({ sourcePath: "", content: "" });
+  const [personaDraft, setPersonaDraft] = useState<TeammatePersonaDraft | undefined>();
+  const [importingPersona, setImportingPersona] = useState(false);
   const [settingsForm, setSettingsForm] = useState<TeammateSettingsForm>(() => teammateToSettingsForm(teammate));
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -178,7 +207,14 @@ export function TeammateWorkspace({
   const [mcpToolFilterByServerId, setMcpToolFilterByServerId] = useState<Readonly<Record<string, McpToolFilter>>>({});
   const [workspaceError, setWorkspaceError] = useState("");
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
-  const skillById = useMemo(() => new Map((skillPack?.skills ?? []).map((skill) => [skill.id, skill])), [skillPack]);
+  const skillDefinitions = useMemo(() => {
+    if (skillRegistryEntries.length > 0) {
+      return skillRegistryEntries.map((entry) => entry.definition);
+    }
+    return skillPack?.skills ?? [];
+  }, [skillPack, skillRegistryEntries]);
+  const skillById = useMemo(() => new Map(skillDefinitions.map((skill) => [skill.id, skill])), [skillDefinitions]);
+  const registryEntryBySkillId = useMemo(() => new Map(skillRegistryEntries.map((entry) => [entry.id, entry])), [skillRegistryEntries]);
   const bindingBySkillId = useMemo(() => new Map(skillBindings.map((binding) => [binding.skillId, binding])), [skillBindings]);
   const effectiveSkillById = useMemo(() => new Map(effectiveSkills.map((skill) => [skill.skillId, skill])), [effectiveSkills]);
   const memoryById = useMemo(() => new Map(memoryObjects.map((memory) => [memory.id, memory])), [memoryObjects]);
@@ -186,7 +222,7 @@ export function TeammateWorkspace({
   const pendingAttachments = useMemo(() => pendingAttachmentIds.map((id) => privateAttachmentById.get(id)).filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment)), [pendingAttachmentIds, privateAttachmentById]);
   const enabledSkillCount = useMemo(() => skillBindings.filter((binding) => binding.enabled).length, [skillBindings]);
   const skillRows = useMemo(() => {
-    const builtInRows = (skillPack?.skills ?? []).map((skill) => ({
+    const registryRows = skillDefinitions.map((skill) => ({
       id: skill.id,
       skill,
       binding: bindingBySkillId.get(skill.id),
@@ -200,8 +236,9 @@ export function TeammateWorkspace({
         binding,
         effectiveSkill: effectiveSkillById.get(binding.skillId),
       }));
-    return [...builtInRows, ...unknownRows];
-  }, [bindingBySkillId, effectiveSkillById, skillBindings, skillById, skillPack]);
+    return [...registryRows, ...unknownRows];
+  }, [bindingBySkillId, effectiveSkillById, skillBindings, skillById, skillDefinitions]);
+  const executableSkillOptions = useMemo(() => effectiveSkills.filter((skill) => skill.executable), [effectiveSkills]);
   const channelsById = useMemo(() => new Map(channels.map((channel) => [channel.id, channel])), [channels]);
   const membershipByChannelId = useMemo(() => new Map(memberships.map((membership) => [membership.channelId, membership])), [memberships]);
   const mcpToolsByServerId = useMemo(() => {
@@ -257,7 +294,11 @@ export function TeammateWorkspace({
     setManualSkillInput("");
     setPendingAttachmentIds([]);
     setHardDeleteReason("");
-    setTaskForm({ channelId: "", title: "", prompt: "" });
+    setTaskForm({ channelId: "", requestedSkillId: "", title: "", prompt: "" });
+    setSkillImportForm({ name: "", sourcePath: "", source: "custom", content: "" });
+    setSkillImportDraft(undefined);
+    setPersonaImportForm({ sourcePath: "", content: "" });
+    setPersonaDraft(undefined);
   }, [teammate.id]);
 
   useEffect(() => {
@@ -283,6 +324,7 @@ export function TeammateWorkspace({
       const [
         directResponse,
         privateAttachmentsResponse,
+        skillRegistryResponse,
         channelResponse,
         skillResponse,
         mcpServersResponse,
@@ -296,6 +338,7 @@ export function TeammateWorkspace({
       ] = await Promise.all([
         listTeammateDirectMessages(workspaceCwd, teammate.id),
         listTeammatePrivateAttachments(workspaceCwd, teammate.id),
+        listSkills(workspaceCwd),
         listTeammateChannels(workspaceCwd, teammate.id),
         listTeammateSkills(workspaceCwd, teammate.id),
         listMcpServers(workspaceCwd),
@@ -310,6 +353,7 @@ export function TeammateWorkspace({
       setThread(directResponse.thread);
       setMessages(directResponse.messages);
       setPrivateAttachments(privateAttachmentsResponse.attachments);
+      setSkillRegistryEntries(skillRegistryResponse.skills);
       setMemberships(channelResponse.memberships);
       setSkillBindings(skillResponse.bindings);
       setEffectiveSkills(skillResponse.effectiveSkills ?? []);
@@ -488,10 +532,12 @@ export function TeammateWorkspace({
       setWorkspaceError("");
       setTaskMessage("");
       const title = (input.title ?? taskForm.title).trim() || titleFromPrompt(prompt);
+      const requestedSkillId = input.requestedSkillId ?? taskForm.requestedSkillId;
       const response = await createTask(cwd.trim(), channelId, {
         title,
         prompt,
         assigneeTeammateId: teammate.id,
+        requestedSkillId: requestedSkillId || undefined,
       });
       setTasks((current) => [response.task, ...current.filter((task) => task.id !== response.task.id)]);
       setTaskForm((current) => ({ ...current, title: "", prompt: "", channelId }));
@@ -570,6 +616,57 @@ export function TeammateWorkspace({
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function previewPersonaImport(): Promise<void> {
+    if (!personaImportForm.content.trim() || importingPersona) {
+      setSaveMessage(t("Paste persona content first"));
+      return;
+    }
+    setImportingPersona(true);
+    try {
+      setWorkspaceError("");
+      setSaveMessage("");
+      const response = await createTeammatePersonaDraft(cwd.trim(), teammate.id, {
+        content: personaImportForm.content,
+        sourcePath: personaImportForm.sourcePath.trim() || undefined,
+      });
+      setPersonaDraft(response.draft);
+      setSaveMessage(t("Draft ready"));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setImportingPersona(false);
+    }
+  }
+
+  async function applyPersonaDraft(): Promise<void> {
+    if (!personaDraft || importingPersona) {
+      return;
+    }
+    setImportingPersona(true);
+    try {
+      setWorkspaceError("");
+      await onUpdateTeammate(teammate.id, {
+        displayName: personaDraft.displayName.trim() || teammate.displayName,
+        description: personaDraft.description.trim(),
+        systemPrompt: personaDraft.systemPrompt.trim() || null,
+        appendSystemPrompt: personaDraft.appendSystemPrompt,
+      });
+      setSettingsForm((current) => ({
+        ...current,
+        displayName: personaDraft.displayName.trim() || current.displayName,
+        description: personaDraft.description.trim(),
+        systemPrompt: personaDraft.systemPrompt.trim(),
+      }));
+      setPersonaDraft(undefined);
+      setPersonaImportForm({ sourcePath: "", content: "" });
+      setSaveMessage(t("Saved"));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setImportingPersona(false);
     }
   }
 
@@ -652,6 +749,71 @@ export function TeammateWorkspace({
       .filter((item) => item.skillId !== skillId)
       .map((item) => ({ skillId: item.skillId, source: item.source, enabled: item.enabled }));
     await saveSkillBindings(nextBindings, t("Skill deleted"));
+  }
+
+  async function previewSkillImport(): Promise<void> {
+    if (!skillImportForm.content.trim() || importingSkill) {
+      setSkillMessage(t("Paste skill content first"));
+      return;
+    }
+    setImportingSkill(true);
+    try {
+      setWorkspaceError("");
+      setSkillMessage("");
+      const response = await createSkillImportDraft(cwd.trim(), {
+        content: skillImportForm.content,
+        source: skillImportForm.source,
+        sourcePath: skillImportForm.sourcePath.trim() || undefined,
+        name: skillImportForm.name.trim() || undefined,
+      });
+      setSkillImportDraft(response.draft);
+      setSkillMessage(t("Draft ready"));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setImportingSkill(false);
+    }
+  }
+
+  async function publishSkillDraft(): Promise<void> {
+    if (!skillImportDraft || importingSkill) {
+      return;
+    }
+    setImportingSkill(true);
+    try {
+      setWorkspaceError("");
+      const response = await publishSkillImportDraft(cwd.trim(), skillImportDraft.id);
+      const registryResponse = await listSkills(cwd.trim());
+      const skillResponse = await listTeammateSkills(cwd.trim(), teammate.id);
+      setSkillRegistryEntries(registryResponse.skills);
+      setSkillBindings(skillResponse.bindings);
+      setEffectiveSkills(skillResponse.effectiveSkills ?? []);
+      setSkillImportDraft(undefined);
+      setSkillImportForm({ name: "", sourcePath: "", source: "custom", content: "" });
+      setSkillMessage(t("Published {count} skills", { count: response.skills.length }));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setImportingSkill(false);
+    }
+  }
+
+  async function archiveCustomSkill(skillId: string): Promise<void> {
+    if (savingSkills) {
+      return;
+    }
+    setSavingSkills(true);
+    try {
+      setWorkspaceError("");
+      await archiveSkill(cwd.trim(), skillId);
+      const registryResponse = await listSkills(cwd.trim());
+      setSkillRegistryEntries(registryResponse.skills);
+      setSkillMessage(t("Skill archived"));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingSkills(false);
+    }
   }
 
   function toggleMcpTool(serverId: string, toolName: string): void {
@@ -942,6 +1104,20 @@ export function TeammateWorkspace({
                 <span>{t("Task title")}</span>
                 <input value={taskForm.title} onChange={(event) => setTaskForm({ ...taskForm, title: event.target.value })} />
               </label>
+              <label className="field">
+                <span>{t("Requested skill")}</span>
+                <select
+                  value={taskForm.requestedSkillId}
+                  onChange={(event) => setTaskForm({ ...taskForm, requestedSkillId: event.target.value })}
+                >
+                  <option value="">{t("None")}</option>
+                  {executableSkillOptions.map((skill) => (
+                    <option key={skill.skillId} value={skill.skillId}>
+                      {t(skill.skill.name)}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="field wide">
                 <span>{t("Task prompt")}</span>
                 <textarea rows={5} value={taskForm.prompt} onChange={(event) => setTaskForm({ ...taskForm, prompt: event.target.value })} />
@@ -949,6 +1125,7 @@ export function TeammateWorkspace({
             </div>
             <div className="teammate-task-create-footer">
               <span className="phase-token implement">{t("Assigned to {name}", { name: teammate.displayName })}</span>
+              {taskForm.requestedSkillId ? <span className="phase-token plan">{t("Skill {skill}", { skill: taskForm.requestedSkillId })}</span> : null}
               <button className="primary-button" type="button" onClick={() => void createAssignedTask()} disabled={creatingTask || !taskForm.prompt.trim() || taskChannelOptions.length === 0}>
                 {creatingTask ? <Loader2 className="spin" size={15} /> : <Plus size={15} />}
                 {t("Create task")}
@@ -1047,7 +1224,7 @@ export function TeammateWorkspace({
           </div>
           <div className="teammate-skill-add-row">
             <label className="field">
-              <span>{t("Manual skill")}</span>
+              <span>{t("Bind registry skill")}</span>
               <input
                 value={manualSkillInput}
                 onChange={(event) => setManualSkillInput(event.target.value)}
@@ -1057,13 +1234,71 @@ export function TeammateWorkspace({
                     void addManualSkillBinding();
                   }
                 }}
-                placeholder={t("URL, repo/name, or skill id")}
+                placeholder={t("Skill id")}
               />
             </label>
             <button className="secondary-button" type="button" onClick={() => void addManualSkillBinding()} disabled={savingSkills}>
               <Plus size={15} />
-              {t("Add custom skill")}
+              {t("Bind skill")}
             </button>
+          </div>
+          <div className="teammate-import-panel">
+            <div className="panel-title split">
+              <span>
+                <Upload size={15} />
+                <h3>{t("Import skill draft")}</h3>
+              </span>
+              {skillImportDraft ? <small>{t("{count} parsed", { count: skillImportDraft.definitions.length })}</small> : null}
+            </div>
+            <div className="teammate-task-create-grid">
+              <label className="field">
+                <span>{t("Source")}</span>
+                <select value={skillImportForm.source} onChange={(event) => setSkillImportForm({ ...skillImportForm, source: event.target.value as SkillPackSource })}>
+                  <option value="custom">{t("custom")}</option>
+                  <option value="skill-directory">{t("skill-directory")}</option>
+                  <option value="agents-md">{t("agents-md")}</option>
+                  <option value="workspace">{t("workspace")}</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>{t("Draft name")}</span>
+                <input value={skillImportForm.name} onChange={(event) => setSkillImportForm({ ...skillImportForm, name: event.target.value })} />
+              </label>
+              <label className="field">
+                <span>{t("Source path")}</span>
+                <input value={skillImportForm.sourcePath} onChange={(event) => setSkillImportForm({ ...skillImportForm, sourcePath: event.target.value })} placeholder="SKILL.md" />
+              </label>
+              <label className="field wide">
+                <span>{t("Skill content")}</span>
+                <textarea rows={5} value={skillImportForm.content} onChange={(event) => setSkillImportForm({ ...skillImportForm, content: event.target.value })} />
+              </label>
+            </div>
+            {skillImportDraft ? (
+              <div className="teammate-import-preview">
+                {skillImportDraft.definitions.map((item) => (
+                  <article key={item.definition.id} className="teammate-data-row">
+                    <span>
+                      <strong>{item.definition.name}</strong>
+                      <small>{item.definition.id} · {item.definition.summary}</small>
+                    </span>
+                    <StatusBadge status={item.warnings?.some((warning) => warning.severity === "error") ? "blocked" : "draft"} />
+                  </article>
+                ))}
+                {[...skillImportDraft.warnings, ...skillImportDraft.definitions.flatMap((item) => item.warnings ?? [])].map((warning, index) => (
+                  <small key={`${warning.code}-${index}`} className={`teammate-warning ${warning.severity}`}>{t(warning.code)}: {warning.message}</small>
+                ))}
+              </div>
+            ) : null}
+            <div className="teammate-settings-actions">
+              <button className="secondary-button" type="button" onClick={() => void previewSkillImport()} disabled={importingSkill || !skillImportForm.content.trim()}>
+                {importingSkill ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
+                {t("Preview draft")}
+              </button>
+              <button className="primary-button" type="button" onClick={() => void publishSkillDraft()} disabled={importingSkill || !skillImportDraft || skillImportDraft.warnings.some((warning) => warning.severity === "error") || skillImportDraft.definitions.some((item) => item.warnings?.some((warning) => warning.severity === "error"))}>
+                <CheckCircle2 size={15} />
+                {t("Publish to registry")}
+              </button>
+            </div>
           </div>
           {skillRows.length === 0 ? (
             <div className="client-empty-state teammate-empty">
@@ -1078,8 +1313,11 @@ export function TeammateWorkspace({
                   ? binding.source === "template"
                     ? t("Default skill")
                     : t("User skill")
-                  : t("Available skill");
+                  : registryEntryBySkillId.get(id)?.source === "builtin"
+                    ? t("Available skill")
+                    : t("Registry skill");
                 const canDelete = binding?.source === "user";
+                const canArchive = !binding && registryEntryBySkillId.has(id) && registryEntryBySkillId.get(id)?.source !== "builtin";
                 const executable = effectiveSkill?.executable ?? false;
                 const blockedLabel = effectiveSkill?.blockedReasons.map((reason) => t(reason.code)).join(", ");
                 return (
@@ -1100,6 +1338,12 @@ export function TeammateWorkspace({
                         <button className="secondary-button danger compact-button" type="button" onClick={() => void deleteUserSkillBinding(id)} disabled={savingSkills}>
                           <Trash2 size={14} />
                           {t("Delete skill")}
+                        </button>
+                      ) : null}
+                      {canArchive ? (
+                        <button className="secondary-button danger compact-button" type="button" onClick={() => void archiveCustomSkill(id)} disabled={savingSkills}>
+                          <Trash2 size={14} />
+                          {t("Archive skill")}
                         </button>
                       ) : null}
                     </div>
@@ -1179,6 +1423,49 @@ export function TeammateWorkspace({
               <button className="secondary-button compact-button" type="button" onClick={() => void removeAvatar()} disabled={uploadingAvatar || !teammate.avatarImageAttachmentId}>
                 <Image size={14} />
                 {t("Remove avatar")}
+              </button>
+            </div>
+          </section>
+          <section className="teammate-import-panel" aria-label={t("Persona import")}>
+            <div className="panel-title split">
+              <span>
+                <Upload size={15} />
+                <h3>{t("Persona import")}</h3>
+              </span>
+              {personaDraft ? <small>{t("Draft ready")}</small> : null}
+            </div>
+            <div className="teammate-task-create-grid">
+              <label className="field">
+                <span>{t("Source path")}</span>
+                <input value={personaImportForm.sourcePath} onChange={(event) => setPersonaImportForm({ ...personaImportForm, sourcePath: event.target.value })} placeholder="AGENTS.md" />
+              </label>
+              <label className="field wide">
+                <span>{t("Persona content")}</span>
+                <textarea rows={5} value={personaImportForm.content} onChange={(event) => setPersonaImportForm({ ...personaImportForm, content: event.target.value })} />
+              </label>
+            </div>
+            {personaDraft ? (
+              <div className="teammate-import-preview">
+                <article className="teammate-data-row">
+                  <span>
+                    <strong>{personaDraft.displayName}</strong>
+                    <small>{personaDraft.description}</small>
+                  </span>
+                  <StatusBadge status={personaDraft.sourceKind} />
+                </article>
+                {personaDraft.warnings.map((warning, index) => (
+                  <small key={`${warning}-${index}`} className="teammate-warning warning">{warning}</small>
+                ))}
+              </div>
+            ) : null}
+            <div className="teammate-settings-actions">
+              <button className="secondary-button" type="button" onClick={() => void previewPersonaImport()} disabled={importingPersona || !personaImportForm.content.trim()}>
+                {importingPersona ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
+                {t("Preview draft")}
+              </button>
+              <button className="primary-button" type="button" onClick={() => void applyPersonaDraft()} disabled={importingPersona || !personaDraft}>
+                <CheckCircle2 size={15} />
+                {t("Apply persona draft")}
               </button>
             </div>
           </section>

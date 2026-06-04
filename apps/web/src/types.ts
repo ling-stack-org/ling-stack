@@ -93,6 +93,7 @@ export interface TaskFormState {
   readonly title: string;
   readonly prompt: string;
   readonly assigneeTeammateId?: string;
+  readonly requestedSkillId?: string;
 }
 
 export interface TaskRunActionState {

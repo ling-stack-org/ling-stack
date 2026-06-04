@@ -209,6 +209,51 @@ test("effective teammate skills expose blocked reasons", async () => {
   }
 });
 
+test("sqlite persists skill import drafts and publishes custom registry skills", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-registry-"));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-06-04T02:30:00.000Z";
+  try {
+    const draft = store.createSkillImportDraft(
+      {
+        source: "custom",
+        name: "Workspace QA Pack",
+        description: "Custom QA workflow pack.",
+        definitions: [{
+          definition: {
+            id: "custom-qa-check",
+            name: "Custom QA Check",
+            summary: "Run a custom QA pass.",
+            roleAffinity: ["qa"],
+            workflowPhase: "test",
+            promptFragments: ["Verify the selected flow and report failures first."],
+            requiredTools: ["read", "grep", "find", "ls"],
+            requiredProviderCapabilities: ["chat", "reasoning"],
+            approvalProfile: { mode: "none" },
+            stateEffects: ["creates_artifact"],
+          },
+        }],
+      },
+      now,
+    );
+    assert.equal(store.getSkillImportDraft(draft.id).definitions[0].definition.id, "custom-qa-check");
+
+    const published = store.publishSkillImportDraft(draft.id, "2026-06-04T02:31:00.000Z");
+    assert.equal(published.length, 1);
+    assert.equal(published[0].id, "custom-qa-check");
+    assert.equal(published[0].reviewStatus, "published");
+    assert.equal(store.listSkillRegistryEntries().some((entry) => entry.id === "custom-qa-check"), true);
+
+    const archived = store.archiveSkillRegistryEntry("custom-qa-check", "2026-06-04T02:32:00.000Z");
+    assert.equal(archived.reviewStatus, "archived");
+    assert.equal(store.listSkillRegistryEntries().some((entry) => entry.id === "custom-qa-check"), false);
+    assert.equal(store.listSkillRegistryEntries({ includeArchived: true }).some((entry) => entry.id === "custom-qa-check"), true);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite persists AI teammate direct thread, messages, channel memberships, and memory scopes", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-private-"));
   const store = createSqliteRunStore(cwd);

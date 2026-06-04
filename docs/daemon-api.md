@@ -301,6 +301,75 @@ Response:
 The tombstone intentionally omits message text, prompt text, persona text, snippets,
 file names, and attachment content.
 
+## Skill Registry
+
+The skill registry lists built-in and workspace custom skill definitions. Skill
+definitions are workflow templates; teammate bindings and Effective Skill checks still
+decide whether a skill can run.
+
+```http
+GET /skills?cwd=/path/to/project
+POST /skills/import-draft?cwd=/path/to/project
+GET /skills/import-drafts/:id?cwd=/path/to/project
+POST /skills/import-drafts/:id/publish?cwd=/path/to/project
+DELETE /skills/:id?cwd=/path/to/project
+```
+
+`GET /skills` returns built-in definitions projected from `gstack-default` plus published
+workspace registry definitions. Built-in definitions are not duplicated into SQLite.
+
+`POST /skills/import-draft` accepts Ling-native JSON or markdown/`SKILL.md` content and
+returns a reviewed draft. Draft creation does not bind the skill to any teammate and does
+not grant tools, approvals, provider capabilities, secrets, memory access, or
+external-send permission.
+
+```json
+{
+  "source": "skill-directory",
+  "sourcePath": "SKILL.md",
+  "content": "---\nname: Custom QA Review\ndescription: Run a focused QA pass.\n---\n\nReport failures first."
+}
+```
+
+Draft response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "draft": {
+    "id": "skill_draft_...",
+    "source": "skill-directory",
+    "definitions": [
+      {
+        "definition": {
+          "id": "custom-qa-review",
+          "name": "Custom QA Review",
+          "workflowPhase": "operate",
+          "requiredTools": ["read", "grep", "find", "ls"],
+          "requiredProviderCapabilities": ["chat", "reasoning"],
+          "approvalProfile": { "mode": "none" }
+        },
+        "warnings": []
+      }
+    ],
+    "warnings": []
+  }
+}
+```
+
+Publishing a draft writes registry definitions and still does not bind them:
+
+```http
+POST /skills/import-drafts/skill_draft_.../publish?cwd=/path/to/project
+```
+
+New teammate bindings must reference a built-in or published registry skill. Existing
+unknown durable bindings can be preserved for legacy visibility, but new unknown binding
+ids are rejected.
+
+`DELETE /skills/:id` archives a custom/imported registry skill. Built-in skills are
+projected from code and cannot be deleted through this endpoint.
+
 ### Channel Memberships
 
 ```http
@@ -332,7 +401,8 @@ state-machine gates. Disabled bindings are retained as user overrides, so a temp
 can be turned off without deleting the skill definition from the workspace library.
 Template-default bindings are protected by storage: omitting them from a replacement
 request does not delete them. Manually added `source: "user"` bindings can be deleted by
-omitting them from the replacement set.
+omitting them from the replacement set. The `GET` response includes `effectiveSkills`
+when the daemon can compute current executability.
 
 ```json
 {

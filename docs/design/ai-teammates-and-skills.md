@@ -14,6 +14,8 @@ Tools are atomic capabilities such as `read`, `grep`, `bash`, `edit`, and `write
 
 This design sits under the broader [Ling Framework](ling-framework.md). Memory-specific
 behavior for teammates is covered by [Ling Memory v1](ling-memory-v1.md).
+The concrete import, persona draft, Effective Skill UI, and skill-aware run implementation
+slice is covered by [Ling Skill Import v1](ling-skill-import-v1.md).
 
 ## Model
 
@@ -190,9 +192,11 @@ The page should behave like a client management view:
 This page must not imply more than the implemented persistence. Durable teammate
 instances, channel memberships, skill bindings, memory-scope metadata, and private
 threads exist. The private workspace can edit channel memberships and bind or disable
-built-in skills for a teammate. Custom skill-pack import, automatic memory recall,
-private attachments, avatar uploads, and full memory editing inside the teammate
-workspace are follow-up slices.
+built-in or custom skills for a teammate. Custom skill import drafts, publish-to-registry,
+persona import UI, teammate workspace `requestedSkillId` task creation, and Effective
+Skill blocked-reason display exist. Optional vector retrieval provider installation,
+global skill-aware task controls, and full memory editing inside the teammate workspace
+are follow-up slices.
 
 The durable persistence and private conversation implementation record is captured in
 [Helio-Inspired AI Teammate Private Workspace](ai-teammate-private-workspace.md).
@@ -268,13 +272,13 @@ filtered context, and approval profile.
 
 ### Implementation Plan
 
-Phase 1 is now the private workspace binding editor: use existing
+Phase 1 is now implemented as the private workspace binding editor: use existing
 `teammate_skill_bindings`, show the built-in library, bind or disable skills per teammate,
 manually add custom `source: "user"` skill ids, delete manually added bindings, and persist
 through `PUT /teammates/:id/skills`. Template-default `source: "template"` bindings are
 protected by the store and cannot be deleted; users can only disable them.
 
-Phase 2 should add an Effective Skills read model:
+Phase 2 is implemented as the Effective Skills read model:
 
 ```ts
 interface EffectiveTeammateSkill {
@@ -291,14 +295,20 @@ interface EffectiveTeammateSkill {
 }
 ```
 
-Phase 3 should add skill-aware task and workflow starts. A task may include
+Phase 3 is implemented at the daemon/runtime layer for skill-aware task and workflow
+starts. A task may include
 `requestedSkillId`; the runner resolves the teammate, validates effective capability,
-and records the selected skill on the run.
+merges skill prompt fragments, required tools, and approval profile, then records the
+selected skill on the run.
 
-Phase 4 should persist custom skill definitions and importers. The first supported
-formats should be Ling-native JSON plus reviewed `AGENTS.md`/skill-directory imports.
-The importer must produce draft definitions, parse warnings, required tool previews, and
-approval previews before any teammate can bind them.
+Phase 4 is implemented as Ling Skill Import v1. It persists custom skill definitions and
+import drafts, then upgrades the private workspace UI around the existing runtime
+foundation. The supported v1 inputs are Ling-native JSON plus reviewed markdown/`SKILL.md`
+imports; `AGENTS.md`/`AGENT.md`/`persona.md` enter as teammate persona drafts. The importer
+produces drafts, parse warnings, required tool previews, provider capability previews, and
+approval previews before any teammate can bind or run imported definitions. PATCH-style
+draft editing and deeper custom skill editing remain follow-ups. See
+[Ling Skill Import v1](ling-skill-import-v1.md).
 
 ### Failure Modes To Avoid
 

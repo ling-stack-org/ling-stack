@@ -46,18 +46,25 @@ Implemented in this slice:
   Memory, and Settings tabs,
 - streaming private replies over SSE with durable pending AI message updates,
 - private teammate attachments and profile avatar uploads,
-- hard delete for teammate private data with minimal retention tombstones.
+- hard delete for teammate private data with minimal retention tombstones,
+- skill registry import drafts, publish-to-registry, bind, disable, archive, and
+  Effective Skill blocked-reason controls inside the Skills tab,
+- persona import draft preview and apply controls inside Settings,
+- teammate workspace task creation with `requestedSkillId`.
 
 Still deferred:
 
-- skill and memory editing controls inside the private workspace tabs,
+- broader skill editing beyond the import draft/publish/archive flow,
+- skill-aware task/run controls outside the teammate private workspace,
+- memory editing controls inside the private workspace tabs,
 - optional vector retrieval provider installation and hidden ingestion,
 - multi-party direct messages,
 - broad browser e2e coverage beyond the focused durable workspace flows.
 
 The broader platform direction lives in [Ling Framework](ling-framework.md). The target
 memory design for private, channel, shared, and task/run recall lives in
-[Ling Memory v1](ling-memory-v1.md).
+[Ling Memory v1](ling-memory-v1.md). The target skill import, persona draft, Effective
+Skill, and skill-aware run model lives in [Ling Skill Import v1](ling-skill-import-v1.md).
 
 ## Product Principles
 
@@ -196,12 +203,17 @@ teammate belongs to that channel.
 
 ### Skills Tab
 
-Purpose: inspect and edit teammate skill bindings.
+Purpose: inspect teammate skill bindings, import reviewed skills, and explain whether a
+skill is executable for this teammate.
 
 Behavior:
 
-- lists the built-in skill library and any unknown durable bindings,
+- lists the built-in skill library, workspace custom skills, imported skill drafts, and
+  any unknown durable bindings,
 - shows workflow phase, required tools, provider capabilities, and approval profile,
+- shows binding source, binding state, executable state, and blocked reasons,
+- lets the user import a skill pack or compatible skill directory as a reviewed draft,
+- lets the user publish reviewed custom skill definitions into the workspace registry,
 - lets the user bind or disable a skill for the selected teammate,
 - lets the user manually add a custom skill binding by id, repo shorthand, or URL,
 - lets the user delete manually added `source: "user"` bindings,
@@ -210,7 +222,9 @@ Behavior:
 - treats disabled bindings as metadata, not as execution permission changes by
   themselves.
 
-Skills are workflow templates. They do not grant execution authority by themselves.
+Skills are workflow templates. They do not grant execution authority by themselves. The
+Skills tab should use the daemon's Effective Skill read model instead of implying that
+"enabled" equals "allowed to run".
 
 ### Memory Tab
 
@@ -236,6 +250,8 @@ Fields:
 - display name,
 - description,
 - avatar tone or image upload,
+- persona import from `AGENTS.md`, `AGENT.md`, `persona.md`, or pasted markdown as a
+  reviewed draft,
 - template id,
 - role key,
 - provider preset,
@@ -251,6 +267,10 @@ Danger zone:
 - `Disable teammate` should hide the teammate from active surfaces but preserve history.
 - `Hard delete teammate` physically deletes teammate private data and attachment bytes,
   then leaves only a minimal tombstone audit record.
+
+Persona import must only update selected profile fields after user confirmation. Imported
+persona text cannot update tools, MCP bindings, approvals, provider settings, memory
+scopes, channel memberships, secrets, or external-send permission.
 
 ## Information Architecture
 
@@ -621,8 +641,10 @@ GET /teammates/:id/skills?cwd=/path/to/workspace
 PUT /teammates/:id/skills?cwd=/path/to/workspace
 ```
 
-`PUT` replaces persisted bindings. The first Web workspace renders the read model; richer
-editing controls remain a follow-up.
+`GET` returns persisted bindings and, when available, Effective Skill diagnostics.
+`PUT` replaces persisted bindings. The next skill slice should add workspace registry
+APIs for custom skill definitions and import drafts; teammate binding remains separate
+from registry publication.
 
 ### Memory Scopes
 
@@ -842,7 +864,8 @@ Files:
 - `apps/web/src/i18n.tsx`
 
 Status: implemented with private chat, task creation, channel membership management, and
-settings editing. Skill and memory tab editing remains deferred.
+settings editing. Custom skill import, persona import UI, skill-aware task/run polish, and
+memory tab editing remain deferred.
 
 Work:
 
@@ -972,4 +995,5 @@ Implemented first code slice:
 - docs updates and focused unit/daemon coverage.
 
 Calendar, custom skill-pack import, optional vector retrieval provider installation, and
-multi-party direct messages remain deferred.
+multi-party direct messages remain deferred. The next skill-focused slice is specified in
+[Ling Skill Import v1](ling-skill-import-v1.md).

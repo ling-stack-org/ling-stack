@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
+import { buildEffectiveTeammateSkills } from "@ling-stack/core";
+import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 
 const cwd = "/tmp/ling-stack-workspace";
 const defaultRuntimePolicy = {
@@ -29,6 +31,8 @@ interface MockState {
   channelWorkflows: unknown[];
   channelWorkflowSteps: unknown[];
   aiTeammates: unknown[];
+  skillRegistryEntries: unknown[];
+  skillImportDrafts: unknown[];
   teammateChannelMemberships: unknown[];
   teammateSkillBindings: unknown[];
   teammateMemoryScopes: unknown[];
@@ -3833,20 +3837,56 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     );
     return isRecord(binding) ? binding.enabled : undefined;
   }).toBe(false);
-  await skillsPanel.getByLabel("Manual skill").fill("triage-playbook");
-  await skillsPanel.getByRole("button", { name: "Add custom skill" }).click();
+  await skillsPanel.getByLabel("Draft name").fill("Custom QA Pack");
+  await skillsPanel.getByLabel("Source path").fill("skills/custom-qa/SKILL.md");
+  await skillsPanel.getByLabel("Skill content").fill([
+    "# Custom QA Drill",
+    "id: custom-qa-drill",
+    "summary: Run a focused QA pass for private workspace changes.",
+    "Keep approval and secret instructions as review-only text.",
+  ].join("\n"));
+  await skillsPanel.getByRole("button", { name: "Preview draft" }).click();
+  await expect(skillsPanel).toContainText("custom-qa-drill");
+  await expect(skillsPanel).toContainText("Permission-like instruction");
+  await skillsPanel.getByRole("button", { name: "Publish to registry" }).click();
+  await expect.poll(() => state.skillRegistryEntries.some((item) =>
+    isRecord(item) && item.id === "custom-qa-drill" && item.reviewStatus === "published"
+  )).toBe(true);
+  await expect(skillsPanel).toContainText("Published 1 skills");
+  await skillsPanel.getByLabel("Bind registry skill").fill("custom-qa-drill");
+  await skillsPanel.locator(".teammate-skill-add-row").getByRole("button", { name: "Bind skill" }).click();
   await expect.poll(() => {
     const binding = state.teammateSkillBindings.find((item) =>
-      isRecord(item) && item.teammateId === teammateId && item.skillId === "triage-playbook"
+      isRecord(item) && item.teammateId === teammateId && item.skillId === "custom-qa-drill"
     );
     return isRecord(binding) ? [binding.source, binding.enabled] : undefined;
   }).toEqual(["user", true]);
-  const customSkillRow = skillsPanel.locator(".teammate-skill-row").filter({ has: page.getByText("triage-playbook", { exact: true }) });
+  const customSkillRow = skillsPanel.locator(".teammate-skill-row").filter({ has: page.getByText("Custom QA Drill", { exact: true }) });
   await expect(customSkillRow).toContainText("User skill");
   await customSkillRow.getByRole("button", { name: "Delete skill" }).click();
   await expect.poll(() => state.teammateSkillBindings.some((item) =>
-    isRecord(item) && item.teammateId === teammateId && item.skillId === "triage-playbook"
+    isRecord(item) && item.teammateId === teammateId && item.skillId === "custom-qa-drill"
   )).toBe(false);
+  await expect(customSkillRow).toContainText("Registry skill");
+  await customSkillRow.getByRole("button", { name: "Archive skill" }).click();
+  await expect.poll(() => state.skillRegistryEntries.some((item) =>
+    isRecord(item) && item.id === "custom-qa-drill" && item.reviewStatus === "archived"
+  )).toBe(true);
+
+  await page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Tasks/ }).click();
+  await taskPanel.getByLabel("Task title").fill("Skill aware follow up");
+  await taskPanel.getByLabel("Requested skill").selectOption("plan-eng-review");
+  await taskPanel.getByLabel("Task prompt").fill("Use the selected skill for this teammate task.");
+  await taskPanel.getByRole("button", { name: "Create task" }).click();
+  await expect(taskPanel).toContainText("Skill plan-eng-review");
+  await expect.poll(() => {
+    const created = state.tasks.find((task) =>
+      isRecord(task) &&
+      task.title === "Skill aware follow up" &&
+      task.assigneeTeammateId === teammateId
+    );
+    return isRecord(created) ? created.requestedSkillId : undefined;
+  }).toBe("plan-eng-review");
 
   await page.locator(".teammate-workspace-tabs").getByRole("button", { name: /Memory/ }).click();
   await expect(page.getByText("Private chat summary")).toBeVisible();
@@ -3866,6 +3906,23 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
 
   await page.locator(".teammate-workspace-tabs").getByRole("button", { name: "Settings" }).click();
+  const personaPanel = page.getByLabel("Persona import");
+  await personaPanel.getByLabel("Source path").fill("AGENTS.md");
+  await personaPanel.getByLabel("Persona content").fill([
+    "# Imported QA Persona",
+    "Review private workspace changes carefully.",
+    "Do not grant tools, approvals, secrets, or external send permissions.",
+  ].join("\n"));
+  await personaPanel.getByRole("button", { name: "Preview draft" }).click();
+  await expect(personaPanel.getByText("Draft ready")).toBeVisible();
+  await expect(personaPanel.getByText("Permission-like persona text was ignored for authority changes.")).toBeVisible();
+  await personaPanel.getByRole("button", { name: "Apply persona draft" }).click();
+  await expect.poll(() => {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+    return isRecord(teammate) ? [teammate.displayName, teammate.allowedTools, teammate.approvalProfile] : undefined;
+  }).toEqual(["Imported QA Persona", ["read", "grep", "find", "ls"], { mode: "standard", risk: "medium" }]);
+  await expect(page.getByRole("heading", { name: "Imported QA Persona", level: 1 })).toBeVisible();
+
   await page.getByLabel("Avatar").locator("input[type=file]").setInputFiles({
     name: "avatar.png",
     mimeType: "image/png",
@@ -5252,6 +5309,8 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     channelWorkflows: [],
     channelWorkflowSteps: [],
     aiTeammates: [],
+    skillRegistryEntries: buildMockSkillRegistryEntries(),
+    skillImportDrafts: [],
     teammateChannelMemberships: [],
     teammateSkillBindings: [],
     teammateMemoryScopes: [],
@@ -5330,6 +5389,122 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     stateTransitions: [],
     artifactsByRun: {},
     artifactsByMediaJob: {},
+  };
+}
+
+function buildMockSkillRegistryEntries(): unknown[] {
+  const timestamp = new Date(0).toISOString();
+  return gstackDefaultSkillPack.skills.map((definition) => ({
+    id: definition.id,
+    workspaceId: "workspace_default",
+    packId: gstackDefaultSkillPack.id,
+    source: "builtin",
+    version: "builtin",
+    definition,
+    visibility: {
+      workspaceVisible: true,
+      promotableToWorkspace: false,
+    },
+    reviewStatus: "builtin",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }));
+}
+
+function buildMockEffectiveSkills(state: MockState, teammateId: string): unknown[] {
+  const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+  if (!isRecord(teammate)) {
+    return [];
+  }
+  const bindings = state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId);
+  const definitions = state.skillRegistryEntries
+    .filter((item) =>
+      isRecord(item) &&
+      (item.reviewStatus === "builtin" || item.reviewStatus === "published") &&
+      isRecord(item.definition)
+    )
+    .map((item) => item.definition);
+  return buildEffectiveTeammateSkills({
+    teammate: teammate as never,
+    bindings: bindings as never,
+    skills: definitions as never,
+  });
+}
+
+function createMockSkillImportDraft(state: MockState, body: Record<string, unknown>): Record<string, unknown> {
+  const content = typeof body.content === "string" ? body.content : "";
+  const skillId = content.match(/^id:\s*([a-z0-9-]+)/im)?.[1] ?? `custom-skill-${state.skillImportDrafts.length + 1}`;
+  const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  const summary = content.match(/^summary:\s*(.+)$/im)?.[1]?.trim() ?? "Imported workspace skill.";
+  const warnings = /approval|secret|external/i.test(content)
+    ? [
+      {
+        code: "permission_like_instruction",
+        severity: "warning",
+        message: "Permission-like instructions were kept as prompt text only.",
+      },
+    ]
+    : [];
+  return {
+    id: `skill_draft_${state.skillImportDrafts.length + 1}`,
+    workspaceId: "workspace_default",
+    source: typeof body.source === "string" ? body.source : "custom",
+    sourcePath: typeof body.sourcePath === "string" ? body.sourcePath : undefined,
+    packId: `skill_pack_${state.skillImportDrafts.length + 1}`,
+    name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : heading ?? "Imported skill pack",
+    version: "0.1.0",
+    description: summary,
+    definitions: [
+      {
+        definition: {
+          id: skillId,
+          name: heading ?? skillId,
+          summary,
+          roleAffinity: ["qa"],
+          workflowPhase: "test",
+          promptFragments: [content],
+          requiredTools: ["read", "grep"],
+          requiredProviderCapabilities: ["chat"],
+          approvalProfile: { mode: "none" },
+          stateEffects: ["creates_artifact"],
+        },
+        visibility: {
+          workspaceVisible: true,
+          promotableToWorkspace: true,
+        },
+        warnings,
+      },
+    ],
+    warnings: [],
+    createdAt: "2026-06-04T00:20:00.000Z",
+    updatedAt: "2026-06-04T00:20:00.000Z",
+  };
+}
+
+function createMockPersonaDraft(teammateId: string, body: Record<string, unknown>): Record<string, unknown> {
+  const sourcePath = typeof body.sourcePath === "string" ? body.sourcePath : "";
+  const content = typeof body.content === "string" ? body.content : "";
+  const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim() || "Imported teammate persona";
+  const description = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith("#") && !/^id:/i.test(line)) ?? "";
+  const sourceKind = /agents?\.md$/i.test(sourcePath)
+    ? "agents-md"
+    : /persona\.md$/i.test(sourcePath)
+      ? "persona-md"
+      : "markdown";
+  return {
+    teammateId,
+    sourceKind,
+    sourcePath: sourcePath || undefined,
+    displayName: heading,
+    description,
+    systemPrompt: content,
+    appendSystemPrompt: [],
+    warnings: /tool|approval|secret|external/i.test(content)
+      ? ["Permission-like persona text was ignored for authority changes."]
+      : [],
   };
 }
 
@@ -6220,6 +6395,86 @@ async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, events } });
     return;
   }
+  if (request.method() === "GET" && path === "/skills") {
+    await route.fulfill({
+      json: {
+        cwd,
+        skills: state.skillRegistryEntries.filter((item) =>
+          isRecord(item) && item.reviewStatus !== "archived" && item.reviewStatus !== "disabled"
+        ),
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/skills/import-draft") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const draft = createMockSkillImportDraft(state, body);
+    state.skillImportDrafts.unshift(draft);
+    await route.fulfill({ status: 201, json: { cwd, draft } });
+    return;
+  }
+  const skillDraftMatch = /^\/skills\/import-drafts\/([^/]+)(?:\/([^/]+))?$/.exec(path);
+  if (skillDraftMatch) {
+    const draftId = decodeURIComponent(skillDraftMatch[1]);
+    const action = skillDraftMatch[2];
+    const draft = state.skillImportDrafts.find((item) => isRecord(item) && item.id === draftId);
+    if (!isRecord(draft)) {
+      await route.fulfill({ status: 404, json: { error: "skill_import_draft_not_found" } });
+      return;
+    }
+    if (!action && request.method() === "GET") {
+      await route.fulfill({ json: { cwd, draft } });
+      return;
+    }
+    if (action === "publish" && request.method() === "POST") {
+      const definitions = Array.isArray(draft.definitions) ? draft.definitions.filter(isRecord) : [];
+      const published = definitions.map((definitionRecord) => {
+        const definition = isRecord(definitionRecord.definition) ? definitionRecord.definition : {};
+        const skillId = typeof definition.id === "string" ? definition.id : `custom-skill-${state.skillRegistryEntries.length + 1}`;
+        return {
+          id: skillId,
+          workspaceId: "workspace_default",
+          packId: typeof draft.packId === "string" ? draft.packId : `skill_pack_${skillId}`,
+          source: typeof draft.source === "string" ? draft.source : "custom",
+          sourcePath: typeof draft.sourcePath === "string" ? draft.sourcePath : undefined,
+          version: typeof draft.version === "string" ? draft.version : undefined,
+          definition,
+          visibility: isRecord(definitionRecord.visibility)
+            ? definitionRecord.visibility
+            : { workspaceVisible: true, promotableToWorkspace: true },
+          reviewStatus: "published",
+          createdAt: "2026-06-04T00:21:00.000Z",
+          updatedAt: "2026-06-04T00:21:00.000Z",
+        };
+      });
+      state.skillRegistryEntries = [
+        ...published,
+        ...state.skillRegistryEntries.filter((entry) =>
+          !isRecord(entry) || !published.some((skill) => skill.id === entry.id)
+        ),
+      ];
+      await route.fulfill({ json: { cwd, draftId, skills: published } });
+      return;
+    }
+  }
+  const skillMatch = /^\/skills\/([^/]+)$/.exec(path);
+  if (skillMatch && request.method() === "DELETE") {
+    const skillId = decodeURIComponent(skillMatch[1]);
+    let archived: unknown;
+    state.skillRegistryEntries = state.skillRegistryEntries.map((entry) => {
+      if (isRecord(entry) && entry.id === skillId && entry.source !== "builtin") {
+        archived = { ...entry, reviewStatus: "archived", updatedAt: "2026-06-04T00:22:00.000Z" };
+        return archived;
+      }
+      return entry;
+    });
+    if (!archived) {
+      await route.fulfill({ status: 404, json: { error: "skill_not_found" } });
+      return;
+    }
+    await route.fulfill({ json: { cwd, skill: archived } });
+    return;
+  }
   if (request.method() === "GET" && path === "/mcp/servers") {
     await route.fulfill({ json: { cwd, servers: state.mcpServers.map((server) => toPublicMockMcpServer(server, state)) } });
     return;
@@ -6472,6 +6727,7 @@ async function handleDaemonRoute(
           cwd,
           teammateId,
           bindings: state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId),
+          effectiveSkills: buildMockEffectiveSkills(state, teammateId),
         },
       });
       return;
@@ -6498,6 +6754,7 @@ async function handleDaemonRoute(
           cwd,
           teammateId,
           bindings: state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId),
+          effectiveSkills: buildMockEffectiveSkills(state, teammateId),
         },
       });
       return;
@@ -6579,6 +6836,11 @@ async function handleDaemonRoute(
           scopes: state.teammateMemoryScopes.filter((item) => isRecord(item) && item.teammateId === teammateId),
         },
       });
+      return;
+    }
+    if (action === "persona-draft" && request.method() === "POST") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      await route.fulfill({ status: 201, json: { cwd, draft: createMockPersonaDraft(teammateId, body) } });
       return;
     }
     if (action === "direct-attachments") {
@@ -7682,6 +7944,7 @@ async function handleDaemonRoute(
       prompt: typeof body.prompt === "string" ? body.prompt : "",
       status: "todo",
       assigneeTeammateId: typeof body.assigneeTeammateId === "string" ? body.assigneeTeammateId : undefined,
+      requestedSkillId: typeof body.requestedSkillId === "string" ? body.requestedSkillId : undefined,
       createdAt: "2026-05-25T00:19:00.000Z",
       updatedAt: "2026-05-25T00:19:00.000Z",
     };

@@ -2395,6 +2395,96 @@ export interface SkillDefinition {
   readonly stateEffects: readonly SkillStateEffect[];
 }
 
+export type SkillPackSource = "builtin" | "gstack" | "workspace" | "skill-directory" | "agents-md" | "custom";
+export type SkillRegistryReviewStatus = "builtin" | "draft" | "published" | "disabled" | "archived";
+export type SkillImportWarningSeverity = "info" | "warning" | "error";
+export type SkillImportWarningCode =
+  | "permission_like_instruction"
+  | "secret_reference"
+  | "external_send_claim"
+  | "unknown_tool"
+  | "unknown_provider_capability"
+  | "unsupported_section"
+  | "missing_metadata"
+  | "duplicate_skill_id";
+
+export interface SkillVisibility {
+  readonly workspaceVisible: boolean;
+  readonly ownerTeammateId?: string;
+  readonly promotableToWorkspace: boolean;
+}
+
+export interface SkillRegistryEntry {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly packId: string;
+  readonly source: SkillPackSource;
+  readonly sourcePath?: string;
+  readonly version?: string;
+  readonly checksum?: string;
+  readonly definition: SkillDefinition;
+  readonly visibility: SkillVisibility;
+  readonly reviewStatus: SkillRegistryReviewStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface SkillImportWarning {
+  readonly code: SkillImportWarningCode;
+  readonly severity: SkillImportWarningSeverity;
+  readonly message: string;
+  readonly location?: string;
+}
+
+export interface SkillImportDraftDefinition {
+  readonly definition: SkillDefinition;
+  readonly visibility?: SkillVisibility;
+  readonly warnings?: readonly SkillImportWarning[];
+}
+
+export interface SkillImportDraft {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly source: SkillPackSource;
+  readonly sourcePath?: string;
+  readonly packId?: string;
+  readonly name: string;
+  readonly version?: string;
+  readonly description: string;
+  readonly definitions: readonly SkillImportDraftDefinition[];
+  readonly warnings: readonly SkillImportWarning[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface SkillRegistryListResponse {
+  readonly cwd: string;
+  readonly skills: readonly SkillRegistryEntry[];
+}
+
+export interface SkillImportDraftRequest {
+  readonly content: string;
+  readonly source?: SkillPackSource;
+  readonly sourcePath?: string;
+  readonly name?: string;
+}
+
+export interface SkillImportDraftResponse {
+  readonly cwd: string;
+  readonly draft: SkillImportDraft;
+}
+
+export interface SkillImportPublishResponse {
+  readonly cwd: string;
+  readonly draftId: string;
+  readonly skills: readonly SkillRegistryEntry[];
+}
+
+export interface SkillRegistryMutationResponse {
+  readonly cwd: string;
+  readonly skill: SkillRegistryEntry;
+}
+
 export type EffectiveSkillBlockedReasonCode =
   | "disabled_binding"
   | "missing_tools"
