@@ -8,6 +8,7 @@ dist-types/
 build/
 .turbo/
 .vite/
+apps/web/test-results/
 
 # environment
 .env
