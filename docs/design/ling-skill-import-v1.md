@@ -546,7 +546,7 @@ Verification:
 5. Persona import UI. Implemented.
 6. Task/run skill selector and blocked reason display. Implemented for teammate workspace
    task creation, run history selected skill, and daemon blocked errors.
-7. Focused tests and merge. In progress.
+7. Focused tests and merge. Completed in PR #70.
 
 ## Open Questions
 
