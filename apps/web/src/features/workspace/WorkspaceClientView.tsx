@@ -1786,7 +1786,7 @@ export function WorkspaceClientView({
             tone={message.status === "blocked" ? "chat-blocked" : plainChatMessage ? "chat" : "system"}
             side={plainChatMessage && message.authorType === "local-user" ? "end" : "start"}
             avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
-            author={messageAuthorLabel(message, teammateOptions)}
+            author={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"))}
             tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
             time={formatDateTime(message.createdAt)}
             body={pendingAiReply ? t("AI teammate is replying...") : message.body}
@@ -1802,7 +1802,7 @@ export function WorkspaceClientView({
             <ChannelExecutionProposalCard
               key={proposal.id}
               proposal={proposal}
-              assigneeLabel={teammateLabel(proposal.assigneeTeammateId, teammateOptions)}
+              assigneeLabel={teammateLabel(proposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))}
               teammates={teammateOptions}
               linkedRun={proposal.linkedRunId ? runById.get(proposal.linkedRunId) : undefined}
               activeRunId={activeRunId}
@@ -3549,7 +3549,7 @@ function ChannelProgressPanel({
       proposal.collaborationSteps.slice(0, 2).map((step) => ({
         id: `${proposal.id}:${step.teammateId}:${step.action}:${step.summary}`,
         title: proposal.title,
-        teammate: teammateLabel(step.teammateId, teammates),
+        teammate: teammateLabel(step.teammateId, teammates, t("Deleted teammate")),
         summary: step.summary.trim() || t(proposalStepActionLabel(step.action)),
       })),
     )
@@ -4348,7 +4348,7 @@ function ChannelExecutionProposalCard({
           <ol>
             {proposal.collaborationSteps.map((step, index) => (
               <li key={`${step.teammateId}-${step.action}-${index}`}>
-                <strong>{teammateLabel(step.teammateId, teammates)}</strong>
+                <strong>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</strong>
                 <small>{t(proposalStepActionLabel(step.action))}</small>
                 <span>{step.summary}</span>
               </li>
@@ -4421,7 +4421,7 @@ function ThreadReplyPanel({
       </div>
       <div className="thread-root-message">
         {rootMessageIsOwn ? null : (
-          <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates) })}</small>
+          <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates, t("Deleted teammate")) })}</small>
         )}
         <p>{renderMessageBody(rootMessage.body)}</p>
         <UsedMemorySummary
@@ -4439,7 +4439,7 @@ function ThreadReplyPanel({
             <article key={reply.id} className={replyIsOwn ? "thread-reply-item thread-reply-own" : "thread-reply-item"}>
               {replyIsOwn ? null : (
                 <div className="thread-reply-meta">
-                  <strong>{messageAuthorLabel(reply, teammates)}</strong>
+                  <strong>{messageAuthorLabel(reply, teammates, t("Deleted teammate"))}</strong>
                   {reply.kind === "ai_reply" ? <small>AI</small> : null}
                 </div>
               )}
@@ -5325,12 +5325,12 @@ function ChannelFiles({
   );
 }
 
-function messageAuthorLabel(message: ChannelMessage, teammates: readonly ChannelMention[]): string {
+function messageAuthorLabel(message: ChannelMessage, teammates: readonly ChannelMention[], deletedTeammateLabel = "Deleted teammate"): string {
   if (message.authorType === "system") {
     return "Ling Stack";
   }
   if (message.authorType === "ai-teammate") {
-    return teammateLabel(message.authorId, teammates, "AI teammate");
+    return teammateLabel(message.authorId, teammates, deletedTeammateLabel);
   }
   return message.authorId ?? "Tian";
 }
@@ -5339,7 +5339,7 @@ function teammateLabel(teammateId: string | undefined, teammates: readonly Chann
   if (!teammateId) {
     return fallback;
   }
-  return teammates.find((teammate) => teammate.id === teammateId)?.label ?? teammateId;
+  return teammates.find((teammate) => teammate.id === teammateId)?.label ?? fallback;
 }
 
 function executionProposalStatusLabel(status: ChannelExecutionProposal["status"]): string {
@@ -5382,7 +5382,7 @@ function proposalCollaborationSummary(
   return proposal.collaborationSteps
     .slice(0, 2)
     .map((step) => {
-      const teammate = teammateLabel(step.teammateId, teammates);
+      const teammate = teammateLabel(step.teammateId, teammates, t("Deleted teammate"));
       const summary = step.summary.trim() || t(proposalStepActionLabel(step.action));
       return `${teammate} ${summary}`;
     })
