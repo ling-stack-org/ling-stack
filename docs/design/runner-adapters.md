@@ -32,13 +32,21 @@ Implemented:
   policy permits falling back to Pi;
 - runtime settings still seed only enabled Pi as default/allowed runner;
 - `/runners` can expose disabled future adapters for audit and UI display.
+- future adapter registrations now include `featureFlag`, `capabilities`, and
+  `disabledReason` metadata, so Settings can show why `codex-app-server` and
+  `openclaw-acp` are unavailable.
+- daemon config can express `runners.codexAppServer.enabled` and
+  `runners.openclawAcp.enabled`, but the registrations still fail closed until a real
+  adapter and conformance gate exist.
+- Settings runtime runner UI shows disabled runner feature flags and disabled reasons
+  while preventing disabled runners from being selected.
 
 Still future:
 
 - real Codex app-server health probe, stream adapter, approval bridge, and resume handle;
 - real OpenClaw/ACP capability negotiation, client bridge, violation handling, and
   workspace-bound session lifecycle;
-- feature-flag UI that exposes a non-Pi runner only after conformance passes.
+- feature-flag UI that enables a non-Pi runner only after conformance passes.
 
 ## Principles
 

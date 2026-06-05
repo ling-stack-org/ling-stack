@@ -30,6 +30,9 @@ export interface RunnerListItem {
   readonly aliases?: readonly string[];
   readonly supportedProviderApis?: readonly string[];
   readonly supportedTools?: readonly string[];
+  readonly capabilities?: readonly string[];
+  readonly featureFlag?: string;
+  readonly disabledReason?: string;
 }
 
 export function listRunnerItems(runnerRegistry: RunnerRegistry): RunnerListItem[] {
@@ -40,6 +43,9 @@ export function listRunnerItems(runnerRegistry: RunnerRegistry): RunnerListItem[
     aliases: runner.aliases,
     supportedProviderApis: runner.supportedProviderApis,
     supportedTools: runner.supportedTools,
+    capabilities: runner.capabilities,
+    featureFlag: runner.featureFlag,
+    disabledReason: runner.disabledReason,
   }));
 }
 

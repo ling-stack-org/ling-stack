@@ -48,7 +48,7 @@ import type {
   CreateTeammateDirectMessageRequest,
   CreateTeammatePrivateAttachmentRequest,
   CreateChannelWorkflowFromHandoffRequest,
-  CreateChannelWorkflowFromTemplateRequest,
+  CreateChannelWorkflowTemplateCompileRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
   CreateMemoryObjectRequest,
@@ -806,7 +806,7 @@ export class LingDaemonClient {
   async createChannelWorkflowFromTemplate(
     cwd: string,
     channelId: string,
-    input: CreateChannelWorkflowFromTemplateRequest,
+    input: CreateChannelWorkflowTemplateCompileRequest,
   ): Promise<ChannelWorkflowTemplateMutationResponse> {
     return this.post(`/channels/${encodeURIComponent(channelId)}/workflows`, { cwd }, input);
   }

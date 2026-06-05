@@ -65,7 +65,7 @@ export function createDaemonServer(
   dependencies: DaemonDependencies = {},
 ): DaemonServer {
   const resolvedConfig = resolveConfig(config);
-  const runnerRegistry = dependencies.runnerRegistry ?? createDefaultRunnerRegistry(dependencies.runner);
+  const runnerRegistry = dependencies.runnerRegistry ?? createDefaultRunnerRegistry(dependencies.runner, resolvedConfig);
   const extensionRegistry = dependencies.extensionRegistry ?? createDefaultLingExtensionRegistry();
   const externalSecretStore = dependencies.externalSecretStore ?? createSystemKeychainSecretStore();
   const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
@@ -133,8 +133,13 @@ export function createDaemonServer(
 
 export const LOCAL_CHANNEL_SOURCE_EXTENSION_ID = "channel-source:local";
 
-export function createDefaultRunnerRegistry(runner: RunnerAdapter = createPiRunner()): RunnerRegistry {
+export function createDefaultRunnerRegistry(
+  runner: RunnerAdapter = createPiRunner(),
+  config: Pick<ResolvedDaemonConfig, "runners"> | Pick<DaemonConfig, "runners"> = {},
+): RunnerRegistry {
   const extension = getPiRunnerExtension();
+  const codexConfig = config.runners?.codexAppServer;
+  const openclawConfig = config.runners?.openclawAcp;
   return createRunnerRegistry([
     {
       id: extension.runnerId,
@@ -148,10 +153,16 @@ export function createDefaultRunnerRegistry(runner: RunnerAdapter = createPiRunn
     createDisabledRunnerRegistration("codex-app-server", "Codex App Server", {
       supportedProviderApis: ["openai-responses", "openai-completions"],
       supportedTools: ["read", "grep", "find", "ls"],
+      capabilities: ["stream_text", "tool_events", "approval_interception", "artifacts", "native_resume"],
+      featureFlag: "runners.codexAppServer.enabled",
+      disabledReason: futureRunnerDisabledReason("Codex App Server", codexConfig?.enabled, codexConfig?.conformancePassed),
     }),
     createDisabledRunnerRegistration("openclaw-acp", "OpenClaw ACP", {
       supportedProviderApis: ["openai-responses", "openai-completions", "anthropic-messages"],
       supportedTools: ["read", "grep", "find", "ls"],
+      capabilities: ["stream_text", "tool_events", "approval_interception", "artifacts", "mcp_tools"],
+      featureFlag: "runners.openclawAcp.enabled",
+      disabledReason: futureRunnerDisabledReason("OpenClaw ACP", openclawConfig?.enabled, openclawConfig?.conformancePassed),
     }),
   ], DEFAULT_RUNNER_ID);
 }
@@ -162,6 +173,9 @@ function createDisabledRunnerRegistration(
   options: {
     readonly supportedProviderApis?: readonly string[];
     readonly supportedTools?: readonly string[];
+    readonly capabilities?: readonly string[];
+    readonly featureFlag?: string;
+    readonly disabledReason?: string;
   } = {},
 ): RegisteredRunner {
   return {
@@ -171,7 +185,20 @@ function createDisabledRunnerRegistration(
     adapter: createDisabledRunnerAdapter(id),
     supportedProviderApis: options.supportedProviderApis,
     supportedTools: options.supportedTools,
+    capabilities: options.capabilities,
+    featureFlag: options.featureFlag,
+    disabledReason: options.disabledReason,
   };
+}
+
+function futureRunnerDisabledReason(displayName: string, enabled: boolean | undefined, conformancePassed: boolean | undefined): string {
+  if (!enabled) {
+    return "Feature flag is disabled.";
+  }
+  if (!conformancePassed) {
+    return `${displayName} feature flag is enabled, but runner conformance has not passed.`;
+  }
+  return `${displayName} feature flag is enabled, but the adapter is not implemented in this build.`;
 }
 
 function createDisabledRunnerAdapter(id: string): RunnerAdapter {

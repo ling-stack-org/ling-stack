@@ -11,8 +11,6 @@ import {
 import { useI18n } from "../i18n.js";
 import type {
   ApprovalRequest,
-  ApprovalPolicy,
-  ApprovalPolicyFormState,
   AiTeammate,
   ChannelAttachment,
   Channel,
@@ -73,12 +71,11 @@ import {
   LazyRunHistory as RunHistory,
   LazySettingsPage as SettingsPage,
   LazyTeammateWorkspace as TeammateWorkspace,
+  LazyThreadPage as ThreadPage,
   LazyWorkspaceClientView as WorkspaceClientView,
 } from "./lazy-pages.js";
 import {
-  approvalPolicyToForm,
   buildRunApprovalSummaries,
-  defaultApprovalPolicyForm,
   effectiveApprovalStatus,
 } from "../lib/approvals.js";
 import {
@@ -104,6 +101,7 @@ import { useRuntimeDomain } from "../domains/runtime/use-runtime-domain.js";
 import { useRunCommandController } from "../domains/runs/use-run-command-controller.js";
 import { useRunsDomain } from "../domains/runs/use-runs-domain.js";
 import { useSettingsCommandController } from "../domains/settings/use-settings-command-controller.js";
+import { useSettingsDomain } from "../domains/settings/use-settings-domain.js";
 import { useTeammatesDomain } from "../domains/teammates/use-teammates-domain.js";
 import { useWorkspaceCommandController } from "../domains/workspace/use-workspace-command-controller.js";
 import {
@@ -181,9 +179,6 @@ export function AppShell(): JSX.Element {
   const [runningWorkflowStepId, setRunningWorkflowStepId] = useState("");
   const [orchestratingWorkflowId, setOrchestratingWorkflowId] = useState("");
   const [taskRepairRunId, setTaskRepairRunId] = useState("");
-  const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
-  const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
-  const [approvalPolicyLoading, setApprovalPolicyLoading] = useState(false);
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
@@ -198,11 +193,7 @@ export function AppShell(): JSX.Element {
     buildTaskRunRequest,
     daemonBaseUrl,
   } = useRunCommandController();
-  const {
-    getApprovalPolicy,
-    getDaemonHealth,
-    updateApprovalPolicy,
-  } = useSettingsCommandController();
+  const { getDaemonHealth } = useSettingsCommandController();
   const {
     cancelChannelWorkflow,
     channelAttachmentContentUrl,
@@ -540,6 +531,31 @@ export function AppShell(): JSX.Element {
     runWorkUnitAction,
     resetForCwd: resetRuntimeForCwd,
   } = runtimeDomain.actions;
+  const settingsDomain = useSettingsDomain({
+    cwd: form.cwd.trim(),
+    setErrorMessage,
+  });
+  const {
+    approvalPolicy,
+    approvalPolicyForm,
+    approvalPolicyLoading,
+    runners,
+    runtimeSettings,
+    runtimeSettingsForm,
+    runtimeSettingsLoading,
+    runtimeSettingsAction,
+    runtimeSettingsError,
+  } = settingsDomain.state;
+  const {
+    setApprovalPolicyForm,
+    refreshApprovalPolicy,
+    saveApprovalPolicy,
+    setRuntimeSettingsForm,
+    toggleAllowedRunner,
+    refreshRuntimeSettings,
+    saveRuntimeSettings,
+    resetForCwd: resetSettingsForCwd,
+  } = settingsDomain.actions;
   const runsDomain = useRunsDomain({
     cwd: form.cwd.trim(),
     confirmFullAccessRunIfNeeded,
@@ -800,6 +816,7 @@ export function AppShell(): JSX.Element {
     }
     if (activeView === "settings") {
       void refreshApprovalPolicy();
+      void refreshRuntimeSettings();
       void refreshExternalWorkStatus();
     }
   }, [activeView]);
@@ -903,6 +920,7 @@ export function AppShell(): JSX.Element {
     resetMcpForCwd();
     resetExternalWorkForCwd();
     resetRuntimeForCwd();
+    resetSettingsForCwd();
     setChannelForm((current) => ({
       ...current,
       boundPath: current.boundPath === previousCwd || !current.boundPath ? cwd : current.boundPath,
@@ -2000,44 +2018,6 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function refreshApprovalPolicy(): Promise<void> {
-    if (!form.cwd.trim()) {
-      setApprovalPolicy(undefined);
-      return;
-    }
-
-    setApprovalPolicyLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await getApprovalPolicy(form.cwd.trim());
-      setApprovalPolicy(response.policy);
-      setApprovalPolicyForm(approvalPolicyToForm(response.policy));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setApprovalPolicyLoading(false);
-    }
-  }
-
-  async function saveApprovalPolicy(): Promise<void> {
-    if (!form.cwd.trim()) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-
-    setApprovalPolicyLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await updateApprovalPolicy(form.cwd.trim(), approvalPolicyForm);
-      setApprovalPolicy(response.policy);
-      setApprovalPolicyForm(approvalPolicyToForm(response.policy));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setApprovalPolicyLoading(false);
-    }
-  }
-
   async function applyProviderToRun(provider: ProviderPreset): Promise<void> {
     setTaskRunProviderId(provider.id);
     setForm((current) => ({
@@ -2429,6 +2409,17 @@ export function AppShell(): JSX.Element {
                 onEditTask={(sourceRun) => void openTaskFromRun(sourceRun)}
                 onSelect={(runId) => void selectRun(runId)}
                   />
+                ) : activeView === "threads" ? (
+                  <ThreadPage
+                cwd={form.cwd}
+                isRunning={isRunning}
+                onRefreshRuns={() => void refreshRuns()}
+                onSelectRun={(runId) => {
+                  setActiveView("runs");
+                  setActiveSidebarTarget("runs");
+                  void selectRun(runId);
+                }}
+                  />
                 ) : activeView === "providers" ? (
                   <ProviderSettings
                 cwd={form.cwd}
@@ -2492,9 +2483,15 @@ export function AppShell(): JSX.Element {
                 cwd={form.cwd}
                 policy={approvalPolicy}
                 form={approvalPolicyForm}
+                runners={runners}
+                runtimeSettings={runtimeSettings}
+                runtimeSettingsForm={runtimeSettingsForm}
                 selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
                 externalWorkStatus={externalWorkStatus}
                 isLoading={approvalPolicyLoading}
+                runtimeSettingsLoading={runtimeSettingsLoading}
+                runtimeSettingsAction={runtimeSettingsAction}
+                runtimeSettingsError={runtimeSettingsError}
                 externalWorkStatusLoading={externalWorkStatusLoading}
                 externalWorkStatusAction={externalWorkStatusAction}
                 externalWorkSecretAction={externalWorkSecretAction}
@@ -2503,6 +2500,10 @@ export function AppShell(): JSX.Element {
                 onFormChange={setApprovalPolicyForm}
                 onRefresh={() => void refreshApprovalPolicy()}
                 onSave={() => void saveApprovalPolicy()}
+                onRuntimeSettingsFormChange={setRuntimeSettingsForm}
+                onToggleAllowedRunner={toggleAllowedRunner}
+                onRefreshRuntimeSettings={() => void refreshRuntimeSettings()}
+                onSaveRuntimeSettings={() => void saveRuntimeSettings()}
                 onRefreshExternalWork={() => void refreshExternalWorkStatus()}
                 onExternalWorkAction={(action) => void runExternalWorkStatusAction(action)}
                 onConfigureExternalWorkWorkflow={(input) => configureExternalWorkWorkflowAction(input)}

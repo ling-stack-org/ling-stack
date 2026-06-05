@@ -928,7 +928,7 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "workflows") {
-      await handleChannelWorkflowsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      await handleChannelWorkflowsCollection(request, response, config, storeRegistry, channelRoute.channelId, runnerRegistry);
       return;
     }
     await handleChannelItem(request, response, config, storeRegistry, channelRoute.channelId);

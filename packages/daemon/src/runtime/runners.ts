@@ -13,6 +13,9 @@ export interface RegisteredRunner {
   readonly aliases?: readonly string[];
   readonly supportedProviderApis?: readonly string[];
   readonly supportedTools?: readonly string[];
+  readonly capabilities?: readonly string[];
+  readonly featureFlag?: string;
+  readonly disabledReason?: string;
 }
 
 export interface RunnerResolutionInput {

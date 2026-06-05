@@ -12,6 +12,7 @@ import {
   Settings,
   ShieldCheck,
   Users,
+  Workflow,
   Wrench,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
@@ -83,6 +84,7 @@ export function SidebarNavigation({
         <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeSidebarTarget === "providers"} onClick={() => onOpenView("providers")} />
         <NavItem icon={<Wrench />} label={t("Tool Access")} active={activeSidebarTarget === "mcp"} onClick={() => onOpenView("mcp")} />
         <NavItem icon={<History />} label={t("Runs")} active={activeSidebarTarget === "runs"} onClick={() => onOpenView("runs")} />
+        <NavItem icon={<Workflow />} label={t("Threads")} active={activeSidebarTarget === "threads"} onClick={() => onOpenView("threads")} />
         <NavItem icon={<Inbox />} label={t("Inbox")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
         <NavItem icon={<Database />} label={t("Media Jobs")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />
         <NavItem icon={<Users />} label={t("AI Teammates")} active={activeSidebarTarget === "teammates"} onClick={() => onOpenView("teammates")} />

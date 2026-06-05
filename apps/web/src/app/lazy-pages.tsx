@@ -12,6 +12,12 @@ export const LazyRunHistory = lazy(() =>
   })),
 );
 
+export const LazyThreadPage = lazy(() =>
+  import("../features/runs/ThreadPage.js").then((module) => ({
+    default: module.ThreadPage,
+  })),
+);
+
 export const LazySettingsPage = lazy(() =>
   import("../features/settings/SettingsPage.js").then((module) => ({
     default: module.SettingsPage,

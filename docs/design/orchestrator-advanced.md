@@ -33,12 +33,18 @@ Implemented in the current future-hardening slice:
 - `dependencyMode` supports `all_succeeded`, `all_terminal`, and `any_succeeded`;
 - dependency output refs include `branchGroupId` for downstream context packets;
 - orchestration responses can return `startedSteps` and `waitingApprovals` for UI/audit.
+- `POST /channels/:channelId/workflows` accepts an inline `customTemplate` JSON object
+  with `schemaVersion: 1`, validates unique step ids, dependency existence, DAG shape,
+  teammate/template resolution, executable skill binding, runner policy, unsafe
+  auto-start confirmation, and channel parallel limits before creating durable workflow
+  steps.
+- compiled custom template steps persist `workflowTemplateId`, `templateVersion`,
+  `templateStepId`, dependency metadata, branch/join metadata, provider/runner
+  metadata, step policy, gates, and explicit `autoStart` settings.
 
 Still future:
 
-- user-authored custom template parser/validator beyond the built-in workflow-template
-  compile path;
-- authoring UI for custom templates;
+- stored `customTemplateId` registry lookup and authoring UI for custom templates;
 - graph visualization of branch groups and fan-in.
 
 ## Non-Goals
@@ -281,9 +287,12 @@ POST /channels/:channelId/workflows
 
 ## Rollout
 
-1. Add custom template parser and validator with no UI.
-2. Add serial custom-template compile path.
-3. Add parallel scheduling behind `orchestrator.parallelBranches` feature flag.
+1. Add custom template parser and validator with no UI. Status: implemented for inline
+   `customTemplate` JSON requests.
+2. Add serial custom-template compile path. Status: implemented.
+3. Add parallel scheduling behind `orchestrator.parallelBranches` feature flag. Status:
+   implemented through channel `runtimePolicy.executionMode: "parallel"` and compiled
+   `maxParallelSiblings` metadata.
 4. Add list UI for branch status.
 5. Add authoring UI only after backend validation and tests are stable.
 

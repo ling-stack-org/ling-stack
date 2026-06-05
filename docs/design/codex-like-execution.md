@@ -95,10 +95,13 @@ Implemented:
   inspection is possible, and fail closed when preview extraction is unsafe;
 - stale runner completions after cancellation are recorded as
   `stale_runner_completion_ignored` without overwriting terminal run/work-unit state.
+- the Web app now has a dedicated top-level `threads` view, loaded as its own route-level
+  lazy page, which lists Ling threads and renders the same thread evidence, action
+  artifacts, lineage, interventions, resume preview, and resume controls outside Run
+  History.
 
 Still future:
 
-- a dedicated route-level thread page beyond the current Run History thread surface;
 - richer action result rendering for every tool family;
 - native runner-session resume when a non-Pi adapter can prove conformance.
 
@@ -664,10 +667,10 @@ layer over approval records first.
 
 ### Thread View
 
-Status as of 2026-06-05: implemented inside the existing Runs surface as a
-thread-first detail mode. Selecting a thread no longer just opens the active/last run;
-it renders thread header, objective, lineage, actions, queued follow-ups, state
-transitions, and the resume composer in the right detail panel.
+Status: implemented inside the existing Runs surface and as a dedicated top-level
+`threads` view. Selecting a thread renders thread header, objective, lineage, actions,
+queued follow-ups, state transitions, resume context preview, and the resume composer in
+the right detail panel.
 
 Required sections:
 
@@ -1019,7 +1022,6 @@ Current state:
 Future goal:
 
 - make channel discussion and teammate-direct work first-class `LingThread` owners;
-- add an optional route-level thread page outside Run History;
 - use the same evidence bundle and resume preview everywhere.
 
 Implementation:
@@ -1027,7 +1029,8 @@ Implementation:
 - create/reuse `LingThread(kind="channel_discussion")` for channel AI replies;
 - create/reuse `LingThread(kind="teammate_direct")` for private teammate messages;
 - link generated reply runs/work units to the thread id;
-- add `GET /threads/:id` route-level Web page only after the data model is unified.
+- add a top-level `threads` Web view that uses `/threads` and `/threads/:id/evidence`
+  and renders the same evidence detail component as Run History. Status: implemented.
 
 Tests:
 

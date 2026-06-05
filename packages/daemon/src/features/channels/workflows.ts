@@ -12,6 +12,7 @@ import {
   type Task,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
+import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
@@ -68,6 +69,7 @@ export async function handleChannelWorkflowsCollection(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
+  runnerRegistry?: RunnerRegistry,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -98,7 +100,7 @@ export async function handleChannelWorkflowsCollection(
       const body = await readJsonBody(request, config.maxBodyBytes);
       if (isWorkflowTemplateCompileRequest(body)) {
         const input = parseWorkflowTemplateCompileRequest(body, channelId);
-        const compiled = compileWorkflowTemplate(store, input);
+        const compiled = compileWorkflowTemplate(store, input, new Date().toISOString(), runnerRegistry);
         writeJson(response, 201, compiled);
         return;
       }

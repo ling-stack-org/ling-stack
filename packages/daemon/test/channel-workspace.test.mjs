@@ -922,6 +922,223 @@ test("workflow orchestrator starts independent parallel branches within channel 
   }
 });
 
+test("custom workflow template compiles deterministic steps and dependencies", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Custom template",
+      status: "active",
+      boundPath: cwd,
+      allowedTools: ["read", "grep", "find", "ls"],
+      runtimePolicy: {
+        maxConcurrentRuns: 2,
+        executionMode: "parallel",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+
+    const compiled = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      objective: "Compile a custom deterministic workflow.",
+      providerPresetId: "provider_static",
+      runnerId: "pi",
+      customTemplate: customTemplate({
+        id: "custom-safe-template",
+        name: "Custom Safe Template",
+        maxParallelSteps: 2,
+        steps: [
+          {
+            id: "research",
+            name: "Research",
+            prompt: "Research the problem.",
+            teammateTemplateId: "architect",
+            skillId: "plan-eng-review",
+            branchGroupId: "planning",
+          },
+          {
+            id: "qa",
+            name: "QA",
+            prompt: "Verify the result.",
+            teammateTemplateId: "designer",
+            skillId: "plan-design-review",
+            dependsOn: ["research"],
+            joinGroupId: "review",
+            dependencyMode: "all_succeeded",
+          },
+        ],
+      }),
+    });
+
+    assert.equal(compiled.workflow.status, "ready");
+    assert.equal(compiled.workflow.title, "Custom Safe Template");
+    assert.equal(compiled.workflowSteps.length, 2);
+    assert.equal(compiled.workflowSteps[0].metadata.workflowTemplateId, "custom-safe-template");
+    assert.equal(compiled.workflowSteps[0].metadata.templateVersion, "custom:1");
+    assert.equal(compiled.workflowSteps[0].metadata.autoStart, false);
+    assert.equal(compiled.workflowSteps[0].metadata.maxParallelSiblings, 2);
+    assert.equal(compiled.workflowSteps[0].toParticipantId, "teammate_builtin_architect");
+    assert.equal(compiled.workflowSteps[1].metadata.dependsOnStepIds[0], compiled.workflowSteps[0].id);
+    assert.equal(compiled.workflowSteps[1].metadata.joinGroupId, "review");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("custom workflow template rejects cycles and unknown runners at compile time", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-invalid-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const cyclic = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        objective: "Reject cycles.",
+        customTemplate: customTemplate({
+          id: "cycle-template",
+          name: "Cycle Template",
+          steps: [
+            { id: "a", name: "A", prompt: "A", teammateTemplateId: "architect", dependsOn: ["b"] },
+            { id: "b", name: "B", prompt: "B", teammateTemplateId: "architect", dependsOn: ["a"] },
+          ],
+        }),
+      }),
+    });
+    assert.equal(cyclic.status, 400);
+    assert.equal((await cyclic.json()).error, "bad_request");
+
+    const unknownRunner = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        objective: "Reject unknown runner.",
+        customTemplate: customTemplate({
+          id: "unknown-runner-template",
+          name: "Unknown Runner Template",
+          steps: [
+            { id: "a", name: "A", prompt: "A", teammateTemplateId: "architect", requestedRunnerId: "missing-runner" },
+          ],
+        }),
+      }),
+    });
+    assert.equal(unknownRunner.status, 400);
+    assert.match((await unknownRunner.json()).message, /not registered|missing-runner/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("custom workflow template unsafe autostart requires explicit confirmation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-autostart-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Unsafe custom template");
+    const body = {
+      objective: "Unsafe autostart.",
+      autoStart: true,
+      customTemplate: customTemplate({
+        id: "unsafe-template",
+        name: "Unsafe Template",
+        steps: [
+          {
+            id: "implement",
+            name: "Implement",
+            prompt: "Implement changes.",
+            teammateTemplateId: "engineer",
+            skillId: "implement",
+          },
+        ],
+      }),
+    };
+
+    const rejected = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(rejected.status, 400);
+    assert.match((await rejected.json()).message, /confirmUnsafeAutoStart/);
+
+    const accepted = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      ...body,
+      confirmUnsafeAutoStart: true,
+    });
+    assert.equal(accepted.workflowSteps[0].metadata.autoStart, true);
+    assert.equal(accepted.workflowSteps[0].metadata.skillId, "implement");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("custom workflow template parallel branches start within compiled budget", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-parallel-"));
+  const runner = new ParallelDelayedRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Custom parallel template",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      allowedTools: ["read", "grep", "find", "ls"],
+      runtimePolicy: {
+        maxConcurrentRuns: 2,
+        executionMode: "parallel",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    const compiled = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      objective: "Run custom parallel branches.",
+      providerPresetId: provider.id,
+      autoStart: true,
+      customTemplate: customTemplate({
+        id: "custom-parallel",
+        name: "Custom Parallel",
+        maxParallelSteps: 2,
+        steps: [
+          {
+            id: "branch-a",
+            name: "Branch A",
+            prompt: "Read branch A.",
+            teammateTemplateId: "architect",
+            skillId: "plan-eng-review",
+            branchGroupId: "a",
+          },
+          {
+            id: "branch-b",
+            name: "Branch B",
+            prompt: "Read branch B.",
+            teammateTemplateId: "architect",
+            skillId: "plan-eng-review",
+            branchGroupId: "b",
+          },
+        ],
+      }),
+    });
+
+    const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(tick.status, "started");
+    assert.equal(tick.startedSteps.length, 2);
+    await runner.waitUntilStarted(2);
+    assert.deepEqual(runner.runs.map((run) => run.task.title).sort(), ["Branch A", "Branch B"]);
+  } finally {
+    runner.resolveAll("custom parallel cleanup");
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("workflow orchestrator keeps serial behavior without parallel runtime policy", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-serial-budget-"));
   const runner = new ParallelDelayedRunner();
@@ -1647,6 +1864,16 @@ function createParallelWorkflowStep(store, workflowId, title, metadata = {}) {
     },
     new Date().toISOString(),
   );
+}
+
+function customTemplate(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    id: "custom-template",
+    name: "Custom Template",
+    steps: [],
+    ...overrides,
+  };
 }
 
 async function createChannel(baseUrl, cwd) {

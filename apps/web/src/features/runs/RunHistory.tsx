@@ -336,7 +336,7 @@ export function RunHistory({
   );
 }
 
-function ThreadDetailPanel({
+export function ThreadDetailPanel({
   cwd,
   thread,
   threadId,

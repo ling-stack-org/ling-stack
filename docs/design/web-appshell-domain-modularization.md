@@ -144,6 +144,11 @@ Implemented in the current strict-cleanup slice:
   cancel/retry/reconcile mutations moved into `useRuntimeDomain`;
 - AppShell no longer imports `../api.js` directly;
 - workspace, run, and settings command controllers now own AppShell command imports;
+- approval policy and runtime runner settings load/save/form state now live in
+  `useSettingsDomain`, so Settings receives state/actions as props instead of loading
+  runner or approval APIs directly;
+- the new thread-first page is a lazy route-level chunk in `lazy-pages.tsx`, keeping the
+  long-lived thread detail surface outside the Run History page bundle;
 - `apps/web` lint includes an AppShell import guard to keep direct daemon API imports
   from returning.
 
@@ -151,10 +156,7 @@ Still future:
 
 - move the remaining workspace command state mutations out of AppShell and into a richer
   `useWorkspaceDomain` action surface;
-- split approval policy state into a settings/approvals controller instead of keeping
-  the form state in AppShell;
-- add page-level route chunks after domain ownership stops pulling inactive feature trees
-  through shared props.
+- keep shrinking page props after workspace command composition is fully domain-owned.
 
 ### Shared Controller Shape
 
@@ -922,8 +924,8 @@ Implementation status:
   `getExternalWorkAction`, `executeExternalWorkAction`, or
   `cancelExternalWorkAction` directly.
 - Approval resolution emits `approval.resolved` through `handleDomainEvent`.
-- Approval policy remains in Settings/AppShell for now; that is intentional because the
-  policy edit surface has not moved into a Settings domain yet.
+- Approval policy edit state was later moved into `useSettingsDomain`; Approvals domain
+  remains focused on the inbox and resolution actions.
 - Verified `corepack pnpm --filter @ling-stack/web typecheck`.
 - Verified `corepack pnpm --filter @ling-stack/web build`.
 
@@ -1101,9 +1103,8 @@ Implementation status:
 - Direct API imports for providers, approvals, media, MCP, external work, selected-run
   loading/streaming, channel read models, and teammate CRUD/memberships have been
   removed from `AppShell`.
-- Remaining direct API imports are concentrated in shell health, approval policy settings,
-  runtime/work-unit diagnostics, and Workspace mutation/workflow command composition.
-  These are the next shrink target if the strict "health only" ideal is enforced.
+- Remaining direct API imports are limited to shell bootstrap health through the settings
+  command controller; domain-specific imports live in domain controllers.
 - Verified `corepack pnpm --filter @ling-stack/web typecheck`.
 - Verified `corepack pnpm --filter @ling-stack/web build`.
 
@@ -1112,8 +1113,10 @@ Implementation status:
 Scope:
 
 - Move remaining Workspace mutation/workflow command composition out of `AppShell`.
-- Move approval policy settings state out of `AppShell`.
-- Move runtime/work-unit diagnostics state out of `AppShell`.
+- Move approval policy settings state out of `AppShell` (implemented through
+  `useSettingsDomain`).
+- Move runtime/work-unit diagnostics state out of `AppShell` (implemented through
+  `useRuntimeDomain`).
 - Keep `AppShell` as the explicit router and coordinator, not a domain state container.
 
 Non-goals:
@@ -1192,7 +1195,8 @@ Exit criteria:
 
 Problem:
 
-- Approval policy settings and runtime settings are still shell-owned.
+- Approval policy settings and runtime settings were shell-owned and made Settings a
+  hidden state container.
 
 Design:
 

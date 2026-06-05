@@ -18,19 +18,18 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { getRuntimeSettings, listRunners, updateRuntimeSettings } from "../../api.js";
 import { LanguageSwitcher, useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { allTools, riskyTools } from "../../lib/tools.js";
 import { MetaRow, StatusBadge } from "../../shared/components/index.js";
 import { ThemeSwitcher } from "../../theme.js";
+import type { RuntimeSettingsFormState } from "../../domains/settings/use-settings-domain.js";
 import type {
   ApprovalPolicy,
   ApprovalPolicyFormState,
   ApprovalToolDecision,
   Channel,
   ExternalWorkStatusResponse,
-  RunnerFallbackPolicy,
   RunnerListItem,
   WorkspaceRuntimeSettings,
 } from "../../types.js";
@@ -38,20 +37,19 @@ import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 
 type SettingsSection = "external-work" | "interface" | "runtime" | "approval-policy" | "skill-library";
 
-interface RuntimeSettingsFormState {
-  readonly defaultRunnerId: string;
-  readonly allowedRunnerIds: readonly string[];
-  readonly explicitRunnerFallback: RunnerFallbackPolicy;
-  readonly implicitRunnerFallback: RunnerFallbackPolicy;
-}
-
 export function SettingsPage({
   cwd,
   policy,
   form,
+  runners,
+  runtimeSettings,
+  runtimeSettingsForm,
   selectedChannel,
   externalWorkStatus,
   isLoading,
+  runtimeSettingsLoading,
+  runtimeSettingsAction,
+  runtimeSettingsError,
   externalWorkStatusLoading,
   externalWorkStatusAction,
   externalWorkSecretAction,
@@ -60,6 +58,10 @@ export function SettingsPage({
   onFormChange,
   onRefresh,
   onSave,
+  onRuntimeSettingsFormChange,
+  onToggleAllowedRunner,
+  onRefreshRuntimeSettings,
+  onSaveRuntimeSettings,
   onRefreshExternalWork,
   onExternalWorkAction,
   onConfigureExternalWorkWorkflow,
@@ -71,9 +73,15 @@ export function SettingsPage({
   readonly cwd: string;
   readonly policy: ApprovalPolicy | undefined;
   readonly form: ApprovalPolicyFormState;
+  readonly runners: readonly RunnerListItem[];
+  readonly runtimeSettings: WorkspaceRuntimeSettings | undefined;
+  readonly runtimeSettingsForm: RuntimeSettingsFormState;
   readonly selectedChannel: Channel | undefined;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
   readonly isLoading: boolean;
+  readonly runtimeSettingsLoading: boolean;
+  readonly runtimeSettingsAction: "save" | undefined;
+  readonly runtimeSettingsError: string;
   readonly externalWorkStatusLoading: boolean;
   readonly externalWorkStatusAction: "poll" | "reconcile" | "start" | "stop" | undefined;
   readonly externalWorkSecretAction: "configure" | "delete" | undefined;
@@ -82,6 +90,10 @@ export function SettingsPage({
   readonly onFormChange: (form: ApprovalPolicyFormState) => void;
   readonly onRefresh: () => void;
   readonly onSave: () => void;
+  readonly onRuntimeSettingsFormChange: (form: RuntimeSettingsFormState) => void;
+  readonly onToggleAllowedRunner: (runnerId: string, allowed: boolean) => void;
+  readonly onRefreshRuntimeSettings: () => void;
+  readonly onSaveRuntimeSettings: () => void;
   readonly onRefreshExternalWork: () => void;
   readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => void;
   readonly onConfigureExternalWorkWorkflow: (input: {
@@ -100,17 +112,6 @@ export function SettingsPage({
   const [workflowSourceKind, setWorkflowSourceKind] = useState<"github" | "linear">("github");
   const [workflowRepository, setWorkflowRepository] = useState("");
   const [workflowProjectSlug, setWorkflowProjectSlug] = useState("");
-  const [runners, setRunners] = useState<readonly RunnerListItem[]>([]);
-  const [runtimeSettings, setRuntimeSettings] = useState<WorkspaceRuntimeSettings | undefined>();
-  const [runtimeSettingsForm, setRuntimeSettingsForm] = useState<RuntimeSettingsFormState>({
-    defaultRunnerId: "pi",
-    allowedRunnerIds: ["pi"],
-    explicitRunnerFallback: "disabled",
-    implicitRunnerFallback: "allow_to_default",
-  });
-  const [runtimeSettingsLoading, setRuntimeSettingsLoading] = useState(false);
-  const [runtimeSettingsAction, setRuntimeSettingsAction] = useState<"save" | undefined>();
-  const [runtimeSettingsError, setRuntimeSettingsError] = useState("");
   const secretRef = externalWorkStatus?.secret.ref ?? externalWorkStatus?.workflow.secretRef;
   const canConfigureSecret = Boolean(externalWorkStatus?.workflow.valid && externalWorkStatus.workflow.sourceKind !== "unknown");
   const canRemoveSecret = Boolean(secretRef?.startsWith("keychain:"));
@@ -123,60 +124,6 @@ export function SettingsPage({
     ? normalizedWorkflowRepository !== undefined
     : workflowProjectSlug.trim().length > 0;
   const enabledRunners = runners.filter((runner) => runner.status === "enabled");
-
-  async function refreshRuntimeSettings(): Promise<void> {
-    if (!cwd.trim()) {
-      setRunners([]);
-      setRuntimeSettings(undefined);
-      setRuntimeSettingsError("");
-      return;
-    }
-    setRuntimeSettingsLoading(true);
-    setRuntimeSettingsError("");
-    try {
-      const [runnerResponse, settingsResponse] = await Promise.all([
-        listRunners(cwd),
-        getRuntimeSettings(cwd),
-      ]);
-      setRunners(runnerResponse.runners);
-      setRuntimeSettings(settingsResponse.settings);
-      setRuntimeSettingsForm(runtimeSettingsToForm(settingsResponse.settings));
-    } catch (error) {
-      setRuntimeSettingsError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRuntimeSettingsLoading(false);
-    }
-  }
-
-  async function saveRuntimeSettings(): Promise<void> {
-    if (!cwd.trim()) {
-      return;
-    }
-    setRuntimeSettingsAction("save");
-    setRuntimeSettingsError("");
-    try {
-      const response = await updateRuntimeSettings(cwd, runtimeSettingsForm);
-      setRuntimeSettings(response.settings);
-      setRuntimeSettingsForm(runtimeSettingsToForm(response.settings));
-    } catch (error) {
-      setRuntimeSettingsError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRuntimeSettingsAction(undefined);
-    }
-  }
-
-  function toggleAllowedRunner(runnerId: string, allowed: boolean): void {
-    setRuntimeSettingsForm((current) => {
-      const nextAllowed = allowed
-        ? [...new Set([...current.allowedRunnerIds, runnerId])]
-        : current.allowedRunnerIds.filter((id) => id !== runnerId);
-      return {
-        ...current,
-        allowedRunnerIds: nextAllowed,
-        defaultRunnerId: nextAllowed.includes(current.defaultRunnerId) ? current.defaultRunnerId : nextAllowed[0] ?? current.defaultRunnerId,
-      };
-    });
-  }
 
   useEffect(() => {
     const sourceKind = externalWorkStatus?.workflow.sourceKind;
@@ -194,10 +141,6 @@ export function SettingsPage({
     externalWorkStatus?.workflow.repository,
     externalWorkStatus?.workflow.projectSlug,
   ]);
-
-  useEffect(() => {
-    void refreshRuntimeSettings();
-  }, [cwd]);
 
   return (
     <div className="settings-layout">
@@ -512,7 +455,7 @@ export function SettingsPage({
             <Bot size={18} />
             <h2 id="runtime-runner-settings-title">{t("Runtime runners")}</h2>
           </span>
-          <button className="secondary-button compact-button" type="button" onClick={() => void refreshRuntimeSettings()} disabled={runtimeSettingsLoading}>
+          <button className="secondary-button compact-button" type="button" onClick={onRefreshRuntimeSettings} disabled={runtimeSettingsLoading}>
             {runtimeSettingsLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
             {t("Refresh")}
           </button>
@@ -538,7 +481,7 @@ export function SettingsPage({
             <span>{t("Default runner")}</span>
             <select
               value={runtimeSettingsForm.defaultRunnerId}
-              onChange={(event) => setRuntimeSettingsForm({ ...runtimeSettingsForm, defaultRunnerId: event.target.value })}
+              onChange={(event) => onRuntimeSettingsFormChange({ ...runtimeSettingsForm, defaultRunnerId: event.target.value })}
               disabled={runtimeSettingsLoading || runtimeSettingsAction !== undefined || enabledRunners.length === 0}
             >
               {enabledRunners.map((runner) => (
@@ -550,9 +493,9 @@ export function SettingsPage({
             <span>{t("Explicit fallback")}</span>
             <select
               value={runtimeSettingsForm.explicitRunnerFallback}
-              onChange={(event) => setRuntimeSettingsForm({
+              onChange={(event) => onRuntimeSettingsFormChange({
                 ...runtimeSettingsForm,
-                explicitRunnerFallback: event.target.value as RunnerFallbackPolicy,
+                explicitRunnerFallback: event.target.value as RuntimeSettingsFormState["explicitRunnerFallback"],
               })}
               disabled={runtimeSettingsAction !== undefined}
             >
@@ -564,9 +507,9 @@ export function SettingsPage({
             <span>{t("Implicit fallback")}</span>
             <select
               value={runtimeSettingsForm.implicitRunnerFallback}
-              onChange={(event) => setRuntimeSettingsForm({
+              onChange={(event) => onRuntimeSettingsFormChange({
                 ...runtimeSettingsForm,
-                implicitRunnerFallback: event.target.value as RunnerFallbackPolicy,
+                implicitRunnerFallback: event.target.value as RuntimeSettingsFormState["implicitRunnerFallback"],
               })}
               disabled={runtimeSettingsAction !== undefined}
             >
@@ -588,12 +531,16 @@ export function SettingsPage({
                 <input
                   type="checkbox"
                   checked={runtimeSettingsForm.allowedRunnerIds.includes(runner.id)}
-                  onChange={(event) => toggleAllowedRunner(runner.id, event.target.checked)}
+                  onChange={(event) => onToggleAllowedRunner(runner.id, event.target.checked)}
                   disabled={runner.status !== "enabled" || runtimeSettingsAction !== undefined}
                 />
                 <StatusBadge status={runner.status} />
                 <span>{runner.displayName}</span>
-                <small>{runner.id}</small>
+                <small>
+                  {runner.id}
+                  {runner.featureFlag ? ` · ${runner.featureFlag}` : ""}
+                  {runner.disabledReason ? ` · ${runner.disabledReason}` : ""}
+                </small>
               </label>
             ))
           )}
@@ -603,7 +550,7 @@ export function SettingsPage({
           <button
             className="primary-button"
             type="button"
-            onClick={() => void saveRuntimeSettings()}
+            onClick={onSaveRuntimeSettings}
             disabled={runtimeSettingsAction !== undefined || runtimeSettingsLoading || enabledRunners.length === 0}
           >
             {runtimeSettingsAction === "save" ? <Loader2 className="spin" size={16} /> : <Save size={16} />}
@@ -694,15 +641,6 @@ function workflowStatusLabel(status: ExternalWorkStatusResponse | undefined): st
     return "missing";
   }
   return status.workflow.valid ? "valid" : "invalid";
-}
-
-function runtimeSettingsToForm(settings: WorkspaceRuntimeSettings): RuntimeSettingsFormState {
-  return {
-    defaultRunnerId: settings.defaultRunnerId,
-    allowedRunnerIds: settings.allowedRunnerIds,
-    explicitRunnerFallback: settings.explicitRunnerFallback,
-    implicitRunnerFallback: settings.implicitRunnerFallback,
-  };
 }
 
 function externalWorkTargetLabel(status: ExternalWorkStatusResponse | undefined): string {

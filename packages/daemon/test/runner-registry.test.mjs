@@ -119,6 +119,9 @@ test("default runner registry exposes disabled future adapters and fails closed"
   assert.equal(runners.some((runner) => runner.id === "pi" && runner.status === "enabled"), true);
   assert.equal(runners.some((runner) => runner.id === "codex-app-server" && runner.status === "disabled"), true);
   assert.equal(runners.some((runner) => runner.id === "openclaw-acp" && runner.status === "disabled"), true);
+  const codex = runners.find((runner) => runner.id === "codex-app-server");
+  assert.equal(codex.featureFlag, "runners.codexAppServer.enabled");
+  assert.equal(codex.disabledReason, "Feature flag is disabled.");
 
   assert.throws(
     () => registry.resolve({
@@ -139,6 +142,37 @@ test("default runner registry exposes disabled future adapters and fails closed"
   assert.equal(fallback.fallbackAllowed, true);
   assert.equal(fallback.fallbackReason?.code, "disabled_requested_runner");
   assert.equal(fallback.runner.adapter, piRunner);
+});
+
+test("future runner feature flags do not enable adapters without conformance", () => {
+  const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
+    runners: {
+      codexAppServer: {
+        enabled: true,
+        baseUrl: "http://127.0.0.1:12345",
+      },
+      openclawAcp: {
+        enabled: true,
+        endpoint: "http://127.0.0.1:23456",
+      },
+    },
+  });
+  const runners = registry.list();
+  const codex = runners.find((runner) => runner.id === "codex-app-server");
+  const openclaw = runners.find((runner) => runner.id === "openclaw-acp");
+  assert.equal(codex.status, "disabled");
+  assert.match(codex.disabledReason, /conformance has not passed/);
+  assert.deepEqual(codex.capabilities.includes("native_resume"), true);
+  assert.equal(openclaw.status, "disabled");
+  assert.match(openclaw.disabledReason, /conformance has not passed/);
+  assert.deepEqual(openclaw.capabilities.includes("mcp_tools"), true);
+
+  assert.throws(
+    () => registry.resolve({ requestedRunnerId: "codex-app-server", explicitFallbackPolicy: "disabled" }),
+    (error) =>
+      error instanceof UnsupportedRunnerError &&
+      error.fallbackReason.code === "disabled_requested_runner",
+  );
 });
 
 test("runner registry enforces workspace allowed runners before fallback", () => {

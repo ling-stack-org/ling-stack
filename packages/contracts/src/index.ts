@@ -314,6 +314,9 @@ export interface RunnerListItem {
   readonly aliases?: readonly string[];
   readonly supportedProviderApis?: readonly string[];
   readonly supportedTools?: readonly string[];
+  readonly capabilities?: readonly string[];
+  readonly featureFlag?: string;
+  readonly disabledReason?: string;
 }
 
 export interface RunnerListResponse {
@@ -2143,6 +2146,62 @@ export interface CreateChannelWorkflowFromTemplateRequest {
   readonly createdBy?: string;
   readonly providerPresetId?: string;
   readonly runnerId?: string;
+  readonly autoStart?: boolean;
+}
+
+export interface CreateChannelWorkflowFromCustomTemplateRequest {
+  readonly customTemplate: CustomWorkflowTemplate;
+  readonly title?: string;
+  readonly objective: string;
+  readonly createdBy?: string;
+  readonly providerPresetId?: string;
+  readonly runnerId?: string;
+  readonly autoStart?: boolean;
+  readonly confirmUnsafeAutoStart?: boolean;
+}
+
+export interface CreateChannelWorkflowFromCustomTemplateIdRequest {
+  readonly customTemplateId: string;
+  readonly title?: string;
+  readonly objective: string;
+  readonly createdBy?: string;
+  readonly providerPresetId?: string;
+  readonly runnerId?: string;
+  readonly autoStart?: boolean;
+  readonly confirmUnsafeAutoStart?: boolean;
+}
+
+export type CreateChannelWorkflowTemplateCompileRequest =
+  | CreateChannelWorkflowFromTemplateRequest
+  | CreateChannelWorkflowFromCustomTemplateRequest
+  | CreateChannelWorkflowFromCustomTemplateIdRequest;
+
+export interface CustomWorkflowTemplate {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly maxParallelSteps?: number;
+  readonly autoStartDefault?: boolean;
+  readonly steps: readonly CustomWorkflowTemplateStep[];
+}
+
+export interface CustomWorkflowTemplateStep {
+  readonly id: string;
+  readonly name: string;
+  readonly prompt: string;
+  readonly teammateTemplateId?: string;
+  readonly teammateId?: string;
+  readonly skillId?: string;
+  readonly providerPresetId?: string;
+  readonly requestedRunnerId?: string;
+  readonly dependsOn?: readonly string[];
+  readonly branchGroupId?: string;
+  readonly joinGroupId?: string;
+  readonly dependencyMode?: ChannelWorkflowStepMetadata["dependencyMode"];
+  readonly maxParallelSiblings?: number;
+  readonly policy?: WorkflowStepPolicy;
+  readonly gates?: readonly WorkflowStepGate[];
   readonly autoStart?: boolean;
 }
 

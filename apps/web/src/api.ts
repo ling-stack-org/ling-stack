@@ -47,7 +47,7 @@ import type {
   CreateAiTeammateRequest,
   CreateTeammateDirectMessageRequest,
   CreateChannelWorkflowFromHandoffRequest,
-  CreateChannelWorkflowFromTemplateRequest,
+  CreateChannelWorkflowTemplateCompileRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
   CreateMemoryObjectRequest,
@@ -631,7 +631,7 @@ export async function createChannelWorkflow(
 export async function createChannelWorkflowFromTemplate(
   cwd: string,
   channelId: string,
-  input: CreateChannelWorkflowFromTemplateRequest,
+  input: CreateChannelWorkflowTemplateCompileRequest,
 ): Promise<ChannelWorkflowTemplateMutationResponse> {
   return daemonClient.createChannelWorkflowFromTemplate(cwd, channelId, input);
 }

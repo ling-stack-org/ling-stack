@@ -5,6 +5,26 @@ export interface DaemonConfig {
   readonly port?: number;
   readonly maxBodyBytes?: number;
   readonly defaultWorkspaceCwd?: string;
+  readonly runners?: RunnerFeatureConfig;
+}
+
+export interface RunnerFeatureConfig {
+  readonly codexAppServer?: CodexAppServerRunnerConfig;
+  readonly openclawAcp?: OpenClawAcpRunnerConfig;
+}
+
+export interface CodexAppServerRunnerConfig {
+  readonly enabled?: boolean;
+  readonly baseUrl?: string;
+  readonly launchMode?: "external";
+  readonly conformancePassed?: boolean;
+}
+
+export interface OpenClawAcpRunnerConfig {
+  readonly enabled?: boolean;
+  readonly endpoint?: string;
+  readonly workspaceMode?: "bound_path";
+  readonly conformancePassed?: boolean;
 }
 
 export interface ResolvedDaemonConfig {
@@ -12,6 +32,7 @@ export interface ResolvedDaemonConfig {
   readonly port: number;
   readonly maxBodyBytes: number;
   readonly defaultWorkspaceCwd: string;
+  readonly runners: RunnerFeatureConfig;
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -26,5 +47,6 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     port: config.port ?? 17891,
     maxBodyBytes: config.maxBodyBytes ?? 1024 * 1024,
     defaultWorkspaceCwd: resolvePath(config.defaultWorkspaceCwd ?? process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? process.cwd()),
+    runners: config.runners ?? {},
   };
 }
