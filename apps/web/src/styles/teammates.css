@@ -2723,14 +2723,993 @@
   color: #111111;
 }
 
+.teammate-skills-workbench {
+  align-content: start;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.teammate-skill-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.teammate-skill-summary-grid span {
+  display: grid;
+  gap: 3px;
+  min-height: 50px;
+  padding: 8px 9px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.teammate-skill-summary-grid small {
+  color: #6b6b6b;
+  font-size: 11px;
+}
+
+.teammate-skill-summary-grid strong {
+  color: #111111;
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.teammate-skill-toolbar {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.8fr) minmax(0, 1fr) minmax(260px, auto);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.teammate-skill-search {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #6b6b6b;
+}
+
+.teammate-skill-search input,
+.teammate-skill-bind-controls input {
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.teammate-skill-filter-tabs,
+.teammate-skill-bind-controls,
+.teammate-skill-row-actions,
+.teammate-skill-inspector-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.teammate-skill-filter-tabs {
+  flex-wrap: wrap;
+}
+
+.teammate-skill-filter-tabs button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.teammate-skill-filter-tabs button.active,
+.teammate-skill-filter-tabs button:hover {
+  background: #f5f5f5;
+  color: #111111;
+}
+
+.teammate-skill-bind-controls {
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.teammate-skill-bind-controls input {
+  width: min(190px, 100%);
+  padding: 0 9px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+}
+
+.teammate-skill-import-panel {
+  margin: 0;
+  border-color: #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.teammate-skill-import-panel .panel-title > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.teammate-skill-workbench-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.teammate-skill-table-wrap,
+.teammate-skill-inspector {
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.teammate-skill-table-wrap {
+  min-width: 0;
+  overflow: auto;
+}
+
+.teammate-skill-table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+  color: #111111;
+  font-size: 12px;
+}
+
+.teammate-skill-table th,
+.teammate-skill-table td {
+  padding: 8px 9px;
+  border-bottom: 1px solid #e5e5e5;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.teammate-skill-table th {
+  color: #6b6b6b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.teammate-skill-table tr.selected td,
+.teammate-skill-table tbody tr:hover td {
+  background: #f5f5f5;
+}
+
+.teammate-skill-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.teammate-skill-name-button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.teammate-skill-name-button strong,
+.teammate-skill-name-button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-skill-name-button strong {
+  color: #111111;
+  font-size: 12px;
+}
+
+.teammate-skill-name-button small,
+.teammate-skill-empty-token {
+  color: #6b6b6b;
+  font-size: 11px;
+}
+
+.teammate-skill-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.teammate-skill-state.executable {
+  color: #111111;
+}
+
+.teammate-skill-state.blocked {
+  color: #b42318;
+}
+
+.teammate-skill-state.disabled,
+.teammate-skill-state.available {
+  color: #6b6b6b;
+}
+
+.teammate-skill-token-list {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.teammate-skill-token-list code,
+.teammate-skill-token-list small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 6px;
+  border: 1px solid #e5e5e5;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #111111;
+  font-size: 11px;
+}
+
+.teammate-skill-row-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.teammate-skill-inspector {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.teammate-skill-inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.teammate-skill-inspector-head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.teammate-skill-inspector-head strong {
+  overflow: hidden;
+  color: #111111;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-skill-inspector-section {
+  display: grid;
+  gap: 6px;
+}
+
+.teammate-skill-inspector-section h3,
+.teammate-skill-inspector-section p {
+  margin: 0;
+}
+
+.teammate-skill-inspector-section h3 {
+  color: #6b6b6b;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.teammate-skill-inspector-section p {
+  color: #6b6b6b;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.teammate-skill-inspector-section pre {
+  max-height: 120px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111111;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: pre-wrap;
+}
+
+.teammate-skill-reason-list {
+  display: grid;
+  gap: 6px;
+}
+
+.teammate-skill-reason-list span {
+  display: grid;
+  gap: 2px;
+  padding: 7px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.teammate-skill-reason-list strong {
+  color: #b42318;
+  font-size: 12px;
+}
+
+.teammate-skill-reason-list small {
+  color: #6b6b6b;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.teammate-skill-inspector-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid #e5e5e5;
+}
+
 @media (max-width: 980px) {
   .workspace-teammates-surface .teammate-management-grid,
-  .teammate-create-list.role-grid {
+  .teammate-create-list.role-grid,
+  .teammate-skill-toolbar,
+  .teammate-skill-workbench-grid {
     grid-template-columns: 1fr;
+  }
+
+  .teammate-skill-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .workspace.workspace-teammates-surface {
     height: auto;
     min-height: 100vh;
+  }
+}
+
+/* AI teammate private chat + single-agent settings split. */
+.workspace.workspace-teammate-private-surface {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: #ffffff;
+}
+
+.teammate-workspace.chat-mode {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 244px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.teammate-workspace.settings-mode {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr) 280px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.teammate-chat-header,
+.teammate-settings-header {
+  grid-column: 1 / -1;
+  display: grid;
+  align-items: center;
+  gap: 0 10px;
+  height: 48px;
+  min-width: 0;
+  padding: 0 18px;
+  overflow: hidden;
+  border-bottom: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.teammate-chat-header {
+  grid-template-columns: minmax(148px, auto) minmax(0, 1fr) auto;
+  grid-template-rows: 1fr;
+}
+
+.teammate-settings-header {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 48px;
+}
+
+.teammate-chat-header .teammate-workspace-identity {
+  grid-column: 1;
+  grid-row: 1;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 7px;
+  align-self: center;
+  min-width: 0;
+  max-width: 280px;
+}
+
+.teammate-chat-header .teammate-workspace-identity .avatar-initial,
+.teammate-chat-header .teammate-workspace-identity .teammate-avatar-image {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+}
+
+.teammate-chat-header .teammate-workspace-identity > div {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+  min-width: 0;
+}
+
+.teammate-chat-header .teammate-pack-label {
+  order: 2;
+  align-self: center;
+  font-size: 10px;
+  line-height: 12px;
+}
+
+.teammate-chat-header .teammate-workspace-identity h2 {
+  order: 1;
+}
+
+.teammate-chat-header .teammate-workspace-identity p {
+  grid-column: 1 / -1;
+  order: 3;
+}
+
+.teammate-chat-header .teammate-workspace-identity p {
+  display: none;
+}
+
+.teammate-chat-header h2,
+.teammate-settings-header h2 {
+  margin: 0;
+  color: #111111;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 15px;
+}
+
+.teammate-chat-header p,
+.teammate-settings-header p {
+  margin: 1px 0 0;
+  overflow: hidden;
+  color: #6b6b6b;
+  font-size: 10px;
+  line-height: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-chat-actions,
+.teammate-settings-header-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.teammate-chat-actions {
+  grid-column: 3;
+  grid-row: 1;
+  min-width: max-content;
+}
+
+.teammate-chat-actions .secondary-button.active {
+  background: #f5f5f5;
+  color: #111111;
+}
+
+.teammate-chat-status-row {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+  padding-left: 0;
+  overflow: hidden;
+}
+
+.teammate-context-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-height: 18px;
+  min-width: 0;
+  max-width: 160px;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid #e5e5e5;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #6b6b6b;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-chat-search {
+  grid-column: 2;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #6b6b6b;
+}
+
+.teammate-chat-search input {
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.teammate-chat-header.searching .teammate-chat-status-row {
+  display: none;
+}
+
+.teammate-chat-search button {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b6b6b;
+}
+
+.teammate-workspace.chat-mode > .inline-error,
+.teammate-workspace.settings-mode > .inline-error,
+.teammate-workspace.chat-mode > .client-empty-state,
+.teammate-workspace.settings-mode > .client-empty-state {
+  grid-column: 1 / -1;
+}
+
+.teammate-workspace.chat-mode > .teammate-private-chat {
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.teammate-workspace.chat-mode .teammate-message-list {
+  max-height: none;
+  min-height: 0;
+  align-content: start;
+  gap: 10px;
+  padding: 16px 18px 14px;
+  background: #ffffff;
+}
+
+.teammate-workspace.chat-mode .teammate-message-list.empty {
+  align-content: center;
+  justify-content: center;
+  justify-items: center;
+  padding-bottom: clamp(96px, 16vh, 170px);
+}
+
+.teammate-chat-day-separator {
+  justify-self: center;
+  color: #8a8a8a;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.teammate-workspace.chat-mode .teammate-message-list > .client-empty-state.teammate-empty {
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 0;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b6b6b;
+  font-size: 12px;
+}
+
+.teammate-workspace.chat-mode .teammate-message-list > .client-empty-state.teammate-empty svg {
+  width: 15px;
+  height: 15px;
+}
+
+.teammate-workspace.chat-mode .teammate-message-row {
+  grid-template-columns: 26px minmax(0, min(620px, 100%));
+  gap: 8px;
+  max-width: 700px;
+}
+
+.teammate-workspace.chat-mode .teammate-message-row.local-user {
+  grid-template-columns: minmax(0, min(520px, 70%)) 26px;
+  justify-content: end;
+  max-width: none;
+}
+
+.teammate-workspace.chat-mode .teammate-message-row.local-user > .avatar-initial {
+  grid-column: 2;
+}
+
+.teammate-workspace.chat-mode .teammate-message-row.local-user > div {
+  grid-column: 1;
+}
+
+.teammate-workspace.chat-mode .teammate-message-row.system {
+  grid-template-columns: minmax(0, min(520px, 100%));
+  justify-content: center;
+  max-width: none;
+}
+
+.teammate-workspace.chat-mode .teammate-message-row.system > .avatar-initial {
+  display: none;
+}
+
+.teammate-workspace.chat-mode .teammate-message-row .avatar-initial,
+.teammate-workspace.chat-mode .teammate-message-row .teammate-avatar-image.compact {
+  width: 26px;
+  height: 26px;
+  font-size: 10px;
+}
+
+.teammate-workspace.chat-mode .teammate-message-row > div {
+  border-color: #e5e5e5;
+  background: #ffffff;
+}
+
+.teammate-workspace.chat-mode .teammate-message-row.ai-teammate > div {
+  background: #ffffff;
+}
+
+.teammate-workspace.chat-mode .teammate-chat-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.teammate-workspace.chat-mode .teammate-pending-attachments {
+  grid-column: 1 / -1;
+}
+
+.teammate-workspace.chat-mode .teammate-chat-composer textarea {
+  height: 38px;
+  min-height: 38px;
+  max-height: 108px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.teammate-workspace.chat-mode .teammate-chat-composer-actions {
+  flex-wrap: nowrap;
+  align-self: end;
+}
+
+.teammate-workspace.chat-mode .teammate-chat-composer-actions label.secondary-button.compact-button {
+  justify-content: center;
+  width: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  font-size: 0;
+}
+
+.teammate-workspace.chat-mode .teammate-chat-composer-actions .primary-button {
+  min-height: 38px;
+}
+
+.teammate-workspace.chat-mode .teammate-direct-composer {
+  align-self: end;
+  margin: 10px 10px 12px;
+  padding: 9px;
+  border-color: #e5e5e5;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.teammate-workspace.chat-mode .teammate-direct-composer .composer-drop-zone {
+  min-height: 96px;
+}
+
+.teammate-workspace.chat-mode .teammate-direct-composer .composer-drop-zone textarea {
+  min-height: 96px;
+  padding: 8px 9px 2px;
+  color: #111111;
+  font-size: 13px;
+}
+
+.teammate-workspace.chat-mode .teammate-direct-composer .composer-primary-actions {
+  min-height: 34px;
+}
+
+.teammate-workspace.chat-mode .teammate-direct-composer .composer-send-button {
+  width: 44px;
+  min-width: 44px;
+  height: 32px;
+  min-height: 32px;
+  border-radius: 8px;
+}
+
+.teammate-context-panel {
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 11px;
+  border-left: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.teammate-context-panel section,
+.teammate-settings-summary-panel section {
+  display: grid;
+  gap: 8px;
+}
+
+.teammate-context-panel h3,
+.teammate-settings-summary-panel h3 {
+  margin: 0;
+  color: #111111;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
+.teammate-context-panel p,
+.teammate-settings-summary-panel p {
+  margin: 0;
+  color: #6b6b6b;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.teammate-context-list {
+  display: grid;
+  gap: 7px;
+}
+
+.teammate-context-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 7px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111111;
+  text-decoration: none;
+}
+
+.teammate-context-row span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.teammate-context-row strong,
+.teammate-context-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-context-row strong {
+  color: #111111;
+  font-size: 12px;
+}
+
+.teammate-context-row small {
+  color: #6b6b6b;
+  font-size: 11px;
+}
+
+.teammate-settings-nav {
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 8px;
+  border-right: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.teammate-settings-nav button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b6b6b;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.teammate-settings-nav button.active,
+.teammate-settings-nav button:hover {
+  background: #f5f5f5;
+  color: #111111;
+}
+
+.teammate-settings-nav button.danger {
+  margin-top: 12px;
+  color: #b42318;
+}
+
+.teammate-settings-nav small {
+  color: inherit;
+  font-size: 11px;
+}
+
+.teammate-workspace.settings-mode > .teammate-list-panel,
+.teammate-workspace.settings-mode > .teammate-settings-panel,
+.teammate-workspace.settings-mode > .teammate-mcp-panel {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.teammate-config-card {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #e5e5e5;
+}
+
+.teammate-danger-panel {
+  gap: 12px;
+}
+
+.teammate-danger-card {
+  grid-template-columns: minmax(0, 1fr) minmax(160px, auto) auto;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.teammate-danger-card:first-of-type {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.teammate-settings-summary-panel {
+  grid-column: 3;
+  grid-row: 2;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  border-left: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.teammate-summary-list {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #e5e5e5;
+}
+
+@media (max-width: 1100px) {
+  .teammate-workspace.chat-mode,
+  .teammate-workspace.settings-mode {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  .teammate-context-panel,
+  .teammate-settings-summary-panel,
+  .teammate-settings-nav,
+  .teammate-workspace.chat-mode > .teammate-private-chat,
+  .teammate-workspace.settings-mode > .teammate-list-panel,
+  .teammate-workspace.settings-mode > .teammate-settings-panel,
+  .teammate-workspace.settings-mode > .teammate-mcp-panel {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .teammate-settings-header,
+  .teammate-chat-header,
+  .teammate-danger-card,
+  .teammate-config-card {
+    grid-template-columns: 1fr;
+  }
+
+  .teammate-settings-nav {
+    display: flex;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid #e5e5e5;
+  }
+
+  .teammate-settings-nav button {
+    flex: 0 0 auto;
+  }
+
+  .teammate-context-panel,
+  .teammate-settings-summary-panel {
+    border-left: 0;
+    border-top: 1px solid #e5e5e5;
   }
 }

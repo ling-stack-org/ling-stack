@@ -2,6 +2,7 @@
 
 Status: Implemented v1 slice; PATCH-style draft editing remains deferred
 Date: 2026-06-04
+Updated: 2026-06-05 UI refinement for workspace skill library and teammate skills
 Scope: Unified skill registry, custom skill packs, persona import drafts, Effective
 Skills UI, and skill-aware task/run polish
 
@@ -445,6 +446,26 @@ to be duplicated into SQLite unless a later migration needs immutable snapshots.
 
 ## UI Surface Sketch
 
+### Workspace Skill Library
+
+The workspace-level surface lives under Settings as **Skill Library**. Its job is
+registry management, not teammate authorization:
+
+```text
+Settings
+  -> Skill Library
+  -> list registry definitions
+  -> import draft
+  -> publish draft
+  -> archive custom/imported definitions
+  -> show which teammates currently bind each skill
+  -> inspect prompt fragments, required tools, provider capabilities, approval profile
+```
+
+This page should not grant a teammate permission to use a skill directly. Binding and
+disable/enable remain teammate-scoped operations in the Private Workspace Skills tab.
+That separation keeps the global library from becoming an implicit permission grant.
+
 ### Skills Tab
 
 ```text
@@ -528,6 +549,16 @@ Web:
 - task create/update can save `requestedSkillId`,
 - run history shows `selectedSkillId`,
 - blocked run start displays reason codes in user-facing text.
+
+Current web refinement:
+
+- Settings `Skill Library` shows registry stats, filters, a compact table, import draft
+  preview/publish, archive for non-built-in definitions, bound teammate visibility, and
+  a right-side inspector.
+- Private Workspace `Skills` tab shows bound/executable/blocked/available stats, filters,
+  a compact Effective Skill table, blocked reason details, and an inspector for prompt
+  fragments, required tools, provider capabilities, approval profile, and binding actions.
+- Task detail surfaces show `requestedSkillId`; run history already shows `selectedSkillId`.
 
 Verification:
 

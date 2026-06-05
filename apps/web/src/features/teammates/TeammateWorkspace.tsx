@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
+  ArrowLeft,
   Bot,
   Brain,
   ChevronDown,
@@ -15,16 +16,16 @@ import {
   RefreshCw,
   Save,
   Search,
-  Send,
   Settings,
   ShieldCheck,
   SquareTerminal,
   Trash2,
   Upload,
+  UserCircle,
   Wrench,
   X,
 } from "lucide-react";
-import type { SkillPack } from "@ling-stack/core/skill-types";
+import type { SkillDefinition, SkillPack } from "@ling-stack/core/skill-types";
 import {
   archiveSkill,
   attachmentContentUrl,
@@ -55,12 +56,13 @@ import {
   uploadTeammateAvatar,
   uploadTeammatePrivateAttachment,
 } from "../../api.js";
-import { useI18n } from "../../i18n.js";
+import { useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
 import { providerPreflightReady } from "../../lib/providers.js";
 import { readSseResponse } from "../../sse.js";
 import {
   AvatarInitial,
+  MessageComposer,
   MetaRow,
   StatusBadge,
   UsedMemorySummary,
@@ -97,8 +99,10 @@ import type {
 } from "../../types.js";
 import { approvalProfileText, teammateInitialFromName, workflowPhaseLabel } from "./helpers.js";
 
-type TeammateWorkspaceTab = "chat" | "tasks" | "activity" | "channels" | "skills" | "memory" | "settings" | "mcp";
+type TeammateWorkspaceView = "chat" | "settings";
+type TeammateWorkspaceTab = "profile" | "model" | "permissions" | "channels" | "skills" | "memory" | "mcp" | "danger" | "tasks" | "activity";
 type McpToolFilter = "all" | "authorized" | "read" | "write-or-external";
+type SkillBindingFilter = "all" | "bound" | "executable" | "blocked" | "available";
 
 interface TeammateSettingsForm {
   readonly displayName: string;
@@ -127,6 +131,13 @@ interface SkillImportForm {
 interface PersonaImportForm {
   readonly sourcePath: string;
   readonly content: string;
+}
+
+interface TeammateSkillRowModel {
+  readonly id: string;
+  readonly skill: SkillDefinition | undefined;
+  readonly binding: TeammateSkillBinding | undefined;
+  readonly effectiveSkill: EffectiveTeammateSkill | undefined;
 }
 
 type MaybePromise<T> = T | Promise<T>;
@@ -159,9 +170,12 @@ export function TeammateWorkspace({
   readonly onRefreshTasks?: (channelId: string) => MaybePromise<void>;
 }): JSX.Element {
   const { t } = useI18n();
-  const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("chat");
+  const [workspaceView, setWorkspaceView] = useState<TeammateWorkspaceView>("chat");
+  const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("profile");
   const [thread, setThread] = useState<TeammateDirectThread | undefined>();
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
   const [pendingAttachmentIds, setPendingAttachmentIds] = useState<readonly string[]>([]);
   const [memberships, setMemberships] = useState<readonly TeammateChannelMembership[]>([]);
@@ -178,6 +192,10 @@ export function TeammateWorkspace({
   const [activityItems, setActivityItems] = useState<readonly TeammateActivityItem[]>([]);
   const [messageDraft, setMessageDraft] = useState("");
   const [manualSkillInput, setManualSkillInput] = useState("");
+  const [selectedSkillId, setSelectedSkillId] = useState("");
+  const [skillSearchQuery, setSkillSearchQuery] = useState("");
+  const [skillFilter, setSkillFilter] = useState<SkillBindingFilter>("all");
+  const [skillImportOpen, setSkillImportOpen] = useState(false);
   const [taskForm, setTaskForm] = useState<TeammateTaskCreateForm>({ channelId: "", requestedSkillId: "", title: "", prompt: "" });
   const [skillImportForm, setSkillImportForm] = useState<SkillImportForm>({ name: "", sourcePath: "", source: "custom", content: "" });
   const [skillImportDraft, setSkillImportDraft] = useState<SkillImportDraft | undefined>();
@@ -221,7 +239,7 @@ export function TeammateWorkspace({
   const privateAttachmentById = useMemo(() => new Map(privateAttachments.map((attachment) => [attachment.id, attachment])), [privateAttachments]);
   const pendingAttachments = useMemo(() => pendingAttachmentIds.map((id) => privateAttachmentById.get(id)).filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment)), [pendingAttachmentIds, privateAttachmentById]);
   const enabledSkillCount = useMemo(() => skillBindings.filter((binding) => binding.enabled).length, [skillBindings]);
-  const skillRows = useMemo(() => {
+  const skillRows = useMemo((): readonly TeammateSkillRowModel[] => {
     const registryRows = skillDefinitions.map((skill) => ({
       id: skill.id,
       skill,
@@ -238,6 +256,18 @@ export function TeammateWorkspace({
       }));
     return [...registryRows, ...unknownRows];
   }, [bindingBySkillId, effectiveSkillById, skillBindings, skillById, skillDefinitions]);
+  const skillTableRows = useMemo(() => filterTeammateSkillRows(skillRows, skillSearchQuery, skillFilter), [skillFilter, skillRows, skillSearchQuery]);
+  const selectedSkillRow = useMemo(
+    () => skillRows.find((row) => row.id === selectedSkillId) ?? skillTableRows[0] ?? skillRows[0],
+    [selectedSkillId, skillRows, skillTableRows],
+  );
+  const skillStats = useMemo(() => {
+    const bound = skillRows.filter((row) => row.binding?.enabled).length;
+    const executable = skillRows.filter((row) => row.effectiveSkill?.executable).length;
+    const blocked = skillRows.filter((row) => row.binding?.enabled && !row.effectiveSkill?.executable).length;
+    const available = skillRows.filter((row) => !row.binding).length;
+    return { bound, executable, blocked, available };
+  }, [skillRows]);
   const executableSkillOptions = useMemo(() => effectiveSkills.filter((skill) => skill.executable), [effectiveSkills]);
   const channelsById = useMemo(() => new Map(channels.map((channel) => [channel.id, channel])), [channels]);
   const membershipByChannelId = useMemo(() => new Map(memberships.map((membership) => [membership.channelId, membership])), [memberships]);
@@ -267,22 +297,53 @@ export function TeammateWorkspace({
     }
     return ordered;
   }, [channels, channelsById, memberships]);
-  const tabs: readonly { readonly id: TeammateWorkspaceTab; readonly label: string; readonly count?: number }[] = [
-    { id: "chat", label: t("Private chat"), count: messages.length },
-    { id: "tasks", label: t("Tasks"), count: tasks.length },
-    { id: "activity", label: t("Activity"), count: activityItems.length },
+  const settingsSections: readonly { readonly id: TeammateWorkspaceTab; readonly label: string; readonly count?: number; readonly danger?: boolean }[] = [
+    { id: "profile", label: t("Profile") },
+    { id: "model", label: t("Model") },
+    { id: "permissions", label: t("Permissions") },
     { id: "channels", label: t("Channels"), count: memberships.length },
     { id: "skills", label: t("Skills"), count: enabledSkillCount },
     { id: "memory", label: t("Memory"), count: memoryScopes.length },
-    { id: "settings", label: t("Settings") },
     { id: "mcp", label: t("MCP") },
+    { id: "danger", label: t("Danger zone"), danger: true },
   ];
+  const normalizedMessageSearchQuery = messageSearchQuery.trim().toLowerCase();
+  const visibleMessages = useMemo(() => {
+    if (!normalizedMessageSearchQuery) {
+      return messages;
+    }
+    return messages.filter((message) => {
+      const attachmentText = message.attachmentIds
+        .map((id) => privateAttachmentById.get(id)?.fileName ?? "")
+        .join(" ");
+      return `${message.body} ${attachmentText}`.toLowerCase().includes(normalizedMessageSearchQuery);
+    });
+  }, [messages, normalizedMessageSearchQuery, privateAttachmentById]);
+  const directAttachments = useMemo(
+    () => privateAttachments.filter((attachment) => attachment.scope === "teammate_direct_thread"),
+    [privateAttachments],
+  );
+  const recentUsedMemoryEvents = useMemo(() => usedMemoryEvents.slice(0, 3), [usedMemoryEvents]);
+  const recentMemoryObjects = useMemo(() => {
+    const memoryIds = recentUsedMemoryEvents.flatMap((event) => event.memoryIds);
+    return [...new Set(memoryIds)]
+      .map((id) => memoryById.get(id))
+      .filter((memory): memory is MemoryObject => Boolean(memory))
+      .slice(0, 3);
+  }, [memoryById, recentUsedMemoryEvents]);
+  const lastAiMessage = useMemo(
+    () => [...messages].reverse().find((message) => message.authorType === "ai-teammate"),
+    [messages],
+  );
+  const providerReady = Boolean(provider && providerPreflightReady(provider));
 
   useEffect(() => {
     setSettingsForm(teammateToSettingsForm(teammate));
   }, [teammate]);
 
   useEffect(() => {
+    setWorkspaceView("chat");
+    setActiveTab("profile");
     setSaveMessage("");
     setTaskMessage("");
     setChannelMessage("");
@@ -292,6 +353,12 @@ export function TeammateWorkspace({
     setMcpToolSearchByServerId({});
     setMcpToolFilterByServerId({});
     setManualSkillInput("");
+    setSelectedSkillId("");
+    setSkillSearchQuery("");
+    setSkillFilter("all");
+    setSkillImportOpen(false);
+    setMessageSearchOpen(false);
+    setMessageSearchQuery("");
     setPendingAttachmentIds([]);
     setHardDeleteReason("");
     setTaskForm({ channelId: "", requestedSkillId: "", title: "", prompt: "" });
@@ -311,6 +378,16 @@ export function TeammateWorkspace({
       return channelId === current.channelId ? current : { ...current, channelId };
     });
   }, [channels, memberships]);
+
+  useEffect(() => {
+    if (!selectedSkillRow && selectedSkillId) {
+      setSelectedSkillId("");
+      return;
+    }
+    if (selectedSkillRow && selectedSkillRow.id !== selectedSkillId) {
+      setSelectedSkillId(selectedSkillRow.id);
+    }
+  }, [selectedSkillId, selectedSkillRow]);
 
   async function refreshTeammateWorkspace(): Promise<void> {
     const workspaceCwd = cwd.trim();
@@ -558,7 +635,6 @@ export function TeammateWorkspace({
       title: titleFromPrompt(message.body),
       prompt: message.body,
     });
-    setActiveTab("tasks");
   }
 
   async function saveChannelMemberships(
@@ -789,6 +865,7 @@ export function TeammateWorkspace({
       setSkillBindings(skillResponse.bindings);
       setEffectiveSkills(skillResponse.effectiveSkills ?? []);
       setSkillImportDraft(undefined);
+      setSkillImportOpen(false);
       setSkillImportForm({ name: "", sourcePath: "", source: "custom", content: "" });
       setSkillMessage(t("Published {count} skills", { count: response.skills.length }));
     } catch (error) {
@@ -931,50 +1008,88 @@ export function TeammateWorkspace({
   }
 
   return (
-    <div className="teammate-workspace">
-      <section className="teammate-workspace-hero" aria-label={t("AI teammate private workspace")}>
-        <div className="teammate-workspace-identity">
-          <TeammateAvatar teammate={teammate} cwd={cwd} />
+    <div className={`teammate-workspace ${workspaceView === "settings" ? "settings-mode" : "chat-mode"}`}>
+      {workspaceView === "chat" ? (
+        <section className={messageSearchOpen ? "teammate-chat-header searching" : "teammate-chat-header"} aria-label={t("AI teammate private chat")}>
+          <div className="teammate-workspace-identity">
+            <TeammateAvatar teammate={teammate} cwd={cwd} />
+            <div>
+              <span className="teammate-pack-label">{t(`role.${teammate.roleKey}`)}</span>
+              <h2>{teammate.displayName}</h2>
+              <p>{t("Private conversation only visible between you and {name}", { name: teammate.displayName })}</p>
+            </div>
+          </div>
+          <div className="teammate-chat-actions" aria-label={t("Private chat actions")}>
+            <button
+              className={messageSearchOpen ? "secondary-button compact-button active" : "secondary-button compact-button"}
+              type="button"
+              onClick={() => setMessageSearchOpen((current) => !current)}
+              title={t("Search private messages")}
+              aria-label={t("Search private messages")}
+            >
+              <Search size={15} />
+            </button>
+            <button
+              className="secondary-button compact-button"
+              type="button"
+              onClick={() => void refreshTeammateWorkspace()}
+              disabled={loading}
+              title={t("Refresh teammate workspace")}
+              aria-label={t("Refresh teammate workspace")}
+            >
+              <RefreshCw size={15} className={loading ? "spin" : undefined} />
+            </button>
+            <button
+              className="secondary-button compact-button"
+              type="button"
+              onClick={() => {
+                setWorkspaceView("settings");
+                setActiveTab("profile");
+              }}
+            >
+              <Settings size={15} />
+              {t("Settings")}
+            </button>
+          </div>
+          <div className="teammate-chat-status-row" aria-label={t("Private chat status")}>
+            <span className="teammate-context-chip">{providerReady ? t("Model ready") : t("Model needs setup")}</span>
+            <span className="teammate-context-chip">{memoryScopes.some((scope) => scope.enabled) ? t("Recall enabled") : t("Recall off")}</span>
+            <span className="teammate-context-chip">{t("{count} attachments", { count: directAttachments.length })}</span>
+            {teammate.status === "active" ? null : <StatusBadge status={teammate.status} />}
+          </div>
+          {messageSearchOpen ? (
+            <label className="teammate-chat-search">
+              <Search size={14} />
+              <input value={messageSearchQuery} onChange={(event) => setMessageSearchQuery(event.target.value)} placeholder={t("Search private messages")} />
+              {messageSearchQuery ? (
+                <button type="button" onClick={() => setMessageSearchQuery("")} aria-label={t("Clear search")}>
+                  <X size={14} />
+                </button>
+              ) : null}
+            </label>
+          ) : null}
+        </section>
+      ) : (
+        <section className="teammate-settings-header" aria-label={t("Single agent settings")}>
+          <button className="secondary-button compact-button" type="button" onClick={() => setWorkspaceView("chat")}>
+            <ArrowLeft size={15} />
+            {t("Back to private chat")}
+          </button>
           <div>
-            <span className="teammate-pack-label">{t(`role.${teammate.roleKey}`)}</span>
-            <h2>{teammate.displayName}</h2>
-            <p>{teammate.description}</p>
+            <h2>{t("{name} settings", { name: teammate.displayName })}</h2>
+            <p>{t("Single agent profile, permissions, and tool configuration")}</p>
           </div>
-        </div>
-        <div className="teammate-workspace-actions">
-          <StatusBadge status={teammate.status} />
-          <button className="secondary-button" type="button" onClick={() => void refreshTeammateWorkspace()} disabled={loading}>
-            <RefreshCw size={15} className={loading ? "spin" : undefined} />
-            {t("Refresh")}
-          </button>
-        </div>
-        <div className="teammate-workspace-meta">
-          <MetaRow label={t("Provider")} value={provider ? provider.displayName : t("None")} compact />
-          <MetaRow label={t("Model")} value={provider?.model ?? "-"} compact />
-          <MetaRow label={t("Approval")} value={approvalProfileText(teammate.approvalProfile, t)} compact />
-          <MetaRow label={t("Thread")} value={thread?.id ?? "-"} compact />
-        </div>
-        {provider && !providerPreflightReady(provider) ? (
-          <div className="provider-run-notice">
-            <ShieldCheck size={16} />
-            <span>{t("Provider needs a successful check before reliable AI replies.")}</span>
+          <div className="teammate-settings-header-actions">
+            <button className="secondary-button compact-button" type="button" onClick={() => setSettingsForm(teammateToSettingsForm(teammate))}>
+              {t("Reset")}
+            </button>
+            <button className="primary-button compact-button" type="button" onClick={() => void saveSettings()} disabled={saving}>
+              {saving ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
+              {t("Save")}
+            </button>
           </div>
-        ) : !provider ? (
-          <div className="provider-run-notice neutral">
-            <ShieldCheck size={16} />
-            <span>{t("No provider is bound. Private chat will record messages but AI replies may be blocked.")}</span>
-          </div>
-        ) : null}
-      </section>
-
-      <div className="teammate-workspace-tabs" role="tablist" aria-label={t("AI teammate workspace tabs")}>
-        {tabs.map((tab) => (
-          <button key={tab.id} type="button" className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}>
-            {t(tab.label)}
-            {tab.count !== undefined ? <span>{tab.count}</span> : null}
-          </button>
-        ))}
-      </div>
+        </section>
+      )}
 
       {workspaceError ? <div className="inline-error">{workspaceError}</div> : null}
       {loading ? (
@@ -984,16 +1099,33 @@ export function TeammateWorkspace({
         </div>
       ) : null}
 
-      {activeTab === "chat" ? (
+      {workspaceView === "settings" ? (
+        <nav className="teammate-settings-nav" aria-label={t("Settings sections")}>
+          {settingsSections.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className={`${activeTab === section.id ? "active" : ""}${section.danger ? " danger" : ""}`}
+              onClick={() => setActiveTab(section.id)}
+            >
+              <span>{section.label}</span>
+              {section.count !== undefined ? <small>{section.count}</small> : null}
+            </button>
+          ))}
+        </nav>
+      ) : null}
+
+      {workspaceView === "chat" ? (
         <section className="teammate-private-chat" aria-label={t("Private chat")}>
-          <div className="teammate-message-list">
-            {messages.length === 0 ? (
+          <div className={visibleMessages.length === 0 ? "teammate-message-list empty" : "teammate-message-list"}>
+            <div className="teammate-chat-day-separator">{t("Today")}</div>
+            {visibleMessages.length === 0 ? (
               <div className="client-empty-state teammate-empty">
                 <MessageSquare size={18} />
-                <span>{t("No private messages yet")}</span>
+                <span>{normalizedMessageSearchQuery ? t("No private messages match search") : t("No private messages yet")}</span>
               </div>
             ) : (
-              messages.map((message) => (
+              visibleMessages.map((message) => (
                 <article key={message.id} className={`teammate-message-row ${message.authorType}`}>
                   {message.authorType === "ai-teammate" ? <TeammateAvatar teammate={teammate} cwd={cwd} compact /> : <AvatarInitial label="U" tone="gray" />}
                   <div>
@@ -1031,50 +1163,107 @@ export function TeammateWorkspace({
               ))
             )}
           </div>
-          <div className="teammate-chat-composer">
-            {pendingAttachments.length > 0 ? (
-              <div className="teammate-pending-attachments">
+          <MessageComposer
+            className="teammate-direct-composer"
+            label={t("Private chat composer")}
+            value={messageDraft}
+            rows={3}
+            sending={sending}
+            sendDisabled={!messageDraft.trim() && pendingAttachmentIds.length === 0}
+            sendLabel={t("Send")}
+            sendingLabel={t("Sending...")}
+            attachLabel={uploadingAttachments ? t("Uploading...") : t("Attach files")}
+            accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
+            placeholder={t("Message this AI teammate privately")}
+            onChange={setMessageDraft}
+            onSend={sendPrivateMessage}
+            onAttachFiles={(files) => void uploadPrivateFiles(Array.from(files))}
+            previewContent={pendingAttachments.length > 0 ? (
+              <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
                 {pendingAttachments.map((attachment) => (
-                  <span key={attachment.id} className="teammate-attachment-chip">
-                    <Paperclip size={13} />
-                    <span>{attachment.fileName}</span>
-                    <button type="button" onClick={() => void removePendingAttachment(attachment.id)} aria-label={t("Remove attachment")}>
-                      <X size={12} />
+                  <div key={attachment.id} className="composer-preview-card file ready">
+                    <span className="composer-preview-file-icon" aria-hidden="true">
+                      <Paperclip size={16} />
+                    </span>
+                    <span className="composer-preview-body">
+                      <strong title={attachment.fileName}>{attachment.fileName}</strong>
+                      <small>{formatBytes(attachment.sizeBytes)}</small>
+                    </span>
+                    <button className="composer-preview-remove" type="button" onClick={() => void removePendingAttachment(attachment.id)} aria-label={t("Remove pending attachment")}>
+                      <X size={13} />
                     </button>
-                  </span>
+                  </div>
                 ))}
               </div>
             ) : null}
-            <textarea
-              rows={3}
-              value={messageDraft}
-              onChange={(event) => setMessageDraft(event.target.value)}
-              placeholder={t("Message this AI teammate privately")}
-            />
-            <div className="teammate-chat-composer-actions">
-              <label className="secondary-button compact-button">
-                {uploadingAttachments ? <Loader2 className="spin" size={14} /> : <Paperclip size={14} />}
-                {t("Attach")}
-                <input
-                  type="file"
-                  multiple
-                  onChange={(event) => {
-                    const files = Array.from(event.currentTarget.files ?? []);
-                    event.currentTarget.value = "";
-                    void uploadPrivateFiles(files);
-                  }}
-                />
-              </label>
-            <button className="primary-button" type="button" onClick={() => void sendPrivateMessage()} disabled={sending || (!messageDraft.trim() && pendingAttachmentIds.length === 0)}>
-              {sending ? <Loader2 className="spin" size={15} /> : <Send size={15} />}
-              {sending ? t("Sending...") : t("Send")}
-            </button>
-            </div>
-          </div>
+          />
         </section>
       ) : null}
 
-      {activeTab === "tasks" ? (
+      {workspaceView === "chat" ? (
+        <aside className="teammate-context-panel" aria-label={t("Conversation context")}>
+          <section>
+            <div className="panel-title split">
+              <span>
+                <MessageSquare size={15} />
+                <h3>{t("Conversation context")}</h3>
+              </span>
+              <small>{t("Private")}</small>
+            </div>
+            <p>{lastAiMessage?.body ? truncateText(lastAiMessage.body, 180) : t("No AI reply summary yet.")}</p>
+          </section>
+          <section>
+            <div className="panel-title split">
+              <span>
+                <Paperclip size={15} />
+                <h3>{t("Private attachments")}</h3>
+              </span>
+              <small>{directAttachments.length}</small>
+            </div>
+            {directAttachments.length === 0 ? (
+              <p>{t("No private attachments yet.")}</p>
+            ) : (
+              <div className="teammate-context-list">
+                {directAttachments.slice(0, 4).map((attachment) => (
+                  <a key={attachment.id} className="teammate-context-row" href={attachmentContentUrl(attachment, cwd.trim())} target="_blank" rel="noreferrer">
+                    <Paperclip size={13} />
+                    <span>
+                      <strong>{attachment.fileName}</strong>
+                      <small>{formatBytes(attachment.sizeBytes)} · {formatDateTime(attachment.createdAt)}</small>
+                    </span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </section>
+          <section>
+            <div className="panel-title split">
+              <span>
+                <Brain size={15} />
+                <h3>{t("Recent Used Memory")}</h3>
+              </span>
+              <small>{recentUsedMemoryEvents.length}</small>
+            </div>
+            {recentMemoryObjects.length === 0 ? (
+              <p>{t("No used memory in this private thread yet.")}</p>
+            ) : (
+              <div className="teammate-context-list">
+                {recentMemoryObjects.map((memory) => (
+                  <span key={memory.id} className="teammate-context-row">
+                    <Brain size={13} />
+                    <span>
+                      <strong>{memory.title}</strong>
+                      <small>{truncateText(memory.body, 96)}</small>
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
+        </aside>
+      ) : null}
+
+      {workspaceView === "settings" && activeTab === "tasks" ? (
         <>
           <section className="teammate-list-panel teammate-task-create-panel" aria-label={t("New teammate task")}>
             <div className="panel-title split">
@@ -1141,7 +1330,10 @@ export function TeammateWorkspace({
               <article key={task.id} className="teammate-data-row">
                 <span>
                   <strong>{task.title}</strong>
-                  <small>{task.prompt}</small>
+                  <small>
+                    {task.prompt}
+                    {task.requestedSkillId ? ` · ${t("Requested skill")}: ${task.requestedSkillId}` : ""}
+                  </small>
                 </span>
                 <StatusBadge status={task.status} />
               </article>
@@ -1150,7 +1342,7 @@ export function TeammateWorkspace({
         </>
       ) : null}
 
-      {activeTab === "activity" ? (
+      {workspaceView === "settings" && activeTab === "activity" ? (
         <TeammateListSection
           icon={<Activity size={16} />}
           title={t("Activity")}
@@ -1168,7 +1360,93 @@ export function TeammateWorkspace({
         />
       ) : null}
 
-      {activeTab === "channels" ? (
+      {workspaceView === "settings" && activeTab === "model" ? (
+        <section className="teammate-list-panel teammate-model-panel" aria-label={t("Model")}>
+          <div className="panel-title split">
+            <span>
+              <ShieldCheck size={16} />
+              <h2>{t("Model")}</h2>
+            </span>
+            <StatusBadge status={providerReady ? "ready" : "blocked"} />
+          </div>
+          <div className="teammate-settings-grid">
+            <label className="field wide">
+              <span>{t("Provider")}</span>
+              <select value={settingsForm.providerPresetId} onChange={(event) => setSettingsForm({ ...settingsForm, providerPresetId: event.target.value })}>
+                <option value="">{t("None")}</option>
+                {providers.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.displayName} / {item.model}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="teammate-config-card">
+            <MetaRow label={t("Provider")} value={provider ? provider.displayName : t("None")} compact />
+            <MetaRow label={t("Model")} value={provider?.model ?? "-"} compact />
+            <MetaRow label={t("Status")} value={providerReady ? t("Ready") : t("Needs setup")} compact />
+          </div>
+          {provider && !providerReady ? (
+            <div className="provider-run-notice">
+              <ShieldCheck size={16} />
+              <span>{t("Provider needs a successful check before reliable AI replies.")}</span>
+            </div>
+          ) : !provider ? (
+            <div className="provider-run-notice neutral">
+              <ShieldCheck size={16} />
+              <span>{t("No provider is bound. Private chat will record messages but AI replies may be blocked.")}</span>
+            </div>
+          ) : null}
+          <div className="teammate-settings-actions">
+            <button className="secondary-button" type="button" onClick={onOpenProviders}>
+              <ShieldCheck size={15} />
+              {t("Model Workbench")}
+            </button>
+            <button className="primary-button" type="button" onClick={() => void saveSettings()} disabled={saving}>
+              {saving ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
+              {t("Save")}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {workspaceView === "settings" && activeTab === "permissions" ? (
+        <section className="teammate-list-panel teammate-permissions-panel" aria-label={t("Permissions")}>
+          <div className="panel-title split">
+            <span>
+              <ShieldCheck size={16} />
+              <h2>{t("Permissions")}</h2>
+            </span>
+            <small>{approvalProfileText(teammate.approvalProfile, t)}</small>
+          </div>
+          <div className="teammate-data-list">
+            <article className="teammate-data-row">
+              <span>
+                <strong>{t("Approval profile")}</strong>
+                <small>{approvalProfileText(teammate.approvalProfile, t)}</small>
+              </span>
+              <StatusBadge status="policy" />
+            </article>
+            <article className="teammate-data-row">
+              <span>
+                <strong>{t("Allowed tools")}</strong>
+                <small>{teammate.allowedTools.length ? teammate.allowedTools.join(", ") : t("No tools")}</small>
+              </span>
+              <StatusBadge status={teammate.allowedTools.length ? "active" : "none"} />
+            </article>
+            <article className="teammate-data-row">
+              <span>
+                <strong>{t("Persona boundary")}</strong>
+                <small>{t("Persona cannot grant tools, approvals, or secrets; Skill permissions are enforced by binding and policy checks.")}</small>
+              </span>
+              <StatusBadge status="enforced" />
+            </article>
+          </div>
+        </section>
+      ) : null}
+
+      {workspaceView === "settings" && activeTab === "channels" ? (
         <section className="teammate-list-panel teammate-channels-panel" aria-label={t("Channels")}>
           <div className="panel-title split">
             <span>
@@ -1213,19 +1491,38 @@ export function TeammateWorkspace({
         </section>
       ) : null}
 
-      {activeTab === "skills" ? (
-        <section className="teammate-list-panel teammate-skills-panel" aria-label={t("Skills")}>
+      {workspaceView === "settings" && activeTab === "skills" ? (
+        <section className="teammate-list-panel teammate-skills-panel teammate-skills-workbench" aria-label={t("Skills")}>
           <div className="panel-title split">
             <span>
               <Brain size={16} />
               <h2>{t("Skills")}</h2>
             </span>
-            <small>{savingSkills ? t("Saving...") : skillMessage || t("{count} bound", { count: enabledSkillCount })}</small>
+            <small>{savingSkills ? t("Saving...") : skillMessage || t("{count} executable", { count: skillStats.executable })}</small>
           </div>
-          <div className="teammate-skill-add-row">
-            <label className="field">
-              <span>{t("Bind registry skill")}</span>
+
+          <div className="teammate-skill-summary-grid" aria-label={t("Skill execution stats")}>
+            <span><small>{t("Bound")}</small><strong>{skillStats.bound}</strong></span>
+            <span><small>{t("Executable")}</small><strong>{skillStats.executable}</strong></span>
+            <span><small>{t("Blocked")}</small><strong>{skillStats.blocked}</strong></span>
+            <span><small>{t("Bindable")}</small><strong>{skillStats.available}</strong></span>
+          </div>
+
+          <div className="teammate-skill-toolbar">
+            <label className="teammate-skill-search">
+              <Search size={14} />
+              <input value={skillSearchQuery} onChange={(event) => setSkillSearchQuery(event.target.value)} placeholder={t("Search Skill or blocked reason")} />
+            </label>
+            <div className="teammate-skill-filter-tabs" role="tablist" aria-label={t("Skill filters")}>
+              {(["all", "bound", "executable", "blocked", "available"] as const).map((filter) => (
+                <button key={filter} type="button" className={skillFilter === filter ? "active" : ""} onClick={() => setSkillFilter(filter)}>
+                  {teammateSkillFilterLabel(filter, t)}
+                </button>
+              ))}
+            </div>
+            <div className="teammate-skill-bind-controls">
               <input
+                aria-label={t("Skill id")}
                 value={manualSkillInput}
                 onChange={(event) => setManualSkillInput(event.target.value)}
                 onKeyDown={(event) => {
@@ -1236,19 +1533,28 @@ export function TeammateWorkspace({
                 }}
                 placeholder={t("Skill id")}
               />
-            </label>
-            <button className="secondary-button" type="button" onClick={() => void addManualSkillBinding()} disabled={savingSkills}>
-              <Plus size={15} />
-              {t("Bind skill")}
-            </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => void addManualSkillBinding()} disabled={savingSkills}>
+                <Plus size={14} />
+                {t("Bind")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => setSkillImportOpen((current) => !current)}>
+                <Upload size={14} />
+                {t("Import")}
+              </button>
+            </div>
           </div>
-          <div className="teammate-import-panel">
+
+          {skillImportOpen ? (
+          <div className="teammate-import-panel teammate-skill-import-panel">
             <div className="panel-title split">
               <span>
                 <Upload size={15} />
                 <h3>{t("Import skill draft")}</h3>
               </span>
-              {skillImportDraft ? <small>{t("{count} parsed", { count: skillImportDraft.definitions.length })}</small> : null}
+              <span>
+                {skillImportDraft ? <small>{t("{count} parsed", { count: skillImportDraft.definitions.length })}</small> : null}
+                <button className="ghost-button compact-button" type="button" onClick={() => setSkillImportOpen(false)}>{t("Close")}</button>
+              </span>
             </div>
             <div className="teammate-task-create-grid">
               <label className="field">
@@ -1300,62 +1606,167 @@ export function TeammateWorkspace({
               </button>
             </div>
           </div>
+          ) : null}
+
           {skillRows.length === 0 ? (
             <div className="client-empty-state teammate-empty">
               <Brain size={18} />
               <span>{t("No skills bound to this teammate")}</span>
             </div>
           ) : (
-            <div className="teammate-data-list">
-              {skillRows.map(({ id, skill, binding, effectiveSkill }) => {
-                const enabled = Boolean(binding?.enabled);
-                const sourceLabel = binding
-                  ? binding.source === "template"
-                    ? t("Default skill")
-                    : t("User skill")
-                  : registryEntryBySkillId.get(id)?.source === "builtin"
-                    ? t("Available skill")
-                    : t("Registry skill");
-                const canDelete = binding?.source === "user";
-                const canArchive = !binding && registryEntryBySkillId.has(id) && registryEntryBySkillId.get(id)?.source !== "builtin";
-                const executable = effectiveSkill?.executable ?? false;
-                const blockedLabel = effectiveSkill?.blockedReasons.map((reason) => t(reason.code)).join(", ");
-                return (
-                  <article key={id} className={`teammate-data-row teammate-skill-row ${enabled ? "enabled" : ""} ${executable ? "executable" : "blocked"}`}>
-                    <span>
-                      <strong>{skill ? t(skill.name) : id}</strong>
-                      <small>{blockedLabel || (skill ? t(skill.summary) : t("Custom skill binding"))}</small>
-                    </span>
-                    <div className="teammate-skill-actions">
-                      <StatusBadge status={executable ? "executable" : enabled ? "blocked" : "disabled"} />
-                      <span className="skill-binding-source">{sourceLabel}</span>
-                      <span className={`phase-token ${skill?.workflowPhase ?? "operate"}`}>{skill ? workflowPhaseLabel(skill.workflowPhase, t) : t("Custom")}</span>
-                      <button className="secondary-button compact-button" type="button" onClick={() => void toggleSkillBinding(id)} disabled={savingSkills}>
-                        {enabled ? <X size={14} /> : <Plus size={14} />}
-                        {binding ? enabled ? t("Disable skill") : t("Enable skill") : t("Bind skill")}
+            <div className="teammate-skill-workbench-grid">
+              <div className="teammate-skill-table-wrap">
+                <table className="teammate-skill-table">
+                  <thead>
+                    <tr>
+                      <th>{t("Status")}</th>
+                      <th>{t("Skill")}</th>
+                      <th>{t("Source")}</th>
+                      <th>{t("Stage")}</th>
+                      <th>{t("Required tools")}</th>
+                      <th>{t("Approval")}</th>
+                      <th>{t("Blocked reasons")}</th>
+                      <th>{t("Actions")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {skillTableRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={8}>
+                          <div className="client-empty-state teammate-empty compact">
+                            <span>{t("No skills match filters")}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : skillTableRows.map(({ id, skill, binding, effectiveSkill }) => {
+                      const enabled = Boolean(binding?.enabled);
+                      const sourceLabel = binding
+                        ? binding.source === "template"
+                          ? t("Default skill")
+                          : t("User skill")
+                        : registryEntryBySkillId.get(id)?.source === "builtin"
+                          ? t("Available skill")
+                          : t("Registry skill");
+                      const canDelete = binding?.source === "user";
+                      const canArchive = !binding && registryEntryBySkillId.has(id) && registryEntryBySkillId.get(id)?.source !== "builtin";
+                      const blockedLabel = effectiveSkill?.blockedReasons.map((reason) => t(reason.code)).join(", ");
+                      const state = skillExecutionState(binding, effectiveSkill, t);
+                      return (
+                        <tr key={id} className={selectedSkillRow?.id === id ? "selected" : ""}>
+                          <td><SkillStatePill label={state.label} tone={state.tone} /></td>
+                          <td>
+                            <button className="teammate-skill-name-button" type="button" onClick={() => setSelectedSkillId(id)}>
+                              <strong>{skill ? t(skill.name) : id}</strong>
+                              <small>{skill?.id ?? id}</small>
+                            </button>
+                          </td>
+                          <td>{sourceLabel}</td>
+                          <td><span className={`phase-token ${skill?.workflowPhase ?? "operate"}`}>{skill ? workflowPhaseLabel(skill.workflowPhase, t) : t("Custom")}</span></td>
+                          <td><TeammateSkillTokenList values={skill?.requiredTools ?? []} emptyLabel={t("No tools")} /></td>
+                          <td>{skill ? approvalProfileText(skill.approvalProfile, t) : "-"}</td>
+                          <td>{blockedLabel || (enabled ? t("Ready") : t("Not bound"))}</td>
+                          <td>
+                            <span className="teammate-skill-row-actions">
+                              <button className="secondary-button compact-button" type="button" onClick={() => setSelectedSkillId(id)}>
+                                <Search size={14} />
+                                {t("Details")}
+                              </button>
+                              <button className="secondary-button compact-button" type="button" onClick={() => void toggleSkillBinding(id)} disabled={savingSkills}>
+                                {enabled ? <X size={14} /> : <Plus size={14} />}
+                                {binding ? enabled ? t("Disable") : t("Enable") : t("Bind")}
+                              </button>
+                              {canDelete ? (
+                                <button className="secondary-button danger compact-button" type="button" onClick={() => void deleteUserSkillBinding(id)} disabled={savingSkills}>
+                                  <Trash2 size={14} />
+                                  {t("Delete")}
+                                </button>
+                              ) : null}
+                              {canArchive ? (
+                                <button className="secondary-button danger compact-button" type="button" onClick={() => void archiveCustomSkill(id)} disabled={savingSkills}>
+                                  <Trash2 size={14} />
+                                  {t("Archive")}
+                                </button>
+                              ) : null}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <aside className="teammate-skill-inspector" aria-label={t("Skill detail")}>
+                {selectedSkillRow ? (
+                  <>
+                    <div className="teammate-skill-inspector-head">
+                      <span>
+                        <Brain size={15} />
+                        <strong>{selectedSkillRow.skill ? t(selectedSkillRow.skill.name) : selectedSkillRow.id}</strong>
+                      </span>
+                      <SkillStatePill
+                        label={skillExecutionState(selectedSkillRow.binding, selectedSkillRow.effectiveSkill, t).label}
+                        tone={skillExecutionState(selectedSkillRow.binding, selectedSkillRow.effectiveSkill, t).tone}
+                      />
+                    </div>
+                    <SkillInspectorSection title={t("Description")}>
+                      <p>{selectedSkillRow.skill ? t(selectedSkillRow.skill.summary) : t("Custom skill binding")}</p>
+                    </SkillInspectorSection>
+                    <SkillInspectorSection title={t("Blocked reasons")}>
+                      {selectedSkillRow.effectiveSkill?.blockedReasons.length ? (
+                        <div className="teammate-skill-reason-list">
+                          {selectedSkillRow.effectiveSkill.blockedReasons.map((reason) => (
+                            <span key={reason.code}>
+                              <strong>{t(reason.code)}</strong>
+                              <small>{reason.missing?.length ? reason.missing.join(", ") : reason.message}</small>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p>{selectedSkillRow.binding?.enabled ? t("No blocked reasons") : t("Bind this skill to evaluate executability.")}</p>
+                      )}
+                    </SkillInspectorSection>
+                    <SkillInspectorSection title={t("Prompt fragments")}>
+                      {selectedSkillRow.skill?.promptFragments.length ? (
+                        <pre>{selectedSkillRow.skill.promptFragments.slice(0, 3).join("\n\n")}</pre>
+                      ) : (
+                        <p>{t("No prompt fragments")}</p>
+                      )}
+                    </SkillInspectorSection>
+                    <SkillInspectorSection title={t("Required tools")}>
+                      <TeammateSkillTokenList values={selectedSkillRow.skill?.requiredTools ?? []} emptyLabel={t("No tools")} />
+                    </SkillInspectorSection>
+                    <SkillInspectorSection title={t("Provider capability")}>
+                      <TeammateSkillTokenList values={selectedSkillRow.skill?.requiredProviderCapabilities ?? []} emptyLabel={t("No provider capability required")} />
+                    </SkillInspectorSection>
+                    <SkillInspectorSection title={t("Approval profile")}>
+                      <p>{selectedSkillRow.skill ? approvalProfileText(selectedSkillRow.skill.approvalProfile, t) : "-"}</p>
+                    </SkillInspectorSection>
+                    <div className="teammate-skill-inspector-actions">
+                      <button className="primary-button compact-button" type="button" onClick={() => void toggleSkillBinding(selectedSkillRow.id)} disabled={savingSkills}>
+                        {selectedSkillRow.binding?.enabled ? <X size={14} /> : <Plus size={14} />}
+                        {selectedSkillRow.binding ? selectedSkillRow.binding.enabled ? t("Disable skill") : t("Enable skill") : t("Bind to teammate")}
                       </button>
-                      {canDelete ? (
-                        <button className="secondary-button danger compact-button" type="button" onClick={() => void deleteUserSkillBinding(id)} disabled={savingSkills}>
+                      {selectedSkillRow.binding?.source === "user" ? (
+                        <button className="secondary-button danger compact-button" type="button" onClick={() => void deleteUserSkillBinding(selectedSkillRow.id)} disabled={savingSkills}>
                           <Trash2 size={14} />
                           {t("Delete skill")}
                         </button>
                       ) : null}
-                      {canArchive ? (
-                        <button className="secondary-button danger compact-button" type="button" onClick={() => void archiveCustomSkill(id)} disabled={savingSkills}>
-                          <Trash2 size={14} />
-                          {t("Archive skill")}
-                        </button>
-                      ) : null}
                     </div>
-                  </article>
-                );
-              })}
+                  </>
+                ) : (
+                  <div className="client-empty-state teammate-empty compact">
+                    <span>{t("Select a skill to inspect")}</span>
+                  </div>
+                )}
+              </aside>
             </div>
           )}
         </section>
       ) : null}
 
-      {activeTab === "memory" ? (
+      {workspaceView === "settings" && activeTab === "memory" ? (
         <section className="teammate-list-panel teammate-memory-panel" aria-label={t("Memory")}>
           <div className="panel-title split">
             <span>
@@ -1392,7 +1803,7 @@ export function TeammateWorkspace({
         </section>
       ) : null}
 
-      {activeTab === "settings" ? (
+      {workspaceView === "settings" && activeTab === "profile" ? (
         <section className="teammate-settings-panel" aria-label={t("Teammate settings")}>
           <div className="panel-title split">
             <span>
@@ -1475,17 +1886,6 @@ export function TeammateWorkspace({
               <input value={settingsForm.displayName} onChange={(event) => setSettingsForm({ ...settingsForm, displayName: event.target.value })} />
             </label>
             <label className="field">
-              <span>{t("Provider")}</span>
-              <select value={settingsForm.providerPresetId} onChange={(event) => setSettingsForm({ ...settingsForm, providerPresetId: event.target.value })}>
-                <option value="">{t("None")}</option>
-                {providers.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.displayName} / {item.model}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
               <span>{t("Status")}</span>
               <select value={settingsForm.status} onChange={(event) => setSettingsForm({ ...settingsForm, status: event.target.value as AiTeammate["status"] })}>
                 <option value="active">{t("active")}</option>
@@ -1519,19 +1919,33 @@ export function TeammateWorkspace({
             </label>
           </div>
           <div className="teammate-settings-actions">
-            <button className="secondary-button" type="button" onClick={onOpenProviders}>
-              <ShieldCheck size={15} />
-              {t("Model Workbench")}
-            </button>
-            <button className="secondary-button danger" type="button" onClick={() => void onDisableTeammate(teammate.id)}>
-              {t("Disable")}
-            </button>
             <button className="primary-button" type="button" onClick={() => void saveSettings()} disabled={saving}>
               {saving ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
               {t("Save")}
             </button>
           </div>
-          <section className="teammate-danger-zone" aria-label={t("Danger zone")}>
+        </section>
+      ) : null}
+
+      {workspaceView === "settings" && activeTab === "danger" ? (
+        <section className="teammate-list-panel teammate-danger-panel" aria-label={t("Danger zone")}>
+          <div className="panel-title split">
+            <span>
+              <Trash2 size={16} />
+              <h2>{t("Danger zone")}</h2>
+            </span>
+            <small>{t("Private data boundary")}</small>
+          </div>
+          <article className="teammate-danger-zone teammate-danger-card">
+            <span>
+              <strong>{t("Disable teammate")}</strong>
+              <small>{t("Soft disable hides the teammate from normal use but keeps durable data recoverable.")}</small>
+            </span>
+            <button className="secondary-button danger" type="button" onClick={() => void onDisableTeammate(teammate.id)}>
+              {t("Disable")}
+            </button>
+          </article>
+          <article className="teammate-danger-zone teammate-danger-card">
             <span>
               <strong>{t("Hard delete private data")}</strong>
               <small>{t("Deletes private chat, private attachments, avatar, teammate memory, and private bindings. Channel and run history keep a deleted teammate reference.")}</small>
@@ -1545,11 +1959,11 @@ export function TeammateWorkspace({
               {hardDeleting ? <Loader2 className="spin" size={15} /> : <Trash2 size={15} />}
               {t("Hard delete")}
             </button>
-          </section>
+          </article>
         </section>
       ) : null}
 
-      {activeTab === "mcp" ? (
+      {workspaceView === "settings" && activeTab === "mcp" ? (
         <section className="teammate-mcp-panel" aria-label={t("MCP tool authorization")}>
           <div className="teammate-mcp-toolbar">
             <div className="panel-title">
@@ -1697,8 +2111,57 @@ export function TeammateWorkspace({
           )}
         </section>
       ) : null}
+
+      {workspaceView === "settings" ? (
+        <aside className="teammate-settings-summary-panel" aria-label={t("Configuration summary")}>
+          <section>
+            <div className="panel-title split">
+              <span>
+                <UserCircle size={15} />
+                <h3>{t("Configuration summary")}</h3>
+              </span>
+            </div>
+            <div className="teammate-summary-list">
+              <MetaRow label={t("Provider")} value={provider ? provider.displayName : t("None")} compact />
+              <MetaRow label={t("Model")} value={provider?.model ?? "-"} compact />
+              <MetaRow label={t("Approval")} value={approvalProfileText(teammate.approvalProfile, t)} compact />
+              <MetaRow label={t("Channels")} value={String(memberships.length)} compact />
+              <MetaRow label={t("Skills")} value={t("{count} executable", { count: skillStats.executable })} compact />
+              <MetaRow label={t("Memory")} value={memoryScopes.some((scope) => scope.enabled) ? t("Recall enabled") : t("Recall off")} compact />
+              <MetaRow label={t("MCP")} value={t("{count} authorized", { count: mcpBindings.length })} compact />
+            </div>
+          </section>
+          <section>
+            <div className="panel-title split">
+              <span>
+                <Upload size={15} />
+                <h3>{t("Import guidance")}</h3>
+              </span>
+            </div>
+            <p>{t("AGENTS.md and persona.md imports create drafts first. They cannot grant tools, approvals, secrets, or external-send permissions.")}</p>
+          </section>
+        </aside>
+      ) : null}
     </div>
   );
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+function formatBytes(sizeBytes: number): string {
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`;
+  }
+  if (sizeBytes < 1024 * 1024) {
+    return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function TeammateListSection<T>({
@@ -1731,6 +2194,114 @@ function TeammateListSection<T>({
       ) : (
         <div className="teammate-data-list">{items.map(renderItem)}</div>
       )}
+    </section>
+  );
+}
+
+function filterTeammateSkillRows(
+  rows: readonly TeammateSkillRowModel[],
+  searchQuery: string,
+  filter: SkillBindingFilter,
+): readonly TeammateSkillRowModel[] {
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  return rows
+    .filter((row) => {
+      if (filter === "bound" && !row.binding?.enabled) {
+        return false;
+      }
+      if (filter === "executable" && !row.effectiveSkill?.executable) {
+        return false;
+      }
+      if (filter === "blocked" && (!row.binding?.enabled || row.effectiveSkill?.executable)) {
+        return false;
+      }
+      if (filter === "available" && row.binding) {
+        return false;
+      }
+      if (!normalizedQuery) {
+        return true;
+      }
+      const searchable = [
+        row.id,
+        row.skill?.name ?? "",
+        row.skill?.summary ?? "",
+        row.skill?.workflowPhase ?? "",
+        ...(row.skill?.requiredTools ?? []),
+        ...(row.skill?.requiredProviderCapabilities ?? []),
+        ...(row.effectiveSkill?.blockedReasons.map((reason) => `${reason.code} ${reason.message} ${(reason.missing ?? []).join(" ")}`) ?? []),
+      ].join(" ").toLowerCase();
+      return searchable.includes(normalizedQuery);
+    })
+    .sort((left, right) => {
+      const leftBoundRank = left.binding?.enabled ? 0 : left.binding ? 1 : 2;
+      const rightBoundRank = right.binding?.enabled ? 0 : right.binding ? 1 : 2;
+      if (leftBoundRank !== rightBoundRank) {
+        return leftBoundRank - rightBoundRank;
+      }
+      return (left.skill?.name ?? left.id).localeCompare(right.skill?.name ?? right.id);
+    });
+}
+
+function teammateSkillFilterLabel(filter: SkillBindingFilter, t: Translate): string {
+  if (filter === "bound") {
+    return t("Bound");
+  }
+  if (filter === "executable") {
+    return t("Executable");
+  }
+  if (filter === "blocked") {
+    return t("Blocked");
+  }
+  if (filter === "available") {
+    return t("Bindable");
+  }
+  return t("All");
+}
+
+function skillExecutionState(
+  binding: TeammateSkillBinding | undefined,
+  effectiveSkill: EffectiveTeammateSkill | undefined,
+  t: Translate,
+): { readonly label: string; readonly tone: "executable" | "blocked" | "disabled" | "available" } {
+  if (!binding) {
+    return { label: t("Bindable"), tone: "available" };
+  }
+  if (!binding.enabled) {
+    return { label: t("Disabled"), tone: "disabled" };
+  }
+  if (effectiveSkill?.executable) {
+    return { label: t("Executable"), tone: "executable" };
+  }
+  return { label: t("Blocked"), tone: "blocked" };
+}
+
+function SkillStatePill({
+  label,
+  tone,
+}: {
+  readonly label: string;
+  readonly tone: "executable" | "blocked" | "disabled" | "available";
+}): JSX.Element {
+  return <span className={`teammate-skill-state ${tone}`}>{label}</span>;
+}
+
+function TeammateSkillTokenList({ values, emptyLabel }: { readonly values: readonly string[]; readonly emptyLabel: string }): JSX.Element {
+  if (values.length === 0) {
+    return <span className="teammate-skill-empty-token">{emptyLabel}</span>;
+  }
+  return (
+    <span className="teammate-skill-token-list">
+      {values.slice(0, 4).map((value) => <code key={value}>{value}</code>)}
+      {values.length > 4 ? <small>+{values.length - 4}</small> : null}
+    </span>
+  );
+}
+
+function SkillInspectorSection({ title, children }: { readonly title: string; readonly children: ReactNode }): JSX.Element {
+  return (
+    <section className="teammate-skill-inspector-section">
+      <h3>{title}</h3>
+      {children}
     </section>
   );
 }

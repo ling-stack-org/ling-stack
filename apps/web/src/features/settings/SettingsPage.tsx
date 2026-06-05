@@ -5,6 +5,7 @@ import {
   GitBranch,
   KeyRound,
   Languages,
+  Library,
   Loader2,
   Palette,
   Play,
@@ -28,10 +29,12 @@ import type {
   Channel,
   ExternalWorkStatusResponse,
 } from "../../types.js";
+import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 
-type SettingsSection = "external-work" | "interface" | "approval-policy";
+type SettingsSection = "external-work" | "interface" | "approval-policy" | "skill-library";
 
 export function SettingsPage({
+  cwd,
   policy,
   form,
   selectedChannel,
@@ -53,6 +56,7 @@ export function SettingsPage({
   onOpenExternalWorkRecords,
   onOpenExternalWorkTriage,
 }: {
+  readonly cwd: string;
   readonly policy: ApprovalPolicy | undefined;
   readonly form: ApprovalPolicyFormState;
   readonly selectedChannel: Channel | undefined;
@@ -147,6 +151,17 @@ export function SettingsPage({
           <span>
             <strong>{t("Approval policy")}</strong>
             <small>{t("Tool permissions")}</small>
+          </span>
+        </button>
+        <button
+          className={activeSection === "skill-library" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("skill-library")}
+        >
+          <span className="settings-section-icon"><Library size={16} /></span>
+          <span>
+            <strong>{t("Skill Library")}</strong>
+            <small>{t("Skill definitions and imports")}</small>
           </span>
         </button>
       </nav>
@@ -464,6 +479,7 @@ export function SettingsPage({
       </div>
       </section>
       ) : null}
+      {activeSection === "skill-library" ? <SkillLibrarySettingsPanel cwd={cwd} /> : null}
       </div>
     </div>
   );

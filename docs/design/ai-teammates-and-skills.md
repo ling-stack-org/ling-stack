@@ -15,7 +15,8 @@ Tools are atomic capabilities such as `read`, `grep`, `bash`, `edit`, and `write
 This design sits under the broader [Ling Framework](ling-framework.md). Memory-specific
 behavior for teammates is covered by [Ling Memory v1](ling-memory-v1.md).
 The concrete import, persona draft, Effective Skill UI, and skill-aware run implementation
-slice is covered by [Ling Skill Import v1](ling-skill-import-v1.md).
+slice is covered by [Ling Skill Import v1](ling-skill-import-v1.md). Automatic
+multi-teammate execution is covered by [Multi-Agent Orchestrator](multi-agent-orchestrator.md).
 
 ## Model
 
@@ -327,4 +328,5 @@ draft editing and deeper custom skill editing remain follow-ups. See
 - Add the Effective Skills read model and blocked-reason UI.
 - Build richer UI controls for editing memory scopes from the private workspace tabs.
 - Add importers for `AGENTS.md` and compatible skill directories.
-- Compile workflow templates into durable workflow and workflow-step state machines.
+- Compile workflow templates into durable workflow and workflow-step state machines; see
+  [Multi-Agent Orchestrator](multi-agent-orchestrator.md).
