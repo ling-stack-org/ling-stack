@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createDefaultRunnerRegistry,
   createRunnerRegistry,
   DEFAULT_RUNNER_ID,
   LEGACY_PI_RUNNER_ID,
@@ -109,6 +110,35 @@ test("runner registry applies explicit and implicit fallback policies", () => {
   assert.equal(implicit.effectiveRunnerId, "pi");
   assert.equal(implicit.requestSource, "workspace_default");
   assert.equal(implicit.fallbackAllowed, true);
+});
+
+test("default runner registry exposes disabled future adapters and fails closed", () => {
+  const piRunner = new RecordingRunner();
+  const registry = createDefaultRunnerRegistry(piRunner);
+  const runners = registry.list();
+  assert.equal(runners.some((runner) => runner.id === "pi" && runner.status === "enabled"), true);
+  assert.equal(runners.some((runner) => runner.id === "codex-app-server" && runner.status === "disabled"), true);
+  assert.equal(runners.some((runner) => runner.id === "openclaw-acp" && runner.status === "disabled"), true);
+
+  assert.throws(
+    () => registry.resolve({
+      requestedRunnerId: "codex-app-server",
+      explicitFallbackPolicy: "disabled",
+    }),
+    (error) =>
+      error instanceof UnsupportedRunnerError &&
+      error.fallbackReason.code === "disabled_requested_runner",
+  );
+
+  const fallback = registry.resolve({
+    requestedRunnerId: "openclaw-acp",
+    explicitFallbackPolicy: "allow_to_default",
+  });
+  assert.equal(fallback.requestedRunnerId, "openclaw-acp");
+  assert.equal(fallback.effectiveRunnerId, "pi");
+  assert.equal(fallback.fallbackAllowed, true);
+  assert.equal(fallback.fallbackReason?.code, "disabled_requested_runner");
+  assert.equal(fallback.runner.adapter, piRunner);
 });
 
 test("runner registry enforces workspace allowed runners before fallback", () => {

@@ -131,6 +131,7 @@ function buildWorkflowStepOutputRef(store: RunStore, step: ChannelWorkflowStep):
     resultSummary: step.resultSummary,
     outputArtifactId: step.metadata?.outputArtifactId,
     artifactIds: uniqueStrings([...metadataArtifactIds, ...runArtifacts]),
+    branchGroupId: step.metadata?.branchGroupId,
   });
 }
 

@@ -25,7 +25,7 @@ import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-wor
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
-import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
+import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RegisteredRunner, type RunnerRegistry } from "./runtime/runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
 import { RuntimeSupervisor } from "./runtime/supervisor.js";
 import { routeRequest } from "./server/router.js";
@@ -145,7 +145,41 @@ export function createDefaultRunnerRegistry(runner: RunnerAdapter = createPiRunn
       supportedProviderApis: extension.supportedProviderApis,
       supportedTools: extension.supportedTools,
     },
+    createDisabledRunnerRegistration("codex-app-server", "Codex App Server", {
+      supportedProviderApis: ["openai-responses", "openai-completions"],
+      supportedTools: ["read", "grep", "find", "ls"],
+    }),
+    createDisabledRunnerRegistration("openclaw-acp", "OpenClaw ACP", {
+      supportedProviderApis: ["openai-responses", "openai-completions", "anthropic-messages"],
+      supportedTools: ["read", "grep", "find", "ls"],
+    }),
   ], DEFAULT_RUNNER_ID);
+}
+
+function createDisabledRunnerRegistration(
+  id: string,
+  displayName: string,
+  options: {
+    readonly supportedProviderApis?: readonly string[];
+    readonly supportedTools?: readonly string[];
+  } = {},
+): RegisteredRunner {
+  return {
+    id,
+    displayName,
+    status: "disabled" as const,
+    adapter: createDisabledRunnerAdapter(id),
+    supportedProviderApis: options.supportedProviderApis,
+    supportedTools: options.supportedTools,
+  };
+}
+
+function createDisabledRunnerAdapter(id: string): RunnerAdapter {
+  return {
+    async runTask() {
+      throw new Error(`Runner ${id} is disabled. Enable and pass conformance before use.`);
+    },
+  };
 }
 
 export function createDefaultLingExtensionRegistry(): LingExtensionRegistry {

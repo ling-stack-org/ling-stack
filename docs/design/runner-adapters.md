@@ -12,6 +12,8 @@ Current boundary:
   conformance, explicit/implicit fallback policy, and audit metadata.
 - Runs, work units, attempts, workflow steps, Settings, and Run History already expose
   runner audit.
+- `codex-app-server` and `openclaw-acp` are registered as disabled placeholder runners
+  so settings, fallback, and audit can fail closed before real adapters are enabled.
 - No Codex app-server or OpenClaw/ACP backend is enabled today.
 
 This document covers:
@@ -19,6 +21,24 @@ This document covers:
 1. `codex-app-server` adapter;
 2. `openclaw-acp` adapter;
 3. shared adapter conformance, security, audit, and rollout rules.
+
+## Implementation Status
+
+Implemented:
+
+- default runner registry includes disabled `codex-app-server` and `openclaw-acp`
+  registrations;
+- disabled runner requests fail with `disabled_requested_runner` unless explicit fallback
+  policy permits falling back to Pi;
+- runtime settings still seed only enabled Pi as default/allowed runner;
+- `/runners` can expose disabled future adapters for audit and UI display.
+
+Still future:
+
+- real Codex app-server health probe, stream adapter, approval bridge, and resume handle;
+- real OpenClaw/ACP capability negotiation, client bridge, violation handling, and
+  workspace-bound session lifecycle;
+- feature-flag UI that exposes a non-Pi runner only after conformance passes.
 
 ## Principles
 

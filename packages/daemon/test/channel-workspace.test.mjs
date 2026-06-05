@@ -858,6 +858,200 @@ test("workflow skipped optional step allows downstream steps to start", async ()
   }
 });
 
+test("workflow orchestrator starts independent parallel branches within channel budget", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-parallel-"));
+  const runner = new ParallelDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Parallel workflow",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      allowedTools: ["read"],
+      runtimePolicy: {
+        maxConcurrentRuns: 2,
+        executionMode: "parallel",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Parallel branches",
+      objective: "Run independent read-only branch steps.",
+      status: "ready",
+      createdBy: "local-user",
+    }, new Date().toISOString());
+    const firstStep = createParallelWorkflowStep(store, workflow.id, "Branch A", {
+      branchGroupId: "branch-a",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+    });
+    const secondStep = createParallelWorkflowStep(store, workflow.id, "Branch B", {
+      branchGroupId: "branch-b",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+    });
+
+    const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(tick.status, "started");
+    assert.equal(tick.startedSteps.length, 2);
+    assert.deepEqual(tick.startedSteps.map((item) => item.workflowStep.id).sort(), [firstStep.id, secondStep.id].sort());
+    await runner.waitUntilStarted(2);
+    const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(steps.workflowSteps.map((step) => step.status).sort(), ["running", "running"]);
+  } finally {
+    runner.resolveAll("parallel cleanup");
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow orchestrator keeps serial behavior without parallel runtime policy", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-serial-budget-"));
+  const runner = new ParallelDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Serial budget workflow");
+    await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      name: channel.name,
+      status: channel.status,
+      boundPath: channel.boundPath,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: channel.defaultTeammateId,
+      allowedTools: ["read"],
+      runtimePolicy: channel.runtimePolicy,
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Serial branches",
+      objective: "Keep default single-start behavior.",
+      status: "ready",
+      createdBy: "local-user",
+    }, new Date().toISOString());
+    createParallelWorkflowStep(store, workflow.id, "Serial A", {
+      branchGroupId: "branch-a",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+    });
+    createParallelWorkflowStep(store, workflow.id, "Serial B", {
+      branchGroupId: "branch-b",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+    });
+
+    const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(tick.status, "started");
+    assert.equal(tick.startedSteps.length, 1);
+    await runner.waitUntilStarted(1);
+    const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(steps.workflowSteps.map((step) => step.status).sort(), ["queued", "running"]);
+  } finally {
+    runner.resolveAll("serial cleanup");
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow dependencyMode any_succeeded can start a fan-in after mixed terminal branches", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-any-succeeded-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Any succeeded workflow",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      allowedTools: ["read"],
+      runtimePolicy: {
+        maxConcurrentRuns: 2,
+        executionMode: "parallel",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const now = new Date().toISOString();
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Fan-in",
+      objective: "Start when one dependency succeeded.",
+      status: "ready",
+      createdBy: "local-user",
+    }, now);
+    const succeeded = createParallelWorkflowStep(store, workflow.id, "Succeeded branch", {
+      branchGroupId: "branch-a",
+      providerPresetId: provider.id,
+      status: "succeeded",
+    });
+    const failed = createParallelWorkflowStep(store, workflow.id, "Failed branch", {
+      branchGroupId: "branch-b",
+      providerPresetId: provider.id,
+      status: "failed",
+    });
+    const fanIn = createParallelWorkflowStep(store, workflow.id, "Fan-in", {
+      branchGroupId: "join",
+      joinGroupId: "join-main",
+      providerPresetId: provider.id,
+      dependsOnStepIds: [succeeded.id, failed.id],
+      dependencyMode: "any_succeeded",
+      maxParallelSiblings: 2,
+    });
+
+    const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(tick.status, "started");
+    assert.equal(tick.workflowStep.id, fanIn.id);
+    assert.equal(tick.startedSteps.length, 1);
+    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.runs[0].task.title, "Fan-in");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("workflow cancel aborts active run, queued steps, and pending workflow approvals", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-cancel-"));
   const runner = new DelayedRunner();
@@ -1377,6 +1571,46 @@ class DelayedRunner {
   }
 }
 
+class ParallelDelayedRunner {
+  constructor() {
+    this.runs = [];
+    this.pendingResolvers = [];
+    this.startedResolvers = [];
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    this.startedResolvers.splice(0).forEach((resolveStarted) => resolveStarted());
+    const text = await new Promise((resolve) => {
+      this.pendingResolvers.push(resolve);
+    });
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return {
+      taskId: options.task.id,
+      messages: [text],
+      events: [],
+    };
+  }
+
+  async waitUntilStarted(count) {
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      if (this.runs.length >= count) {
+        return;
+      }
+      await new Promise((resolve) => {
+        this.startedResolvers.push(resolve);
+        setTimeout(resolve, 20);
+      });
+    }
+    assert.fail(`Timed out waiting for ${count} parallel runs. Started: ${this.runs.length}`);
+  }
+
+  resolveAll(text) {
+    this.pendingResolvers.splice(0).forEach((resolvePending) => resolvePending(text));
+  }
+}
+
 async function startDaemonForTest(runner, dependencies = {}) {
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, {
     ...dependencies,
@@ -1389,6 +1623,30 @@ async function startDaemonForTest(runner, dependencies = {}) {
     url: `http://127.0.0.1:${address.port}`,
     close: () => daemon.stop(),
   };
+}
+
+function createParallelWorkflowStep(store, workflowId, title, metadata = {}) {
+  return store.createChannelWorkflowStep(
+    {
+      workflowId,
+      position: metadata.position ?? 1,
+      title,
+      prompt: `Complete ${title}.`,
+      toParticipantId: "teammate_builtin_engineer",
+      toParticipantLabel: "Engineer",
+      status: metadata.status,
+      metadata: {
+        templateStepId: title.toLowerCase().replaceAll(" ", "-"),
+        branchGroupId: metadata.branchGroupId,
+        joinGroupId: metadata.joinGroupId,
+        dependsOnStepIds: metadata.dependsOnStepIds,
+        dependencyMode: metadata.dependencyMode,
+        maxParallelSiblings: metadata.maxParallelSiblings,
+        providerPresetId: metadata.providerPresetId,
+      },
+    },
+    new Date().toISOString(),
+  );
 }
 
 async function createChannel(baseUrl, cwd) {

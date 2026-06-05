@@ -286,6 +286,16 @@ export interface ListLingThreadsOptions {
 
 export type ExecutionActionType = ApprovalActionType;
 
+export type ExecutionScope =
+  | "read_only"
+  | "workspace_write"
+  | "git_history"
+  | "network"
+  | "credential"
+  | "provider_config"
+  | "deployment"
+  | "external_system";
+
 export type ExecutionActionStatus =
   | "proposed"
   | "waiting_for_approval"
@@ -331,6 +341,8 @@ export interface ExecutionAction {
   readonly targetRefs: readonly ExecutionActionTargetRef[];
   readonly previewArtifactIds: readonly string[];
   readonly resultArtifactIds: readonly string[];
+  readonly scopes?: readonly ExecutionScope[];
+  readonly scopeSummary?: string;
   readonly policySnapshot?: unknown;
   readonly createdAt: string;
   readonly resolvedAt?: string;

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -369,6 +370,100 @@ test("approval execution actions expose preview and result artifacts", async () 
     const resultContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(completedActions.actions[0].resultArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(resultContent.status, 200);
     assert.match(await resultContent.text(), /approved stdout artifact/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("non-approval tool events are exposed as action lifecycle records", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-non-approval-actions-"));
+  const runner = new NonApprovalToolLifecycleRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const response = await postRunStream(daemon.url, {
+      ...runBody(cwd, "task_non_approval_actions"),
+      tools: ["read", "grep"],
+    });
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    await runner.waitUntilToolStarted();
+
+    const executingActions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(executingActions.actions.length, 1);
+    assert.equal(executingActions.actions[0].toolCallId, "tool_read_lifecycle");
+    assert.equal(executingActions.actions[0].actionType, "read");
+    assert.equal(executingActions.actions[0].status, "executing");
+    assert.deepEqual(executingActions.actions[0].scopes, ["read_only"]);
+
+    runner.finish("release lifecycle");
+    await sse.collectRemaining();
+
+    const completedActions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    const byToolCall = new Map(completedActions.actions.map((action) => [action.toolCallId, action]));
+    assert.equal(byToolCall.get("tool_read_lifecycle")?.status, "succeeded");
+    assert.equal(byToolCall.get("tool_grep_lifecycle")?.status, "failed");
+    assert.equal(byToolCall.get("tool_grep_lifecycle")?.actionType, "grep");
+  } finally {
+    runner.finish("cleanup");
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("git commit approval actions include scope analysis and git preview artifacts", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-git-action-preview-"));
+  execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "ling-test@example.com"], { cwd });
+  execFileSync("git", ["config", "user.name", "Ling Test"], { cwd });
+  await writeFile(resolve(cwd, "README.md"), "baseline\n", "utf8");
+  execFileSync("git", ["add", "README.md"], { cwd });
+  execFileSync("git", ["commit", "-m", "baseline"], { cwd, stdio: "ignore" });
+  await writeFile(resolve(cwd, "README.md"), "git preview\n", "utf8");
+  execFileSync("git", ["add", "README.md"], { cwd });
+
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_git_commit_preview",
+    toolName: "bash",
+    input: { command: "git commit -m \"Ling preview\"" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const response = await postRunStream(daemon.url, {
+      ...runBody(cwd, "task_git_commit_preview"),
+      tools: ["bash"],
+    });
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    const actions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(actions.actions.length, 1);
+    assert.equal(actions.actions[0].approvalId, approvalId);
+    assert.equal(actions.actions[0].actionType, "git_commit");
+    assert.equal(actions.actions[0].risk, "medium");
+    assert.ok(actions.actions[0].scopes.includes("git_history"));
+    assert.match(actions.actions[0].scopeSummary, /git_history/);
+    assert.equal(actions.actions[0].previewArtifactIds.length, 1);
+
+    const previewContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(actions.actions[0].previewArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(previewContent.status, 200);
+    const preview = JSON.parse(await previewContent.text());
+    assert.equal(preview.actionType, "git_commit");
+    assert.equal(preview.gitPreview.kind, "git_commit");
+    assert.equal(preview.gitPreview.previewStatus, "ready");
+    assert.deepEqual(preview.gitPreview.stagedPaths, ["README.md"]);
+    assert.equal(preview.gitPreview.commitMessage, "Ling preview");
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "git preview approved",
+    });
+    await sse.collectRemaining();
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -2407,6 +2502,85 @@ class ApprovalArtifactRunner {
       events: [],
       messages: [{ role: "assistant", content: "done" }],
     };
+  }
+}
+
+class NonApprovalToolLifecycleRunner {
+  constructor() {
+    this.started = false;
+    this.startedResolvers = [];
+    this.finishResolver = undefined;
+    this.finished = false;
+  }
+
+  async runTask(options) {
+    options.onEvent?.({
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    });
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: "tool_read_lifecycle",
+      toolName: "read",
+      args: { path: "README.md" },
+    });
+    this.started = true;
+    this.startedResolvers.splice(0).forEach((resolveStarted) => resolveStarted());
+    await new Promise((resolve) => {
+      this.finishResolver = resolve;
+    });
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId: "tool_read_lifecycle",
+      toolName: "read",
+      result: { path: "README.md", content: "ok" },
+      isError: false,
+    });
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: "tool_grep_lifecycle",
+      toolName: "grep",
+      args: { pattern: "missing", path: "." },
+    });
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId: "tool_grep_lifecycle",
+      toolName: "grep",
+      result: { error: "no matches" },
+      isError: true,
+    });
+    options.onEvent?.({
+      type: "run_end",
+      taskId: options.task.id,
+      messageCount: 1,
+    });
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+
+  async waitUntilToolStarted() {
+    if (this.started) {
+      return;
+    }
+    await withTimeout(
+      new Promise((resolveStarted) => this.startedResolvers.push(resolveStarted)),
+      2_000,
+      "Timed out waiting for non-approval tool start.",
+    );
+  }
+
+  finish() {
+    if (this.finished) {
+      return;
+    }
+    this.finished = true;
+    this.finishResolver?.();
   }
 }
 

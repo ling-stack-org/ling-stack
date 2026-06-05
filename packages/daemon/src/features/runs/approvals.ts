@@ -22,6 +22,10 @@ import {
   appendExecutionActionArtifactEvents,
   createExecutionActionPreviewArtifacts,
 } from "./action-artifacts.js";
+import {
+  classifyApprovalActionType,
+  classifyBashRiskFlags,
+} from "./action-classifier.js";
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
@@ -393,7 +397,7 @@ function toCreateApprovalRequestInput(run: RunSession, request: PiRunnerApproval
     taskId: run.taskId,
     channelId: run.channelId,
     toolCallId: request.toolCallId,
-    actionType: isRunTool(request.toolName) ? request.toolName : "mcp_tool_call",
+    actionType: classifyApprovalActionType(request.toolName, payload),
     risk,
     title: approvalTitle(request.toolName, risk),
     description: approvalDescription(request.toolName, payload),
@@ -457,6 +461,9 @@ function toApprovalPayload(request: PiRunnerApprovalRequest): ApprovalPayload {
 
 function classifyApprovalRisk(request: PiRunnerApprovalRequest, payload: ApprovalPayload): ApprovalRisk {
   if (payload.type === "bash") {
+    if (payload.riskFlags.includes("git_force_push")) {
+      return "critical";
+    }
     return payload.riskFlags.length > 0 ? "high" : "medium";
   }
 
@@ -577,20 +584,6 @@ function findApprovalDecisionEvent(
         isRecord(event.data) &&
         event.data.approvalId === approval.id,
     );
-}
-
-function classifyBashRiskFlags(command: string): string[] {
-  const checks: Array<[RegExp, string]> = [
-    [/\brm\s+-(?:[^\n]*r[^\n]*f|[^\n]*f[^\n]*r)\b/i, "destructive_remove"],
-    [/\bgit\s+reset\s+--hard\b/i, "git_reset_hard"],
-    [/\bgit\s+push\b[^\n]*--force\b/i, "git_force_push"],
-    [/\bsudo\b/i, "sudo"],
-    [/\b(?:chmod|chown)\s+-R\b/i, "recursive_permission_change"],
-    [/\b(?:dd|mkfs|diskutil)\b/i, "disk_mutation"],
-    [/\b(?:kubectl|helm|flyctl|vercel|netlify|aws|gcloud|az)\b[^\n]*\b(?:apply|delete|deploy|destroy|terminate)\b/i, "external_mutation"],
-    [/\b(?:curl|wget)\b[^\n|;]*\|\s*(?:sh|bash)\b/i, "remote_script_execution"],
-  ];
-  return checks.filter(([pattern]) => pattern.test(command)).map(([, flag]) => flag);
 }
 
 function isOutsideWorkspace(inputPath: string, cwd: string): boolean {

@@ -8,7 +8,7 @@
     "build": "corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json && vite build",
     "typecheck": "corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json --noEmit",
     "preview": "vite preview --host 127.0.0.1",
-    "lint": "echo \"lint not configured yet\"",
+    "lint": "node scripts/check-appshell-imports.mjs",
     "test": "echo \"tests not configured yet\"",
     "test:e2e": "corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && playwright test"
   },

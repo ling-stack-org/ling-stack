@@ -108,6 +108,16 @@ export type ExecutionActionStatus =
   | "succeeded"
   | "failed";
 
+export type ExecutionScope =
+  | "read_only"
+  | "workspace_write"
+  | "git_history"
+  | "network"
+  | "credential"
+  | "provider_config"
+  | "deployment"
+  | "external_system";
+
 export interface ExecutionActionTargetRef {
   readonly type:
     | "run"
@@ -142,6 +152,8 @@ export interface ExecutionAction {
   readonly targetRefs: readonly ExecutionActionTargetRef[];
   readonly previewArtifactIds: readonly string[];
   readonly resultArtifactIds: readonly string[];
+  readonly scopes?: readonly ExecutionScope[];
+  readonly scopeSummary?: string;
   readonly policySnapshot?: unknown;
   readonly createdAt: string;
   readonly resolvedAt?: string;
@@ -2024,6 +2036,7 @@ export interface WorkflowStepOutputRef {
   readonly resultSummary?: string;
   readonly outputArtifactId?: string;
   readonly artifactIds: readonly string[];
+  readonly branchGroupId?: string;
 }
 
 export interface ChannelWorkflowStepContextPacket {
@@ -2056,8 +2069,13 @@ export interface ChannelWorkflowStepOutputPacket {
 
 export interface ChannelWorkflowStepMetadata {
   readonly workflowTemplateId?: string;
+  readonly templateVersion?: string;
   readonly templateStepId?: string;
   readonly dependsOnStepIds?: readonly string[];
+  readonly branchGroupId?: string;
+  readonly joinGroupId?: string;
+  readonly dependencyMode?: "all_succeeded" | "all_terminal" | "any_succeeded";
+  readonly maxParallelSiblings?: number;
   readonly teammateTemplateId?: string;
   readonly skillId?: string;
   readonly requestedRunnerId?: string;
@@ -2228,12 +2246,21 @@ export type ChannelWorkflowOrchestrationResponse =
       readonly workflowStep: ChannelWorkflowStep;
       readonly taskId: string;
       readonly runId?: string;
+      readonly startedSteps?: readonly {
+        readonly workflowStep: ChannelWorkflowStep;
+        readonly taskId: string;
+        readonly runId?: string;
+      }[];
     }
   | {
       readonly status: "waiting_for_approval";
       readonly workflow: ChannelWorkflow;
       readonly workflowStep: ChannelWorkflowStep;
       readonly approval: ApprovalRequest;
+      readonly waitingApprovals?: readonly {
+        readonly workflowStep: ChannelWorkflowStep;
+        readonly approval: ApprovalRequest;
+      }[];
     }
   | {
       readonly status: "idle";

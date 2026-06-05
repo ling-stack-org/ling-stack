@@ -65,9 +65,9 @@ Implemented foundations:
 Important gaps:
 
 - Approval coverage is not complete for every side-effect category.
-- Approval records now have an action-oriented read model, Web payload previews, and
-  durable preview/result artifact linkage for approval-backed runtime actions; richer
-  scope analysis and non-approval action stages are still incomplete.
+- Approval records now have an action-oriented read model, Web payload previews, durable
+  preview/result artifact linkage, scope analysis, non-approval tool lifecycle actions,
+  and git commit/push preview extraction for approval-backed bash actions.
 - The UI exposes threads as a top-level list inside Run history and opens a thread-first
   detail panel for evidence, queued follow-ups, actions, and resume.
 - `LingThread` exists as a backend grouping, lineage, evidence, and manual resume
@@ -82,6 +82,25 @@ Follow-up hardening:
 - [Execution And Orchestration Hardening](execution-orchestration-hardening.md) defines
   the next Codex-like execution hardening slice: action preview/result artifacts, a
   thread-first page, resume context preview, and a stale completion audit event.
+
+## Implementation Status: Future Hardening Slice
+
+Implemented:
+
+- non-approval `tool_start`/`tool_end` events now appear in `/execution-actions` as
+  `executing`, `succeeded`, or `failed` action records;
+- approval-backed actions expose `scopes` and `scopeSummary`;
+- `git commit` and `git push` bash approvals classify as `git_commit`/`git_push`;
+- preview artifacts include a structured `gitPreview` block where direct git command
+  inspection is possible, and fail closed when preview extraction is unsafe;
+- stale runner completions after cancellation are recorded as
+  `stale_runner_completion_ignored` without overwriting terminal run/work-unit state.
+
+Still future:
+
+- a dedicated route-level thread page beyond the current Run History thread surface;
+- richer action result rendering for every tool family;
+- native runner-session resume when a non-Pi adapter can prove conformance.
 
 ## Goals
 

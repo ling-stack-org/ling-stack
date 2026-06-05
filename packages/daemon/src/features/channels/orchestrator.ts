@@ -32,9 +32,31 @@ export type StartOrchestratedWorkflowStepRun = (input: {
   readonly runRequest: WorkflowStepRunRequest;
 }) => Promise<string | undefined>;
 
+export interface WorkflowOrchestrationStartedStep {
+  readonly workflowStep: ChannelWorkflowStep;
+  readonly taskId: string;
+  readonly runId?: string;
+}
+
 export type WorkflowOrchestrationResult =
-  | { readonly status: "started"; readonly workflow: ChannelWorkflow; readonly workflowStep: ChannelWorkflowStep; readonly taskId: string; readonly runId?: string }
-  | { readonly status: "waiting_for_approval"; readonly workflow: ChannelWorkflow; readonly workflowStep: ChannelWorkflowStep; readonly approval: ApprovalRequest }
+  | {
+      readonly status: "started";
+      readonly workflow: ChannelWorkflow;
+      readonly workflowStep: ChannelWorkflowStep;
+      readonly taskId: string;
+      readonly runId?: string;
+      readonly startedSteps?: readonly WorkflowOrchestrationStartedStep[];
+    }
+  | {
+      readonly status: "waiting_for_approval";
+      readonly workflow: ChannelWorkflow;
+      readonly workflowStep: ChannelWorkflowStep;
+      readonly approval: ApprovalRequest;
+      readonly waitingApprovals?: readonly {
+        readonly workflowStep: ChannelWorkflowStep;
+        readonly approval: ApprovalRequest;
+      }[];
+    }
   | { readonly status: "idle"; readonly workflow: ChannelWorkflow; readonly reason: string }
   | { readonly status: "blocked"; readonly workflow: ChannelWorkflow; readonly workflowStep?: ChannelWorkflowStep; readonly blocker: string }
   | { readonly status: "failed"; readonly workflow: ChannelWorkflow; readonly workflowStep?: ChannelWorkflowStep; readonly blocker: string }
@@ -86,75 +108,126 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   }
   const currentWorkflow = input.store.getChannelWorkflow(workflow.id) ?? workflow;
   const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
-  const approvedGatedStep = steps.find((step) => step.status === "running" && step.metadata?.preStepApprovalId && !step.runId && !step.taskId);
-  if (!approvedGatedStep && steps.some((step) => step.status === "claimed" || step.status === "running" || step.status === "waiting_for_approval")) {
+  const parallelStartBudget = resolveParallelStartBudget(input.store, currentWorkflow, steps);
+  const activeStepCount = countActiveWorkflowSteps(steps);
+  const startBudget = Math.max(parallelStartBudget - activeStepCount, 0);
+  const approvedGatedSteps = steps.filter((step) => step.status === "running" && step.metadata?.preStepApprovalId && !step.runId && !step.taskId);
+  if (parallelStartBudget <= 1 && approvedGatedSteps.length === 0 && steps.some((step) => step.status === "claimed" || step.status === "running" || step.status === "waiting_for_approval")) {
     return { status: "idle", workflow: currentWorkflow, reason: "Workflow already has an active step." };
   }
-  const eligible = approvedGatedStep ?? steps.find((step) => step.status === "queued" && isWorkflowStepEligible(step, steps));
-  if (!eligible) {
+  const eligibleSteps = [
+    ...approvedGatedSteps,
+    ...steps.filter((step) => step.status === "queued" && isWorkflowStepEligible(step, steps)),
+  ].sort(compareWorkflowStepForScheduling);
+  if (eligibleSteps.length === 0 || startBudget <= 0) {
     completeWorkflowIfStepsFinished(input.store, workflow.id, new Date().toISOString());
     const latest = input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow;
     if (latest.status === "succeeded") {
       return { status: "completed", workflow: latest };
     }
-    return { status: "idle", workflow: latest, reason: "No eligible queued workflow step." };
-  }
-  if (eligible.metadata?.autoStart === false) {
-    return { status: "idle", workflow: currentWorkflow, reason: `Workflow step is not configured for auto-start: ${eligible.id}` };
-  }
-  if (!approvedGatedStep) {
-    const gateResult = maybeRequestPreStepApproval(input.store, currentWorkflow, eligible);
-    if (gateResult) {
-      return gateResult;
-    }
-  }
-
-  const started = prepareWorkflowStepStart(
-    input.store,
-    eligible.id,
-    {
-      mode: "create_and_run_task",
-      assigneeTeammateId: eligible.toParticipantId,
-      providerPresetId: eligible.metadata?.providerPresetId,
-      runnerId: eligible.metadata?.requestedRunnerId,
-      idempotencyKey: `workflow-step:${eligible.id}`,
-    },
-    input.cwd,
-    input.validateRunRequest,
-  );
-  if (started.kind === "blocked") {
     return {
-      status: "blocked",
-      workflow: input.store.getChannelWorkflow(started.workflowId) ?? currentWorkflow,
-      workflowStep: input.store.getChannelWorkflowStep(eligible.id) ?? eligible,
-      blocker: started.blocker,
+      status: "idle",
+      workflow: latest,
+      reason: startBudget <= 0 ? "Workflow parallel start budget is exhausted." : "No eligible queued workflow step.",
     };
   }
-  if (started.kind === "error") {
-    throw new HttpError(started.statusCode, started.code, started.message);
+
+  const startedSteps: WorkflowOrchestrationStartedStep[] = [];
+  const waitingApprovals: Array<{ readonly workflowStep: ChannelWorkflowStep; readonly approval: ApprovalRequest }> = [];
+  const blockedResults: Array<Extract<WorkflowOrchestrationResult, { status: "blocked" }>> = [];
+
+  for (const candidate of eligibleSteps) {
+    if (startedSteps.length >= startBudget) {
+      break;
+    }
+    const latestCandidate = input.store.getChannelWorkflowStep(candidate.id) ?? candidate;
+    if (latestCandidate.metadata?.autoStart === false) {
+      continue;
+    }
+    const isApprovedGatedStep = latestCandidate.status === "running" && latestCandidate.metadata?.preStepApprovalId && !latestCandidate.runId && !latestCandidate.taskId;
+    if (!isApprovedGatedStep) {
+      const gateResult = maybeRequestPreStepApproval(input.store, input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow, latestCandidate);
+      if (gateResult) {
+        if (gateResult.status === "waiting_for_approval") {
+          waitingApprovals.push({ workflowStep: gateResult.workflowStep, approval: gateResult.approval });
+          continue;
+        }
+        return gateResult;
+      }
+    }
+
+    const started = prepareWorkflowStepStart(
+      input.store,
+      latestCandidate.id,
+      {
+        mode: "create_and_run_task",
+        assigneeTeammateId: latestCandidate.toParticipantId,
+        providerPresetId: latestCandidate.metadata?.providerPresetId,
+        runnerId: latestCandidate.metadata?.requestedRunnerId,
+        idempotencyKey: `workflow-step:${latestCandidate.id}`,
+      },
+      input.cwd,
+      input.validateRunRequest,
+    );
+    if (started.kind === "blocked") {
+      blockedResults.push({
+        status: "blocked",
+        workflow: input.store.getChannelWorkflow(started.workflowId) ?? currentWorkflow,
+        workflowStep: input.store.getChannelWorkflowStep(latestCandidate.id) ?? latestCandidate,
+        blocker: started.blocker,
+      });
+      continue;
+    }
+    if (started.kind === "error") {
+      throw new HttpError(started.statusCode, started.code, started.message);
+    }
+
+    const runRequest: WorkflowStepRunRequest = {
+      ...started.runRequest,
+      requestedSkillId: latestCandidate.metadata?.skillId,
+      approvalProfile: mergeApprovalProfiles(started.runRequest.approvalProfile, latestCandidate.metadata?.approvalGate),
+    };
+    const runId = await input.startRun({
+      workflow: input.store.getChannelWorkflow(started.workflowId) ?? currentWorkflow,
+      workflowStep: input.store.getChannelWorkflowStep(latestCandidate.id) ?? latestCandidate,
+      taskId: started.task.id,
+      runRequest,
+    });
+    if (!runId) {
+      blockedResults.push(blockWorkflowStepRunStartFailure(input.store, started.workflowId, latestCandidate.id, started.task.id));
+      continue;
+    }
+    startedSteps.push({
+      workflowStep: input.store.getChannelWorkflowStep(latestCandidate.id) ?? latestCandidate,
+      taskId: started.task.id,
+      runId,
+    });
   }
 
-  const runRequest: WorkflowStepRunRequest = {
-    ...started.runRequest,
-    requestedSkillId: eligible.metadata?.skillId,
-    approvalProfile: mergeApprovalProfiles(started.runRequest.approvalProfile, eligible.metadata?.approvalGate),
-  };
-  const runId = await input.startRun({
-    workflow: input.store.getChannelWorkflow(started.workflowId) ?? currentWorkflow,
-    workflowStep: input.store.getChannelWorkflowStep(eligible.id) ?? eligible,
-    taskId: started.task.id,
-    runRequest,
-  });
-  if (!runId) {
-    return blockWorkflowStepRunStartFailure(input.store, started.workflowId, eligible.id, started.task.id);
+  if (startedSteps.length === 0 && waitingApprovals.length > 0) {
+    const first = waitingApprovals[0];
+    return {
+      status: "waiting_for_approval",
+      workflow: input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow,
+      workflowStep: first.workflowStep,
+      approval: first.approval,
+      waitingApprovals,
+    };
   }
-  const workflowStep = input.store.getChannelWorkflowStep(eligible.id) ?? eligible;
+  if (startedSteps.length === 0 && blockedResults.length > 0) {
+    return blockedResults[0];
+  }
+  if (startedSteps.length === 0) {
+    return { status: "idle", workflow: input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow, reason: "No workflow step was started." };
+  }
+  const firstStarted = startedSteps[0];
   return {
     status: "started",
-    workflow: input.store.getChannelWorkflow(started.workflowId) ?? currentWorkflow,
-    workflowStep,
-    taskId: started.task.id,
-    runId,
+    workflow: input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow,
+    workflowStep: firstStarted.workflowStep,
+    taskId: firstStarted.taskId,
+    runId: firstStarted.runId,
+    startedSteps,
   };
 }
 
@@ -1078,10 +1151,53 @@ function ensureWorkflowStepRunningForGate(
 
 function isWorkflowStepEligible(step: ChannelWorkflowStep, steps: readonly ChannelWorkflowStep[]): boolean {
   const byId = new Map(steps.map((candidate) => [candidate.id, candidate]));
-  return (step.metadata?.dependsOnStepIds ?? []).every((dependencyId) => {
-    const dependency = byId.get(dependencyId);
-    return dependency?.status === "succeeded" || dependency?.status === "skipped";
-  });
+  const dependencies = (step.metadata?.dependsOnStepIds ?? [])
+    .map((dependencyId) => byId.get(dependencyId))
+    .filter((dependency): dependency is ChannelWorkflowStep => dependency !== undefined);
+  if (dependencies.length !== (step.metadata?.dependsOnStepIds ?? []).length) {
+    return false;
+  }
+  const mode = step.metadata?.dependencyMode ?? "all_succeeded";
+  if (mode === "any_succeeded") {
+    return dependencies.length === 0 || dependencies.some((dependency) => dependency.status === "succeeded");
+  }
+  if (mode === "all_terminal") {
+    return dependencies.every((dependency) => isTerminalWorkflowStepStatus(dependency.status));
+  }
+  return dependencies.every((dependency) => dependency.status === "succeeded" || dependency.status === "skipped");
+}
+
+function resolveParallelStartBudget(
+  store: RunStore,
+  workflow: ChannelWorkflow,
+  steps: readonly ChannelWorkflowStep[],
+): number {
+  const channel = store.getChannel(workflow.channelId);
+  const runtimePolicy = channel?.runtimePolicy;
+  if (!runtimePolicy || runtimePolicy.executionMode !== "parallel" || runtimePolicy.maxConcurrentRuns <= 1) {
+    return 1;
+  }
+  const templateBudget = Math.max(1, ...steps.map((step) => step.metadata?.maxParallelSiblings ?? 1));
+  return Math.max(1, Math.min(runtimePolicy.maxConcurrentRuns, templateBudget));
+}
+
+function countActiveWorkflowSteps(steps: readonly ChannelWorkflowStep[]): number {
+  return steps.filter((step) =>
+    step.status === "claimed" ||
+    step.status === "running" && (Boolean(step.runId) || Boolean(step.taskId))
+  ).length;
+}
+
+function compareWorkflowStepForScheduling(left: ChannelWorkflowStep, right: ChannelWorkflowStep): number {
+  const positionDelta = left.position - right.position;
+  if (positionDelta !== 0) {
+    return positionDelta;
+  }
+  const branchDelta = (left.metadata?.branchGroupId ?? "").localeCompare(right.metadata?.branchGroupId ?? "");
+  if (branchDelta !== 0) {
+    return branchDelta;
+  }
+  return left.id.localeCompare(right.id);
 }
 
 function mergeApprovalProfiles(

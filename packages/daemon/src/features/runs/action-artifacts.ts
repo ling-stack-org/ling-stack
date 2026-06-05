@@ -11,6 +11,7 @@ import {
 } from "@ling-stack/core";
 import { normalizeArtifactPath } from "../../shared/path.js";
 import { isRecord } from "../../shared/validation.js";
+import { buildGitCommandPreview } from "./action-classifier.js";
 
 export function createExecutionActionPreviewArtifacts(input: {
   readonly store: RunStore;
@@ -82,6 +83,7 @@ export function appendExecutionActionArtifactEvents(input: {
 }
 
 function buildPreviewArtifact(input: {
+  readonly run: RunSession;
   readonly approval: ApprovalRequest;
   readonly toolName: string;
   readonly toolArgs: unknown;
@@ -104,6 +106,9 @@ function buildPreviewArtifact(input: {
       content: input.approval.payload.diffPreview || JSON.stringify({ payload: redactedPayload, args: redactedArgs }, null, 2),
     };
   }
+  const gitPreview = input.approval.payload.type === "bash"
+    ? buildGitCommandPreview(input.approval.payload.cwd || input.run.cwd, input.approval.payload.command)
+    : undefined;
   return {
     filename: "preview.json",
     type: "json",
@@ -118,6 +123,7 @@ function buildPreviewArtifact(input: {
       description: redactSecrets(input.approval.description, input.extraSecrets ?? []),
       payload: redactedPayload,
       args: redactedArgs,
+      gitPreview,
     }, null, 2)}\n`,
   };
 }

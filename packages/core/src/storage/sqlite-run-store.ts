@@ -10940,8 +10940,13 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
   const record = parsed as Record<string, unknown>;
   return omitUndefined({
     workflowTemplateId: readOptionalStringValue(record.workflowTemplateId),
+    templateVersion: readOptionalStringValue(record.templateVersion),
     templateStepId: readOptionalStringValue(record.templateStepId),
     dependsOnStepIds: readOptionalStringListValue(record.dependsOnStepIds),
+    branchGroupId: readOptionalStringValue(record.branchGroupId),
+    joinGroupId: readOptionalStringValue(record.joinGroupId),
+    dependencyMode: readOptionalWorkflowStepDependencyModeValue(record.dependencyMode),
+    maxParallelSiblings: readOptionalPositiveIntegerValue(record.maxParallelSiblings),
     teammateTemplateId: readOptionalStringValue(record.teammateTemplateId),
     skillId: readOptionalStringValue(record.skillId),
     requestedRunnerId: normalizeStoredRunnerId(readOptionalStringValue(record.requestedRunnerId)),
@@ -10966,6 +10971,14 @@ function readOptionalStringValue(value: unknown): string | undefined {
 
 function readOptionalStringListValue(value: unknown): readonly string[] | undefined {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value as string[] : undefined;
+}
+
+function readOptionalPositiveIntegerValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function readOptionalWorkflowStepDependencyModeValue(value: unknown): ChannelWorkflowStepMetadata["dependencyMode"] | undefined {
+  return value === "all_succeeded" || value === "all_terminal" || value === "any_succeeded" ? value : undefined;
 }
 
 function parseOptionalWorkflowStepPolicyValue(value: unknown): WorkflowStepPolicy | undefined {

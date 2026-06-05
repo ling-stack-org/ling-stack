@@ -136,6 +136,26 @@ apps/web/src/
 
 Domain files own data and actions. Feature files remain presentation components.
 
+## Implementation Status
+
+Implemented in the current strict-cleanup slice:
+
+- runtime diagnostics, state transitions, leases, work units, and work-unit
+  cancel/retry/reconcile mutations moved into `useRuntimeDomain`;
+- AppShell no longer imports `../api.js` directly;
+- workspace, run, and settings command controllers now own AppShell command imports;
+- `apps/web` lint includes an AppShell import guard to keep direct daemon API imports
+  from returning.
+
+Still future:
+
+- move the remaining workspace command state mutations out of AppShell and into a richer
+  `useWorkspaceDomain` action surface;
+- split approval policy state into a settings/approvals controller instead of keeping
+  the form state in AppShell;
+- add page-level route chunks after domain ownership stops pulling inactive feature trees
+  through shared props.
+
 ### Shared Controller Shape
 
 Every domain hook should return a consistent controller shape:

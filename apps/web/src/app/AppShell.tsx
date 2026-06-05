@@ -8,50 +8,6 @@ import {
   GSTACK_DEFAULT_SKILL_PACK_ID,
   getBuiltinSkillPack,
 } from "@ling-stack/core/builtin-skill-packs";
-import {
-  buildRerunRequest,
-  buildRunRequest,
-  buildTaskRunRequest,
-  cancelChannelWorkflow,
-  cancelWorkUnit,
-  channelAttachmentContentUrl,
-  createChannel,
-  createChannelContextSummary,
-  createChannelDecision,
-  createChannelHandoff,
-  createChannelLinkPreview,
-  createChannelMessage,
-  createChannelWorkflowFromHandoff,
-  createChannelWorkflowFromTemplate,
-  createTask,
-  daemonBaseUrl,
-  deleteChannelAttachment,
-  deleteChannel,
-  deleteTask,
-  getDaemonHealth,
-  getApprovalPolicy,
-  getRuntimeDiagnostics,
-  getWorkUnit,
-  listResourceLeases,
-  listStateTransitions,
-  listWorkUnits,
-  orchestrateChannelWorkflow,
-  reconcileWorkUnit,
-  retryWorkUnit,
-  retryChannelWorkflowStep,
-  startChannelWorkflowStep,
-  uploadChannelAttachment,
-  updateChannel,
-  updateApprovalPolicy,
-  updateChannelBrief,
-  updateChannelContextSummary,
-  updateChannelDecision,
-  updateChannelHandoff,
-  updateChannelExecutionProposal,
-  updateChannelWorkflowStep,
-  updateTask,
-  updateTaskStatus,
-} from "../api.js";
 import { useI18n } from "../i18n.js";
 import type {
   ApprovalRequest,
@@ -77,22 +33,17 @@ import type {
   ProviderFormState,
   ProviderPreset,
   ProviderTemplate,
-  ResourceLease,
-  RuntimeDiagnosticsResponse,
   RunArtifact,
   RunEventEnvelope,
   RunFormState,
   RunSession,
   SessionPermissionMode,
   StateEntityType,
-  StateTransitionEvent,
   Task,
   TaskEditFormState,
   TaskFormState,
   TaskRunActionState,
   UpdateChannelBriefRequest,
-  WorkUnit,
-  WorkUnitDetailResponse,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -149,8 +100,12 @@ import { useExternalWorkDomain } from "../domains/external-work/use-external-wor
 import { useMediaDomain } from "../domains/media/use-media-domain.js";
 import { useMcpDomain } from "../domains/mcp/use-mcp-domain.js";
 import { useProvidersDomain } from "../domains/providers/use-providers-domain.js";
+import { useRuntimeDomain } from "../domains/runtime/use-runtime-domain.js";
+import { useRunCommandController } from "../domains/runs/use-run-command-controller.js";
 import { useRunsDomain } from "../domains/runs/use-runs-domain.js";
+import { useSettingsCommandController } from "../domains/settings/use-settings-command-controller.js";
 import { useTeammatesDomain } from "../domains/teammates/use-teammates-domain.js";
+import { useWorkspaceCommandController } from "../domains/workspace/use-workspace-command-controller.js";
 import {
   defaultTaskEditForm,
   defaultTaskForm,
@@ -230,13 +185,6 @@ export function AppShell(): JSX.Element {
   const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
   const [approvalPolicyLoading, setApprovalPolicyLoading] = useState(false);
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
-  const [stateTransitions, setStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
-  const [resourceLeases, setResourceLeases] = useState<readonly ResourceLease[]>([]);
-  const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnosticsResponse | undefined>();
-  const [workUnits, setWorkUnits] = useState<readonly WorkUnit[]>([]);
-  const [selectedWorkUnitDetail, setSelectedWorkUnitDetail] = useState<WorkUnitDetailResponse | undefined>();
-  const [runtimeLoading, setRuntimeLoading] = useState(false);
-  const [runtimeActionWorkUnitId, setRuntimeActionWorkUnitId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
@@ -244,6 +192,46 @@ export function AppShell(): JSX.Element {
   const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
+  const {
+    buildRerunRequest,
+    buildRunRequest,
+    buildTaskRunRequest,
+    daemonBaseUrl,
+  } = useRunCommandController();
+  const {
+    getApprovalPolicy,
+    getDaemonHealth,
+    updateApprovalPolicy,
+  } = useSettingsCommandController();
+  const {
+    cancelChannelWorkflow,
+    channelAttachmentContentUrl,
+    createChannel,
+    createChannelContextSummary,
+    createChannelDecision,
+    createChannelHandoff,
+    createChannelLinkPreview,
+    createChannelMessage,
+    createChannelWorkflowFromHandoff,
+    createChannelWorkflowFromTemplate,
+    createTask,
+    deleteChannel,
+    deleteChannelAttachment,
+    deleteTask,
+    orchestrateChannelWorkflow,
+    retryChannelWorkflowStep,
+    startChannelWorkflowStep,
+    updateChannel,
+    updateChannelBrief,
+    updateChannelContextSummary,
+    updateChannelDecision,
+    updateChannelExecutionProposal,
+    updateChannelHandoff,
+    updateChannelWorkflowStep,
+    updateTask,
+    updateTaskStatus,
+    uploadChannelAttachment,
+  } = useWorkspaceCommandController();
   const workspaceDomain = useWorkspaceDomain({
     cwd: form.cwd.trim(),
     initialWorkspaceCwd,
@@ -526,6 +514,32 @@ export function AppShell(): JSX.Element {
     resetSelectedChannel: resetExternalWorkSelectedChannel,
     resetForCwd: resetExternalWorkForCwd,
   } = externalWorkDomain.actions;
+  const runtimeDomain = useRuntimeDomain({
+    cwd: form.cwd.trim(),
+    setErrorMessage,
+    onWorkUnitActionComplete: async (workUnitId, action) => {
+      if (action === "cancel" && run?.workUnitId === workUnitId) {
+        abortCurrentRun();
+        setIsRunning(false);
+      }
+      await Promise.all([refreshRuns(), refreshHealth()]);
+    },
+  });
+  const {
+    stateTransitions,
+    resourceLeases,
+    runtimeDiagnostics,
+    workUnits,
+    selectedWorkUnitDetail,
+    runtimeLoading,
+    runtimeActionWorkUnitId,
+  } = runtimeDomain.state;
+  const {
+    setSelectedWorkUnitDetail,
+    refreshRuntimeState,
+    runWorkUnitAction,
+    resetForCwd: resetRuntimeForCwd,
+  } = runtimeDomain.actions;
   const runsDomain = useRunsDomain({
     cwd: form.cwd.trim(),
     confirmFullAccessRunIfNeeded,
@@ -888,6 +902,7 @@ export function AppShell(): JSX.Element {
     resetMediaForCwd();
     resetMcpForCwd();
     resetExternalWorkForCwd();
+    resetRuntimeForCwd();
     setChannelForm((current) => ({
       ...current,
       boundPath: current.boundPath === previousCwd || !current.boundPath ? cwd : current.boundPath,
@@ -965,59 +980,6 @@ export function AppShell(): JSX.Element {
     setFullAccessConfirmOpen(false);
     fullAccessConfirmResolveRef.current?.(approved);
     fullAccessConfirmResolveRef.current = undefined;
-  }
-
-  async function refreshRuntimeState(cwd = form.cwd.trim(), sourceRun: RunSession | undefined = run): Promise<void> {
-    if (!cwd) {
-      setStateTransitions([]);
-      setResourceLeases([]);
-      setRuntimeDiagnostics(undefined);
-      setWorkUnits([]);
-      setSelectedWorkUnitDetail(undefined);
-      return;
-    }
-
-    setRuntimeLoading(true);
-    try {
-      const transitionRequests: Promise<readonly StateTransitionEvent[]>[] = [];
-      if (sourceRun?.id) {
-        transitionRequests.push(
-          listStateTransitions(cwd, { entityType: "run", entityId: sourceRun.id, limit: 50 }).then((response) => response.transitions),
-        );
-      }
-      const taskTransitionId = sourceRun?.taskId || selectedTaskId;
-      if (taskTransitionId) {
-        transitionRequests.push(
-          listStateTransitions(cwd, { entityType: "task", entityId: taskTransitionId, limit: 50 }).then((response) => response.transitions),
-        );
-      }
-      if (sourceRun?.workUnitId) {
-        transitionRequests.push(
-          listStateTransitions(cwd, { entityType: "work_unit", entityId: sourceRun.workUnitId, limit: 50 }).then((response) => response.transitions),
-        );
-      }
-      const [leasesResponse, diagnosticsResponse, workUnitsResponse, ...transitionResponses] = await Promise.all([
-        listResourceLeases(cwd, { status: "active", limit: 50 }),
-        getRuntimeDiagnostics(cwd).catch(() => undefined),
-        listWorkUnits(cwd, { limit: 100 }).catch(() => ({ cwd, workUnits: [] })),
-        ...transitionRequests,
-      ]);
-      const uniqueTransitions = new Map<string, StateTransitionEvent>();
-      for (const transition of transitionResponses.flat()) {
-        uniqueTransitions.set(transition.id, transition);
-      }
-      setResourceLeases(diagnosticsResponse?.leases ?? leasesResponse.leases);
-      setRuntimeDiagnostics(diagnosticsResponse);
-      setWorkUnits(workUnitsResponse.workUnits);
-      setStateTransitions([...uniqueTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
-    } catch {
-      setResourceLeases([]);
-      setStateTransitions([]);
-      setRuntimeDiagnostics(undefined);
-      setWorkUnits([]);
-    } finally {
-      setRuntimeLoading(false);
-    }
   }
 
   async function refreshChannelActivity(): Promise<void> {
@@ -2190,42 +2152,6 @@ export function AppShell(): JSX.Element {
     setActiveSidebarTarget(channelSidebarTarget(runToRepair.channelId));
     await refreshTasks(runToRepair.channelId);
     setSelectedTaskId(runToRepair.taskId);
-  }
-
-  async function runWorkUnitAction(workUnitId: string, action: "cancel" | "retry" | "reconcile"): Promise<void> {
-    const cwd = form.cwd.trim();
-    if (!cwd || runtimeActionWorkUnitId) {
-      return;
-    }
-
-    setRuntimeActionWorkUnitId(workUnitId);
-    try {
-      setErrorMessage("");
-      const response = action === "cancel"
-        ? await cancelWorkUnit(cwd, workUnitId)
-        : action === "retry"
-          ? await retryWorkUnit(cwd, workUnitId)
-          : await reconcileWorkUnit(cwd, workUnitId);
-      if (action === "cancel" && response.workUnit.linkedRunId && response.workUnit.linkedRunId === activeRunId) {
-        abortCurrentRun();
-        setIsRunning(false);
-      }
-      await Promise.all([
-        refreshRuns(cwd),
-        refreshRuntimeState(cwd, run),
-      ]);
-      if (run?.workUnitId === workUnitId) {
-        try {
-          setSelectedWorkUnitDetail(await getWorkUnit(cwd, workUnitId));
-        } catch {
-          setSelectedWorkUnitDetail(undefined);
-        }
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRuntimeActionWorkUnitId("");
-    }
   }
 
   const showInspector = !["workspace", "providers", "mcp", "teammates", "runs", "approvals", "media", "settings"].includes(activeView);

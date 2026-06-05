@@ -20,6 +20,27 @@ The remaining advanced scope is:
 
 These should not change the default serial behavior.
 
+## Implementation Status
+
+Implemented in the current future-hardening slice:
+
+- workflow step metadata persists and round-trips `branchGroupId`, `joinGroupId`,
+  `dependencyMode`, `maxParallelSiblings`, and `templateVersion`;
+- the orchestrator tick can start multiple eligible steps when the channel runtime policy
+  is `executionMode: "parallel"` and step metadata opts in with
+  `maxParallelSiblings > 1`;
+- default serial behavior remains a single started step per tick;
+- `dependencyMode` supports `all_succeeded`, `all_terminal`, and `any_succeeded`;
+- dependency output refs include `branchGroupId` for downstream context packets;
+- orchestration responses can return `startedSteps` and `waitingApprovals` for UI/audit.
+
+Still future:
+
+- user-authored custom template parser/validator beyond the built-in workflow-template
+  compile path;
+- authoring UI for custom templates;
+- graph visualization of branch groups and fan-in.
+
 ## Non-Goals
 
 - No OpenClaw/ACP delegation. Runner backend selection is owned by
