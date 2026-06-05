@@ -224,6 +224,23 @@ test("bash=ask pauses the run until the approval is resolved", async () => {
     const approvalId = requested.data.data.approvalId;
     const waitingRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(waitingRun.status, "waiting_for_approval");
+    assert.ok(waitingRun.threadId);
+
+    const waitingThread = await getJson(`${daemon.url}/threads/${encodeURIComponent(waitingRun.threadId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(waitingThread.thread.kind, "task");
+    assert.equal(waitingThread.thread.taskId, "task_bash_ask");
+    assert.equal(waitingThread.thread.status, "waiting_for_approval");
+    assert.equal(waitingThread.thread.activeRunId, runId);
+
+    const pendingActions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(pendingActions.actions.length, 1);
+    assert.equal(pendingActions.actions[0].approvalId, approvalId);
+    assert.equal(pendingActions.actions[0].threadId, waitingRun.threadId);
+    assert.equal(pendingActions.actions[0].workUnitId, waitingRun.workUnitId);
+    assert.equal(pendingActions.actions[0].actionType, "bash");
+    assert.equal(pendingActions.actions[0].status, "waiting_for_approval");
+    assert.equal(pendingActions.actions[0].targetRefs.some((ref) => ref.type === "command" && ref.label === "echo approve-me"), true);
+    assert.equal(pendingActions.actions[0].policySnapshot.toolDecisions.bash, "ask");
 
     const resolved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
       reason: "test approval",
@@ -241,6 +258,70 @@ test("bash=ask pauses the run until the approval is resolved", async () => {
     assert.equal(remaining.some((event) => event.event === "result"), true);
     const finalRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(finalRun.status, "succeeded");
+    const finalThread = await getJson(`${daemon.url}/threads/${encodeURIComponent(waitingRun.threadId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(finalThread.thread.status, "succeeded");
+    assert.equal(finalThread.thread.activeRunId, undefined);
+    assert.equal(finalThread.thread.lastRunId, runId);
+
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const second = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_bash_ask"));
+    const secondRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(second.runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(secondRun.threadId, waitingRun.threadId);
+    const runsForThread = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}&threadId=${encodeURIComponent(waitingRun.threadId)}`);
+    assert.deepEqual(runsForThread.runs.map((run) => run.id), [second.runId, runId]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("thread evidence and manual resume preserve Ling-owned lineage", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-thread-resume-"));
+  const runner = new ThreadResumeRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const first = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_thread_resume"));
+    assert.ok(first.runId);
+
+    const threads = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&taskId=task_thread_resume`);
+    assert.equal(threads.threads.length, 1);
+    const thread = threads.threads[0];
+    assert.equal(thread.lastRunId, first.runId);
+    assert.equal(thread.status, "succeeded");
+
+    const evidence = await getJson(`${daemon.url}/threads/${encodeURIComponent(thread.id)}/evidence?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(evidence.thread.id, thread.id);
+    assert.equal(evidence.runs.length, 1);
+    assert.equal(evidence.runs[0].run.id, first.runId);
+    assert.equal(evidence.runs[0].events.some((event) => event.type === "run_created"), true);
+    assert.equal(evidence.runs[0].runtimeEvents.some((event) => event.type === "work_unit_started"), true);
+
+    const resumed = await postJson(`${daemon.url}/threads/${encodeURIComponent(thread.id)}/resume?cwd=${encodeURIComponent(cwd)}`, {
+      instruction: "Continue after manual resume.",
+      idempotencyKey: "thread-resume-test",
+    });
+    assert.equal(resumed.continuationReason, "manual_resume");
+    assert.equal(resumed.sourceRun.id, first.runId);
+    assert.ok(resumed.runId);
+    assert.notEqual(resumed.runId, first.runId);
+
+    await waitForCondition(async () => {
+      const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(resumed.runId)}?cwd=${encodeURIComponent(cwd)}`);
+      return run.status === "succeeded";
+    }, "manual resume run should finish");
+
+    const continuation = await getJson(`${daemon.url}/runs/${encodeURIComponent(resumed.runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(continuation.threadId, thread.id);
+    assert.equal(continuation.parentRunId, first.runId);
+    assert.equal(continuation.continuationReason, "manual_resume");
+    assert.match(continuation.taskSnapshot.prompt, /not a native runner session resume/);
+
+    const updatedThread = await getJson(`${daemon.url}/threads/${encodeURIComponent(thread.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(updatedThread.thread.lastRunId, resumed.runId);
+    assert.equal(updatedThread.thread.status, "succeeded");
+
+    const resumedEvidence = await getJson(`${daemon.url}/threads/${encodeURIComponent(thread.id)}/evidence?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(resumedEvidence.runs.map((entry) => entry.run.id), [first.runId, resumed.runId]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1661,8 +1742,11 @@ test("queued run guidance starts FIFO continuation after the source run finishes
     assert.ok(updatedFirst.intervention.continuationRunId);
 
     const continuation = await getJson(`${daemon.url}/runs/${encodeURIComponent(updatedFirst.intervention.continuationRunId)}?cwd=${encodeURIComponent(cwd)}`);
+    const source = await getJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(source.threadId);
     assert.equal(continuation.parentRunId, sourceRunId);
     assert.equal(continuation.interventionId, first.intervention.id);
+    assert.equal(continuation.threadId, source.threadId);
     assert.equal(continuation.requestSnapshot.permissionMode, "balanced");
     assert.match(continuation.requestSnapshot.task.prompt, /After that, verify the memory audit UI/);
 
@@ -1672,6 +1756,7 @@ test("queued run guidance starts FIFO continuation after the source run finishes
     const secondContinuation = await getJson(`${daemon.url}/runs/${encodeURIComponent(updatedSecond.intervention.continuationRunId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(secondContinuation.parentRunId, sourceRunId);
     assert.equal(secondContinuation.interventionId, second.intervention.id);
+    assert.equal(secondContinuation.threadId, source.threadId);
     assert.match(secondContinuation.requestSnapshot.task.prompt, /Then summarize remaining risk/);
   } finally {
     runner.release();
@@ -1730,6 +1815,7 @@ test("interrupt redirect cancels the source run and starts a linked continuation
 
     const source = await getJson(`${daemon.url}/runs/${encodeURIComponent(sourceRunId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(source.status, "cancelled");
+    assert.ok(source.threadId);
     const intervention = await getJson(`${daemon.url}/run-interventions/${encodeURIComponent(redirect.intervention.id)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(intervention.intervention.status, "started");
     assert.ok(intervention.intervention.continuationRunId);
@@ -1738,6 +1824,7 @@ test("interrupt redirect cancels the source run and starts a linked continuation
     assert.equal(continuation.parentRunId, sourceRunId);
     assert.equal(continuation.interventionId, redirect.intervention.id);
     assert.equal(continuation.continuationReason, "interrupt_redirect");
+    assert.equal(continuation.threadId, source.threadId);
     assert.match(continuation.requestSnapshot.task.prompt, /Stop and use the daemon API path instead/);
   } finally {
     runner.release();
@@ -1990,6 +2077,39 @@ test("daemon extracts artifacts from tool outputs and generated file paths", asy
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+class ThreadResumeRunner {
+  constructor() {
+    this.runs = [];
+  }
+
+  async runTask(options) {
+    this.runs.push({
+      cwd: options.cwd,
+      taskId: options.task.id,
+      title: options.task.title,
+      prompt: options.task.prompt,
+      parentRunId: options.task.parentRunId,
+    });
+    options.onEvent?.({
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    });
+    options.onEvent?.({
+      type: "run_end",
+      taskId: options.task.id,
+      messageCount: 1,
+    });
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+}
 
 class ApprovalProbeRunner {
   constructor(request) {
@@ -2622,4 +2742,20 @@ function withTimeout(promise, timeoutMs, message) {
       timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
     }),
   ]);
+}
+
+async function waitForCondition(check, message, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      if (await check()) {
+        return;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+  }
+  throw lastError ?? new Error(message);
 }

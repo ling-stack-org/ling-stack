@@ -6,6 +6,7 @@ import {
 } from "@ling-stack/core";
 import { transitionWorkUnitCancelled } from "../../runtime/work-units.js";
 import { writeTerminalSummary } from "./terminal.js";
+import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./threads.js";
 
 export function ensureRunCancelled(input: {
   readonly store: RunStore;
@@ -41,12 +42,14 @@ export function ensureRunCancelled(input: {
       decisionReason: cancelled.decisionReason,
     });
     input.streamEnvelope?.(approvalEvent);
+    syncLingThreadForRunEvent(input.store, current, "approval_cancelled", approvalEvent);
   }
   const event = input.store.appendEvent(input.runId, "run_cancelled", {
     reason: input.reason,
     active: input.active,
   });
   input.streamEnvelope?.(event);
+  syncLingThreadForRunEvent(input.store, current, "run_cancelled", event);
   const summaryPath = writeTerminalSummary(getRunSummaryPath(input.store.paths, input.runId), {
     runId: input.runId,
     status: "cancelled",
@@ -67,6 +70,7 @@ export function ensureRunCancelled(input: {
     summaryPath,
     errorMessage: null,
   });
+  syncLingThreadForTerminalRun(input.store, input.runId, endedAt);
   const task = input.store.getTask(input.taskId);
   if (task && task.status !== "done" && task.status !== "cancelled") {
     input.store.transitionTaskStatus({

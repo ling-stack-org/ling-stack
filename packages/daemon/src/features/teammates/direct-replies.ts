@@ -1,5 +1,5 @@
 import type { AiTeammate, RunStore, SecretResolver, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
-import type { RunnerAdapter } from "../../context.js";
+import type { RunnerRegistry, RunnerResolution } from "../../runtime/runners.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
@@ -9,7 +9,7 @@ import { resolveProviderForRun } from "../runs/providers.js";
 import { formatTeammateDirectPrompt } from "./direct-prompts.js";
 
 export async function createAiTeammateDirectReply(input: {
-  readonly runner: RunnerAdapter;
+  readonly runnerRegistry: RunnerRegistry;
   readonly store: RunStore;
   readonly teammate: AiTeammate;
   readonly thread: TeammateDirectThread;
@@ -26,6 +26,11 @@ export async function createAiTeammateDirectReply(input: {
   };
 }): Promise<TeammateDirectMessage> {
   const providerPresetId = input.providerPresetId ?? input.teammate.providerPresetId;
+  const runnerResolution = input.runnerRegistry.resolve({
+    requestedRunnerId: input.teammate.runnerId,
+    allowFallback: true,
+    tools: [],
+  });
   const now = new Date().toISOString();
   const pending = input.store.createTeammateDirectMessage(
     {
@@ -47,12 +52,16 @@ export async function createAiTeammateDirectReply(input: {
     ownerId: input.sourceMessage.id,
     teammateId: input.teammate.id,
     providerPresetId,
+    requestedRunnerId: runnerResolution.requestedRunnerId,
+    effectiveRunnerId: runnerResolution.effectiveRunnerId,
+    fallbackReason: runnerResolution.fallbackReason,
     linkedMessageId: pending.id,
     idempotencyKey: `teammate_direct_reply:${input.sourceMessage.id}:${pending.id}`,
     request: {
       sourceMessageId: input.sourceMessage.id,
       teammateId: input.teammate.id,
       providerPresetId,
+      runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
     },
   });
   if (input.teammate.status !== "active") {
@@ -123,10 +132,11 @@ export async function createAiTeammateDirectReply(input: {
       workUnit: supervised.workUnit,
       attempt: supervised.attempt,
       providerKey: providerPresetId,
+      runnerId: runnerResolution.effectiveRunnerId,
       now,
     });
 
-    const result = await input.runner.runTask({
+    const result = await runnerResolution.runner.adapter.runTask({
       cwd: input.store.paths.cwd,
       task,
       provider,
@@ -193,6 +203,18 @@ export async function createAiTeammateDirectReply(input: {
   } finally {
     input.store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
   }
+}
+
+function toRunnerResolutionSnapshot(resolution: RunnerResolution): {
+  readonly requestedRunnerId: string;
+  readonly effectiveRunnerId: string;
+  readonly fallbackReason?: RunnerResolution["fallbackReason"];
+} {
+  return {
+    requestedRunnerId: resolution.requestedRunnerId,
+    effectiveRunnerId: resolution.effectiveRunnerId,
+    fallbackReason: resolution.fallbackReason,
+  };
 }
 
 function finishDirectMessageWorkUnit(

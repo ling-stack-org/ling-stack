@@ -13,6 +13,7 @@ import {
   buildRerunRequest,
   buildRunRequest,
   buildTaskRunRequest,
+  cancelChannelWorkflow,
   cancelWorkUnit,
   cancelExternalWorkAction,
   checkProvider,
@@ -28,6 +29,7 @@ import {
   createChannelLinkPreview,
   createChannelMessage,
   createChannelWorkflowFromHandoff,
+  createChannelWorkflowFromTemplate,
   createAiTeammate,
   createMediaJob,
   createMcpServer,
@@ -80,11 +82,13 @@ import {
   listTeammateChannels,
   listTasks,
   listWorkUnits,
+  orchestrateChannelWorkflow,
   pollGitHubExternalWork,
   pollLinearExternalWork,
   reconcileWorkUnit,
   reconcileExternalWork,
   retryWorkUnit,
+  retryChannelWorkflowStep,
   runMediaJob,
   replaceTeammateChannels,
   replaceTeammateMemoryScopes,
@@ -367,6 +371,7 @@ export function AppShell(): JSX.Element {
   const [channelRunArtifactsLoading, setChannelRunArtifactsLoading] = useState(false);
   const [channelProtocolLoading, setChannelProtocolLoading] = useState(false);
   const [runningWorkflowStepId, setRunningWorkflowStepId] = useState("");
+  const [orchestratingWorkflowId, setOrchestratingWorkflowId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
@@ -2275,6 +2280,145 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function startAutoplanWorkflow(): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd || !selectedChannelId) {
+      setErrorMessage("请先选择 channel");
+      return;
+    }
+
+    const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    const providerPresetId = taskRunProviderId || selectedChannel?.defaultProviderPresetId || form.providerPresetId || providers.find(providerPreflightReady)?.id;
+    const objective = (channelBrief?.objective || selectedChannel?.name || "Run the built-in autoplan-lite workflow.").trim();
+    setOrchestratingWorkflowId("new:autoplan-lite");
+    try {
+      setErrorMessage("");
+      const response = await createChannelWorkflowFromTemplate(workspaceCwd, selectedChannelId, {
+        templateId: "autoplan-lite",
+        title: `${selectedChannel?.name ?? "Channel"} autoplan`,
+        objective,
+        createdBy: "local-user",
+        providerPresetId: providerPresetId || undefined,
+        autoStart: true,
+      });
+      setChannelWorkflows((current) => [response.workflow, ...current.filter((item) => item.id !== response.workflow.id)]);
+      setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
+      await orchestrateWorkflowById(response.workflow.id, response.workflow.channelId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOrchestratingWorkflowId((current) => current === "new:autoplan-lite" ? "" : current);
+    }
+  }
+
+  async function orchestrateWorkflowById(workflowId: string, channelId?: string): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage("本地工作区未就绪");
+      return;
+    }
+
+    setOrchestratingWorkflowId(workflowId);
+    try {
+      setErrorMessage("");
+      const result = await orchestrateChannelWorkflow(workspaceCwd, workflowId);
+      setChannelWorkflows((current) => [result.workflow, ...current.filter((item) => item.id !== result.workflow.id)]);
+      const workflowStep = "workflowStep" in result ? result.workflowStep : undefined;
+      if (workflowStep) {
+        setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, [workflowStep]));
+      }
+      if ("approval" in result && result.approval) {
+        setApprovals((current) => upsertApproval(current, result.approval));
+        setSelectedApprovalId(result.approval.id);
+      }
+      if (result.status === "blocked" || result.status === "failed") {
+        setErrorMessage(result.blocker);
+      } else if (result.status === "idle" && result.reason) {
+        setErrorMessage(result.reason);
+      }
+      await Promise.all([
+        refreshChannelProtocol(channelId ?? selectedChannelId),
+        refreshTasks(channelId ?? selectedChannelId),
+        refreshRuns(workspaceCwd),
+        refreshApprovals(workspaceCwd),
+        refreshRuntimeState(workspaceCwd),
+      ]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOrchestratingWorkflowId((current) => current === workflowId ? "" : current);
+    }
+  }
+
+  async function orchestrateWorkflowAction(workflow: ChannelWorkflow): Promise<void> {
+    await orchestrateWorkflowById(workflow.id, workflow.channelId);
+  }
+
+  async function cancelWorkflowAction(workflow: ChannelWorkflow): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage("本地工作区未就绪");
+      return;
+    }
+
+    setOrchestratingWorkflowId(workflow.id);
+    try {
+      setErrorMessage("");
+      const response = await cancelChannelWorkflow(workspaceCwd, workflow.id);
+      setChannelWorkflows((current) => [response.workflow, ...current.filter((item) => item.id !== response.workflow.id)]);
+      setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
+      await Promise.all([
+        refreshChannelProtocol(workflow.channelId),
+        refreshRuns(workspaceCwd),
+        refreshApprovals(workspaceCwd),
+        refreshRuntimeState(workspaceCwd),
+      ]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOrchestratingWorkflowId((current) => current === workflow.id ? "" : current);
+    }
+  }
+
+  async function retryWorkflowStepAction(step: ChannelWorkflowStep): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage("本地工作区未就绪");
+      return;
+    }
+
+    setRunningWorkflowStepId(step.id);
+    try {
+      setErrorMessage("");
+      const result = await retryChannelWorkflowStep(workspaceCwd, step.id);
+      setChannelWorkflows((current) => [result.workflow, ...current.filter((item) => item.id !== result.workflow.id)]);
+      const workflowStep = "workflowStep" in result ? result.workflowStep : undefined;
+      if (workflowStep) {
+        setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, [workflowStep]));
+      }
+      if ("approval" in result && result.approval) {
+        setApprovals((current) => upsertApproval(current, result.approval));
+        setSelectedApprovalId(result.approval.id);
+      }
+      if (result.status === "blocked" || result.status === "failed") {
+        setErrorMessage(result.blocker);
+      } else if (result.status === "idle" && result.reason) {
+        setErrorMessage(result.reason);
+      }
+      await Promise.all([
+        refreshChannelProtocol(step.channelId),
+        refreshTasks(step.channelId),
+        refreshRuns(workspaceCwd),
+        refreshApprovals(workspaceCwd),
+        refreshRuntimeState(workspaceCwd),
+      ]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRunningWorkflowStepId((current) => current === step.id ? "" : current);
+    }
+  }
+
   async function startWorkflowStepAction(step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode): Promise<void> {
     const workspaceCwd = form.cwd.trim();
     if (!workspaceCwd) {
@@ -3477,6 +3621,7 @@ export function AppShell(): JSX.Element {
             permissionMode={form.permissionMode}
             activeTaskRunAction={activeTaskRunAction}
             runningWorkflowStepId={runningWorkflowStepId}
+            orchestratingWorkflowId={orchestratingWorkflowId}
             errorMessage={errorMessage}
             onChannelFormChange={setChannelForm}
             onChannelCreateOpenChange={setChannelCreateOpen}
@@ -3509,7 +3654,11 @@ export function AppShell(): JSX.Element {
             onCreateHandoffFromTask={(task) => void createHandoffFromTask(task)}
             onUpdateHandoffStatus={(handoff, status) => void updateHandoffStatusValue(handoff, status)}
             onStartWorkflowFromHandoff={(handoff) => void startWorkflowFromHandoff(handoff)}
+            onStartTemplateWorkflow={() => void startAutoplanWorkflow()}
+            onOrchestrateWorkflow={(workflow) => void orchestrateWorkflowAction(workflow)}
+            onCancelWorkflow={(workflow) => void cancelWorkflowAction(workflow)}
             onStartWorkflowStep={(step, mode) => void startWorkflowStepAction(step, mode)}
+            onRetryWorkflowStep={(step) => void retryWorkflowStepAction(step)}
             onUpdateWorkflowStepStatus={(step, status) => void updateWorkflowStepStatus(step, status)}
             onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
             onRunActivityTriageAction={runActivityTriageAction}
@@ -3985,6 +4134,20 @@ function isContractApprovalAction(
     value === "credential_change" ||
     value === "provider_change"
   );
+}
+
+function mergeWorkflowSteps(
+  current: readonly ChannelWorkflowStep[],
+  next: readonly ChannelWorkflowStep[],
+): readonly ChannelWorkflowStep[] {
+  const byId = new Map(current.map((step) => [step.id, step]));
+  for (const step of next) {
+    byId.set(step.id, step);
+  }
+  return [...byId.values()].sort((left, right) => {
+    const workflowOrder = right.updatedAt.localeCompare(left.updatedAt);
+    return workflowOrder !== 0 ? workflowOrder : left.position - right.position;
+  });
 }
 
 function readRequestPermissionMode(requestBody: unknown): SessionPermissionMode | undefined {

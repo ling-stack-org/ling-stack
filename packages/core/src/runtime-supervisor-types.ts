@@ -84,6 +84,15 @@ export const defaultRuntimeTimeoutPolicy: RuntimeTimeoutPolicy = {
   cancelGraceMs: 15_000,
 };
 
+export interface RunnerFallbackReason {
+  readonly code:
+    | "missing_requested_runner"
+    | "disabled_requested_runner"
+    | "unsupported_provider_api"
+    | "unsupported_tool";
+  readonly message: string;
+}
+
 export interface WorkUnit {
   readonly id: string;
   readonly workspaceId: string;
@@ -95,6 +104,9 @@ export interface WorkUnit {
   readonly teammateId?: string;
   readonly providerPresetId?: string;
   readonly runnerId?: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly fallbackReason?: RunnerFallbackReason;
   readonly idempotencyKey: string;
   readonly status: WorkUnitStatus;
   readonly priority: number;
@@ -129,6 +141,9 @@ export interface CreateWorkUnitInput {
   readonly teammateId?: string;
   readonly providerPresetId?: string;
   readonly runnerId?: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly fallbackReason?: RunnerFallbackReason;
   readonly idempotencyKey: string;
   readonly status?: WorkUnitStatus;
   readonly priority?: number;
@@ -159,6 +174,9 @@ export interface WorkUnitAttempt {
   readonly attemptNumber: number;
   readonly runtimeInstanceId: string;
   readonly runnerId: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId: string;
+  readonly fallbackReason?: RunnerFallbackReason;
   readonly providerPresetId?: string;
   readonly status: WorkUnitAttemptStatus;
   readonly createdAt: string;
@@ -177,6 +195,9 @@ export interface CreateWorkUnitAttemptInput {
   readonly attemptNumber: number;
   readonly runtimeInstanceId: string;
   readonly runnerId: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly fallbackReason?: RunnerFallbackReason;
   readonly providerPresetId?: string;
   readonly status?: WorkUnitAttemptStatus;
   readonly now: string;

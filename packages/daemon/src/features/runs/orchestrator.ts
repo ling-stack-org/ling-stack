@@ -9,6 +9,7 @@ import {
   getRunSummaryPath,
   redactSecrets,
   type EffectiveRunPolicySnapshot,
+  type LingThread,
   type RunEventEnvelope,
   type RunEventType,
   type RunSession,
@@ -21,9 +22,10 @@ import {
   type WorkUnitAttempt,
 } from "@ling-stack/core";
 import type { PiRunnerEvent, PiRunnerProviderConfig, PiRunnerRunOptions } from "@ling-stack/runner-pi";
-import type { McpBroker, RunnerAdapter } from "../../context.js";
+import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
 import { ActiveRunRegistry } from "../../runtime/active-runs.js";
+import { UnsupportedRunnerError, type RunnerRegistry, type RunnerResolution } from "../../runtime/runners.js";
 import { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import {
@@ -62,6 +64,12 @@ import { createQueuedRunForConflict } from "./queue.js";
 import { resolveProviderForRun } from "./providers.js";
 import type { RunRequest } from "./schemas.js";
 import { appendFailureEvent, writeTerminalSummary } from "./terminal.js";
+import {
+  ensureLingThreadForRun,
+  markLingThreadRunActive,
+  syncLingThreadForRunEvent,
+  syncLingThreadForTerminalRun,
+} from "./threads.js";
 import { appendRuntimeProgressForRunEvent, syncWorkUnitForRunEvent } from "./work-units.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
@@ -145,7 +153,7 @@ export function createDetachedRunExecutionSink(): RunExecutionSink {
 export async function executeRunRequest(
   runRequest: RunRequest,
   sink: RunExecutionSink,
-  runner: RunnerAdapter,
+  runnerRegistry: RunnerRegistry,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
   runtimeSupervisor: RuntimeSupervisor,
@@ -157,11 +165,13 @@ export async function executeRunRequest(
   let run: RunSession | undefined;
   let workUnit: WorkUnit | undefined;
   let attempt: WorkUnitAttempt | undefined;
+  let thread: LingThread | undefined;
   let runtime: RuntimeInstance | undefined;
   let runnerRequest: PiRunnerRunOptions;
   let preparedConcurrency: PreparedRunConcurrency = { taskExists: false, leases: [] };
   let resolvedSecretValues: readonly (string | undefined)[] = [];
   let resolvedProvider: PiRunnerProviderConfig | undefined;
+  let runnerResolution: RunnerResolution | undefined;
   let memoryRecall: ReturnType<RunStore["recallMemory"]> | undefined;
   let selectedSkill: ReturnType<typeof getEffectiveTeammateSkill> | undefined;
   let runtimeApprovalProfile: SkillApprovalProfile | undefined;
@@ -226,6 +236,13 @@ export async function executeRunRequest(
     runtimeApprovalProfile = selectedSkill
       ? mergeApprovalProfiles(runRequest.approvalProfile, selectedSkill.skill.approvalProfile)
       : runRequest.approvalProfile;
+    runnerResolution = runnerRegistry.resolve({
+      requestedRunnerId: runRequest.runnerId ?? skillTeammate?.runnerId,
+      defaultRunnerId: DEFAULT_RUNNER_ID,
+      allowFallback: runRequest.runnerId === undefined,
+      providerApi: resolvedProvider.api,
+      tools: runtimeTools,
+    });
     const channelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
     const sessionPolicy = resolveSessionRunPolicy({
       workspacePolicy: store.getApprovalPolicy(),
@@ -265,6 +282,7 @@ export async function executeRunRequest(
     if (existingWorkUnit) {
       throw new HttpError(409, "duplicate_work_unit", `Duplicate work unit request: ${existingWorkUnit.id}`);
     }
+    thread = ensureLingThreadForRun(store, runRequest, createdAt);
     workUnit = store.createWorkUnit({
       workspaceId: DEFAULT_WORKSPACE_ID,
       kind: "task_run",
@@ -273,7 +291,10 @@ export async function executeRunRequest(
       channelId: runRequest.task.channelId,
       taskId: runRequest.task.id,
       providerPresetId: runRequest.providerPresetId,
-      runnerId: DEFAULT_RUNNER_ID,
+      runnerId: runnerResolution.effectiveRunnerId,
+      requestedRunnerId: runnerResolution.requestedRunnerId,
+      effectiveRunnerId: runnerResolution.effectiveRunnerId,
+      fallbackReason: runnerResolution.fallbackReason,
       idempotencyKey,
       createdByActor: "user",
       request: {
@@ -281,7 +302,9 @@ export async function executeRunRequest(
         permissionMode: effectivePolicySnapshot.mode,
         effectivePolicySnapshot,
         workspaceCwd,
+        threadId: thread.id,
         provider: resolvedProvider,
+        runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
         selectedSkillId: selectedSkill?.skillId,
         mcpToolAccess,
       },
@@ -296,13 +319,19 @@ export async function executeRunRequest(
         kind: workUnit.kind,
         ownerType: workUnit.ownerType,
         ownerId: workUnit.ownerId,
+        requestedRunnerId: runnerResolution.requestedRunnerId,
+        effectiveRunnerId: runnerResolution.effectiveRunnerId,
+        fallbackReason: runnerResolution.fallbackReason,
       },
     });
     attempt = store.createWorkUnitAttempt({
       workUnitId: workUnit.id,
       attemptNumber: workUnit.attemptCount + 1,
       runtimeInstanceId: runtime.runtimeInstanceId,
-      runnerId: DEFAULT_RUNNER_ID,
+      runnerId: runnerResolution.effectiveRunnerId,
+      requestedRunnerId: runnerResolution.requestedRunnerId,
+      effectiveRunnerId: runnerResolution.effectiveRunnerId,
+      fallbackReason: runnerResolution.fallbackReason,
       providerPresetId: runRequest.providerPresetId,
       now: createdAt,
     });
@@ -320,6 +349,7 @@ export async function executeRunRequest(
       attempt,
       channel: preparedConcurrency.channel,
       providerKey: runRequest.providerPresetId ?? `${resolvedProvider.provider}:${resolvedProvider.model}`,
+      runnerId: runnerResolution.effectiveRunnerId,
       now: createdAt,
     });
     claimPreparedRunTask({
@@ -370,17 +400,21 @@ export async function executeRunRequest(
         permissionMode: effectivePolicySnapshot.mode,
         effectivePolicySnapshot,
         workspaceCwd,
+        threadId: thread.id,
         provider: resolvedProvider,
+        runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
         selectedSkillId: selectedSkill?.skillId,
         mcpToolAccess,
       },
       workUnitId: workUnit.id,
+      threadId: thread.id,
       parentRunId: runRequest.parentRunId,
       interventionId: runRequest.interventionId,
       continuationReason: runRequest.continuationReason,
       createdAt,
     });
     store.linkRunToWorkUnit(run.id, workUnit.id, createdAt);
+    markLingThreadRunActive(store, thread.id, run.id, createdAt);
     storeRegistry.rememberRun(run.id, store);
     if (memoryRecall.memories.length > 0) {
       store.recordUsedMemoryEvent(
@@ -403,8 +437,12 @@ export async function executeRunRequest(
       workUnitId: workUnit.id,
       workspaceCwd,
       cwd: run.cwd,
+      threadId: thread.id,
       providerName: run.providerName,
       providerModel: run.providerModel,
+      requestedRunnerId: runnerResolution.requestedRunnerId,
+      effectiveRunnerId: runnerResolution.effectiveRunnerId,
+      fallbackReason: runnerResolution.fallbackReason,
       teammateId: run.teammateId,
       selectedSkillId: run.selectedSkillId,
       parentRunId: run.parentRunId,
@@ -436,6 +474,7 @@ export async function executeRunRequest(
         attempt,
         channel: error.channel ?? preparedConcurrency.channel,
         provider: resolvedProvider,
+        thread,
         selectedSkillId: selectedSkill?.skillId,
         queuedAt,
         reason: error.code,
@@ -487,6 +526,9 @@ export async function executeRunRequest(
         });
       }
     }
+    if (store && thread && !run) {
+      store.updateLingThread(thread.id, { status: "failed", activeRunId: null }, new Date().toISOString());
+    }
     if (error instanceof DuplicateRunRequestError) {
       try {
         options.onRunReady?.(error.runId);
@@ -497,15 +539,15 @@ export async function executeRunRequest(
       sink.end();
       return error.runId;
     }
-    const statusCode = error instanceof HttpError ? error.statusCode : 500;
+    const statusCode = error instanceof HttpError ? error.statusCode : error instanceof UnsupportedRunnerError ? 400 : 500;
     sink.writeError(statusCode, {
-      error: error instanceof HttpError ? error.code : "run_storage_unavailable",
+      error: error instanceof HttpError ? error.code : error instanceof UnsupportedRunnerError ? error.code : "run_storage_unavailable",
       message: error instanceof Error ? error.message : String(error),
     });
     return undefined;
   }
 
-  if (!store || !run || !workUnit || !attempt || !runtime) {
+  if (!store || !run || !workUnit || !attempt || !runtime || !runnerResolution || !thread) {
     sink.writeError(500, { error: "run_storage_unavailable", message: "Run was not initialized." });
     return undefined;
   }
@@ -629,6 +671,7 @@ export async function executeRunRequest(
       }
       syncWorkUnitForRunEvent(store, workUnit.id, attempt.id, type, envelope);
       appendRuntimeProgressForRunEvent(store, workUnit.id, attempt.id, type, envelope);
+      syncLingThreadForRunEvent(store, run, type, envelope);
       streamEnvelope(envelope);
       return envelope;
     } catch (error) {
@@ -694,7 +737,7 @@ export async function executeRunRequest(
     if (!approvalPolicy) {
       throw new Error("Run approval policy was not initialized.");
     }
-    const result = await runner.runTask({
+    const result = await runnerResolution.runner.adapter.runTask({
       ...runnerRequest,
       onApprovalRequired: createRunApprovalHandler({
         store,
@@ -787,6 +830,7 @@ export async function executeRunRequest(
       actor: "runner",
       now: endedAt,
     });
+    syncLingThreadForTerminalRun(store, run.id, endedAt);
     if (preparedConcurrency.taskExists) {
       store.transitionTaskStatus({
         taskId: run.taskId,
@@ -813,6 +857,7 @@ export async function executeRunRequest(
         streamEnvelope,
       });
       transitionWorkUnitCancelled(store, workUnit.id, attempt.id, "cancelled");
+      syncLingThreadForTerminalRun(store, run.id, new Date().toISOString());
       if (!sinkClosed) {
         sink.end();
       }
@@ -854,6 +899,7 @@ export async function executeRunRequest(
       errorCode: "runner_failed",
       errorMessage: message,
     });
+    syncLingThreadForTerminalRun(store, run.id, endedAt);
     if (preparedConcurrency.taskExists) {
       store.transitionTaskStatus({
         taskId: run.taskId,
@@ -889,6 +935,18 @@ function isAbortError(error: unknown): boolean {
 
 function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function toRunnerResolutionSnapshot(resolution: RunnerResolution): {
+  readonly requestedRunnerId: string;
+  readonly effectiveRunnerId: string;
+  readonly fallbackReason?: RunnerResolution["fallbackReason"];
+} {
+  return {
+    requestedRunnerId: resolution.requestedRunnerId,
+    effectiveRunnerId: resolution.effectiveRunnerId,
+    fallbackReason: resolution.fallbackReason,
+  };
 }
 
 function assertFullAccessPermissionConfirmed(runRequest: RunRequest): void {

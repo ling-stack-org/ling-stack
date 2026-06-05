@@ -11,6 +11,7 @@ import {
   type WorkUnitStatus,
   type RuntimeEvent,
 } from "@ling-stack/core";
+import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./features/runs/threads.js";
 
 export interface ActiveRunHandle {
   readonly abortController: AbortController;
@@ -128,6 +129,7 @@ export class RunControlService {
       active: input.active,
     });
     input.streamEnvelope?.(event);
+    syncLingThreadForRunEvent(input.store, current, "run_cancelled", event);
     const summaryPath = writeTerminalSummary(getRunSummaryPath(input.store.paths, input.run.id), {
       runId: input.run.id,
       status: "cancelled",
@@ -148,6 +150,7 @@ export class RunControlService {
       summaryPath,
       errorMessage: null,
     });
+    syncLingThreadForTerminalRun(input.store, input.run.id, endedAt);
     const task = input.store.getTask(input.run.taskId);
     if (task && task.status !== "done" && task.status !== "cancelled") {
       input.store.transitionTaskStatus({
@@ -194,6 +197,10 @@ export class RunControlService {
         decisionReason: cancelled.decisionReason,
       });
       streamEnvelope?.(event);
+      const run = store.getRun(runId);
+      if (run) {
+        syncLingThreadForRunEvent(store, run, "approval_cancelled", event);
+      }
     }
   }
 

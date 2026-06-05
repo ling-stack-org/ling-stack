@@ -371,6 +371,12 @@ export function ChannelTaskWorkspace({
                 onOpenRun={onOpenRun}
               />
             ) : null}
+            {selectedTask.requestedSkillId ? (
+              <div className="task-run-link compact">
+                <StatusBadge status="skill" />
+                <span>{t("Requested skill")}: {selectedTask.requestedSkillId}</span>
+              </div>
+            ) : null}
             {selectedTaskRepairRun ? (
               <TaskRepairHandoffPanel
                 task={selectedTask}

@@ -1,4 +1,136 @@
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
+export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work";
+export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
+
+export interface LingThread {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly kind: LingThreadKind;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly teammateId?: string;
+  readonly workflowId?: string;
+  readonly workflowStepId?: string;
+  readonly externalWorkId?: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly status: LingThreadStatus;
+  readonly activeRunId?: string;
+  readonly lastRunId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly archivedAt?: string;
+}
+
+export interface LingThreadListResponse {
+  readonly cwd: string;
+  readonly threads: readonly LingThread[];
+}
+
+export interface LingThreadListRequest {
+  readonly kind?: LingThreadKind;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly teammateId?: string;
+  readonly workflowStepId?: string;
+  readonly externalWorkId?: string;
+  readonly status?: LingThreadStatus;
+  readonly includeArchived?: boolean;
+  readonly limit?: number;
+}
+
+export interface LingThreadDetailResponse {
+  readonly cwd: string;
+  readonly thread: LingThread;
+}
+
+export interface LingThreadEvidenceRun {
+  readonly run: RunSession;
+  readonly events: readonly RunEventEnvelope[];
+  readonly approvals: readonly ApprovalRequest[];
+  readonly artifacts: readonly RunArtifact[];
+  readonly runtimeEvents: readonly RuntimeEvent[];
+}
+
+export interface LingThreadEvidenceResponse {
+  readonly cwd: string;
+  readonly thread: LingThread;
+  readonly generatedAt: string;
+  readonly runs: readonly LingThreadEvidenceRun[];
+  readonly actions: readonly ExecutionAction[];
+  readonly transitions: readonly StateTransitionEvent[];
+}
+
+export interface LingThreadResumeResponse {
+  readonly cwd: string;
+  readonly thread: LingThread;
+  readonly sourceRun: RunSession;
+  readonly runId?: string;
+  readonly continuationReason: "manual_resume";
+}
+
+export interface LingThreadResumeRequest {
+  readonly instruction?: string;
+  readonly idempotencyKey?: string;
+  readonly sourceRunId?: string;
+}
+
+export type ExecutionActionStatus =
+  | "proposed"
+  | "waiting_for_approval"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "cancelled"
+  | "executing"
+  | "succeeded"
+  | "failed";
+
+export interface ExecutionActionTargetRef {
+  readonly type:
+    | "run"
+    | "task"
+    | "channel"
+    | "workflow"
+    | "workflow_step"
+    | "work_unit"
+    | "media_job"
+    | "external_work_action"
+    | "file"
+    | "command"
+    | "mcp_tool";
+  readonly id?: string;
+  readonly label?: string;
+  readonly path?: string;
+}
+
+export interface ExecutionAction {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId?: string;
+  readonly runId?: string;
+  readonly workUnitId?: string;
+  readonly approvalId?: string;
+  readonly toolCallId?: string;
+  readonly actionType: ApprovalActionType;
+  readonly risk: ApprovalRisk;
+  readonly status: ExecutionActionStatus;
+  readonly title: string;
+  readonly summary: string;
+  readonly targetRefs: readonly ExecutionActionTargetRef[];
+  readonly previewArtifactIds: readonly string[];
+  readonly resultArtifactIds: readonly string[];
+  readonly policySnapshot?: unknown;
+  readonly createdAt: string;
+  readonly resolvedAt?: string;
+  readonly executedAt?: string;
+  readonly completedAt?: string;
+}
+
+export interface ExecutionActionListResponse {
+  readonly cwd: string;
+  readonly actions: readonly ExecutionAction[];
+}
 
 export type RunTool = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write";
 
@@ -105,6 +237,15 @@ export interface RuntimeTimeoutPolicy {
   readonly cancelGraceMs: number;
 }
 
+export interface RunnerFallbackReason {
+  readonly code:
+    | "missing_requested_runner"
+    | "disabled_requested_runner"
+    | "unsupported_provider_api"
+    | "unsupported_tool";
+  readonly message: string;
+}
+
 export interface WorkUnit {
   readonly id: string;
   readonly workspaceId: string;
@@ -116,6 +257,9 @@ export interface WorkUnit {
   readonly teammateId?: string;
   readonly providerPresetId?: string;
   readonly runnerId?: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly fallbackReason?: RunnerFallbackReason;
   readonly idempotencyKey: string;
   readonly status: WorkUnitStatus;
   readonly priority: number;
@@ -145,6 +289,9 @@ export interface WorkUnitAttempt {
   readonly attemptNumber: number;
   readonly runtimeInstanceId: string;
   readonly runnerId: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId: string;
+  readonly fallbackReason?: RunnerFallbackReason;
   readonly providerPresetId?: string;
   readonly status: WorkUnitAttemptStatus;
   readonly createdAt: string;
@@ -289,10 +436,11 @@ export interface RunSession {
   readonly providerSnapshot: unknown;
   readonly requestSnapshot: unknown;
   readonly eventLogPath: string;
+  readonly threadId?: string;
   readonly workUnitId?: string;
   readonly parentRunId?: string;
   readonly interventionId?: string;
-  readonly continuationReason?: RunInterventionMode;
+  readonly continuationReason?: RunContinuationReason;
   readonly summaryPath?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;
@@ -320,6 +468,7 @@ export interface RunCancelResponse {
 }
 
 export type RunInterventionMode = "queue_followup" | "interrupt_redirect";
+export type RunContinuationReason = RunInterventionMode | "manual_resume";
 
 export type RunInterventionStatus =
   | "queued"
@@ -1760,6 +1909,21 @@ export type ChannelWorkflowStepStatus =
 
 export type ChannelWorkflowStepStartMode = "create_task" | "create_and_run_task";
 
+export interface ChannelWorkflowStepMetadata {
+  readonly workflowTemplateId?: string;
+  readonly templateStepId?: string;
+  readonly dependsOnStepIds?: readonly string[];
+  readonly teammateTemplateId?: string;
+  readonly skillId?: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly providerPresetId?: string;
+  readonly autoStart?: boolean;
+  readonly approvalGate?: SkillApprovalProfile;
+  readonly preStepApprovalId?: string;
+  readonly outputArtifactIds?: readonly string[];
+}
+
 export interface ChannelWorkflow {
   readonly id: string;
   readonly workspaceId: string;
@@ -1790,6 +1954,7 @@ export interface ChannelWorkflowStep {
   readonly status: ChannelWorkflowStepStatus;
   readonly blocker?: string;
   readonly resultSummary?: string;
+  readonly metadata?: ChannelWorkflowStepMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -1800,6 +1965,16 @@ export interface CreateChannelWorkflowRequest {
   readonly objective: string;
   readonly status?: ChannelWorkflowStatus;
   readonly createdBy: string;
+}
+
+export interface CreateChannelWorkflowFromTemplateRequest {
+  readonly templateId: string;
+  readonly title?: string;
+  readonly objective: string;
+  readonly createdBy?: string;
+  readonly providerPresetId?: string;
+  readonly runnerId?: string;
+  readonly autoStart?: boolean;
 }
 
 export interface CreateChannelWorkflowFromHandoffRequest {
@@ -1813,6 +1988,13 @@ export interface UpdateChannelWorkflowRequest {
   readonly title?: string;
   readonly objective?: string;
   readonly status?: ChannelWorkflowStatus;
+}
+
+export interface ChannelWorkflowCancelResponse {
+  readonly workflow: ChannelWorkflow;
+  readonly workflowSteps: readonly ChannelWorkflowStep[];
+  readonly cancelledRunIds: readonly string[];
+  readonly cancelledApprovalIds: readonly string[];
 }
 
 export interface CreateChannelWorkflowStepRequest {
@@ -1862,6 +2044,11 @@ export interface ChannelWorkflowMutationResponse {
   readonly workflowStep?: ChannelWorkflowStep;
 }
 
+export interface ChannelWorkflowTemplateMutationResponse {
+  readonly workflow: ChannelWorkflow;
+  readonly workflowSteps: readonly ChannelWorkflowStep[];
+}
+
 export interface ChannelWorkflowStepListResponse {
   readonly cwd: string;
   readonly workflowId: string;
@@ -1880,6 +2067,44 @@ export interface ChannelWorkflowStepStartResponse {
   readonly run?: RunSession;
   readonly blocker?: string;
 }
+
+export type ChannelWorkflowStepRetryResponse = ChannelWorkflowOrchestrationResponse;
+
+export type ChannelWorkflowOrchestrationResponse =
+  | {
+      readonly status: "started";
+      readonly workflow: ChannelWorkflow;
+      readonly workflowStep: ChannelWorkflowStep;
+      readonly taskId: string;
+      readonly runId?: string;
+    }
+  | {
+      readonly status: "waiting_for_approval";
+      readonly workflow: ChannelWorkflow;
+      readonly workflowStep: ChannelWorkflowStep;
+      readonly approval: ApprovalRequest;
+    }
+  | {
+      readonly status: "idle";
+      readonly workflow: ChannelWorkflow;
+      readonly reason: string;
+    }
+  | {
+      readonly status: "blocked";
+      readonly workflow: ChannelWorkflow;
+      readonly workflowStep?: ChannelWorkflowStep;
+      readonly blocker: string;
+    }
+  | {
+      readonly status: "failed";
+      readonly workflow: ChannelWorkflow;
+      readonly workflowStep?: ChannelWorkflowStep;
+      readonly blocker: string;
+    }
+  | {
+      readonly status: "completed";
+      readonly workflow: ChannelWorkflow;
+    };
 
 export type ResourceType =
   | "channel"
@@ -2225,6 +2450,10 @@ export interface McpServerToolSyncResponse {
 }
 
 export type ApprovalActionType =
+  | "read"
+  | "grep"
+  | "find"
+  | "ls"
   | "write"
   | "edit"
   | "bash"
@@ -2235,6 +2464,7 @@ export type ApprovalActionType =
   | "media_cost"
   | "credential_change"
   | "provider_change"
+  | "workflow_step"
   | "mcp_tool_call";
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
@@ -2247,6 +2477,7 @@ export interface ApprovalRequest {
   readonly taskId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly workflowStepId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
   readonly actionType: ApprovalActionType;

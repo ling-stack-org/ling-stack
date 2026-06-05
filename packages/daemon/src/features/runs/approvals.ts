@@ -41,7 +41,12 @@ export function appendApprovalDecisionEvent(store: RunStore, approval: ApprovalR
 
 export function expireStalePendingApprovals(
   store: RunStore,
-  options: { readonly runId?: string; readonly mediaJobId?: string; readonly externalWorkActionId?: string } = {},
+  options: {
+    readonly runId?: string;
+    readonly mediaJobId?: string;
+    readonly externalWorkActionId?: string;
+    readonly workflowStepId?: string;
+  } = {},
 ): void {
   const now = new Date().toISOString();
   let safety = 0;
@@ -51,6 +56,7 @@ export function expireStalePendingApprovals(
       runId: options.runId,
       mediaJobId: options.mediaJobId,
       externalWorkActionId: options.externalWorkActionId,
+      workflowStepId: options.workflowStepId,
       limit: 500,
     });
     const expired = pending.filter((approval) => approval.expiresAt && approval.expiresAt <= now);

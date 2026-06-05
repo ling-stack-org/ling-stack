@@ -6,6 +6,9 @@ Draft for Milestone 1: Durable Runs.
 
 This design narrows the broader v0.1 plan into the first implementation slice. It should be implemented before provider presets, task CRUD, approval UI, or the full web application, because those features all need durable run history.
 
+The broader thread, evidence bundle, and resume experience is defined in
+[Codex-Like Execution Experience](codex-like-execution.md).
+
 ## Goal
 
 Every `POST /runs` call should leave a local, inspectable record.

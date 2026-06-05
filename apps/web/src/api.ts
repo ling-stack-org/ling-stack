@@ -27,12 +27,16 @@ import type {
   ChannelListResponse,
   ChannelMessageListResponse,
   ChannelMessageMutationResponse,
+  ChannelWorkflowCancelResponse,
   ChannelMutationResponse,
   ChannelWorkflowListResponse,
   ChannelWorkflowMutationResponse,
+  ChannelWorkflowOrchestrationResponse,
   ChannelWorkflowStepListResponse,
   ChannelWorkflowStepMutationResponse,
+  ChannelWorkflowStepRetryResponse,
   ChannelWorkflowStepStartResponse,
+  ChannelWorkflowTemplateMutationResponse,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
   CreateChannelExecutionProposalRequest,
@@ -43,6 +47,7 @@ import type {
   CreateAiTeammateRequest,
   CreateTeammateDirectMessageRequest,
   CreateChannelWorkflowFromHandoffRequest,
+  CreateChannelWorkflowFromTemplateRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
   CreateMemoryObjectRequest,
@@ -71,6 +76,12 @@ import type {
   ExternalWorkWorkflowConfigureRequest,
   ExternalWorkWorkflowMutationResponse,
   HardDeleteAiTeammateResponse,
+  LingThreadDetailResponse,
+  LingThreadEvidenceResponse,
+  LingThreadListRequest,
+  LingThreadListResponse,
+  LingThreadResumeRequest,
+  LingThreadResumeResponse,
   MediaJobFormState,
   MediaJobArtifactListResponse,
   MediaJobListResponse,
@@ -191,6 +202,26 @@ export async function getRun(runId: string, cwd?: string): Promise<RunSession> {
 
 export async function listRuns(cwd: string, limit = 50): Promise<RunListResponse> {
   return daemonClient.listRuns(cwd, limit);
+}
+
+export async function listLingThreads(cwd: string, options: LingThreadListRequest = {}): Promise<LingThreadListResponse> {
+  return daemonClient.listLingThreads(cwd, options);
+}
+
+export async function getLingThread(cwd: string, threadId: string): Promise<LingThreadDetailResponse> {
+  return daemonClient.getLingThread(cwd, threadId);
+}
+
+export async function getLingThreadEvidence(cwd: string, threadId: string): Promise<LingThreadEvidenceResponse> {
+  return daemonClient.getLingThreadEvidence(cwd, threadId);
+}
+
+export async function resumeLingThread(
+  cwd: string,
+  threadId: string,
+  input: LingThreadResumeRequest = {},
+): Promise<LingThreadResumeResponse> {
+  return daemonClient.resumeLingThread(cwd, threadId, input);
 }
 
 export async function listRunInterventions(cwd: string, runId: string, limit = 100): Promise<RunInterventionListResponse> {
@@ -584,12 +615,24 @@ export async function createChannelWorkflow(
   return daemonClient.createChannelWorkflow(cwd, channelId, input);
 }
 
+export async function createChannelWorkflowFromTemplate(
+  cwd: string,
+  channelId: string,
+  input: CreateChannelWorkflowFromTemplateRequest,
+): Promise<ChannelWorkflowTemplateMutationResponse> {
+  return daemonClient.createChannelWorkflowFromTemplate(cwd, channelId, input);
+}
+
 export async function updateChannelWorkflow(
   cwd: string,
   workflowId: string,
   input: UpdateChannelWorkflowRequest,
 ): Promise<ChannelWorkflowMutationResponse> {
   return daemonClient.updateChannelWorkflow(cwd, workflowId, input);
+}
+
+export async function cancelChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowCancelResponse> {
+  return daemonClient.cancelChannelWorkflow(cwd, workflowId);
 }
 
 export async function createChannelWorkflowFromHandoff(
@@ -626,6 +669,14 @@ export async function startChannelWorkflowStep(
   input: StartChannelWorkflowStepRequest,
 ): Promise<ChannelWorkflowStepStartResponse> {
   return daemonClient.startChannelWorkflowStep(cwd, workflowStepId, input);
+}
+
+export async function retryChannelWorkflowStep(cwd: string, workflowStepId: string): Promise<ChannelWorkflowStepRetryResponse> {
+  return daemonClient.retryChannelWorkflowStep(cwd, workflowStepId);
+}
+
+export async function orchestrateChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowOrchestrationResponse> {
+  return daemonClient.orchestrateChannelWorkflow(cwd, workflowId);
 }
 
 export async function listTasks(cwd: string, channelId?: string): Promise<TaskListResponse> {

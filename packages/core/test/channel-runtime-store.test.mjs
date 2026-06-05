@@ -1029,3 +1029,82 @@ test("sqlite channel workflow migration self-heals missing workflow tables", asy
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("recoverStaleChannelWorkflows reconciles running steps from linked terminal runs", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-recovery-"));
+  const now = "2026-06-05T00:00:00.000Z";
+  const recoveredAt = "2026-06-05T00:05:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
+    const workflow = store.createChannelWorkflow(
+      {
+        channelId: channel.id,
+        title: "Recover stale workflow",
+        objective: "Reconcile linked run terminal state.",
+        status: "running",
+        createdBy: "system",
+      },
+      now,
+    );
+    const step = store.createChannelWorkflowStep(
+      {
+        workflowId: workflow.id,
+        title: "Implementation",
+        prompt: "Implement the thing.",
+        toParticipantId: "engineer",
+        toParticipantLabel: "Engineer",
+        status: "running",
+      },
+      now,
+    );
+    const task = store.createTask(
+      {
+        channelId: channel.id,
+        title: "Workflow recovery",
+        prompt: "Recover this workflow.",
+      },
+      now,
+    );
+    const run = store.createRun({
+      id: "run_workflow_recovery_stale",
+      cwd,
+      taskId: task.id,
+      channelId: channel.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: {
+        id: task.id,
+        title: "Workflow recovery",
+        prompt: "Recover this workflow.",
+        channelId: channel.id,
+      },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    store.transitionRunStatus({
+      runId: run.id,
+      expectedStatus: "queued",
+      event: "runner_started",
+      actor: "runner",
+      now,
+      startedAt: now,
+    });
+    store.updateChannelWorkflowStep(step.id, {
+      taskId: task.id,
+      runId: run.id,
+    }, now);
+
+    assert.equal(store.recoverStaleRuns(recoveredAt), 1);
+    assert.ok(store.recoverStaleChannelWorkflows(recoveredAt) >= 2);
+
+    assert.equal(store.getRun(run.id).status, "failed");
+    assert.equal(store.getChannelWorkflowStep(step.id).status, "failed");
+    assert.equal(store.getChannelWorkflow(workflow.id).status, "failed");
+    assert.equal(store.listStateTransitionEvents({ entityType: "workflow_step", entityId: step.id }).some((event) => event.event === "fail"), true);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

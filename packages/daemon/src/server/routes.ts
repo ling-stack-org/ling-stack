@@ -51,6 +51,26 @@ export function parseRunInterventionRoute(
   return undefined;
 }
 
+export function parseLingThreadRoute(
+  pathname: string,
+):
+  | { readonly kind: "detail"; readonly threadId: string }
+  | { readonly kind: "evidence"; readonly threadId: string }
+  | { readonly kind: "resume"; readonly threadId: string }
+  | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "threads") {
+    return { kind: "detail", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "evidence") {
+    return { kind: "evidence", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "resume") {
+    return { kind: "resume", threadId: segments[1] };
+  }
+  return undefined;
+}
+
 export type SkillRoute =
   | { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" }
   | { readonly kind: "skill"; readonly skillId: string };
@@ -242,13 +262,19 @@ export function parseChannelHandoffRoute(pathname: string): { readonly handoffId
 export function parseChannelWorkflowRoute(
   pathname: string,
 ):
-  | { readonly kind: "workflow"; readonly workflowId: string }
+  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" }
   | { readonly kind: "steps"; readonly workflowId: string }
-  | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" }
+  | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" | "retry" }
   | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "workflows") {
     return { kind: "workflow", workflowId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "orchestrate") {
+    return { kind: "workflow", workflowId: segments[1], action: "orchestrate" };
+  }
+  if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "cancel") {
+    return { kind: "workflow", workflowId: segments[1], action: "cancel" };
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "steps") {
     return { kind: "steps", workflowId: segments[1] };
@@ -258,6 +284,9 @@ export function parseChannelWorkflowRoute(
   }
   if (segments.length === 3 && segments[0] === "workflow-steps" && segments[2] === "start") {
     return { kind: "workflow-step", workflowStepId: segments[1], action: "start" };
+  }
+  if (segments.length === 3 && segments[0] === "workflow-steps" && segments[2] === "retry") {
+    return { kind: "workflow-step", workflowStepId: segments[1], action: "retry" };
   }
   return undefined;
 }

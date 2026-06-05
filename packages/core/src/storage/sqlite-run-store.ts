@@ -82,6 +82,7 @@ import {
   type ChannelUpdateInput,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
+  type ChannelWorkflowStepMetadata,
   type ChannelWorkflowStepStatus,
   type ChannelWorkflowStatus,
   type CreateAiTeammateInput,
@@ -158,23 +159,32 @@ import {
 import {
   createArtifactId,
   createEventId,
+  createLingThreadId,
   createRunInterventionId,
+  runContinuationReasons,
   type ArtifactType,
+  type CreateLingThreadInput,
   type CreateRunArtifactInput,
   type CreateRunInterventionInput,
   type CreateRunInput,
+  type LingThread,
+  type LingThreadKind,
+  type LingThreadStatus,
+  type ListLingThreadsOptions,
   type ListRunInterventionsOptions,
   type ListRunEventsOptions,
   type ListRunsOptions,
   type RunArtifact,
   type RunEventEnvelope,
   type RunEventType,
+  type RunContinuationReason,
   type RunIntervention,
   type RunInterventionMode,
   type RunInterventionStatus,
   type RunSession,
   type RunStore,
   type RunStatus,
+  type UpdateLingThreadInput,
   type UpdateRunInterventionStatusInput,
 } from "../run-types.js";
 import {
@@ -199,6 +209,7 @@ import {
   type RuntimeSemaphoreSlot,
   type RuntimeSemaphoreSlotStatus,
   type RuntimeTimeoutPolicy,
+  type RunnerFallbackReason,
   type WorkUnit,
   type WorkUnitAttempt,
   type WorkUnitAttemptStatus,
@@ -352,6 +363,14 @@ const SKILL_REGISTRY_MIGRATION_VERSION = 27;
 const SKILL_REGISTRY_MIGRATION_NAME = "create_skill_registry";
 const RUN_INTERVENTIONS_MIGRATION_VERSION = 28;
 const RUN_INTERVENTIONS_MIGRATION_NAME = "create_run_interventions";
+const RUNNER_AUDIT_MIGRATION_VERSION = 29;
+const RUNNER_AUDIT_MIGRATION_NAME = "add_runner_audit_fields";
+const CHANNEL_WORKFLOW_STEP_METADATA_MIGRATION_VERSION = 30;
+const CHANNEL_WORKFLOW_STEP_METADATA_MIGRATION_NAME = "add_channel_workflow_step_metadata";
+const LING_THREADS_MIGRATION_VERSION = 31;
+const LING_THREADS_MIGRATION_NAME = "create_ling_threads";
+const APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_VERSION = 32;
+const APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_NAME = "allow_workflow_step_approval_owners";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -379,6 +398,161 @@ export class SqliteRunStore implements RunStore {
     }
   }
 
+  createLingThread(input: CreateLingThreadInput, now: string): LingThread {
+    const id = input.id ?? createLingThreadId();
+    this.database
+      .prepare(`
+        INSERT INTO ling_threads (
+          id,
+          workspace_id,
+          kind,
+          channel_id,
+          task_id,
+          teammate_id,
+          workflow_id,
+          workflow_step_id,
+          external_work_id,
+          title,
+          objective,
+          status,
+          active_run_id,
+          last_run_id,
+          created_at,
+          updated_at,
+          archived_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        DEFAULT_WORKSPACE_ID,
+        input.kind,
+        input.channelId ?? null,
+        input.taskId ?? null,
+        input.teammateId ?? null,
+        input.workflowId ?? null,
+        input.workflowStepId ?? null,
+        input.externalWorkId ?? null,
+        input.title,
+        input.objective,
+        input.status ?? "open",
+        input.activeRunId ?? null,
+        input.lastRunId ?? null,
+        now,
+        now,
+        null,
+      );
+    const thread = this.getLingThread(id);
+    if (!thread) {
+      throw new Error(`Failed to create Ling thread: ${id}`);
+    }
+    return thread;
+  }
+
+  getLingThread(threadId: string): LingThread | undefined {
+    const row = this.database.prepare(lingThreadSelectSql("WHERE id = ?")).get(threadId);
+    return row ? mapLingThread(row) : undefined;
+  }
+
+  findLingThreadByOwner(input: {
+    readonly kind: LingThreadKind;
+    readonly taskId?: string;
+    readonly workflowStepId?: string;
+    readonly externalWorkId?: string;
+    readonly teammateId?: string;
+    readonly channelId?: string;
+  }): LingThread | undefined {
+    const clauses = ["workspace_id = ?", "kind = ?"];
+    const params: string[] = [DEFAULT_WORKSPACE_ID, input.kind];
+    appendNullableOwnerClause(clauses, params, "task_id", input.taskId);
+    appendNullableOwnerClause(clauses, params, "workflow_step_id", input.workflowStepId);
+    appendNullableOwnerClause(clauses, params, "external_work_id", input.externalWorkId);
+    appendNullableOwnerClause(clauses, params, "teammate_id", input.teammateId);
+    appendNullableOwnerClause(clauses, params, "channel_id", input.channelId);
+    const row = this.database.prepare(`${lingThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC LIMIT 1`).get(...params);
+    return row ? mapLingThread(row) : undefined;
+  }
+
+  listLingThreads(options: ListLingThreadsOptions = {}): LingThread[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.kind) {
+      clauses.push("kind = ?");
+      params.push(options.kind);
+    }
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.taskId) {
+      clauses.push("task_id = ?");
+      params.push(options.taskId);
+    }
+    if (options.teammateId) {
+      clauses.push("teammate_id = ?");
+      params.push(options.teammateId);
+    }
+    if (options.workflowStepId) {
+      clauses.push("workflow_step_id = ?");
+      params.push(options.workflowStepId);
+    }
+    if (options.externalWorkId) {
+      clauses.push("external_work_id = ?");
+      params.push(options.externalWorkId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    } else if (!options.includeArchived) {
+      clauses.push("status != 'archived'");
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${lingThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC LIMIT ?`)
+      .all(...params)
+      .map(mapLingThread);
+  }
+
+  updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined {
+    const existing = this.getLingThread(threadId);
+    if (!existing) {
+      return undefined;
+    }
+    const next: LingThread = {
+      ...existing,
+      title: input.title ?? existing.title,
+      objective: input.objective ?? existing.objective,
+      status: input.status ?? existing.status,
+      activeRunId: nullableUpdate(input.activeRunId, existing.activeRunId),
+      lastRunId: nullableUpdate(input.lastRunId, existing.lastRunId),
+      archivedAt: nullableUpdate(input.archivedAt, existing.archivedAt),
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        UPDATE ling_threads
+        SET title = ?,
+            objective = ?,
+            status = ?,
+            active_run_id = ?,
+            last_run_id = ?,
+            updated_at = ?,
+            archived_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.title,
+        next.objective,
+        next.status,
+        next.activeRunId ?? null,
+        next.lastRunId ?? null,
+        next.updatedAt,
+        next.archivedAt ?? null,
+        threadId,
+      );
+    return this.getLingThread(threadId);
+  }
+
   createRun(input: CreateRunInput): RunSession {
     const eventLogPath = getRunEventLogPath(this.paths, input.id);
     const redactedTaskSnapshot = redactSecrets(input.taskSnapshot);
@@ -402,6 +576,7 @@ export class SqliteRunStore implements RunStore {
           provider_snapshot_json,
           request_snapshot_json,
           event_log_path,
+          thread_id,
           work_unit_id,
           parent_run_id,
           intervention_id,
@@ -412,7 +587,7 @@ export class SqliteRunStore implements RunStore {
           started_at,
           ended_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.id,
@@ -429,6 +604,7 @@ export class SqliteRunStore implements RunStore {
         stringifyJson(redactedProviderSnapshot),
         stringifyJson(redactedRequestSnapshot),
         eventLogPath,
+        input.threadId ?? null,
         input.workUnitId ?? null,
         input.parentRunId ?? null,
         input.interventionId ?? null,
@@ -511,9 +687,10 @@ export class SqliteRunStore implements RunStore {
             provider_model,
             task_snapshot_json,
             provider_snapshot_json,
-            request_snapshot_json,
-            event_log_path,
-            work_unit_id,
+	            request_snapshot_json,
+	            event_log_path,
+	            thread_id,
+	            work_unit_id,
             parent_run_id,
             intervention_id,
             continuation_reason,
@@ -544,6 +721,10 @@ export class SqliteRunStore implements RunStore {
       clauses.push("teammate_id = ?");
       params.push(options.teammateId);
     }
+    if (options.threadId) {
+      clauses.push("thread_id = ?");
+      params.push(options.threadId);
+    }
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     params.push(limit);
     const statement = this.database.prepare(`
@@ -560,9 +741,10 @@ export class SqliteRunStore implements RunStore {
         provider_model,
         task_snapshot_json,
         provider_snapshot_json,
-        request_snapshot_json,
-        event_log_path,
-        work_unit_id,
+	        request_snapshot_json,
+	        event_log_path,
+	        thread_id,
+	        work_unit_id,
         parent_run_id,
         intervention_id,
         continuation_reason,
@@ -761,6 +943,9 @@ export class SqliteRunStore implements RunStore {
           teammate_id,
           provider_preset_id,
           runner_id,
+          requested_runner_id,
+          effective_runner_id,
+          runner_fallback_reason_json,
           idempotency_key,
           status,
           priority,
@@ -782,7 +967,7 @@ export class SqliteRunStore implements RunStore {
           last_heartbeat_at,
           error_code,
           error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -794,7 +979,10 @@ export class SqliteRunStore implements RunStore {
         input.taskId ?? null,
         input.teammateId ?? null,
         input.providerPresetId ?? null,
-        input.runnerId ?? null,
+        normalizeStoredRunnerId(input.runnerId ?? input.effectiveRunnerId) ?? null,
+        normalizeStoredRunnerId(input.requestedRunnerId) ?? null,
+        normalizeStoredRunnerId(input.effectiveRunnerId ?? input.runnerId) ?? null,
+        input.fallbackReason ? stringifyJson(input.fallbackReason) : null,
         input.idempotencyKey,
         status,
         input.priority ?? 0,
@@ -990,6 +1178,9 @@ export class SqliteRunStore implements RunStore {
           attempt_number,
           runtime_instance_id,
           runner_id,
+          requested_runner_id,
+          effective_runner_id,
+          runner_fallback_reason_json,
           provider_preset_id,
           status,
           created_at,
@@ -1000,14 +1191,17 @@ export class SqliteRunStore implements RunStore {
           abort_requested_at,
           error_code,
           error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
         input.workUnitId,
         input.attemptNumber,
         input.runtimeInstanceId,
-        input.runnerId,
+        normalizeStoredRunnerId(input.runnerId) ?? input.runnerId,
+        normalizeStoredRunnerId(input.requestedRunnerId) ?? null,
+        normalizeStoredRunnerId(input.effectiveRunnerId ?? input.runnerId) ?? input.runnerId,
+        input.fallbackReason ? stringifyJson(input.fallbackReason) : null,
         input.providerPresetId ?? null,
         input.status ?? "created",
         input.now,
@@ -1377,9 +1571,222 @@ export class SqliteRunStore implements RunStore {
         this.appendEvent(runId, "run_error", { message: STALE_RUN_ERROR });
       }
       this.markRunFailed(runId, now, STALE_RUN_ERROR);
+      const run = this.getRun(runId);
+      const thread = run?.threadId ? this.getLingThread(run.threadId) : undefined;
+      if (run?.threadId && thread) {
+        this.updateLingThread(
+          run.threadId,
+          {
+            status: "failed",
+            activeRunId: thread.activeRunId === run.id ? null : thread.activeRunId,
+            lastRunId: run.id,
+          },
+          now,
+        );
+      }
     }
 
     return staleRuns.length;
+  }
+
+  recoverStaleChannelWorkflows(now: string): number {
+    let recovered = 0;
+    const workflows = this.listRecoverableChannelWorkflows();
+
+    for (const workflow of workflows) {
+      const steps = this.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+      for (const step of steps) {
+        if (step.status === "running" && step.runId) {
+          const run = this.getRun(step.runId);
+          if (run?.status === "succeeded") {
+            recovered += this.recoverWorkflowStepSucceeded(step, run, now) ? 1 : 0;
+          } else if (run?.status === "failed" || run?.status === "cancelled") {
+            recovered += this.recoverWorkflowStepFailed(step, run, now) ? 1 : 0;
+          } else if (!run) {
+            recovered += this.recoverWorkflowStepBlocked(step, "Linked run is missing after daemon restart.", now) ? 1 : 0;
+          }
+          continue;
+        }
+        if (step.status === "running" && !step.runId) {
+          recovered += this.recoverWorkflowStepBlocked(step, "Daemon restarted before workflow step run started; retry required.", now) ? 1 : 0;
+          continue;
+        }
+        if (step.status === "claimed") {
+          recovered += this.recoverWorkflowClaimedStepBlocked(step, "Daemon restarted after workflow step was claimed; retry required.", now) ? 1 : 0;
+          continue;
+        }
+        if (step.status === "waiting_for_approval" && step.metadata?.preStepApprovalId) {
+          const approval = this.getApprovalRequest(step.metadata.preStepApprovalId);
+          if (approval?.status === "approved") {
+            recovered += this.recoverWorkflowStepBlocked(step, "Daemon restarted after approval but before workflow step run started; retry required.", now) ? 1 : 0;
+          } else if (approval && approval.status !== "pending") {
+            recovered += this.recoverWorkflowStepApprovalFailed(step, approval.status, approval.decisionReason ?? `Workflow step approval ${approval.status}.`, now) ? 1 : 0;
+          }
+        }
+      }
+      recovered += this.recoverWorkflowAggregateStatus(workflow.id, now);
+    }
+
+    return recovered;
+  }
+
+  private recoverWorkflowStepSucceeded(step: ChannelWorkflowStep, run: RunSession, now: string): boolean {
+    const result = this.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "running",
+      event: "succeed",
+      actor: "system",
+      reason: `startup_recovery:${run.id}`,
+      now,
+      taskId: step.taskId ?? run.taskId,
+      runId: run.id,
+      resultSummary: "Recovered from linked terminal run.",
+    });
+    return result.ok;
+  }
+
+  private listRecoverableChannelWorkflows(): ChannelWorkflow[] {
+    return this.database
+      .prepare(`${channelWorkflowSelectSql("WHERE workspace_id = ? AND status IN ('running', 'waiting_for_approval', 'blocked')")} ORDER BY updated_at ASC, rowid ASC LIMIT 500`)
+      .all(DEFAULT_WORKSPACE_ID)
+      .map(mapChannelWorkflow);
+  }
+
+  private recoverWorkflowStepFailed(step: ChannelWorkflowStep, run: RunSession, now: string): boolean {
+    const result = this.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "running",
+      event: run.status === "cancelled" ? "cancel" : "fail",
+      actor: "system",
+      reason: run.errorMessage ?? `startup_recovery:${run.id}`,
+      now,
+      taskId: step.taskId ?? run.taskId,
+      runId: run.id,
+      blocker: run.errorMessage ?? `Linked run ${run.status} during startup recovery.`,
+    });
+    return result.ok;
+  }
+
+  private recoverWorkflowClaimedStepBlocked(step: ChannelWorkflowStep, blocker: string, now: string): boolean {
+    const started = this.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "claimed",
+      event: "start",
+      actor: "system",
+      reason: "startup_recovery",
+      now,
+      blocker: null,
+    });
+    if (!started.ok) {
+      return false;
+    }
+    return this.recoverWorkflowStepBlocked({ ...step, status: "running" }, blocker, now);
+  }
+
+  private recoverWorkflowStepBlocked(step: ChannelWorkflowStep, blocker: string, now: string): boolean {
+    if (step.status === "waiting_for_approval") {
+      const approved = this.transitionChannelWorkflowStepStatus({
+        workflowStepId: step.id,
+        expectedStatus: "waiting_for_approval",
+        event: "approval_approved",
+        actor: "system",
+        reason: "startup_recovery",
+        now,
+        blocker: null,
+      });
+      if (!approved.ok) {
+        return false;
+      }
+      return this.recoverWorkflowStepBlocked({ ...step, status: "running" }, blocker, now);
+    }
+    const result = this.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: step.status,
+      event: "blocked",
+      actor: "system",
+      reason: blocker,
+      now,
+      blocker,
+    });
+    return result.ok;
+  }
+
+  private recoverWorkflowStepApprovalFailed(step: ChannelWorkflowStep, status: string, blocker: string, now: string): boolean {
+    const result = this.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "waiting_for_approval",
+      event: "fail",
+      actor: "system",
+      reason: blocker,
+      now,
+      blocker,
+    });
+    if (result.ok) {
+      this.transitionChannelWorkflowStatus({
+        workflowId: step.workflowId,
+        expectedStatus: this.getChannelWorkflow(step.workflowId)?.status,
+        event: "step_failed",
+        actor: "system",
+        reason: `approval_${status}`,
+        now,
+      });
+    }
+    return result.ok;
+  }
+
+  private recoverWorkflowAggregateStatus(workflowId: string, now: string): number {
+    const workflow = this.getChannelWorkflow(workflowId);
+    if (!workflow || workflow.status === "succeeded" || workflow.status === "failed" || workflow.status === "cancelled") {
+      return 0;
+    }
+    const steps = this.listChannelWorkflowSteps({ workflowId, limit: 500 });
+    if (steps.length > 0 && steps.every((step) => step.status === "succeeded" || step.status === "skipped")) {
+      const result = this.transitionChannelWorkflowStatus({
+        workflowId,
+        expectedStatus: workflow.status,
+        event: workflow.status === "waiting_for_approval" ? "approval_approved" : "all_steps_succeeded",
+        actor: "system",
+        reason: "startup_recovery",
+        now,
+      });
+      if (result.ok && result.to !== "succeeded") {
+        const succeeded = this.transitionChannelWorkflowStatus({
+          workflowId,
+          expectedStatus: "running",
+          event: "all_steps_succeeded",
+          actor: "system",
+          reason: "startup_recovery",
+          now,
+        });
+        return succeeded.ok ? 2 : 1;
+      }
+      return result.ok ? 1 : 0;
+    }
+    const failed = steps.find((step) => step.status === "failed" || step.status === "cancelled");
+    if (failed) {
+      const result = this.transitionChannelWorkflowStatus({
+        workflowId,
+        expectedStatus: workflow.status,
+        event: "step_failed",
+        actor: "system",
+        reason: failed.blocker ?? "startup_recovery",
+        now,
+      });
+      return result.ok ? 1 : 0;
+    }
+    const blocked = steps.find((step) => step.status === "blocked");
+    if (blocked && workflow.status === "running") {
+      const result = this.transitionChannelWorkflowStatus({
+        workflowId,
+        expectedStatus: "running",
+        event: "step_blocked",
+        actor: "system",
+        reason: blocked.blocker ?? "startup_recovery",
+        now,
+      });
+      return result.ok ? 1 : 0;
+    }
+    return 0;
   }
 
   listStateTransitionEvents(options: ListStateTransitionEventsOptions = {}): StateTransitionEvent[] {
@@ -1996,6 +2403,7 @@ export class SqliteRunStore implements RunStore {
       avatarTone: input.avatarTone,
       avatarImageAttachmentId: input.avatarImageAttachmentId,
       providerPresetId: input.providerPresetId,
+      runnerId: normalizeStoredRunnerId(input.runnerId),
       systemPrompt: input.systemPrompt,
       appendSystemPrompt: input.appendSystemPrompt ?? [],
       allowedTools: input.allowedTools ?? [...readOnlyRunTools],
@@ -2019,6 +2427,7 @@ export class SqliteRunStore implements RunStore {
           avatar_tone,
           avatar_image_attachment_id,
           provider_preset_id,
+          runner_id,
           system_prompt,
           append_system_prompt_json,
           allowed_tools_json,
@@ -2028,7 +2437,7 @@ export class SqliteRunStore implements RunStore {
           hidden,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         teammate.id,
@@ -2040,6 +2449,7 @@ export class SqliteRunStore implements RunStore {
         teammate.avatarTone ?? null,
         teammate.avatarImageAttachmentId ?? null,
         teammate.providerPresetId ?? null,
+        teammate.runnerId ?? null,
         teammate.systemPrompt ?? null,
         stringifyJson(teammate.appendSystemPrompt),
         stringifyJson(teammate.allowedTools),
@@ -2104,6 +2514,7 @@ export class SqliteRunStore implements RunStore {
       avatarTone: nullableUpdate(input.avatarTone, existing.avatarTone),
       avatarImageAttachmentId: nullableUpdate(input.avatarImageAttachmentId, existing.avatarImageAttachmentId),
       providerPresetId: nullableUpdate(input.providerPresetId, existing.providerPresetId),
+      runnerId: normalizeStoredRunnerId(nullableUpdate(input.runnerId, existing.runnerId)),
       systemPrompt: nullableUpdate(input.systemPrompt, existing.systemPrompt),
       appendSystemPrompt: input.appendSystemPrompt ?? existing.appendSystemPrompt,
       allowedTools: input.allowedTools ?? existing.allowedTools,
@@ -2125,6 +2536,7 @@ export class SqliteRunStore implements RunStore {
           avatar_tone = ?,
           avatar_image_attachment_id = ?,
           provider_preset_id = ?,
+          runner_id = ?,
           system_prompt = ?,
           append_system_prompt_json = ?,
           allowed_tools_json = ?,
@@ -2143,6 +2555,7 @@ export class SqliteRunStore implements RunStore {
         next.avatarTone ?? null,
         next.avatarImageAttachmentId ?? null,
         next.providerPresetId ?? null,
+        next.runnerId ?? null,
         next.systemPrompt ?? null,
         stringifyJson(next.appendSystemPrompt),
         stringifyJson(next.allowedTools),
@@ -4366,9 +4779,10 @@ export class SqliteRunStore implements RunStore {
       title: input.title,
       prompt: input.prompt,
       toParticipantId: input.toParticipantId,
-      toParticipantLabel: input.toParticipantLabel,
-      status: input.status ?? "queued",
-      createdAt: now,
+	      toParticipantLabel: input.toParticipantLabel,
+	      status: input.status ?? "queued",
+	      metadata: input.metadata,
+	      createdAt: now,
       updatedAt: now,
     };
 
@@ -4389,11 +4803,12 @@ export class SqliteRunStore implements RunStore {
           to_participant_id,
           to_participant_label,
           status,
-          blocker,
-          result_summary,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	          blocker,
+	          result_summary,
+	          metadata_json,
+	          created_at,
+	          updated_at
+	        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         step.id,
@@ -4409,11 +4824,12 @@ export class SqliteRunStore implements RunStore {
         step.prompt,
         step.toParticipantId,
         step.toParticipantLabel,
-        step.status,
-        null,
-        null,
-        step.createdAt,
-        step.updatedAt,
+	        step.status,
+	        null,
+	        null,
+	        step.metadata ? stringifyJson(step.metadata) : null,
+	        step.createdAt,
+	        step.updatedAt,
       );
 
     const created = this.getChannelWorkflowStep(step.id);
@@ -4468,8 +4884,8 @@ export class SqliteRunStore implements RunStore {
     if (runId) {
       this.assertRunInChannel(existing.channelId, runId);
     }
-    const next: ChannelWorkflowStep = {
-      ...existing,
+	    const next: ChannelWorkflowStep = {
+	      ...existing,
       sourceHandoffId,
       contextSummaryId,
       taskId,
@@ -4480,10 +4896,11 @@ export class SqliteRunStore implements RunStore {
       toParticipantId: input.toParticipantId ?? existing.toParticipantId,
       toParticipantLabel: input.toParticipantLabel ?? existing.toParticipantLabel,
       status: input.status ?? existing.status,
-      blocker: nullableUpdate(input.blocker, existing.blocker),
-      resultSummary: nullableUpdate(input.resultSummary, existing.resultSummary),
-      updatedAt: now,
-    };
+	      blocker: nullableUpdate(input.blocker, existing.blocker),
+	      resultSummary: nullableUpdate(input.resultSummary, existing.resultSummary),
+	      metadata: nullableUpdate(input.metadata, existing.metadata),
+	      updatedAt: now,
+	    };
     this.database
       .prepare(`
         UPDATE channel_workflow_steps
@@ -4497,10 +4914,11 @@ export class SqliteRunStore implements RunStore {
           prompt = ?,
           to_participant_id = ?,
           to_participant_label = ?,
-          status = ?,
-          blocker = ?,
-          result_summary = ?,
-          updated_at = ?
+	          status = ?,
+	          blocker = ?,
+	          result_summary = ?,
+	          metadata_json = ?,
+	          updated_at = ?
         WHERE id = ?
       `)
       .run(
@@ -4513,10 +4931,11 @@ export class SqliteRunStore implements RunStore {
         next.prompt,
         next.toParticipantId,
         next.toParticipantLabel,
-        next.status,
-        next.blocker ?? null,
-        next.resultSummary ?? null,
-        next.updatedAt,
+	        next.status,
+	        next.blocker ?? null,
+	        next.resultSummary ?? null,
+	        next.metadata ? stringifyJson(next.metadata) : null,
+	        next.updatedAt,
         id,
       );
     return this.getChannelWorkflowStep(id);
@@ -5994,14 +6413,16 @@ export class SqliteRunStore implements RunStore {
     const taskId = normalizeOptionalOwnerId(input.taskId);
     const mediaJobId = normalizeOptionalOwnerId(input.mediaJobId);
     const externalWorkActionId = normalizeOptionalOwnerId(input.externalWorkActionId);
+    const workflowStepId = normalizeOptionalOwnerId(input.workflowStepId);
     const hasRunOwner = Boolean(runId && taskId);
     const hasMediaOwner = Boolean(mediaJobId);
     const hasExternalWorkActionOwner = Boolean(externalWorkActionId);
+    const hasWorkflowStepOwner = Boolean(workflowStepId);
     if (Boolean(runId) !== Boolean(taskId)) {
       throw new Error("Run approval requests require both runId and taskId.");
     }
-    if ([hasRunOwner, hasMediaOwner, hasExternalWorkActionOwner].filter(Boolean).length !== 1) {
-      throw new Error("Approval requests require exactly one owner: runId/taskId, mediaJobId, or externalWorkActionId.");
+    if ([hasRunOwner, hasMediaOwner, hasExternalWorkActionOwner, hasWorkflowStepOwner].filter(Boolean).length !== 1) {
+      throw new Error("Approval requests require exactly one owner: runId/taskId, mediaJobId, externalWorkActionId, or workflowStepId.");
     }
     if (runId && !this.getRun(runId)) {
       throw new Error(`Run not found: ${runId}`);
@@ -6012,6 +6433,9 @@ export class SqliteRunStore implements RunStore {
     if (externalWorkActionId && !this.getExternalWorkAction(externalWorkActionId)) {
       throw new Error(`External work action not found: ${externalWorkActionId}`);
     }
+    if (workflowStepId && !this.getChannelWorkflowStep(workflowStepId)) {
+      throw new Error(`Workflow step not found: ${workflowStepId}`);
+    }
 
     const approval: ApprovalRequest = {
       id: createApprovalRequestId(),
@@ -6019,6 +6443,7 @@ export class SqliteRunStore implements RunStore {
       taskId,
       mediaJobId,
       externalWorkActionId,
+      workflowStepId,
       channelId: input.channelId,
       toolCallId: input.toolCallId,
       actionType: input.actionType,
@@ -6039,6 +6464,7 @@ export class SqliteRunStore implements RunStore {
           task_id,
           media_job_id,
           external_work_action_id,
+          workflow_step_id,
           channel_id,
           tool_call_id,
           action_type,
@@ -6052,7 +6478,7 @@ export class SqliteRunStore implements RunStore {
           resolved_at,
           resolved_by,
           decision_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         approval.id,
@@ -6060,6 +6486,7 @@ export class SqliteRunStore implements RunStore {
         approval.taskId ?? null,
         approval.mediaJobId ?? null,
         approval.externalWorkActionId ?? null,
+        approval.workflowStepId ?? null,
         approval.channelId ?? null,
         approval.toolCallId ?? null,
         approval.actionType,
@@ -6105,6 +6532,10 @@ export class SqliteRunStore implements RunStore {
     if (options.externalWorkActionId) {
       clauses.push("external_work_action_id = ?");
       params.push(options.externalWorkActionId);
+    }
+    if (options.workflowStepId) {
+      clauses.push("workflow_step_id = ?");
+      params.push(options.workflowStepId);
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
@@ -6246,10 +6677,11 @@ export class SqliteRunStore implements RunStore {
           provider_name TEXT NOT NULL,
           provider_model TEXT NOT NULL,
           task_snapshot_json TEXT NOT NULL,
-          provider_snapshot_json TEXT NOT NULL,
-          request_snapshot_json TEXT NOT NULL,
-          event_log_path TEXT NOT NULL,
-          parent_run_id TEXT,
+	          provider_snapshot_json TEXT NOT NULL,
+	          request_snapshot_json TEXT NOT NULL,
+	          event_log_path TEXT NOT NULL,
+	          thread_id TEXT,
+	          parent_run_id TEXT,
           intervention_id TEXT,
           continuation_reason TEXT,
           summary_path TEXT,
@@ -6944,6 +7376,7 @@ export class SqliteRunStore implements RunStore {
           status TEXT NOT NULL,
           blocker TEXT,
           result_summary TEXT,
+          metadata_json TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -6994,6 +7427,7 @@ export class SqliteRunStore implements RunStore {
           avatar_tone TEXT,
           avatar_image_attachment_id TEXT,
           provider_preset_id TEXT,
+          runner_id TEXT,
           system_prompt TEXT,
           append_system_prompt_json TEXT NOT NULL,
           allowed_tools_json TEXT NOT NULL,
@@ -7509,6 +7943,9 @@ export class SqliteRunStore implements RunStore {
           teammate_id TEXT,
           provider_preset_id TEXT,
           runner_id TEXT,
+          requested_runner_id TEXT,
+          effective_runner_id TEXT,
+          runner_fallback_reason_json TEXT,
           idempotency_key TEXT NOT NULL,
           status TEXT NOT NULL,
           priority INTEGER NOT NULL,
@@ -7555,6 +7992,9 @@ export class SqliteRunStore implements RunStore {
           attempt_number INTEGER NOT NULL,
           runtime_instance_id TEXT NOT NULL,
           runner_id TEXT NOT NULL,
+          requested_runner_id TEXT,
+          effective_runner_id TEXT,
+          runner_fallback_reason_json TEXT,
           provider_preset_id TEXT,
           status TEXT NOT NULL,
           created_at TEXT NOT NULL,
@@ -8002,6 +8442,192 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(RUN_INTERVENTIONS_MIGRATION_VERSION, RUN_INTERVENTIONS_MIGRATION_NAME);
       }
     }
+
+    const hasRunnerAuditMigration = this.hasMigration(RUNNER_AUDIT_MIGRATION_VERSION);
+    if (
+      !hasRunnerAuditMigration ||
+      !this.hasColumn("ai_teammates", "runner_id") ||
+      !this.hasColumn("work_units", "requested_runner_id") ||
+      !this.hasColumn("work_units", "effective_runner_id") ||
+      !this.hasColumn("work_units", "runner_fallback_reason_json") ||
+      !this.hasColumn("work_unit_attempts", "requested_runner_id") ||
+      !this.hasColumn("work_unit_attempts", "effective_runner_id") ||
+      !this.hasColumn("work_unit_attempts", "runner_fallback_reason_json")
+    ) {
+      if (!this.hasColumn("ai_teammates", "runner_id")) {
+        this.database.exec("ALTER TABLE ai_teammates ADD COLUMN runner_id TEXT;");
+      }
+      if (!this.hasColumn("work_units", "requested_runner_id")) {
+        this.database.exec("ALTER TABLE work_units ADD COLUMN requested_runner_id TEXT;");
+      }
+      if (!this.hasColumn("work_units", "effective_runner_id")) {
+        this.database.exec("ALTER TABLE work_units ADD COLUMN effective_runner_id TEXT;");
+      }
+      if (!this.hasColumn("work_units", "runner_fallback_reason_json")) {
+        this.database.exec("ALTER TABLE work_units ADD COLUMN runner_fallback_reason_json TEXT;");
+      }
+      if (!this.hasColumn("work_unit_attempts", "requested_runner_id")) {
+        this.database.exec("ALTER TABLE work_unit_attempts ADD COLUMN requested_runner_id TEXT;");
+      }
+      if (!this.hasColumn("work_unit_attempts", "effective_runner_id")) {
+        this.database.exec("ALTER TABLE work_unit_attempts ADD COLUMN effective_runner_id TEXT;");
+      }
+      if (!this.hasColumn("work_unit_attempts", "runner_fallback_reason_json")) {
+        this.database.exec("ALTER TABLE work_unit_attempts ADD COLUMN runner_fallback_reason_json TEXT;");
+      }
+      if (!hasRunnerAuditMigration) {
+        this.recordMigration(RUNNER_AUDIT_MIGRATION_VERSION, RUNNER_AUDIT_MIGRATION_NAME);
+      }
+    }
+
+    const hasChannelWorkflowStepMetadataMigration = this.hasMigration(CHANNEL_WORKFLOW_STEP_METADATA_MIGRATION_VERSION);
+    if (!hasChannelWorkflowStepMetadataMigration || !this.hasColumn("channel_workflow_steps", "metadata_json")) {
+      if (!this.hasColumn("channel_workflow_steps", "metadata_json")) {
+        this.database.exec("ALTER TABLE channel_workflow_steps ADD COLUMN metadata_json TEXT;");
+      }
+      if (!hasChannelWorkflowStepMetadataMigration) {
+        this.recordMigration(CHANNEL_WORKFLOW_STEP_METADATA_MIGRATION_VERSION, CHANNEL_WORKFLOW_STEP_METADATA_MIGRATION_NAME);
+      }
+    }
+
+    const hasLingThreadsMigration = this.hasMigration(LING_THREADS_MIGRATION_VERSION);
+    if (!hasLingThreadsMigration || !this.hasTable("ling_threads") || !this.hasColumn("run_sessions", "thread_id")) {
+      if (!this.hasColumn("run_sessions", "thread_id")) {
+        this.database.exec("ALTER TABLE run_sessions ADD COLUMN thread_id TEXT;");
+      }
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS ling_threads (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          channel_id TEXT,
+          task_id TEXT,
+          teammate_id TEXT,
+          workflow_id TEXT,
+          workflow_step_id TEXT,
+          external_work_id TEXT,
+          title TEXT NOT NULL,
+          objective TEXT NOT NULL,
+          status TEXT NOT NULL,
+          active_run_id TEXT,
+          last_run_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          archived_at TEXT,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(active_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL,
+          FOREIGN KEY(last_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ling_threads_owner
+        ON ling_threads(workspace_id, kind, task_id, workflow_step_id, external_work_id, teammate_id, channel_id);
+
+        CREATE INDEX IF NOT EXISTS idx_ling_threads_status_updated
+        ON ling_threads(workspace_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_run_sessions_thread
+        ON run_sessions(thread_id);
+      `);
+      if (!hasLingThreadsMigration) {
+        this.recordMigration(LING_THREADS_MIGRATION_VERSION, LING_THREADS_MIGRATION_NAME);
+      }
+    }
+
+    const hasApprovalWorkflowStepOwnerMigration = this.hasMigration(APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_VERSION);
+    if (!hasApprovalWorkflowStepOwnerMigration || !this.hasColumn("approval_requests", "workflow_step_id")) {
+      this.database.exec(`
+        DROP TABLE IF EXISTS approval_requests_next;
+
+        CREATE TABLE approval_requests_next (
+          id TEXT PRIMARY KEY,
+          run_id TEXT,
+          task_id TEXT,
+          media_job_id TEXT,
+          external_work_action_id TEXT,
+          workflow_step_id TEXT,
+          channel_id TEXT,
+          tool_call_id TEXT,
+          action_type TEXT NOT NULL,
+          risk TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT,
+          resolved_at TEXT,
+          resolved_by TEXT,
+          decision_reason TEXT,
+          CHECK (
+            (run_id IS NOT NULL AND task_id IS NOT NULL AND media_job_id IS NULL AND external_work_action_id IS NULL AND workflow_step_id IS NULL)
+            OR (run_id IS NULL AND task_id IS NULL AND media_job_id IS NOT NULL AND external_work_action_id IS NULL AND workflow_step_id IS NULL)
+            OR (run_id IS NULL AND task_id IS NULL AND media_job_id IS NULL AND external_work_action_id IS NOT NULL AND workflow_step_id IS NULL)
+            OR (run_id IS NULL AND task_id IS NULL AND media_job_id IS NULL AND external_work_action_id IS NULL AND workflow_step_id IS NOT NULL)
+          ),
+          FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
+          FOREIGN KEY(media_job_id) REFERENCES media_jobs(id) ON DELETE CASCADE,
+          FOREIGN KEY(external_work_action_id) REFERENCES external_work_actions(id) ON DELETE CASCADE,
+          FOREIGN KEY(workflow_step_id) REFERENCES channel_workflow_steps(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO approval_requests_next (
+          id,
+          run_id,
+          task_id,
+          media_job_id,
+          external_work_action_id,
+          workflow_step_id,
+          channel_id,
+          tool_call_id,
+          action_type,
+          risk,
+          title,
+          description,
+          payload_json,
+          status,
+          created_at,
+          expires_at,
+          resolved_at,
+          resolved_by,
+          decision_reason
+        )
+        SELECT
+          id,
+          run_id,
+          task_id,
+          media_job_id,
+          external_work_action_id,
+          NULL,
+          channel_id,
+          tool_call_id,
+          action_type,
+          risk,
+          title,
+          description,
+          payload_json,
+          status,
+          created_at,
+          expires_at,
+          resolved_at,
+          resolved_by,
+          decision_reason
+        FROM approval_requests;
+
+        DROP TABLE approval_requests;
+        ALTER TABLE approval_requests_next RENAME TO approval_requests;
+
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_run ON approval_requests(run_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_task ON approval_requests(task_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_media_job ON approval_requests(media_job_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_external_work_action ON approval_requests(external_work_action_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_workflow_step ON approval_requests(workflow_step_id);
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_created_at ON approval_requests(created_at);
+      `);
+      if (!hasApprovalWorkflowStepOwnerMigration) {
+        this.recordMigration(APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_VERSION, APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -8327,6 +8953,28 @@ export function createSqliteRunStore(cwd: string): SqliteRunStore {
   return new SqliteRunStore({ cwd });
 }
 
+function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    kind: readString(row, "kind") as LingThreadKind,
+    channelId: readNullableString(row, "channel_id"),
+    taskId: readNullableString(row, "task_id"),
+    teammateId: readNullableString(row, "teammate_id"),
+    workflowId: readNullableString(row, "workflow_id"),
+    workflowStepId: readNullableString(row, "workflow_step_id"),
+    externalWorkId: readNullableString(row, "external_work_id"),
+    title: readString(row, "title"),
+    objective: readString(row, "objective"),
+    status: readString(row, "status") as LingThreadStatus,
+    activeRunId: readNullableString(row, "active_run_id"),
+    lastRunId: readNullableString(row, "last_run_id"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    archivedAt: readNullableString(row, "archived_at"),
+  });
+}
+
 function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
   return omitUndefined({
     id: readString(row, "id"),
@@ -8343,10 +8991,11 @@ function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
     providerSnapshot: parseJson(readString(row, "provider_snapshot_json")),
     requestSnapshot: parseJson(readString(row, "request_snapshot_json")),
     eventLogPath: readString(row, "event_log_path"),
+    threadId: readNullableString(row, "thread_id"),
     workUnitId: readNullableString(row, "work_unit_id"),
     parentRunId: readNullableString(row, "parent_run_id"),
     interventionId: readNullableString(row, "intervention_id"),
-    continuationReason: readNullableString(row, "continuation_reason"),
+    continuationReason: readNullableRunContinuationReason(row, "continuation_reason"),
     summaryPath: readNullableString(row, "summary_path"),
     errorMessage: readNullableString(row, "error_message"),
     createdAt: readString(row, "created_at"),
@@ -8414,6 +9063,31 @@ function runInterventionSelectSql(whereClause: string): string {
   `;
 }
 
+function lingThreadSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      kind,
+      channel_id,
+      task_id,
+      teammate_id,
+      workflow_id,
+      workflow_step_id,
+      external_work_id,
+      title,
+      objective,
+      status,
+      active_run_id,
+      last_run_id,
+      created_at,
+      updated_at,
+      archived_at
+    FROM ling_threads
+    ${whereClause}
+  `;
+}
+
 function mapChannel(row: Record<string, SQLOutputValue>): Channel {
   return omitUndefined({
     id: readString(row, "id"),
@@ -8457,6 +9131,7 @@ function mapAiTeammate(row: Record<string, SQLOutputValue>): AiTeammate {
     avatarTone: readNullableString(row, "avatar_tone"),
     avatarImageAttachmentId: readNullableString(row, "avatar_image_attachment_id"),
     providerPresetId: readNullableString(row, "provider_preset_id"),
+    runnerId: normalizeStoredRunnerId(readNullableString(row, "runner_id")),
     systemPrompt: readNullableString(row, "system_prompt"),
     appendSystemPrompt: parseJsonStringArray(readString(row, "append_system_prompt_json")),
     allowedTools: parseJsonStringArray(readString(row, "allowed_tools_json")) as RunTool[],
@@ -8833,6 +9508,7 @@ function mapChannelWorkflowStep(row: Record<string, SQLOutputValue>): ChannelWor
     status: readString(row, "status") as ChannelWorkflowStepStatus,
     blocker: readNullableString(row, "blocker"),
     resultSummary: readNullableString(row, "result_summary"),
+    metadata: parseOptionalChannelWorkflowStepMetadata(readNullableString(row, "metadata_json")),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
@@ -8919,6 +9595,7 @@ function mapApprovalRequest(row: Record<string, SQLOutputValue>): ApprovalReques
     taskId: readNullableString(row, "task_id"),
     mediaJobId: readNullableString(row, "media_job_id"),
     externalWorkActionId: readNullableString(row, "external_work_action_id"),
+    workflowStepId: readNullableString(row, "workflow_step_id"),
     channelId: readNullableString(row, "channel_id"),
     toolCallId: readNullableString(row, "tool_call_id"),
     actionType: readString(row, "action_type") as ApprovalRequest["actionType"],
@@ -9110,6 +9787,9 @@ function mapStateTransitionEvent(row: Record<string, SQLOutputValue>): StateTran
 }
 
 function mapWorkUnit(row: Record<string, SQLOutputValue>): WorkUnit {
+  const runnerId = normalizeStoredRunnerId(readNullableString(row, "runner_id"));
+  const requestedRunnerId = normalizeStoredRunnerId(readNullableString(row, "requested_runner_id"));
+  const effectiveRunnerId = normalizeStoredRunnerId(readNullableString(row, "effective_runner_id") ?? runnerId);
   return omitUndefined({
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
@@ -9120,7 +9800,10 @@ function mapWorkUnit(row: Record<string, SQLOutputValue>): WorkUnit {
     taskId: readNullableString(row, "task_id"),
     teammateId: readNullableString(row, "teammate_id"),
     providerPresetId: readNullableString(row, "provider_preset_id"),
-    runnerId: readNullableString(row, "runner_id"),
+    runnerId,
+    requestedRunnerId,
+    effectiveRunnerId,
+    fallbackReason: parseOptionalRunnerFallbackReason(readNullableString(row, "runner_fallback_reason_json")),
     idempotencyKey: readString(row, "idempotency_key"),
     status: readString(row, "status") as WorkUnitStatus,
     priority: readNumber(row, "priority"),
@@ -9146,12 +9829,18 @@ function mapWorkUnit(row: Record<string, SQLOutputValue>): WorkUnit {
 }
 
 function mapWorkUnitAttempt(row: Record<string, SQLOutputValue>): WorkUnitAttempt {
+  const runnerId = normalizeStoredRunnerId(readString(row, "runner_id")) ?? readString(row, "runner_id");
+  const requestedRunnerId = normalizeStoredRunnerId(readNullableString(row, "requested_runner_id"));
+  const effectiveRunnerId = normalizeStoredRunnerId(readNullableString(row, "effective_runner_id") ?? runnerId) ?? runnerId;
   return omitUndefined({
     id: readString(row, "id"),
     workUnitId: readString(row, "work_unit_id"),
     attemptNumber: readNumber(row, "attempt_number"),
     runtimeInstanceId: readString(row, "runtime_instance_id"),
-    runnerId: readString(row, "runner_id"),
+    runnerId,
+    requestedRunnerId,
+    effectiveRunnerId,
+    fallbackReason: parseOptionalRunnerFallbackReason(readNullableString(row, "runner_fallback_reason_json")),
     providerPresetId: readNullableString(row, "provider_preset_id"),
     status: readString(row, "status") as WorkUnitAttemptStatus,
     createdAt: readString(row, "created_at"),
@@ -9334,6 +10023,9 @@ function workUnitSelectSql(whereClause: string): string {
       teammate_id,
       provider_preset_id,
       runner_id,
+      requested_runner_id,
+      effective_runner_id,
+      runner_fallback_reason_json,
       idempotency_key,
       status,
       priority,
@@ -9368,6 +10060,9 @@ function workUnitAttemptSelectSql(whereClause: string): string {
       attempt_number,
       runtime_instance_id,
       runner_id,
+      requested_runner_id,
+      effective_runner_id,
+      runner_fallback_reason_json,
       provider_preset_id,
       status,
       created_at,
@@ -9452,6 +10147,7 @@ function aiTeammateSelectSql(whereClause: string): string {
       avatar_tone,
       avatar_image_attachment_id,
       provider_preset_id,
+      runner_id,
       system_prompt,
       append_system_prompt_json,
       allowed_tools_json,
@@ -9866,6 +10562,7 @@ function channelWorkflowStepSelectSql(whereClause: string): string {
       status,
       blocker,
       result_summary,
+      metadata_json,
       created_at,
       updated_at
     FROM channel_workflow_steps
@@ -9909,6 +10606,7 @@ function approvalRequestSelectSql(whereClause: string): string {
       task_id,
       media_job_id,
       external_work_action_id,
+      workflow_step_id,
       channel_id,
       tool_call_id,
       action_type,
@@ -10167,6 +10865,86 @@ function countWhere(database: DatabaseSync, table: string, whereClause: string, 
 
 function parseJson(value: string): unknown {
   return JSON.parse(value) as unknown;
+}
+
+function parseOptionalRunnerFallbackReason(value: string | undefined): RunnerFallbackReason | undefined {
+  if (!value) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  const code = record.code;
+  const message = record.message;
+  if (
+    (code === "missing_requested_runner" ||
+      code === "disabled_requested_runner" ||
+      code === "unsupported_provider_api" ||
+      code === "unsupported_tool") &&
+    typeof message === "string"
+  ) {
+    return { code, message };
+  }
+  return undefined;
+}
+
+function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): ChannelWorkflowStepMetadata | undefined {
+  if (!value) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  return omitUndefined({
+    workflowTemplateId: readOptionalStringValue(record.workflowTemplateId),
+    templateStepId: readOptionalStringValue(record.templateStepId),
+    dependsOnStepIds: readOptionalStringListValue(record.dependsOnStepIds),
+    teammateTemplateId: readOptionalStringValue(record.teammateTemplateId),
+    skillId: readOptionalStringValue(record.skillId),
+    requestedRunnerId: normalizeStoredRunnerId(readOptionalStringValue(record.requestedRunnerId)),
+    effectiveRunnerId: normalizeStoredRunnerId(readOptionalStringValue(record.effectiveRunnerId)),
+    providerPresetId: readOptionalStringValue(record.providerPresetId),
+    autoStart: typeof record.autoStart === "boolean" ? record.autoStart : undefined,
+    approvalGate: parseOptionalApprovalProfileValue(record.approvalGate),
+    preStepApprovalId: readOptionalStringValue(record.preStepApprovalId),
+    outputArtifactIds: readOptionalStringListValue(record.outputArtifactIds),
+  });
+}
+
+function readOptionalStringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function readOptionalStringListValue(value: unknown): readonly string[] | undefined {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value as string[] : undefined;
+}
+
+function parseOptionalApprovalProfileValue(value: unknown): SkillApprovalProfile | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return record.mode === "none" || record.mode === "standard" || record.mode === "strict"
+    ? record as unknown as SkillApprovalProfile
+    : undefined;
+}
+
+function normalizeStoredRunnerId(value: string | undefined): string | undefined {
+  return value === "pi-coding-agent" ? "pi" : value;
 }
 
 function parseJsonObject(value: string): Record<string, unknown> {
@@ -10683,6 +11461,13 @@ function readNullableString(row: Record<string, SQLOutputValue>, key: string): s
   return value;
 }
 
+function readNullableRunContinuationReason(row: Record<string, SQLOutputValue>, key: string): RunContinuationReason | undefined {
+  const value = readNullableString(row, key);
+  return value && runContinuationReasons.includes(value as RunContinuationReason)
+    ? value as RunContinuationReason
+    : undefined;
+}
+
 function readNullableNumber(row: Record<string, SQLOutputValue>, key: string): number | undefined {
   const value = row[key];
   if (value === null || value === undefined) {
@@ -10723,6 +11508,15 @@ function nullableUpdate<T>(value: T | null | undefined, existing: T | undefined)
     return undefined;
   }
   return value;
+}
+
+function appendNullableOwnerClause(clauses: string[], params: string[], column: string, value: string | undefined): void {
+  if (value === undefined) {
+    clauses.push(`${column} IS NULL`);
+    return;
+  }
+  clauses.push(`${column} = ?`);
+  params.push(value);
 }
 
 function omitUndefined<T extends Record<string, unknown>>(value: T): T {

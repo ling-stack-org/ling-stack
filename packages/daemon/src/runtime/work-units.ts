@@ -1,5 +1,6 @@
 import {
   DEFAULT_WORKSPACE_ID,
+  type RunnerFallbackReason,
   type RunStore,
   type RuntimeEvent,
   type WorkUnit,
@@ -7,9 +8,10 @@ import {
   type WorkUnitKind,
   type WorkUnitStatus,
 } from "@ling-stack/core";
+import { DEFAULT_RUNNER_ID } from "./runners.js";
 import type { RuntimeSupervisor } from "./supervisor.js";
 
-export const DEFAULT_RUNNER_ID = "pi-coding-agent";
+export { DEFAULT_RUNNER_ID } from "./runners.js";
 
 export function listActiveWorkUnits(store: RunStore): WorkUnit[] {
   return [
@@ -98,6 +100,9 @@ export function startRuntimeWorkUnit(input: {
   readonly channelId?: string;
   readonly teammateId?: string;
   readonly providerPresetId?: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly fallbackReason?: RunnerFallbackReason;
   readonly linkedMessageId?: string;
   readonly linkedMediaJobId?: string;
   readonly linkedExternalWorkId?: string;
@@ -106,6 +111,7 @@ export function startRuntimeWorkUnit(input: {
 }): { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt } {
   const now = new Date().toISOString();
   const runtime = input.runtimeSupervisor.getRuntime(input.store.paths.cwd, input.store);
+  const effectiveRunnerId = input.effectiveRunnerId ?? DEFAULT_RUNNER_ID;
   const workUnit = input.store.createWorkUnit({
     workspaceId: DEFAULT_WORKSPACE_ID,
     kind: input.kind,
@@ -114,7 +120,10 @@ export function startRuntimeWorkUnit(input: {
     channelId: input.channelId,
     teammateId: input.teammateId,
     providerPresetId: input.providerPresetId,
-    runnerId: DEFAULT_RUNNER_ID,
+    runnerId: effectiveRunnerId,
+    requestedRunnerId: input.requestedRunnerId,
+    effectiveRunnerId,
+    fallbackReason: input.fallbackReason,
     idempotencyKey: input.idempotencyKey,
     createdByActor: "system",
     request: input.request,
@@ -134,7 +143,10 @@ export function startRuntimeWorkUnit(input: {
     workUnitId: workUnit.id,
     attemptNumber: workUnit.attemptCount + 1,
     runtimeInstanceId: runtime.runtimeInstanceId,
-    runnerId: DEFAULT_RUNNER_ID,
+    runnerId: effectiveRunnerId,
+    requestedRunnerId: input.requestedRunnerId,
+    effectiveRunnerId,
+    fallbackReason: input.fallbackReason,
     providerPresetId: input.providerPresetId,
     now,
   });

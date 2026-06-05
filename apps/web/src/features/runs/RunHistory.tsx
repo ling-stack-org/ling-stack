@@ -16,9 +16,10 @@ import {
   SquareTerminal,
   Workflow,
 } from "lucide-react";
+import { LingDaemonError } from "@ling-stack/api-client";
 import { useEffect, useState } from "react";
 import { ApprovalCard, type ApprovalResolution } from "../approvals/index.js";
-import { cancelRunIntervention, createRunIntervention, listRunInterventions } from "../../api.js";
+import { cancelRunIntervention, createRunIntervention, getLingThreadEvidence, listLingThreads, listRunInterventions, resumeLingThread } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import {
   formatEventData,
@@ -59,6 +60,8 @@ import {
 } from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
+  LingThread,
+  LingThreadEvidenceResponse,
   MemoryObject,
   ResourceLease,
   RunArtifact,
@@ -132,6 +135,34 @@ export function RunHistory({
   readonly onSelect: (runId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [threads, setThreads] = useState<readonly LingThread[]>([]);
+  const [threadsLoading, setThreadsLoading] = useState(false);
+  const [threadError, setThreadError] = useState("");
+
+  async function refreshThreads(): Promise<void> {
+    if (!cwd.trim()) {
+      setThreads([]);
+      setThreadError("");
+      return;
+    }
+    setThreadsLoading(true);
+    setThreadError("");
+    try {
+      const response = await listLingThreads(cwd, { limit: 50 });
+      setThreads(response.threads);
+    } catch (error) {
+      if (error instanceof LingDaemonError && error.status === 404) {
+        setThreads([]);
+        setThreadError("");
+        return;
+      }
+      setThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setThreadsLoading(false);
+    }
+  }
+
+  const visibleThreads = threads.length > 0 ? threads : deriveThreadsFromRuns(runs);
 
   return (
     <div className="run-history-layout">
@@ -145,6 +176,63 @@ export function RunHistory({
             {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
             {t("Refresh")}
           </button>
+        </div>
+
+        <div className="thread-list-section">
+          <div className="panel-title tight split">
+            <span>
+              <Workflow size={16} />
+              <h3>{t("Threads")}</h3>
+            </span>
+            <button className="secondary-button compact-button" type="button" onClick={() => void refreshThreads()} disabled={threadsLoading}>
+              {threadsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+              {t("Refresh")}
+            </button>
+          </div>
+          {threadError ? (
+            <div className="inline-error compact">
+              <CircleAlert size={15} />
+              {threadError}
+            </div>
+          ) : null}
+          <div className="runs-list thread-list">
+            {visibleThreads.length === 0 ? (
+              <div className="empty-state compact-empty">
+                {threadsLoading ? <Loader2 className="spin" /> : <Workflow />}
+                <span>{threadsLoading ? t("Loading threads...") : t("No threads yet")}</span>
+              </div>
+            ) : (
+              visibleThreads.map((thread) => {
+                const targetRunId = thread.activeRunId ?? thread.lastRunId;
+                return (
+                  <button
+                    key={thread.id}
+                    className={targetRunId && targetRunId === selectedRunId ? "run-list-row selected" : "run-list-row"}
+                    type="button"
+                    onClick={() => targetRunId ? onSelect(targetRunId) : undefined}
+                    disabled={!targetRunId}
+                  >
+                    <span className={`status-dot ${thread.status}`} />
+                    <span className="run-list-main">
+                      <strong>{thread.title}</strong>
+                      <small>{thread.kind} · {thread.objective}</small>
+                    </span>
+                    <span className="run-list-meta">
+                      <StatusBadge status={thread.status} />
+                      <time>{formatDateTime(thread.updatedAt)}</time>
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        <div className="panel-title tight">
+          <span>
+            <History size={16} />
+            <h3>{t("Runs")}</h3>
+          </span>
         </div>
 
         {errorMessage ? (
@@ -416,12 +504,14 @@ function RunDetailPanel({
           ) : null}
 
           <RunEvidencePanel
+            cwd={cwd}
             run={run}
             terminalEvent={terminalEvent}
             toolEvents={toolEvents}
             assistantText={assistantText}
             approvals={approvals}
             artifacts={artifacts}
+            onRefresh={onRefresh}
           />
 
           <details className="run-detail-section json-details debug-details">
@@ -530,6 +620,52 @@ function RunDetailPanel({
 
 function runCanBeStopped(run: RunSession): boolean {
   return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+}
+
+function deriveThreadsFromRuns(runs: readonly RunSession[]): readonly LingThread[] {
+  const groups = new Map<string, RunSession[]>();
+  for (const run of runs) {
+    if (!run.threadId) {
+      continue;
+    }
+    groups.set(run.threadId, [...(groups.get(run.threadId) ?? []), run]);
+  }
+
+  return [...groups.entries()]
+    .map(([threadId, threadRuns]) => {
+      const orderedRuns = [...threadRuns].sort((left, right) => compareRunRecency(right, left));
+      const latestRun = orderedRuns[0];
+      const oldestRun = [...threadRuns].sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
+      return {
+        id: threadId,
+        workspaceId: "workspace_default",
+        kind: "task",
+        channelId: latestRun.channelId,
+        taskId: latestRun.taskId,
+        teammateId: latestRun.teammateId,
+        title: readTaskTitle(latestRun.taskSnapshot) || latestRun.taskId,
+        objective: readTaskPrompt(latestRun.taskSnapshot) || readTaskTitle(latestRun.taskSnapshot) || latestRun.taskId,
+        status: threadStatusFromRun(latestRun),
+        activeRunId: runCanBeStopped(latestRun) ? latestRun.id : undefined,
+        lastRunId: latestRun.id,
+        createdAt: oldestRun.createdAt,
+        updatedAt: latestRun.updatedAt || latestRun.createdAt,
+      } satisfies LingThread;
+    })
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function compareRunRecency(left: RunSession, right: RunSession): number {
+  const leftTime = left.updatedAt || left.endedAt || left.startedAt || left.createdAt;
+  const rightTime = right.updatedAt || right.endedAt || right.startedAt || right.createdAt;
+  return leftTime.localeCompare(rightTime);
+}
+
+function threadStatusFromRun(run: RunSession): LingThread["status"] {
+  if (run.status === "queued") {
+    return "open";
+  }
+  return run.status;
 }
 
 function RunGuidancePanel({
@@ -819,21 +955,31 @@ function RuntimeAuditBlock({
 }
 
 function RunEvidencePanel({
+  cwd,
   run,
   terminalEvent,
   toolEvents,
   assistantText,
   approvals,
   artifacts,
+  onRefresh,
 }: {
+  readonly cwd: string;
   readonly run: RunSession;
   readonly terminalEvent: RunEventEnvelope | undefined;
   readonly toolEvents: readonly RunEventEnvelope[];
   readonly assistantText: string;
   readonly approvals: readonly ApprovalRequest[];
   readonly artifacts: readonly RunArtifact[];
+  readonly onRefresh: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [threadEvidence, setThreadEvidence] = useState<LingThreadEvidenceResponse | undefined>(undefined);
+  const [threadEvidenceLoading, setThreadEvidenceLoading] = useState(false);
+  const [threadActionLoading, setThreadActionLoading] = useState(false);
+  const [threadError, setThreadError] = useState("");
+  const [resumedRunId, setResumedRunId] = useState("");
+  const [resumeInstruction, setResumeInstruction] = useState("");
   const taskLabel = readTaskTitle(run.taskSnapshot) || run.taskId;
   const providerLabel = `${run.providerName}/${run.providerModel}`;
   const terminalLabel = terminalEvent ? `#${terminalEvent.seq} ${terminalEvent.type}` : "-";
@@ -841,6 +987,57 @@ function RunEvidencePanel({
   const assistantPreview = buildAssistantOutputPreview(assistantText, t);
   const toolSummary = summarizeToolEvents(toolEvents);
   const artifactCwd = readRunWorkspaceCwd(run, run.cwd);
+  const canResumeThread = Boolean(run.threadId && (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled"));
+
+  useEffect(() => {
+    setThreadEvidence(undefined);
+    setThreadError("");
+    setResumedRunId("");
+    setResumeInstruction("");
+  }, [run.id, run.threadId]);
+
+  useEffect(() => {
+    if (run.threadId) {
+      void loadThreadEvidence();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cwd, run.threadId]);
+
+  async function loadThreadEvidence(): Promise<void> {
+    if (!run.threadId) {
+      return;
+    }
+    setThreadEvidenceLoading(true);
+    setThreadError("");
+    try {
+      setThreadEvidence(await getLingThreadEvidence(cwd, run.threadId));
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setThreadEvidenceLoading(false);
+    }
+  }
+
+  async function handleResumeThread(): Promise<void> {
+    if (!run.threadId || !canResumeThread) {
+      return;
+    }
+    setThreadActionLoading(true);
+    setThreadError("");
+    try {
+      const response = await resumeLingThread(cwd, run.threadId, {
+        sourceRunId: run.id,
+        instruction: resumeInstruction.trim() || "Resume this thread from the selected run detail.",
+      });
+      setResumedRunId(response.runId ?? "");
+      setResumeInstruction("");
+      onRefresh();
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setThreadActionLoading(false);
+    }
+  }
 
   return (
     <div className="run-detail-section run-evidence">
@@ -869,6 +1066,110 @@ function RunEvidencePanel({
           {assistantPreview}
         </p>
       </div>
+
+      {run.threadId ? (
+        <div className="run-evidence-block">
+          <div className="panel-title tight split">
+            <span>
+              <Workflow size={16} />
+              <h3>{t("Thread evidence")}</h3>
+            </span>
+            <span className="button-row compact">
+              <button className="secondary-button compact-button" type="button" onClick={() => void loadThreadEvidence()} disabled={threadEvidenceLoading}>
+                {threadEvidenceLoading ? <Loader2 className="spin" size={14} /> : <Search size={14} />}
+                {t("Load")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => void handleResumeThread()} disabled={!canResumeThread || threadActionLoading}>
+                {threadActionLoading ? <Loader2 className="spin" size={14} /> : <RotateCcw size={14} />}
+                {t("Resume")}
+              </button>
+            </span>
+          </div>
+          <div className="run-evidence-grid">
+            <MetaRow label={t("Thread")} value={run.threadId} compact />
+            <MetaRow label={t("Thread status")} value={threadEvidence?.thread.status ?? "-"} compact />
+            <MetaRow label={t("Parent run")} value={run.parentRunId ?? "-"} compact />
+            <MetaRow label={t("Continuation")} value={run.continuationReason ?? "-"} compact />
+            <MetaRow label={t("Thread runs")} value={threadEvidence ? String(threadEvidence.runs.length) : "-"} compact />
+            <MetaRow label={t("Actions")} value={threadEvidence ? String(threadEvidence.actions.length) : "-"} compact />
+            <MetaRow label={t("Transitions")} value={threadEvidence ? String(threadEvidence.transitions.length) : "-"} compact />
+          </div>
+          <label className="approval-reason-field thread-resume-composer">
+            <span>{t("Resume instruction")}</span>
+            <textarea
+              value={resumeInstruction}
+              rows={3}
+              placeholder={t("Tell the next continuation what changed or what to do next...")}
+              onChange={(event) => setResumeInstruction(event.target.value)}
+              disabled={!canResumeThread || threadActionLoading}
+            />
+          </label>
+          <div className="button-row compact">
+            <button className="secondary-button compact-button" type="button" onClick={() => void handleResumeThread()} disabled={!canResumeThread || threadActionLoading}>
+              {threadActionLoading ? <Loader2 className="spin" size={14} /> : <RotateCcw size={14} />}
+              {t("Resume thread")}
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={() => void loadThreadEvidence()} disabled={threadEvidenceLoading}>
+              {threadEvidenceLoading ? <Loader2 className="spin" size={14} /> : <Search size={14} />}
+              {t("Reload evidence")}
+            </button>
+          </div>
+          {resumedRunId ? (
+            <p className="run-evidence-copy">
+              <strong>{t("Resume run")}</strong>
+              {resumedRunId}
+            </p>
+          ) : null}
+          {threadError ? <p className="run-evidence-copy error">{threadError}</p> : null}
+          {threadEvidence ? (
+            <div className="thread-evidence-trail">
+              <strong>{t("Thread runs")}</strong>
+              <div className="runtime-list">
+                {threadEvidence.runs.map((item) => (
+                  <div key={item.run.id} className="runtime-list-row">
+                    <StatusBadge status={item.run.status} />
+                    <span>{readTaskTitle(item.run.taskSnapshot) || item.run.taskId}</span>
+                    <small>
+                      {t("{count} events", { count: item.events.length })}
+                      {" · "}
+                      {t("{count} approval events", { count: item.approvals.length })}
+                      {" · "}
+                      {t("{count} artifacts", { count: item.artifacts.length })}
+                    </small>
+                  </div>
+                ))}
+              </div>
+              <strong>{t("Execution actions")}</strong>
+              <div className="runtime-list">
+                {threadEvidence.actions.length === 0 ? (
+                  <div className="empty-state compact-empty">
+                    <ShieldCheck />
+                    <span>{t("No execution actions recorded")}</span>
+                  </div>
+                ) : (
+                  threadEvidence.actions.map((action) => (
+                    <div key={action.id} className="runtime-list-row">
+                      <StatusBadge status={action.status} />
+                      <span>{action.actionType}: {action.title}</span>
+                      <small>{formatActionTargets(action.targetRefs)}</small>
+                    </div>
+                  ))
+                )}
+              </div>
+              <strong>{t("State transitions")}</strong>
+              <div className="runtime-list">
+                {threadEvidence.transitions.slice(0, 10).map((transition) => (
+                  <div key={transition.id} className="runtime-list-row">
+                    <StatusBadge status={transition.entityType} />
+                    <span>{transition.event}: {transition.fromStatus} -&gt; {transition.toStatus}</span>
+                    <small>{formatDateTime(transition.createdAt)}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="run-evidence-block">
         <strong>{t("Artifacts")}</strong>
@@ -950,6 +1251,18 @@ function RuntimeRunRepairPanel({
       </div>
     </div>
   );
+}
+
+function formatActionTargets(targetRefs: LingThreadEvidenceResponse["actions"][number]["targetRefs"]): string {
+  if (targetRefs.length === 0) {
+    return "-";
+  }
+  return targetRefs
+    .map((ref) => {
+      const value = ref.path ?? ref.label ?? ref.id;
+      return value ? `${ref.type}:${value}` : ref.type;
+    })
+    .join(" · ");
 }
 
 function ToolEventDetails({

@@ -6,12 +6,18 @@ import {
   type ChannelWorkflowStepStatus,
   type RunStore,
   type RunTool,
+  type SkillApprovalProfile,
   type Task,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import {
+  compileWorkflowTemplate,
+  isWorkflowTemplateCompileRequest,
+  parseWorkflowTemplateCompileRequest,
+} from "./workflow-templates.js";
 import {
   parseChannelWorkflowFromHandoffRequest,
   parseChannelWorkflowRequest,
@@ -30,9 +36,12 @@ export interface WorkflowStepRunRequest {
   readonly workspaceCwd: string;
   readonly cwd: string;
   readonly providerPresetId?: string;
+  readonly runnerId?: string;
   readonly teammateId?: string;
+  readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
+  readonly approvalProfile?: SkillApprovalProfile;
   readonly task: {
     readonly id: string;
     readonly title: string;
@@ -84,6 +93,12 @@ export async function handleChannelWorkflowsCollection(
     }
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
+      if (isWorkflowTemplateCompileRequest(body)) {
+        const input = parseWorkflowTemplateCompileRequest(body, channelId);
+        const compiled = compileWorkflowTemplate(store, input);
+        writeJson(response, 201, compiled);
+        return;
+      }
       const input = parseChannelWorkflowRequest(body);
       const workflow = store.createChannelWorkflow({ ...input, channelId }, new Date().toISOString());
       writeJson(response, 201, { workflow });
@@ -434,12 +449,12 @@ async function handleChannelWorkflowStepStart(
   });
 }
 
-type PreparedWorkflowStepStart =
+export type PreparedWorkflowStepStart =
   | { readonly kind: "ready"; readonly workflowId: string; readonly task: Task; readonly runRequest: WorkflowStepRunRequest }
   | { readonly kind: "blocked"; readonly workflowId: string; readonly blocker: string }
   | { readonly kind: "error"; readonly statusCode: number; readonly code: string; readonly message: string };
 
-function prepareWorkflowStepStart(
+export function prepareWorkflowStepStart(
   store: RunStore,
   workflowStepId: string,
   input: ChannelWorkflowStepStartRequest,
@@ -517,6 +532,7 @@ function prepareWorkflowStepStart(
   }
 
   const providerPresetId = input.providerPresetId ?? channel.defaultProviderPresetId;
+  const runnerId = input.runnerId;
   const taskTitle = input.taskTitle ?? step.title;
   const taskPrompt = input.taskPrompt ?? formatWorkflowStepTaskPrompt(step.prompt, workflow.objective);
   const assigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
@@ -524,6 +540,7 @@ function prepareWorkflowStepStart(
     workspaceCwd: cwd,
     cwd: channel.boundPath ?? cwd,
     providerPresetId,
+    runnerId,
     teammateId: assigneeTeammateId,
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     idempotencyKey: input.idempotencyKey ?? `workflow-step:${step.id}`,
@@ -678,7 +695,7 @@ function ensureWorkflowStepRunning(
   return { ok: false, code: "invalid_transition", currentStatus: status };
 }
 
-function completeWorkflowIfStepsFinished(store: RunStore, workflowId: string, now: string): void {
+export function completeWorkflowIfStepsFinished(store: RunStore, workflowId: string, now: string): void {
   const workflow = store.getChannelWorkflow(workflowId);
   if (!workflow || workflow.status !== "running") {
     return;

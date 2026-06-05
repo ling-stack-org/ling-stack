@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defaultProviderTemplates, executeExternalWorkAction } from "@ling-stack/core";
-import type { RunSession } from "@ling-stack/core";
+import type { RunSession, RunStore } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
+import { HttpError } from "../errors.js";
 import {
   handleChannelAttachmentItem,
   handleChannelAttachmentsCollection,
@@ -9,6 +10,13 @@ import {
 import { createAiChannelReply } from "../features/channels/ai-replies.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
 import { handleChannelMessagesCollection } from "../features/channels/messages.js";
+import {
+  cancelChannelWorkflow,
+  finalizeOrchestratedWorkflowStepRun,
+  orchestrateChannelWorkflow,
+  retryChannelWorkflowStep,
+  type StartOrchestratedWorkflowStepRun,
+} from "../features/channels/orchestrator.js";
 import {
   handleChannelBrief,
   handleChannelContextSummariesCollection,
@@ -73,7 +81,8 @@ import {
 } from "../features/providers/routes.js";
 import { expireStalePendingApprovals } from "../features/runs/approvals.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
-import { createSseRunExecutionSink, executeRunRequest } from "../features/runs/orchestrator.js";
+import { handleExecutionActionsCollection } from "../features/runs/execution-actions.js";
+import { createDetachedRunExecutionSink, createSseRunExecutionSink, executeRunRequest } from "../features/runs/orchestrator.js";
 import {
   handleRunInterventionItem,
   handleRunInterventions,
@@ -92,6 +101,7 @@ import {
   handleListRuns,
   handleRun,
 } from "../features/runs/routes.js";
+import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
@@ -140,6 +150,7 @@ import {
   parseExternalWorkBackgroundStopRoute,
   parseExternalWorkCiTriageItemRoute,
   parseExternalWorkCiTriageRunRoute,
+  parseLingThreadRoute,
   parseMcpServerRoute,
   parseMediaJobRoute,
   parseProviderRoute,
@@ -159,7 +170,7 @@ export async function routeRequest(
 ): Promise<void> {
   const {
     config,
-    runner,
+    runnerRegistry,
     storeRegistry,
     activeRuns,
     runtimeSupervisor,
@@ -187,7 +198,7 @@ export async function routeRequest(
     maybeStartNextRunInterventionContinuation({
       sourceRunId,
       store,
-      runner,
+      runnerRegistry,
       storeRegistry,
       activeRuns,
       runtimeSupervisor,
@@ -329,7 +340,7 @@ export async function routeRequest(
         await executeRunRequest(
           runRequest,
           createSseRunExecutionSink(runResponse),
-          runner,
+          runnerRegistry,
           storeRegistry,
           activeRuns,
           runtimeSupervisor,
@@ -435,6 +446,40 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/execution-actions") {
+    handleExecutionActionsCollection(request, response, url, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/threads") {
+    handleLingThreadsCollection(request, response, url, storeRegistry);
+    return;
+  }
+
+  const lingThreadRoute = parseLingThreadRoute(url.pathname);
+  if (lingThreadRoute) {
+    await handleLingThreadItem(request, response, url, storeRegistry, lingThreadRoute, {
+      maxBodyBytes: config.maxBodyBytes,
+      startResumeRun: async (runRequest) =>
+        await startDetachedRunAndResolveReady((onRunReady) =>
+          executeRunRequest(
+            runRequest,
+            createDetachedRunExecutionSink(),
+            runnerRegistry,
+            storeRegistry,
+            activeRuns,
+            runtimeSupervisor,
+            secretResolver,
+            mcpBroker,
+            {
+              onRunReady,
+              afterRunTerminal: maybeContinueRunInterventions,
+            },
+          )),
+    });
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/state-transitions") {
     handleListStateTransitions(response, url, storeRegistry);
     return;
@@ -512,7 +557,7 @@ export async function routeRequest(
       executeRunRequest(
         runRequest,
         createSseRunExecutionSink(response),
-        runner,
+        runnerRegistry,
         storeRegistry,
         activeRuns,
         runtimeSupervisor,
@@ -540,7 +585,7 @@ export async function routeRequest(
       response,
       config,
       url,
-      runner,
+      runnerRegistry,
       storeRegistry,
       activeRuns,
       runtimeSupervisor,
@@ -613,14 +658,159 @@ export async function routeRequest(
     return;
   }
 
+  const createStartOrchestratedRun = (store: RunStore, cwd: string): StartOrchestratedWorkflowStepRun => {
+    const startOrchestratedRun: StartOrchestratedWorkflowStepRun = ({ workflow, workflowStep, taskId, runRequest }) =>
+      new Promise((resolve) => {
+        let resolved = false;
+        const resolveOnce = (runId: string | undefined): void => {
+          if (!resolved) {
+            resolved = true;
+            resolve(runId);
+          }
+        };
+        void executeRunRequest(
+          runRequest,
+          createDetachedRunExecutionSink(),
+          runnerRegistry,
+          storeRegistry,
+          activeRuns,
+          runtimeSupervisor,
+          secretResolver,
+          mcpBroker,
+          {
+            onRunReady: (runId) => {
+              store.updateChannelWorkflowStep(workflowStep.id, { taskId, runId }, new Date().toISOString());
+              resolveOnce(runId);
+            },
+            afterRunTerminal: (terminalRun) => {
+              finalizeOrchestratedWorkflowStepRun(store, workflowStep.id, taskId, terminalRun);
+              maybeContinueRunInterventions(terminalRun);
+              if (terminalRun.status === "succeeded") {
+                void orchestrateChannelWorkflow({
+                  store,
+                  cwd,
+                  workflowId: workflow.id,
+                  validateRunRequest: (candidateRunRequest) => {
+                    resolveProviderForRun(store, candidateRunRequest, secretResolver);
+                  },
+                  startRun: startOrchestratedRun,
+                });
+              }
+            },
+          },
+        ).then(resolveOnce, () => resolveOnce(undefined));
+      });
+    return startOrchestratedRun;
+  };
+
   const workflowRoute = parseChannelWorkflowRoute(url.pathname);
   if (workflowRoute) {
     if (workflowRoute.kind === "workflow") {
+      if (workflowRoute.action === "orchestrate") {
+        if (request.method !== "POST") {
+          writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow orchestration` });
+          return;
+        }
+        const cwd = url.searchParams.get("cwd");
+        if (!cwd) {
+          writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+          return;
+        }
+        try {
+          const store = storeRegistry.getStore(cwd);
+          const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
+          const result = await orchestrateChannelWorkflow({
+            store,
+            cwd,
+            workflowId: workflowRoute.workflowId,
+            validateRunRequest: (candidateRunRequest) => {
+              resolveProviderForRun(store, candidateRunRequest, secretResolver);
+            },
+            startRun: startOrchestratedRun,
+          });
+          writeJson(response, 200, result);
+        } catch (error) {
+          writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+            error: error instanceof HttpError ? error.code : "bad_request",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return;
+      }
+      if (workflowRoute.action === "cancel") {
+        if (request.method !== "POST") {
+          writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow cancellation` });
+          return;
+        }
+        const cwd = url.searchParams.get("cwd");
+        if (!cwd) {
+          writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+          return;
+        }
+        try {
+          const store = storeRegistry.getStore(cwd);
+          const result = cancelChannelWorkflow({
+            store,
+            workflowId: workflowRoute.workflowId,
+            cancelRun: (run) => {
+              const activeRun = activeRuns.get(run.id);
+              ensureRunCancelled({
+                store,
+                runId: run.id,
+                taskId: run.taskId,
+                startedAt: run.startedAt,
+                reason: "workflow_cancelled",
+                active: Boolean(activeRun),
+                streamEnvelope: activeRun?.streamEnvelope,
+              });
+              activeRun?.abortController.abort();
+            },
+          });
+          writeJson(response, 200, result);
+        } catch (error) {
+          writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+            error: error instanceof HttpError ? error.code : "bad_request",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return;
+      }
       await handleChannelWorkflowItem(request, response, config, storeRegistry, workflowRoute.workflowId);
       return;
     }
     if (workflowRoute.kind === "steps") {
       await handleChannelWorkflowStepsCollection(request, response, config, storeRegistry, workflowRoute.workflowId);
+      return;
+    }
+    if (workflowRoute.action === "retry") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow step retry` });
+        return;
+      }
+      const cwd = url.searchParams.get("cwd");
+      if (!cwd) {
+        writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+        return;
+      }
+      try {
+        const store = storeRegistry.getStore(cwd);
+        const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
+        const result = await retryChannelWorkflowStep({
+          store,
+          cwd,
+          workflowStepId: workflowRoute.workflowStepId,
+          validateRunRequest: (candidateRunRequest) => {
+            resolveProviderForRun(store, candidateRunRequest, secretResolver);
+          },
+          startRun: startOrchestratedRun,
+        });
+        writeJson(response, 200, result);
+      } catch (error) {
+        writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+          error: error instanceof HttpError ? error.code : "bad_request",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
       return;
     }
     if (workflowRoute.action === "start") {
@@ -638,7 +828,7 @@ export async function routeRequest(
           executeRunRequest(
             runRequest,
             createSseRunExecutionSink(response),
-            runner,
+            runnerRegistry,
             storeRegistry,
             activeRuns,
             runtimeSupervisor,
@@ -670,7 +860,7 @@ export async function routeRequest(
     if (channelRoute.action === "messages") {
       await handleChannelMessagesCollection(request, response, config, storeRegistry, channelRoute.channelId, (input) =>
         createAiChannelReply({
-          runner,
+          runnerRegistry,
           runtimeSupervisor,
           secretResolver,
           ...input,
@@ -762,7 +952,7 @@ export async function routeRequest(
         teammateRoute.teammateId,
         ({ store, teammate, thread, sourceMessage, providerPresetId }) =>
           createAiTeammateDirectReply({
-            runner,
+            runnerRegistry,
             store,
             teammate,
             thread,
@@ -795,7 +985,7 @@ export async function routeRequest(
         teammateRoute.teammateId,
         ({ store, teammate, thread, sourceMessage, providerPresetId, signal, stream }) =>
           createAiTeammateDirectReply({
-            runner,
+            runnerRegistry,
             store,
             teammate,
             thread,
@@ -828,6 +1018,7 @@ export async function routeRequest(
               workspaceCwd,
               cwd: channel.boundPath ?? workspaceCwd,
               providerPresetId: runRequest.providerPresetId,
+              runnerId: runRequest.runnerId,
               teammateId: task.assigneeTeammateId ?? channel.defaultTeammateId,
               requestedSkillId: runRequest.requestedSkillId ?? task.requestedSkillId,
               skipProviderPreflight: runRequest.skipProviderPreflight,
@@ -848,7 +1039,7 @@ export async function routeRequest(
               agentDir: runRequest.agentDir,
             },
             createSseRunExecutionSink(response),
-            runner,
+            runnerRegistry,
             storeRegistry,
             activeRuns,
             runtimeSupervisor,
@@ -918,4 +1109,22 @@ export async function routeRequest(
   }
 
   writeJson(response, 404, { error: "not_found", message: `No route for ${request.method} ${url.pathname}` });
+}
+
+async function startDetachedRunAndResolveReady(
+  startRun: (onRunReady: (runId: string) => void) => Promise<string | undefined>,
+): Promise<string | undefined> {
+  let settled = false;
+  return await new Promise<string | undefined>((resolve) => {
+    const settle = (runId: string | undefined): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(runId);
+    };
+    void startRun((runId) => settle(runId))
+      .then((runId) => settle(runId))
+      .catch(() => settle(undefined));
+  });
 }

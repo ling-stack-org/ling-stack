@@ -15,7 +15,9 @@ export class RunStoreRegistry {
     }
 
     const store = this.storeFactory(cwd);
-    store.recoverStaleRuns(new Date().toISOString());
+    const now = new Date().toISOString();
+    store.recoverStaleRuns(now);
+    store.recoverStaleChannelWorkflows(now);
     this.storesByCwd.set(cwd, store);
     return store;
   }
