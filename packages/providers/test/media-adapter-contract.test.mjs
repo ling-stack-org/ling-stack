@@ -400,6 +400,43 @@ test("live media vendor transport calls Seedream image generation through the Op
   assert.deepEqual(capturedRequests[1].init.headers, {});
 });
 
+test("live media vendor transport reports a clear timeout error", async () => {
+  const registry = createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:SEEDREAM_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      timeoutMs: 5,
+      httpClient: (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            const error = new Error("This operation was aborted");
+            error.name = "AbortError";
+            reject(error);
+          });
+        }),
+    }),
+  });
+  const resolution = resolveMediaAdapter(registry, provider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_live_seedream_timeout",
+    provider,
+    operation: "image_generate",
+    prompt: "Create a product mockup.",
+    input: { size: "2K" },
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorCode, "timeout");
+  assert.match(result.errorMessage ?? "", /timed out after/);
+  assert.doesNotMatch(result.errorMessage ?? "", /This operation was aborted/);
+});
+
 test("live media vendor transport normalizes Seedream HTTP failures", async () => {
   const seedream = defaultMediaVendorAdapterDefinitions().find((definition) => definition.kind === "seedream");
   assert.ok(seedream);

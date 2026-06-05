@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { isMediaProvider } from "../../lib/providers.js";
+import { canUseMediaProviderForOperation, isLiveMediaProvider, isMediaProvider } from "../../lib/providers.js";
 import { ArtifactRow, MetaRow, StatusBadge } from "../../shared/components/index.js";
 import type {
   MediaJob,
@@ -56,9 +56,12 @@ export function MediaJobsPage({
   const { t } = useI18n();
   const mediaProviders = providers.filter(isMediaProvider);
   const enabledMediaProviders = mediaProviders.filter((provider) => provider.enabled);
+  const liveMediaProviders = mediaProviders.filter(isLiveMediaProvider);
+  const runnableProvidersForOperation = mediaProviders.filter((provider) => canUseMediaProviderForOperation(provider, form.operation));
   const selectedProvider = providers.find((provider) => provider.id === form.providerPresetId);
   const providerSupportsOperation = Boolean(selectedProvider?.capabilities.includes(form.operation));
-  const canCreate = Boolean(selectedProvider && selectedProvider.enabled && providerSupportsOperation && form.prompt.trim());
+  const selectedProviderCanRun = Boolean(selectedProvider && canUseMediaProviderForOperation(selectedProvider, form.operation));
+  const canCreate = Boolean(selectedProviderCanRun && form.prompt.trim());
 
   return (
     <div className="media-jobs-layout">
@@ -84,6 +87,7 @@ export function MediaJobsPage({
         <div className="provider-onboarding-strip" aria-label="Media job status">
           <MetaRow label={t("Media providers")} value={String(mediaProviders.length)} compact />
           <MetaRow label={t("Enabled")} value={String(enabledMediaProviders.length)} compact />
+          <MetaRow label={t("Live ready")} value={String(liveMediaProviders.length)} compact />
           <MetaRow label={t("Queued jobs")} value={String(jobs.filter((job) => job.status === "queued").length)} compact />
         </div>
 
@@ -97,6 +101,7 @@ export function MediaJobsPage({
             jobs.map((job) => {
               const provider = providers.find((item) => item.id === job.providerPresetId);
               const jobArtifacts = artifactsByJob[job.id] ?? [];
+              const mediaArtifacts = jobArtifacts.filter((artifact) => artifact.type === "image" || artifact.type === "video");
               const isRunnable = job.status === "queued" || job.status === "waiting_for_approval" || job.status === "failed" || job.status === "cancelled";
               const isRunningJob = runningJobId === job.id;
               return (
@@ -136,17 +141,19 @@ export function MediaJobsPage({
                   <p>{job.prompt}</p>
                   <div className="provider-meta-line">
                     <span>{provider?.displayName ?? t("Unknown provider")}</span>
-                    <span>{t("{count} artifacts", { count: job.artifactIds.length })}</span>
+                    <span>{t("{count} media results", { count: mediaArtifacts.length })}</span>
                     <time>{formatDateTime(job.createdAt)}</time>
                   </div>
                   {job.status === "waiting_for_approval" ? <small className="media-job-approval">{t("Approval required before live execution")}</small> : null}
                   {job.errorMessage ? <small className="media-job-error">{job.errorMessage}</small> : null}
-                  {jobArtifacts.length > 0 ? (
+                  {mediaArtifacts.length > 0 ? (
                     <div className="media-job-artifacts artifact-list" aria-label={`Artifacts for ${job.id}`}>
-                      {jobArtifacts.map((artifact) => (
+                      {mediaArtifacts.map((artifact) => (
                         <ArtifactRow artifact={artifact} cwd={cwd} key={artifact.id} />
                       ))}
                     </div>
+                  ) : job.artifactIds.length > 0 ? (
+                    <small className="media-job-error">{t("No generated media artifact was returned.")}</small>
                   ) : null}
                 </article>
               );
@@ -167,26 +174,26 @@ export function MediaJobsPage({
           </button>
         </div>
 
-        <div className={mediaProviders.length > 0 ? "provider-next-action ok" : "provider-next-action"}>
-          {mediaProviders.length > 0 ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
+        <div className={runnableProvidersForOperation.length > 0 ? "provider-next-action ok" : "provider-next-action"}>
+          {runnableProvidersForOperation.length > 0 ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
           <span>
-            {mediaProviders.length > 0
-              ? t("Media providers can run through the media adapter contract. Coding task runs still require chat providers.")
-              : t("Create a Jimeng, Seedream, or Seedance media provider before recording media jobs.")}
+            {runnableProvidersForOperation.length > 0
+              ? t("Ready media models can generate real results. Coding task runs still require chat providers.")
+              : t("当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。")}
           </span>
         </div>
 
         <label className="field wide">
           <span>{t("Media provider")}</span>
           <select
-            value={form.providerPresetId}
+            value={selectedProviderCanRun ? form.providerPresetId : ""}
             onChange={(event) => onFormChange({ ...form, providerPresetId: event.target.value })}
-            disabled={mediaProviders.length === 0}
+            disabled={runnableProvidersForOperation.length === 0}
           >
             <option value="">{t("Select media provider")}</option>
-            {mediaProviders.map((provider) => (
-              <option key={provider.id} value={provider.id} disabled={!provider.enabled}>
-                {provider.displayName} / {provider.model}{provider.enabled ? "" : ` - ${t("disabled")}`}
+            {runnableProvidersForOperation.map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider.displayName} / {provider.model}
               </option>
             ))}
           </select>
@@ -194,7 +201,14 @@ export function MediaJobsPage({
 
         <label className="field wide">
           <span>{t("Operation")}</span>
-          <select value={form.operation} onChange={(event) => onFormChange({ ...form, operation: event.target.value as MediaOperation })}>
+          <select
+            value={form.operation}
+            onChange={(event) => {
+              const operation = event.target.value as MediaOperation;
+              const nextProvider = mediaProviders.find((provider) => canUseMediaProviderForOperation(provider, operation));
+              onFormChange({ ...form, operation, providerPresetId: nextProvider?.id ?? "" });
+            }}
+          >
             <option value="image_generate">{t("Image generate")}</option>
             <option value="image_edit">{t("Image edit")}</option>
             <option value="video_generate">{t("Video generate")}</option>
@@ -205,6 +219,13 @@ export function MediaJobsPage({
           <div className="provider-run-notice">
             <CircleAlert size={16} />
             <span>{t("{providerName} does not support {operation}.", { providerName: selectedProvider.displayName, operation: form.operation })}</span>
+          </div>
+        ) : null}
+
+        {selectedProvider && providerSupportsOperation && !selectedProviderCanRun ? (
+          <div className="provider-run-notice">
+            <CircleAlert size={16} />
+            <span>{t("当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。")}</span>
           </div>
         ) : null}
 

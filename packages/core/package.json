@@ -20,6 +20,10 @@
     "./skill-types": {
       "types": "./dist/skill-types.d.ts",
       "default": "./dist/skill-types.js"
+    },
+    "./provider-adapters": {
+      "types": "./dist/provider-adapters.d.ts",
+      "default": "./dist/provider-adapters.js"
     }
   },
   "scripts": {

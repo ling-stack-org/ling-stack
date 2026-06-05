@@ -6,6 +6,7 @@ export * from "./media-types.js";
 export * from "./memory-types.js";
 export * from "./provider-types.js";
 export * from "./provider-templates.js";
+export * from "./provider-adapters.js";
 export * from "./state-machines.js";
 export * from "./channel-runtime-types.js";
 export * from "./runtime-supervisor-types.js";

@@ -164,6 +164,7 @@ function mediaProviderTemplate(input: {
     baseUrl: input.baseUrl,
     api: "media-job",
     apiKeyRef: input.apiKeyRef,
+    compat: input.kind === "seedream" ? { mediaVendorTransport: { mode: "live" } } : {},
     capabilities: input.capabilities,
     input: ["text", "image"],
     enabled: false,
