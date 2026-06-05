@@ -3402,6 +3402,8 @@ export function AppShell(): JSX.Element {
         className={
           activeView === "workspace"
             ? "workspace workspace-client-surface"
+            : activeView === "teammates" && selectedAiTeammate
+              ? "workspace workspace-teammate-private-surface"
             : activeView === "teammates" && !selectedAiTeammate
               ? "workspace workspace-teammates-surface"
               : activeView === "providers"
@@ -3540,7 +3542,7 @@ export function AppShell(): JSX.Element {
           />
         ) : (
           <>
-            {activeView === "providers" ? null : (
+            {activeView === "providers" || (activeView === "teammates" && selectedAiTeammate) ? null : (
               <div className="workspace-head">
                 <div>
                   <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
@@ -3696,6 +3698,7 @@ export function AppShell(): JSX.Element {
               />
             ) : activeView === "settings" ? (
               <SettingsPage
+                cwd={form.cwd}
                 policy={approvalPolicy}
                 form={approvalPolicyForm}
                 selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}

@@ -1,7 +1,8 @@
 # Helio-Inspired AI Teammate Private Workspace
 
-Status: Implemented durable private workspace plus private data lifecycle; editing polish and broader e2e remain follow-ups
+Status: Implemented durable private workspace, private data lifecycle, and chat/settings IA split; broader e2e remains follow-up
 Date: 2026-06-04
+Updated: 2026-06-05
 Scope: Web UI, daemon API, workspace storage, API client, docs, and e2e coverage
 
 ## Summary
@@ -10,11 +11,12 @@ Ling Stack should turn AI teammates from local UI drafts and sidebar presence in
 durable workspace members with private conversations, inspectable work, scoped settings,
 and explicit safety boundaries.
 
-The Helio reference is useful for the interaction pattern: a selected AI teammate opens a
-profile-like workspace with tabs for chat, tasks, activity, channels, skills, memory, and
-settings. Ling Stack should adapt that pattern without copying the product model. The
-Ling Stack version must stay local-first, auditable, provider-aware, and governed by
-tools, approval policy, and state machines.
+The Helio reference is useful for the interaction pattern: a selected AI teammate should
+feel like a reachable workspace member with private conversation, profile, and scoped
+configuration. Ling Stack adapts that pattern without copying a tab-heavy profile model:
+clicking a teammate opens a pure private chat, while configuration lives behind a
+separate single-agent settings page. The Ling Stack version must stay local-first,
+auditable, provider-aware, and governed by tools, approval policy, and state machines.
 
 This document is the design, engineering landing plan, and implementation record for
 the first durable AI teammate private workspace slice.
@@ -42,13 +44,14 @@ Implemented in this slice:
 - daemon teammate CRUD, direct message, task read-model, and activity read-model APIs,
 - API client and Web API wrappers for the teammate routes,
 - sidebar roster rows backed by daemon teammates,
-- `teammate:<id>` private workspace route with Chat, Tasks, Activity, Channels, Skills,
-  Memory, and Settings tabs,
+- `teammate:<id>` private workspace route that opens a private chat first,
+- single-agent settings page for Profile, Model, Permissions, Channels, Skills, Memory,
+  MCP, and Danger Zone,
 - streaming private replies over SSE with durable pending AI message updates,
 - private teammate attachments and profile avatar uploads,
 - hard delete for teammate private data with minimal retention tombstones,
 - skill registry import drafts, publish-to-registry, bind, disable, archive, and
-  Effective Skill blocked-reason controls inside the Skills tab,
+  Effective Skill blocked-reason controls inside the Skills settings section,
 - persona import draft preview and apply controls inside Settings,
 - teammate workspace task creation with `requestedSkillId`.
 
@@ -56,7 +59,7 @@ Still deferred:
 
 - broader skill editing beyond the import draft/publish/archive flow,
 - skill-aware task/run controls outside the teammate private workspace,
-- memory editing controls inside the private workspace tabs,
+- memory editing controls inside the single-agent settings page,
 - optional vector retrieval provider installation and hidden ingestion,
 - multi-party direct messages,
 - broad browser e2e coverage beyond the focused durable workspace flows.
@@ -71,8 +74,8 @@ Skill, and skill-aware run model lives in [Ling Skill Import v1](ling-skill-impo
 1. AI teammates are workspace members, not decorative model presets.
 2. Private chat is for clarification and planning. Side effects must move through tasks,
    runs, approvals, and channel/workspace state machines.
-3. Every tab must be backed by real state or clearly be out of scope. Avoid empty
-   product-shaped panels that imply unsupported behavior.
+3. Every surface or settings section must be backed by real state or clearly be out of
+   scope. Avoid empty product-shaped panels that imply unsupported behavior.
 4. Channel context, files, memory, and private chat must not leak into each other by
    default.
 5. Provider readiness is part of teammate identity. A teammate with no working provider
@@ -86,9 +89,10 @@ The Helio reference contributes these useful patterns:
 
 - left sidebar roster with channels, AI teammates, and private messages,
 - selected teammate header with avatar, display name, and model identity,
-- horizontal tabs for teammate-specific surfaces,
-- chat composer at the bottom of the primary conversation tab,
-- settings page with identity, model, channel subscription, and danger zone.
+- a focused private chat surface with a direct settings entry,
+- chat composer at the bottom of the primary conversation page,
+- settings page with identity, model, permissions, skill execution, channel subscription,
+  memory, MCP, and danger zone.
 
 Ling Stack should not copy these parts:
 
@@ -110,21 +114,47 @@ Ling Stack should not copy these parts:
 - Sidebar active state remains exclusive across workspace, tasks, channels, teammates,
   direct messages, providers, approvals, and settings.
 
-### Teammate Workspace Shell
+### Teammate Private Chat Shell
 
 The selected teammate workspace uses a compact client surface:
 
 ```text
 avatar + display name + AI badge + provider/model status
-Chat | Tasks | Activity | Channels | Skills | Memory | Settings
-main tab surface
-optional right context drawer when the tab has a selected record
+private chat transcript + composer
+right-side conversation context: summary, private attachments, recent Used Memory
+settings button -> single-agent settings page
 ```
 
-The first implementation should avoid a separate persistent right panel unless the tab
-already has a selected record. Empty space is better than noisy placeholder cards.
+The private chat shell must not display configuration tabs. It only shows the durable
+private conversation, private attachment chips, streaming reply state, Used Memory shown
+beside the AI message, and a light conversation-context rail.
 
-### Chat Tab
+### Single-Agent Settings Page
+
+Purpose: configure one durable teammate without mixing setup controls into the chat.
+
+Layout:
+
+```text
+back to private chat + teammate settings header
+left settings navigation: Profile, Model, Permissions, Channels, Skills, Memory, MCP, Danger
+main section content
+right configuration summary + import guidance
+```
+
+Settings sections:
+
+- Profile: avatar upload/removal, persona draft import, display name, status, pinned,
+  hidden, description, and system prompt.
+- Model: provider preset selection, provider readiness, model workbench shortcut.
+- Permissions: approval profile, allowed tools, and explicit persona boundary copy.
+- Channels: channel memberships and default teammate controls.
+- Skills: Effective Skill list, import draft, bind/disable/archive, blocked reasons.
+- Memory: visible memory scopes and optional vector retrieval status.
+- MCP: explicit per-agent MCP authorization.
+- Danger: soft disable and hard delete private data.
+
+### Private Chat Page
 
 Purpose: private human-to-teammate discussion.
 
@@ -150,16 +180,27 @@ MVP composer:
 Visual treatment:
 
 - Web uses the same strict platform-console surface model as the rest of the Web shell.
-- In dark mode, the private workspace hero, tabs, empty chat state, message rows, and
+- Private chat uses the same shared `MessageComposer` shell as channel chat: a rounded
+  composer panel, large multiline drop zone, left tool row, and compact icon send
+  action. Private chat can expose a smaller tool set than channel chat, but the
+  spacing, border, focus, and preview-strip treatment should stay shared.
+- Private chat and single-agent settings must not override the shared left navigation
+  drawer width, toolbar, or collapse behavior. Teammate pages adapt inside the workspace
+  area so switching between channel, private chat, and teammate settings does not resize
+  the drawer.
+- In dark mode, the private chat header, empty chat state, message rows, and
   composer stay on near-black semantic tokens instead of legacy glass or translucent
   light panels.
-- Skills tab add rows, enabled skill rows, and phase tokens follow the same strict
+- Skills settings section add rows, enabled skill rows, and phase tokens follow the same strict
   console dark/light tokens; no legacy pale green, gray, beige, or glass panels should
   appear in dark mode.
 - The send button remains a compact primary action and must not stretch into a tall
   high-contrast column beside the textarea.
+- Conversation message rows should converge toward a shared message/feed component after
+  the channel feed's richer states (mentions, attachments, link previews, used memory,
+  task actions, streamed private replies) are normalized behind common props.
 
-### Tasks Tab
+### Tasks Surface
 
 Purpose: show work assigned to this teammate.
 
@@ -171,7 +212,7 @@ Behavior:
 - creates a task with this teammate preselected as assignee,
 - shows current run, approval, or blocked state when available.
 
-### Activity Tab
+### Activity Surface
 
 Purpose: show teammate-relevant work history.
 
@@ -183,10 +224,10 @@ Sources:
 - approvals waiting on runs started by this teammate,
 - channel messages that mention the teammate.
 
-The activity tab is read-only in the first slice. Mutations happen through the source
+The activity surface is read-only in the first slice. Mutations happen through the source
 surface: chat, task detail, approvals, or channel.
 
-### Channels Tab
+### Channels Settings Section
 
 Purpose: manage where the teammate participates.
 
@@ -201,7 +242,7 @@ Behavior:
 Private chat should not automatically gain access to channel history just because a
 teammate belongs to that channel.
 
-### Skills Tab
+### Skills Settings Section
 
 Purpose: inspect teammate skill bindings, import reviewed skills, and explain whether a
 skill is executable for this teammate.
@@ -223,10 +264,10 @@ Behavior:
   themselves.
 
 Skills are workflow templates. They do not grant execution authority by themselves. The
-Skills tab should use the daemon's Effective Skill read model instead of implying that
+The Skills settings section should use the daemon's Effective Skill read model instead of implying that
 "enabled" equals "allowed to run".
 
-### Memory Tab
+### Memory Settings Section
 
 Purpose: make teammate context boundaries visible.
 
@@ -239,9 +280,9 @@ MVP behavior:
 - does not feed memory into private chat until the prompt builder has an explicit
   inclusion decision.
 
-The memory tab is primarily a trust surface in the first slice.
+The memory settings section is primarily a trust surface in the first slice.
 
-### Settings Tab
+### Profile Settings Section
 
 Purpose: edit durable teammate instance settings.
 
@@ -282,13 +323,19 @@ Workspace shell
     direct:<id> human/private conversations
 
 Teammate private workspace
-  Chat
-  Tasks
-  Activity
-  Channels
-  Skills
-  Memory
-  Settings
+  Private Chat
+    Conversation transcript
+    Composer
+    Conversation Context rail
+  Single-Agent Settings
+    Profile
+    Model
+    Permissions
+    Channels
+    Skills
+    Memory
+    MCP
+    Danger Zone
 ```
 
 `teammate:<id>` and `direct:<id>` remain separate sidebar targets. A teammate private
@@ -784,10 +831,10 @@ Implemented API client changes:
 Visual constraints:
 
 - match the existing dense client shell,
-- use tabs and icon buttons consistently with the channel workspace,
+- use settings navigation and icon buttons consistently with the channel workspace,
 - avoid nested cards inside cards,
 - do not add a marketing hero or decorative gradients,
-- keep the chat composer stable at the bottom of the chat tab,
+- keep the chat composer stable at the bottom of the private chat page,
 - keep settings forms narrow enough for comfortable desktop editing.
 
 ## Engineering Landing Plan
@@ -863,14 +910,15 @@ Files:
 - `apps/web/src/styles/teammates.css` if split later
 - `apps/web/src/i18n.tsx`
 
-Status: implemented with private chat, task creation, channel membership management, and
-settings editing. Custom skill import, persona import UI, skill-aware task/run polish, and
-memory tab editing remain deferred.
+Status: implemented with private chat, single-agent settings, task creation, channel
+membership management, skill import, persona import UI, and hard delete. Broader
+skill-aware task/run polish and memory editing remain deferred.
 
 Work:
 
 - [x] create `TeammateWorkspace`,
-- [x] implement Chat, Tasks, Activity, Channels, Skills, Memory, and Settings tabs,
+- [x] implement private chat plus single-agent settings sections for Profile, Model,
+  Permissions, Channels, Skills, Memory, MCP, and Danger Zone,
 - [x] wire chat send and blocked reply states,
 - [x] wire settings save, hide, pin, pause, and disable,
 - [x] wire task creation with the selected teammate prefilled,
@@ -944,12 +992,12 @@ Work:
 - [x] Provider failures create a visible blocked reply record.
 - [x] Private chat does not include channel messages, files, or memory unless a future scope
   decision explicitly adds them.
-- [x] The Tasks tab only shows tasks assigned to the selected teammate.
-- [x] The Channels tab can add/remove membership and set the channel default teammate through
+- [x] The teammate task surface only shows tasks assigned to the selected teammate.
+- [x] The Channels settings section can add/remove membership and set the channel default teammate through
   channel update logic.
-- [x] The Skills tab accurately shows template skill requirements and approval profiles.
-- [x] The Settings tab can rename, pause, hide, pin, and soft-disable a teammate.
-- [x] The Settings tab can upload/remove an avatar image.
+- [x] The Skills settings section accurately shows template skill requirements and approval profiles.
+- [x] The Profile and Danger settings sections can rename, pause, hide, pin, and soft-disable a teammate.
+- [x] The Profile settings section can upload/remove an avatar image.
 - [x] Hard delete removes teammate private data and leaves a minimal tombstone audit record.
 - [x] E2E covers selecting teammate, sending private chat, creating teammate-assigned tasks,
   editing channel membership/defaults, blocked provider state, settings persistence, and
@@ -959,7 +1007,7 @@ Work:
 
 | Risk | Control |
 | --- | --- |
-| UI looks complete while backing state is missing | Only ship tabs with real read models or explicit metadata-only behavior |
+| UI looks complete while backing state is missing | Only ship surfaces/sections with real read models or explicit metadata-only behavior |
 | Private chat leaks channel context | Prompt builder includes private thread only by default |
 | Built-in template ids conflict with custom teammate ids | Use deterministic `teammate_builtin_*` ids for seeded instances |
 | Disabling a seeded teammate recreates it on bootstrap | Store disabled state and make bootstrap idempotent |
@@ -988,10 +1036,10 @@ Implemented first code slice:
 
 - durable teammate instances seeded from built-in templates,
 - private teammate thread and message persistence,
-- private chat tab with no-tools streamed AI replies,
+- private chat page with no-tools streamed AI replies,
 - private attachments and avatar upload,
 - soft disable plus hard delete with minimal tombstone audit,
-- tasks, skills, channels, memory, and settings tabs backed by real data or metadata,
+- single-agent settings sections for skills, channels, memory, MCP, model, profile, and danger backed by real data or metadata,
 - docs updates and focused unit/daemon coverage.
 
 Calendar, custom skill-pack import, optional vector retrieval provider installation, and
