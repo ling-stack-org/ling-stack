@@ -179,6 +179,54 @@ Follow-up design:
 - No contracts package extraction in this slice.
 - No desktop implementation.
 
+## Web E2E Structure Guidance
+
+`apps/web/e2e/app.spec.ts` is the Web end-to-end regression suite. It runs with
+Playwright against the real Vite Web client, while daemon calls to
+`http://127.0.0.1:17891/**` are mocked through the suite's route handler. Treat it as a
+browser-level Web contract test, not as a full daemon process integration test.
+
+Do not split the file only to make the tree look cleaner. The current suite intentionally
+shares `MockState`, daemon route handling, fixture builders, and cross-feature flows.
+Splitting tests before those support boundaries are stable would create churn and raise
+the risk of breaking selectors, mock daemon behavior, or setup order.
+
+Refactor the e2e structure incrementally when there is a real maintenance trigger:
+
+- a new feature would add a large block of unrelated scenarios to `app.spec.ts`,
+- merge conflicts in the file become frequent,
+- mock daemon changes repeatedly affect unrelated domains,
+- a domain can move cleanly with its helpers and fixtures, such as channel, workspace,
+  runtime, model workbench, settings, external work, or media jobs.
+
+When the trigger exists, split support code before splitting scenarios:
+
+```text
+apps/web/e2e/
+  app.spec.ts
+  support/
+    mock-daemon.ts
+    mock-state.ts
+    test-helpers.ts
+```
+
+Only after the shared support layer is stable should domain specs move out of
+`app.spec.ts`:
+
+```text
+apps/web/e2e/channel.spec.ts
+apps/web/e2e/workspace.spec.ts
+apps/web/e2e/runtime.spec.ts
+apps/web/e2e/model-workbench.spec.ts
+apps/web/e2e/settings.spec.ts
+apps/web/e2e/external-work.spec.ts
+apps/web/e2e/media-jobs.spec.ts
+```
+
+Each split must preserve visible labels, aria labels, CSS selectors used by tests, and
+mock daemon response semantics unless the same change intentionally updates the affected
+tests and product behavior.
+
 ## Test Plan
 
 Run after each meaningful extraction:
