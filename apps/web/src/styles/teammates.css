@@ -2232,6 +2232,10 @@
   padding: 10px 8px 10px 10px;
 }
 
+.teammate-draft-row:has(.teammate-row-menu[open]) {
+  z-index: 20;
+}
+
 .teammate-template-row:hover,
 .teammate-template-row.selected,
 .teammate-draft-row:hover,
@@ -2329,6 +2333,10 @@
 
 .teammate-row-menu {
   position: relative;
+}
+
+.teammate-row-menu[open] {
+  z-index: 30;
 }
 
 .teammate-row-menu summary {

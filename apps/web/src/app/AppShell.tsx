@@ -3851,7 +3851,8 @@ function aiTeammateToLocalDraft(teammate: AiTeammate, providers: readonly Provid
     channelIds: [],
     memorySources: [],
     pinned: teammate.pinned,
-    hidden: teammate.hidden || teammate.status === "disabled",
+    hidden: teammate.hidden,
+    disabled: teammate.status === "disabled",
     createdAt: teammate.createdAt,
   };
 }

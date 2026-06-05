@@ -1348,9 +1348,15 @@ export function WorkspaceClientView({
   const allTeammateOptions = useMemo(
     () => [
       ...teammateTemplates.map((template) => ({ id: template.id, label: template.name, kind: "ai-teammate" as const })),
-      ...localTeammates.map((teammate) => ({ id: teammate.id, label: teammate.displayName, kind: "ai-teammate" as const })),
+      ...localTeammates
+        .filter((teammate) => !teammate.disabled)
+        .map((teammate) => ({ id: teammate.id, label: teammate.displayName, kind: "ai-teammate" as const })),
     ],
     [localTeammates, teammateTemplates],
+  );
+  const activeLocalTeammates = useMemo(
+    () => localTeammates.filter((teammate) => !teammate.disabled),
+    [localTeammates],
   );
   const channelTeammateIds = useMemo(
     () => new Set(channelTeammateMemberships.map((membership) => membership.teammateId)),
@@ -1384,8 +1390,8 @@ export function WorkspaceClientView({
     ? allTeammateOptions.find((teammate) => teammate.id === selectedChannel.defaultTeammateId)
     : undefined;
   const localTeammateById = useMemo(
-    () => new Map(localTeammates.map((teammate) => [teammate.id, teammate])),
-    [localTeammates],
+    () => new Map(activeLocalTeammates.map((teammate) => [teammate.id, teammate])),
+    [activeLocalTeammates],
   );
   const channelTeammates = useMemo(
     () => {
@@ -1399,8 +1405,8 @@ export function WorkspaceClientView({
     [channelTeammateMemberships, localTeammateById, selectedChannel?.defaultTeammateId],
   );
   const availableChannelTeammates = useMemo(
-    () => localTeammates.filter((teammate) => !teammate.hidden && !channelTeammateIds.has(teammate.id)),
-    [channelTeammateIds, localTeammates],
+    () => activeLocalTeammates.filter((teammate) => !teammate.hidden && !channelTeammateIds.has(teammate.id)),
+    [activeLocalTeammates, channelTeammateIds],
   );
 
   function updateMentionPicker(value: string, caret: number): void {
