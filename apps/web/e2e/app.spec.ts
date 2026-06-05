@@ -3709,6 +3709,25 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
       createdAt: "2026-05-29T00:10:01.000Z",
     },
   ];
+  state.channelMessages = [
+    {
+      id: "chmsg_deleted_teammate_history",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: teammateId,
+      body: "Historical channel reply from a teammate that will be deleted.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-05-29T00:00:30.000Z",
+      updatedAt: "2026-05-29T00:00:30.000Z",
+    },
+    ...state.channelMessages,
+  ];
   state.tasks = [
     {
       id: "task_teammate",
@@ -3981,6 +4000,10 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect.poll(() => state.teammatePrivateAttachments.some((item) => isRecord(item) && item.teammateId === teammateId)).toBe(false);
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Renamed Engineer" })).toHaveCount(0);
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  const deletedHistoryMessage = page.locator(".message-group").filter({ hasText: "Historical channel reply from a teammate that will be deleted." });
+  await expect(deletedHistoryMessage).toContainText("Deleted teammate");
+  await expect(deletedHistoryMessage).not.toContainText(teammateId);
 });
 
 test("workspace path initializes from daemon default without showing the path field", async ({ page }) => {
