@@ -3404,6 +3404,8 @@ export function AppShell(): JSX.Element {
             ? "workspace workspace-client-surface"
             : activeView === "teammates" && !selectedAiTeammate
               ? "workspace workspace-teammates-surface"
+              : activeView === "providers"
+                ? "workspace workspace-provider-surface"
               : "workspace"
         }
       >

@@ -390,6 +390,113 @@
   -webkit-backdrop-filter: none;
 }
 
+.workspace.workspace-provider-surface {
+  background: #ffffff;
+  color: #111111;
+}
+
+.workspace-provider-surface .provider-sheet-backdrop {
+  background: rgba(17, 17, 17, 0.08);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.workspace-provider-surface .provider-sheet-header.panel-title,
+.workspace-provider-surface .provider-sheet-footer {
+  background: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.workspace-provider-surface .provider-sheet-header.panel-title::after,
+.workspace-provider-surface .provider-sheet-footer::before {
+  content: none;
+}
+
+.workspace-provider-surface .provider-next-action,
+.workspace-provider-surface .provider-batch-result,
+.workspace-provider-surface .provider-run-repair,
+.workspace-provider-surface .provider-run-notice,
+.workspace-provider-surface .provider-repair-queue,
+.workspace-provider-surface .provider-repair-item,
+.workspace-provider-surface .inline-error {
+  border-color: #e5e5e5;
+  background: #ffffff;
+  color: #111111;
+}
+
+.workspace-provider-surface .provider-batch-result.bad,
+.workspace-provider-surface .provider-run-notice:not(.ok),
+.workspace-provider-surface .provider-repair-item.warning {
+  color: #b42318;
+}
+
+.workspace-provider-surface .provider-next-action code,
+.workspace-provider-surface .provider-env-hint code,
+.workspace-provider-surface .provider-run-repair-copy code {
+  background: #f5f5f5;
+  color: #111111;
+}
+
+:root[data-theme="dark"] .workspace.workspace-provider-surface,
+:root[data-theme="dark"] .workspace-provider-surface .provider-next-action,
+:root[data-theme="dark"] .workspace-provider-surface .provider-batch-result,
+:root[data-theme="dark"] .workspace-provider-surface .provider-run-repair,
+:root[data-theme="dark"] .workspace-provider-surface .provider-run-notice,
+:root[data-theme="dark"] .workspace-provider-surface .provider-repair-queue,
+:root[data-theme="dark"] .workspace-provider-surface .provider-repair-item,
+:root[data-theme="dark"] .workspace-provider-surface .inline-error {
+  border-color: #e5e5e5;
+  background: #ffffff;
+  color: #111111;
+}
+
+:root[data-theme="dark"] .workspace-provider-surface .provider-sheet-header.panel-title,
+:root[data-theme="dark"] .workspace-provider-surface .provider-sheet-footer {
+  background: #ffffff;
+}
+
+.workspace-provider-surface .provider-sheet input,
+.workspace-provider-surface .provider-sheet select,
+.workspace-provider-surface .provider-sheet textarea,
+:root[data-theme="dark"] .workspace-provider-surface .provider-sheet input,
+:root[data-theme="dark"] .workspace-provider-surface .provider-sheet select,
+:root[data-theme="dark"] .workspace-provider-surface .provider-sheet textarea {
+  border-color: #e5e5e5;
+  background: #ffffff;
+  color: #111111;
+}
+
+.workspace-provider-surface .provider-sheet input:disabled,
+.workspace-provider-surface .provider-sheet select:disabled,
+:root[data-theme="dark"] .workspace-provider-surface .provider-sheet input:disabled,
+:root[data-theme="dark"] .workspace-provider-surface .provider-sheet select:disabled {
+  background: #f5f5f5;
+  color: #6b6b6b;
+  opacity: 1;
+}
+
+.workspace-provider-surface .provider-sheet .secondary-button,
+:root[data-theme="dark"] .workspace-provider-surface .provider-sheet .secondary-button {
+  border-color: #e5e5e5;
+  background: #ffffff;
+  color: #111111;
+}
+
+.workspace-provider-surface .provider-sheet .primary-button,
+:root[data-theme="dark"] .workspace-provider-surface .provider-sheet .primary-button {
+  border-color: #111111;
+  background: #111111;
+  color: #ffffff;
+}
+
+.workspace-provider-surface .provider-sheet .settings-toggle,
+:root[data-theme="dark"] .workspace-provider-surface .provider-sheet .settings-toggle {
+  border-color: #e5e5e5;
+  background: #ffffff;
+  color: #111111;
+}
+
 .teammate-workspace-identity h2,
 .teammate-message-row header strong,
 .teammate-data-row strong {
