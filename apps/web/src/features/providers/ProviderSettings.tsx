@@ -1,6 +1,7 @@
 import {
   CheckCircle2,
   CircleAlert,
+  CircleSlash,
   Eye,
   EyeOff,
   History,
@@ -22,21 +23,15 @@ import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import {
   canBatchCheckProvider,
-  canUseProviderForRun,
   customOpenAICompatibleForm,
   groupProviderTemplates,
   providerCheckGuidance,
   providerCheckMessage,
   providerCheckStatusLabel,
-  providerCodingTaskLabel,
   providerFormToTemplate,
-  providerLastCheckClass,
-  providerLastCheckLabel,
-  providerLastCheckTitle,
   providerNeedsSecret,
   providerPreflightReady,
   providerEffectiveBaseUrl,
-  providerRunBlockerLabel,
   providerRunPreflightBlocker,
   providerTemplateKindLabel,
 } from "../../lib/providers.js";
@@ -123,14 +118,11 @@ export function ProviderSettings({
   readonly onClearRepair: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const compatibleProviderCount = providers.filter(canUseProviderForRun).length;
   const preflightReadyProviderCount = providers.filter(providerPreflightReady).length;
   const batchCheckProviderCount = providers.filter(canBatchCheckProvider).length;
   const missingSecretCount = providers.filter((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured).length;
   const disabledProviderCount = providers.filter((provider) => !provider.enabled).length;
   const needsAttentionProviderCount = providers.filter((provider) => provider.enabled && !providerPreflightReady(provider)).length;
-  const chatTemplateCount = templates.filter((template) => template.capabilities.includes("chat")).length;
-  const mediaTemplateCount = templates.length - chatTemplateCount;
   const templateGroups = useMemo(() => groupProviderTemplates(templates), [templates]);
   const templateTabs = useMemo(() => {
     const groupedTemplates = new Map<string, ProviderTemplate[]>();
@@ -155,17 +147,6 @@ export function ProviderSettings({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [editorErrorMessage, setEditorErrorMessage] = useState("");
   const activeTemplateGroup = templateTabs.find((group) => group.label === activeTemplateGroupLabel) ?? templateTabs[0];
-  const nextActionProvider =
-    providers.find(
-      (provider) =>
-        provider.enabled &&
-        provider.api !== "media-job" &&
-        provider.capabilities.includes("chat") &&
-        providerNeedsSecret(provider) &&
-        !provider.apiKeyConfigured,
-    ) ??
-    providers.find(canUseProviderForRun) ??
-    providers.find((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured);
   const checkedProvider = checkedProviderId ? providers.find((provider) => provider.id === checkedProviderId) : undefined;
   const isCheckingProviders = checkingProviderIds.length > 0;
   const selectedTemplateIsCustom = selectedTemplateId === customOpenAICompatibleTemplateId;
@@ -312,7 +293,7 @@ export function ProviderSettings({
         <header className="provider-workbench-header">
           <div>
             <h1 id="provider-workbench-title">{t("Model Workbench")}</h1>
-            <p>{t("Manage and configure all available model presets.")}</p>
+            <p>{t("Manage model presets, key references, connectivity checks, and task availability.")}</p>
           </div>
           <div className="provider-title-actions">
             <button className="primary-button compact-button" type="button" onClick={openNewProviderSheet}>
@@ -333,6 +314,13 @@ export function ProviderSettings({
         <div className="provider-toolbar" aria-label={t("Model preset filters")}>
           <div className="provider-status-tabs" aria-label={t("Provider workbench status")}>
             <button
+              className={providerStatusFilter === "all" ? "selected" : ""}
+              type="button"
+              onClick={() => setProviderStatusFilter("all")}
+            >
+              {t("All presets")} <strong>{providers.length}</strong>
+            </button>
+            <button
               className={providerStatusFilter === "ready" ? "selected" : ""}
               type="button"
               onClick={() => setProviderStatusFilter("ready")}
@@ -349,6 +337,14 @@ export function ProviderSettings({
               {t("Needs config")} <strong>{needsAttentionProviderCount}</strong>
             </button>
             <button
+              className={providerStatusFilter === "missingKey" ? "selected" : ""}
+              type="button"
+              onClick={() => setProviderStatusFilter("missingKey")}
+            >
+              <span className="provider-status-dot warning" />
+              {t("Missing key")} <strong>{missingSecretCount}</strong>
+            </button>
+            <button
               className={providerStatusFilter === "disabled" ? "selected" : ""}
               type="button"
               onClick={() => setProviderStatusFilter("disabled")}
@@ -363,29 +359,11 @@ export function ProviderSettings({
               <input
                 aria-label={t("Search model presets")}
                 value={providerSearch}
-                placeholder={t("Search name, model, or endpoint")}
+                placeholder={t("Search model, provider, or Base URL")}
                 onChange={(event) => setProviderSearch(event.target.value)}
               />
             </label>
-            <select
-              aria-label={t("Filter model presets")}
-              value={providerStatusFilter}
-              onChange={(event) => setProviderStatusFilter(event.target.value as ProviderStatusFilter)}
-            >
-              <option value="all">{t("All presets")}</option>
-              <option value="ready">{t("Ready presets")}</option>
-              <option value="needsAttention">{t("Needs attention")}</option>
-              <option value="missingKey">{t("Missing key")}</option>
-              <option value="disabled">{t("Disabled providers")}</option>
-            </select>
           </div>
-        </div>
-
-        <div className="provider-capability-summary" aria-label={t("Provider workbench status")}>
-          <span>{t("Chat-capable")} <strong>{compatibleProviderCount}</strong></span>
-          <span>{t("Coding ready")} <strong>{preflightReadyProviderCount}</strong></span>
-          <span>{t("Missing secrets")} <strong>{missingSecretCount}</strong></span>
-          <span>{t("Templates")} <strong>{t("{chatCount} chat / {mediaCount} media", { chatCount: chatTemplateCount, mediaCount: mediaTemplateCount })}</strong></span>
         </div>
 
         {errorMessage ? (
@@ -395,7 +373,6 @@ export function ProviderSettings({
           </div>
         ) : null}
 
-        <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={isLoading} />
         {repairRun ? (
           <ProviderRunRepairPanel
             run={repairRun}
@@ -443,12 +420,10 @@ export function ProviderSettings({
             <table className="provider-table">
               <thead>
                 <tr>
+                  <th>{t("Status")}</th>
                   <th>{t("Name")}</th>
                   <th>{t("Model")}</th>
-                  <th>{t("Base URL")}</th>
-                  <th>{t("API key status")}</th>
-                  <th>{t("Check status")}</th>
-                  <th>{t("Status")}</th>
+                  <th>{t("Key")}</th>
                   <th className="provider-table-action-head">{t("Actions")}</th>
                 </tr>
               </thead>
@@ -456,16 +431,38 @@ export function ProviderSettings({
                 {filteredProviders.map((provider) => {
                   const providerMissingApiKey = providerNeedsSecret(provider) && !provider.apiKeyConfigured;
                   const providerSelectedForRun = provider.id === selectedProviderId;
+                  const providerReadyForRun = providerPreflightReady(provider);
                   const effectiveBaseUrl = providerEffectiveBaseUrl(provider, templates) || t("default endpoint");
+                  const providerUseActionLabel = providerSelectedForRun ? t("Stop using") : t("Use");
+                  const providerUseActionTooltip = providerSelectedForRun ? t("Stop using this preset") : t("Use this preset");
+                  const providerStatusLabel = !provider.enabled ? t("disabled") : providerReadyForRun ? t("ready") : t("Needs config");
+                  const providerStatusClassName = !provider.enabled
+                    ? "provider-status-indicator disabled"
+                    : providerReadyForRun
+                      ? "provider-status-indicator ready"
+                      : "provider-status-indicator attention";
+                  const providerRowClassName = [
+                    "provider-row",
+                    providerSelectedForRun ? "selected" : "",
+                    !provider.enabled ? "disabled-provider-row" : "",
+                  ].filter(Boolean).join(" ");
                   return (
-                    <tr key={provider.id} className={provider.id === selectedProviderId ? "provider-row selected" : "provider-row"}>
+                    <tr key={provider.id} className={providerRowClassName}>
+                      <td className="provider-status-cell">
+                        <span className={providerStatusClassName} aria-label={providerStatusLabel} title={providerStatusLabel}>
+                          {!provider.enabled ? (
+                            <CircleSlash size={16} />
+                          ) : providerReadyForRun ? (
+                            <CheckCircle2 size={16} />
+                          ) : (
+                            <CircleAlert size={16} />
+                          )}
+                        </span>
+                      </td>
                       <td className="provider-name-cell">
-                        <span className="provider-name-main">
-                          <span className="provider-avatar" aria-hidden="true">{providerInitial(provider.displayName)}</span>
-                          <span className="provider-name-copy">
-                            <strong>{provider.displayName}</strong>
-                            <small>{provider.providerId}</small>
-                          </span>
+                        <span className="provider-name-copy">
+                          <strong>{provider.displayName}</strong>
+                          <small>{provider.providerId} · {effectiveBaseUrl}</small>
                         </span>
                       </td>
                       <td>
@@ -477,13 +474,8 @@ export function ProviderSettings({
                         </div>
                       </td>
                       <td>
-                        <div className="provider-meta-line mono provider-endpoint-cell">
-                          <span><span className="provider-endpoint-label">{t("Base URL")}: </span>{effectiveBaseUrl}</span>
-                        </div>
-                      </td>
-                      <td>
                         {providerMissingApiKey ? (
-                          <span className="provider-state key-missing">{t("API key missing")}</span>
+                          <span className="provider-state key-missing">{t("Missing key")}</span>
                         ) : (
                           <span className={providerNeedsSecret(provider) ? "provider-state key-ok" : "provider-state check-unknown"}>
                             {providerNeedsSecret(provider) ? t("key ready") : t("no key required")}
@@ -491,38 +483,14 @@ export function ProviderSettings({
                         )}
                       </td>
                       <td>
-                        <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider, t)}>
-                          {providerLastCheckLabel(provider, t)}
-                        </span>
-                      </td>
-                      <td className="provider-status-cell">
-                        <span className="provider-status-stack">
-                          {providerMissingApiKey ? (
-                            <span className="provider-state check-unknown">{t("Needs config")}</span>
-                          ) : null}
-                          {!providerMissingApiKey ? (
-                            <span className={providerSelectedForRun ? "provider-state enabled" : "provider-state disabled"}>
-                              {providerSelectedForRun ? t("enabled") : t("disabled")}
-                            </span>
-                          ) : null}
-                          {!providerMissingApiKey ? (
-                            <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
-                              {providerPreflightReady(provider) ? t("preflight ready") : canUseProviderForRun(provider) ? t("needs check") : providerRunBlockerLabel(provider, t)}
-                            </span>
-                          ) : null}
-                          {!providerMissingApiKey ? (
-                            <span className={providerPreflightReady(provider) ? "provider-state run-ready provider-compat-only" : "provider-state run-blocked provider-compat-only"}>
-                              {t("Coding task")}: {providerCodingTaskLabel(provider, t)}
-                            </span>
-                          ) : null}
-                        </span>
-                      </td>
-                      <td>
                         <div className="provider-actions">
                           <button
                             className="secondary-button compact-button"
                             type="button"
-                            disabled={!providerSelectedForRun && !providerPreflightReady(provider)}
+                            aria-label={providerUseActionLabel}
+                            title={providerUseActionLabel}
+                            data-tooltip={providerUseActionTooltip}
+                            disabled={!providerSelectedForRun && !providerReadyForRun}
                             onClick={() => {
                               if (providerSelectedForRun) {
                                 onStopUse();
@@ -532,19 +500,15 @@ export function ProviderSettings({
                             }}
                           >
                             {providerSelectedForRun ? <X size={14} /> : <Play size={14} />}
-                            {providerSelectedForRun ? t("Stop using") : t("Use")}
                           </button>
-                          <button className="secondary-button compact-button" type="button" onClick={() => openEditProviderSheet(provider)}>
+                          <button className="secondary-button compact-button" type="button" aria-label={t("Edit")} title={t("Edit")} data-tooltip={t("Edit this preset")} onClick={() => openEditProviderSheet(provider)}>
                             <Pencil size={14} />
-                            {t("Edit")}
                           </button>
-                          <button className="secondary-button compact-button" type="button" disabled={isCheckingProviders} onClick={() => onCheck(provider.id)}>
+                          <button className="secondary-button compact-button" type="button" aria-label={t("Check")} title={t("Check")} data-tooltip={t("Check this preset")} disabled={isCheckingProviders} onClick={() => onCheck(provider.id)}>
                             {checkingProviderIds.includes(provider.id) ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                            {t("Check")}
                           </button>
-                          <button className="secondary-button compact-button danger" type="button" onClick={() => onDelete(provider.id)}>
+                          <button className="secondary-button compact-button danger" type="button" aria-label={t("Delete")} title={t("Delete")} data-tooltip={t("Delete this preset")} onClick={() => onDelete(provider.id)}>
                             <Trash2 size={14} />
-                            {t("Delete")}
                           </button>
                         </div>
                       </td>
@@ -569,311 +533,266 @@ export function ProviderSettings({
       {isEditorOpen ? (
         <div className="provider-sheet-backdrop" role="presentation">
           <section className="panel provider-form-panel provider-sheet" aria-labelledby="provider-form-title" role="dialog" aria-modal="true">
-        <div className="panel-title split provider-sheet-header">
-          <span>
-            <h2 id="provider-form-title">{editingProviderId ? t("Edit preset") : t("New preset")}</h2>
-          </span>
-          <button className="icon-button" type="button" onClick={closeProviderSheet} aria-label={t("Close model preset editor")}>
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="provider-sheet-body">
-        <div className="provider-template-board" aria-label={t("Model templates")}>
-          <div className="provider-template-tabs" role="tablist" aria-label={t("Choose model supplier")}>
-            {templateTabs.map((group) => (
-              <button
-                key={group.label}
-                className={group.label === activeTemplateGroup?.label ? "provider-template-tab selected" : "provider-template-tab"}
-                type="button"
-                role="tab"
-                aria-selected={group.label === activeTemplateGroup?.label}
-                onClick={() => selectTemplateGroup(group.label)}
-              >
-                <span>{t(group.label)}</span>
-                <small>{group.templates.length}</small>
+            <div className="panel-title split provider-sheet-header">
+              <span>
+                <h2 id="provider-form-title">{editingProviderId ? t("Edit preset") : t("New preset")}</h2>
+              </span>
+              <button className="icon-button" type="button" onClick={closeProviderSheet} aria-label={t("Close model preset editor")}>
+                <X size={16} />
               </button>
-            ))}
-          </div>
-          {!activeTemplateGroup ? (
-            <div className="empty-state compact-empty">
-              <PlugZap />
-              <span>{t("No templates available.")}</span>
             </div>
-          ) : (
-            <div className="provider-template-panel" role="tabpanel" aria-label={t(activeTemplateGroup.label)}>
-              <div className="provider-template-grid">
-                {activeTemplateGroup.templates.map((template) => (
-                  <button
-                    key={template.templateId}
-                    className={[
-                      "provider-template-card",
-                      template.templateId === customOpenAICompatibleTemplateId ? "custom-provider-card" : "",
-                      selectedTemplateId === template.templateId ? "selected" : "",
-                    ].filter(Boolean).join(" ")}
-                    type="button"
-                    onClick={() => onTemplateSelect(template)}
-                  >
-                    <span className="provider-template-kind">{t(providerTemplateKindLabel(template))}</span>
-                    <strong>{t(template.displayName)}</strong>
-                    <span className="provider-template-model">{template.templateId === customOpenAICompatibleTemplateId ? t("Base URL + model + API Key") : template.model}</span>
-                    <small>{t(template.description)}</small>
+
+            <div className="provider-sheet-body">
+              <section className="provider-inspector-section" aria-label={t("Basic information")}>
+                <div className="provider-inspector-section-title">
+                  <strong>{t("Basic information")}</strong>
+                </div>
+                <div className="provider-template-board" aria-label={t("Model templates")}>
+                  <div className="provider-template-tabs" role="tablist" aria-label={t("Choose model supplier")}>
+                    {templateTabs.map((group) => (
+                      <button
+                        key={group.label}
+                        className={group.label === activeTemplateGroup?.label ? "provider-template-tab selected" : "provider-template-tab"}
+                        type="button"
+                        role="tab"
+                        aria-selected={group.label === activeTemplateGroup?.label}
+                        onClick={() => selectTemplateGroup(group.label)}
+                      >
+                        <span>{t(group.label)}</span>
+                        <small>{group.templates.length}</small>
+                      </button>
+                    ))}
+                  </div>
+                  {!activeTemplateGroup ? (
+                    <div className="empty-state compact-empty">
+                      <PlugZap />
+                      <span>{t("No templates available.")}</span>
+                    </div>
+                  ) : (
+                    <div className="provider-template-panel" role="tabpanel" aria-label={t(activeTemplateGroup.label)}>
+                      <div className="provider-template-grid">
+                        {activeTemplateGroup.templates.map((template) => (
+                          <button
+                            key={template.templateId}
+                            className={[
+                              "provider-template-card",
+                              template.templateId === customOpenAICompatibleTemplateId ? "custom-provider-card" : "",
+                              selectedTemplateId === template.templateId ? "selected" : "",
+                            ].filter(Boolean).join(" ")}
+                            type="button"
+                            onClick={() => onTemplateSelect(template)}
+                          >
+                            <span className="provider-template-kind">{t(providerTemplateKindLabel(template))}</span>
+                            <strong>{t(template.displayName)}</strong>
+                            <span className="provider-template-model">{template.templateId === customOpenAICompatibleTemplateId ? t("Base URL + model + API Key") : template.model}</span>
+                            <small>{t(template.description)}</small>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="field-row provider-identity-row">
+                  <label className="field">
+                    <span>{t("Provider name")}</span>
+                    <input value={form.displayName} onChange={(event) => onFormChange({ ...form, displayName: event.target.value })} />
+                  </label>
+                  <label className="field">
+                    <span>{t("Provider ID")}</span>
+                    <input
+                      value={form.providerId}
+                      disabled={!canEditCustomProviderFields}
+                      onChange={(event) => onFormChange({ ...form, providerId: event.target.value })}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>{t("Model")}</span>
+                    <input value={form.model} onChange={(event) => onFormChange({ ...form, model: event.target.value })} />
+                  </label>
+                </div>
+              </section>
+
+              <section className="provider-inspector-section" aria-label={t("Connection")}>
+                <div className="provider-inspector-section-title">
+                  <strong>{t("Connection")}</strong>
+                </div>
+                <div className="field-row provider-connection-row">
+                  <label className="field">
+                    <span>{t("Base URL")}</span>
+                    <input value={form.baseUrl} onChange={(event) => onFormChange({ ...form, baseUrl: event.target.value })} />
+                  </label>
+                </div>
+                <div className="field-row provider-number-row">
+                  <label className="field">
+                    <span>{t("API protocol")}</span>
+                    <select
+                      value={form.api}
+                      disabled={!canEditCustomProviderFields}
+                      onChange={(event) => onFormChange({ ...form, api: event.target.value as ProviderFormState["api"] })}
+                    >
+                      <option value="openai-completions">{t("OpenAI completions")}</option>
+                      <option value="openai-responses">{t("OpenAI responses")}</option>
+                      <option value="anthropic-messages">{t("Anthropic messages")}</option>
+                      <option value="google-generative-ai">{t("Google generative AI")}</option>
+                      <option value="mistral-conversations">{t("Mistral conversations")}</option>
+                      <option value="media-job">{t("Media job")}</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>{t("Context")}</span>
+                    <input value={form.contextWindow} inputMode="numeric" onChange={(event) => onFormChange({ ...form, contextWindow: event.target.value })} />
+                  </label>
+                  <label className="field">
+                    <span>{t("Max tokens")}</span>
+                    <input value={form.maxTokens} inputMode="numeric" onChange={(event) => onFormChange({ ...form, maxTokens: event.target.value })} />
+                  </label>
+                </div>
+                <label className="field wide">
+                  <span>{t("Capabilities")}</span>
+                  <input value={form.capabilitiesText} onChange={(event) => onFormChange({ ...form, capabilitiesText: event.target.value })} />
+                </label>
+              </section>
+
+              <section className="provider-inspector-section" aria-label={t("Secrets")}>
+                <div className="provider-inspector-section-title">
+                  <strong>{t("Secrets")}</strong>
+                </div>
+                <div className="field provider-api-key-field">
+                  <span>{t("API key")}</span>
+                  <div className="provider-secret-input">
+                    <input
+                      aria-label={t("API key")}
+                      type={showApiKey ? "text" : "password"}
+                      autoComplete="new-password"
+                      value={form.apiKey}
+                      placeholder={t("Paste API key")}
+                      onChange={(event) => onFormChange({ ...form, apiKey: event.target.value, clearApiKey: false })}
+                    />
+                    {form.apiKey ? (
+                      <span className="provider-secret-actions">
+                        <button
+                          className="icon-button provider-secret-toggle"
+                          type="button"
+                          aria-label={showApiKey ? t("Hide API key") : t("Show API key")}
+                          onClick={() => setShowApiKey((current) => !current)}
+                        >
+                          {showApiKey ? <Eye size={15} /> : <EyeOff size={15} />}
+                        </button>
+                        <button
+                          className="icon-button provider-secret-clear"
+                          type="button"
+                          aria-label={t("Clear input")}
+                          onClick={() => onFormChange({ ...form, apiKey: "", clearApiKey: Boolean(editingProvider?.apiKeyConfigured) })}
+                        >
+                          <X size={15} />
+                        </button>
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </section>
+
+              <section className="provider-inspector-section" aria-label={t("Model discovery")}>
+                <div className="provider-model-discovery">
+                  <div className="provider-model-discovery-header">
+                    <span>
+                      <strong>{t("Model discovery")}</strong>
+                      <small>{modelOptionsSource ? t("Loaded from {source}", { source: modelOptionsSource }) : t("Fetch models from the configured endpoint.")}</small>
+                    </span>
+                    <button
+                      className="secondary-button compact-button"
+                      type="button"
+                      disabled={isFetchingModels || form.api === "media-job"}
+                      onClick={() => void fetchProviderModels()}
+                    >
+                      {isFetchingModels ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+                      {t("Fetch models")}
+                    </button>
+                  </div>
+                  {modelOptions.length > 0 ? (
+                    <div className="provider-model-grid" aria-label={t("Available models")}>
+                      {modelOptions.map((model) => (
+                        <button
+                          key={model.id}
+                          className={model.id === form.model ? "provider-model-card selected" : "provider-model-card"}
+                          type="button"
+                          onClick={() => onFormChange({ ...form, model: model.id })}
+                        >
+                          <strong>{model.displayName ?? model.id}</strong>
+                          <small>{model.ownedBy ?? model.id}</small>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {modelFetchError ? (
+                    <div className="model-fetch-error">
+                      <CircleAlert size={15} />
+                      <span>{t(modelFetchError)}</span>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+
+              <section className="provider-inspector-section" aria-label={t("Run preflight")}>
+                <div className="provider-inspector-section-title">
+                  <strong>{t("Run preflight")}</strong>
+                </div>
+                <div className="provider-toggle-row">
+                  <label className="settings-toggle">
+                    <input type="checkbox" checked={form.enabled} onChange={(event) => onFormChange({ ...form, enabled: event.target.checked })} />
+                    <span>{t("Enabled")}</span>
+                  </label>
+                  <label className="settings-toggle">
+                    <input type="checkbox" checked={form.authHeader} onChange={(event) => onFormChange({ ...form, authHeader: event.target.checked })} />
+                    <span>{t("Auth header")}</span>
+                  </label>
+                  <label className="settings-toggle">
+                    <input type="checkbox" checked={form.reasoning} onChange={(event) => onFormChange({ ...form, reasoning: event.target.checked })} />
+                    <span>{t("Reasoning")}</span>
+                  </label>
+                </div>
+
+                {editorErrorMessage ? (
+                  <div className="inline-error provider-editor-error">
+                    <CircleAlert size={16} />
+                    <span>{t(editorErrorMessage)}</span>
+                  </div>
+                ) : null}
+
+                {checkResult && !editorErrorMessage ? (
+                  <div className={checkResult.ok ? "check-result ok" : "check-result bad"}>
+                    {checkResult.ok ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
+                    <div className="check-result-copy">
+                      <span className="check-result-status">{providerCheckStatusLabel(checkResult, t)}</span>
+                      <strong>{checkedProvider ? checkedProvider.displayName : t("Provider check")}</strong>
+                      <span>{providerCheckMessage(checkResult, t)}</span>
+                      <small>{providerCheckGuidance(checkResult, checkedProvider ?? (editingProviderId ? providers.find((provider) => provider.id === editingProviderId) : undefined), t)}</small>
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            </div>
+
+            <div className="provider-sheet-footer">
+              <div className="action-row">
+                <button className="secondary-button" type="button" onClick={closeProviderSheet}>
+                  {t("Cancel")}
+                </button>
+                {editingProviderId ? (
+                  <button className="secondary-button" type="button" disabled={isCheckingProviders} onClick={() => onCheck(editingProviderId)}>
+                    {checkingProviderIds.includes(editingProviderId) ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
+                    {t("Check")}
                   </button>
-                ))}
+                ) : null}
+                <button className="primary-button" type="button" disabled={isCheckingProviders} onClick={() => void handleSaveProvider()}>
+                  {isCheckingProviders ? <Loader2 className="spin" size={16} /> : <Save size={16} />}
+                  {t("Save")}
+                </button>
               </div>
             </div>
-          )}
-        </div>
-        <div className="field-row provider-identity-row">
-          <label className="field">
-            <span>{t("Provider name")}</span>
-            <input value={form.displayName} onChange={(event) => onFormChange({ ...form, displayName: event.target.value })} />
-          </label>
-          <label className="field">
-            <span>{t("Provider ID")}</span>
-            <input
-              value={form.providerId}
-              disabled={!canEditCustomProviderFields}
-              onChange={(event) => onFormChange({ ...form, providerId: event.target.value })}
-            />
-          </label>
-          <label className="field">
-            <span>{t("Model")}</span>
-            <input value={form.model} onChange={(event) => onFormChange({ ...form, model: event.target.value })} />
-          </label>
-        </div>
-
-        <div className="field-row provider-connection-row">
-          <label className="field">
-            <span>{t("Base URL")}</span>
-            <input value={form.baseUrl} onChange={(event) => onFormChange({ ...form, baseUrl: event.target.value })} />
-          </label>
-          <div className="field provider-api-key-field">
-            <span>{t("API key")}</span>
-            <div className="provider-secret-input">
-              <input
-                aria-label={t("API key")}
-                type={showApiKey ? "text" : "password"}
-                autoComplete="new-password"
-                value={form.apiKey}
-                placeholder={t("Paste API key")}
-                onChange={(event) => onFormChange({ ...form, apiKey: event.target.value, clearApiKey: false })}
-              />
-              {form.apiKey ? (
-                <span className="provider-secret-actions">
-                  <button
-                    className="icon-button provider-secret-toggle"
-                    type="button"
-                    aria-label={showApiKey ? t("Hide API key") : t("Show API key")}
-                    onClick={() => setShowApiKey((current) => !current)}
-                  >
-                    {showApiKey ? <Eye size={15} /> : <EyeOff size={15} />}
-                  </button>
-                  <button
-                    className="icon-button provider-secret-clear"
-                    type="button"
-                    aria-label={t("Clear input")}
-                    onClick={() => onFormChange({ ...form, apiKey: "", clearApiKey: Boolean(editingProvider?.apiKeyConfigured) })}
-                  >
-                    <X size={15} />
-                  </button>
-                </span>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        <div className="field-row provider-number-row">
-          <label className="field">
-            <span>{t("API protocol")}</span>
-            <select
-              value={form.api}
-              disabled={!canEditCustomProviderFields}
-              onChange={(event) => onFormChange({ ...form, api: event.target.value as ProviderFormState["api"] })}
-            >
-              <option value="openai-completions">{t("OpenAI completions")}</option>
-              <option value="openai-responses">{t("OpenAI responses")}</option>
-              <option value="anthropic-messages">{t("Anthropic messages")}</option>
-              <option value="google-generative-ai">{t("Google generative AI")}</option>
-              <option value="mistral-conversations">{t("Mistral conversations")}</option>
-              <option value="media-job">{t("Media job")}</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>{t("Context")}</span>
-            <input value={form.contextWindow} inputMode="numeric" onChange={(event) => onFormChange({ ...form, contextWindow: event.target.value })} />
-          </label>
-          <label className="field">
-            <span>{t("Max tokens")}</span>
-            <input value={form.maxTokens} inputMode="numeric" onChange={(event) => onFormChange({ ...form, maxTokens: event.target.value })} />
-          </label>
-        </div>
-
-        <label className="field wide">
-          <span>{t("Capabilities")}</span>
-          <input value={form.capabilitiesText} onChange={(event) => onFormChange({ ...form, capabilitiesText: event.target.value })} />
-        </label>
-
-        <div className="provider-model-discovery">
-          <div className="provider-model-discovery-header">
-            <span>
-              <strong>{t("Available models")}</strong>
-              <small>{modelOptionsSource ? t("Loaded from {source}", { source: modelOptionsSource }) : t("Fetch models from the configured endpoint.")}</small>
-            </span>
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              disabled={isFetchingModels || form.api === "media-job"}
-              onClick={() => void fetchProviderModels()}
-            >
-              {isFetchingModels ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-              {t("Fetch models")}
-            </button>
-          </div>
-          {modelOptions.length > 0 ? (
-            <div className="provider-model-grid" aria-label={t("Available models")}>
-              {modelOptions.map((model) => (
-                <button
-                  key={model.id}
-                  className={model.id === form.model ? "provider-model-card selected" : "provider-model-card"}
-                  type="button"
-                  onClick={() => onFormChange({ ...form, model: model.id })}
-                >
-                  <strong>{model.displayName ?? model.id}</strong>
-                  <small>{model.ownedBy ?? model.id}</small>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {modelFetchError ? (
-            <div className="model-fetch-error">
-              <CircleAlert size={15} />
-              <span>{t(modelFetchError)}</span>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="provider-toggle-row">
-          <label className="settings-toggle">
-            <input type="checkbox" checked={form.enabled} onChange={(event) => onFormChange({ ...form, enabled: event.target.checked })} />
-            <span>{t("Enabled")}</span>
-          </label>
-          <label className="settings-toggle">
-            <input type="checkbox" checked={form.authHeader} onChange={(event) => onFormChange({ ...form, authHeader: event.target.checked })} />
-            <span>{t("Auth header")}</span>
-          </label>
-          <label className="settings-toggle">
-            <input type="checkbox" checked={form.reasoning} onChange={(event) => onFormChange({ ...form, reasoning: event.target.checked })} />
-            <span>{t("Reasoning")}</span>
-          </label>
-        </div>
-
-        {editorErrorMessage ? (
-          <div className="inline-error provider-editor-error">
-            <CircleAlert size={16} />
-            <span>{t(editorErrorMessage)}</span>
-          </div>
-        ) : null}
-
-        {checkResult && !editorErrorMessage ? (
-          <div className={checkResult.ok ? "check-result ok" : "check-result bad"}>
-            {checkResult.ok ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
-            <div className="check-result-copy">
-              <span className="check-result-status">{providerCheckStatusLabel(checkResult, t)}</span>
-              <strong>{checkedProvider ? checkedProvider.displayName : t("Provider check")}</strong>
-              <span>{providerCheckMessage(checkResult, t)}</span>
-              <small>{providerCheckGuidance(checkResult, checkedProvider ?? (editingProviderId ? providers.find((provider) => provider.id === editingProviderId) : undefined), t)}</small>
-            </div>
-          </div>
-        ) : null}
-        </div>
-
-        <div className="provider-sheet-footer">
-        <div className="action-row">
-          <button className="secondary-button" type="button" onClick={closeProviderSheet}>
-            {t("Cancel")}
-          </button>
-          <button className="primary-button" type="button" disabled={isCheckingProviders} onClick={() => void handleSaveProvider()}>
-            {isCheckingProviders ? <Loader2 className="spin" size={16} /> : <Save size={16} />}
-            {t("Save")}
-          </button>
-        </div>
-        </div>
           </section>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function ProviderNextAction({
-  providers,
-  nextActionProvider,
-  isLoading,
-}: {
-  readonly providers: readonly ProviderPreset[];
-  readonly nextActionProvider: ProviderPreset | undefined;
-  readonly isLoading: boolean;
-}): JSX.Element | null {
-  const { t } = useI18n();
-
-  if (isLoading) {
-    return null;
-  }
-
-  if (providers.length === 0) {
-    return (
-      <div className="provider-next-action">
-        <CircleAlert size={16} />
-        <span>{t("Next: choose a template, add an API key, then Save before using it.")}</span>
-      </div>
-    );
-  }
-
-  const readyProvider = providers.find(providerPreflightReady);
-  if (readyProvider) {
-    return null;
-  }
-
-  if (nextActionProvider && providerNeedsSecret(nextActionProvider) && !nextActionProvider.apiKeyConfigured) {
-    return (
-      <div className="provider-next-action">
-        <CircleAlert size={16} />
-        <span>
-          {t("Next: add an API key for {providerName}, then Save.", { providerName: nextActionProvider.displayName })}
-        </span>
-      </div>
-    );
-  }
-
-  if (nextActionProvider && canUseProviderForRun(nextActionProvider)) {
-    if (!nextActionProvider.lastCheck) {
-      return (
-        <div className="provider-next-action">
-          <CircleAlert size={16} />
-          <span>{t("Next: Save {providerName} before using it in Workspace.", { providerName: nextActionProvider.displayName })}</span>
-        </div>
-      );
-    }
-    if (!nextActionProvider.lastCheck.ok) {
-      return (
-        <div className="provider-next-action">
-          <CircleAlert size={16} />
-          <span>
-            {t("Next: repair {providerName} check failure ({status}), then run Check again.", {
-              providerName: nextActionProvider.displayName,
-              status: providerCheckStatusLabel(nextActionProvider.lastCheck, t),
-            })}
-          </span>
-        </div>
-      );
-    }
-  }
-
-  return (
-    <div className="provider-next-action">
-      <CircleAlert size={16} />
-      <span>{t("Next: enable a chat provider with a supported API protocol, then Save.")}</span>
     </div>
   );
 }
@@ -882,13 +801,6 @@ function normalizeProviderEndpoint(value: string): string {
   return value.trim().replace(/\/+$/, "").toLowerCase();
 }
 
-function providerInitial(displayName: string): string {
-  const normalizedName = displayName.trim();
-  if (!normalizedName) {
-    return "#";
-  }
-  return normalizedName.slice(0, 1).toUpperCase();
-}
 
 function ProviderRunRepairPanel({
   run,
