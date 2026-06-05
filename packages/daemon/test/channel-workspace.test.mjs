@@ -373,6 +373,150 @@ test("channel handoff workflows start steps, create tasks, and expose blockers",
   }
 });
 
+test("autoplan-lite workflow compiles durable steps and orchestrates them through the runner", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-orchestrator-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Autoplan",
+      status: "active",
+      boundPath: cwd,
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+      runtimePolicy: {
+        maxConcurrentRuns: 1,
+        executionMode: "serial",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+
+    const compiled = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      templateId: "autoplan-lite",
+      objective: "Build the orchestrator test slice.",
+      providerPresetId: provider.id,
+      createdBy: "local-user",
+    });
+    assert.equal(compiled.workflow.status, "ready");
+    assert.equal(compiled.workflowSteps.length, 8);
+    assert.equal(compiled.workflowSteps[0].metadata.templateStepId, "product-discovery");
+    assert.equal(compiled.workflowSteps[1].metadata.dependsOnStepIds.length, 1);
+
+    const firstTick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(firstTick.status, "started");
+    assert.equal(firstTick.workflowStep.metadata.templateStepId, "product-discovery");
+
+    await waitForCondition(() => runner.runs.length === 4, "autoplan-lite planning runner sequence");
+    const implementationTick = await approveWorkflowStepGate(daemon.url, cwd, compiled.workflow.id, "implementation");
+    assert.equal(implementationTick.status, "started");
+    assert.equal(implementationTick.workflowStep.metadata.templateStepId, "implementation");
+
+    await waitForCondition(() => runner.runs.length === 6, "autoplan-lite implementation and review sequence");
+    const qaTick = await approveWorkflowStepGate(daemon.url, cwd, compiled.workflow.id, "qa");
+    assert.equal(qaTick.status, "started");
+    assert.equal(qaTick.workflowStep.metadata.templateStepId, "qa");
+
+    await waitForCondition(() => runner.runs.length === 7, "autoplan-lite qa sequence");
+    const shipTick = await approveWorkflowStepGate(daemon.url, cwd, compiled.workflow.id, "ship");
+    assert.equal(shipTick.status, "started");
+    assert.equal(shipTick.workflowStep.metadata.templateStepId, "ship");
+
+    await waitForCondition(() => runner.runs.length === 8, "autoplan-lite runner sequence");
+    const finalWorkflow = await getJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(finalWorkflow.workflow.status, "succeeded");
+    const finalSteps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(finalSteps.workflowSteps.map((step) => step.status), Array(8).fill("succeeded"));
+    assert.deepEqual(runner.runs.map((run) => run.task.title), [
+      "Product Discovery",
+      "Product Review",
+      "Design Review",
+      "Engineering Review",
+      "Implementation",
+      "Code Review",
+      "QA",
+      "Ship",
+    ]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow cancel aborts active run, queued steps, and pending workflow approvals", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-cancel-"));
+  const runner = new DelayedRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Cancel workflow");
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+
+    const compiled = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      templateId: "autoplan-lite",
+      objective: "Cancel the workflow.",
+      providerPresetId: provider.id,
+      createdBy: "local-user",
+    });
+    const firstTick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(firstTick.status, "started");
+    await waitForCondition(() => runner.runs.length === 1, "workflow runner start before cancel");
+
+    const cancelled = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/cancel?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cancelled.workflow.status, "cancelled");
+    assert.equal(cancelled.cancelledRunIds.length, 1);
+    assert.deepEqual(cancelled.workflowSteps.map((step) => step.status), Array(8).fill("cancelled"));
+
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(cancelled.cancelledRunIds[0])}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.status, "cancelled");
+  } finally {
+    runner.resolve("cleanup");
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow step retry starts a blocked step after configuration is repaired", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-retry-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Retry workflow");
+    const compiled = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      templateId: "autoplan-lite",
+      objective: "Retry a blocked workflow step.",
+      createdBy: "local-user",
+    });
+    const blocked = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.workflowStep.metadata.templateStepId, "product-discovery");
+    assert.match(blocked.blocker, /provider preset/i);
+
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      defaultProviderPresetId: provider.id,
+    });
+
+    const retried = await postJson(`${daemon.url}/workflow-steps/${encodeURIComponent(blocked.workflowStep.id)}/retry?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(retried.status, "started");
+    assert.equal(retried.workflowStep.metadata.templateStepId, "product-discovery");
+    await waitForCondition(() => runner.runs.length >= 1, "workflow retry runner start");
+    assert.equal(runner.runs[0].task.title, "Product Discovery");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel link preview blocks localhost targets instead of fetching them", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-links-"));
   const daemon = await startDaemonForTest();
@@ -829,6 +973,22 @@ async function createChannel(baseUrl, cwd) {
   })).channel;
 }
 
+async function createWorkflowTestChannel(baseUrl, cwd, name) {
+  return (await postJson(`${baseUrl}/channels?cwd=${encodeURIComponent(cwd)}`, {
+    name,
+    status: "active",
+    boundPath: cwd,
+    allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    runtimePolicy: {
+      maxConcurrentRuns: 1,
+      executionMode: "serial",
+      writeLockScope: "boundPath",
+      allowReadOnlyParallel: true,
+      queueOnConflict: true,
+    },
+  })).channel;
+}
+
 async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
   return await postJson(`${baseUrl}/providers?cwd=${encodeURIComponent(cwd)}`, {
     kind: "glm",
@@ -908,6 +1068,34 @@ async function waitForCondition(predicate, label) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   assert.fail(`Timed out waiting for ${label}.`);
+}
+
+async function approveWorkflowStepGate(baseUrl, cwd, workflowId, templateStepId) {
+  const deadline = Date.now() + 2_000;
+  let approval;
+  let step;
+  while (Date.now() < deadline) {
+    const steps = await getJson(`${baseUrl}/workflows/${encodeURIComponent(workflowId)}/steps?cwd=${encodeURIComponent(cwd)}`);
+    step = steps.workflowSteps.find((candidate) => candidate.metadata?.templateStepId === templateStepId);
+    assert.ok(step, `Expected workflow step for template step ${templateStepId}`);
+    const approvals = await getJson(`${baseUrl}/approvals?cwd=${encodeURIComponent(cwd)}&status=pending&workflowStepId=${encodeURIComponent(step.id)}`);
+    approval = approvals.approvals[0];
+    if (approval) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(approval, `Expected pending approval for workflow step ${templateStepId}`);
+  assert.equal(approval.workflowStepId, step.id);
+  assert.equal(approval.actionType, "workflow_step");
+  assert.equal(approval.payload.type, "workflow_step");
+  assert.equal(approval.payload.workflowStepId, step.id);
+  const actions = await getJson(`${baseUrl}/execution-actions?cwd=${encodeURIComponent(cwd)}&status=waiting_for_approval`);
+  assert.equal(actions.actions.some((action) => action.approvalId === approval.id && action.targetRefs.some((ref) => ref.type === "workflow_step" && ref.id === step.id)), true);
+  await postJson(`${baseUrl}/approvals/${encodeURIComponent(approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+    reason: `approve ${templateStepId}`,
+  });
+  return await postJson(`${baseUrl}/workflows/${encodeURIComponent(workflowId)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
 }
 
 async function postJson(url, body) {

@@ -16,9 +16,10 @@ import {
   type SkillApprovalProfile,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
-import type { McpBroker, RunnerAdapter } from "../../context.js";
+import type { McpBroker } from "../../context.js";
 import { RunControlService } from "../../run-control.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
+import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
@@ -37,7 +38,7 @@ export async function handleRunInterventions(
   response: ServerResponse,
   config: { readonly maxBodyBytes: number },
   url: URL,
-  runner: RunnerAdapter,
+  runnerRegistry: RunnerRegistry,
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
   runtimeSupervisor: RuntimeSupervisor,
@@ -110,7 +111,7 @@ export async function handleRunInterventions(
       void maybeStartNextRunInterventionContinuation({
         sourceRunId,
         store,
-        runner,
+        runnerRegistry,
         storeRegistry,
         activeRuns,
         runtimeSupervisor,
@@ -181,7 +182,7 @@ export function handleRunInterventionItem(
 export function maybeStartNextRunInterventionContinuation(input: {
   readonly sourceRunId: string;
   readonly store: RunStore;
-  readonly runner: RunnerAdapter;
+  readonly runnerRegistry: RunnerRegistry;
   readonly storeRegistry: RunStoreRegistry;
   readonly activeRuns: ActiveRunRegistry;
   readonly runtimeSupervisor: RuntimeSupervisor;
@@ -217,7 +218,7 @@ export function maybeStartNextRunInterventionContinuation(input: {
     const continuationRunId = await executeRunRequest(
       continuationRequest,
       createDetachedRunExecutionSink(),
-      input.runner,
+      input.runnerRegistry,
       input.storeRegistry,
       input.activeRuns,
       input.runtimeSupervisor,

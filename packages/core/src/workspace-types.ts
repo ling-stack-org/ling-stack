@@ -149,6 +149,7 @@ export interface AiTeammate {
   readonly avatarTone?: string;
   readonly avatarImageAttachmentId?: string;
   readonly providerPresetId?: string;
+  readonly runnerId?: string;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt: readonly string[];
   readonly allowedTools: readonly RunTool[];
@@ -169,6 +170,7 @@ export interface CreateAiTeammateInput {
   readonly avatarTone?: string;
   readonly avatarImageAttachmentId?: string;
   readonly providerPresetId?: string;
+  readonly runnerId?: string;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
   readonly allowedTools?: readonly RunTool[];
@@ -186,6 +188,7 @@ export interface AiTeammateUpdateInput {
   readonly avatarTone?: string | null;
   readonly avatarImageAttachmentId?: string | null;
   readonly providerPresetId?: string | null;
+  readonly runnerId?: string | null;
   readonly systemPrompt?: string | null;
   readonly appendSystemPrompt?: readonly string[];
   readonly allowedTools?: readonly RunTool[];
@@ -816,6 +819,21 @@ export const channelWorkflowStepStatuses: readonly ChannelWorkflowStepStatus[] =
 
 export type ChannelWorkflowStepStartMode = "create_task" | "create_and_run_task";
 
+export interface ChannelWorkflowStepMetadata {
+  readonly workflowTemplateId?: string;
+  readonly templateStepId?: string;
+  readonly dependsOnStepIds?: readonly string[];
+  readonly teammateTemplateId?: string;
+  readonly skillId?: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly providerPresetId?: string;
+  readonly autoStart?: boolean;
+  readonly approvalGate?: SkillApprovalProfile;
+  readonly preStepApprovalId?: string;
+  readonly outputArtifactIds?: readonly string[];
+}
+
 export interface ChannelWorkflow {
   readonly id: string;
   readonly workspaceId: string;
@@ -867,6 +885,7 @@ export interface ChannelWorkflowStep {
   readonly status: ChannelWorkflowStepStatus;
   readonly blocker?: string;
   readonly resultSummary?: string;
+  readonly metadata?: ChannelWorkflowStepMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -881,6 +900,7 @@ export interface CreateChannelWorkflowStepInput {
   readonly toParticipantId: string;
   readonly toParticipantLabel: string;
   readonly status?: ChannelWorkflowStepStatus;
+  readonly metadata?: ChannelWorkflowStepMetadata;
 }
 
 export interface UpdateChannelWorkflowStepInput {
@@ -896,6 +916,7 @@ export interface UpdateChannelWorkflowStepInput {
   readonly status?: ChannelWorkflowStepStatus;
   readonly blocker?: string | null;
   readonly resultSummary?: string | null;
+  readonly metadata?: ChannelWorkflowStepMetadata | null;
 }
 
 export interface ListChannelWorkflowStepsOptions {

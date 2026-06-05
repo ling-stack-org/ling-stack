@@ -4220,6 +4220,15 @@ code,
   white-space: nowrap;
 }
 
+.workflow-queue-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .workflow-step-list {
   display: grid;
   gap: 8px;
@@ -4248,6 +4257,41 @@ code,
   flex: 0 0 auto;
   min-width: 68px;
   white-space: nowrap;
+}
+
+.workflow-final-summary {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  min-width: min(100%, 280px);
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-panel);
+}
+
+.workflow-final-summary > strong {
+  font-size: 12px;
+}
+
+.thread-list-section {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.thread-list .run-list-row:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.thread-evidence-trail,
+.thread-resume-composer {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 
 .context-packet {

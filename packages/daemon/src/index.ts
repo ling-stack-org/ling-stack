@@ -20,11 +20,12 @@ import {
   type DaemonConfig,
   type ResolvedDaemonConfig,
 } from "./config.js";
-import type { DaemonContext, DaemonDependencies } from "./context.js";
+import type { DaemonContext, DaemonDependencies, RunnerAdapter } from "./context.js";
 import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
+import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
 import { RuntimeSupervisor } from "./runtime/supervisor.js";
 import { routeRequest } from "./server/router.js";
@@ -33,6 +34,18 @@ import { writeJson } from "./shared/response.js";
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, ResolvedDaemonConfig } from "./config.js";
 export type { DaemonDependencies, ExternalSecretStore, McpBroker, RunnerAdapter } from "./context.js";
+export {
+  createRunnerRegistry,
+  DEFAULT_RUNNER_ID,
+  LEGACY_PI_RUNNER_ID,
+  UnsupportedRunnerError,
+  normalizeRunnerId,
+  type RegisteredRunner,
+  type RunnerRegistry,
+  type RunnerResolution,
+  type RunnerResolutionInput,
+} from "./runtime/runners.js";
+export type { RunnerFallbackReason } from "@ling-stack/core";
 export { ActiveRunRegistry } from "./runtime/active-runs.js";
 export { RunStoreRegistry } from "./runtime/store-registry.js";
 export { RuntimeSupervisor } from "./runtime/supervisor.js";
@@ -52,7 +65,7 @@ export function createDaemonServer(
   dependencies: DaemonDependencies = {},
 ): DaemonServer {
   const resolvedConfig = resolveConfig(config);
-  const runner = dependencies.runner ?? createPiRunner();
+  const runnerRegistry = dependencies.runnerRegistry ?? createDefaultRunnerRegistry(dependencies.runner);
   const extensionRegistry = dependencies.extensionRegistry ?? createDefaultLingExtensionRegistry();
   const externalSecretStore = dependencies.externalSecretStore ?? createSystemKeychainSecretStore();
   const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
@@ -64,7 +77,7 @@ export function createDaemonServer(
   const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig);
   const context: DaemonContext = {
     config: resolvedConfig,
-    runner,
+    runnerRegistry,
     storeRegistry,
     activeRuns,
     runtimeSupervisor,
@@ -119,6 +132,21 @@ export function createDaemonServer(
 }
 
 export const LOCAL_CHANNEL_SOURCE_EXTENSION_ID = "channel-source:local";
+
+export function createDefaultRunnerRegistry(runner: RunnerAdapter = createPiRunner()): RunnerRegistry {
+  const extension = getPiRunnerExtension();
+  return createRunnerRegistry([
+    {
+      id: extension.runnerId,
+      displayName: extension.manifest.name,
+      status: "enabled",
+      adapter: runner,
+      aliases: [LEGACY_PI_RUNNER_ID],
+      supportedProviderApis: extension.supportedProviderApis,
+      supportedTools: extension.supportedTools,
+    },
+  ], DEFAULT_RUNNER_ID);
+}
 
 export function createDefaultLingExtensionRegistry(): LingExtensionRegistry {
   const registry = createLingExtensionRegistry();

@@ -291,6 +291,7 @@ export function WorkspaceClientView({
   permissionMode,
   activeTaskRunAction,
   runningWorkflowStepId,
+  orchestratingWorkflowId,
   errorMessage,
   onChannelFormChange,
   onChannelCreateOpenChange,
@@ -317,7 +318,11 @@ export function WorkspaceClientView({
   onCreateHandoffFromTask,
   onUpdateHandoffStatus,
   onStartWorkflowFromHandoff,
+  onStartTemplateWorkflow,
+  onOrchestrateWorkflow,
+  onCancelWorkflow,
   onStartWorkflowStep,
+  onRetryWorkflowStep,
   onUpdateWorkflowStepStatus,
   onCreateTaskFromContextSummary,
   onRunActivityTriageAction,
@@ -408,6 +413,7 @@ export function WorkspaceClientView({
   readonly permissionMode: SessionPermissionMode;
   readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly runningWorkflowStepId: string;
+  readonly orchestratingWorkflowId: string;
   readonly errorMessage: string;
   readonly onChannelFormChange: (form: ChannelFormState) => void;
   readonly onChannelCreateOpenChange: (open: boolean) => void;
@@ -441,7 +447,11 @@ export function WorkspaceClientView({
   readonly onCreateHandoffFromTask: (task: Task) => void;
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
   readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
+  readonly onStartTemplateWorkflow: () => void;
+  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
+  readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
+  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onRunActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
@@ -1896,6 +1906,31 @@ export function WorkspaceClientView({
           action={
             activityActionRow(item.id, <>
               <small>{t("{count} steps", { count: steps.length })}</small>
+              {workflow.status === "succeeded" ? (
+                <WorkflowFinalSummary
+                  workflow={workflow}
+                  steps={steps}
+                  artifactsByRun={channelArtifactsByRun}
+                />
+              ) : null}
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={() => onOrchestrateWorkflow(workflow)}
+                disabled={orchestratingWorkflowId === workflow.id || !workflowCanAdvance(workflow.status)}
+              >
+                {orchestratingWorkflowId === workflow.id ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                {t("Advance")}
+              </button>
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={() => onCancelWorkflow(workflow)}
+                disabled={orchestratingWorkflowId === workflow.id || !workflowCanCancel(workflow.status)}
+              >
+                <Square size={14} />
+                {t("Cancel")}
+              </button>
               <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
                 <Workflow size={14} />
                 {t("Open context")}
@@ -1922,6 +1957,10 @@ export function WorkspaceClientView({
                   <CircleAlert size={14} />
                   <span>{step.blocker}</span>
                 </div>
+                <button className="secondary-button compact-button" type="button" onClick={() => onRetryWorkflowStep(step)} disabled={runningWorkflowStepId === step.id || step.status !== "blocked"}>
+                  {runningWorkflowStepId === step.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                  {t("Retry")}
+                </button>
                 <button className="secondary-button compact-button" type="button" onClick={() => openProtocolFromActivity("runtime")}>
                   <Workflow size={14} />
                   {t("Open context")}
@@ -2462,6 +2501,7 @@ export function WorkspaceClientView({
         attachments={channelAttachments}
         linkPreviews={channelLinkPreviews}
         runningWorkflowStepId={runningWorkflowStepId}
+        orchestratingWorkflowId={orchestratingWorkflowId}
         loading={channelProtocolLoading}
         runtimeLoading={runtimeLoading}
         runtimeActionWorkUnitId={runtimeActionWorkUnitId}
@@ -2470,7 +2510,11 @@ export function WorkspaceClientView({
         onRejectDecision={onRejectDecision}
         onUpdateHandoffStatus={onUpdateHandoffStatus}
         onStartWorkflowFromHandoff={onStartWorkflowFromHandoff}
+        onStartTemplateWorkflow={onStartTemplateWorkflow}
+        onOrchestrateWorkflow={onOrchestrateWorkflow}
+        onCancelWorkflow={onCancelWorkflow}
         onStartWorkflowStep={onStartWorkflowStep}
+        onRetryWorkflowStep={onRetryWorkflowStep}
         onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
         onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
         onRefreshRuntime={onRefreshRuntime}
@@ -2922,6 +2966,7 @@ function ChannelInspector({
   attachments,
   linkPreviews,
   runningWorkflowStepId,
+  orchestratingWorkflowId,
   loading,
   runtimeLoading,
   runtimeActionWorkUnitId,
@@ -2930,7 +2975,11 @@ function ChannelInspector({
   onRejectDecision,
   onUpdateHandoffStatus,
   onStartWorkflowFromHandoff,
+  onStartTemplateWorkflow,
+  onOrchestrateWorkflow,
+  onCancelWorkflow,
   onStartWorkflowStep,
+  onRetryWorkflowStep,
   onUpdateWorkflowStepStatus,
   onCreateTaskFromContextSummary,
   onRefreshRuntime,
@@ -2966,6 +3015,7 @@ function ChannelInspector({
   readonly attachments: readonly ChannelAttachment[];
   readonly linkPreviews: readonly ChannelLinkPreview[];
   readonly runningWorkflowStepId: string;
+  readonly orchestratingWorkflowId: string;
   readonly loading: boolean;
   readonly runtimeLoading: boolean;
   readonly runtimeActionWorkUnitId: string;
@@ -2974,7 +3024,11 @@ function ChannelInspector({
   readonly onRejectDecision: (decision: ChannelDecision) => void;
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
   readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
+  readonly onStartTemplateWorkflow: () => void;
+  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
+  readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
+  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onRefreshRuntime: () => void;
@@ -3087,7 +3141,13 @@ function ChannelInspector({
           />
           <div className="task-strip-head">
             <span><Workflow size={15} /><strong>{t("Workflow queue")}</strong></span>
-            <small>{activeWorkflows.length}</small>
+            <span className="button-row compact">
+              <small>{activeWorkflows.length}</small>
+              <button className="secondary-button compact-button" type="button" onClick={onStartTemplateWorkflow} disabled={Boolean(orchestratingWorkflowId)}>
+                {orchestratingWorkflowId === "new:autoplan-lite" ? <Loader2 className="spin" size={13} /> : <Play size={13} />}
+                {t("Start autoplan")}
+              </button>
+            </span>
           </div>
           <ProtocolList
             emptyLabel={t("No active workflows")}
@@ -3104,7 +3164,11 @@ function ChannelInspector({
                 attachments={attachments}
                 linkPreviews={linkPreviews}
                 runningWorkflowStepId={runningWorkflowStepId}
+                orchestrating={orchestratingWorkflowId === workflow.id}
+                onOrchestrateWorkflow={onOrchestrateWorkflow}
+                onCancelWorkflow={onCancelWorkflow}
                 onStartWorkflowStep={onStartWorkflowStep}
+                onRetryWorkflowStep={onRetryWorkflowStep}
                 onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
               />
             )}
@@ -3342,6 +3406,10 @@ function uniqueWorkUnits(workUnits: readonly WorkUnit[]): readonly WorkUnit[] {
   return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  return [...new Set(values)];
+}
+
 function formatAge(value: string | undefined): string {
   if (!value) {
     return "-";
@@ -3395,7 +3463,11 @@ function WorkflowQueueCard({
   attachments,
   linkPreviews,
   runningWorkflowStepId,
+  orchestrating,
+  onOrchestrateWorkflow,
+  onCancelWorkflow,
   onStartWorkflowStep,
+  onRetryWorkflowStep,
   onUpdateWorkflowStepStatus,
 }: {
   readonly workflow: ChannelWorkflow;
@@ -3407,12 +3479,17 @@ function WorkflowQueueCard({
   readonly attachments: readonly ChannelAttachment[];
   readonly linkPreviews: readonly ChannelLinkPreview[];
   readonly runningWorkflowStepId: string;
+  readonly orchestrating: boolean;
+  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
+  readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
+  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
 }): JSX.Element {
   const { t } = useI18n();
   const orderedSteps = [...steps].sort((left, right) => left.position - right.position);
   const workflowContextSummaries = contextSummaries.filter((summary) => orderedSteps.some((step) => step.contextSummaryId === summary.id));
+  const canAdvance = workflowCanAdvance(workflow.status);
   return (
     <div className="protocol-row workflow-queue-card">
       <div className="workflow-queue-head">
@@ -3420,7 +3497,17 @@ function WorkflowQueueCard({
           <strong>{workflow.title}</strong>
           <small>{workflow.status} · {workflow.objective}</small>
         </span>
-        <StatusBadge status={workflow.status} />
+        <span className="workflow-queue-actions">
+          <StatusBadge status={workflow.status} />
+          <button className="secondary-button compact-button" type="button" onClick={() => onOrchestrateWorkflow(workflow)} disabled={!canAdvance || orchestrating}>
+            {orchestrating ? <Loader2 className="spin" size={13} /> : <Play size={13} />}
+            {t("Advance")}
+          </button>
+          <button className="secondary-button compact-button" type="button" onClick={() => onCancelWorkflow(workflow)} disabled={!workflowCanCancel(workflow.status) || orchestrating}>
+            <Square size={13} />
+            {t("Cancel")}
+          </button>
+        </span>
       </div>
       <div className="context-packet">
         {brief?.objective ? <span>{t("Brief")}: {brief.objective}</span> : null}
@@ -3444,6 +3531,7 @@ function WorkflowQueueCard({
               running={runningWorkflowStepId === step.id}
               contextSummary={contextSummaries.find((summary) => summary.id === step.contextSummaryId)}
               onStartWorkflowStep={onStartWorkflowStep}
+              onRetryWorkflowStep={onRetryWorkflowStep}
               onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
             />
           ))
@@ -3458,18 +3546,21 @@ function WorkflowStepCard({
   running,
   contextSummary,
   onStartWorkflowStep,
+  onRetryWorkflowStep,
   onUpdateWorkflowStepStatus,
 }: {
   readonly step: ChannelWorkflowStep;
   readonly running: boolean;
   readonly contextSummary: ChannelContextSummary | undefined;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
+  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
 }): JSX.Element {
   const { t } = useI18n();
   const terminal = isWorkflowStepTerminal(step.status);
   const canStart = step.status === "queued" || step.status === "blocked";
   const canSkip = step.status === "queued";
+  const metadata = step.metadata;
   return (
     <article className="workflow-step-card compact">
       <div className="workflow-step-head">
@@ -3490,6 +3581,16 @@ function WorkflowStepCard({
           <span>{step.blocker}</span>
         </div>
       ) : null}
+      {metadata ? (
+        <div className="context-packet muted">
+          {metadata.templateStepId ? <span>{t("Template")}: {metadata.templateStepId}</span> : null}
+          {metadata.skillId ? <span>{t("Skill")}: {metadata.skillId}</span> : null}
+          {metadata.requestedRunnerId ? <span>{t("Runner")}: {metadata.requestedRunnerId}</span> : null}
+          {metadata.providerPresetId ? <span>{t("Provider")}: {metadata.providerPresetId}</span> : null}
+          {metadata.dependsOnStepIds?.length ? <span>{t("Depends")}: {metadata.dependsOnStepIds.length}</span> : null}
+          {metadata.preStepApprovalId ? <span>{t("Approval")}: {metadata.preStepApprovalId}</span> : null}
+        </div>
+      ) : null}
       {step.taskId || step.runId || step.resultSummary ? (
         <div className="context-packet muted">
           {step.taskId ? <span>{t("Task linked")}</span> : null}
@@ -3506,6 +3607,10 @@ function WorkflowStepCard({
           {running ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
           {t("Start + run")}
         </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onRetryWorkflowStep(step)} disabled={step.status !== "blocked" || running}>
+          {running ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          {t("Retry")}
+        </button>
         <button className="secondary-button compact-button" type="button" onClick={() => onUpdateWorkflowStepStatus(step, "skipped")} disabled={!canSkip || running}>
           {t("Skip")}
         </button>
@@ -3514,6 +3619,48 @@ function WorkflowStepCard({
         </button>
       </div>
     </article>
+  );
+}
+
+function WorkflowFinalSummary({
+  workflow,
+  steps,
+  artifactsByRun,
+}: {
+  readonly workflow: ChannelWorkflow;
+  readonly steps: readonly ChannelWorkflowStep[];
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+}): JSX.Element {
+  const { t } = useI18n();
+  const orderedSteps = [...steps].sort((left, right) => left.position - right.position);
+  const completedSteps = orderedSteps.filter((step) => step.status === "succeeded" || step.status === "skipped");
+  const runIds = uniqueStrings(orderedSteps.map((step) => step.runId).filter((id): id is string => Boolean(id)));
+  const artifacts = runIds.flatMap((runId) => artifactsByRun[runId] ?? []);
+  const changedFiles = uniqueStrings(artifacts.map((artifact) => artifact.path).filter(Boolean));
+  const summaries = orderedSteps
+    .filter((step) => step.resultSummary)
+    .map((step) => `${step.title}: ${step.resultSummary}`);
+
+  return (
+    <div className="workflow-final-summary" aria-label={t("Workflow summary")}>
+      <strong>{t("Workflow summary")}</strong>
+      <div className="context-packet muted">
+        <span>{workflow.title}</span>
+        <span>{t("{count} steps", { count: completedSteps.length })}</span>
+        <span>{t("{count} runs", { count: runIds.length })}</span>
+        <span>{t("{count} artifacts", { count: artifacts.length })}</span>
+      </div>
+      {summaries.length > 0 ? (
+        <div className="context-packet muted">
+          {summaries.slice(0, 4).map((summary) => <span key={summary}>{summary}</span>)}
+        </div>
+      ) : null}
+      {changedFiles.length > 0 ? (
+        <div className="context-packet muted">
+          <span>{t("Changed files")}: {changedFiles.slice(0, 4).join(", ")}{changedFiles.length > 4 ? ` +${changedFiles.length - 4}` : ""}</span>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -4060,6 +4207,12 @@ function TaskDetailPanel({
           <Clock3 size={13} />
           {formatDateTime(task.updatedAt)}
         </span>
+        {task.requestedSkillId ? (
+          <span>
+            <SquareTerminal size={13} />
+            {t("Requested skill")}: {task.requestedSkillId}
+          </span>
+        ) : null}
       </div>
       {task.currentRunId ? (
         <div className={linkedRunSucceeded ? "task-run-link compact succeeded" : "task-run-link compact"}>
@@ -5163,6 +5316,14 @@ function savedViewLabel(view: ChannelActivitySavedView, t: (key: string) => stri
 
 function isWorkflowStepTerminal(status: ChannelWorkflowStep["status"]): boolean {
   return status === "succeeded" || status === "failed" || status === "skipped" || status === "cancelled";
+}
+
+function workflowCanAdvance(status: ChannelWorkflow["status"]): boolean {
+  return status === "ready" || status === "running" || status === "waiting_for_approval" || status === "blocked";
+}
+
+function workflowCanCancel(status: ChannelWorkflow["status"]): boolean {
+  return status === "draft" || status === "ready" || status === "running" || status === "waiting_for_approval" || status === "blocked";
 }
 
 function ChannelFiles({

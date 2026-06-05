@@ -213,6 +213,7 @@ export interface ChannelWorkflowStepStartRequest {
   readonly taskTitle?: string;
   readonly taskPrompt?: string;
   readonly providerPresetId?: string;
+  readonly runnerId?: string;
   readonly assigneeTeammateId?: string;
   readonly idempotencyKey?: string;
   readonly skipProviderPreflight?: boolean;
@@ -596,6 +597,7 @@ export function parseChannelWorkflowStepStartRequest(value: unknown): ChannelWor
     taskTitle: readOptionalString(value, "taskTitle"),
     taskPrompt: readOptionalString(value, "taskPrompt"),
     providerPresetId: readOptionalString(value, "providerPresetId"),
+    runnerId: readOptionalString(value, "runnerId"),
     assigneeTeammateId: readOptionalString(value, "assigneeTeammateId"),
     idempotencyKey: readOptionalString(value, "idempotencyKey"),
     skipProviderPreflight: readOptionalBoolean(value, "skipProviderPreflight"),

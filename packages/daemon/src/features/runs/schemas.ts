@@ -1,9 +1,9 @@
 import {
   readOnlyRunTools,
-  runInterventionModes,
+  runContinuationReasons,
   sessionPermissionModes,
   type PermissionConfirmation,
-  type RunInterventionMode,
+  type RunContinuationReason,
   type RunTool,
   type SessionPermissionMode,
   type SkillApprovalProfile,
@@ -26,6 +26,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly providerPresetId?: string;
   readonly provider?: PiRunnerProviderConfig;
   readonly teammateId?: string;
+  readonly runnerId?: string;
   readonly requestedSkillId?: string;
   readonly tools?: readonly RunTool[];
   readonly approvalProfile?: SkillApprovalProfile;
@@ -35,7 +36,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly idempotencyKey?: string;
   readonly parentRunId?: string;
   readonly interventionId?: string;
-  readonly continuationReason?: RunInterventionMode;
+  readonly continuationReason?: RunContinuationReason;
 }
 
 export function parseRunRequest(value: unknown): RunRequest {
@@ -49,6 +50,7 @@ export function parseRunRequest(value: unknown): RunRequest {
   const provider = value.provider;
   const providerPresetId = readOptionalString(value, "providerPresetId");
   const teammateId = readOptionalString(value, "teammateId");
+  const runnerId = readOptionalString(value, "runnerId");
   const requestedSkillId = readOptionalString(value, "requestedSkillId");
   const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
   const idempotencyKey = readOptionalString(value, "idempotencyKey");
@@ -71,6 +73,7 @@ export function parseRunRequest(value: unknown): RunRequest {
     workspaceCwd,
     providerPresetId,
     teammateId,
+    runnerId,
     requestedSkillId,
     skipProviderPreflight,
     idempotencyKey,
@@ -91,7 +94,7 @@ export function parseRunRequest(value: unknown): RunRequest {
     agentDir: readOptionalString(value, "agentDir"),
     parentRunId: readOptionalString(value, "parentRunId"),
     interventionId: readOptionalString(value, "interventionId"),
-    continuationReason: readOptionalRunInterventionMode(value, "continuationReason"),
+    continuationReason: readOptionalRunContinuationReason(value, "continuationReason"),
   };
   assertFullAccessPermissionConfirmed(runRequest);
   return runRequest;
@@ -200,15 +203,15 @@ function readOptionalPermissionConfirmation(record: Record<string, unknown>, key
   };
 }
 
-function readOptionalRunInterventionMode(record: Record<string, unknown>, key: string): RunInterventionMode | undefined {
+function readOptionalRunContinuationReason(record: Record<string, unknown>, key: string): RunContinuationReason | undefined {
   const value = readOptionalString(record, key);
   if (value === undefined) {
     return undefined;
   }
-  if (!runInterventionModes.includes(value as RunInterventionMode)) {
-    throw new Error(`${key} must be one of: ${runInterventionModes.join(", ")}`);
+  if (!runContinuationReasons.includes(value as RunContinuationReason)) {
+    throw new Error(`${key} must be one of: ${runContinuationReasons.join(", ")}`);
   }
-  return value as RunInterventionMode;
+  return value as RunContinuationReason;
 }
 
 function readOptionalProviderApi(record: Record<string, unknown>, key: string): PiRunnerProviderConfig["api"] {

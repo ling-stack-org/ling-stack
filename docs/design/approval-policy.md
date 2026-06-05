@@ -8,6 +8,9 @@ Current implementation includes workspace-level configurable policy storage, `GE
 
 This design follows session persistence and provider presets. It defines how Ling Stack should represent, persist, display, and enforce human approval gates for risky actions.
 
+The broader action-ledger, evidence, and long-lived execution experience is defined in
+[Codex-Like Execution Experience](codex-like-execution.md).
+
 ## Goal
 
 Risky actions must stop before they happen.

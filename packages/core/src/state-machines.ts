@@ -208,7 +208,7 @@ const workflowTransitions: Readonly<Record<WorkflowStatus, Partial<Record<Workfl
     all_steps_succeeded: "succeeded",
     cancel: "cancelled",
   },
-  waiting_for_approval: { approval_approved: "running", cancel: "cancelled" },
+  waiting_for_approval: { approval_approved: "running", step_failed: "failed", cancel: "cancelled" },
   blocked: { start: "running", step_failed: "failed", cancel: "cancelled" },
   succeeded: {},
   failed: {},

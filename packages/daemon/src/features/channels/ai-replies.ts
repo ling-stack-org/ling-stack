@@ -1,5 +1,5 @@
 import type { Channel, ChannelMessage, RunStore, SecretResolver } from "@ling-stack/core";
-import type { RunnerAdapter } from "../../context.js";
+import type { RunnerRegistry, RunnerResolution } from "../../runtime/runners.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
@@ -12,7 +12,7 @@ import { extractChannelExecutionProposal } from "./ai-proposals.js";
 import { formatChannelDiscussionPrompt } from "./ai-prompts.js";
 
 export async function createAiChannelReply(input: {
-  readonly runner: RunnerAdapter;
+  readonly runnerRegistry: RunnerRegistry;
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
@@ -29,6 +29,11 @@ export async function createAiChannelReply(input: {
   const teammate = resolveAiTeammateReference(input.store, teammateId);
   const canonicalTeammateId = teammate?.id ?? teammateId;
   const providerPresetId = input.providerPresetId ?? teammate?.providerPresetId ?? input.channel.defaultProviderPresetId;
+  const runnerResolution = input.runnerRegistry.resolve({
+    requestedRunnerId: teammate?.runnerId,
+    allowFallback: true,
+    tools: [],
+  });
   const now = new Date().toISOString();
   const pending = input.store.createChannelMessage(
     {
@@ -52,12 +57,16 @@ export async function createAiChannelReply(input: {
     channelId: input.channel.id,
     teammateId: canonicalTeammateId,
     providerPresetId,
+    requestedRunnerId: runnerResolution.requestedRunnerId,
+    effectiveRunnerId: runnerResolution.effectiveRunnerId,
+    fallbackReason: runnerResolution.fallbackReason,
     linkedMessageId: pending.id,
     idempotencyKey: `channel_ai_reply:${input.sourceMessage.id}:${pending.id}`,
     request: {
       sourceMessageId: input.sourceMessage.id,
       providerPresetId,
       teammateId: canonicalTeammateId,
+      runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
     },
   });
 
@@ -68,13 +77,14 @@ export async function createAiChannelReply(input: {
     teammate,
     canonicalTeammateId,
     providerPresetId,
+    runnerResolution,
     now,
   });
   return pending;
 }
 
 async function completeAiChannelReply(input: {
-  readonly runner: RunnerAdapter;
+  readonly runnerRegistry: RunnerRegistry;
   readonly store: RunStore;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
@@ -86,6 +96,7 @@ async function completeAiChannelReply(input: {
   readonly supervised: ReturnType<typeof startRuntimeWorkUnit>;
   readonly teammate: ReturnType<typeof resolveAiTeammateReference>;
   readonly canonicalTeammateId: string;
+  readonly runnerResolution: RunnerResolution;
   readonly now: string;
 }): Promise<void> {
   if (input.teammate && input.teammate.status !== "active") {
@@ -152,10 +163,11 @@ async function completeAiChannelReply(input: {
       attempt: input.supervised.attempt,
       channel: input.channel,
       providerKey: input.providerPresetId,
+      runnerId: input.runnerResolution.effectiveRunnerId,
       now: input.now,
     });
 
-    const result = await input.runner.runTask({
+    const result = await input.runnerResolution.runner.adapter.runTask({
       cwd: input.store.paths.cwd,
       task: {
         id: input.sourceMessage.id,
@@ -230,6 +242,18 @@ async function completeAiChannelReply(input: {
   } finally {
     input.store.releaseRuntimeSemaphoreSlotsForOwner(input.supervised.attempt.id, new Date().toISOString(), "message-reply-finished");
   }
+}
+
+function toRunnerResolutionSnapshot(resolution: RunnerResolution): {
+  readonly requestedRunnerId: string;
+  readonly effectiveRunnerId: string;
+  readonly fallbackReason?: RunnerResolution["fallbackReason"];
+} {
+  return {
+    requestedRunnerId: resolution.requestedRunnerId,
+    effectiveRunnerId: resolution.effectiveRunnerId,
+    fallbackReason: resolution.fallbackReason,
+  };
 }
 
 function finishChannelMessageWorkUnit(

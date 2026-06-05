@@ -15,6 +15,7 @@ import { isRecord, readNullableString, readOptionalBoolean, readOptionalString, 
 
 export interface TaskRunRequest {
   readonly providerPresetId: string;
+  readonly runnerId?: string;
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight: boolean;
   readonly idempotencyKey?: string;
@@ -67,6 +68,7 @@ export function parseTaskRunRequest(value: unknown): TaskRunRequest {
   }
   return {
     providerPresetId: readString(value, "providerPresetId"),
+    runnerId: readOptionalString(value, "runnerId"),
     requestedSkillId: readOptionalString(value, "requestedSkillId"),
     skipProviderPreflight: readOptionalBoolean(value, "skipProviderPreflight") ?? false,
     idempotencyKey: readOptionalString(value, "idempotencyKey"),

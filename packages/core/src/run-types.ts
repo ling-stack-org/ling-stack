@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type {
+  ApprovalActionType,
   ApprovalRequest,
+  ApprovalRisk,
   CreateApprovalRequestInput,
   ListApprovalRequestsOptions,
   ResolveApprovalRequestInput,
@@ -174,6 +176,10 @@ import type {
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
+export function createLingThreadId(): string {
+  return `thread_${randomUUID()}`;
+}
+
 export type RunEventType =
   | "run_created"
   | "run_start"
@@ -204,6 +210,8 @@ export type RunEventType =
 
 export const runInterventionModes = ["queue_followup", "interrupt_redirect"] as const;
 export type RunInterventionMode = (typeof runInterventionModes)[number];
+export const runContinuationReasons = [...runInterventionModes, "manual_resume"] as const;
+export type RunContinuationReason = (typeof runContinuationReasons)[number];
 
 export const runInterventionStatuses = [
   "queued",
@@ -214,6 +222,120 @@ export const runInterventionStatuses = [
   "cancelled",
 ] as const;
 export type RunInterventionStatus = (typeof runInterventionStatuses)[number];
+
+export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work";
+export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
+
+export interface LingThread {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly kind: LingThreadKind;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly teammateId?: string;
+  readonly workflowId?: string;
+  readonly workflowStepId?: string;
+  readonly externalWorkId?: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly status: LingThreadStatus;
+  readonly activeRunId?: string;
+  readonly lastRunId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly archivedAt?: string;
+}
+
+export interface CreateLingThreadInput {
+  readonly id?: string;
+  readonly kind: LingThreadKind;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly teammateId?: string;
+  readonly workflowId?: string;
+  readonly workflowStepId?: string;
+  readonly externalWorkId?: string;
+  readonly title: string;
+  readonly objective: string;
+  readonly status?: LingThreadStatus;
+  readonly activeRunId?: string;
+  readonly lastRunId?: string;
+}
+
+export interface UpdateLingThreadInput {
+  readonly title?: string;
+  readonly objective?: string;
+  readonly status?: LingThreadStatus;
+  readonly activeRunId?: string | null;
+  readonly lastRunId?: string | null;
+  readonly archivedAt?: string | null;
+}
+
+export interface ListLingThreadsOptions {
+  readonly kind?: LingThreadKind;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly teammateId?: string;
+  readonly workflowStepId?: string;
+  readonly externalWorkId?: string;
+  readonly status?: LingThreadStatus;
+  readonly includeArchived?: boolean;
+  readonly limit?: number;
+}
+
+export type ExecutionActionType = ApprovalActionType;
+
+export type ExecutionActionStatus =
+  | "proposed"
+  | "waiting_for_approval"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "cancelled"
+  | "executing"
+  | "succeeded"
+  | "failed";
+
+export interface ExecutionActionTargetRef {
+  readonly type:
+    | "run"
+    | "task"
+    | "channel"
+    | "workflow"
+    | "workflow_step"
+    | "work_unit"
+    | "media_job"
+    | "external_work_action"
+    | "file"
+    | "command"
+    | "mcp_tool";
+  readonly id?: string;
+  readonly label?: string;
+  readonly path?: string;
+}
+
+export interface ExecutionAction {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId?: string;
+  readonly runId?: string;
+  readonly workUnitId?: string;
+  readonly approvalId?: string;
+  readonly toolCallId?: string;
+  readonly actionType: ExecutionActionType;
+  readonly risk: ApprovalRisk;
+  readonly status: ExecutionActionStatus;
+  readonly title: string;
+  readonly summary: string;
+  readonly targetRefs: readonly ExecutionActionTargetRef[];
+  readonly previewArtifactIds: readonly string[];
+  readonly resultArtifactIds: readonly string[];
+  readonly policySnapshot?: unknown;
+  readonly createdAt: string;
+  readonly resolvedAt?: string;
+  readonly executedAt?: string;
+  readonly completedAt?: string;
+}
 
 export interface RunSession {
   readonly id: string;
@@ -230,10 +352,11 @@ export interface RunSession {
   readonly providerSnapshot: unknown;
   readonly requestSnapshot: unknown;
   readonly eventLogPath: string;
+  readonly threadId?: string;
   readonly workUnitId?: string;
   readonly parentRunId?: string;
   readonly interventionId?: string;
-  readonly continuationReason?: string;
+  readonly continuationReason?: RunContinuationReason;
   readonly summaryPath?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;
@@ -264,10 +387,11 @@ export interface CreateRunInput {
   readonly taskSnapshot: unknown;
   readonly providerSnapshot: unknown;
   readonly requestSnapshot: unknown;
+  readonly threadId?: string;
   readonly workUnitId?: string;
   readonly parentRunId?: string;
   readonly interventionId?: string;
-  readonly continuationReason?: string;
+  readonly continuationReason?: RunContinuationReason;
   readonly createdAt: string;
 }
 
@@ -329,6 +453,7 @@ export interface ListRunEventsOptions {
 export interface ListRunsOptions {
   readonly status?: RunStatus;
   readonly teammateId?: string;
+  readonly threadId?: string;
   readonly limit?: number;
 }
 
@@ -373,6 +498,18 @@ export interface CreateRunArtifactInput {
 
 export interface RunStore {
   readonly paths: LingStackRuntimePaths;
+  createLingThread(input: CreateLingThreadInput, now: string): LingThread;
+  getLingThread(threadId: string): LingThread | undefined;
+  findLingThreadByOwner(input: {
+    readonly kind: LingThreadKind;
+    readonly taskId?: string;
+    readonly workflowStepId?: string;
+    readonly externalWorkId?: string;
+    readonly teammateId?: string;
+    readonly channelId?: string;
+  }): LingThread | undefined;
+  listLingThreads(options?: ListLingThreadsOptions): LingThread[];
+  updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined;
   createRun(input: CreateRunInput): RunSession;
   markRunStarted(runId: string, startedAt: string): void;
   markRunWaitingForApproval(runId: string, updatedAt: string): void;
@@ -443,6 +580,7 @@ export interface RunStore {
   listMediaJobArtifacts(mediaJobId: string): RunArtifact[];
   listExternalWorkArtifacts(externalWorkId: string): RunArtifact[];
   recoverStaleRuns(now: string): number;
+  recoverStaleChannelWorkflows(now: string): number;
   listStateTransitionEvents(options?: ListStateTransitionEventsOptions): StateTransitionEvent[];
   recordStateTransitionEvent(input: CreateStateTransitionEventInput): StateTransitionEvent;
   findStateTransitionByIdempotency(

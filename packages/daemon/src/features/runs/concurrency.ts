@@ -155,6 +155,7 @@ export function acquireRunRuntimeSemaphores(input: {
   readonly attempt: WorkUnitAttempt;
   readonly channel?: Channel;
   readonly providerKey: string;
+  readonly runnerId?: string;
   readonly now: string;
 }): void {
   const expiresAt = new Date(new Date(input.now).getTime() + RESOURCE_LEASE_TTL_MS).toISOString();
@@ -166,7 +167,7 @@ export function acquireRunRuntimeSemaphores(input: {
     },
     {
       resourceType: "runner" as const,
-      resourceKey: DEFAULT_RUNNER_ID,
+      resourceKey: input.runnerId ?? DEFAULT_RUNNER_ID,
       limit: 4,
     },
     ...(input.channel

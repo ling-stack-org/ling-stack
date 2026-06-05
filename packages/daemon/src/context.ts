@@ -17,6 +17,7 @@ import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/externa
 import type { ActiveRunRegistry } from "./runtime/active-runs.js";
 import type { RunStoreFactory } from "./runtime/store-registry.js";
 import type { RunStoreRegistry } from "./runtime/store-registry.js";
+import type { RunnerRegistry } from "./runtime/runners.js";
 import type { RuntimeSupervisor } from "./runtime/supervisor.js";
 
 export interface RunnerAdapter {
@@ -47,6 +48,7 @@ export interface ExternalSecretStore extends SecretResolver {
 
 export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
+  readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
   readonly extensionRegistry?: LingExtensionRegistry;
   readonly secretResolver?: SecretResolver;
@@ -57,7 +59,7 @@ export interface DaemonDependencies {
 
 export interface DaemonContext {
   readonly config: ResolvedDaemonConfig;
-  readonly runner: RunnerAdapter;
+  readonly runnerRegistry: RunnerRegistry;
   readonly storeRegistry: RunStoreRegistry;
   readonly activeRuns: ActiveRunRegistry;
   readonly runtimeSupervisor: RuntimeSupervisor;

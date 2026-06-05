@@ -15,6 +15,7 @@ export type ApprovalActionType =
   | "media_cost"
   | "credential_change"
   | "provider_change"
+  | "workflow_step"
   | "mcp_tool_call";
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
@@ -77,6 +78,15 @@ export type ApprovalPayload =
       readonly changedFields: readonly string[];
     }
   | {
+      readonly type: "workflow_step";
+      readonly workflowId: string;
+      readonly workflowStepId: string;
+      readonly title: string;
+      readonly approvalMode: string;
+      readonly requiredForTools: readonly string[];
+      readonly requiredForActions: readonly string[];
+    }
+  | {
       readonly type: "external_action";
       readonly sourceKind: "github" | "linear";
       readonly actionKind: string;
@@ -90,6 +100,7 @@ export interface ApprovalRequest {
   readonly taskId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly workflowStepId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
   readonly actionType: ApprovalActionType;
@@ -110,6 +121,7 @@ export interface CreateApprovalRequestInput {
   readonly taskId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly workflowStepId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
   readonly actionType: ApprovalActionType;
@@ -130,6 +142,7 @@ export interface ListApprovalRequestsOptions {
   readonly runId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly workflowStepId?: string;
   readonly limit?: number;
 }
 
@@ -150,6 +163,7 @@ export const approvalActionTypes: readonly ApprovalActionType[] = [
   "media_cost",
   "credential_change",
   "provider_change",
+  "workflow_step",
   "mcp_tool_call",
 ];
 

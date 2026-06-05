@@ -22,6 +22,9 @@ This borrows the Codex-style interaction pattern of "keep working, but let the u
 steer" while preserving Ling's daemon-owned runtime supervisor, approvals, memory audit,
 and state-machine guarantees.
 
+The complete approval, evidence, thread, and resume product contract is defined in
+[Codex-Like Execution Experience](codex-like-execution.md).
+
 ## Current State
 
 The current runner path creates a Pi session and calls one `session.prompt(...)`. The

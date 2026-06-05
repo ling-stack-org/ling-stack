@@ -65,7 +65,11 @@ export function handleListRuns(response: ServerResponse, url: URL, storeRegistry
     const store = storeRegistry.getStore(cwd);
     writeJson(response, 200, {
       cwd,
-      runs: store.listRuns({ limit, status }),
+      runs: store.listRuns({
+        limit,
+        status,
+        threadId: url.searchParams.get("threadId") ?? undefined,
+      }),
     });
   } catch (error) {
     writeJson(response, 400, {
@@ -343,6 +347,7 @@ export function handleApprovalsCollection(
       runId: url.searchParams.get("runId") ?? undefined,
       mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
       externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
+      workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
     });
     writeJson(response, 200, {
       cwd,
@@ -351,6 +356,7 @@ export function handleApprovalsCollection(
         runId: url.searchParams.get("runId") ?? undefined,
         mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
         externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
+        workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       }),
     });

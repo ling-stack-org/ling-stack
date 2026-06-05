@@ -194,6 +194,9 @@ The next implementation slices are documented separately so the platform archite
 - [Web Modularization](design/web-modularization.md): split the large Web app surface into feature modules without changing behavior.
 - [Contracts and API Client](design/contracts-api-client.md): extract shared daemon DTOs and one reusable client for Web, CLI, desktop, and future mobile/PWA.
 - [Internal Registry and Plugin SDK](design/internal-registry-plugin-sdk.md): introduce internal extension registries before external plugin loading.
+- [Runner Registry](design/runner-registry.md): introduce multi-runner resolution while keeping Pi as the default execution backend.
+- [Multi-Agent Orchestrator](design/multi-agent-orchestrator.md): compile workflow templates into durable multi-teammate workflow steps that execute through normal task/run state machines.
+- [Codex-like Execution](design/codex-like-execution.md): complete approval action auditing, evidence replay, long-lived threads, and resume/redirect behavior.
 - [Desktop Shell](design/desktop-shell.md): package the Web UI and daemon behind a desktop shell without forking the product model.
 - [Secrets and Keychain](design/secrets-keychain.md): keep `env:` and fail-closed `keychain:` refs behind one resolver while keeping raw secret values out of renderer, logs, and artifacts.
 

@@ -1042,13 +1042,14 @@ export function TeammateWorkspace({
             <button
               className="secondary-button compact-button"
               type="button"
+              title={t("Settings")}
+              aria-label={t("Settings")}
               onClick={() => {
                 setWorkspaceView("settings");
                 setActiveTab("profile");
               }}
             >
               <Settings size={15} />
-              {t("Settings")}
             </button>
           </div>
           <div className="teammate-chat-status-row" aria-label={t("Private chat status")}>

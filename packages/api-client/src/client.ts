@@ -26,12 +26,16 @@ import type {
   ChannelMessageMutationResponse,
   ChannelMutationResponse,
   ChannelWorkflowListResponse,
+  ChannelWorkflowCancelResponse,
   ChannelWorkflowMutationResponse,
+  ChannelWorkflowOrchestrationResponse,
   ChannelWorkflowStatus,
   ChannelWorkflowStepListResponse,
   ChannelWorkflowStepMutationResponse,
+  ChannelWorkflowStepRetryResponse,
   ChannelWorkflowStepStartResponse,
   ChannelWorkflowStepStatus,
+  ChannelWorkflowTemplateMutationResponse,
   CreateChannelAttachmentRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
@@ -44,6 +48,7 @@ import type {
   CreateTeammateDirectMessageRequest,
   CreateTeammatePrivateAttachmentRequest,
   CreateChannelWorkflowFromHandoffRequest,
+  CreateChannelWorkflowFromTemplateRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
   CreateMemoryObjectRequest,
@@ -86,6 +91,12 @@ import type {
   HardDeleteAiTeammateRequest,
   HardDeleteAiTeammateResponse,
   ListApprovalsRequest,
+  LingThreadDetailResponse,
+  LingThreadEvidenceResponse,
+  LingThreadListRequest,
+  LingThreadListResponse,
+  LingThreadResumeRequest,
+  LingThreadResumeResponse,
   ListResourceLeasesRequest,
   ListStateTransitionsRequest,
   ListTasksRequest,
@@ -236,6 +247,33 @@ export class LingDaemonClient {
 
   async listRuns(cwd: string, limit = 50): Promise<RunListResponse> {
     return this.get("/runs", { cwd, limit });
+  }
+
+  async listLingThreads(cwd: string, options: LingThreadListRequest = {}): Promise<LingThreadListResponse> {
+    return this.get("/threads", {
+      cwd,
+      kind: options.kind,
+      channelId: options.channelId,
+      taskId: options.taskId,
+      teammateId: options.teammateId,
+      workflowStepId: options.workflowStepId,
+      externalWorkId: options.externalWorkId,
+      status: options.status,
+      includeArchived: options.includeArchived,
+      limit: options.limit,
+    });
+  }
+
+  async getLingThread(cwd: string, threadId: string): Promise<LingThreadDetailResponse> {
+    return this.get(`/threads/${encodeURIComponent(threadId)}`, { cwd });
+  }
+
+  async getLingThreadEvidence(cwd: string, threadId: string): Promise<LingThreadEvidenceResponse> {
+    return this.get(`/threads/${encodeURIComponent(threadId)}/evidence`, { cwd });
+  }
+
+  async resumeLingThread(cwd: string, threadId: string, input: LingThreadResumeRequest = {}): Promise<LingThreadResumeResponse> {
+    return this.post(`/threads/${encodeURIComponent(threadId)}/resume`, { cwd }, input);
   }
 
   async getRun(runId: string, cwd?: string): Promise<RunSession> {
@@ -736,6 +774,14 @@ export class LingDaemonClient {
     return this.post(`/channels/${encodeURIComponent(channelId)}/workflows`, { cwd }, input);
   }
 
+  async createChannelWorkflowFromTemplate(
+    cwd: string,
+    channelId: string,
+    input: CreateChannelWorkflowFromTemplateRequest,
+  ): Promise<ChannelWorkflowTemplateMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/workflows`, { cwd }, input);
+  }
+
   async getChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowMutationResponse> {
     return this.get(`/workflows/${encodeURIComponent(workflowId)}`, { cwd });
   }
@@ -746,6 +792,10 @@ export class LingDaemonClient {
     input: UpdateChannelWorkflowRequest,
   ): Promise<ChannelWorkflowMutationResponse> {
     return this.patch(`/workflows/${encodeURIComponent(workflowId)}`, { cwd }, input);
+  }
+
+  async cancelChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowCancelResponse> {
+    return this.post(`/workflows/${encodeURIComponent(workflowId)}/cancel`, { cwd }, {});
   }
 
   async createChannelWorkflowFromHandoff(
@@ -790,6 +840,14 @@ export class LingDaemonClient {
     input: StartChannelWorkflowStepRequest,
   ): Promise<ChannelWorkflowStepStartResponse> {
     return this.post(`/workflow-steps/${encodeURIComponent(workflowStepId)}/start`, { cwd }, input);
+  }
+
+  async retryChannelWorkflowStep(cwd: string, workflowStepId: string): Promise<ChannelWorkflowStepRetryResponse> {
+    return this.post(`/workflow-steps/${encodeURIComponent(workflowStepId)}/retry`, { cwd }, {});
+  }
+
+  async orchestrateChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowOrchestrationResponse> {
+    return this.post(`/workflows/${encodeURIComponent(workflowId)}/orchestrate`, { cwd }, {});
   }
 
   async listTasks(cwd: string, options: ListTasksRequest = {}): Promise<TaskListResponse> {
