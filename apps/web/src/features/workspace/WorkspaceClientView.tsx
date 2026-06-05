@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
   ArrowDown,
@@ -13,6 +13,7 @@ import {
   CircleAlert,
   Clock3,
   Command,
+  Copy,
   Database,
   FileCheck2,
   FileText,
@@ -43,6 +44,7 @@ import {
   X,
 } from "lucide-react";
 import type { AiTeammateTemplate } from "@ling-stack/core";
+import { artifactContentUrl } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildChannelActivityItems, type ChannelActivityAttention, type ChannelActivityItem } from "../../lib/channel-activity.js";
@@ -104,6 +106,7 @@ import {
   UsedMemorySummary,
   filterUsedMemoryEventsByResponse,
 } from "../../shared/components/index.js";
+import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, MessageFooterActions, MessageRow, RightDrawer } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -138,7 +141,9 @@ import type {
   UsedMemoryEvent,
   WorkUnit,
 } from "../../types.js";
-import { ApprovalCard, type ApprovalResolution } from "../approvals/index.js";
+import { ApprovalCard } from "../approvals/ApprovalCard.js";
+import type { ApprovalResolution } from "../approvals/types.js";
+import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
@@ -538,6 +543,10 @@ export function WorkspaceClientView({
   const activeRun = activeRunId ? runById.get(activeRunId) : undefined;
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const taskChannelById = useMemo(() => new Map(tasks.map((task) => [task.id, task.channelId])), [tasks]);
+  const channelAttachmentById = useMemo(
+    () => new Map(channelAttachments.map((attachment) => [attachment.id, attachment])),
+    [channelAttachments],
+  );
   const channelRuns = useMemo(
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
@@ -567,6 +576,86 @@ export function WorkspaceClientView({
   const providerBlocker = providerRunPreflightBlocker(effectiveProvider, t);
   const activeLeaseCount = resourceLeases.filter((lease) => lease.status === "active").length;
   const taskActionPending = activeTaskRunAction !== undefined;
+  const activeConversationRun = activeRun && runCanBeStopped(activeRun) ? activeRun : channelRuns.find(runCanBeStopped);
+  const activeConversationTask = activeConversationRun?.taskId ? taskById.get(activeConversationRun.taskId) : undefined;
+  const channelActiveStatusStrip = activeConversationRun ? (
+    <ConversationStatusStrip
+      className="channel-active-status-strip"
+      icon={<Workflow size={15} />}
+      title={t("Run in progress")}
+      description={activeConversationTask ? t("Run for {title} is {status}.", { title: activeConversationTask.title, status: activeConversationRun.status }) : t("Run is still running.")}
+      statusNode={<StatusBadge status={activeConversationRun.status} />}
+      metaItems={[
+        { id: "provider", label: t("Provider"), value: effectiveProvider?.displayName ?? t("No model selected") },
+        { id: "approvals", label: t("Approvals"), value: pendingApprovalCount },
+      ]}
+      actions={[
+        {
+          id: "open-run",
+          label: t("Open run"),
+          icon: <SquareTerminal size={14} />,
+          onClick: () => openRunInPanel(activeConversationRun.id),
+        },
+      ]}
+    />
+  ) : pendingApprovalCount > 0 ? (
+    <ConversationStatusStrip
+      className="channel-active-status-strip attention"
+      icon={<ShieldCheck size={15} />}
+      title={t("Pending approvals")}
+      description={selectedApproval?.title ?? t("Approval request")}
+      statusNode={<StatusBadge status="waiting_for_approval" />}
+      metaItems={[
+        { id: "approvals", label: t("Approvals"), value: pendingApprovalCount },
+      ]}
+      actions={[
+        {
+          id: "open-approval",
+          label: t("Open approval"),
+          icon: <ShieldCheck size={14} />,
+          onClick: () => openApprovalInPanel(selectedApproval),
+        },
+      ]}
+    />
+  ) : providerBlocker ? (
+    <ConversationStatusStrip
+      className="channel-active-status-strip attention"
+      icon={<CircleAlert size={15} />}
+      title={t("Provider needs attention")}
+      description={providerBlocker}
+      statusNode={<StatusBadge status="blocked" />}
+      metaItems={[
+        { id: "provider", label: t("Provider"), value: effectiveProvider?.displayName ?? t("No model selected") },
+      ]}
+      actions={[
+        {
+          id: "open-progress",
+          label: t("Progress"),
+          icon: <Workflow size={14} />,
+          onClick: openProgressPanel,
+        },
+      ]}
+    />
+  ) : activeLeaseCount > 0 || taskActionPending ? (
+    <ConversationStatusStrip
+      className="channel-active-status-strip"
+      icon={<Clock3 size={15} />}
+      title={t("Active work")}
+      description={activeLeaseCount > 0 ? t("Active resource lock") : t("Sending message...")}
+      statusNode={<StatusBadge status="running" />}
+      metaItems={[
+        { id: "leases", label: t("Resource leases"), value: activeLeaseCount },
+      ]}
+      actions={[
+        {
+          id: "open-progress",
+          label: t("Progress"),
+          icon: <Workflow size={14} />,
+          onClick: openProgressPanel,
+        },
+      ]}
+    />
+  ) : null;
 
   useEffect(() => {
     if (!channelCreateOpen) {
@@ -1050,6 +1139,10 @@ export function WorkspaceClientView({
     }
     messageFeedPinnedToLatestRef.current = true;
     setMessageFeedLatestButtonVisible(false);
+  }
+
+  function copyMessageText(text: string): void {
+    void navigator.clipboard.writeText(text).catch(() => undefined);
   }
 
   function openTaskFromActivity(taskId: string): void {
@@ -1793,9 +1886,95 @@ export function WorkspaceClientView({
       const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
         <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
       ) : undefined;
+      const messageAttachments = message.attachmentIds
+        .map((id) => channelAttachmentById.get(id))
+        .filter((attachment): attachment is ChannelAttachment => Boolean(attachment));
       const nonChatAction = message.linkedTaskId
         ? activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
         : activityActionRow(item.id);
+      if (plainChatMessage) {
+        return (
+          <div className="message-group">
+            <MessageRow
+              className={message.status === "blocked" ? "channel-message-row blocked" : "channel-message-row"}
+              authorType={message.authorType}
+              avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
+              authorName={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"))}
+              createdAtLabel={formatDateTime(message.createdAt)}
+              statusNode={message.kind === "ai_reply" ? <small className="conversation-message-tag">AI</small> : null}
+              bodyNode={(
+                <p>
+                  {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
+                  {renderMessageBody(pendingAiReply ? t("AI teammate is replying...") : message.body)}
+                </p>
+              )}
+              attachmentsNode={messageAttachments.length > 0 ? (
+                <ConversationAttachmentStrip
+                  attachments={messageAttachments.map((attachment) => ({
+                    id: attachment.id,
+                    label: attachment.fileName,
+                    meta: formatBytes(attachment.sizeBytes),
+                    href: attachmentContentUrl(attachment),
+                    target: "_blank",
+                    rel: "noreferrer",
+                    icon: attachment.kind === "image" ? <ImageIcon size={13} /> : <FileText size={13} />,
+                  }))}
+                />
+              ) : null}
+              evidenceNode={messageUsedMemoryEvents.length > 0 ? (
+                <ConversationEvidenceBundlePanel
+                  label={t("Message evidence")}
+                  bundle={{
+                    summary: t("Used memory"),
+                    sections: [
+                      {
+                        id: "memory",
+                        label: t("Memory"),
+                        summary: t("Used memory"),
+                        content: usedMemorySummary,
+                      },
+                    ],
+                  }}
+                />
+              ) : null}
+              actionsNode={(
+                <MessageFooterActions
+                  className="channel-message-row-actions"
+                  actions={[
+                    {
+                      id: "copy",
+                      label: t("Copy message"),
+                      icon: <Copy size={11} />,
+                      onClick: () => copyMessageText(message.body),
+                    },
+                    {
+                      id: "reply",
+                      label: t("Reply in topic"),
+                      icon: <Reply size={11} />,
+                      className: "message-reply-button",
+                      onClick: () => openThreadForMessage(message),
+                    },
+                  ]}
+                />
+              )}
+            />
+            {executionProposals.map((proposal) => (
+              <ChannelExecutionProposalCard
+                key={proposal.id}
+                proposal={proposal}
+                assigneeLabel={teammateLabel(proposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))}
+                teammates={teammateOptions}
+                linkedRun={proposal.linkedRunId ? runById.get(proposal.linkedRunId) : undefined}
+                activeRunId={activeRunId}
+                latestStatus={latestStatus}
+                onConfirm={() => onConfirmExecutionProposal(proposal)}
+                onCancel={() => onCancelExecutionProposal(proposal)}
+                onOpenRun={openRunInPanel}
+              />
+            ))}
+          </div>
+        );
+      }
       return (
         <div className="message-group">
           <MessageBubble
@@ -1803,7 +1982,7 @@ export function WorkspaceClientView({
             side={plainChatMessage && message.authorType === "local-user" ? "end" : "start"}
             avatar={<AvatarInitial label={message.authorType === "ai-teammate" ? "A" : message.authorType === "system" ? "S" : "T"} tone={message.authorType === "ai-teammate" ? "teal" : message.authorType === "system" ? "violet" : undefined} />}
             author={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"))}
-            tag={message.kind === "ai_reply" ? "AI" : message.kind === "task_link" ? "Task" : undefined}
+            tag={message.kind === "task_link" ? "Task" : undefined}
             time={formatDateTime(message.createdAt)}
             body={pendingAiReply ? t("AI teammate is replying...") : message.body}
             pending={pendingAiReply}
@@ -2134,6 +2313,7 @@ export function WorkspaceClientView({
 
   const channelComposer = (
     <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
+      {channelActiveStatusStrip}
       <div
         className={composerDragActive ? "composer-drop-zone active" : "composer-drop-zone"}
         onDragOver={handleComposerDragOver}
@@ -2485,6 +2665,7 @@ export function WorkspaceClientView({
   ) : sidePanelView === "context" ? (
     <div className="channel-protocol-tab-content">
       <ChannelInspector
+        cwd={cwd}
         mode={inspectorMode}
         onModeChange={setInspectorMode}
         brief={channelBrief}
@@ -2496,6 +2677,7 @@ export function WorkspaceClientView({
         contextSummaries={channelContextSummaries}
         workflows={channelWorkflows}
         workflowSteps={channelWorkflowSteps}
+        artifactsByRun={channelArtifactsByRun}
         runtimeDiagnostics={runtimeDiagnostics}
         workUnits={workUnits}
         attachments={channelAttachments}
@@ -2589,7 +2771,7 @@ export function WorkspaceClientView({
 	                    }}
 	                  >
 	                    <SlidersHorizontal size={15} />
-	                    <span>{t("Activity filters")}</span>
+	                    <span>{t("Filter channel events")}</span>
 	                  </button>
 	                </div>
 	              ) : null}
@@ -2795,64 +2977,57 @@ export function WorkspaceClientView({
                       />
                     </div>
                   ) : null}
-	                  <div className="message-feed-wrap">
-	                    <div
-	                      ref={messageFeedRef}
-	                      className={messageFeedEmpty ? "message-feed message-feed-empty" : "message-feed"}
-                      aria-label={t("Channel message feed")}
-                      onScroll={handleMessageFeedScroll}
-                    >
-                  {channelMessagesLoading || channelProtocolLoading ? (
-                    <div className="client-empty-state">
-                      <Loader2 className="spin" />
-                      <span>{t("Loading messages...")}</span>
-                    </div>
-                  ) : visibleActivityItems.length === 0 ? (
-                    <div className="client-empty-state message-feed-empty-state">
-                      {activityFiltersActive ? <Search /> : <MessageSquare />}
-                      <span>{activityFiltersActive ? t("No activity matches these filters") : selectedChannel ? t("No channel messages yet") : t("Create a default channel to start the workspace loop.")}</span>
-                    </div>
-                  ) : (
-                    <div
-                      className="message-feed-virtualizer"
-                      style={{ height: `${messageFeedVirtualizer.getTotalSize()}px` }}
-                    >
-                      {messageFeedVirtualRows.map((virtualRow) => (
-                        <MessageFeedVirtualRow
-                          key={virtualRow.key}
-                          feedItem={messageFeedItems[virtualRow.index]}
-                          measureElement={messageFeedVirtualizer.measureElement}
-                          virtualRow={virtualRow}
+                  <ConversationVirtualFeed
+                    scrollRef={messageFeedRef}
+                    ariaLabel={t("Channel message feed")}
+                    loading={channelMessagesLoading || channelProtocolLoading}
+                    empty={messageFeedEmpty}
+                    loadingLabel={t("Loading messages...")}
+                    emptyIcon={activityFiltersActive ? <Search /> : <MessageSquare />}
+                    emptyLabel={
+                      activityFiltersActive
+                        ? t("No activity matches these filters")
+                        : selectedChannel
+                          ? t("No channel messages yet")
+                          : t("Create a default channel to start the workspace loop.")
+                    }
+                    totalSize={messageFeedVirtualizer.getTotalSize()}
+                    virtualRows={messageFeedVirtualRows}
+                    items={messageFeedItems}
+                    getItemId={(feedItem) => feedItem.id}
+                    getItemKind={(feedItem) => feedItem.kind}
+                    renderItem={(feedItem) => renderMessageFeedItem(feedItem)}
+                    measureElement={messageFeedVirtualizer.measureElement}
+                    onScroll={handleMessageFeedScroll}
+                    statusNode={
+                      <>
+                        {channelActivityTransitionsLoading ? (
+                          <div className="activity-feed-status" role="status">
+                            <Loader2 className="spin" size={14} />
+                            <span>{t("Loading activity events...")}</span>
+                          </div>
+                        ) : null}
+                        {channelActivityTransitionError ? (
+                          <div className="activity-feed-status warning" role="status">
+                            <CircleAlert size={14} />
+                            <span>{t("Some activity changes could not be loaded")}</span>
+                          </div>
+                        ) : null}
+                      </>
+                    }
+                    latestButtonNode={
+                      messageFeedLatestButtonVisible ? (
+                        <button
+                          className="message-feed-latest-button"
+                          type="button"
+                          onClick={scrollMessageFeedToLatest}
+                          aria-label={t("Jump to latest message")}
                         >
-                          {renderMessageFeedItem(messageFeedItems[virtualRow.index])}
-                        </MessageFeedVirtualRow>
-                      ))}
-                    </div>
-                  )}
-                  {channelActivityTransitionsLoading ? (
-                    <div className="activity-feed-status" role="status">
-                      <Loader2 className="spin" size={14} />
-                      <span>{t("Loading activity events...")}</span>
-                    </div>
-                  ) : null}
-                  {channelActivityTransitionError ? (
-                    <div className="activity-feed-status warning" role="status">
-                      <CircleAlert size={14} />
-                      <span>{t("Some activity changes could not be loaded")}</span>
-                    </div>
-                  ) : null}
-                    </div>
-                    {messageFeedLatestButtonVisible ? (
-                      <button
-                        className="message-feed-latest-button"
-                        type="button"
-                        onClick={scrollMessageFeedToLatest}
-                        aria-label={t("Jump to latest message")}
-                      >
-                        <ArrowDown size={22} />
-                      </button>
-                    ) : null}
-                  </div>
+                          <ArrowDown size={22} />
+                        </button>
+                      ) : null
+                    }
+                  />
                   {channelComposer}
                 </div>
                 {activeThreadRoot ? (
@@ -2892,55 +3067,48 @@ export function WorkspaceClientView({
             </div>
         </section>
         {sidePanelOpen ? (
-          <aside className="channel-side-panel" aria-label={sidePanelTitle}>
-            <div className="channel-side-panel-head">
-              <span className="channel-side-panel-title">
-                {channelSidePanelIcon(sidePanelView, 16)}
-                <strong>{sidePanelTitle}</strong>
-	              </span>
-	              <div className="channel-side-panel-actions">
-	                {(sidePanelView === "progress" || sidePanelView === "task") ? (
-	                  <button
-	                    className="icon-button"
-	                    type="button"
-	                    onClick={() => {
-	                      setCreateTaskOpen(true);
-	                      setSidePanelView("task");
-	                      setSidePanelOpen(true);
-	                      setActivityToolsOpen(false);
-	                      setAttentionQueueOpen(false);
-	                      setTeammateManagerOpen(false);
-	                    }}
-	                    disabled={!selectedChannelId}
-	                    aria-label={t("New task")}
-	                    title={t("New task")}
-	                  >
-	                    <Plus size={15} />
-	                  </button>
-	                ) : null}
-	                <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
-	                  {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-	                </button>
-	              </div>
-            </div>
-            <div className="channel-side-panel-nav" aria-label={t("Channel drawer pages")}>
-              {channelSidePanelRootViews.map((view) => (
-                <button
-                  key={view}
-                  className={sidePanelView === view ? "channel-side-panel-nav-item active" : "channel-side-panel-nav-item"}
-                  type="button"
-                  onClick={() => openSidePanelView(view)}
-                  aria-label={t(channelSidePanelLabel(view))}
-                  title={t(channelSidePanelLabel(view))}
-                >
-                  {channelSidePanelIcon(view, 16)}
+          <RightDrawer
+            className="channel-side-panel"
+            ariaLabel={sidePanelTitle}
+            title={sidePanelTitle}
+            icon={channelSidePanelIcon(sidePanelView, 16)}
+            actions={(
+              <>
+                {(sidePanelView === "progress" || sidePanelView === "task") ? (
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={() => {
+                      setCreateTaskOpen(true);
+                      setSidePanelView("task");
+                      setSidePanelOpen(true);
+                      setActivityToolsOpen(false);
+                      setAttentionQueueOpen(false);
+                      setTeammateManagerOpen(false);
+                    }}
+                    disabled={!selectedChannelId}
+                    aria-label={t("New task")}
+                    title={t("New task")}
+                  >
+                    <Plus size={15} />
+                  </button>
+                ) : null}
+                <button className="icon-button" type="button" onClick={refreshSidePanel} disabled={sidePanelLoading || !selectedChannelId} aria-label={t("Refresh")} title={t("Refresh")}>
+                  {sidePanelLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
                 </button>
-              ))}
-            </div>
-            <div className="channel-side-panel-body">
-              {sidePanelContent}
-            </div>
-          </aside>
+              </>
+            )}
+            navLabel={t("Channel drawer pages")}
+            navItems={channelSidePanelRootViews.map((view) => ({
+              id: view,
+              label: t(channelSidePanelLabel(view)),
+              icon: channelSidePanelIcon(view, 16),
+              active: sidePanelView === view,
+              onSelect: () => openSidePanelView(view),
+            }))}
+          >
+            {sidePanelContent}
+          </RightDrawer>
         ) : null}
       </div>
     </div>
@@ -2950,6 +3118,7 @@ export function WorkspaceClientView({
 type ChannelInspectorMode = "brief" | "decisions" | "handoffs" | "runtime";
 
 function ChannelInspector({
+  cwd,
   mode,
   onModeChange,
   brief,
@@ -2961,6 +3130,7 @@ function ChannelInspector({
   contextSummaries,
   workflows,
   workflowSteps,
+  artifactsByRun,
   runtimeDiagnostics,
   workUnits,
   attachments,
@@ -2987,6 +3157,7 @@ function ChannelInspector({
   onRetryWorkUnit,
   onReconcileWorkUnit,
 }: {
+  readonly cwd: string;
   readonly mode: ChannelInspectorMode;
   readonly onModeChange: (mode: ChannelInspectorMode) => void;
   readonly brief: ChannelBrief | undefined;
@@ -3010,6 +3181,7 @@ function ChannelInspector({
   readonly contextSummaries: readonly ChannelContextSummary[];
   readonly workflows: readonly ChannelWorkflow[];
   readonly workflowSteps: readonly ChannelWorkflowStep[];
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly runtimeDiagnostics: RuntimeDiagnosticsResponse | undefined;
   readonly workUnits: readonly WorkUnit[];
   readonly attachments: readonly ChannelAttachment[];
@@ -3155,8 +3327,10 @@ function ChannelInspector({
             renderItem={(workflow) => (
               <WorkflowQueueCard
                 key={workflow.id}
+                cwd={cwd}
                 workflow={workflow}
                 steps={workflowSteps.filter((step) => step.workflowId === workflow.id)}
+                artifactsByRun={artifactsByRun}
                 brief={brief}
                 decisions={activeDecisions}
                 handoff={handoffs.find((handoff) => handoff.id === workflow.sourceHandoffId)}
@@ -3454,8 +3628,10 @@ function ProtocolList<T>({
 }
 
 function WorkflowQueueCard({
+  cwd,
   workflow,
   steps,
+  artifactsByRun,
   brief,
   decisions,
   handoff,
@@ -3470,8 +3646,10 @@ function WorkflowQueueCard({
   onRetryWorkflowStep,
   onUpdateWorkflowStepStatus,
 }: {
+  readonly cwd: string;
   readonly workflow: ChannelWorkflow;
   readonly steps: readonly ChannelWorkflowStep[];
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly brief: ChannelBrief | undefined;
   readonly decisions: readonly ChannelDecision[];
   readonly handoff: ChannelHandoff | undefined;
@@ -3527,9 +3705,11 @@ function WorkflowQueueCard({
           orderedSteps.map((step) => (
             <WorkflowStepCard
               key={step.id}
+              cwd={cwd}
               step={step}
               running={runningWorkflowStepId === step.id}
               contextSummary={contextSummaries.find((summary) => summary.id === step.contextSummaryId)}
+              artifactsByRun={artifactsByRun}
               onStartWorkflowStep={onStartWorkflowStep}
               onRetryWorkflowStep={onRetryWorkflowStep}
               onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
@@ -3542,16 +3722,20 @@ function WorkflowQueueCard({
 }
 
 function WorkflowStepCard({
+  cwd,
   step,
   running,
   contextSummary,
+  artifactsByRun,
   onStartWorkflowStep,
   onRetryWorkflowStep,
   onUpdateWorkflowStepStatus,
 }: {
+  readonly cwd: string;
   readonly step: ChannelWorkflowStep;
   readonly running: boolean;
   readonly contextSummary: ChannelContextSummary | undefined;
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
   readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
@@ -3561,6 +3745,15 @@ function WorkflowStepCard({
   const canStart = step.status === "queued" || step.status === "blocked";
   const canSkip = step.status === "queued";
   const metadata = step.metadata;
+  const runArtifacts = step.runId ? artifactsByRun[step.runId] ?? [] : [];
+  const runArtifactsById = new Map(runArtifacts.map((artifact) => [artifact.id, artifact] as const));
+  const additionalOutputArtifactIds = uniqueStrings((metadata?.outputArtifactIds ?? []).filter((artifactId) => artifactId !== metadata?.outputArtifactId));
+  const packetArtifactIds = uniqueStrings([
+    metadata?.contextArtifactId,
+    metadata?.outputArtifactId,
+    ...additionalOutputArtifactIds,
+  ].filter((artifactId): artifactId is string => Boolean(artifactId)));
+  const gates = metadata?.gates ?? [];
   return (
     <article className="workflow-step-card compact">
       <div className="workflow-step-head">
@@ -3588,7 +3781,58 @@ function WorkflowStepCard({
           {metadata.requestedRunnerId ? <span>{t("Runner")}: {metadata.requestedRunnerId}</span> : null}
           {metadata.providerPresetId ? <span>{t("Provider")}: {metadata.providerPresetId}</span> : null}
           {metadata.dependsOnStepIds?.length ? <span>{t("Depends")}: {metadata.dependsOnStepIds.length}</span> : null}
-          {metadata.preStepApprovalId ? <span>{t("Approval")}: {metadata.preStepApprovalId}</span> : null}
+          {metadata.preStepApprovalId ? <span>{t("Pre-step approval")}: {metadata.preStepApprovalId}</span> : null}
+        </div>
+      ) : null}
+      {packetArtifactIds.length > 0 || runArtifacts.length > 0 ? (
+        <div className="context-packet muted" aria-label={t("Packet artifacts")}>
+          {metadata?.contextArtifactId ? (
+            <WorkflowArtifactChip
+              label={t("Context packet")}
+              artifactId={metadata.contextArtifactId}
+              artifact={runArtifactsById.get(metadata.contextArtifactId)}
+              cwd={cwd}
+            />
+          ) : null}
+          {metadata?.outputArtifactId ? (
+            <WorkflowArtifactChip
+              label={t("Output packet")}
+              artifactId={metadata.outputArtifactId}
+              artifact={runArtifactsById.get(metadata.outputArtifactId)}
+              cwd={cwd}
+            />
+          ) : null}
+          {additionalOutputArtifactIds.map((artifactId) => (
+            <WorkflowArtifactChip
+              key={artifactId}
+              label={t("Artifact")}
+              artifactId={artifactId}
+              artifact={runArtifactsById.get(artifactId)}
+              cwd={cwd}
+            />
+          ))}
+          {runArtifacts.length > packetArtifactIds.length ? <span>{t("{count} artifacts", { count: runArtifacts.length })}</span> : null}
+        </div>
+      ) : null}
+      {metadata?.policy ? (
+        <div className="context-packet muted" aria-label={t("Workflow policy")}>
+          <span>{t("Workflow policy")}</span>
+          <span>{t("Run failed")}: {workflowStepFailurePolicyLabel(metadata.policy.onRunFailed, t)}</span>
+          <span>{t("Run cancelled")}: {workflowStepFailurePolicyLabel(metadata.policy.onRunCancelled, t)}</span>
+          <span>{t("Approval denied")}: {workflowStepFailurePolicyLabel(metadata.policy.onApprovalDenied, t)}</span>
+          <span>{metadata.policy.retryable ? t("Retryable") : t("Not retryable")}</span>
+          {metadata.policy.maxRetries !== undefined ? <span>{t("Max retries")}: {metadata.policy.maxRetries}</span> : null}
+        </div>
+      ) : null}
+      {gates.length > 0 || metadata?.activeGateStage || metadata?.postStepApprovalId ? (
+        <div className="context-packet muted" aria-label={t("Workflow gates")}>
+          {gates.map((gate) => (
+            <span key={`${gate.stage}:${gate.title}`}>
+              {workflowGateStageLabel(gate.stage, t)}: {gate.title} · {approvalProfileText(gate.approvalProfile, t)}
+            </span>
+          ))}
+          {metadata?.activeGateStage ? <span>{t("Active gate")}: {workflowGateStageLabel(metadata.activeGateStage, t)}</span> : null}
+          {metadata?.postStepApprovalId ? <span>{t("Post-step approval")}: {metadata.postStepApprovalId}</span> : null}
         </div>
       ) : null}
       {step.taskId || step.runId || step.resultSummary ? (
@@ -3620,6 +3864,50 @@ function WorkflowStepCard({
       </div>
     </article>
   );
+}
+
+function WorkflowArtifactChip({
+  label,
+  artifactId,
+  artifact,
+  cwd,
+}: {
+  readonly label: string;
+  readonly artifactId: string;
+  readonly artifact: RunArtifact | undefined;
+  readonly cwd: string;
+}): JSX.Element {
+  const { t } = useI18n();
+  const chipTitle = artifact?.title || artifact?.path || artifactId;
+  const text = `${label}: ${truncatePreview(chipTitle, 42)}`;
+  if (!artifact) {
+    return <code title={artifactId}>{text}</code>;
+  }
+  return (
+    <a className="workflow-artifact-chip" href={artifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer" title={`${t("Open artifact")}: ${chipTitle}`}>
+      {text}
+    </a>
+  );
+}
+
+function workflowStepFailurePolicyLabel(policy: string, t: Translate): string {
+  if (policy === "block_for_user") {
+    return t("Block for user");
+  }
+  if (policy === "fail_workflow") {
+    return t("Fail workflow");
+  }
+  if (policy === "cancel_workflow") {
+    return t("Cancel workflow");
+  }
+  if (policy === "skip_if_optional") {
+    return t("Skip if optional");
+  }
+  return policy;
+}
+
+function workflowGateStageLabel(stage: "pre" | "post", t: Translate): string {
+  return stage === "pre" ? t("Pre-step gate") : t("Post-step gate");
 }
 
 function WorkflowFinalSummary({
@@ -4339,33 +4627,6 @@ function TaskDetailPanel({
   );
 }
 
-function MessageFeedVirtualRow({
-  children,
-  feedItem,
-  measureElement,
-  virtualRow,
-}: {
-  readonly children: ReactNode;
-  readonly feedItem: MessageFeedItem | undefined;
-  readonly measureElement: (node: HTMLDivElement | null) => void;
-  readonly virtualRow: VirtualItem;
-}): JSX.Element {
-  return (
-    <div
-      ref={measureElement}
-      className="message-feed-virtual-row"
-      data-feed-item-id={feedItem?.id}
-      data-feed-item-kind={feedItem?.kind}
-      data-index={virtualRow.index}
-      style={{
-        transform: `translateY(${virtualRow.start}px)`,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
 function runCanBeStopped(run: RunSession): boolean {
   return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
 }
@@ -4703,7 +4964,7 @@ function ActivityFilterToolbar({
   ].filter(Boolean);
   const filterSummary = filterSummaryParts.length > 0 ? filterSummaryParts.join(" · ") : t("All activity");
   return (
-    <div className="activity-filter-toolbar" aria-label={t("Activity filters")}>
+    <div className="activity-filter-toolbar" aria-label={t("Channel event filters")}>
       <div className="activity-view-control" aria-label={t("Saved views")}>
         <label className="activity-view-select">
           <span>{t("View")}</span>
@@ -4738,7 +4999,7 @@ function ActivityFilterToolbar({
         className={filtersExpanded ? "activity-filter-toggle active" : "activity-filter-toggle"}
         type="button"
         aria-expanded={filtersExpanded}
-        aria-label={t("Filter activity")}
+        aria-label={t("Filter channel events")}
         onClick={() => onFiltersExpandedChange(!filtersExpanded)}
       >
         <SlidersHorizontal size={14} />
@@ -4750,7 +5011,7 @@ function ActivityFilterToolbar({
         {t("Clear")}
       </button>
       {filtersExpanded ? (
-        <div className="activity-filter-panel" aria-label={t("Filter panel")}>
+        <div className="activity-filter-panel" aria-label={t("Channel event filters")}>
           <div className="activity-saved-view-actions" aria-label={t("Saved view actions")}>
             <button className="secondary-button compact-button" type="button" onClick={onSaveView} disabled={customViewLimitReached}>
               <Plus size={13} />

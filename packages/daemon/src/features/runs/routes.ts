@@ -68,6 +68,8 @@ export function handleListRuns(response: ServerResponse, url: URL, storeRegistry
       runs: store.listRuns({
         limit,
         status,
+        teammateId: url.searchParams.get("teammateId") ?? undefined,
+        workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
         threadId: url.searchParams.get("threadId") ?? undefined,
       }),
     });

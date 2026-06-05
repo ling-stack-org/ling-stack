@@ -3249,6 +3249,39 @@
   overflow: hidden;
 }
 
+.teammate-chat-status-row.conversation-status-strip {
+  display: grid;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+}
+
+.teammate-chat-status-row .conversation-status-main {
+  gap: 2px;
+}
+
+.teammate-chat-status-row .conversation-status-title strong {
+  font-size: 10px;
+  line-height: 12px;
+}
+
+.teammate-chat-status-row .conversation-status-meta {
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.teammate-chat-status-row .conversation-status-meta > span {
+  min-height: 18px;
+  padding: 0 6px;
+  border-color: #e5e5e5;
+  border-radius: 5px;
+  background: #ffffff;
+}
+
 .teammate-context-chip {
   display: inline-flex;
   align-items: center;

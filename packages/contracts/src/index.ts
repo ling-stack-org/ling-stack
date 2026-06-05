@@ -73,6 +73,28 @@ export interface LingThreadResumeRequest {
   readonly instruction?: string;
   readonly idempotencyKey?: string;
   readonly sourceRunId?: string;
+  readonly includeArtifacts?: boolean;
+}
+
+export interface ResumeContextPreview {
+  readonly title: string;
+  readonly instruction: string;
+  readonly sourceRunId: string;
+  readonly priorRunIds: readonly string[];
+  readonly includedEventCount: number;
+  readonly includedApprovalCount: number;
+  readonly includedArtifactIds: readonly string[];
+  readonly pendingActionIds: readonly string[];
+  readonly contextText: string;
+  readonly redactionNotes: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+export interface LingThreadResumePreviewResponse {
+  readonly cwd: string;
+  readonly thread: LingThread;
+  readonly sourceRun: RunSession;
+  readonly context: ResumeContextPreview;
 }
 
 export type ExecutionActionStatus =
@@ -227,6 +249,7 @@ export type RuntimeEventType =
   | "semaphore_acquired"
   | "semaphore_released"
   | "artifact_created"
+  | "stale_runner_completion_ignored"
   | "diagnostic_stuck_detected";
 
 export interface RuntimeTimeoutPolicy {
@@ -244,6 +267,51 @@ export interface RunnerFallbackReason {
     | "unsupported_provider_api"
     | "unsupported_tool";
   readonly message: string;
+}
+
+export type RunnerFallbackPolicy = "disabled" | "allow_to_default";
+
+export type RunnerRequestSource =
+  | "product_default"
+  | "workspace_default"
+  | "teammate_default"
+  | "workflow_step"
+  | "run_request"
+  | "user_explicit";
+
+export interface WorkspaceRuntimeSettings {
+  readonly workspaceId: string;
+  readonly defaultRunnerId: string;
+  readonly allowedRunnerIds: readonly string[];
+  readonly explicitRunnerFallback: RunnerFallbackPolicy;
+  readonly implicitRunnerFallback: RunnerFallbackPolicy;
+  readonly updatedAt: string;
+}
+
+export interface WorkspaceRuntimeSettingsPatch {
+  readonly defaultRunnerId?: string;
+  readonly allowedRunnerIds?: readonly string[];
+  readonly explicitRunnerFallback?: RunnerFallbackPolicy;
+  readonly implicitRunnerFallback?: RunnerFallbackPolicy;
+}
+
+export interface RunnerListItem {
+  readonly id: string;
+  readonly displayName: string;
+  readonly status: "enabled" | "disabled";
+  readonly aliases?: readonly string[];
+  readonly supportedProviderApis?: readonly string[];
+  readonly supportedTools?: readonly string[];
+}
+
+export interface RunnerListResponse {
+  readonly cwd: string;
+  readonly runners: readonly RunnerListItem[];
+}
+
+export interface RuntimeSettingsResponse {
+  readonly cwd: string;
+  readonly settings: WorkspaceRuntimeSettings;
 }
 
 export interface WorkUnit {
@@ -410,6 +478,7 @@ export type RunEventType =
   | "run_continuation_starting"
   | "run_continuation_started"
   | "run_intervention_failed"
+  | "stale_runner_completion_ignored"
   | "result";
 
 export interface RunEventEnvelope {
@@ -428,6 +497,7 @@ export interface RunSession {
   readonly taskId: string;
   readonly channelId?: string;
   readonly teammateId?: string;
+  readonly workflowStepId?: string;
   readonly selectedSkillId?: string;
   readonly providerPresetId?: string;
   readonly providerName: string;
@@ -458,6 +528,14 @@ export interface RunEventsResponse {
 export interface RunListResponse {
   readonly cwd: string;
   readonly runs: readonly RunSession[];
+}
+
+export interface RunListRequest {
+  readonly status?: RunStatus;
+  readonly teammateId?: string;
+  readonly workflowStepId?: string;
+  readonly threadId?: string;
+  readonly limit?: number;
 }
 
 export interface RunCancelResponse {
@@ -1909,6 +1987,73 @@ export type ChannelWorkflowStepStatus =
 
 export type ChannelWorkflowStepStartMode = "create_task" | "create_and_run_task";
 
+export type WorkflowStepFailurePolicy =
+  | "block_for_user"
+  | "fail_workflow"
+  | "cancel_workflow"
+  | "skip_if_optional";
+
+export interface WorkflowStepPolicy {
+  readonly onRunFailed: WorkflowStepFailurePolicy;
+  readonly onRunCancelled: WorkflowStepFailurePolicy;
+  readonly onApprovalDenied: WorkflowStepFailurePolicy;
+  readonly retryable: boolean;
+  readonly maxRetries?: number;
+}
+
+export interface WorkflowStepGate {
+  readonly stage: "pre" | "post";
+  readonly approvalProfile: SkillApprovalProfile;
+  readonly title: string;
+  readonly reason: string;
+  readonly requiredForStatuses?: readonly ChannelWorkflowStepStatus[];
+}
+
+export interface RunnerResolutionAudit {
+  readonly requestedRunnerId: string;
+  readonly effectiveRunnerId: string;
+  readonly requestSource?: RunnerRequestSource;
+  readonly fallbackAllowed?: boolean;
+  readonly fallbackReason?: RunnerFallbackReason;
+}
+
+export interface WorkflowStepOutputRef {
+  readonly workflowStepId: string;
+  readonly runId?: string;
+  readonly status: ChannelWorkflowStepStatus;
+  readonly resultSummary?: string;
+  readonly outputArtifactId?: string;
+  readonly artifactIds: readonly string[];
+}
+
+export interface ChannelWorkflowStepContextPacket {
+  readonly schemaVersion: 1;
+  readonly workflowId: string;
+  readonly workflowStepId: string;
+  readonly objective: string;
+  readonly stepTitle: string;
+  readonly stepPrompt: string;
+  readonly dependencies: readonly WorkflowStepOutputRef[];
+  readonly priorOutputArtifactIds: readonly string[];
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly providerPresetId?: string;
+  readonly approvalGate?: SkillApprovalProfile;
+  readonly generatedAt: string;
+}
+
+export interface ChannelWorkflowStepOutputPacket {
+  readonly schemaVersion: 1;
+  readonly workflowId: string;
+  readonly workflowStepId: string;
+  readonly runId?: string;
+  readonly status: ChannelWorkflowStepStatus;
+  readonly resultSummary?: string;
+  readonly artifactIds: readonly string[];
+  readonly runnerAudit?: RunnerResolutionAudit;
+  readonly generatedAt: string;
+}
+
 export interface ChannelWorkflowStepMetadata {
   readonly workflowTemplateId?: string;
   readonly templateStepId?: string;
@@ -1921,6 +2066,12 @@ export interface ChannelWorkflowStepMetadata {
   readonly autoStart?: boolean;
   readonly approvalGate?: SkillApprovalProfile;
   readonly preStepApprovalId?: string;
+  readonly policy?: WorkflowStepPolicy;
+  readonly gates?: readonly WorkflowStepGate[];
+  readonly activeGateStage?: "pre" | "post";
+  readonly postStepApprovalId?: string;
+  readonly contextArtifactId?: string;
+  readonly outputArtifactId?: string;
   readonly outputArtifactIds?: readonly string[];
 }
 

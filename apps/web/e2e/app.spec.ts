@@ -84,6 +84,28 @@ interface MockState {
   stateTransitions: unknown[];
   artifactsByRun: Record<string, MockArtifact[]>;
   artifactsByMediaJob: Record<string, MockArtifact[]>;
+  threads: MockLingThread[];
+  executionActions: MockExecutionAction[];
+}
+
+interface MockLingThread {
+  id: string;
+  workspaceId: string;
+  kind: string;
+  channelId?: string;
+  taskId?: string;
+  teammateId?: string;
+  workflowId?: string;
+  workflowStepId?: string;
+  externalWorkId?: string;
+  title: string;
+  objective: string;
+  status: string;
+  activeRunId?: string;
+  lastRunId?: string;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt?: string;
 }
 
 interface MockRun {
@@ -99,6 +121,7 @@ interface MockRun {
   providerSnapshot: unknown;
   requestSnapshot: unknown;
   eventLogPath: string;
+  threadId?: string;
   workUnitId?: string;
   parentRunId?: string;
   interventionId?: string;
@@ -106,7 +129,33 @@ interface MockRun {
   summaryPath?: string;
   errorMessage?: string;
   createdAt: string;
+  startedAt?: string;
   updatedAt: string;
+  endedAt?: string;
+}
+
+interface MockExecutionAction {
+  id: string;
+  workspaceId: string;
+  threadId?: string;
+  runId?: string;
+  workUnitId?: string;
+  approvalId?: string;
+  toolCallId?: string;
+  actionType: string;
+  risk: string;
+  status: string;
+  title: string;
+  summary: string;
+  targetRefs: Array<{ type: string; id?: string; label?: string; path?: string }>;
+  previewArtifactIds: string[];
+  resultArtifactIds: string[];
+  policySnapshot?: unknown;
+  createdAt: string;
+  updatedAt: string;
+  approvedAt?: string;
+  executedAt?: string;
+  failureReason?: string;
 }
 
 interface MockRunIntervention {
@@ -5059,6 +5108,211 @@ test("run detail renders artifact rows from the daemon API", async ({ page }) =>
   await expect(downloadLink).toHaveAttribute("download", "003-seedream-image.png");
 });
 
+test("run history opens a thread-first detail with evidence and resume preview", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  const sourceRun: MockRun = {
+    ...state.runs[0],
+    id: "run_thread_source",
+    status: "failed",
+    threadId: "thread_audit",
+    taskSnapshot: {
+      id: "task_thread_audit",
+      title: "Thread-first execution audit",
+      prompt: "Inspect thread-level evidence before resuming.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      task: {
+        id: "task_thread_audit",
+        title: "Thread-first execution audit",
+        prompt: "Inspect thread-level evidence before resuming.",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_thread_source.jsonl",
+    errorMessage: "Previous implementation stopped before thread audit.",
+    createdAt: "2026-05-25T00:35:00.000Z",
+    updatedAt: "2026-05-25T00:36:00.000Z",
+    endedAt: "2026-05-25T00:36:00.000Z",
+  };
+  state.runs = [sourceRun];
+  state.threads = [
+    {
+      id: "thread_audit",
+      workspaceId: "workspace_default",
+      kind: "task",
+      channelId: "channel_engineering",
+      taskId: "task_thread_audit",
+      title: "Thread-first execution audit",
+      objective: "Inspect thread-level evidence before resuming.",
+      status: "failed",
+      lastRunId: sourceRun.id,
+      createdAt: "2026-05-25T00:35:00.000Z",
+      updatedAt: "2026-05-25T00:36:00.000Z",
+    },
+  ];
+  state.eventsByRun[sourceRun.id] = [
+    {
+      id: "evt_thread_source_error",
+      runId: sourceRun.id,
+      seq: 1,
+      ts: "2026-05-25T00:36:00.000Z",
+      type: "run_error",
+      data: { message: "Previous implementation stopped before thread audit." },
+    },
+  ];
+  state.artifactsByRun[sourceRun.id] = [
+    {
+      id: "artifact_action_preview",
+      runId: sourceRun.id,
+      type: "diff",
+      path: "run_thread_source/action-preview.diff",
+      title: "Action preview diff",
+      contentType: "text/x-diff; charset=utf-8",
+      sizeBytes: 512,
+      createdAt: "2026-05-25T00:35:30.000Z",
+    },
+    {
+      id: "artifact_action_result",
+      runId: sourceRun.id,
+      type: "markdown",
+      path: "run_thread_source/action-result.md",
+      title: "Action result summary",
+      contentType: "text/markdown; charset=utf-8",
+      sizeBytes: 256,
+      createdAt: "2026-05-25T00:36:00.000Z",
+    },
+  ];
+  state.executionActions = [
+    {
+      id: "execution_action_thread_patch",
+      workspaceId: "workspace_default",
+      threadId: "thread_audit",
+      runId: sourceRun.id,
+      actionType: "bash",
+      risk: "medium",
+      status: "succeeded",
+      title: "Apply thread audit patch",
+      summary: "Patch was previewed and then applied.",
+      targetRefs: [{ type: "file", path: "apps/web/src/features/runs/RunHistory.tsx" }],
+      previewArtifactIds: ["artifact_action_preview"],
+      resultArtifactIds: ["artifact_action_result"],
+      createdAt: "2026-05-25T00:35:30.000Z",
+      updatedAt: "2026-05-25T00:36:00.000Z",
+      executedAt: "2026-05-25T00:36:00.000Z",
+    },
+  ];
+  state.runInterventions = [
+    {
+      id: "intervention_followup_thread",
+      workspaceId: "workspace_default",
+      sourceRunId: sourceRun.id,
+      mode: "queue_followup",
+      status: "queued",
+      instruction: "Follow up with browser smoke evidence.",
+      requestedBy: "local-user",
+      idempotencyKey: "thread_followup",
+      createdAt: "2026-05-25T00:36:10.000Z",
+      updatedAt: "2026-05-25T00:36:10.000Z",
+    },
+  ];
+  state.stateTransitions = [
+    {
+      id: "transition_thread_source_failed",
+      workspaceId: "workspace_default",
+      entityType: "run",
+      entityId: sourceRun.id,
+      fromStatus: "running",
+      toStatus: "failed",
+      event: "run_failed",
+      actor: "runner",
+      reason: "Previous implementation stopped before thread audit.",
+      createdAt: "2026-05-25T00:36:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await page.locator(".thread-list").getByRole("button", { name: /Thread-first execution audit/ }).click();
+
+  const detail = page.getByLabel("Thread detail");
+  await expect(detail.getByRole("heading", { name: "Thread detail" })).toBeVisible();
+  await expect(detail).toContainText("Inspect thread-level evidence before resuming.");
+  await expect(detail).toContainText("Thread lineage");
+  await expect(detail).toContainText("Execution actions");
+  await expect(detail).toContainText("Action preview diff");
+  await expect(detail).toContainText("Action result summary");
+  await expect(detail).toContainText("Follow up with browser smoke evidence.");
+  await expect(detail).toContainText("run_failed: running -> failed");
+
+  await detail.getByRole("button", { name: "Preview resume" }).click();
+  await expect(detail.locator(".compact-json").filter({ hasText: "Resume context preview" })).toContainText("Source run");
+  await expect(detail.locator(".compact-json").filter({ hasText: "Resume context preview" })).toContainText("artifact_action_preview");
+
+  await detail.getByRole("button", { name: "Resume thread" }).click();
+  await expect.poll(() => state.runs.some((run) => run.id.startsWith("run_resume_"))).toBe(true);
+  await expect(detail).toContainText("Resume run");
+});
+
+test("thread detail keeps resume disabled while the thread has an active run", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  const activeRun: MockRun = {
+    ...state.runs[0],
+    id: "run_thread_active",
+    status: "running",
+    threadId: "thread_active",
+    taskSnapshot: {
+      id: "task_thread_active",
+      title: "Active thread audit",
+      prompt: "Keep the active thread guarded.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      task: {
+        id: "task_thread_active",
+        title: "Active thread audit",
+        prompt: "Keep the active thread guarded.",
+      },
+    },
+    errorMessage: undefined,
+    createdAt: "2026-05-25T00:37:00.000Z",
+    startedAt: "2026-05-25T00:37:05.000Z",
+    updatedAt: "2026-05-25T00:37:10.000Z",
+    endedAt: undefined,
+  };
+  state.runs = [activeRun];
+  state.threads = [
+    {
+      id: "thread_active",
+      workspaceId: "workspace_default",
+      kind: "task",
+      channelId: "channel_engineering",
+      taskId: "task_thread_active",
+      title: "Active thread audit",
+      objective: "Keep the active thread guarded.",
+      status: "running",
+      activeRunId: activeRun.id,
+      lastRunId: activeRun.id,
+      createdAt: "2026-05-25T00:37:00.000Z",
+      updatedAt: "2026-05-25T00:37:10.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await page.locator(".thread-list").getByRole("button", { name: /Active thread audit/ }).click();
+
+  const detail = page.getByLabel("Thread detail");
+  await expect(detail).toContainText("Thread has an active run; resume is disabled until it reaches a terminal state.");
+  await expect(detail.getByRole("button", { name: "Resume thread" })).toBeDisabled();
+
+  await detail.getByRole("button", { name: "Preview resume" }).click();
+  await expect(detail.locator(".compact-json").filter({ hasText: "Resume context preview" })).toContainText("Thread already has an active run: run_thread_active");
+});
+
 test("workspace task run sends the selected session permission mode", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
@@ -5619,7 +5873,128 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     stateTransitions: [],
     artifactsByRun: {},
     artifactsByMediaJob: {},
+    threads: [],
+    executionActions: [],
   };
+}
+
+function filterOptionalSearchParam(url: URL, key: string, value: string | undefined): boolean {
+  const expected = url.searchParams.get(key);
+  return !expected || value === expected;
+}
+
+function deriveMockThreadFromRuns(state: MockState, threadId: string): MockLingThread | undefined {
+  const threadRuns = state.runs.filter((run) => run.threadId === threadId);
+  if (threadRuns.length === 0) {
+    return undefined;
+  }
+  const orderedRuns = [...threadRuns].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
+  const latestRun = orderedRuns[0];
+  const oldestRun = [...threadRuns].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))[0];
+  return {
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "task",
+    channelId: latestRun.channelId,
+    taskId: latestRun.taskId,
+    title: readMockTaskTitle(latestRun.taskSnapshot) || latestRun.taskId,
+    objective: readMockTaskPrompt(latestRun.taskSnapshot) || readMockTaskTitle(latestRun.taskSnapshot) || latestRun.taskId,
+    status: isMockRunActive(latestRun) ? latestRun.status : latestRun.status === "succeeded" ? "succeeded" : latestRun.status === "cancelled" ? "cancelled" : "failed",
+    activeRunId: isMockRunActive(latestRun) ? latestRun.id : undefined,
+    lastRunId: latestRun.id,
+    createdAt: oldestRun.createdAt,
+    updatedAt: latestRun.updatedAt,
+  };
+}
+
+function buildMockThreadEvidence(state: MockState, thread: MockLingThread) {
+  const linkedRunIds = new Set([thread.activeRunId, thread.lastRunId].filter((value): value is string => Boolean(value)));
+  const threadRuns = state.runs
+    .filter((run) => run.threadId === thread.id || linkedRunIds.has(run.id))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const runIds = new Set(threadRuns.map((run) => run.id));
+  const actionIds = new Set<string>();
+  const actions = state.executionActions.filter((action) => {
+    const linked = action.threadId === thread.id || Boolean(action.runId && runIds.has(action.runId));
+    if (linked) {
+      actionIds.add(action.id);
+    }
+    return linked;
+  });
+  return {
+    cwd,
+    thread,
+    generatedAt: "2026-05-25T00:39:00.000Z",
+    runs: threadRuns.map((run) => ({
+      run,
+      events: state.eventsByRun[run.id] ?? [],
+      approvals: state.approvals.filter((approval) => approval.runId === run.id),
+      artifacts: state.artifactsByRun[run.id] ?? [],
+      runtimeEvents: run.workUnitId ? state.runtimeEventsByWorkUnit[run.workUnitId] ?? [] : [],
+    })),
+    actions,
+    transitions: state.stateTransitions.filter((transition) =>
+      isRecord(transition) &&
+      (
+        transition.entityId === thread.id ||
+        (typeof transition.entityId === "string" && runIds.has(transition.entityId)) ||
+        (thread.workflowStepId !== undefined && transition.entityId === thread.workflowStepId) ||
+        (typeof transition.entityId === "string" && actionIds.has(transition.entityId))
+      )
+    ),
+  };
+}
+
+function buildMockResumeContext(
+  state: MockState,
+  thread: MockLingThread,
+  sourceRun: MockRun,
+  body: Record<string, unknown>,
+  hasActiveRun: boolean,
+) {
+  const evidence = buildMockThreadEvidence(state, thread);
+  const includeArtifacts = body.includeArtifacts === true;
+  const artifacts = includeArtifacts ? evidence.runs.flatMap((item) => item.artifacts) : [];
+  const instruction = typeof body.instruction === "string" && body.instruction.trim()
+    ? body.instruction.trim()
+    : "Resume this Ling thread from durable evidence.";
+  const pendingActionIds = evidence.actions
+    .filter((action) => action.status === "proposed" || action.status === "waiting_for_approval" || action.status === "executing")
+    .map((action) => action.id);
+  const warnings = hasActiveRun ? [`Thread already has an active run: ${thread.activeRunId}`] : [];
+  return {
+    title: `Resume: ${thread.title}`,
+    instruction,
+    sourceRunId: sourceRun.id,
+    priorRunIds: evidence.runs.map((item) => item.run.id),
+    includedEventCount: evidence.runs.reduce((count, item) => count + item.events.length, 0),
+    includedApprovalCount: evidence.runs.reduce((count, item) => count + item.approvals.length, 0),
+    includedArtifactIds: artifacts.map((artifact) => artifact.id),
+    pendingActionIds,
+    redactionNotes: includeArtifacts && artifacts.length > 0 ? ["Artifact contents are omitted; preview includes artifact ids only."] : [],
+    warnings,
+    contextText: [
+      `Thread: ${thread.title}`,
+      `Objective: ${thread.objective}`,
+      `Source run: ${sourceRun.id}`,
+      `Instruction: ${instruction}`,
+      `Prior runs: ${evidence.runs.map((item) => item.run.id).join(", ") || "none"}`,
+      `Artifacts: ${artifacts.map((artifact) => artifact.id).join(", ") || "none"}`,
+      `Pending actions: ${pendingActionIds.join(", ") || "none"}`,
+    ].join("\n"),
+  };
+}
+
+function isMockRunActive(run: MockRun): boolean {
+  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+}
+
+function readMockTaskTitle(snapshot: unknown): string {
+  return isRecord(snapshot) && typeof snapshot.title === "string" ? snapshot.title : "";
+}
+
+function readMockTaskPrompt(snapshot: unknown): string {
+  return isRecord(snapshot) && typeof snapshot.prompt === "string" ? snapshot.prompt : "";
 }
 
 function buildMockSkillRegistryEntries(): unknown[] {
@@ -8199,6 +8574,96 @@ async function handleDaemonRoute(
       : state.tasks;
     await route.fulfill({ json: { cwd, tasks } });
     return;
+  }
+  if (request.method() === "GET" && path === "/threads") {
+    const limit = Number(url.searchParams.get("limit") ?? "50");
+    const includeArchived = url.searchParams.get("includeArchived") === "true";
+    const threads = state.threads
+      .filter((thread) => includeArchived || thread.status !== "archived")
+      .filter((thread) => filterOptionalSearchParam(url, "kind", thread.kind))
+      .filter((thread) => filterOptionalSearchParam(url, "channelId", thread.channelId))
+      .filter((thread) => filterOptionalSearchParam(url, "taskId", thread.taskId))
+      .filter((thread) => filterOptionalSearchParam(url, "teammateId", thread.teammateId))
+      .filter((thread) => filterOptionalSearchParam(url, "workflowStepId", thread.workflowStepId))
+      .filter((thread) => filterOptionalSearchParam(url, "externalWorkId", thread.externalWorkId))
+      .filter((thread) => filterOptionalSearchParam(url, "status", thread.status))
+      .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 50);
+    await route.fulfill({ json: { cwd, threads } });
+    return;
+  }
+
+  const threadRouteMatch = /^\/threads\/([^/]+)(?:\/([^/]+))?$/.exec(path);
+  if (threadRouteMatch) {
+    const threadId = decodeURIComponent(threadRouteMatch[1]);
+    const action = threadRouteMatch[2];
+    const thread = state.threads.find((item) => item.id === threadId) ?? deriveMockThreadFromRuns(state, threadId);
+    if (!thread) {
+      await route.fulfill({ status: 404, json: { error: "thread_not_found" } });
+      return;
+    }
+    if (request.method() === "GET" && !action) {
+      await route.fulfill({ json: { cwd, thread } });
+      return;
+    }
+    if (request.method() === "GET" && action === "evidence") {
+      await route.fulfill({ json: buildMockThreadEvidence(state, thread) });
+      return;
+    }
+    if (request.method() === "POST" && (action === "resume-preview" || action === "resume")) {
+      let body: Record<string, unknown> = {};
+      try {
+        body = request.postDataJSON() as Record<string, unknown>;
+      } catch {
+        body = {};
+      }
+      const sourceRunId = typeof body.sourceRunId === "string" ? body.sourceRunId : thread.lastRunId;
+      const sourceRun = sourceRunId ? state.runs.find((item) => item.id === sourceRunId) : undefined;
+      if (!sourceRun) {
+        await route.fulfill({ status: 400, json: { error: "source_run_not_found" } });
+        return;
+      }
+      const activeRun = thread.activeRunId ? state.runs.find((item) => item.id === thread.activeRunId) : undefined;
+      const hasActiveRun = Boolean(activeRun && isMockRunActive(activeRun));
+      const context = buildMockResumeContext(state, thread, sourceRun, body, hasActiveRun);
+      if (action === "resume-preview") {
+        await route.fulfill({ json: { cwd, thread, sourceRun, context } });
+        return;
+      }
+      if (hasActiveRun) {
+        await route.fulfill({ status: 400, json: { error: "thread_active", message: `Thread already has an active run: ${activeRun?.id}` } });
+        return;
+      }
+      const now = "2026-05-25T00:40:00.000Z";
+      const runId = `run_resume_${state.runs.length + 1}`;
+      const continuationRun: MockRun = {
+        ...sourceRun,
+        id: runId,
+        status: "queued",
+        parentRunId: sourceRun.id,
+        continuationReason: "manual_resume",
+        taskSnapshot: { id: `task_${runId}`, title: `Resume: ${thread.title}`, prompt: context.contextText },
+        requestSnapshot: {
+          ...(isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {}),
+          task: { id: `task_${runId}`, title: `Resume: ${thread.title}`, prompt: context.contextText },
+          parentRunId: sourceRun.id,
+          continuationReason: "manual_resume",
+        },
+        eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+        errorMessage: undefined,
+        createdAt: now,
+        startedAt: undefined,
+        updatedAt: now,
+        endedAt: undefined,
+      };
+      state.runs.unshift(continuationRun);
+      state.eventsByRun[runId] = [];
+      const updatedThread = { ...thread, status: "running", activeRunId: runId, lastRunId: runId, updatedAt: now };
+      state.threads = state.threads.some((item) => item.id === thread.id)
+        ? state.threads.map((item) => item.id === thread.id ? updatedThread : item)
+        : [updatedThread, ...state.threads];
+      await route.fulfill({ status: 202, json: { cwd, thread: updatedThread, sourceRun, runId, continuationReason: "manual_resume" } });
+      return;
+    }
   }
   if (request.method() === "POST" && path === "/tasks") {
     if (state.failNextTaskCreate) {

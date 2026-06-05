@@ -68,6 +68,10 @@ The broader platform direction lives in [Ling Framework](ling-framework.md). The
 memory design for private, channel, shared, and task/run recall lives in
 [Ling Memory v1](ling-memory-v1.md). The target skill import, persona draft, Effective
 Skill, and skill-aware run model lives in [Ling Skill Import v1](ling-skill-import-v1.md).
+The shared Codex-style conversation, evidence folding, right drawer, and component
+extraction direction lives in
+[Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md) and
+[Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md).
 
 ## Product Principles
 

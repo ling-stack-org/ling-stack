@@ -62,6 +62,7 @@ export type RuntimeEventType =
   | "semaphore_acquired"
   | "semaphore_released"
   | "artifact_created"
+  | "stale_runner_completion_ignored"
   | "diagnostic_stuck_detected";
 
 export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider";
@@ -91,6 +92,25 @@ export interface RunnerFallbackReason {
     | "unsupported_provider_api"
     | "unsupported_tool";
   readonly message: string;
+}
+
+export type RunnerFallbackPolicy = "disabled" | "allow_to_default";
+
+export type RunnerRequestSource =
+  | "product_default"
+  | "workspace_default"
+  | "teammate_default"
+  | "workflow_step"
+  | "run_request"
+  | "user_explicit";
+
+export interface WorkspaceRuntimeSettings {
+  readonly workspaceId: string;
+  readonly defaultRunnerId: string;
+  readonly allowedRunnerIds: readonly string[];
+  readonly explicitRunnerFallback: RunnerFallbackPolicy;
+  readonly implicitRunnerFallback: RunnerFallbackPolicy;
+  readonly updatedAt: string;
 }
 
 export interface WorkUnit {

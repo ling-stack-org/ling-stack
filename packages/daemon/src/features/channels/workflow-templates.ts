@@ -5,6 +5,7 @@ import {
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type RunStore,
+  type WorkflowStepPolicy,
   type WorkflowStepTemplate,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
@@ -90,6 +91,7 @@ export function compileWorkflowTemplate(store: RunStore, input: CompileWorkflowT
           providerPresetId: input.providerPresetId,
           autoStart: input.autoStart ?? true,
           approvalGate: templateStep.approvalGate,
+          policy: defaultWorkflowStepPolicy(templateStep),
         },
       },
       now,
@@ -120,6 +122,15 @@ export function compileWorkflowTemplate(store: RunStore, input: CompileWorkflowT
   return {
     workflow,
     workflowSteps: updatedSteps,
+  };
+}
+
+function defaultWorkflowStepPolicy(templateStep: WorkflowStepTemplate): WorkflowStepPolicy {
+  return {
+    onRunFailed: templateStep.id === "implementation" || templateStep.id === "ship" ? "fail_workflow" : "block_for_user",
+    onRunCancelled: "block_for_user",
+    onApprovalDenied: "block_for_user",
+    retryable: true,
   };
 }
 

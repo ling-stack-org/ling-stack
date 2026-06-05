@@ -11,14 +11,15 @@ import {
   Wrench,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ApprovalCard, type ApprovalResolution } from "../approvals/index.js";
+import { ApprovalCard } from "../approvals/ApprovalCard.js";
+import type { ApprovalResolution } from "../approvals/types.js";
 import { useI18n } from "../../i18n.js";
 import { buildRunActivities, type RunActivityItem } from "../../lib/run-activity.js";
 import type {
   ApprovalRequest,
   RunEventEnvelope,
 } from "../../types.js";
-import { EventRow } from "./RunHistory.js";
+import { EventRow } from "./EventRow.js";
 
 export function RunTimeline({
   events,

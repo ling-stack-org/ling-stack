@@ -22,6 +22,8 @@ test("runner registry resolves default pi and legacy pi alias", () => {
   const defaultResolution = registry.resolve();
   assert.equal(defaultResolution.requestedRunnerId, DEFAULT_RUNNER_ID);
   assert.equal(defaultResolution.effectiveRunnerId, DEFAULT_RUNNER_ID);
+  assert.equal(defaultResolution.requestSource, "product_default");
+  assert.equal(defaultResolution.fallbackAllowed, false);
   assert.equal(defaultResolution.runner.adapter, runner);
 
   const legacyResolution = registry.resolve({ requestedRunnerId: LEGACY_PI_RUNNER_ID });
@@ -68,8 +70,65 @@ test("runner registry records fallback reason when policy allows fallback", () =
 
   assert.equal(resolution.requestedRunnerId, "codex-app-server");
   assert.equal(resolution.effectiveRunnerId, "pi");
+  assert.equal(resolution.requestSource, "run_request");
+  assert.equal(resolution.fallbackAllowed, true);
   assert.equal(resolution.runner.adapter, piRunner);
   assert.equal(resolution.fallbackReason?.code, "missing_requested_runner");
+});
+
+test("runner registry applies explicit and implicit fallback policies", () => {
+  const piRunner = new RecordingRunner();
+  const registry = createRunnerRegistry([
+    { id: "pi", displayName: "Pi", status: "enabled", adapter: piRunner },
+  ]);
+
+  assert.throws(
+    () => registry.resolve({
+      requestedRunnerId: "codex-app-server",
+      requestSource: "run_request",
+      explicitFallbackPolicy: "disabled",
+      implicitFallbackPolicy: "allow_to_default",
+    }),
+    (error) => error instanceof UnsupportedRunnerError && error.fallbackReason.code === "missing_requested_runner",
+  );
+
+  const explicit = registry.resolve({
+    requestedRunnerId: "codex-app-server",
+    requestSource: "run_request",
+    explicitFallbackPolicy: "allow_to_default",
+  });
+  assert.equal(explicit.effectiveRunnerId, "pi");
+  assert.equal(explicit.requestSource, "run_request");
+  assert.equal(explicit.fallbackAllowed, true);
+
+  const implicit = registry.resolve({
+    requestedRunnerId: "codex-app-server",
+    requestSource: "workspace_default",
+    implicitFallbackPolicy: "allow_to_default",
+  });
+  assert.equal(implicit.effectiveRunnerId, "pi");
+  assert.equal(implicit.requestSource, "workspace_default");
+  assert.equal(implicit.fallbackAllowed, true);
+});
+
+test("runner registry enforces workspace allowed runners before fallback", () => {
+  const registry = createRunnerRegistry([
+    { id: "pi", displayName: "Pi", status: "enabled", adapter: new RecordingRunner() },
+    { id: "codex-app-server", displayName: "Codex", status: "enabled", adapter: new RecordingRunner() },
+  ]);
+
+  assert.throws(
+    () => registry.resolve({
+      requestedRunnerId: "codex-app-server",
+      allowedRunnerIds: ["pi"],
+      requestSource: "run_request",
+      explicitFallbackPolicy: "allow_to_default",
+    }),
+    (error) =>
+      error instanceof UnsupportedRunnerError &&
+      error.fallbackReason.code === "disabled_requested_runner" &&
+      /not allowed/.test(error.message),
+  );
 });
 
 test("runner registry enforces declared tool and provider conformance", () => {

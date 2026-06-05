@@ -95,6 +95,7 @@ import type {
   LingThreadEvidenceResponse,
   LingThreadListRequest,
   LingThreadListResponse,
+  LingThreadResumePreviewResponse,
   LingThreadResumeRequest,
   LingThreadResumeResponse,
   ListResourceLeasesRequest,
@@ -123,14 +124,17 @@ import type {
   ProviderSecretResponse,
   ProviderTemplateListResponse,
   ResourceLeaseListResponse,
+  RunnerListResponse,
   RuntimeDiagnosticsResponse,
   RuntimeResponse,
   RuntimeSemaphoreListResponse,
+  RuntimeSettingsResponse,
   RunArtifactListResponse,
   RunCancelResponse,
   RunEventsResponse,
   RunInterventionListResponse,
   RunInterventionResponse,
+  RunListRequest,
   RunListResponse,
   RunSession,
   SecretPurpose,
@@ -179,6 +183,7 @@ import type {
   WorkUnitListResponse,
   WorkUnitMutationResponse,
   WorkUnitStatus,
+  WorkspaceRuntimeSettingsPatch,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "./errors.js";
 
@@ -245,8 +250,16 @@ export class LingDaemonClient {
     return this.request("DELETE", `/skills/${encodeURIComponent(skillId)}`, { cwd });
   }
 
-  async listRuns(cwd: string, limit = 50): Promise<RunListResponse> {
-    return this.get("/runs", { cwd, limit });
+  async listRuns(cwd: string, options: RunListRequest | number = 50): Promise<RunListResponse> {
+    const request = typeof options === "number" ? { limit: options } : options;
+    return this.get("/runs", {
+      cwd,
+      status: request.status,
+      teammateId: request.teammateId,
+      workflowStepId: request.workflowStepId,
+      threadId: request.threadId,
+      limit: request.limit,
+    });
   }
 
   async listLingThreads(cwd: string, options: LingThreadListRequest = {}): Promise<LingThreadListResponse> {
@@ -274,6 +287,10 @@ export class LingDaemonClient {
 
   async resumeLingThread(cwd: string, threadId: string, input: LingThreadResumeRequest = {}): Promise<LingThreadResumeResponse> {
     return this.post(`/threads/${encodeURIComponent(threadId)}/resume`, { cwd }, input);
+  }
+
+  async previewLingThreadResume(cwd: string, threadId: string, input: LingThreadResumeRequest = {}): Promise<LingThreadResumePreviewResponse> {
+    return this.post(`/threads/${encodeURIComponent(threadId)}/resume-preview`, { cwd }, input);
   }
 
   async getRun(runId: string, cwd?: string): Promise<RunSession> {
@@ -352,6 +369,18 @@ export class LingDaemonClient {
 
   async getRuntime(cwd: string): Promise<RuntimeResponse> {
     return this.get("/runtime", { cwd });
+  }
+
+  async listRunners(cwd: string): Promise<RunnerListResponse> {
+    return this.get("/runners", { cwd });
+  }
+
+  async getRuntimeSettings(cwd: string): Promise<RuntimeSettingsResponse> {
+    return this.get("/runtime/settings", { cwd });
+  }
+
+  async updateRuntimeSettings(cwd: string, input: WorkspaceRuntimeSettingsPatch): Promise<RuntimeSettingsResponse> {
+    return this.patch("/runtime/settings", { cwd }, input);
   }
 
   async getRuntimeDiagnostics(cwd: string): Promise<RuntimeDiagnosticsResponse> {

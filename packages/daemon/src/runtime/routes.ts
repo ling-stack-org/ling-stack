@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
+  RunnerFallbackPolicy,
   ResourceLease,
   RunEventEnvelope,
   RunSession,
@@ -13,10 +14,17 @@ import type {
 } from "@ling-stack/core";
 import { HttpError } from "../errors.js";
 import type { WorkUnitRoute } from "../server/routes.js";
-import { readOptionalIntegerQuery } from "../shared/request.js";
+import { readOptionalIntegerQuery, readOptionalJsonBody } from "../shared/request.js";
 import { writeJson } from "../shared/response.js";
-import { removeUndefined } from "../shared/validation.js";
+import { isRecord, readOptionalString, readOptionalStringArray, removeUndefined } from "../shared/validation.js";
 import type { ActiveRunRegistry } from "./active-runs.js";
+import {
+  listRunnerItems,
+  loadWorkspaceRuntimeSettings,
+  patchWorkspaceRuntimeSettings,
+  type WorkspaceRuntimeSettingsPatch,
+} from "./runner-settings.js";
+import type { RunnerRegistry } from "./runners.js";
 import type { RunStoreRegistry } from "./store-registry.js";
 import type { RuntimeSupervisor } from "./supervisor.js";
 import {
@@ -209,6 +217,59 @@ export function handleListWorkUnits(response: ServerResponse, url: URL, storeReg
   });
 }
 
+export function handleListRunners(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry, runnerRegistry: RunnerRegistry): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  writeJson(response, 200, {
+    cwd: resolved.cwd,
+    runners: listRunnerItems(runnerRegistry),
+  });
+}
+
+export async function handleRuntimeSettings(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  runnerRegistry: RunnerRegistry,
+  maxBodyBytes: number,
+): Promise<void> {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  try {
+    if (request.method === "GET") {
+      writeJson(response, 200, {
+        cwd: resolved.cwd,
+        settings: loadWorkspaceRuntimeSettings(resolved.store, runnerRegistry),
+      });
+      return;
+    }
+    if (request.method === "PATCH") {
+      const body = await readOptionalJsonBody(request, maxBodyBytes);
+      const settings = patchWorkspaceRuntimeSettings(
+        resolved.store,
+        runnerRegistry,
+        parseWorkspaceRuntimeSettingsPatch(body),
+      );
+      writeJson(response, 200, {
+        cwd: resolved.cwd,
+        settings,
+      });
+      return;
+    }
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for runtime settings` });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export function handleWorkUnitRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -352,6 +413,32 @@ function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: Wor
     semaphoreSlots: store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, limit: 500 }),
     run: workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined,
   });
+}
+
+function parseWorkspaceRuntimeSettingsPatch(value: unknown): WorkspaceRuntimeSettingsPatch {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error("Runtime settings patch must be a JSON object");
+  }
+  return removeUndefined({
+    defaultRunnerId: readOptionalString(value, "defaultRunnerId"),
+    allowedRunnerIds: readOptionalStringArray(value, "allowedRunnerIds"),
+    explicitRunnerFallback: readOptionalRunnerFallbackPolicy(value, "explicitRunnerFallback"),
+    implicitRunnerFallback: readOptionalRunnerFallbackPolicy(value, "implicitRunnerFallback"),
+  });
+}
+
+function readOptionalRunnerFallbackPolicy(record: Record<string, unknown>, key: string): RunnerFallbackPolicy | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "disabled" && value !== "allow_to_default") {
+    throw new Error(`${key} must be disabled or allow_to_default`);
+  }
+  return value;
 }
 
 function getCwdStoreOrWriteError(

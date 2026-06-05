@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
+import type { RunnerFallbackReason, RunnerRequestSource } from "./runtime-supervisor-types.js";
 import type { AiTeammateRoleKey, SkillApprovalProfile } from "./skill-types.js";
 
 export const DEFAULT_WORKSPACE_ID = "workspace_default";
@@ -819,6 +820,73 @@ export const channelWorkflowStepStatuses: readonly ChannelWorkflowStepStatus[] =
 
 export type ChannelWorkflowStepStartMode = "create_task" | "create_and_run_task";
 
+export type WorkflowStepFailurePolicy =
+  | "block_for_user"
+  | "fail_workflow"
+  | "cancel_workflow"
+  | "skip_if_optional";
+
+export interface WorkflowStepPolicy {
+  readonly onRunFailed: WorkflowStepFailurePolicy;
+  readonly onRunCancelled: WorkflowStepFailurePolicy;
+  readonly onApprovalDenied: WorkflowStepFailurePolicy;
+  readonly retryable: boolean;
+  readonly maxRetries?: number;
+}
+
+export interface WorkflowStepGate {
+  readonly stage: "pre" | "post";
+  readonly approvalProfile: SkillApprovalProfile;
+  readonly title: string;
+  readonly reason: string;
+  readonly requiredForStatuses?: readonly ChannelWorkflowStepStatus[];
+}
+
+export interface RunnerResolutionAudit {
+  readonly requestedRunnerId: string;
+  readonly effectiveRunnerId: string;
+  readonly requestSource?: RunnerRequestSource;
+  readonly fallbackAllowed?: boolean;
+  readonly fallbackReason?: RunnerFallbackReason;
+}
+
+export interface WorkflowStepOutputRef {
+  readonly workflowStepId: string;
+  readonly runId?: string;
+  readonly status: ChannelWorkflowStepStatus;
+  readonly resultSummary?: string;
+  readonly outputArtifactId?: string;
+  readonly artifactIds: readonly string[];
+}
+
+export interface ChannelWorkflowStepContextPacket {
+  readonly schemaVersion: 1;
+  readonly workflowId: string;
+  readonly workflowStepId: string;
+  readonly objective: string;
+  readonly stepTitle: string;
+  readonly stepPrompt: string;
+  readonly dependencies: readonly WorkflowStepOutputRef[];
+  readonly priorOutputArtifactIds: readonly string[];
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly providerPresetId?: string;
+  readonly approvalGate?: SkillApprovalProfile;
+  readonly generatedAt: string;
+}
+
+export interface ChannelWorkflowStepOutputPacket {
+  readonly schemaVersion: 1;
+  readonly workflowId: string;
+  readonly workflowStepId: string;
+  readonly runId?: string;
+  readonly status: ChannelWorkflowStepStatus;
+  readonly resultSummary?: string;
+  readonly artifactIds: readonly string[];
+  readonly runnerAudit?: RunnerResolutionAudit;
+  readonly generatedAt: string;
+}
+
 export interface ChannelWorkflowStepMetadata {
   readonly workflowTemplateId?: string;
   readonly templateStepId?: string;
@@ -831,6 +899,12 @@ export interface ChannelWorkflowStepMetadata {
   readonly autoStart?: boolean;
   readonly approvalGate?: SkillApprovalProfile;
   readonly preStepApprovalId?: string;
+  readonly policy?: WorkflowStepPolicy;
+  readonly gates?: readonly WorkflowStepGate[];
+  readonly activeGateStage?: "pre" | "post";
+  readonly postStepApprovalId?: string;
+  readonly contextArtifactId?: string;
+  readonly outputArtifactId?: string;
   readonly outputArtifactIds?: readonly string[];
 }
 

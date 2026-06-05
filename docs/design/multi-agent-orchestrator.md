@@ -71,6 +71,13 @@ Still pending:
 
 - Parallel branches and custom auto-startable templates.
 
+Implemented hardening:
+
+- [Execution And Orchestration Hardening](execution-orchestration-hardening.md) defines
+  the follow-up orchestrator hardening slice. Deterministic step context packets, step
+  output packets, durable failure/block policy, and post-step gates are now implemented
+  for the serial workflow engine.
+
 ## Original Baseline
 
 Ling Stack already has most of the lower-level pieces:
@@ -254,7 +261,9 @@ Step start:
 3. Build a task from step prompt, context packet, previous step outputs, teammate, and
    skill.
 4. Start a run through the existing run coordinator.
-5. Link `taskId`, `runId`, and `workUnitId` back to the workflow step.
+5. Link `taskId`, `runId`, and `workUnitId` back to the workflow step; the run request
+   and run session also persist `workflowStepId` so run/thread evidence remains
+   queryable by workflow-step owner.
 6. Watch the run terminal state.
 7. Transition the step:
    - `succeeded` if the run succeeded,
@@ -381,9 +390,8 @@ There are three gate types:
 The first implementation should support:
 
 - pre-step gates from `WorkflowStepTemplate.approvalGate`,
+- post-step gates from explicit workflow step metadata,
 - existing tool gates during runs.
-
-Post-step gates can be added later as explicit template metadata.
 
 ## Failure And Blocking Rules
 
@@ -526,12 +534,12 @@ continue the next eligible step.
 
 ### Slice 4: Approval Gates
 
-Status: implemented for backend pre-step approval gates and existing run/tool approval
-hooks.
+Status: implemented for backend pre-step approval gates, post-step approval gates, and
+existing run/tool approval hooks.
 
 - Add pre-step approval records for gated steps.
 - Keep existing tool approval hooks inside the run.
-- Show workflow/step approval state in API responses. UI cards remain part of Slice 6.
+- Show workflow/step approval state in API responses and Web workflow cards.
 
 ### Slice 5: Startup Recovery
 
@@ -563,6 +571,8 @@ Current coverage:
   task/run coordinator.
 - Succeeded workflow activity cards show a deterministic final summary with linked runs,
   artifacts, step summaries, and changed-file/artifact path refs.
+- Workflow step cards show context/output packet artifact chips plus policy and gate
+  detail rows.
 
 ## Test Plan
 
@@ -580,10 +590,14 @@ Daemon:
 - Tick does not start a dependent step before prerequisites succeed.
 - Gated steps create `workflow_step` approvals and do not start until approved.
 - Denied or expired pre-step approvals fail the step/workflow before any runner starts.
+- Denied pre/post approvals follow durable `onApprovalDenied` policy.
 - Provider/preflight failures block the step without creating a run.
 - Terminal successful run advances the workflow on next tick.
 - Failed run fails or blocks the workflow according to policy.
-- Cancellation cancels active run and queued steps.
+- Run cancellation blocks or fails according to policy; workflow cancellation cancels
+  active run, queued steps, and pending approvals.
+- `skip_if_optional` marks the failed step skipped and allows a later orchestrator tick to
+  start downstream steps.
 - Startup reconcile repairs stale running steps.
 
 Runner integration:
@@ -646,5 +660,5 @@ Recommended defaults:
 - Failed planning/review steps block, while failed implementation/release steps fail the
   workflow unless the user retries.
 - Keep all execution serial until recovery and UI are proven.
-- Add explicit post-step gate metadata later.
+- Use explicit post-step gate metadata.
 - Start with deterministic summaries plus links to run artifacts.

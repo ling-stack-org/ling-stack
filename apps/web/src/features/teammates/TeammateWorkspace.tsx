@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   CheckCircle2,
+  Copy,
   Hash,
   Image,
   Loader2,
@@ -68,6 +69,7 @@ import {
   UsedMemorySummary,
   filterUsedMemoryEventsByResponse,
 } from "../../shared/components/index.js";
+import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationFeed, ConversationShell, ConversationStatusStrip, MessageFooterActions, MessageRow } from "../../shared/conversation/index.js";
 import type {
   AiTeammate,
   Channel,
@@ -538,6 +540,10 @@ export function TeammateWorkspace({
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  function copyMessageText(text: string): void {
+    void navigator.clipboard.writeText(text).catch(() => undefined);
   }
 
   async function uploadAvatarFile(file: File | undefined): Promise<void> {
@@ -1052,12 +1058,15 @@ export function TeammateWorkspace({
               <Settings size={15} />
             </button>
           </div>
-          <div className="teammate-chat-status-row" aria-label={t("Private chat status")}>
-            <span className="teammate-context-chip">{providerReady ? t("Model ready") : t("Model needs setup")}</span>
-            <span className="teammate-context-chip">{memoryScopes.some((scope) => scope.enabled) ? t("Recall enabled") : t("Recall off")}</span>
-            <span className="teammate-context-chip">{t("{count} attachments", { count: directAttachments.length })}</span>
-            {teammate.status === "active" ? null : <StatusBadge status={teammate.status} />}
-          </div>
+          <ConversationStatusStrip
+            className="teammate-chat-status-row"
+            title={providerReady ? t("Model ready") : t("Model needs setup")}
+            statusNode={teammate.status === "active" ? null : <StatusBadge status={teammate.status} />}
+            metaItems={[
+              { id: "recall", label: t("Memory"), value: memoryScopes.some((scope) => scope.enabled) ? t("Recall enabled") : t("Recall off") },
+              { id: "attachments", label: t("Files"), value: t("{count} attachments", { count: directAttachments.length }) },
+            ]}
+          />
           {messageSearchOpen ? (
             <label className="teammate-chat-search">
               <Search size={14} />
@@ -1117,88 +1126,127 @@ export function TeammateWorkspace({
       ) : null}
 
       {workspaceView === "chat" ? (
-        <section className="teammate-private-chat" aria-label={t("Private chat")}>
-          <div className={visibleMessages.length === 0 ? "teammate-message-list empty" : "teammate-message-list"}>
-            <div className="teammate-chat-day-separator">{t("Today")}</div>
-            {visibleMessages.length === 0 ? (
-              <div className="client-empty-state teammate-empty">
-                <MessageSquare size={18} />
-                <span>{normalizedMessageSearchQuery ? t("No private messages match search") : t("No private messages yet")}</span>
-              </div>
-            ) : (
-              visibleMessages.map((message) => (
-                <article key={message.id} className={`teammate-message-row ${message.authorType}`}>
-                  {message.authorType === "ai-teammate" ? <TeammateAvatar teammate={teammate} cwd={cwd} compact /> : <AvatarInitial label="U" tone="gray" />}
-                  <div>
-                    <header>
-                      <strong>{message.authorType === "ai-teammate" ? teammate.displayName : t("You")}</strong>
-                      <time>{formatDateTime(message.createdAt)}</time>
-                      <StatusBadge status={message.status} />
-                    </header>
-                    <p>{message.body}</p>
-                    {message.attachmentIds.length > 0 ? (
-                      <AttachmentChipList
-                        attachments={message.attachmentIds.map((id) => privateAttachmentById.get(id)).filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))}
-                        cwd={cwd}
+        <ConversationShell
+          className="teammate-private-chat"
+          ariaLabel={t("Private chat")}
+          feedNode={(
+            <ConversationFeed
+              className="teammate-message-list"
+              emptyClassName="client-empty-state teammate-empty"
+              items={visibleMessages}
+              dayLabel={t("Today")}
+              emptyIcon={<MessageSquare size={18} />}
+              emptyLabel={normalizedMessageSearchQuery ? t("No private messages match search") : t("No private messages yet")}
+              getItemId={(message) => message.id}
+              renderItem={(message) => {
+                const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
+                return (
+                  <MessageRow
+                    className="teammate-message-row"
+                    authorType={message.authorType}
+                    avatar={message.authorType === "ai-teammate" ? <TeammateAvatar teammate={teammate} cwd={cwd} compact /> : <AvatarInitial label="U" tone="gray" />}
+                    authorName={message.authorType === "ai-teammate" ? teammate.displayName : t("You")}
+                    createdAtLabel={formatDateTime(message.createdAt)}
+                    statusNode={<StatusBadge status={message.status} />}
+                    body={message.body}
+                    attachmentsNode={message.attachmentIds.length > 0 ? (
+                      <ConversationAttachmentStrip
+                        className="teammate-message-attachments"
+                        chipClassName="teammate-attachment-chip"
+                        attachments={message.attachmentIds
+                          .map((id) => privateAttachmentById.get(id))
+                          .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
+                          .map((attachment) => ({
+                            id: attachment.id,
+                            label: attachment.fileName,
+                            meta: formatBytes(attachment.sizeBytes),
+                            href: attachmentContentUrl(attachment, cwd.trim()),
+                            target: "_blank",
+                            rel: "noreferrer",
+                            icon: <Paperclip size={13} />,
+                          }))}
                       />
                     ) : null}
-                    <UsedMemorySummary
-                      compact
-                      events={filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id)}
-                      memoryById={memoryById}
-                    />
-                    {message.errorMessage ? <small>{message.errorMessage}</small> : null}
-                    <div className="teammate-message-actions">
-                      <button
-                        className="secondary-button compact-button"
-                        type="button"
-                        onClick={() => void createTaskFromMessage(message)}
-                        disabled={creatingTask || taskChannelOptions.length === 0}
-                      >
-                        {creatingTask ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
-                        {t("Create task")}
+                    evidenceNode={messageUsedMemoryEvents.length > 0 ? (
+                      <ConversationEvidenceBundlePanel
+                        label={t("Message evidence")}
+                        bundle={{
+                          summary: t("Used memory"),
+                          sections: [
+                            {
+                              id: "memory",
+                              label: t("Memory"),
+                              summary: t("Used memory"),
+                              content: <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />,
+                            },
+                          ],
+                        }}
+                      />
+                    ) : null}
+                    errorNode={message.errorMessage ? <small>{message.errorMessage}</small> : null}
+                    actionsNode={(
+                      <MessageFooterActions
+                        className="teammate-message-actions"
+                        actions={[
+                          {
+                            id: "copy",
+                            label: t("Copy message"),
+                            icon: <Copy size={14} />,
+                            onClick: () => copyMessageText(message.body),
+                          },
+                          {
+                            id: "create-task",
+                            label: t("Create task"),
+                            icon: creatingTask ? <Loader2 className="spin" size={14} /> : <Plus size={14} />,
+                            className: "secondary-button compact-button",
+                            disabled: creatingTask || taskChannelOptions.length === 0,
+                            onClick: () => void createTaskFromMessage(message),
+                          },
+                        ]}
+                      />
+                    )}
+                  />
+                );
+              }}
+            />
+          )}
+          composerNode={(
+            <MessageComposer
+              className="teammate-direct-composer"
+              label={t("Private chat composer")}
+              value={messageDraft}
+              rows={3}
+              sending={sending}
+              sendDisabled={!messageDraft.trim() && pendingAttachmentIds.length === 0}
+              sendLabel={t("Send")}
+              sendingLabel={t("Sending...")}
+              attachLabel={uploadingAttachments ? t("Uploading...") : t("Attach files")}
+              accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
+              placeholder={t("Message this AI teammate privately")}
+              onChange={setMessageDraft}
+              onSend={sendPrivateMessage}
+              onAttachFiles={(files) => void uploadPrivateFiles(Array.from(files))}
+              previewContent={pendingAttachments.length > 0 ? (
+                <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
+                  {pendingAttachments.map((attachment) => (
+                    <div key={attachment.id} className="composer-preview-card file ready">
+                      <span className="composer-preview-file-icon" aria-hidden="true">
+                        <Paperclip size={16} />
+                      </span>
+                      <span className="composer-preview-body">
+                        <strong title={attachment.fileName}>{attachment.fileName}</strong>
+                        <small>{formatBytes(attachment.sizeBytes)}</small>
+                      </span>
+                      <button className="composer-preview-remove" type="button" onClick={() => void removePendingAttachment(attachment.id)} aria-label={t("Remove pending attachment")}>
+                        <X size={13} />
                       </button>
                     </div>
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-          <MessageComposer
-            className="teammate-direct-composer"
-            label={t("Private chat composer")}
-            value={messageDraft}
-            rows={3}
-            sending={sending}
-            sendDisabled={!messageDraft.trim() && pendingAttachmentIds.length === 0}
-            sendLabel={t("Send")}
-            sendingLabel={t("Sending...")}
-            attachLabel={uploadingAttachments ? t("Uploading...") : t("Attach files")}
-            accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
-            placeholder={t("Message this AI teammate privately")}
-            onChange={setMessageDraft}
-            onSend={sendPrivateMessage}
-            onAttachFiles={(files) => void uploadPrivateFiles(Array.from(files))}
-            previewContent={pendingAttachments.length > 0 ? (
-              <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
-                {pendingAttachments.map((attachment) => (
-                  <div key={attachment.id} className="composer-preview-card file ready">
-                    <span className="composer-preview-file-icon" aria-hidden="true">
-                      <Paperclip size={16} />
-                    </span>
-                    <span className="composer-preview-body">
-                      <strong title={attachment.fileName}>{attachment.fileName}</strong>
-                      <small>{formatBytes(attachment.sizeBytes)}</small>
-                    </span>
-                    <button className="composer-preview-remove" type="button" onClick={() => void removePendingAttachment(attachment.id)} aria-label={t("Remove pending attachment")}>
-                      <X size={13} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          />
-        </section>
+                  ))}
+                </div>
+              ) : null}
+            />
+          )}
+        />
       ) : null}
 
       {workspaceView === "chat" ? (
@@ -2443,22 +2491,6 @@ function TeammateAvatar({ teammate, cwd, compact = false }: { readonly teammate:
     );
   }
   return <AvatarInitial label={teammateInitialFromName(teammate.displayName)} tone={teammateAvatarTone(teammate)} />;
-}
-
-function AttachmentChipList({ attachments, cwd }: { readonly attachments: readonly TeammatePrivateAttachment[]; readonly cwd: string }): JSX.Element | null {
-  if (attachments.length === 0) {
-    return null;
-  }
-  return (
-    <div className="teammate-message-attachments">
-      {attachments.map((attachment) => (
-        <a key={attachment.id} className="teammate-attachment-chip" href={attachmentContentUrl(attachment, cwd.trim())} target="_blank" rel="noreferrer">
-          <Paperclip size={13} />
-          <span>{attachment.fileName}</span>
-        </a>
-      ))}
-    </div>
-  );
 }
 
 function teammateAvatarTone(teammate: AiTeammate): "default" | "orange" | "teal" | "violet" | "blue" | "rose" | "gray" {

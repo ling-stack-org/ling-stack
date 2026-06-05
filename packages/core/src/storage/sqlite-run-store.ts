@@ -53,6 +53,7 @@ import {
   createTeammateMemoryScopeId,
   createTeammatePrivateAttachmentId,
   createTaskId,
+  channelWorkflowStepStatuses,
   normalizeChannelRuntimePolicy,
   type AiTeammate,
   type AiTeammateStatus,
@@ -140,6 +141,9 @@ import {
   type UpdateChannelLinkPreviewInput,
   type UpdateChannelWorkflowInput,
   type UpdateChannelWorkflowStepInput,
+  type WorkflowStepFailurePolicy,
+  type WorkflowStepGate,
+  type WorkflowStepPolicy,
 } from "../workspace-types.js";
 import { GSTACK_DEFAULT_SKILL_PACK_ID, listDefaultTeammateTemplates } from "../builtin-skill-packs.js";
 import {
@@ -371,6 +375,8 @@ const LING_THREADS_MIGRATION_VERSION = 31;
 const LING_THREADS_MIGRATION_NAME = "create_ling_threads";
 const APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_VERSION = 32;
 const APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_NAME = "allow_workflow_step_approval_owners";
+const RUN_WORKFLOW_STEP_OWNER_MIGRATION_VERSION = 33;
+const RUN_WORKFLOW_STEP_OWNER_MIGRATION_NAME = "add_run_workflow_step_owner";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -568,6 +574,7 @@ export class SqliteRunStore implements RunStore {
           task_id,
           channel_id,
           teammate_id,
+          workflow_step_id,
           selected_skill_id,
           provider_preset_id,
           provider_name,
@@ -587,7 +594,7 @@ export class SqliteRunStore implements RunStore {
           started_at,
           ended_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.id,
@@ -596,6 +603,7 @@ export class SqliteRunStore implements RunStore {
         input.taskId,
         input.channelId ?? null,
         input.teammateId ?? null,
+        input.workflowStepId ?? null,
         input.selectedSkillId ?? null,
         input.providerPresetId ?? null,
         input.providerName,
@@ -681,6 +689,7 @@ export class SqliteRunStore implements RunStore {
             task_id,
             channel_id,
             teammate_id,
+            workflow_step_id,
             selected_skill_id,
             provider_preset_id,
             provider_name,
@@ -721,6 +730,10 @@ export class SqliteRunStore implements RunStore {
       clauses.push("teammate_id = ?");
       params.push(options.teammateId);
     }
+    if (options.workflowStepId) {
+      clauses.push("workflow_step_id = ?");
+      params.push(options.workflowStepId);
+    }
     if (options.threadId) {
       clauses.push("thread_id = ?");
       params.push(options.threadId);
@@ -735,6 +748,7 @@ export class SqliteRunStore implements RunStore {
         task_id,
         channel_id,
         teammate_id,
+        workflow_step_id,
         selected_skill_id,
         provider_preset_id,
         provider_name,
@@ -8628,6 +8642,20 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_VERSION, APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_NAME);
       }
     }
+
+    const hasRunWorkflowStepOwnerMigration = this.hasMigration(RUN_WORKFLOW_STEP_OWNER_MIGRATION_VERSION);
+    if (!hasRunWorkflowStepOwnerMigration || !this.hasColumn("run_sessions", "workflow_step_id")) {
+      if (!this.hasColumn("run_sessions", "workflow_step_id")) {
+        this.database.exec("ALTER TABLE run_sessions ADD COLUMN workflow_step_id TEXT;");
+      }
+      this.database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_run_sessions_workflow_step
+        ON run_sessions(workflow_step_id);
+      `);
+      if (!hasRunWorkflowStepOwnerMigration) {
+        this.recordMigration(RUN_WORKFLOW_STEP_OWNER_MIGRATION_VERSION, RUN_WORKFLOW_STEP_OWNER_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -8983,6 +9011,7 @@ function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
     taskId: readString(row, "task_id"),
     channelId: readNullableString(row, "channel_id"),
     teammateId: readNullableString(row, "teammate_id"),
+    workflowStepId: readNullableString(row, "workflow_step_id"),
     selectedSkillId: readNullableString(row, "selected_skill_id"),
     providerPresetId: readNullableString(row, "provider_preset_id"),
     providerName: readString(row, "provider_name"),
@@ -10921,6 +10950,12 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     autoStart: typeof record.autoStart === "boolean" ? record.autoStart : undefined,
     approvalGate: parseOptionalApprovalProfileValue(record.approvalGate),
     preStepApprovalId: readOptionalStringValue(record.preStepApprovalId),
+    policy: parseOptionalWorkflowStepPolicyValue(record.policy),
+    gates: parseOptionalWorkflowStepGateListValue(record.gates),
+    activeGateStage: readOptionalGateStageValue(record.activeGateStage),
+    postStepApprovalId: readOptionalStringValue(record.postStepApprovalId),
+    contextArtifactId: readOptionalStringValue(record.contextArtifactId),
+    outputArtifactId: readOptionalStringValue(record.outputArtifactId),
     outputArtifactIds: readOptionalStringListValue(record.outputArtifactIds),
   });
 }
@@ -10931,6 +10966,79 @@ function readOptionalStringValue(value: unknown): string | undefined {
 
 function readOptionalStringListValue(value: unknown): readonly string[] | undefined {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value as string[] : undefined;
+}
+
+function parseOptionalWorkflowStepPolicyValue(value: unknown): WorkflowStepPolicy | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const onRunFailed = readWorkflowStepFailurePolicy(record.onRunFailed);
+  const onRunCancelled = readWorkflowStepFailurePolicy(record.onRunCancelled);
+  const onApprovalDenied = readWorkflowStepFailurePolicy(record.onApprovalDenied);
+  if (!onRunFailed || !onRunCancelled || !onApprovalDenied || typeof record.retryable !== "boolean") {
+    return undefined;
+  }
+  return omitUndefined({
+    onRunFailed,
+    onRunCancelled,
+    onApprovalDenied,
+    retryable: record.retryable,
+    maxRetries: typeof record.maxRetries === "number" && Number.isFinite(record.maxRetries) ? record.maxRetries : undefined,
+  });
+}
+
+function parseOptionalWorkflowStepGateListValue(value: unknown): readonly WorkflowStepGate[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const gates = value
+    .map(parseWorkflowStepGateValue)
+    .filter((gate): gate is WorkflowStepGate => gate !== undefined);
+  return gates.length === value.length ? gates : undefined;
+}
+
+function parseWorkflowStepGateValue(value: unknown): WorkflowStepGate | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const stage = readOptionalGateStageValue(record.stage);
+  const title = readOptionalStringValue(record.title);
+  const reason = readOptionalStringValue(record.reason);
+  const approvalProfile = parseOptionalApprovalProfileValue(record.approvalProfile);
+  if (!stage || !title || !reason || !approvalProfile) {
+    return undefined;
+  }
+  const requiredForStatuses = parseOptionalWorkflowStepStatusListValue(record.requiredForStatuses);
+  return omitUndefined({
+    stage,
+    approvalProfile,
+    title,
+    reason,
+    requiredForStatuses,
+  });
+}
+
+function readWorkflowStepFailurePolicy(value: unknown): WorkflowStepFailurePolicy | undefined {
+  return value === "block_for_user" || value === "fail_workflow" || value === "cancel_workflow" || value === "skip_if_optional"
+    ? value
+    : undefined;
+}
+
+function readOptionalGateStageValue(value: unknown): "pre" | "post" | undefined {
+  return value === "pre" || value === "post" ? value : undefined;
+}
+
+function parseOptionalWorkflowStepStatusListValue(value: unknown): readonly ChannelWorkflowStepStatus[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.every(isChannelWorkflowStepStatusValue) ? value as ChannelWorkflowStepStatus[] : undefined;
+}
+
+function isChannelWorkflowStepStatusValue(value: unknown): value is ChannelWorkflowStepStatus {
+  return typeof value === "string" && channelWorkflowStepStatuses.includes(value as ChannelWorkflowStepStatus);
 }
 
 function parseOptionalApprovalProfileValue(value: unknown): SkillApprovalProfile | undefined {

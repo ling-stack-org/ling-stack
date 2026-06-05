@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
+  type ChannelWorkflow,
   type ChannelHandoff,
   type ChannelWorkflowStatus,
+  type ChannelWorkflowStep,
   type ChannelWorkflowStepStatus,
   type RunStore,
   type RunTool,
@@ -38,6 +40,7 @@ export interface WorkflowStepRunRequest {
   readonly providerPresetId?: string;
   readonly runnerId?: string;
   readonly teammateId?: string;
+  readonly workflowStepId?: string;
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
@@ -534,7 +537,12 @@ export function prepareWorkflowStepStart(
   const providerPresetId = input.providerPresetId ?? channel.defaultProviderPresetId;
   const runnerId = input.runnerId;
   const taskTitle = input.taskTitle ?? step.title;
-  const taskPrompt = input.taskPrompt ?? formatWorkflowStepTaskPrompt(step.prompt, workflow.objective);
+  const taskPrompt = formatWorkflowStepTaskPrompt(
+    input.taskPrompt ?? step.prompt,
+    workflow,
+    step,
+    store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
+  );
   const assigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const runRequestBase: WorkflowStepRunRequest = {
     workspaceCwd: cwd,
@@ -542,6 +550,7 @@ export function prepareWorkflowStepStart(
     providerPresetId,
     runnerId,
     teammateId: assigneeTeammateId,
+    workflowStepId: step.id,
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     idempotencyKey: input.idempotencyKey ?? `workflow-step:${step.id}`,
     task: {
@@ -713,8 +722,81 @@ export function completeWorkflowIfStepsFinished(store: RunStore, workflowId: str
   });
 }
 
-function formatWorkflowStepTaskPrompt(prompt: string, workflowObjective: string): string {
-  return [`Workflow objective: ${workflowObjective || "No objective provided."}`, "", prompt].join("\n");
+function formatWorkflowStepTaskPrompt(
+  prompt: string,
+  workflow: ChannelWorkflow,
+  step: ChannelWorkflowStep,
+  workflowSteps: readonly ChannelWorkflowStep[],
+): string {
+  const stepsById = new Map(workflowSteps.map((candidate) => [candidate.id, candidate] as const));
+  const dependencies = (step.metadata?.dependsOnStepIds ?? [])
+    .map((stepId) => stepsById.get(stepId))
+    .filter((candidate): candidate is ChannelWorkflowStep => candidate !== undefined);
+  const dependencyLines = dependencies.length === 0
+    ? ["- none"]
+    : dependencies.flatMap((dependency) => formatWorkflowDependencyPromptLines(dependency));
+  const approvalGateLines = formatWorkflowApprovalGatePromptLines(step);
+  return [
+    `Workflow context packet: ${step.metadata?.contextArtifactId ?? "pending until run starts"}`,
+    "",
+    "Objective:",
+    workflow.objective || "No objective provided.",
+    "",
+    "Dependencies:",
+    ...dependencyLines,
+    "",
+    "Approval gates:",
+    ...approvalGateLines,
+    "",
+    "Current step:",
+    prompt,
+  ].join("\n");
+}
+
+function formatWorkflowDependencyPromptLines(step: ChannelWorkflowStep): readonly string[] {
+  const artifactIds = uniqueStrings([
+    step.metadata?.outputArtifactId,
+    ...(step.metadata?.outputArtifactIds ?? []),
+  ].filter((artifactId): artifactId is string => Boolean(artifactId)));
+  return [
+    `- ${step.title} (${step.status})`,
+    `  workflowStepId: ${step.id}`,
+    `  runId: ${step.runId ?? "none"}`,
+    `  outputArtifactId: ${step.metadata?.outputArtifactId ?? "none"}`,
+    `  artifactIds: ${artifactIds.length > 0 ? artifactIds.join(", ") : "none"}`,
+    `  resultSummary: ${step.resultSummary ? truncateWorkflowPromptValue(step.resultSummary, 280) : "none"}`,
+  ];
+}
+
+function truncateWorkflowPromptValue(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
+function formatWorkflowApprovalGatePromptLines(step: ChannelWorkflowStep): readonly string[] {
+  const lines: string[] = [];
+  if (step.metadata?.approvalGate) {
+    lines.push(`- pre-run: ${formatApprovalProfileSummary(step.metadata.approvalGate)}`);
+  }
+  for (const gate of step.metadata?.gates ?? []) {
+    lines.push(`- ${gate.stage}: ${gate.title} (${formatApprovalProfileSummary(gate.approvalProfile)})`);
+    lines.push(`  reason: ${truncateWorkflowPromptValue(gate.reason, 180)}`);
+    lines.push(`  requiredForStatuses: ${gate.requiredForStatuses?.join(", ") ?? "any"}`);
+  }
+  return lines.length > 0 ? lines : ["- none"];
+}
+
+function formatApprovalProfileSummary(profile: SkillApprovalProfile): string {
+  return [
+    `mode=${profile.mode}`,
+    profile.risk ? `risk=${profile.risk}` : undefined,
+    profile.requiredForTools?.length ? `tools=${profile.requiredForTools.join(",")}` : undefined,
+    profile.requiredForActions?.length ? `actions=${profile.requiredForActions.join(",")}` : undefined,
+  ].filter((item): item is string => Boolean(item)).join("; ");
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  return [...new Set(values)];
 }
 
 function transitionWorkflowToStatus(

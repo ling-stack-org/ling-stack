@@ -18,20 +18,35 @@ import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
-import { isRecord, readOptionalString } from "../../shared/validation.js";
+import { isRecord, readOptionalBoolean, readOptionalString } from "../../shared/validation.js";
 import { listExecutionActions } from "./execution-actions.js";
 import type { RunRequest } from "./schemas.js";
 
 export type LingThreadRoute =
   | { readonly kind: "detail"; readonly threadId: string }
   | { readonly kind: "evidence"; readonly threadId: string }
-  | { readonly kind: "resume"; readonly threadId: string };
+  | { readonly kind: "resume"; readonly threadId: string }
+  | { readonly kind: "resume-preview"; readonly threadId: string };
 
 export type StartLingThreadResumeRun = (runRequest: RunRequest) => Promise<string | undefined>;
 
 export interface HandleLingThreadRouteOptions {
   readonly maxBodyBytes: number;
   readonly startResumeRun?: StartLingThreadResumeRun;
+}
+
+interface ResumeContextPreview {
+  readonly title: string;
+  readonly instruction: string;
+  readonly sourceRunId: string;
+  readonly priorRunIds: readonly string[];
+  readonly includedEventCount: number;
+  readonly includedApprovalCount: number;
+  readonly includedArtifactIds: readonly string[];
+  readonly pendingActionIds: readonly string[];
+  readonly contextText: string;
+  readonly redactionNotes: readonly string[];
+  readonly warnings: readonly string[];
 }
 
 export function handleLingThreadsCollection(
@@ -86,6 +101,9 @@ export function handleLingThreadItem(
   if (route.kind === "resume") {
     return handleLingThreadResume(request, response, url, storeRegistry, route.threadId, options);
   }
+  if (route.kind === "resume-preview") {
+    return handleLingThreadResumePreview(request, response, url, storeRegistry, route.threadId, options);
+  }
   if (request.method !== "GET") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for thread items` });
     return;
@@ -110,6 +128,43 @@ export function handleLingThreadItem(
   }
 
   writeJson(response, 200, { cwd, thread });
+}
+
+async function handleLingThreadResumePreview(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  threadId: string,
+  options?: HandleLingThreadRouteOptions,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for thread resume preview` });
+    return;
+  }
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    if (!thread) {
+      writeJson(response, 404, { error: "thread_not_found", message: `Ling thread not found: ${threadId}` });
+      return;
+    }
+    const body = await readOptionalJsonBody(request, options?.maxBodyBytes ?? 1024 * 1024);
+    const resume = buildLingThreadResumeContext({ store, thread, body, mode: "preview" });
+    writeJson(response, 200, {
+      cwd,
+      thread,
+      sourceRun: resume.sourceRun,
+      context: resume.context,
+    });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 async function handleLingThreadResume(
@@ -141,7 +196,7 @@ async function handleLingThreadResume(
       return;
     }
     const body = await readOptionalJsonBody(request, options.maxBodyBytes);
-    const resume = prepareLingThreadResumeRun(store, thread, body);
+    const resume = buildLingThreadResumeContext({ store, thread, body, mode: "execute" });
     const runId = await options.startResumeRun(resume.runRequest);
     if (!runId) {
       writeJson(response, 500, { error: "resume_start_failed", message: "Thread resume run failed to start." });
@@ -211,14 +266,21 @@ function buildLingThreadEvidence(store: RunStore, cwd: string, thread: LingThrea
   };
 }
 
-function prepareLingThreadResumeRun(
-  store: RunStore,
-  thread: LingThread,
-  body: unknown,
-): { readonly sourceRun: RunSession; readonly runRequest: RunRequest } {
+function buildLingThreadResumeContext(input: {
+  readonly store: RunStore;
+  readonly thread: LingThread;
+  readonly body: unknown;
+  readonly mode: "preview" | "execute";
+}): { readonly sourceRun: RunSession; readonly context: ResumeContextPreview; readonly runRequest: RunRequest } {
+  const { store, thread, body } = input;
+  const warnings: string[] = [];
   const activeRun = thread.activeRunId ? store.getRun(thread.activeRunId) : undefined;
   if (activeRun && !isTerminalRunStatus(activeRun.status)) {
-    throw new Error(`Thread already has an active run: ${activeRun.id}`);
+    const message = `Thread already has an active run: ${activeRun.id}`;
+    if (input.mode === "execute") {
+      throw new Error(message);
+    }
+    warnings.push(message);
   }
   const sourceRun = resolveThreadResumeSourceRun(store, thread, body);
   const requestSnapshot = isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {};
@@ -244,8 +306,19 @@ function prepareLingThreadResumeRun(
   if (!providerPresetId && !inlineProvider) {
     throw new Error("Cannot resume thread because the source run has no reusable provider snapshot.");
   }
+  const context = buildResumeContextPreview({
+    store,
+    thread,
+    sourceRun,
+    originalTitle,
+    originalPrompt,
+    instruction,
+    includeArtifacts: isRecord(body) ? readOptionalBoolean(body, "includeArtifacts") ?? false : false,
+    warnings,
+  });
   return {
     sourceRun,
+    context,
     runRequest: {
       workspaceCwd: readSnapshotString(requestSnapshot, "workspaceCwd") ?? sourceRun.cwd,
       cwd: readSnapshotString(requestSnapshot, "cwd") ?? sourceRun.cwd,
@@ -259,13 +332,7 @@ function prepareLingThreadResumeRun(
       task: {
         id: `manual_resume_${randomUUID()}`,
         title: `Resume: ${thread.title}`,
-        prompt: renderManualResumePrompt({
-          thread,
-          sourceRun,
-          originalTitle,
-          originalPrompt,
-          instruction,
-        }),
+        prompt: context.contextText,
         channelId:
           thread.channelId ??
           readSnapshotString(taskSnapshot, "channelId") ??
@@ -302,12 +369,63 @@ function resolveThreadResumeSourceRun(store: RunStore, thread: LingThread, body:
   return sourceRun;
 }
 
-function renderManualResumePrompt(input: {
+function buildResumeContextPreview(input: {
+  readonly store: RunStore;
   readonly thread: LingThread;
   readonly sourceRun: RunSession;
   readonly originalTitle: string;
   readonly originalPrompt: string;
   readonly instruction: string;
+  readonly includeArtifacts: boolean;
+  readonly warnings: readonly string[];
+}): ResumeContextPreview {
+  const runs = [...input.store.listRuns({ threadId: input.thread.id, limit: 100 })]
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const events = runs.flatMap((run) => input.store.listEvents(run.id, { limit: 1000 }));
+  const approvals = uniqueById(runs.flatMap((run) => input.store.listApprovalRequests({ runId: run.id, limit: 500 })));
+  const artifacts = input.includeArtifacts ? runs.flatMap((run) => input.store.listArtifacts(run.id)) : [];
+  const actions = listExecutionActions(input.store, { threadId: input.thread.id, limit: 500 });
+  const pendingActionIds = actions
+    .filter((action) => action.status === "proposed" || action.status === "waiting_for_approval" || action.status === "executing")
+    .map((action) => action.id);
+  const redactionNotes = input.includeArtifacts && artifacts.length > 0
+    ? ["Artifact contents are omitted; preview includes artifact ids only."]
+    : [];
+  const context: Omit<ResumeContextPreview, "contextText"> = {
+    title: `Resume: ${input.thread.title}`,
+    instruction: input.instruction,
+    sourceRunId: input.sourceRun.id,
+    priorRunIds: runs.map((run) => run.id),
+    includedEventCount: events.length,
+    includedApprovalCount: approvals.length,
+    includedArtifactIds: artifacts.map((artifact) => artifact.id),
+    pendingActionIds,
+    redactionNotes,
+    warnings: input.warnings,
+  };
+  return {
+    ...context,
+    contextText: renderResumeContextText({
+      ...context,
+      thread: input.thread,
+      sourceRun: input.sourceRun,
+      originalTitle: input.originalTitle,
+      originalPrompt: input.originalPrompt,
+      runs,
+      approvals,
+      actions,
+    }),
+  };
+}
+
+function renderResumeContextText(input: Omit<ResumeContextPreview, "contextText"> & {
+  readonly thread: LingThread;
+  readonly sourceRun: RunSession;
+  readonly originalTitle: string;
+  readonly originalPrompt: string;
+  readonly runs: readonly RunSession[];
+  readonly approvals: readonly ApprovalRequest[];
+  readonly actions: ReturnType<typeof listExecutionActions>;
 }): string {
   return [
     "Resume a Ling Stack thread from durable Ling state.",
@@ -318,6 +436,13 @@ function renderManualResumePrompt(input: {
     `Status: ${input.thread.status}`,
     `Title: ${input.thread.title}`,
     `Objective: ${input.thread.objective}`,
+    "",
+    "Resume instruction:",
+    input.instruction,
+    "",
+    "Prior runs:",
+    ...input.runs.map((run) =>
+      `- ${run.id}: ${run.status}, ${run.startedAt ?? run.createdAt} -> ${run.endedAt ?? "open"}, runner ${runnerAuditLine(run)}`),
     "",
     "Source run:",
     `Run id: ${input.sourceRun.id}`,
@@ -331,14 +456,34 @@ function renderManualResumePrompt(input: {
     `Title: ${input.originalTitle}`,
     input.originalPrompt,
     "",
-    "User resume instruction:",
-    input.instruction,
+    "Recent terminal evidence:",
+    `Included events: ${input.includedEventCount}`,
+    `Included approvals: ${input.includedApprovalCount}`,
+    `Included artifact ids: ${input.includedArtifactIds.length > 0 ? input.includedArtifactIds.join(", ") : "none"}`,
+    "",
+    "Pending actions:",
+    ...(input.pendingActionIds.length > 0 ? input.pendingActionIds.map((id) => `- ${id}`) : ["- none"]),
+    "",
+    "Warnings:",
+    ...(input.warnings.length > 0 ? input.warnings.map((warning) => `- ${warning}`) : ["- none"]),
+    "",
+    "Redaction notes:",
+    ...(input.redactionNotes.length > 0 ? input.redactionNotes.map((note) => `- ${note}`) : ["- none"]),
     "",
     "Constraints:",
     "- Treat this as a new Ling-supervised continuation, not a native runner session resume.",
     "- Use durable thread/run evidence as hints only; re-check files or external state before side effects.",
     "- The resume instruction does not grant extra tools, approvals, secrets, MCP access, or external-send rights.",
   ].filter((line): line is string => line !== undefined).join("\n");
+}
+
+function runnerAuditLine(run: RunSession): string {
+  const requestSnapshot = isRecord(run.requestSnapshot) ? run.requestSnapshot : {};
+  const resolution = isRecord(requestSnapshot.runnerResolution) ? requestSnapshot.runnerResolution : {};
+  const requested = readSnapshotString(resolution, "requestedRunnerId") ?? "unknown";
+  const effective = readSnapshotString(resolution, "effectiveRunnerId") ?? requested;
+  const source = readSnapshotString(resolution, "requestSource") ?? "legacy";
+  return requested === effective ? `${effective} (${source})` : `${requested} -> ${effective} (${source})`;
 }
 
 function collectThreadStateTransitions(

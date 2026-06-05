@@ -65,16 +65,23 @@ Implemented foundations:
 Important gaps:
 
 - Approval coverage is not complete for every side-effect category.
-- Approval records now have an action-oriented read model and Web payload previews, but
-  durable preview/result artifact linkage and richer scope analysis are still incomplete.
-- The UI exposes threads as a top-level list inside Run history and uses the selected
-  thread's active/last run as the evidence and resume entry point.
+- Approval records now have an action-oriented read model, Web payload previews, and
+  durable preview/result artifact linkage for approval-backed runtime actions; richer
+  scope analysis and non-approval action stages are still incomplete.
+- The UI exposes threads as a top-level list inside Run history and opens a thread-first
+  detail panel for evidence, queued follow-ups, actions, and resume.
 - `LingThread` exists as a backend grouping, lineage, evidence, and manual resume
-  primitive; it is not yet a full UI replacement for task run history.
+  primitive; a dedicated route-level thread page remains optional polish.
 - Pi session state is currently not the durable resume source. The current runner path
   creates a fresh session for a run.
 - Mid-run user input should not be injected into the active Pi prompt. It must become a
   queued follow-up or an interrupt-and-redirect continuation.
+
+Follow-up hardening:
+
+- [Execution And Orchestration Hardening](execution-orchestration-hardening.md) defines
+  the next Codex-like execution hardening slice: action preview/result artifacts, a
+  thread-first page, resume context preview, and a stale completion audit event.
 
 ## Goals
 
@@ -638,6 +645,11 @@ layer over approval records first.
 
 ### Thread View
 
+Status as of 2026-06-05: implemented inside the existing Runs surface as a
+thread-first detail mode. Selecting a thread no longer just opens the active/last run;
+it renders thread header, objective, lineage, actions, queued follow-ups, state
+transitions, and the resume composer in the right detail panel.
+
 Required sections:
 
 - objective and current status,
@@ -683,7 +695,8 @@ The default view should be concise. Raw payloads should be expandable for debugg
 ### Slice 1: Execution Action Read Model
 
 Status: implemented for approval-backed actions via `GET /execution-actions`; Web approval
-cards render structured payload previews for common approval payloads.
+cards render structured payload previews for common approval payloads, and action
+read models expose durable preview/result artifact ids when the daemon can derive them.
 
 Current coverage:
 
@@ -691,12 +704,13 @@ Current coverage:
 - action type, risk, waiting/decision status,
 - deterministic target refs for run/task/channel/work unit/file/command/MCP/media/external
   action owners,
-- effective policy snapshot from the linked run request.
+- effective policy snapshot from the linked run request,
+- preview artifacts from approval payload paths,
+- result artifacts derived from matching `artifact_created` events by `toolCallId`.
 
 Still pending:
 
 - non-approval action stages such as `proposed`, `executing`, `succeeded`, and `failed`,
-- preview/result artifact linkage,
 - richer scope analysis.
 
 - Build an action/evidence read model from existing approval requests, tool events,
@@ -707,8 +721,9 @@ Still pending:
 
 ### Slice 2: Action Preview Builders
 
-Status: partially implemented at the approval-payload/UI layer. Backend preview artifact
-builders are still pending.
+Status: implemented for approval-backed runtime actions. Backend preview artifact
+builders create durable metadata artifacts from approval paths, and result artifacts are
+linked after execution when matching tool-call artifact events exist.
 
 - Add preview builders for:
   - filesystem edit/write diff,
@@ -725,10 +740,11 @@ Current coverage:
   cost prompts, workflow-step gate data, external action previews, and provider-change
   field names.
 - Web approval cards render those payload fields before approval.
+- `ExecutionAction.previewArtifactIds` and `ExecutionAction.resultArtifactIds` are shown
+  in approval/run/thread evidence surfaces.
 
 Still pending:
 
-- Durable preview artifacts linked from `ExecutionAction.previewArtifactIds`.
 - Git commit/push-specific preview extraction from generic shell commands.
 - Scope analysis beyond existing allowed-write-path policy decisions.
 
@@ -739,18 +755,22 @@ Status: implemented for task runs and continuation lineage.
 Current coverage:
 
 - `ling_threads` table and `run_sessions.thread_id`,
+- `run_sessions.workflow_step_id` and `RunRequest.workflowStepId` for workflow-step
+  run ownership,
 - task thread create/reuse,
+- workflow-step thread create/reuse keyed by `workflowStepId`,
 - continuation thread inheritance from `parentRunId`,
 - thread status sync for running, waiting for approval, succeeded, failed, and cancelled,
 - stale run recovery marks linked active threads failed,
-- `GET /threads`, `GET /threads/:id`, and `GET /runs?threadId=...`.
-- Web Run history lists durable threads and opens the active/last run evidence path.
+- `GET /threads`, `GET /threads/:id`, `GET /runs?threadId=...`, and
+  `GET /runs?workflowStepId=...`.
+- Web Run history lists durable threads and opens a thread-first detail mode with
+  lineage, actions, queued follow-ups, state transitions, and resume preview.
 
 Still pending:
 
-- explicit `workflowStepId` run request ownership,
 - channel discussion and teammate-direct thread unification,
-- dedicated route-level thread view that does not select a run first.
+- optional dedicated route-level thread view outside the Runs surface.
 
 - Add thread records and thread/run links.
 - Auto-create or resolve a thread for task runs, channel proposal runs, workflow-step
@@ -793,7 +813,7 @@ Status: implemented for run-level redirect continuations.
   `continuationReason: "interrupt_redirect"`.
 - Late runner success cannot overwrite a cancelled run through the run/work-unit state
   transition guards. A dedicated `stale_runner_completion_ignored` diagnostic event is
-  still a follow-up hardening item.
+  persisted when stale runner completion is ignored.
 
 - Persist redirect interventions.
 - Cancel active run/work unit.
@@ -805,8 +825,8 @@ Status: implemented for run-level redirect continuations.
 
 Status: implemented in Run history/detail. Backend manual resume is implemented via
 `POST /threads/:id/resume`, the Web Run history surface lists durable Ling threads, and
-the evidence panel has a resume composer that starts a linked `manual_resume`
-continuation from durable Ling state.
+selecting a thread opens a thread-first detail panel with source-run selection, context
+preview, and a linked `manual_resume` continuation action.
 
 - Add thread resume composer.
 - Add manual `Resume` action for terminal or blocked threads.
@@ -816,12 +836,14 @@ Current coverage:
 
 - The left Run history rail lists durable Ling threads with status, kind, objective, and
   active/last run linkage.
-- Selecting a thread opens its active or last run and reuses the thread evidence/resume
-  panel, so the user does not need to find isolated run attempts manually.
+- Selecting a thread opens thread detail rather than forcing the user to hunt through
+  isolated run attempts.
+- Active non-terminal threads keep preview available but disable resume start; terminal
+  threads can preview and start a continuation from an explicit source run.
 
-Still pending:
+Optional later polish:
 
-- A dedicated route that renders a thread without selecting a run first.
+- A dedicated route that renders a thread outside the Runs surface.
 
 ### Slice 8: Optional Native Resume
 

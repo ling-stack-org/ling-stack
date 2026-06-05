@@ -25,8 +25,8 @@ import type {
   Task,
 } from "../../types.js";
 import type { SelectedEntity, ViewId } from "../../app/view-types.js";
-import { ApprovalCard, type ApprovalResolution } from "../approvals/index.js";
-import type { ExternalActionBusyState } from "../approvals/ApprovalsPage.js";
+import { ApprovalCard, type ExternalActionBusyState } from "../approvals/ApprovalCard.js";
+import type { ApprovalResolution } from "../approvals/types.js";
 import { CiTriageAuditPanel } from "../external-work/CiTriageAuditPanel.js";
 import { RunInspector, RunTimeline } from "../runs/index.js";
 

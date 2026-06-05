@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Bot,
   CircleAlert,
   Database,
   GitBranch,
@@ -17,10 +18,11 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
+import { getRuntimeSettings, listRunners, updateRuntimeSettings } from "../../api.js";
 import { LanguageSwitcher, useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { allTools, riskyTools } from "../../lib/tools.js";
-import { MetaRow } from "../../shared/components/index.js";
+import { MetaRow, StatusBadge } from "../../shared/components/index.js";
 import { ThemeSwitcher } from "../../theme.js";
 import type {
   ApprovalPolicy,
@@ -28,10 +30,20 @@ import type {
   ApprovalToolDecision,
   Channel,
   ExternalWorkStatusResponse,
+  RunnerFallbackPolicy,
+  RunnerListItem,
+  WorkspaceRuntimeSettings,
 } from "../../types.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 
-type SettingsSection = "external-work" | "interface" | "approval-policy" | "skill-library";
+type SettingsSection = "external-work" | "interface" | "runtime" | "approval-policy" | "skill-library";
+
+interface RuntimeSettingsFormState {
+  readonly defaultRunnerId: string;
+  readonly allowedRunnerIds: readonly string[];
+  readonly explicitRunnerFallback: RunnerFallbackPolicy;
+  readonly implicitRunnerFallback: RunnerFallbackPolicy;
+}
 
 export function SettingsPage({
   cwd,
@@ -88,6 +100,17 @@ export function SettingsPage({
   const [workflowSourceKind, setWorkflowSourceKind] = useState<"github" | "linear">("github");
   const [workflowRepository, setWorkflowRepository] = useState("");
   const [workflowProjectSlug, setWorkflowProjectSlug] = useState("");
+  const [runners, setRunners] = useState<readonly RunnerListItem[]>([]);
+  const [runtimeSettings, setRuntimeSettings] = useState<WorkspaceRuntimeSettings | undefined>();
+  const [runtimeSettingsForm, setRuntimeSettingsForm] = useState<RuntimeSettingsFormState>({
+    defaultRunnerId: "pi",
+    allowedRunnerIds: ["pi"],
+    explicitRunnerFallback: "disabled",
+    implicitRunnerFallback: "allow_to_default",
+  });
+  const [runtimeSettingsLoading, setRuntimeSettingsLoading] = useState(false);
+  const [runtimeSettingsAction, setRuntimeSettingsAction] = useState<"save" | undefined>();
+  const [runtimeSettingsError, setRuntimeSettingsError] = useState("");
   const secretRef = externalWorkStatus?.secret.ref ?? externalWorkStatus?.workflow.secretRef;
   const canConfigureSecret = Boolean(externalWorkStatus?.workflow.valid && externalWorkStatus.workflow.sourceKind !== "unknown");
   const canRemoveSecret = Boolean(secretRef?.startsWith("keychain:"));
@@ -99,6 +122,61 @@ export function SettingsPage({
   const workflowTargetReady = workflowSourceKind === "github"
     ? normalizedWorkflowRepository !== undefined
     : workflowProjectSlug.trim().length > 0;
+  const enabledRunners = runners.filter((runner) => runner.status === "enabled");
+
+  async function refreshRuntimeSettings(): Promise<void> {
+    if (!cwd.trim()) {
+      setRunners([]);
+      setRuntimeSettings(undefined);
+      setRuntimeSettingsError("");
+      return;
+    }
+    setRuntimeSettingsLoading(true);
+    setRuntimeSettingsError("");
+    try {
+      const [runnerResponse, settingsResponse] = await Promise.all([
+        listRunners(cwd),
+        getRuntimeSettings(cwd),
+      ]);
+      setRunners(runnerResponse.runners);
+      setRuntimeSettings(settingsResponse.settings);
+      setRuntimeSettingsForm(runtimeSettingsToForm(settingsResponse.settings));
+    } catch (error) {
+      setRuntimeSettingsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRuntimeSettingsLoading(false);
+    }
+  }
+
+  async function saveRuntimeSettings(): Promise<void> {
+    if (!cwd.trim()) {
+      return;
+    }
+    setRuntimeSettingsAction("save");
+    setRuntimeSettingsError("");
+    try {
+      const response = await updateRuntimeSettings(cwd, runtimeSettingsForm);
+      setRuntimeSettings(response.settings);
+      setRuntimeSettingsForm(runtimeSettingsToForm(response.settings));
+    } catch (error) {
+      setRuntimeSettingsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRuntimeSettingsAction(undefined);
+    }
+  }
+
+  function toggleAllowedRunner(runnerId: string, allowed: boolean): void {
+    setRuntimeSettingsForm((current) => {
+      const nextAllowed = allowed
+        ? [...new Set([...current.allowedRunnerIds, runnerId])]
+        : current.allowedRunnerIds.filter((id) => id !== runnerId);
+      return {
+        ...current,
+        allowedRunnerIds: nextAllowed,
+        defaultRunnerId: nextAllowed.includes(current.defaultRunnerId) ? current.defaultRunnerId : nextAllowed[0] ?? current.defaultRunnerId,
+      };
+    });
+  }
 
   useEffect(() => {
     const sourceKind = externalWorkStatus?.workflow.sourceKind;
@@ -116,6 +194,10 @@ export function SettingsPage({
     externalWorkStatus?.workflow.repository,
     externalWorkStatus?.workflow.projectSlug,
   ]);
+
+  useEffect(() => {
+    void refreshRuntimeSettings();
+  }, [cwd]);
 
   return (
     <div className="settings-layout">
@@ -140,6 +222,17 @@ export function SettingsPage({
           <span>
             <strong>{t("Interface preferences")}</strong>
             <small>{t("Theme and language")}</small>
+          </span>
+        </button>
+        <button
+          className={activeSection === "runtime" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("runtime")}
+        >
+          <span className="settings-section-icon"><Bot size={16} /></span>
+          <span>
+            <strong>{t("Runtime runners")}</strong>
+            <small>{runtimeSettings?.defaultRunnerId ?? t("Runner policy")}</small>
           </span>
         </button>
         <button
@@ -412,6 +505,114 @@ export function SettingsPage({
       </section>
       ) : null}
 
+      {activeSection === "runtime" ? (
+      <section className="panel settings-panel runtime-runner-settings-panel" aria-labelledby="runtime-runner-settings-title">
+        <div className="panel-title split">
+          <span>
+            <Bot size={18} />
+            <h2 id="runtime-runner-settings-title">{t("Runtime runners")}</h2>
+          </span>
+          <button className="secondary-button compact-button" type="button" onClick={() => void refreshRuntimeSettings()} disabled={runtimeSettingsLoading}>
+            {runtimeSettingsLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+            {t("Refresh")}
+          </button>
+        </div>
+
+        {runtimeSettingsError ? (
+          <div className="inline-error">
+            <CircleAlert size={17} />
+            {runtimeSettingsError}
+          </div>
+        ) : null}
+
+        <div className="external-work-status-grid">
+          <MetaRow label={t("Default runner")} value={runtimeSettings?.defaultRunnerId ?? "-"} compact />
+          <MetaRow label={t("Allowed runners")} value={runtimeSettings?.allowedRunnerIds.join(", ") || "-"} compact />
+          <MetaRow label={t("Explicit fallback")} value={runtimeSettings?.explicitRunnerFallback ?? "-"} compact />
+          <MetaRow label={t("Implicit fallback")} value={runtimeSettings?.implicitRunnerFallback ?? "-"} compact />
+          <MetaRow label={t("Updated")} value={runtimeSettings ? formatDateTime(runtimeSettings.updatedAt) : "-"} compact />
+        </div>
+
+        <div className="policy-tool-grid" aria-label={t("Runner settings")}>
+          <label className="policy-tool-row">
+            <span>{t("Default runner")}</span>
+            <select
+              value={runtimeSettingsForm.defaultRunnerId}
+              onChange={(event) => setRuntimeSettingsForm({ ...runtimeSettingsForm, defaultRunnerId: event.target.value })}
+              disabled={runtimeSettingsLoading || runtimeSettingsAction !== undefined || enabledRunners.length === 0}
+            >
+              {enabledRunners.map((runner) => (
+                <option key={runner.id} value={runner.id}>{runner.displayName} ({runner.id})</option>
+              ))}
+            </select>
+          </label>
+          <label className="policy-tool-row">
+            <span>{t("Explicit fallback")}</span>
+            <select
+              value={runtimeSettingsForm.explicitRunnerFallback}
+              onChange={(event) => setRuntimeSettingsForm({
+                ...runtimeSettingsForm,
+                explicitRunnerFallback: event.target.value as RunnerFallbackPolicy,
+              })}
+              disabled={runtimeSettingsAction !== undefined}
+            >
+              <option value="disabled">{t("Disabled")}</option>
+              <option value="allow_to_default">{t("Allow to default")}</option>
+            </select>
+          </label>
+          <label className="policy-tool-row">
+            <span>{t("Implicit fallback")}</span>
+            <select
+              value={runtimeSettingsForm.implicitRunnerFallback}
+              onChange={(event) => setRuntimeSettingsForm({
+                ...runtimeSettingsForm,
+                implicitRunnerFallback: event.target.value as RunnerFallbackPolicy,
+              })}
+              disabled={runtimeSettingsAction !== undefined}
+            >
+              <option value="disabled">{t("Disabled")}</option>
+              <option value="allow_to_default">{t("Allow to default")}</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="runtime-list">
+          {runners.length === 0 ? (
+            <div className="empty-state compact-empty">
+              {runtimeSettingsLoading ? <Loader2 className="spin" /> : <Bot />}
+              <span>{runtimeSettingsLoading ? t("Loading runners...") : t("No runners registered")}</span>
+            </div>
+          ) : (
+            runners.map((runner) => (
+              <label key={runner.id} className="runtime-list-row">
+                <input
+                  type="checkbox"
+                  checked={runtimeSettingsForm.allowedRunnerIds.includes(runner.id)}
+                  onChange={(event) => toggleAllowedRunner(runner.id, event.target.checked)}
+                  disabled={runner.status !== "enabled" || runtimeSettingsAction !== undefined}
+                />
+                <StatusBadge status={runner.status} />
+                <span>{runner.displayName}</span>
+                <small>{runner.id}</small>
+              </label>
+            ))
+          )}
+        </div>
+
+        <div className="action-row">
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => void saveRuntimeSettings()}
+            disabled={runtimeSettingsAction !== undefined || runtimeSettingsLoading || enabledRunners.length === 0}
+          >
+            {runtimeSettingsAction === "save" ? <Loader2 className="spin" size={16} /> : <Save size={16} />}
+            {t("Save runtime settings")}
+          </button>
+        </div>
+      </section>
+      ) : null}
+
       {activeSection === "approval-policy" ? (
       <section className="panel settings-panel" aria-labelledby="settings-title">
       <div className="panel-title split">
@@ -493,6 +694,15 @@ function workflowStatusLabel(status: ExternalWorkStatusResponse | undefined): st
     return "missing";
   }
   return status.workflow.valid ? "valid" : "invalid";
+}
+
+function runtimeSettingsToForm(settings: WorkspaceRuntimeSettings): RuntimeSettingsFormState {
+  return {
+    defaultRunnerId: settings.defaultRunnerId,
+    allowedRunnerIds: settings.allowedRunnerIds,
+    explicitRunnerFallback: settings.explicitRunnerFallback,
+    implicitRunnerFallback: settings.implicitRunnerFallback,
+  };
 }
 
 function externalWorkTargetLabel(status: ExternalWorkStatusResponse | undefined): string {

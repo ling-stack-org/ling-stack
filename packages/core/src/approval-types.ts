@@ -79,8 +79,13 @@ export type ApprovalPayload =
     }
   | {
       readonly type: "workflow_step";
+      readonly gateStage?: "pre" | "post";
       readonly workflowId: string;
       readonly workflowStepId: string;
+      readonly templateStepId?: string;
+      readonly contextArtifactId?: string;
+      readonly outputArtifactId?: string;
+      readonly runId?: string;
       readonly title: string;
       readonly approvalMode: string;
       readonly requiredForTools: readonly string[];

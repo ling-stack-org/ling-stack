@@ -80,6 +80,7 @@ import type {
   LingThreadEvidenceResponse,
   LingThreadListRequest,
   LingThreadListResponse,
+  LingThreadResumePreviewResponse,
   LingThreadResumeRequest,
   LingThreadResumeResponse,
   MediaJobFormState,
@@ -111,15 +112,18 @@ import type {
   ReplaceTeammateMemoryScopesRequest,
   ReplaceTeammateMcpBindingsRequest,
   ReplaceTeammateSkillBindingsRequest,
+  RunnerListResponse,
   RuntimeDiagnosticsResponse,
   RuntimeResponse,
   RuntimeSemaphoreListResponse,
+  RuntimeSettingsResponse,
   RunCancelResponse,
   RunArtifactListResponse,
   RunEventsResponse,
   RunInterventionListResponse,
   RunInterventionResponse,
   RunFormState,
+  RunListRequest,
   RunListResponse,
   RunSession,
   SecretPurpose,
@@ -170,6 +174,7 @@ import type {
   WorkUnitListResponse,
   WorkUnitMutationResponse,
   WorkUnitStatus,
+  WorkspaceRuntimeSettingsPatch,
 } from "./types.js";
 
 export const daemonBaseUrl = daemonBaseUrlFromEnv(import.meta.env as Record<string, string | undefined>);
@@ -200,8 +205,8 @@ export async function getRun(runId: string, cwd?: string): Promise<RunSession> {
   return daemonClient.getRun(runId, cwd);
 }
 
-export async function listRuns(cwd: string, limit = 50): Promise<RunListResponse> {
-  return daemonClient.listRuns(cwd, limit);
+export async function listRuns(cwd: string, options: RunListRequest | number = 50): Promise<RunListResponse> {
+  return daemonClient.listRuns(cwd, options);
 }
 
 export async function listLingThreads(cwd: string, options: LingThreadListRequest = {}): Promise<LingThreadListResponse> {
@@ -222,6 +227,14 @@ export async function resumeLingThread(
   input: LingThreadResumeRequest = {},
 ): Promise<LingThreadResumeResponse> {
   return daemonClient.resumeLingThread(cwd, threadId, input);
+}
+
+export async function previewLingThreadResume(
+  cwd: string,
+  threadId: string,
+  input: LingThreadResumeRequest = {},
+): Promise<LingThreadResumePreviewResponse> {
+  return daemonClient.previewLingThreadResume(cwd, threadId, input);
 }
 
 export async function listRunInterventions(cwd: string, runId: string, limit = 100): Promise<RunInterventionListResponse> {
@@ -721,6 +734,18 @@ export async function listResourceLeases(
 
 export async function getRuntime(cwd: string): Promise<RuntimeResponse> {
   return daemonClient.getRuntime(cwd);
+}
+
+export async function listRunners(cwd: string): Promise<RunnerListResponse> {
+  return daemonClient.listRunners(cwd);
+}
+
+export async function getRuntimeSettings(cwd: string): Promise<RuntimeSettingsResponse> {
+  return daemonClient.getRuntimeSettings(cwd);
+}
+
+export async function updateRuntimeSettings(cwd: string, input: WorkspaceRuntimeSettingsPatch): Promise<RuntimeSettingsResponse> {
+  return daemonClient.updateRuntimeSettings(cwd, input);
 }
 
 export async function getRuntimeDiagnostics(cwd: string): Promise<RuntimeDiagnosticsResponse> {

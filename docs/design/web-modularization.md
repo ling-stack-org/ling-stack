@@ -161,6 +161,15 @@ Current slice:
 - Goal 2 is complete: feature presentation has moved out of `AppShell`, and CSS has a
   stable modular entry structure.
 
+Follow-up design:
+
+- [Web AppShell Domain Modularization](web-appshell-domain-modularization.md) defines
+  the next architecture slice: page-level lazy loading, domain-owned state controllers,
+  a typed `AppEventRouter`, concurrency rules, refresh/cache policy, stream lifecycle,
+  and migration exit criteria. That follow-up keeps this document's original
+  no-new-global-store constraint while addressing the remaining `AppShell` growth and
+  large initial Web chunk warning.
+
 ## Non-Goals
 
 - No daemon API changes.

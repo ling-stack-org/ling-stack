@@ -42,7 +42,12 @@ Implemented in the first backend slice:
 - Work units and attempts persist `requestedRunnerId`, `effectiveRunnerId`, and
   `fallbackReason`; legacy `runnerId` remains the effective runner for compatibility.
 - `run_created` and runtime work-unit events include additive runner audit metadata.
-- The Web workflow-step card displays runner metadata attached to orchestrated steps.
+- Workspace runtime settings persist the default runner, allowed runners, and fallback
+  policy in `.ling-stack/runtime-settings.json`.
+- The Web Settings runtime panel edits default/allowed runner settings and fallback
+  policy.
+- The Web run detail and workflow-step cards display requested/effective runner metadata
+  and fallback reason.
 - `packages/daemon/test/runner-registry.test.mjs` covers default Pi resolution, legacy
   alias normalization, fallback, explicit missing runner rejection, and provider/tool
   conformance.
@@ -56,6 +61,13 @@ Still out of scope for this slice:
 - Codex app-server adapter.
 - OpenClaw/ACP adapter.
 - UI picker for non-Pi backends.
+
+Implemented follow-up hardening:
+
+- [Execution And Orchestration Hardening](execution-orchestration-hardening.md) defined
+  the RunnerRegistry hardening slice. Workspace default runner settings, explicit
+  fallback policy, and runner audit UI are now implemented. Codex app-server and
+  OpenClaw/ACP adapters remain out of scope.
 
 ## Original Baseline
 

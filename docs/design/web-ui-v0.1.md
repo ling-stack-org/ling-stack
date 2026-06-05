@@ -10,6 +10,7 @@ This design depends on:
 - [Provider presets](provider-presets.md)
 - [Approval policy](approval-policy.md)
 - [Channel workspace](channel-workspace.md)
+- [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
 
 The current `apps/web` package now provides the local app shell, Model Workbench provider setup with templates and health checks, approval list, approval policy settings, run history with persisted run detail/rerun, a client-style channel workspace, compact task creation/running, channel runtime policy controls, active lease/conflict signals, state-machine timelines, contextual readiness and first-run panels, and English / Chinese UI language switching. This document remains the target design for the remaining richer workspace flows.
 

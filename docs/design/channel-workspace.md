@@ -34,6 +34,8 @@ Related docs:
 - [Channel Workspace v1.22 Long Conversation Virtual Feed](channel-workspace-v1.22.md)
 - [Channel Workspace v1.23 Explicit Task Selection](channel-workspace-v1.23.md)
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
+- [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
+- [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Multi-channel concurrency](multi-channel-concurrency.md)
@@ -48,6 +50,7 @@ External pattern references:
 - [Microsoft Teams Channel Agent](https://learn.microsoft.com/MicrosoftTeams/set-up-channel-agent-teams)
 - [ChatGPT Projects](https://help.openai.com/en/articles/10169521-chatgpt-projects)
 - [GitHub Copilot coding agent](https://docs.github.com/en/copilot/using-github-copilot/coding-agent/about-assigning-tasks-to-copilot)
+- [OpenAI Codex open-source project](https://github.com/openai/codex)
 
 ## Problem
 
@@ -2193,6 +2196,19 @@ Current MVP implementation status:
 - [x] Keep run IDs and raw approval audit payloads out of default channel detail UI.
 - [x] Route run actions back to the linked task drawer when the current channel state can
   resolve the task.
+
+### Phase 32: Codex-Inspired Conversation Components
+
+- [x] Define the cross-surface conversation design baseline in
+  `docs/design/codex-inspired-conversation-v1.md`.
+- [x] Define implementation-level shared component detail in
+  `docs/design/codex-inspired-conversation-components-v1.md`.
+- [ ] Consolidate channel and private chat onto shared `MessageRow`,
+  `ConversationFeed`, evidence bundle, and composer geometry.
+- [ ] Render run/thread work as compact summaries with folded memory, skill, tool,
+  approval, file, runtime, and lineage evidence.
+- [ ] Add targeted browser checks for left drawer stability, composer width consistency,
+  centered empty states, folded evidence, and Model Workbench duplicate-column removal.
 
 ## Validation Plan
 

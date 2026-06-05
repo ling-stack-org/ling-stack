@@ -1,4 +1,4 @@
-import type { RunnerFallbackReason } from "@ling-stack/core";
+import type { RunnerFallbackPolicy, RunnerFallbackReason, RunnerRequestSource } from "@ling-stack/core";
 import type { PiRunnerProviderApi } from "@ling-stack/runner-pi";
 import type { RunnerAdapter } from "../context.js";
 
@@ -18,6 +18,10 @@ export interface RegisteredRunner {
 export interface RunnerResolutionInput {
   readonly requestedRunnerId?: string;
   readonly defaultRunnerId?: string;
+  readonly allowedRunnerIds?: readonly string[];
+  readonly requestSource?: RunnerRequestSource;
+  readonly explicitFallbackPolicy?: RunnerFallbackPolicy;
+  readonly implicitFallbackPolicy?: RunnerFallbackPolicy;
   readonly allowFallback?: boolean;
   readonly providerApi?: PiRunnerProviderApi;
   readonly tools?: readonly string[];
@@ -26,6 +30,8 @@ export interface RunnerResolutionInput {
 export interface RunnerResolution {
   readonly requestedRunnerId: string;
   readonly effectiveRunnerId: string;
+  readonly requestSource: RunnerRequestSource;
+  readonly fallbackAllowed: boolean;
   readonly runner: RegisteredRunner;
   readonly fallbackReason?: RunnerFallbackReason;
 }
@@ -62,7 +68,15 @@ export function createRunnerRegistry(runners: readonly RegisteredRunner[], defau
     },
     resolve(input = {}) {
       const requestedRunnerId = normalizeRunnerId(input.requestedRunnerId ?? input.defaultRunnerId ?? defaultId) ?? defaultId;
-      const allowFallback = input.allowFallback ?? false;
+      const requestSource = input.requestSource ?? (input.requestedRunnerId ? "run_request" : "product_default");
+      const allowFallback = input.allowFallback ?? shouldAllowFallback(input, requestSource);
+      const allowedRunnerIds = normalizeAllowedRunnerIds(input.allowedRunnerIds);
+      if (allowedRunnerIds && !allowedRunnerIds.has(requestedRunnerId)) {
+        throw new UnsupportedRunnerError(requestedRunnerId, {
+          code: "disabled_requested_runner",
+          message: `Runner ${requestedRunnerId} is not allowed in this workspace.`,
+        });
+      }
       const fallbackRunner = byId.get(defaultId);
       if (!fallbackRunner) {
         throw new Error(`Default runner is not registered: ${defaultId}`);
@@ -70,10 +84,12 @@ export function createRunnerRegistry(runners: readonly RegisteredRunner[], defau
       const requestedRunner = byId.get(requestedRunnerId);
       const missingOrDisabled = getMissingOrDisabledReason(requestedRunnerId, requestedRunner);
       if (missingOrDisabled) {
-        if (allowFallback && fallbackRunner.status === "enabled") {
+        if (allowFallback && fallbackRunner.status === "enabled" && isRunnerAllowed(allowedRunnerIds, fallbackRunner.id)) {
           return {
             requestedRunnerId,
             effectiveRunnerId: fallbackRunner.id,
+            requestSource,
+            fallbackAllowed: allowFallback,
             runner: fallbackRunner,
             fallbackReason: missingOrDisabled,
           };
@@ -86,12 +102,14 @@ export function createRunnerRegistry(runners: readonly RegisteredRunner[], defau
       const runner = requestedRunner;
       const unsupported = getUnsupportedCapabilityReason(runner, input);
       if (unsupported) {
-        if (allowFallback && fallbackRunner.status === "enabled" && fallbackRunner.id !== runner.id) {
+        if (allowFallback && fallbackRunner.status === "enabled" && fallbackRunner.id !== runner.id && isRunnerAllowed(allowedRunnerIds, fallbackRunner.id)) {
           const fallbackUnsupported = getUnsupportedCapabilityReason(fallbackRunner, input);
           if (!fallbackUnsupported) {
             return {
               requestedRunnerId,
               effectiveRunnerId: fallbackRunner.id,
+              requestSource,
+              fallbackAllowed: allowFallback,
               runner: fallbackRunner,
               fallbackReason: unsupported,
             };
@@ -102,10 +120,34 @@ export function createRunnerRegistry(runners: readonly RegisteredRunner[], defau
       return {
         requestedRunnerId,
         effectiveRunnerId: runner.id,
+        requestSource,
+        fallbackAllowed: allowFallback,
         runner,
       };
     },
   };
+}
+
+function shouldAllowFallback(input: RunnerResolutionInput, requestSource: RunnerRequestSource): boolean {
+  const policy = isExplicitRunnerRequestSource(requestSource)
+    ? input.explicitFallbackPolicy ?? "disabled"
+    : input.implicitFallbackPolicy ?? "disabled";
+  return policy === "allow_to_default";
+}
+
+function isExplicitRunnerRequestSource(source: RunnerRequestSource): boolean {
+  return source === "teammate_default" || source === "workflow_step" || source === "run_request" || source === "user_explicit";
+}
+
+function normalizeAllowedRunnerIds(ids: readonly string[] | undefined): ReadonlySet<string> | undefined {
+  if (!ids) {
+    return undefined;
+  }
+  return new Set(ids.map((id) => normalizeRunnerId(id) ?? id));
+}
+
+function isRunnerAllowed(allowedRunnerIds: ReadonlySet<string> | undefined, runnerId: string): boolean {
+  return !allowedRunnerIds || allowedRunnerIds.has(runnerId);
 }
 
 export class UnsupportedRunnerError extends Error {

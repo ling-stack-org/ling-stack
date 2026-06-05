@@ -14,6 +14,33 @@ export function ensureLingThreadForRun(store: RunStore, runRequest: RunRequest, 
     return parentThread;
   }
 
+  if (runRequest.workflowStepId) {
+    const workflowStep = store.getChannelWorkflowStep(runRequest.workflowStepId);
+    const existing = store.findLingThreadByOwner({
+      kind: "workflow_step",
+      workflowStepId: runRequest.workflowStepId,
+      channelId: workflowStep?.channelId ?? runRequest.task.channelId,
+    });
+    if (existing && existing.status !== "archived") {
+      return existing;
+    }
+
+    return store.createLingThread(
+      {
+        kind: "workflow_step",
+        channelId: workflowStep?.channelId ?? runRequest.task.channelId,
+        taskId: runRequest.task.id,
+        teammateId: runRequest.teammateId,
+        workflowId: workflowStep?.workflowId,
+        workflowStepId: runRequest.workflowStepId,
+        title: workflowStep?.title ?? runRequest.task.title,
+        objective: workflowStep?.prompt ?? runRequest.task.prompt,
+        status: "open",
+      },
+      now,
+    );
+  }
+
   const existing = store.findLingThreadByOwner({
     kind: "task",
     taskId: runRequest.task.id,

@@ -1,0 +1,768 @@
+import { useState, type Dispatch, type SetStateAction } from "react";
+import {
+  getChannelBrief,
+  listChannelAttachments,
+  listChannelContextSummaries,
+  listChannelDecisions,
+  listChannelExecutionProposals,
+  listChannelHandoffs,
+  listChannelLinkPreviews,
+  listChannelMessages,
+  listChannelWorkflowSteps,
+  listChannelWorkflows,
+  listChannels,
+  listMemoryObjects,
+  listRunArtifacts,
+  listStateTransitions,
+  listTasks,
+  listUsedMemoryEvents,
+} from "../../api.js";
+import type { DomainController, DomainError } from "../../app/domain-controller.js";
+import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
+import {
+  defaultChannelEditForm,
+  defaultChannelForm,
+} from "../../lib/channels.js";
+import { useLatestKeyedRequestGuard } from "../../lib/use-latest-request.js";
+import type {
+  Channel,
+  ChannelAttachment,
+  ChannelBrief,
+  ChannelContextSummary,
+  ChannelDecision,
+  ChannelExecutionProposal,
+  ChannelFormState,
+  ChannelHandoff,
+  ChannelLinkPreview,
+  ChannelMessage,
+  ChannelWorkflow,
+  ChannelWorkflowStep,
+  MemoryObject,
+  RunArtifact,
+  RunSession,
+  StateEntityType,
+  StateTransitionEvent,
+  Task,
+  TaskEditFormState,
+  TaskFormState,
+  UsedMemoryEvent,
+} from "../../types.js";
+
+const channelMessageInitialLimit = 200;
+const channelMessageOlderLimit = 100;
+
+export const defaultTaskForm: TaskFormState = {
+  title: "Inspect workspace",
+  prompt: "Inspect the current project structure, give next implementation advice, and do not modify files.",
+};
+
+export const defaultTaskEditForm: TaskEditFormState = {
+  title: "",
+  prompt: "",
+  status: "todo",
+};
+
+export interface WorkspaceState {
+  readonly channels: readonly Channel[];
+  readonly channelsLoading: boolean;
+  readonly selectedChannelId: string;
+  readonly channelForm: ChannelFormState;
+  readonly channelCreateOpen: boolean;
+  readonly channelEditForm: ChannelFormState;
+  readonly tasks: readonly Task[];
+  readonly tasksLoading: boolean;
+  readonly taskForm: TaskFormState;
+  readonly selectedTaskId: string;
+  readonly taskEditForm: TaskEditFormState;
+  readonly taskRunProviderId: string;
+  readonly channelMessages: readonly ChannelMessage[];
+  readonly memoryObjects: readonly MemoryObject[];
+  readonly usedMemoryEvents: readonly UsedMemoryEvent[];
+  readonly channelMessagesHasOlder: boolean;
+  readonly channelMessagesLoadingOlder: boolean;
+  readonly channelExecutionProposals: readonly ChannelExecutionProposal[];
+  readonly channelAttachments: readonly ChannelAttachment[];
+  readonly channelLinkPreviews: readonly ChannelLinkPreview[];
+  readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly channelArtifactErrorsByRun: Readonly<Record<string, string>>;
+  readonly channelBrief: ChannelBrief | undefined;
+  readonly channelDecisions: readonly ChannelDecision[];
+  readonly channelHandoffs: readonly ChannelHandoff[];
+  readonly channelContextSummaries: readonly ChannelContextSummary[];
+  readonly channelWorkflows: readonly ChannelWorkflow[];
+  readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
+  readonly channelMessagesLoading: boolean;
+  readonly channelFilesLoading: boolean;
+  readonly channelRunArtifactsLoading: boolean;
+  readonly channelProtocolLoading: boolean;
+  readonly channelStateTransitions: readonly StateTransitionEvent[];
+  readonly channelActivityTransitionsLoading: boolean;
+  readonly channelActivityTransitionError: string;
+}
+
+export interface WorkspaceActions {
+  readonly setChannels: Dispatch<SetStateAction<readonly Channel[]>>;
+  readonly setSelectedChannelId: Dispatch<SetStateAction<string>>;
+  readonly setChannelForm: Dispatch<SetStateAction<ChannelFormState>>;
+  readonly setChannelCreateOpen: Dispatch<SetStateAction<boolean>>;
+  readonly setChannelEditForm: Dispatch<SetStateAction<ChannelFormState>>;
+  readonly setTasks: Dispatch<SetStateAction<readonly Task[]>>;
+  readonly setSelectedTaskId: Dispatch<SetStateAction<string>>;
+  readonly setTaskForm: Dispatch<SetStateAction<TaskFormState>>;
+  readonly setTaskEditForm: Dispatch<SetStateAction<TaskEditFormState>>;
+  readonly setTaskRunProviderId: Dispatch<SetStateAction<string>>;
+  readonly setChannelMessages: Dispatch<SetStateAction<readonly ChannelMessage[]>>;
+  readonly setChannelExecutionProposals: Dispatch<SetStateAction<readonly ChannelExecutionProposal[]>>;
+  readonly setChannelAttachments: Dispatch<SetStateAction<readonly ChannelAttachment[]>>;
+  readonly setChannelLinkPreviews: Dispatch<SetStateAction<readonly ChannelLinkPreview[]>>;
+  readonly setChannelFilesLoading: Dispatch<SetStateAction<boolean>>;
+  readonly setChannelBrief: Dispatch<SetStateAction<ChannelBrief | undefined>>;
+  readonly setChannelDecisions: Dispatch<SetStateAction<readonly ChannelDecision[]>>;
+  readonly setChannelHandoffs: Dispatch<SetStateAction<readonly ChannelHandoff[]>>;
+  readonly setChannelContextSummaries: Dispatch<SetStateAction<readonly ChannelContextSummary[]>>;
+  readonly setChannelWorkflows: Dispatch<SetStateAction<readonly ChannelWorkflow[]>>;
+  readonly setChannelWorkflowSteps: Dispatch<SetStateAction<readonly ChannelWorkflowStep[]>>;
+  readonly refreshChannels: (cwd?: string) => Promise<void>;
+  readonly refreshTasks: (channelId?: string) => Promise<void>;
+  readonly refreshChannelMessages: (channelId?: string) => Promise<void>;
+  readonly loadOlderChannelMessages: (channelId?: string) => Promise<void>;
+  readonly refreshChannelExecutionProposals: (channelId?: string) => Promise<void>;
+  readonly upsertChannelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
+  readonly refreshChannelFiles: (channelId?: string) => Promise<void>;
+  readonly refreshChannelRunArtifacts: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
+  readonly refreshChannelActivityTransitions: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
+  readonly refreshChannelProtocol: (channelId?: string) => Promise<void>;
+  readonly refreshUsedMemoryAudit: (cwd?: string) => Promise<void>;
+  readonly resetSelectedChannelActivity: () => void;
+  readonly resetForCwd: (cwd: string) => void;
+}
+
+export type WorkspaceController = DomainController<WorkspaceState, WorkspaceActions>;
+
+export function useWorkspaceDomain(input: {
+  readonly cwd: string;
+  readonly initialWorkspaceCwd: string;
+  readonly translate: (value: string) => string;
+  readonly setErrorMessage: (message: string) => void;
+  readonly onChannelMessagesLoaded?: (channelId: string, messages: readonly ChannelMessage[]) => void;
+}): WorkspaceController {
+  const [channels, setChannels] = useState<readonly Channel[]>([]);
+  const [channelsLoading, setChannelsLoading] = useState(false);
+  const [selectedChannelId, setSelectedChannelId] = useState("");
+  const [channelForm, setChannelForm] = useState<ChannelFormState>(() => ({
+    ...defaultChannelForm,
+    boundPath: input.initialWorkspaceCwd,
+  }));
+  const [channelCreateOpen, setChannelCreateOpen] = useState(false);
+  const [channelEditForm, setChannelEditForm] = useState<ChannelFormState>(defaultChannelEditForm);
+  const [tasks, setTasks] = useState<readonly Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [taskForm, setTaskForm] = useState<TaskFormState>(() => ({
+    ...defaultTaskForm,
+    title: input.translate(defaultTaskForm.title),
+    prompt: input.translate(defaultTaskForm.prompt),
+  }));
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
+  const [taskRunProviderId, setTaskRunProviderId] = useState("");
+  const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
+  const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
+  const [usedMemoryEvents, setUsedMemoryEvents] = useState<readonly UsedMemoryEvent[]>([]);
+  const [channelMessagesHasOlder, setChannelMessagesHasOlder] = useState(false);
+  const [channelMessagesLoadingOlder, setChannelMessagesLoadingOlder] = useState(false);
+  const [channelExecutionProposals, setChannelExecutionProposals] = useState<readonly ChannelExecutionProposal[]>([]);
+  const [channelAttachments, setChannelAttachments] = useState<readonly ChannelAttachment[]>([]);
+  const [channelLinkPreviews, setChannelLinkPreviews] = useState<readonly ChannelLinkPreview[]>([]);
+  const [channelArtifactsByRun, setChannelArtifactsByRun] = useState<Record<string, readonly RunArtifact[]>>({});
+  const [channelArtifactErrorsByRun, setChannelArtifactErrorsByRun] = useState<Record<string, string>>({});
+  const [channelBrief, setChannelBrief] = useState<ChannelBrief | undefined>();
+  const [channelDecisions, setChannelDecisions] = useState<readonly ChannelDecision[]>([]);
+  const [channelHandoffs, setChannelHandoffs] = useState<readonly ChannelHandoff[]>([]);
+  const [channelContextSummaries, setChannelContextSummaries] = useState<readonly ChannelContextSummary[]>([]);
+  const [channelWorkflows, setChannelWorkflows] = useState<readonly ChannelWorkflow[]>([]);
+  const [channelWorkflowSteps, setChannelWorkflowSteps] = useState<readonly ChannelWorkflowStep[]>([]);
+  const [channelMessagesLoading, setChannelMessagesLoading] = useState(false);
+  const [channelFilesLoading, setChannelFilesLoading] = useState(false);
+  const [channelRunArtifactsLoading, setChannelRunArtifactsLoading] = useState(false);
+  const [channelProtocolLoading, setChannelProtocolLoading] = useState(false);
+  const [channelStateTransitions, setChannelStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
+  const [channelActivityTransitionsLoading, setChannelActivityTransitionsLoading] = useState(false);
+  const [channelActivityTransitionError, setChannelActivityTransitionError] = useState("");
+  const [error, setError] = useState<DomainError | undefined>();
+  const loadGuard = useLatestKeyedRequestGuard();
+
+  async function refreshChannels(cwd = input.cwd): Promise<void> {
+    if (!cwd) {
+      setChannels([]);
+      setSelectedChannelId("");
+      return;
+    }
+
+    const token = loadGuard.next(`channels:${cwd}`);
+    setChannelsLoading(true);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const response = await listChannels(cwd);
+      if (!loadGuard.isCurrent(`channels:${cwd}`, token)) {
+        return;
+      }
+      setChannels(response.channels);
+      setSelectedChannelId((current) => {
+        if (response.channels.some((channel) => channel.id === current)) {
+          return current;
+        }
+        return response.channels[0]?.id ?? "";
+      });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "load", message });
+      input.setErrorMessage(message);
+    } finally {
+      if (loadGuard.isCurrent(`channels:${cwd}`, token)) {
+        setChannelsLoading(false);
+      }
+    }
+  }
+
+  async function refreshTasks(channelId = selectedChannelId): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !channelId) {
+      setTasks([]);
+      return;
+    }
+
+    const token = loadGuard.next(`tasks:${cwd}:${channelId}`);
+    setTasksLoading(true);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const response = await listTasks(cwd, channelId);
+      if (!loadGuard.isCurrent(`tasks:${cwd}:${channelId}`, token)) {
+        return;
+      }
+      setTasks(response.tasks);
+      setSelectedTaskId((current) => {
+        if (response.tasks.some((task) => task.id === current)) {
+          return current;
+        }
+        return "";
+      });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "load", message });
+      input.setErrorMessage(message);
+    } finally {
+      if (loadGuard.isCurrent(`tasks:${cwd}:${channelId}`, token)) {
+        setTasksLoading(false);
+      }
+    }
+  }
+
+  async function refreshChannelMessages(channelId = selectedChannelId): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !channelId) {
+      setChannelMessages([]);
+      setChannelMessagesHasOlder(false);
+      return;
+    }
+
+    const token = loadGuard.next(`messages:${cwd}:${channelId}`);
+    setChannelMessagesLoading(true);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const response = await listChannelMessages(cwd, channelId, { limit: channelMessageInitialLimit });
+      if (!loadGuard.isCurrent(`messages:${cwd}:${channelId}`, token)) {
+        return;
+      }
+      setChannelMessages(response.messages);
+      setChannelMessagesHasOlder(response.hasMore === true);
+      input.onChannelMessagesLoaded?.(channelId, response.messages);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "load", message });
+      input.setErrorMessage(message);
+    } finally {
+      if (loadGuard.isCurrent(`messages:${cwd}:${channelId}`, token)) {
+        setChannelMessagesLoading(false);
+      }
+    }
+  }
+
+  async function loadOlderChannelMessages(channelId = selectedChannelId): Promise<void> {
+    const cwd = input.cwd.trim();
+    const beforeMessageId = channelMessages[0]?.id;
+    if (!cwd || !channelId || !beforeMessageId || channelMessagesLoadingOlder || !channelMessagesHasOlder) {
+      return;
+    }
+
+    const token = loadGuard.next(`olderMessages:${cwd}:${channelId}`);
+    setChannelMessagesLoadingOlder(true);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const response = await listChannelMessages(cwd, channelId, {
+        limit: channelMessageOlderLimit,
+        beforeMessageId,
+      });
+      if (!loadGuard.isCurrent(`olderMessages:${cwd}:${channelId}`, token)) {
+        return;
+      }
+      setChannelMessages((current) => mergeChannelMessages(response.messages, current));
+      setChannelMessagesHasOlder(response.hasMore === true);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "load", message });
+      input.setErrorMessage(message);
+    } finally {
+      if (loadGuard.isCurrent(`olderMessages:${cwd}:${channelId}`, token)) {
+        setChannelMessagesLoadingOlder(false);
+      }
+    }
+  }
+
+  async function refreshChannelExecutionProposals(channelId = selectedChannelId): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !channelId) {
+      setChannelExecutionProposals([]);
+      return;
+    }
+
+    const token = loadGuard.next(`executionProposals:${cwd}:${channelId}`);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const response = await listChannelExecutionProposals(cwd, channelId);
+      if (!loadGuard.isCurrent(`executionProposals:${cwd}:${channelId}`, token)) {
+        return;
+      }
+      setChannelExecutionProposals(response.proposals);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "load", message });
+      input.setErrorMessage(message);
+    }
+  }
+
+  function upsertChannelExecutionProposal(proposal: ChannelExecutionProposal): void {
+    setChannelExecutionProposals((current) => [
+      proposal,
+      ...current.filter((item) => item.id !== proposal.id),
+    ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  }
+
+  async function refreshChannelFiles(channelId = selectedChannelId): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !channelId) {
+      setChannelAttachments([]);
+      setChannelLinkPreviews([]);
+      return;
+    }
+
+    const token = loadGuard.next(`files:${cwd}:${channelId}`);
+    setChannelFilesLoading(true);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const [attachmentsResponse, linksResponse] = await Promise.all([
+        listChannelAttachments(cwd, channelId),
+        listChannelLinkPreviews(cwd, channelId),
+      ]);
+      if (!loadGuard.isCurrent(`files:${cwd}:${channelId}`, token)) {
+        return;
+      }
+      setChannelAttachments(attachmentsResponse.attachments);
+      setChannelLinkPreviews(linksResponse.linkPreviews);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "load", message });
+      input.setErrorMessage(message);
+    } finally {
+      if (loadGuard.isCurrent(`files:${cwd}:${channelId}`, token)) {
+        setChannelFilesLoading(false);
+      }
+    }
+  }
+
+  async function refreshChannelRunArtifacts(
+    cwd = input.cwd.trim(),
+    channelId = selectedChannelId,
+    channelRuns: readonly RunSession[] = [],
+  ): Promise<void> {
+    if (!cwd || !channelId || channelRuns.length === 0) {
+      setChannelArtifactsByRun({});
+      setChannelArtifactErrorsByRun({});
+      setChannelRunArtifactsLoading(false);
+      return;
+    }
+
+    const token = loadGuard.next(`runArtifacts:${cwd}:${channelId}`);
+    setChannelRunArtifactsLoading(true);
+    const results = await Promise.all(
+      channelRuns.map(async (sourceRun) => {
+        try {
+          const response = await listRunArtifacts(sourceRun.id, cwd);
+          return { runId: sourceRun.id, artifacts: response.artifacts } as const;
+        } catch (caught) {
+          const message = caught instanceof Error ? caught.message : String(caught);
+          return { runId: sourceRun.id, error: message } as const;
+        }
+      }),
+    );
+    if (!loadGuard.isCurrent(`runArtifacts:${cwd}:${channelId}`, token)) {
+      return;
+    }
+
+    const nextArtifacts: Record<string, readonly RunArtifact[]> = {};
+    const nextErrors: Record<string, string> = {};
+    for (const result of results) {
+      if ("artifacts" in result) {
+        nextArtifacts[result.runId] = result.artifacts ?? [];
+      } else {
+        nextErrors[result.runId] = result.error;
+      }
+    }
+    setChannelArtifactsByRun(nextArtifacts);
+    setChannelArtifactErrorsByRun(nextErrors);
+    setChannelRunArtifactsLoading(false);
+  }
+
+  async function refreshChannelActivityTransitions(
+    cwd = input.cwd.trim(),
+    channelId = selectedChannelId,
+    channelRuns: readonly RunSession[] = [],
+  ): Promise<void> {
+    if (!cwd || !channelId) {
+      setChannelStateTransitions([]);
+      setChannelActivityTransitionError("");
+      setChannelActivityTransitionsLoading(false);
+      return;
+    }
+
+    const entities = buildChannelTransitionEntities(channelId, tasks, channelRuns, channelWorkflows, channelWorkflowSteps);
+    if (entities.length === 0) {
+      setChannelStateTransitions([]);
+      setChannelActivityTransitionError("");
+      setChannelActivityTransitionsLoading(false);
+      return;
+    }
+
+    const token = loadGuard.next(`activityTransitions:${cwd}:${channelId}`);
+    setChannelActivityTransitionsLoading(true);
+    const results = await Promise.all(
+      entities.map(async (entity) => {
+        try {
+          const response = await listStateTransitions(cwd, {
+            entityType: entity.entityType,
+            entityId: entity.entityId,
+            limit: 20,
+          });
+          return { transitions: response.transitions } as const;
+        } catch (caught) {
+          return { error: caught instanceof Error ? caught.message : String(caught) } as const;
+        }
+      }),
+    );
+    if (!loadGuard.isCurrent(`activityTransitions:${cwd}:${channelId}`, token)) {
+      return;
+    }
+
+    const nextTransitions = new Map<string, StateTransitionEvent>();
+    const errors = new Set<string>();
+    for (const result of results) {
+      if ("error" in result) {
+        errors.add(result.error ?? "unknown_error");
+      } else {
+        for (const transition of result.transitions) {
+          nextTransitions.set(transition.id, transition);
+        }
+      }
+    }
+
+    setChannelStateTransitions([...nextTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    setChannelActivityTransitionError(errors.size > 0 ? [...errors][0] : "");
+    setChannelActivityTransitionsLoading(false);
+  }
+
+  async function refreshChannelProtocol(channelId = selectedChannelId): Promise<void> {
+    const cwd = input.cwd.trim();
+    if (!cwd || !channelId) {
+      resetChannelProtocol();
+      return;
+    }
+
+    const token = loadGuard.next(`protocol:${cwd}:${channelId}`);
+    setChannelProtocolLoading(true);
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const [briefResponse, decisionsResponse, handoffsResponse, summariesResponse, workflowsResponse] = await Promise.all([
+        getChannelBrief(cwd, channelId),
+        listChannelDecisions(cwd, channelId),
+        listChannelHandoffs(cwd, channelId),
+        listChannelContextSummaries(cwd, channelId),
+        listChannelWorkflows(cwd, channelId),
+      ]);
+      const workflowSteps = await loadWorkflowSteps(cwd, workflowsResponse.workflows);
+      if (!loadGuard.isCurrent(`protocol:${cwd}:${channelId}`, token)) {
+        return;
+      }
+      setChannelBrief(briefResponse.brief);
+      setChannelDecisions(decisionsResponse.decisions);
+      setChannelHandoffs(handoffsResponse.handoffs);
+      setChannelContextSummaries(summariesResponse.contextSummaries);
+      setChannelWorkflows(workflowsResponse.workflows);
+      setChannelWorkflowSteps(workflowSteps);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "load", message });
+      input.setErrorMessage(message);
+    } finally {
+      if (loadGuard.isCurrent(`protocol:${cwd}:${channelId}`, token)) {
+        setChannelProtocolLoading(false);
+      }
+    }
+  }
+
+  async function refreshUsedMemoryAudit(cwd = input.cwd.trim()): Promise<void> {
+    if (!cwd) {
+      setMemoryObjects([]);
+      setUsedMemoryEvents([]);
+      return;
+    }
+
+    const token = loadGuard.next(`memory:${cwd}`);
+    try {
+      const [memoryResponse, usedResponse] = await Promise.all([
+        listMemoryObjects(cwd),
+        listUsedMemoryEvents(cwd, { limit: 200 }),
+      ]);
+      if (!loadGuard.isCurrent(`memory:${cwd}`, token)) {
+        return;
+      }
+      setMemoryObjects(memoryResponse.memories);
+      setUsedMemoryEvents(usedResponse.events);
+    } catch {
+      if (!loadGuard.isCurrent(`memory:${cwd}`, token)) {
+        return;
+      }
+      setMemoryObjects([]);
+      setUsedMemoryEvents([]);
+    }
+  }
+
+  async function loadWorkflowSteps(cwd: string, workflows: readonly ChannelWorkflow[]): Promise<readonly ChannelWorkflowStep[]> {
+    if (workflows.length === 0) {
+      return [];
+    }
+    const stepResponses = await Promise.all(workflows.map((workflow) => listChannelWorkflowSteps(cwd, workflow.id)));
+    return stepResponses.flatMap((response) => response.workflowSteps);
+  }
+
+  function resetChannelProtocol(): void {
+    setChannelBrief(undefined);
+    setChannelDecisions([]);
+    setChannelHandoffs([]);
+    setChannelContextSummaries([]);
+    setChannelWorkflows([]);
+    setChannelWorkflowSteps([]);
+    setChannelProtocolLoading(false);
+  }
+
+  function resetSelectedChannelActivity(): void {
+    setTasks([]);
+    setChannelMessages([]);
+    setChannelMessagesHasOlder(false);
+    setChannelMessagesLoadingOlder(false);
+    setChannelExecutionProposals([]);
+    setChannelAttachments([]);
+    setChannelLinkPreviews([]);
+    setChannelArtifactsByRun({});
+    setChannelArtifactErrorsByRun({});
+    setChannelStateTransitions([]);
+    setChannelActivityTransitionError("");
+    setChannelActivityTransitionsLoading(false);
+    resetChannelProtocol();
+  }
+
+  function resetForCwd(cwd: string): void {
+    loadGuard.reset();
+    setChannels([]);
+    setSelectedChannelId("");
+    setChannelForm((current) => ({
+      ...defaultChannelForm,
+      ...current,
+      boundPath: cwd || current.boundPath,
+    }));
+    setChannelCreateOpen(false);
+    setChannelEditForm(defaultChannelEditForm);
+    setTasks([]);
+    setTaskForm({
+      ...defaultTaskForm,
+      title: input.translate(defaultTaskForm.title),
+      prompt: input.translate(defaultTaskForm.prompt),
+    });
+    setSelectedTaskId("");
+    setTaskEditForm(defaultTaskEditForm);
+    setTaskRunProviderId("");
+    setChannelsLoading(false);
+    setTasksLoading(false);
+    setChannelMessages([]);
+    setMemoryObjects([]);
+    setUsedMemoryEvents([]);
+    setChannelMessagesHasOlder(false);
+    setChannelMessagesLoadingOlder(false);
+    setChannelExecutionProposals([]);
+    setChannelAttachments([]);
+    setChannelLinkPreviews([]);
+    setChannelArtifactsByRun({});
+    setChannelArtifactErrorsByRun({});
+    setChannelMessagesLoading(false);
+    setChannelFilesLoading(false);
+    setChannelRunArtifactsLoading(false);
+    setChannelStateTransitions([]);
+    setChannelActivityTransitionsLoading(false);
+    setChannelActivityTransitionError("");
+    resetChannelProtocol();
+    setError(undefined);
+  }
+
+  return {
+    state: {
+      channels,
+      channelsLoading,
+      selectedChannelId,
+      channelForm,
+      channelCreateOpen,
+      channelEditForm,
+      tasks,
+      tasksLoading,
+      taskForm,
+      selectedTaskId,
+      taskEditForm,
+      taskRunProviderId,
+      channelMessages,
+      memoryObjects,
+      usedMemoryEvents,
+      channelMessagesHasOlder,
+      channelMessagesLoadingOlder,
+      channelExecutionProposals,
+      channelAttachments,
+      channelLinkPreviews,
+      channelArtifactsByRun,
+      channelArtifactErrorsByRun,
+      channelBrief,
+      channelDecisions,
+      channelHandoffs,
+      channelContextSummaries,
+      channelWorkflows,
+      channelWorkflowSteps,
+      channelMessagesLoading,
+      channelFilesLoading,
+      channelRunArtifactsLoading,
+      channelProtocolLoading,
+      channelStateTransitions,
+      channelActivityTransitionsLoading,
+      channelActivityTransitionError,
+    },
+    actions: {
+      setChannels,
+      setSelectedChannelId,
+      setChannelForm,
+      setChannelCreateOpen,
+      setChannelEditForm,
+      setTasks,
+      setSelectedTaskId,
+      setTaskForm,
+      setTaskEditForm,
+      setTaskRunProviderId,
+      setChannelMessages,
+      setChannelExecutionProposals,
+      setChannelAttachments,
+      setChannelLinkPreviews,
+      setChannelFilesLoading,
+      setChannelBrief,
+      setChannelDecisions,
+      setChannelHandoffs,
+      setChannelContextSummaries,
+      setChannelWorkflows,
+      setChannelWorkflowSteps,
+      refreshChannels,
+      refreshTasks,
+      refreshChannelMessages,
+      loadOlderChannelMessages,
+      refreshChannelExecutionProposals,
+      upsertChannelExecutionProposal,
+      refreshChannelFiles,
+      refreshChannelRunArtifacts,
+      refreshChannelActivityTransitions,
+      refreshChannelProtocol,
+      refreshUsedMemoryAudit,
+      resetSelectedChannelActivity,
+      resetForCwd,
+    },
+    refresh: refreshChannels,
+    isLoading: channelsLoading || tasksLoading || channelMessagesLoading || channelFilesLoading || channelProtocolLoading,
+    error,
+    clearError: () => setError(undefined),
+  };
+}
+
+function mergeChannelMessages(
+  olderMessages: readonly ChannelMessage[],
+  currentMessages: readonly ChannelMessage[],
+): readonly ChannelMessage[] {
+  const seen = new Set<string>();
+  const merged: ChannelMessage[] = [];
+  for (const message of [...olderMessages, ...currentMessages]) {
+    if (seen.has(message.id)) {
+      continue;
+    }
+    seen.add(message.id);
+    merged.push(message);
+  }
+  return merged;
+}
+
+interface ChannelTransitionEntity {
+  readonly entityType: StateEntityType;
+  readonly entityId: string;
+  readonly updatedAt: string;
+}
+
+function buildChannelTransitionEntities(
+  channelId: string,
+  tasks: readonly Task[],
+  runs: readonly RunSession[],
+  workflows: readonly ChannelWorkflow[],
+  workflowSteps: readonly ChannelWorkflowStep[],
+): readonly ChannelTransitionEntity[] {
+  if (!channelId) {
+    return [];
+  }
+
+  const channelTasks = deriveChannelTasks(channelId, tasks);
+  const channelTaskIds = new Set(channelTasks.map((task) => task.id));
+  const items: ChannelTransitionEntity[] = [
+    ...channelTasks.map((task) => ({ entityType: "task" as const, entityId: task.id, updatedAt: task.updatedAt })),
+    ...runs
+      .filter((run) => run.channelId === channelId || channelTaskIds.has(run.taskId))
+      .map((run) => ({ entityType: "run" as const, entityId: run.id, updatedAt: run.updatedAt })),
+    ...workflows
+      .filter((workflow) => workflow.channelId === channelId)
+      .map((workflow) => ({ entityType: "workflow" as const, entityId: workflow.id, updatedAt: workflow.updatedAt })),
+    ...workflowSteps
+      .filter((step) => step.channelId === channelId)
+      .map((step) => ({ entityType: "workflow_step" as const, entityId: step.id, updatedAt: step.updatedAt })),
+  ];
+
+  const deduped = new Map<string, ChannelTransitionEntity>();
+  for (const item of items) {
+    deduped.set(`${item.entityType}:${item.entityId}`, item);
+  }
+
+  return [...deduped.values()]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 20);
+}

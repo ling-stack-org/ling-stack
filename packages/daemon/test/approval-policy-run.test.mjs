@@ -35,6 +35,60 @@ test("health includes the configured default workspace cwd", async () => {
   }
 });
 
+test("runtime runner settings api seeds Pi defaults and explicit runner requests fail closed", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-settings-"));
+  const runner = new ThreadResumeRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const runners = await getJson(`${daemon.url}/runners?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(runners.cwd, cwd);
+    assert.equal(runners.runners.some((item) => item.id === "pi" && item.status === "enabled"), true);
+
+    const seeded = await getJson(`${daemon.url}/runtime/settings?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(seeded.settings, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      defaultRunnerId: "pi",
+      allowedRunnerIds: ["pi"],
+      explicitRunnerFallback: "disabled",
+      implicitRunnerFallback: "allow_to_default",
+      updatedAt: "1970-01-01T00:00:00.000Z",
+    });
+
+    const patched = await patchJson(`${daemon.url}/runtime/settings?cwd=${encodeURIComponent(cwd)}`, {
+      explicitRunnerFallback: "allow_to_default",
+    });
+    assert.equal(patched.settings.explicitRunnerFallback, "allow_to_default");
+    assert.ok(Date.parse(patched.settings.updatedAt));
+
+    const invalid = await patchJsonExpectError(`${daemon.url}/runtime/settings?cwd=${encodeURIComponent(cwd)}`, {
+      defaultRunnerId: "codex-app-server",
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.error, "bad_request");
+
+    await patchJson(`${daemon.url}/runtime/settings?cwd=${encodeURIComponent(cwd)}`, {
+      explicitRunnerFallback: "disabled",
+    });
+    const explicit = await postRunExpectError(daemon.url, {
+      ...runBody(cwd, "task_explicit_unknown_runner"),
+      runnerId: "codex-app-server",
+    });
+    assert.equal(explicit.status, 400);
+    assert.equal(explicit.body.error, "unsupported_runner");
+
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_workspace_default_runner"));
+    assert.ok(runId);
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.requestSnapshot.runnerResolution.requestSource, "workspace_default");
+    assert.equal(run.requestSnapshot.runnerResolution.fallbackAllowed, true);
+    assert.equal(run.requestSnapshot.runnerResolution.effectiveRunnerId, "pi");
+    assert.equal(run.requestSnapshot.runtimeSettings.defaultRunnerId, "pi");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("bash=allow lets the runner continue without creating an approval request", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-"));
   const runner = new ApprovalProbeRunner({
@@ -275,6 +329,52 @@ test("bash=ask pauses the run until the approval is resolved", async () => {
   }
 });
 
+test("approval execution actions expose preview and result artifacts", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-action-artifacts-"));
+  const runner = new ApprovalArtifactRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const response = await postRunStream(daemon.url, {
+      ...runBody(cwd, "task_action_artifacts"),
+      tools: ["bash"],
+    });
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+    assert.equal(requested.data.data.previewArtifactIds.length, 1);
+
+    const waitingActions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(waitingActions.actions.length, 1);
+    assert.deepEqual(waitingActions.actions[0].previewArtifactIds, requested.data.data.previewArtifactIds);
+    assert.deepEqual(waitingActions.actions[0].resultArtifactIds, []);
+
+    const previewContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(waitingActions.actions[0].previewArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(previewContent.status, 200);
+    const previewText = await previewContent.text();
+    assert.match(previewText, /\[REDACTED\]/);
+    assert.doesNotMatch(previewText, /sk-test_action_preview_secret/);
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "artifact approval",
+    });
+    await sse.collectRemaining();
+
+    const completedActions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(completedActions.actions.length, 1);
+    assert.equal(completedActions.actions[0].status, "approved");
+    assert.equal(completedActions.actions[0].resultArtifactIds.length, 1);
+    const resultContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(completedActions.actions[0].resultArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(resultContent.status, 200);
+    assert.match(await resultContent.text(), /approved stdout artifact/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("thread evidence and manual resume preserve Ling-owned lineage", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-thread-resume-"));
   const runner = new ThreadResumeRunner();
@@ -295,6 +395,17 @@ test("thread evidence and manual resume preserve Ling-owned lineage", async () =
     assert.equal(evidence.runs[0].run.id, first.runId);
     assert.equal(evidence.runs[0].events.some((event) => event.type === "run_created"), true);
     assert.equal(evidence.runs[0].runtimeEvents.some((event) => event.type === "work_unit_started"), true);
+
+    const preview = await postJson(`${daemon.url}/threads/${encodeURIComponent(thread.id)}/resume-preview?cwd=${encodeURIComponent(cwd)}`, {
+      sourceRunId: first.runId,
+      instruction: "Continue after manual resume.",
+      includeArtifacts: true,
+    });
+    assert.equal(preview.sourceRun.id, first.runId);
+    assert.equal(preview.context.sourceRunId, first.runId);
+    assert.deepEqual(preview.context.priorRunIds, [first.runId]);
+    assert.equal(preview.context.includedEventCount > 0, true);
+    assert.match(preview.context.contextText, /Continue after manual resume/);
 
     const resumed = await postJson(`${daemon.url}/threads/${encodeURIComponent(thread.id)}/resume?cwd=${encodeURIComponent(cwd)}`, {
       instruction: "Continue after manual resume.",
@@ -1952,6 +2063,8 @@ test("cancelled runs are not overwritten when a late runner reports success", as
     const ready = await sse.nextEvent();
     const runId = ready.data.runId;
     await runner.waitUntilStarted();
+    const activeRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(activeRun.workUnitId);
 
     const cancel = await postJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/cancel?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(cancel.cancelled, true);
@@ -1963,6 +2076,20 @@ test("cancelled runs are not overwritten when a late runner reports success", as
     const finalRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(finalRun.status, "cancelled");
     assert.equal(runner.runs.length, 1);
+
+    const events = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/events?cwd=${encodeURIComponent(cwd)}&limit=1000`);
+    const ignoredCompletions = events.events.filter((event) => event.type === "stale_runner_completion_ignored");
+    assert.equal(ignoredCompletions.length, 1);
+    assert.equal(ignoredCompletions[0].data.reportedStatus, "succeeded");
+    assert.equal(ignoredCompletions[0].data.currentRunStatus, "cancelled");
+    assert.equal(ignoredCompletions[0].data.currentWorkUnitStatus, "cancelled");
+    assert.equal(ignoredCompletions[0].data.reason, "run_cancelled");
+
+    const detail = await getJson(`${daemon.url}/work-units/${encodeURIComponent(activeRun.workUnitId)}?cwd=${encodeURIComponent(cwd)}`);
+    const runtimeIgnoredCompletions = detail.events.filter((event) => event.type === "stale_runner_completion_ignored");
+    assert.equal(runtimeIgnoredCompletions.length, 1);
+    assert.equal(runtimeIgnoredCompletions[0].data.runEventId, ignoredCompletions[0].id);
+    assert.equal(runtimeIgnoredCompletions[0].data.reportedStatus, "succeeded");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -2097,6 +2224,44 @@ class ThreadResumeRunner {
       cwd: options.cwd,
       provider: options.provider.provider,
       model: options.provider.model,
+    });
+    options.onEvent?.({
+      type: "run_end",
+      taskId: options.task.id,
+      messageCount: 1,
+    });
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+}
+
+class ApprovalArtifactRunner {
+  async runTask(options) {
+    options.onEvent?.({
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    });
+    const decision = await options.onApprovalRequired?.({
+      toolCallId: "tool_action_artifacts",
+      toolName: "bash",
+      input: { command: "echo sk-test_action_preview_secret" },
+      task: options.task,
+      cwd: options.cwd,
+    });
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId: "tool_action_artifacts",
+      toolName: "bash",
+      result: {
+        stdout: `approved stdout artifact: ${decision?.approved ? "yes" : "no"}`,
+      },
+      isError: !decision?.approved,
     });
     options.onEvent?.({
       type: "run_end",
@@ -2610,6 +2775,20 @@ async function patchJson(url, body) {
     body: JSON.stringify(body),
   });
   return await readJsonResponse(response);
+}
+
+async function patchJsonExpectError(url, body) {
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  assert.equal(response.ok, false, text);
+  return {
+    status: response.status,
+    body: text.trim() ? JSON.parse(text) : {},
+  };
 }
 
 async function postJson(url, body) {

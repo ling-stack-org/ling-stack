@@ -15,6 +15,10 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
+import {
+  previewArtifactIdsForApproval,
+  resultArtifactIdsForApproval,
+} from "./action-artifacts.js";
 import { expireStalePendingApprovals } from "./approvals.js";
 
 export interface ListExecutionActionsOptions {
@@ -99,8 +103,8 @@ function approvalToExecutionAction(store: RunStore, approval: ApprovalRequest): 
     title: approval.title,
     summary: approval.description,
     targetRefs: buildApprovalTargetRefs(approval, run),
-    previewArtifactIds: [],
-    resultArtifactIds: [],
+    previewArtifactIds: previewArtifactIdsForApproval(store, approval),
+    resultArtifactIds: resultArtifactIdsForApproval(store, approval),
     policySnapshot: readRunPolicySnapshot(run),
     createdAt: approval.createdAt,
     resolvedAt: approval.resolvedAt,

@@ -15,9 +15,11 @@ import {
   type RunSession,
   type RunStatus,
   type RunStore,
+  type RunnerRequestSource,
   type RuntimeInstance,
   type SecretResolver,
   type SkillApprovalProfile,
+  type WorkspaceRuntimeSettings,
   type WorkUnit,
   type WorkUnitAttempt,
 } from "@ling-stack/core";
@@ -25,11 +27,11 @@ import type { PiRunnerEvent, PiRunnerProviderConfig, PiRunnerRunOptions } from "
 import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
 import { ActiveRunRegistry } from "../../runtime/active-runs.js";
+import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { UnsupportedRunnerError, type RunnerRegistry, type RunnerResolution } from "../../runtime/runners.js";
 import { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import {
-  DEFAULT_RUNNER_ID,
   isActiveWorkUnitStatus,
   isTerminalWorkUnitStatus,
   transitionWorkUnitCancelled,
@@ -64,6 +66,7 @@ import { createQueuedRunForConflict } from "./queue.js";
 import { resolveProviderForRun } from "./providers.js";
 import type { RunRequest } from "./schemas.js";
 import { appendFailureEvent, writeTerminalSummary } from "./terminal.js";
+import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
 import {
   ensureLingThreadForRun,
   markLingThreadRunActive,
@@ -172,6 +175,7 @@ export async function executeRunRequest(
   let resolvedSecretValues: readonly (string | undefined)[] = [];
   let resolvedProvider: PiRunnerProviderConfig | undefined;
   let runnerResolution: RunnerResolution | undefined;
+  let runtimeSettings: WorkspaceRuntimeSettings | undefined;
   let memoryRecall: ReturnType<RunStore["recallMemory"]> | undefined;
   let selectedSkill: ReturnType<typeof getEffectiveTeammateSkill> | undefined;
   let runtimeApprovalProfile: SkillApprovalProfile | undefined;
@@ -184,6 +188,7 @@ export async function executeRunRequest(
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
     store = storeRegistry.getStore(workspaceCwd);
     assertFullAccessPermissionConfirmed(runRequest);
+    validateWorkflowStepOwner(store, runRequest);
     runtime = runtimeSupervisor.getRuntime(workspaceCwd, store);
     resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver);
     const skillChannel = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
@@ -236,10 +241,17 @@ export async function executeRunRequest(
     runtimeApprovalProfile = selectedSkill
       ? mergeApprovalProfiles(runRequest.approvalProfile, selectedSkill.skill.approvalProfile)
       : runRequest.approvalProfile;
+    runtimeSettings = loadWorkspaceRuntimeSettings(store, runnerRegistry);
+    const runnerRequestSource: RunnerRequestSource = runRequest.runnerId
+      ? getExplicitRunnerRequestSource(runRequest)
+      : skillTeammate?.runnerId ? "teammate_default" : "workspace_default";
     runnerResolution = runnerRegistry.resolve({
-      requestedRunnerId: runRequest.runnerId ?? skillTeammate?.runnerId,
-      defaultRunnerId: DEFAULT_RUNNER_ID,
-      allowFallback: runRequest.runnerId === undefined,
+      requestedRunnerId: runRequest.runnerId ?? skillTeammate?.runnerId ?? runtimeSettings.defaultRunnerId,
+      defaultRunnerId: runtimeSettings.defaultRunnerId,
+      allowedRunnerIds: runtimeSettings.allowedRunnerIds,
+      requestSource: runnerRequestSource,
+      explicitFallbackPolicy: runtimeSettings.explicitRunnerFallback,
+      implicitFallbackPolicy: runtimeSettings.implicitRunnerFallback,
       providerApi: resolvedProvider.api,
       tools: runtimeTools,
     });
@@ -305,6 +317,7 @@ export async function executeRunRequest(
         threadId: thread.id,
         provider: resolvedProvider,
         runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
+        runtimeSettings,
         selectedSkillId: selectedSkill?.skillId,
         mcpToolAccess,
       },
@@ -321,6 +334,8 @@ export async function executeRunRequest(
         ownerId: workUnit.ownerId,
         requestedRunnerId: runnerResolution.requestedRunnerId,
         effectiveRunnerId: runnerResolution.effectiveRunnerId,
+        requestSource: runnerResolution.requestSource,
+        fallbackAllowed: runnerResolution.fallbackAllowed,
         fallbackReason: runnerResolution.fallbackReason,
       },
     });
@@ -389,6 +404,7 @@ export async function executeRunRequest(
       taskId: runRequest.task.id,
       channelId: preparedConcurrency.channel?.id ?? runRequest.task.channelId,
       teammateId: mcpToolAccess.teammateId ?? runRequest.teammateId,
+      workflowStepId: runRequest.workflowStepId,
       selectedSkillId: selectedSkill?.skillId,
       providerPresetId: runRequest.providerPresetId,
       providerName: resolvedProvider.provider,
@@ -403,6 +419,7 @@ export async function executeRunRequest(
         threadId: thread.id,
         provider: resolvedProvider,
         runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
+        runtimeSettings,
         selectedSkillId: selectedSkill?.skillId,
         mcpToolAccess,
       },
@@ -438,10 +455,13 @@ export async function executeRunRequest(
       workspaceCwd,
       cwd: run.cwd,
       threadId: thread.id,
+      workflowStepId: runRequest.workflowStepId,
       providerName: run.providerName,
       providerModel: run.providerModel,
       requestedRunnerId: runnerResolution.requestedRunnerId,
       effectiveRunnerId: runnerResolution.effectiveRunnerId,
+      requestSource: runnerResolution.requestSource,
+      fallbackAllowed: runnerResolution.fallbackAllowed,
       fallbackReason: runnerResolution.fallbackReason,
       teammateId: run.teammateId,
       selectedSkillId: run.selectedSkillId,
@@ -746,6 +766,7 @@ export async function executeRunRequest(
         appendAndMaybeStream,
         streamEnvelope,
         signal: abortController.signal,
+        extraSecrets: resolvedSecretValues,
       }),
       onEvent: (event: PiRunnerEvent) => {
         if (event.type === "tool_start") {
@@ -785,6 +806,16 @@ export async function executeRunRequest(
       throw persistenceError;
     }
     if (store.getRun(run.id)?.status === "cancelled") {
+      const staleEvent = auditIgnoredRunnerCompletion({
+        store,
+        run,
+        workUnit,
+        attempt,
+        reportedStatus: "succeeded",
+      });
+      if (staleEvent) {
+        streamEnvelope(staleEvent);
+      }
       if (!sinkClosed) {
         sink.end();
       }
@@ -811,7 +842,7 @@ export async function executeRunRequest(
       endedAt,
       errorMessage: null,
     });
-    store.transitionRunStatus({
+    const successTransition = store.transitionRunStatus({
       runId: run.id,
       expectedStatus: "running",
       event: "runner_succeeded",
@@ -821,6 +852,23 @@ export async function executeRunRequest(
       summaryPath,
       errorMessage: null,
     });
+    if (!successTransition.ok) {
+      const staleEvent = auditIgnoredRunnerCompletion({
+        store,
+        run,
+        workUnit,
+        attempt,
+        reportedStatus: "succeeded",
+        now: endedAt,
+      });
+      if (staleEvent) {
+        streamEnvelope(staleEvent);
+      }
+      if (!sinkClosed) {
+        sink.end();
+      }
+      return run.id;
+    }
     transitionWorkUnitTerminal(store, {
       workUnitId: workUnit.id,
       attemptId: attempt.id,
@@ -877,7 +925,7 @@ export async function executeRunRequest(
       endedAt,
       errorMessage: message,
     });
-    store.transitionRunStatus({
+    const failureTransition = store.transitionRunStatus({
       runId: run.id,
       expectedStatus: "running",
       event: "runner_failed",
@@ -888,6 +936,23 @@ export async function executeRunRequest(
       summaryPath,
       errorMessage: message,
     });
+    if (!failureTransition.ok) {
+      const staleEvent = auditIgnoredRunnerCompletion({
+        store,
+        run,
+        workUnit,
+        attempt,
+        reportedStatus: "failed",
+        now: endedAt,
+      });
+      if (staleEvent) {
+        streamEnvelope(staleEvent);
+      }
+      if (!sinkClosed) {
+        sink.end();
+      }
+      return run.id;
+    }
     transitionWorkUnitTerminal(store, {
       workUnitId: workUnit.id,
       attemptId: attempt.id,
@@ -937,16 +1002,55 @@ function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
+function validateWorkflowStepOwner(store: RunStore, runRequest: RunRequest): void {
+  if (!runRequest.workflowStepId) {
+    return;
+  }
+  const workflowStep = store.getChannelWorkflowStep(runRequest.workflowStepId);
+  if (!workflowStep) {
+    throw new HttpError(
+      400,
+      "workflow_step_not_found",
+      `Channel workflow step not found: ${runRequest.workflowStepId}`,
+    );
+  }
+  if (runRequest.task.channelId && workflowStep.channelId !== runRequest.task.channelId) {
+    throw new HttpError(
+      400,
+      "workflow_step_channel_mismatch",
+      `Run request channel does not match workflow step: ${runRequest.workflowStepId}`,
+    );
+  }
+  if (workflowStep.taskId && workflowStep.taskId !== runRequest.task.id) {
+    throw new HttpError(
+      400,
+      "workflow_step_task_mismatch",
+      `Run request task does not match workflow step: ${runRequest.workflowStepId}`,
+    );
+  }
+}
+
 function toRunnerResolutionSnapshot(resolution: RunnerResolution): {
   readonly requestedRunnerId: string;
   readonly effectiveRunnerId: string;
+  readonly requestSource: RunnerRequestSource;
+  readonly fallbackAllowed: boolean;
   readonly fallbackReason?: RunnerResolution["fallbackReason"];
 } {
   return {
     requestedRunnerId: resolution.requestedRunnerId,
     effectiveRunnerId: resolution.effectiveRunnerId,
+    requestSource: resolution.requestSource,
+    fallbackAllowed: resolution.fallbackAllowed,
     fallbackReason: resolution.fallbackReason,
   };
+}
+
+function getExplicitRunnerRequestSource(runRequest: RunRequest): RunnerRequestSource {
+  if (runRequest.workflowStepId) {
+    return "workflow_step";
+  }
+  return "run_request";
 }
 
 function assertFullAccessPermissionConfirmed(runRequest: RunRequest): void {

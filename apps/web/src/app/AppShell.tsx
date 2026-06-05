@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   PanelRightClose,
   PanelRightOpen,
@@ -9,19 +9,12 @@ import {
   getBuiltinSkillPack,
 } from "@ling-stack/core/builtin-skill-packs";
 import {
-  approveApproval,
   buildRerunRequest,
   buildRunRequest,
   buildTaskRunRequest,
   cancelChannelWorkflow,
   cancelWorkUnit,
-  cancelExternalWorkAction,
-  checkProvider,
-  checkProviderDraft,
-  checkMcpServer,
   channelAttachmentContentUrl,
-  configureExternalWorkWorkflow,
-  configureExternalWorkSecret,
   createChannel,
   createChannelContextSummary,
   createChannelDecision,
@@ -30,75 +23,24 @@ import {
   createChannelMessage,
   createChannelWorkflowFromHandoff,
   createChannelWorkflowFromTemplate,
-  createAiTeammate,
-  createMediaJob,
-  createMcpServer,
-  createProvider,
   createTask,
   daemonBaseUrl,
-  denyApproval,
   deleteChannelAttachment,
   deleteChannel,
-  deleteMcpServer,
-  deleteExternalWorkSecret,
   deleteTask,
-  deleteProvider,
-  executeExternalWorkAction,
-  getExternalWorkAction,
-  getExternalWorkStatus,
-  listGitHubExternalWorkCiTriage,
   getDaemonHealth,
-  getProviderSecret,
   getApprovalPolicy,
-  getChannelBrief,
   getRuntimeDiagnostics,
-  getRun,
-  getRunEvents,
   getWorkUnit,
-  listMediaJobArtifacts,
-  listMcpServers,
-  listMcpTools,
-  listRunArtifacts,
   listResourceLeases,
-  listChannelAttachments,
-  listChannels,
-  listChannelContextSummaries,
-  listChannelDecisions,
-  listChannelHandoffs,
-  listChannelLinkPreviews,
-  listChannelMessages,
-  listChannelExecutionProposals,
-  listChannelWorkflows,
-  listChannelWorkflowSteps,
-  listAiTeammates,
-  listMemoryObjects,
-  listApprovals,
-  listMediaJobs,
-  listProviders,
-  listProviderTemplates,
-  listRuns,
   listStateTransitions,
-  listUsedMemoryEvents,
-  listTeammateChannels,
-  listTasks,
   listWorkUnits,
   orchestrateChannelWorkflow,
-  pollGitHubExternalWork,
-  pollLinearExternalWork,
   reconcileWorkUnit,
-  reconcileExternalWork,
   retryWorkUnit,
   retryChannelWorkflowStep,
-  runMediaJob,
-  replaceTeammateChannels,
-  replaceTeammateMemoryScopes,
-  replaceTeammateSkills,
-  syncMcpServerTools,
   startChannelWorkflowStep,
-  startGitHubExternalWorkBackground,
-  stopExternalWorkBackground,
   uploadChannelAttachment,
-  updateAiTeammate,
   updateChannel,
   updateApprovalPolicy,
   updateChannelBrief,
@@ -109,20 +51,14 @@ import {
   updateChannelWorkflowStep,
   updateTask,
   updateTaskStatus,
-  disableAiTeammate,
-  hardDeleteAiTeammate,
-  updateMcpServer,
-  updateProvider,
 } from "../api.js";
 import { useI18n } from "../i18n.js";
-import { streamRun } from "../sse.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
   ApprovalPolicyFormState,
   AiTeammate,
   ChannelAttachment,
-  ChannelBrief,
   Channel,
   ChannelContextSummary,
   ChannelDecision,
@@ -135,22 +71,12 @@ import type {
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
-  CreateAiTeammateRequest,
-  ExternalWorkActionMutationResponse,
   ExternalWorkActionView,
-  ExternalWorkCiTriageView,
-  ExternalWorkStatusResponse,
   MediaJob,
-  MediaJobFormState,
-  MemoryObject,
-  McpServer,
-  McpServerFormState,
-  McpTool,
   ProviderCheckResult,
   ProviderFormState,
   ProviderPreset,
   ProviderTemplate,
-  ReplaceTeammateMemoryScopesRequest,
   ResourceLease,
   RuntimeDiagnosticsResponse,
   RunArtifact,
@@ -164,10 +90,7 @@ import type {
   TaskEditFormState,
   TaskFormState,
   TaskRunActionState,
-  TeammateChannelMembership,
-  UpdateAiTeammateRequest,
   UpdateChannelBriefRequest,
-  UsedMemoryEvent,
   WorkUnit,
   WorkUnitDetailResponse,
 } from "../types.js";
@@ -181,27 +104,31 @@ import {
   type SelectedEntity,
   type ViewId,
 } from "./view-types.js";
-import { ApprovalsPage, type ApprovalResolution } from "../features/approvals/index.js";
+import type { DomainEvent } from "./domain-events.js";
+import type { ApprovalResolution } from "../features/approvals/types.js";
 import { PageInspector } from "../features/inspector/PageInspector.js";
-import { MediaJobsPage } from "../features/media/index.js";
-import { McpToolsPage } from "../features/mcp/index.js";
 import { SidebarNavigation, type SidebarNotification } from "../features/navigation/SidebarNavigation.js";
-import { ProviderSettings, type ProviderBatchResult } from "../features/providers/index.js";
-import { RunHistory } from "../features/runs/index.js";
-import { SettingsPage } from "../features/settings/index.js";
 import type {
   LocalTeammateCreateInput,
   LocalTeammateDraft,
 } from "../features/teammates/index.js";
-import { AiTeammatesPage, TeammateWorkspace } from "../features/teammates/index.js";
-import { WorkspaceClientView } from "../features/workspace/index.js";
+import {
+  LazyAiTeammatesPage as AiTeammatesPage,
+  LazyApprovalsPage as ApprovalsPage,
+  LazyMediaJobsPage as MediaJobsPage,
+  LazyMcpToolsPage as McpToolsPage,
+  LazyPageErrorBoundary,
+  LazyProviderSettings as ProviderSettings,
+  LazyRunHistory as RunHistory,
+  LazySettingsPage as SettingsPage,
+  LazyTeammateWorkspace as TeammateWorkspace,
+  LazyWorkspaceClientView as WorkspaceClientView,
+} from "./lazy-pages.js";
 import {
   approvalPolicyToForm,
   buildRunApprovalSummaries,
   defaultApprovalPolicyForm,
   effectiveApprovalStatus,
-  mergeApprovalsForRun,
-  upsertApproval,
 } from "../lib/approvals.js";
 import {
   channelToForm,
@@ -214,38 +141,37 @@ import { readDataString } from "../lib/data.js";
 import { titleFromPrompt } from "../lib/formatting.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd, writeSavedWorkspaceCwd } from "../lib/local-storage.js";
 import {
-  inferRunStatus,
   readRunProviderPresetId,
   readRunWorkspaceCwd,
 } from "../lib/run-evidence.js";
-import { useRunControl } from "../lib/use-run-control.js";
+import { useApprovalsDomain } from "../domains/approvals/use-approvals-domain.js";
+import { useExternalWorkDomain } from "../domains/external-work/use-external-work-domain.js";
+import { useMediaDomain } from "../domains/media/use-media-domain.js";
+import { useMcpDomain } from "../domains/mcp/use-mcp-domain.js";
+import { useProvidersDomain } from "../domains/providers/use-providers-domain.js";
+import { useRunsDomain } from "../domains/runs/use-runs-domain.js";
+import { useTeammatesDomain } from "../domains/teammates/use-teammates-domain.js";
+import {
+  defaultTaskEditForm,
+  defaultTaskForm,
+  useWorkspaceDomain,
+} from "../domains/workspace/use-workspace-domain.js";
 import { defaultTools } from "../lib/tools.js";
 import {
-  canBatchCheckProvider,
   canUseProviderForRun,
   customOpenAICompatibleForm,
-  defaultProviderForm,
   isMediaProvider,
   providerFormToTemplate,
-  providerCheckGuidance,
-  providerCheckStatusLabel,
   providerPreflightReady,
   providerRunBlockerLabel,
   providerRunPreflightBlocker,
-  providerSecretReady,
   providerEffectiveBaseUrl,
-  providerTemplateToForm,
-  providerToForm,
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
 import { StatusBadge } from "../shared/components/index.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
-const channelMessageInitialLimit = 200;
-const channelMessageOlderLimit = 100;
-
-type ExternalActionBusyState = "execute" | "cancel";
 
 const defaultForm: RunFormState = {
   cwd: "",
@@ -260,24 +186,6 @@ const defaultForm: RunFormState = {
   api: "openai-completions",
   tools: defaultTools,
   permissionMode: "balanced",
-};
-
-const defaultTaskForm: TaskFormState = {
-  title: "Inspect workspace",
-  prompt: "Inspect the current project structure, give next implementation advice, and do not modify files.",
-};
-
-const defaultTaskEditForm: TaskEditFormState = {
-  title: "",
-  prompt: "",
-  status: "todo",
-};
-
-const defaultMediaJobForm: MediaJobFormState = {
-  providerPresetId: "",
-  operation: "image_generate",
-  prompt: "Generate a product screenshot style image for the current task.",
-  inputText: "{}",
 };
 
 function buildContextTaskPrompt(summary: ChannelContextSummary, decisions: readonly ChannelDecision[]): string {
@@ -314,379 +222,308 @@ export function AppShell(): JSX.Element {
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(true);
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
-  const [activeRunId, setActiveRunId] = useState("");
-  const [lookupRunId, setLookupRunId] = useState("");
-  const [run, setRun] = useState<RunSession | undefined>();
-  const [runs, setRuns] = useState<readonly RunSession[]>([]);
-  const [runsLoading, setRunsLoading] = useState(false);
-  const [providers, setProviders] = useState<readonly ProviderPreset[]>([]);
-  const [providerTemplates, setProviderTemplates] = useState<readonly ProviderTemplate[]>([]);
-  const [providersLoading, setProvidersLoading] = useState(false);
-  const [mcpServers, setMcpServers] = useState<readonly McpServer[]>([]);
-  const [mcpTools, setMcpTools] = useState<readonly McpTool[]>([]);
-  const [mcpLoading, setMcpLoading] = useState(false);
-  const [mcpBusyServerId, setMcpBusyServerId] = useState("");
-  const [mcpBusyAction, setMcpBusyAction] = useState<"check" | "sync" | "delete" | "save" | undefined>();
-  const [channels, setChannels] = useState<readonly Channel[]>([]);
-  const [channelsLoading, setChannelsLoading] = useState(false);
-  const [selectedChannelId, setSelectedChannelId] = useState("");
   const [channelUnreadById, setChannelUnreadById] = useState<Readonly<Record<string, boolean>>>({});
   const channelSeenMessageAtRef = useRef<Record<string, string>>({});
-  const [aiTeammates, setAiTeammates] = useState<readonly AiTeammate[]>([]);
-  const [aiTeammatesLoading, setAiTeammatesLoading] = useState(false);
-  const [teammateChannelMembershipsByTeammate, setTeammateChannelMembershipsByTeammate] = useState<Readonly<Record<string, readonly TeammateChannelMembership[]>>>({});
-  const [teammateChannelMembershipsLoading, setTeammateChannelMembershipsLoading] = useState(false);
-  const [channelTeammateSavingId, setChannelTeammateSavingId] = useState("");
-  const [channelForm, setChannelForm] = useState<ChannelFormState>(() => ({
-    ...defaultChannelForm,
-    boundPath: initialWorkspaceCwd,
-  }));
-  const [channelCreateOpen, setChannelCreateOpen] = useState(false);
-  const [channelEditForm, setChannelEditForm] = useState<ChannelFormState>(defaultChannelEditForm);
-  const [tasks, setTasks] = useState<readonly Task[]>([]);
-  const [tasksLoading, setTasksLoading] = useState(false);
-  const [taskForm, setTaskForm] = useState<TaskFormState>(() => ({
-    ...defaultTaskForm,
-    title: t(defaultTaskForm.title),
-    prompt: t(defaultTaskForm.prompt),
-  }));
-  const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
-  const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
-  const [usedMemoryEvents, setUsedMemoryEvents] = useState<readonly UsedMemoryEvent[]>([]);
-  const [channelMessagesHasOlder, setChannelMessagesHasOlder] = useState(false);
-  const [channelMessagesLoadingOlder, setChannelMessagesLoadingOlder] = useState(false);
-  const [channelExecutionProposals, setChannelExecutionProposals] = useState<readonly ChannelExecutionProposal[]>([]);
-  const [channelAttachments, setChannelAttachments] = useState<readonly ChannelAttachment[]>([]);
-  const [channelLinkPreviews, setChannelLinkPreviews] = useState<readonly ChannelLinkPreview[]>([]);
-  const [channelArtifactsByRun, setChannelArtifactsByRun] = useState<Record<string, readonly RunArtifact[]>>({});
-  const [channelArtifactErrorsByRun, setChannelArtifactErrorsByRun] = useState<Record<string, string>>({});
-  const [channelBrief, setChannelBrief] = useState<ChannelBrief | undefined>();
-  const [channelDecisions, setChannelDecisions] = useState<readonly ChannelDecision[]>([]);
-  const [channelHandoffs, setChannelHandoffs] = useState<readonly ChannelHandoff[]>([]);
-  const [channelContextSummaries, setChannelContextSummaries] = useState<readonly ChannelContextSummary[]>([]);
-  const [channelWorkflows, setChannelWorkflows] = useState<readonly ChannelWorkflow[]>([]);
-  const [channelWorkflowSteps, setChannelWorkflowSteps] = useState<readonly ChannelWorkflowStep[]>([]);
-  const [channelMessagesLoading, setChannelMessagesLoading] = useState(false);
-  const [channelFilesLoading, setChannelFilesLoading] = useState(false);
-  const [channelRunArtifactsLoading, setChannelRunArtifactsLoading] = useState(false);
-  const [channelProtocolLoading, setChannelProtocolLoading] = useState(false);
   const [runningWorkflowStepId, setRunningWorkflowStepId] = useState("");
   const [orchestratingWorkflowId, setOrchestratingWorkflowId] = useState("");
-  const [selectedTaskId, setSelectedTaskId] = useState("");
-  const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
-  const [taskRunProviderId, setTaskRunProviderId] = useState("");
-  const [providerForm, setProviderForm] = useState<ProviderFormState>(defaultProviderForm);
-  const [editingProviderId, setEditingProviderId] = useState("");
-  const [selectedProviderTemplateId, setSelectedProviderTemplateId] = useState("");
-  const [providerCheck, setProviderCheck] = useState<ProviderCheckResult | undefined>();
-  const [providerCheckTargetId, setProviderCheckTargetId] = useState("");
-  const [checkingProviderIds, setCheckingProviderIds] = useState<readonly string[]>([]);
-  const [providerBatchResult, setProviderBatchResult] = useState<ProviderBatchResult | undefined>();
-  const [providerSaveMessage, setProviderSaveMessage] = useState("");
-  const [providerRepairRunId, setProviderRepairRunId] = useState("");
-  const [mediaJobs, setMediaJobs] = useState<readonly MediaJob[]>([]);
-  const [mediaJobArtifacts, setMediaJobArtifacts] = useState<Record<string, readonly RunArtifact[]>>({});
-  const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
-  const [runningMediaJobId, setRunningMediaJobId] = useState("");
-  const [mediaJobForm, setMediaJobForm] = useState<MediaJobFormState>(() => ({
-    ...defaultMediaJobForm,
-    prompt: t(defaultMediaJobForm.prompt),
-  }));
   const [taskRepairRunId, setTaskRepairRunId] = useState("");
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | undefined>();
   const [approvalPolicyForm, setApprovalPolicyForm] = useState<ApprovalPolicyFormState>(defaultApprovalPolicyForm);
   const [approvalPolicyLoading, setApprovalPolicyLoading] = useState(false);
-  const [approvals, setApprovals] = useState<readonly ApprovalRequest[]>([]);
-  const [approvalsLoading, setApprovalsLoading] = useState(false);
-  const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, ApprovalResolution>>({});
-  const [externalActionDetails, setExternalActionDetails] = useState<Readonly<Record<string, ExternalWorkActionView>>>({});
-  const [externalActionBusy, setExternalActionBusy] = useState<Record<string, ExternalActionBusyState>>({});
-  const [externalWorkCiTriage, setExternalWorkCiTriage] = useState<readonly ExternalWorkCiTriageView[]>([]);
-  const [externalWorkCiTriageLoading, setExternalWorkCiTriageLoading] = useState(false);
-  const [externalWorkStatus, setExternalWorkStatus] = useState<ExternalWorkStatusResponse | undefined>();
-  const [externalWorkStatusLoading, setExternalWorkStatusLoading] = useState(false);
-  const [externalWorkStatusAction, setExternalWorkStatusAction] = useState<"poll" | "reconcile" | "start" | "stop" | undefined>();
-  const [externalWorkSecretAction, setExternalWorkSecretAction] = useState<"configure" | "delete" | undefined>();
-  const [externalWorkWorkflowAction, setExternalWorkWorkflowAction] = useState<"configure" | undefined>();
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
-  const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
-  const [artifacts, setArtifacts] = useState<readonly RunArtifact[]>([]);
   const [stateTransitions, setStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
-  const [channelStateTransitions, setChannelStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
-  const [channelActivityTransitionsLoading, setChannelActivityTransitionsLoading] = useState(false);
-  const [channelActivityTransitionError, setChannelActivityTransitionError] = useState("");
   const [resourceLeases, setResourceLeases] = useState<readonly ResourceLease[]>([]);
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnosticsResponse | undefined>();
   const [workUnits, setWorkUnits] = useState<readonly WorkUnit[]>([]);
   const [selectedWorkUnitDetail, setSelectedWorkUnitDetail] = useState<WorkUnitDetailResponse | undefined>();
   const [runtimeLoading, setRuntimeLoading] = useState(false);
   const [runtimeActionWorkUnitId, setRuntimeActionWorkUnitId] = useState("");
-  const [isRunning, setIsRunning] = useState(false);
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
-  const [selectedMediaJobId, setSelectedMediaJobId] = useState("");
-  const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const abortRef = useRef<AbortController | undefined>(undefined);
   const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
-  const { cancellingRunId, cancelRunOrWorkUnit } = useRunControl({
-    defaultCwd: form.cwd.trim(),
-    activeRunId,
-    currentRun: run,
-    runs,
-    abortCurrentRun: () => abortRef.current?.abort(),
-    setRun,
-    setEvents,
-    setIsRunning,
+  const workspaceDomain = useWorkspaceDomain({
+    cwd: form.cwd.trim(),
+    initialWorkspaceCwd,
+    translate: t,
     setErrorMessage,
-    refreshRuns,
+    onChannelMessagesLoaded: updateChannelMessageReadState,
+  });
+  const {
+    channels,
+    channelsLoading,
+    selectedChannelId,
+    channelForm,
+    channelCreateOpen,
+    channelEditForm,
+    tasks,
+    tasksLoading,
+    taskForm,
+    selectedTaskId,
+    taskEditForm,
+    taskRunProviderId,
+    channelMessages,
+    memoryObjects,
+    usedMemoryEvents,
+    channelMessagesHasOlder,
+    channelMessagesLoadingOlder,
+    channelExecutionProposals,
+    channelAttachments,
+    channelLinkPreviews,
+    channelArtifactsByRun,
+    channelArtifactErrorsByRun,
+    channelBrief,
+    channelDecisions,
+    channelHandoffs,
+    channelContextSummaries,
+    channelWorkflows,
+    channelWorkflowSteps,
+    channelMessagesLoading,
+    channelFilesLoading,
+    channelRunArtifactsLoading,
+    channelProtocolLoading,
+    channelStateTransitions,
+    channelActivityTransitionsLoading,
+    channelActivityTransitionError,
+  } = workspaceDomain.state;
+  const {
+    setChannels,
+    setSelectedChannelId,
+    setChannelForm,
+    setChannelCreateOpen,
+    setChannelEditForm,
+    setTasks,
+    setSelectedTaskId,
+    setTaskForm,
+    setTaskEditForm,
+    setTaskRunProviderId,
+    setChannelMessages,
+    setChannelExecutionProposals,
+    setChannelAttachments,
+    setChannelLinkPreviews,
+    setChannelFilesLoading,
+    setChannelBrief,
+    setChannelDecisions,
+    setChannelHandoffs,
+    setChannelContextSummaries,
+    setChannelWorkflows,
+    setChannelWorkflowSteps,
+    refreshChannels,
+    refreshTasks,
+    refreshChannelMessages,
+    loadOlderChannelMessages,
+    refreshChannelExecutionProposals,
+    upsertChannelExecutionProposal,
+    refreshChannelFiles,
+    refreshChannelRunArtifacts,
+    refreshChannelActivityTransitions,
+    refreshChannelProtocol,
+    refreshUsedMemoryAudit,
+    resetSelectedChannelActivity,
+    resetForCwd: resetWorkspaceForCwd,
+  } = workspaceDomain.actions;
+  const providersDomain = useProvidersDomain({
+    cwd: form.cwd.trim(),
+    translate: t,
+    setErrorMessage,
+    applyProviderToRun,
+    clearSelectedProvider: (providerId) => {
+      if (form.providerPresetId === providerId) {
+        setForm((current) => ({ ...current, providerPresetId: "" }));
+      }
+    },
+  });
+  const {
+    providers,
+    providerTemplates,
+    providersLoading,
+    providerForm,
+    editingProviderId,
+    selectedProviderTemplateId,
+    providerCheck,
+    providerCheckTargetId,
+    checkingProviderIds,
+    providerBatchResult,
+    providerSaveMessage,
+    providerRepairRunId,
+  } = providersDomain.state;
+  const {
+    setProviderForm,
+    setProviderRepairRunId,
+    refreshProviders,
+    refreshProviderTemplates,
+    checkProviderForRun,
+    saveProviderWithPreflight,
+    removeProvider,
+    runProviderCheck,
+    runProviderBatchCheck,
+    editProvider,
+    selectProviderTemplate,
+    startNewProviderFromTemplate,
+    resetForCwd: resetProvidersForCwd,
+  } = providersDomain.actions;
+  const teammatesDomain = useTeammatesDomain({
+    cwd: form.cwd.trim(),
+    builtinTeammateTemplates,
+    setErrorMessage,
+    refreshChannels,
+    openTeammate: (teammateId) => {
+      setActiveView("teammates");
+      setActiveSidebarTarget(teammateSidebarTarget(teammateId));
+    },
+    closeTeammateIfActive: (teammateId) => {
+      if (activeSidebarTarget === teammateSidebarTarget(teammateId)) {
+        openPlainView("teammates");
+      }
+    },
+  });
+  const {
+    aiTeammates,
+    aiTeammatesLoading,
+    teammateChannelMembershipsByTeammate,
+    teammateChannelMembershipsLoading,
+    channelTeammateSavingId,
+  } = teammatesDomain.state;
+  const {
+    refreshAiTeammates,
+    addAiTeammate,
+    removeAiTeammate,
+    hardDeleteAiTeammateAndRefresh,
+    updateAiTeammateSettings,
+    toggleAiTeammatePinned,
+    toggleAiTeammateHidden,
+    addChannelTeammate,
+    removeChannelTeammate,
+    setDefaultChannelTeammate,
+    resetForCwd: resetTeammatesForCwd,
+  } = teammatesDomain.actions;
+  const approvalsDomain = useApprovalsDomain({
+    cwd: form.cwd.trim(),
+    emitEvent: handleDomainEvent,
+    setErrorMessage,
+  });
+  const {
+    approvals,
+    selectedApprovalId,
+    resolvingApprovals,
+    externalActionDetails,
+    externalActionBusy,
+    isLoading: approvalsLoading,
+  } = approvalsDomain.state;
+  const {
+    setSelectedApprovalId,
+    refreshApprovals,
+    refreshExternalActionDetailsByIds,
+    upsertApproval: upsertApprovalRecord,
+    resolveApproval,
+    executeExternalAction,
+    cancelExternalAction,
+  } = approvalsDomain.actions;
+  const mediaDomain = useMediaDomain({
+    cwd: form.cwd.trim(),
+    translate: t,
+    setErrorMessage,
+    upsertApproval: upsertApprovalRecord,
+    refreshApprovals: (cwd) => refreshApprovals(cwd),
+  });
+  const {
+    mediaJobs,
+    mediaJobArtifacts,
+    mediaJobsLoading,
+    runningMediaJobId,
+    mediaJobForm,
+    selectedMediaJobId,
+  } = mediaDomain.state;
+  const {
+    setMediaJobForm,
+    setSelectedMediaJobId,
+    refreshMediaJobs,
+    saveMediaJob,
+    executeMediaJob,
+    resetForCwd: resetMediaForCwd,
+  } = mediaDomain.actions;
+  const mcpDomain = useMcpDomain({
+    cwd: form.cwd.trim(),
+    translate: t,
+    setErrorMessage,
+  });
+  const {
+    mcpServers,
+    mcpTools,
+    mcpLoading,
+    mcpBusyServerId,
+    mcpBusyAction,
+  } = mcpDomain.state;
+  const {
+    refreshMcp,
+    addMcpServer,
+    saveMcpServer,
+    runMcpServerCheck,
+    syncMcpTools,
+    removeMcpServer,
+    resetForCwd: resetMcpForCwd,
+  } = mcpDomain.actions;
+  const externalWorkDomain = useExternalWorkDomain({
+    cwd: form.cwd.trim(),
+    selectedChannelId,
+    setErrorMessage,
+  });
+  const {
+    externalWorkCiTriage,
+    externalWorkCiTriageLoading,
+    externalWorkStatus,
+    externalWorkStatusLoading,
+    externalWorkStatusAction,
+    externalWorkSecretAction,
+    externalWorkWorkflowAction,
+  } = externalWorkDomain.state;
+  const {
+    refreshExternalWorkCiTriage,
+    refreshExternalWorkStatus,
+    configureExternalWorkWorkflowAction,
+    runExternalWorkStatusAction,
+    configureExternalWorkSecretAction,
+    deleteExternalWorkSecretAction,
+    resetSelectedChannel: resetExternalWorkSelectedChannel,
+    resetForCwd: resetExternalWorkForCwd,
+  } = externalWorkDomain.actions;
+  const runsDomain = useRunsDomain({
+    cwd: form.cwd.trim(),
+    confirmFullAccessRunIfNeeded,
+    setSelectedWorkUnitDetail,
+    setErrorMessage,
     refreshApprovals,
     refreshRuntimeState,
     refreshHealth,
+    refreshUsedMemoryAudit,
     readRunWorkspaceCwd,
   });
-
-  useEffect(() => {
-    if (!providerSaveMessage) {
-      return;
-    }
-    const timeout = window.setTimeout(() => setProviderSaveMessage(""), 3500);
-    return () => window.clearTimeout(timeout);
-  }, [providerSaveMessage]);
-
-  async function addAiTeammate(input: LocalTeammateCreateInput): Promise<void> {
-    const cwd = form.cwd.trim();
-    if (!cwd) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-    const template = input.templateId ? builtinTeammateTemplates.find((item) => item.id === input.templateId) : undefined;
-    const payload: CreateAiTeammateRequest = template
-      ? {
-        templateId: template.id,
-        roleKey: template.roleKey,
-        displayName: input.displayName.trim() || template.name,
-        description: input.description.trim() || template.summary,
-        providerPresetId: input.providerPresetId,
-        systemPrompt: template.systemPrompt,
-        allowedTools: template.allowedTools.filter(isContractToolName),
-        approvalProfile: toContractApprovalProfile(template.approvalProfile),
-        status: "active",
-      }
-      : {
-        roleKey: "custom",
-        displayName: input.displayName.trim() || "Custom teammate",
-        description: input.description.trim(),
-        providerPresetId: input.providerPresetId,
-        systemPrompt: `You are ${input.displayName.trim() || "a custom AI teammate"}. ${input.description.trim()}`,
-        allowedTools: ["read", "grep", "find", "ls"],
-        approvalProfile: { mode: "none" },
-        status: "active",
-      };
-
-    setAiTeammatesLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await createAiTeammate(cwd, payload);
-      const teammateId = response.teammate.id;
-      const setupCalls: Promise<unknown>[] = [];
-      if (input.channelIds.length > 0) {
-        setupCalls.push(
-          replaceTeammateChannels(
-            cwd,
-            teammateId,
-            input.channelIds.map((channelId, index) => ({ channelId, isDefault: index === 0 })),
-          ),
-        );
-      }
-      if (template && template.defaultSkillIds.length > 0) {
-        setupCalls.push(
-          replaceTeammateSkills(
-            cwd,
-            teammateId,
-            template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
-          ),
-        );
-      }
-      const memoryScopes = buildMemoryScopesForTeammate(input.channelIds, input.memorySources);
-      if (memoryScopes.length > 0) {
-        setupCalls.push(replaceTeammateMemoryScopes(cwd, teammateId, memoryScopes));
-      }
-      await Promise.all(setupCalls);
-      await refreshAiTeammates(cwd);
-      setActiveView("teammates");
-      setActiveSidebarTarget(teammateSidebarTarget(teammateId));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAiTeammatesLoading(false);
-    }
-  }
-
-  async function removeAiTeammate(teammateId: string): Promise<void> {
-    const cwd = form.cwd.trim();
-    if (!cwd) {
-      return;
-    }
-    try {
-      setErrorMessage("");
-      await disableAiTeammate(cwd, teammateId);
-      await refreshAiTeammates(cwd);
-      if (activeSidebarTarget === teammateSidebarTarget(teammateId)) {
-        openPlainView("teammates");
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function hardDeleteAiTeammateAndRefresh(teammateId: string, reason?: string): Promise<void> {
-    const cwd = form.cwd.trim();
-    if (!cwd) {
-      return;
-    }
-    try {
-      setErrorMessage("");
-      await hardDeleteAiTeammate(cwd, teammateId, reason);
-      await refreshAiTeammates(cwd);
-      if (activeSidebarTarget === teammateSidebarTarget(teammateId)) {
-        openPlainView("teammates");
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function updateAiTeammateSettings(teammateId: string, input: UpdateAiTeammateRequest): Promise<void> {
-    const cwd = form.cwd.trim();
-    if (!cwd) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-    setAiTeammatesLoading(true);
-    try {
-      setErrorMessage("");
-      await updateAiTeammate(cwd, teammateId, input);
-      await refreshAiTeammates(cwd);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    } finally {
-      setAiTeammatesLoading(false);
-    }
-  }
-
-  async function toggleAiTeammatePinned(teammateId: string): Promise<void> {
-    const teammate = aiTeammates.find((item) => item.id === teammateId);
-    if (teammate) {
-      await updateAiTeammateSettings(teammateId, { pinned: !teammate.pinned });
-    }
-  }
-
-  async function toggleAiTeammateHidden(teammateId: string): Promise<void> {
-    const teammate = aiTeammates.find((item) => item.id === teammateId);
-    if (teammate) {
-      await updateAiTeammateSettings(teammateId, { hidden: !teammate.hidden });
-    }
-  }
-
-  async function refreshTeammateChannelMemberships(
-    cwd = form.cwd.trim(),
-    teammates = aiTeammates,
-  ): Promise<void> {
-    if (!cwd || teammates.length === 0) {
-      setTeammateChannelMembershipsByTeammate({});
-      return;
-    }
-
-    setTeammateChannelMembershipsLoading(true);
-    try {
-      const responses = await Promise.all(
-        teammates.map((teammate) => listTeammateChannels(cwd, teammate.id)),
-      );
-      setTeammateChannelMembershipsByTeammate(Object.fromEntries(
-        responses.map((response) => [response.teammateId, response.memberships]),
-      ));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setTeammateChannelMembershipsLoading(false);
-    }
-  }
-
-  function readTeammateChannelMembershipPayload(teammateId: string): { readonly channelId: string; readonly isDefault?: boolean }[] {
-    return (teammateChannelMembershipsByTeammate[teammateId] ?? []).map((membership) => ({
-      channelId: membership.channelId,
-      isDefault: membership.isDefault,
-    }));
-  }
-
-  async function saveTeammateChannelMemberships(
-    teammateId: string,
-    memberships: readonly { readonly channelId: string; readonly isDefault?: boolean }[],
-  ): Promise<void> {
-    const cwd = form.cwd.trim();
-    if (!cwd) {
-      setErrorMessage("请输入 workspace path");
-      return;
-    }
-
-    setChannelTeammateSavingId(teammateId);
-    try {
-      setErrorMessage("");
-      const response = await replaceTeammateChannels(cwd, teammateId, memberships);
-      setTeammateChannelMembershipsByTeammate((current) => ({
-        ...current,
-        [teammateId]: response.memberships,
-      }));
-      await refreshChannels(cwd);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    } finally {
-      setChannelTeammateSavingId("");
-    }
-  }
-
-  async function addChannelTeammate(teammateId: string): Promise<void> {
-    if (!selectedChannelId) {
-      return;
-    }
-    const current = readTeammateChannelMembershipPayload(teammateId)
-      .filter((membership) => membership.channelId !== selectedChannelId);
-    await saveTeammateChannelMemberships(teammateId, [
-      ...current,
-      { channelId: selectedChannelId, isDefault: false },
-    ]);
-  }
-
-  async function removeChannelTeammate(teammateId: string): Promise<void> {
-    if (!selectedChannelId) {
-      return;
-    }
-    const next = readTeammateChannelMembershipPayload(teammateId)
-      .filter((membership) => membership.channelId !== selectedChannelId);
-    await saveTeammateChannelMemberships(teammateId, next);
-  }
-
-  async function setDefaultChannelTeammate(teammateId: string): Promise<void> {
-    if (!selectedChannelId) {
-      return;
-    }
-    const current = readTeammateChannelMembershipPayload(teammateId);
-    const hasMembership = current.some((membership) => membership.channelId === selectedChannelId);
-    const next = current.map((membership) => ({
-      ...membership,
-      isDefault: membership.channelId === selectedChannelId,
-    }));
-    if (!hasMembership) {
-      next.push({ channelId: selectedChannelId, isDefault: true });
-    }
-    await saveTeammateChannelMemberships(teammateId, next);
-  }
+  const {
+    runs,
+    selectedRunId: activeRunId,
+    lookupRunId,
+    selectedRun: run,
+    events,
+    artifacts,
+    assistantText,
+    latestStatus,
+    isRunning,
+    isLoading: runsLoading,
+    cancellingRunId,
+  } = runsDomain.state;
+  const {
+    setLookupRunId,
+    setIsRunning,
+    loadRun,
+    refreshRunList: refreshRuns,
+    runWithRequest,
+    streamRunRequest,
+    abortCurrentRun,
+    cancelRunOrWorkUnit,
+  } = runsDomain.actions;
 
   function openPlainView(view: ViewId): void {
     if (view === "approvals") {
@@ -752,18 +589,6 @@ export function AppShell(): JSX.Element {
     setActiveSidebarTarget(selectedChannelId ? channelSidebarTarget(selectedChannelId) : "workspace");
   }
 
-  const resolvingApprovalsRef = useRef<Set<string>>(new Set());
-
-  const assistantText = useMemo(
-    () =>
-      events
-        .filter((event) => event.type === "assistant_text_delta")
-        .map((event) => readDataString(event.data, "text"))
-        .join(""),
-    [events],
-  );
-
-  const latestStatus = run?.status ?? inferRunStatus(events, isRunning);
   const activePendingApprovals = useMemo(
     () => approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending" && approval.runId === activeRunId),
     [approvals, activeRunId],
@@ -941,23 +766,8 @@ export function AppShell(): JSX.Element {
         void refreshExternalWorkStatus(form.cwd.trim(), selectedChannelId);
       }
     } else {
-      setTasks([]);
-      setChannelMessages([]);
-      setChannelExecutionProposals([]);
-      setChannelAttachments([]);
-      setChannelLinkPreviews([]);
-      setChannelArtifactsByRun({});
-      setChannelArtifactErrorsByRun({});
-      setChannelStateTransitions([]);
-      setChannelActivityTransitionError("");
-      setChannelBrief(undefined);
-      setChannelDecisions([]);
-      setChannelHandoffs([]);
-      setChannelContextSummaries([]);
-      setChannelWorkflows([]);
-      setChannelWorkflowSteps([]);
-      setExternalWorkCiTriage([]);
-      setExternalWorkStatus(undefined);
+      resetSelectedChannelActivity();
+      resetExternalWorkSelectedChannel();
       setSelectedTaskId("");
     }
   }, [selectedChannelId]);
@@ -966,14 +776,14 @@ export function AppShell(): JSX.Element {
     if (activeView !== "workspace") {
       return;
     }
-    void refreshChannelRunArtifacts();
+    void refreshChannelRunArtifacts(form.cwd.trim(), selectedChannelId, channelRunsForArtifacts);
   }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
 
   useEffect(() => {
     if (activeView !== "workspace") {
       return;
     }
-    void refreshChannelActivityTransitions();
+    void refreshChannelActivityTransitions(form.cwd.trim(), selectedChannelId, channelRunsForArtifacts);
   }, [activeView, channelTransitionEntityKey, form.cwd, selectedChannelId]);
 
   useEffect(() => {
@@ -1036,13 +846,6 @@ export function AppShell(): JSX.Element {
   }, [providers]);
 
   useEffect(() => {
-    if (selectedMediaJobId && mediaJobs.some((job) => job.id === selectedMediaJobId)) {
-      return;
-    }
-    setSelectedMediaJobId(mediaJobs[0]?.id ?? "");
-  }, [mediaJobs, selectedMediaJobId]);
-
-  useEffect(() => {
     if (selectedApprovalId && approvals.some((approval) => approval.id === selectedApprovalId)) {
       return;
     }
@@ -1053,6 +856,12 @@ export function AppShell(): JSX.Element {
     const previousCwd = form.cwd;
     writeSavedWorkspaceCwd(cwd);
     setForm({ ...form, cwd });
+    resetWorkspaceForCwd(cwd);
+    resetProvidersForCwd();
+    resetTeammatesForCwd();
+    resetMediaForCwd();
+    resetMcpForCwd();
+    resetExternalWorkForCwd();
     setChannelForm((current) => ({
       ...current,
       boundPath: current.boundPath === previousCwd || !current.boundPath ? cwd : current.boundPath,
@@ -1132,106 +941,6 @@ export function AppShell(): JSX.Element {
     fullAccessConfirmResolveRef.current = undefined;
   }
 
-  async function runWithRequest(
-    requestBody: unknown,
-    loadCwd: string,
-    afterRunLoaded?: (runId: string) => Promise<void>,
-  ): Promise<void> {
-    await streamRunRequest(`${daemonBaseUrl}/runs`, requestBody, loadCwd, afterRunLoaded);
-  }
-
-  async function streamRunRequest(
-    url: string,
-    requestBody: unknown,
-    loadCwd: string,
-    afterRunLoaded?: (runId: string) => Promise<void>,
-  ): Promise<void> {
-    const confirmedRequestBody = await confirmFullAccessRunIfNeeded(requestBody);
-    if (!confirmedRequestBody) {
-      return;
-    }
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setErrorMessage("");
-    setEvents([]);
-    setArtifacts([]);
-    setRun(undefined);
-    setSelectedWorkUnitDetail(undefined);
-    setActiveRunId("");
-    setIsRunning(true);
-
-    try {
-      let streamedRunId = "";
-      await streamRun(
-        url,
-        confirmedRequestBody,
-        (message) => {
-          if (message.kind === "ready") {
-            streamedRunId = message.runId;
-            setActiveRunId(message.runId);
-            setLookupRunId(message.runId);
-            return;
-          }
-          if (message.event.type === "approval_requested" || message.event.type === "approval_expired") {
-            void refreshApprovals(loadCwd, streamedRunId || undefined);
-          }
-          setEvents((current) => [...current, message.event]);
-        },
-        controller.signal,
-      );
-
-      if (streamedRunId) {
-        await loadRun(streamedRunId, loadCwd);
-        await refreshRuns(loadCwd);
-        await refreshApprovals(loadCwd, streamedRunId);
-        await refreshUsedMemoryAudit(loadCwd);
-        await afterRunLoaded?.(streamedRunId);
-      }
-    } catch (error) {
-      if ((error as Error).name !== "AbortError") {
-        setErrorMessage(error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      setIsRunning(false);
-      await refreshHealth();
-    }
-  }
-
-  async function loadRun(runId = lookupRunId, cwd = form.cwd): Promise<void> {
-    if (!runId.trim()) {
-      setErrorMessage("请输入 runId");
-      return;
-    }
-
-    try {
-      setErrorMessage("");
-      const [runResult, eventResult, artifactResult] = await Promise.all([
-        getRun(runId.trim(), cwd),
-        getRunEvents(runId.trim(), cwd),
-        listRunArtifacts(runId.trim(), cwd),
-      ]);
-      setRun(runResult);
-      setEvents(eventResult.events);
-      setArtifacts(artifactResult.artifacts);
-      setActiveRunId(runResult.id);
-      setLookupRunId(runResult.id);
-      if (runResult.workUnitId) {
-        try {
-          setSelectedWorkUnitDetail(await getWorkUnit(cwd, runResult.workUnitId));
-        } catch {
-          setSelectedWorkUnitDetail(undefined);
-        }
-      } else {
-        setSelectedWorkUnitDetail(undefined);
-      }
-      await refreshRuntimeState(cwd, runResult);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
   async function refreshRuntimeState(cwd = form.cwd.trim(), sourceRun: RunSession | undefined = run): Promise<void> {
     if (!cwd) {
       setStateTransitions([]);
@@ -1285,599 +994,6 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function refreshRuns(cwd = form.cwd.trim()): Promise<void> {
-    if (!cwd) {
-      setRuns([]);
-      return;
-    }
-
-    setRunsLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await listRuns(cwd);
-      setRuns(response.runs);
-      void refreshRuntimeState(cwd);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRunsLoading(false);
-    }
-  }
-
-  async function refreshUsedMemoryAudit(cwd = form.cwd.trim()): Promise<void> {
-    if (!cwd) {
-      setMemoryObjects([]);
-      setUsedMemoryEvents([]);
-      return;
-    }
-
-    try {
-      const [memoryResponse, usedResponse] = await Promise.all([
-        listMemoryObjects(cwd),
-        listUsedMemoryEvents(cwd, { limit: 200 }),
-      ]);
-      setMemoryObjects(memoryResponse.memories);
-      setUsedMemoryEvents(usedResponse.events);
-    } catch {
-      setMemoryObjects([]);
-      setUsedMemoryEvents([]);
-    }
-  }
-
-  async function refreshProviders(cwd = form.cwd.trim()): Promise<void> {
-    if (!cwd) {
-      setProviders([]);
-      return;
-    }
-
-    setProvidersLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await listProviders(cwd);
-      setProviders(response.providers);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setProvidersLoading(false);
-    }
-  }
-
-  async function refreshProviderTemplates(): Promise<void> {
-    try {
-      const response = await listProviderTemplates();
-      setProviderTemplates(response.templates);
-    } catch {
-      setProviderTemplates([]);
-    }
-  }
-
-  async function refreshMcp(cwd = form.cwd.trim()): Promise<void> {
-    if (!cwd) {
-      setMcpServers([]);
-      setMcpTools([]);
-      return;
-    }
-
-    setMcpLoading(true);
-    try {
-      setErrorMessage("");
-      const [serversResponse, toolsResponse] = await Promise.all([
-        listMcpServers(cwd),
-        listMcpTools(cwd),
-      ]);
-      setMcpServers(serversResponse.servers);
-      setMcpTools(toolsResponse.tools);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setMcpLoading(false);
-    }
-  }
-
-  async function refreshMediaJobs(cwd = form.cwd.trim()): Promise<void> {
-    if (!cwd) {
-      setMediaJobs([]);
-      setMediaJobArtifacts({});
-      return;
-    }
-
-    setMediaJobsLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await listMediaJobs(cwd);
-      setMediaJobs(response.mediaJobs);
-      setMediaJobArtifacts(await loadMediaJobArtifacts(cwd, response.mediaJobs));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setMediaJobsLoading(false);
-    }
-  }
-
-  async function loadMediaJobArtifacts(cwd: string, jobs: readonly MediaJob[]): Promise<Record<string, readonly RunArtifact[]>> {
-    const jobsWithArtifacts = jobs.filter((job) => job.artifactIds.length > 0);
-    if (jobsWithArtifacts.length === 0) {
-      return {};
-    }
-    const entries = await Promise.all(
-      jobsWithArtifacts.map(async (job) => {
-        const response = await listMediaJobArtifacts(job.id, cwd);
-        return [job.id, response.artifacts] as const;
-      }),
-    );
-    return Object.fromEntries(entries);
-  }
-
-  async function saveMediaJob(): Promise<void> {
-    if (!form.cwd.trim()) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-    if (!mediaJobForm.providerPresetId) {
-      setErrorMessage("请选择 media provider preset");
-      return;
-    }
-    if (!mediaJobForm.prompt.trim()) {
-      setErrorMessage("请输入 media prompt");
-      return;
-    }
-
-    setMediaJobsLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await createMediaJob(form.cwd.trim(), {
-        ...mediaJobForm,
-        prompt: mediaJobForm.prompt.trim(),
-      });
-      setSelectedMediaJobId(response.mediaJob.id);
-      setMediaJobs((current) => [response.mediaJob, ...current.filter((job) => job.id !== response.mediaJob.id)]);
-      setMediaJobArtifacts((current) => ({ ...current, [response.mediaJob.id]: response.artifacts ?? [] }));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setMediaJobsLoading(false);
-    }
-  }
-
-  async function executeMediaJob(jobId: string): Promise<void> {
-    const cwd = form.cwd.trim();
-    if (!cwd) {
-      setErrorMessage("本地工作区未就绪");
-      return;
-    }
-
-    setRunningMediaJobId(jobId);
-    setSelectedMediaJobId(jobId);
-    try {
-      setErrorMessage("");
-      const response = await runMediaJob(cwd, jobId);
-      const artifactsResponse = response.mediaJob.artifactIds.length > 0
-        ? await listMediaJobArtifacts(response.mediaJob.id, cwd)
-        : { artifacts: response.artifacts ?? [] };
-      setMediaJobs((current) => current.map((job) => (job.id === response.mediaJob.id ? response.mediaJob : job)));
-      setMediaJobArtifacts((current) => ({ ...current, [response.mediaJob.id]: artifactsResponse.artifacts }));
-      const mediaApproval = response.approval;
-      if (mediaApproval) {
-        setApprovals((current) => upsertApproval(current, mediaApproval));
-        void refreshApprovals(cwd);
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      void refreshMediaJobs(cwd);
-    } finally {
-      setRunningMediaJobId("");
-    }
-  }
-
-  async function refreshAiTeammates(cwd = form.cwd.trim()): Promise<void> {
-    if (!cwd) {
-      setAiTeammates([]);
-      setTeammateChannelMembershipsByTeammate({});
-      return;
-    }
-
-    setAiTeammatesLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await listAiTeammates(cwd);
-      setAiTeammates(response.teammates);
-      await refreshTeammateChannelMemberships(cwd, response.teammates);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAiTeammatesLoading(false);
-    }
-  }
-
-  async function refreshChannels(cwd = form.cwd.trim()): Promise<void> {
-    if (!cwd) {
-      setChannels([]);
-      setSelectedChannelId("");
-      return;
-    }
-
-    setChannelsLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await listChannels(cwd);
-      setChannels(response.channels);
-      setSelectedChannelId((current) => {
-        if (response.channels.some((channel) => channel.id === current)) {
-          return current;
-        }
-        return response.channels[0]?.id ?? "";
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setChannelsLoading(false);
-    }
-  }
-
-  async function refreshTasks(channelId = selectedChannelId): Promise<void> {
-    if (!form.cwd.trim() || !channelId) {
-      setTasks([]);
-      return;
-    }
-
-    setTasksLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await listTasks(form.cwd.trim(), channelId);
-      setTasks(response.tasks);
-      setSelectedTaskId((current) => {
-        if (response.tasks.some((task) => task.id === current)) {
-          return current;
-        }
-        return "";
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setTasksLoading(false);
-    }
-  }
-
-  async function refreshExternalWorkCiTriage(
-    cwd = form.cwd.trim(),
-    channelId = selectedChannelId,
-  ): Promise<void> {
-    if (!cwd || !channelId) {
-      setExternalWorkCiTriage([]);
-      return;
-    }
-
-    setExternalWorkCiTriageLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await listGitHubExternalWorkCiTriage(cwd, { channelId, limit: 25 });
-      setExternalWorkCiTriage(response.records);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setExternalWorkCiTriageLoading(false);
-    }
-  }
-
-  async function refreshExternalWorkStatus(
-    cwd = form.cwd.trim(),
-    channelId = selectedChannelId,
-  ): Promise<void> {
-    if (!cwd || !channelId) {
-      setExternalWorkStatus(undefined);
-      return;
-    }
-
-    setExternalWorkStatusLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await getExternalWorkStatus(cwd, { channelId });
-      setExternalWorkStatus(response);
-    } catch (error) {
-      setExternalWorkStatus(undefined);
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setExternalWorkStatusLoading(false);
-    }
-  }
-
-  async function configureExternalWorkWorkflowAction(input: {
-    readonly sourceKind: "github" | "linear";
-    readonly repository?: string;
-    readonly projectSlug?: string;
-  }): Promise<void> {
-    const cwd = form.cwd.trim();
-    const channelId = selectedChannelId;
-    if (!cwd || !channelId) {
-      setErrorMessage("Select a channel before creating WORKFLOW.md.");
-      return;
-    }
-
-    setExternalWorkWorkflowAction("configure");
-    try {
-      setErrorMessage("");
-      await configureExternalWorkWorkflow(cwd, {
-        channelId,
-        sourceKind: input.sourceKind,
-        repository: input.repository,
-        projectSlug: input.projectSlug,
-      });
-      await refreshExternalWorkStatus(cwd, channelId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      await refreshExternalWorkStatus(cwd, channelId);
-    } finally {
-      setExternalWorkWorkflowAction(undefined);
-    }
-  }
-
-  async function runExternalWorkStatusAction(action: "poll" | "reconcile" | "start" | "stop"): Promise<void> {
-    const cwd = form.cwd.trim();
-    const channelId = selectedChannelId;
-    if (!cwd || !channelId) {
-      setErrorMessage("Select a channel before using external work controls.");
-      return;
-    }
-
-    setExternalWorkStatusAction(action);
-    try {
-      setErrorMessage("");
-      if (action === "poll") {
-        if (externalWorkStatus?.workflow.sourceKind === "linear") {
-          await pollLinearExternalWork(cwd, { channelId, limit: 50 });
-        } else {
-          await pollGitHubExternalWork(cwd, { channelId, limit: 50 });
-        }
-      } else if (action === "reconcile") {
-        await reconcileExternalWork(cwd, { channelId });
-      } else if (action === "start") {
-        await startGitHubExternalWorkBackground(cwd, { channelId, limit: 50 });
-      } else if (action === "stop") {
-        const schedulerId = externalWorkStatus?.background.schedulerId;
-        if (!schedulerId) {
-          throw new Error("No external work background scheduler is registered for this channel.");
-        }
-        await stopExternalWorkBackground(cwd, schedulerId);
-      }
-      await Promise.all([
-        refreshExternalWorkStatus(cwd, channelId),
-        refreshExternalWorkCiTriage(cwd, channelId),
-      ]);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      await refreshExternalWorkStatus(cwd, channelId);
-    } finally {
-      setExternalWorkStatusAction(undefined);
-    }
-  }
-
-  async function configureExternalWorkSecretAction(token: string): Promise<void> {
-    const cwd = form.cwd.trim();
-    const channelId = selectedChannelId;
-    if (!cwd || !channelId) {
-      setErrorMessage("Select a channel before configuring an external work token.");
-      return;
-    }
-
-    setExternalWorkSecretAction("configure");
-    try {
-      setErrorMessage("");
-      await configureExternalWorkSecret(cwd, { channelId, token });
-      await refreshExternalWorkStatus(cwd, channelId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      await refreshExternalWorkStatus(cwd, channelId);
-    } finally {
-      setExternalWorkSecretAction(undefined);
-    }
-  }
-
-  async function deleteExternalWorkSecretAction(): Promise<void> {
-    const cwd = form.cwd.trim();
-    const channelId = selectedChannelId;
-    const secretRef = externalWorkStatus?.secret.ref ?? externalWorkStatus?.workflow.secretRef;
-    if (!cwd || !channelId) {
-      setErrorMessage("Select a channel before removing an external work token.");
-      return;
-    }
-    if (!secretRef?.startsWith("keychain:")) {
-      setErrorMessage("Only keychain external work tokens can be removed from Settings.");
-      return;
-    }
-
-    setExternalWorkSecretAction("delete");
-    try {
-      setErrorMessage("");
-      await deleteExternalWorkSecret(cwd, { channelId, secretRef });
-      await refreshExternalWorkStatus(cwd, channelId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      await refreshExternalWorkStatus(cwd, channelId);
-    } finally {
-      setExternalWorkSecretAction(undefined);
-    }
-  }
-
-  async function refreshChannelMessages(channelId = selectedChannelId): Promise<void> {
-    if (!form.cwd.trim() || !channelId) {
-      setChannelMessages([]);
-      setChannelMessagesHasOlder(false);
-      return;
-    }
-
-    setChannelMessagesLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await listChannelMessages(form.cwd.trim(), channelId, { limit: channelMessageInitialLimit });
-      setChannelMessages(response.messages);
-      setChannelMessagesHasOlder(response.hasMore === true);
-      updateChannelMessageReadState(channelId, response.messages);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setChannelMessagesLoading(false);
-    }
-  }
-
-  async function loadOlderChannelMessages(channelId = selectedChannelId): Promise<void> {
-    const cwd = form.cwd.trim();
-    const beforeMessageId = channelMessages[0]?.id;
-    if (!cwd || !channelId || !beforeMessageId || channelMessagesLoadingOlder || !channelMessagesHasOlder) {
-      return;
-    }
-
-    setChannelMessagesLoadingOlder(true);
-    try {
-      setErrorMessage("");
-      const response = await listChannelMessages(cwd, channelId, {
-        limit: channelMessageOlderLimit,
-        beforeMessageId,
-      });
-      setChannelMessages((current) => mergeChannelMessages(response.messages, current));
-      setChannelMessagesHasOlder(response.hasMore === true);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setChannelMessagesLoadingOlder(false);
-    }
-  }
-
-  async function refreshChannelExecutionProposals(channelId = selectedChannelId): Promise<void> {
-    if (!form.cwd.trim() || !channelId) {
-      setChannelExecutionProposals([]);
-      return;
-    }
-
-    try {
-      setErrorMessage("");
-      const response = await listChannelExecutionProposals(form.cwd.trim(), channelId);
-      setChannelExecutionProposals(response.proposals);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  function upsertChannelExecutionProposal(proposal: ChannelExecutionProposal): void {
-    setChannelExecutionProposals((current) => [
-      proposal,
-      ...current.filter((item) => item.id !== proposal.id),
-    ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
-  }
-
-  async function refreshChannelFiles(channelId = selectedChannelId): Promise<void> {
-    if (!form.cwd.trim() || !channelId) {
-      setChannelAttachments([]);
-      setChannelLinkPreviews([]);
-      return;
-    }
-
-    setChannelFilesLoading(true);
-    try {
-      setErrorMessage("");
-      const [attachmentsResponse, linksResponse] = await Promise.all([
-        listChannelAttachments(form.cwd.trim(), channelId),
-        listChannelLinkPreviews(form.cwd.trim(), channelId),
-      ]);
-      setChannelAttachments(attachmentsResponse.attachments);
-      setChannelLinkPreviews(linksResponse.linkPreviews);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setChannelFilesLoading(false);
-    }
-  }
-
-  async function refreshChannelRunArtifacts(
-    cwd = form.cwd.trim(),
-    channelRuns = channelRunsForArtifacts,
-  ): Promise<void> {
-    if (!cwd || !selectedChannelId || channelRuns.length === 0) {
-      setChannelArtifactsByRun({});
-      setChannelArtifactErrorsByRun({});
-      setChannelRunArtifactsLoading(false);
-      return;
-    }
-
-    setChannelRunArtifactsLoading(true);
-    const results = await Promise.all(
-      channelRuns.map(async (sourceRun) => {
-        try {
-          const response = await listRunArtifacts(sourceRun.id, cwd);
-          return { runId: sourceRun.id, artifacts: response.artifacts } as const;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return { runId: sourceRun.id, error: message } as const;
-        }
-      }),
-    );
-
-    const nextArtifacts: Record<string, readonly RunArtifact[]> = {};
-    const nextErrors: Record<string, string> = {};
-    for (const result of results) {
-      if ("artifacts" in result) {
-        nextArtifacts[result.runId] = result.artifacts ?? [];
-      } else {
-        nextErrors[result.runId] = result.error;
-      }
-    }
-    setChannelArtifactsByRun(nextArtifacts);
-    setChannelArtifactErrorsByRun(nextErrors);
-    setChannelRunArtifactsLoading(false);
-  }
-
-  async function refreshChannelActivityTransitions(
-    cwd = form.cwd.trim(),
-    channelId = selectedChannelId,
-    channelRuns = channelRunsForArtifacts,
-  ): Promise<void> {
-    if (!cwd || !channelId) {
-      setChannelStateTransitions([]);
-      setChannelActivityTransitionError("");
-      setChannelActivityTransitionsLoading(false);
-      return;
-    }
-
-    const entities = buildChannelTransitionEntities(channelId, tasks, channelRuns, channelWorkflows, channelWorkflowSteps);
-    if (entities.length === 0) {
-      setChannelStateTransitions([]);
-      setChannelActivityTransitionError("");
-      setChannelActivityTransitionsLoading(false);
-      return;
-    }
-
-    setChannelActivityTransitionsLoading(true);
-    const results = await Promise.all(
-      entities.map(async (entity) => {
-        try {
-          const response = await listStateTransitions(cwd, {
-            entityType: entity.entityType,
-            entityId: entity.entityId,
-            limit: 20,
-          });
-          return { transitions: response.transitions } as const;
-        } catch (error) {
-          return { error: error instanceof Error ? error.message : String(error) } as const;
-        }
-      }),
-    );
-
-    const nextTransitions = new Map<string, StateTransitionEvent>();
-    const errors = new Set<string>();
-    for (const result of results) {
-      if ("error" in result) {
-        errors.add(result.error ?? "unknown_error");
-      } else {
-        for (const transition of result.transitions) {
-          nextTransitions.set(transition.id, transition);
-        }
-      }
-    }
-
-    setChannelStateTransitions([...nextTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
-    setChannelActivityTransitionError(errors.size > 0 ? [...errors][0] : "");
-    setChannelActivityTransitionsLoading(false);
-  }
-
   async function refreshChannelActivity(): Promise<void> {
     const channelId = selectedChannelId;
     if (!channelId) {
@@ -1895,50 +1011,7 @@ export function AppShell(): JSX.Element {
       refreshExternalWorkCiTriage(form.cwd.trim(), channelId),
       refreshUsedMemoryAudit(),
     ]);
-    void refreshChannelActivityTransitions();
-  }
-
-  async function refreshChannelProtocol(channelId = selectedChannelId): Promise<void> {
-    if (!form.cwd.trim() || !channelId) {
-      setChannelBrief(undefined);
-      setChannelDecisions([]);
-      setChannelHandoffs([]);
-      setChannelContextSummaries([]);
-      setChannelWorkflows([]);
-      setChannelWorkflowSteps([]);
-      return;
-    }
-
-    setChannelProtocolLoading(true);
-    try {
-      setErrorMessage("");
-      const [briefResponse, decisionsResponse, handoffsResponse, summariesResponse, workflowsResponse] = await Promise.all([
-        getChannelBrief(form.cwd.trim(), channelId),
-        listChannelDecisions(form.cwd.trim(), channelId),
-        listChannelHandoffs(form.cwd.trim(), channelId),
-        listChannelContextSummaries(form.cwd.trim(), channelId),
-        listChannelWorkflows(form.cwd.trim(), channelId),
-      ]);
-      const workflowSteps = await loadWorkflowSteps(form.cwd.trim(), workflowsResponse.workflows);
-      setChannelBrief(briefResponse.brief);
-      setChannelDecisions(decisionsResponse.decisions);
-      setChannelHandoffs(handoffsResponse.handoffs);
-      setChannelContextSummaries(summariesResponse.contextSummaries);
-      setChannelWorkflows(workflowsResponse.workflows);
-      setChannelWorkflowSteps(workflowSteps);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setChannelProtocolLoading(false);
-    }
-  }
-
-  async function loadWorkflowSteps(cwd: string, workflows: readonly ChannelWorkflow[]): Promise<readonly ChannelWorkflowStep[]> {
-    if (workflows.length === 0) {
-      return [];
-    }
-    const stepResponses = await Promise.all(workflows.map((workflow) => listChannelWorkflowSteps(cwd, workflow.id)));
-    return stepResponses.flatMap((response) => response.workflowSteps);
+    void refreshChannelActivityTransitions(form.cwd.trim(), channelId, channelRunsForArtifacts);
   }
 
   async function saveChannel(): Promise<void> {
@@ -2311,6 +1384,63 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  async function handleDomainEvent(event: DomainEvent): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    switch (event.type) {
+      case "view.openRequested":
+        setActiveView(event.view);
+        setActiveSidebarTarget(event.target ?? event.view);
+        return;
+
+      case "approval.resolved":
+        await refreshApprovals(workspaceCwd, event.runId);
+        if (event.externalWorkActionId) {
+          await refreshExternalActionDetailsByIds(workspaceCwd, [event.externalWorkActionId]);
+        }
+        if (event.runId && (event.runId === activeRunId || event.runId === lookupRunId || event.runId === approvalRepairRunId)) {
+          await Promise.all([loadRun(event.runId, workspaceCwd), refreshRuns(workspaceCwd)]);
+          window.setTimeout(() => {
+            void loadRun(event.runId, workspaceCwd);
+            void refreshRuns(workspaceCwd);
+            void refreshApprovals(workspaceCwd, event.runId);
+          }, 750);
+        }
+        if (event.mediaJobId) {
+          await refreshMediaJobs(workspaceCwd);
+        }
+        return;
+
+      case "provider.repairRequested": {
+        const provider = event.providerPresetId ? providers.find((item) => item.id === event.providerPresetId) : undefined;
+        if (event.sourceRunId) {
+          setProviderRepairRunId(event.sourceRunId);
+        }
+        if (provider) {
+          editProvider(provider);
+        }
+        setActiveView("providers");
+        setActiveSidebarTarget("providers");
+        return;
+      }
+
+      case "workflow.advanced":
+      case "workflow.cancelled":
+      case "workflowStep.retried":
+      case "workflowStep.updated":
+        await Promise.all([
+          refreshChannelProtocol(event.channelId),
+          event.type === "workflowStep.updated" ? Promise.resolve() : refreshTasks(event.channelId),
+          refreshRuns(workspaceCwd),
+          refreshApprovals(workspaceCwd),
+          refreshRuntimeState(workspaceCwd),
+        ]);
+        return;
+
+      default:
+        return;
+    }
+  }
+
   async function orchestrateWorkflowById(workflowId: string, channelId?: string): Promise<void> {
     const workspaceCwd = form.cwd.trim();
     if (!workspaceCwd) {
@@ -2328,21 +1458,18 @@ export function AppShell(): JSX.Element {
         setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, [workflowStep]));
       }
       if ("approval" in result && result.approval) {
-        setApprovals((current) => upsertApproval(current, result.approval));
-        setSelectedApprovalId(result.approval.id);
+        upsertApprovalRecord(result.approval);
       }
       if (result.status === "blocked" || result.status === "failed") {
         setErrorMessage(result.blocker);
       } else if (result.status === "idle" && result.reason) {
         setErrorMessage(result.reason);
       }
-      await Promise.all([
-        refreshChannelProtocol(channelId ?? selectedChannelId),
-        refreshTasks(channelId ?? selectedChannelId),
-        refreshRuns(workspaceCwd),
-        refreshApprovals(workspaceCwd),
-        refreshRuntimeState(workspaceCwd),
-      ]);
+      await handleDomainEvent({
+        type: "workflow.advanced",
+        workflowId,
+        channelId: channelId ?? selectedChannelId,
+      });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -2367,12 +1494,12 @@ export function AppShell(): JSX.Element {
       const response = await cancelChannelWorkflow(workspaceCwd, workflow.id);
       setChannelWorkflows((current) => [response.workflow, ...current.filter((item) => item.id !== response.workflow.id)]);
       setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
-      await Promise.all([
-        refreshChannelProtocol(workflow.channelId),
-        refreshRuns(workspaceCwd),
-        refreshApprovals(workspaceCwd),
-        refreshRuntimeState(workspaceCwd),
-      ]);
+      await handleDomainEvent({
+        type: "workflow.cancelled",
+        workflowId: workflow.id,
+        channelId: workflow.channelId,
+        runIds: [],
+      });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -2397,21 +1524,19 @@ export function AppShell(): JSX.Element {
         setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, [workflowStep]));
       }
       if ("approval" in result && result.approval) {
-        setApprovals((current) => upsertApproval(current, result.approval));
-        setSelectedApprovalId(result.approval.id);
+        upsertApprovalRecord(result.approval);
       }
       if (result.status === "blocked" || result.status === "failed") {
         setErrorMessage(result.blocker);
       } else if (result.status === "idle" && result.reason) {
         setErrorMessage(result.reason);
       }
-      await Promise.all([
-        refreshChannelProtocol(step.channelId),
-        refreshTasks(step.channelId),
-        refreshRuns(workspaceCwd),
-        refreshApprovals(workspaceCwd),
-        refreshRuntimeState(workspaceCwd),
-      ]);
+      await handleDomainEvent({
+        type: "workflowStep.retried",
+        workflowId: step.workflowId,
+        workflowStepId: step.id,
+        channelId: step.channelId,
+      });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -2478,7 +1603,12 @@ export function AppShell(): JSX.Element {
       if (response.workflow) {
         setChannelWorkflows((current) => current.map((item) => item.id === response.workflow?.id ? response.workflow : item));
       }
-      await refreshChannelProtocol(step.channelId);
+      await handleDomainEvent({
+        type: "workflowStep.updated",
+        workflowId: step.workflowId,
+        workflowStepId: step.id,
+        channelId: step.channelId,
+      });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
@@ -2873,142 +2003,12 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function checkProviderForRun(provider: ProviderPreset): Promise<boolean> {
-    if (!canBatchCheckProvider(provider)) {
-      setErrorMessage(t("Provider preset is not runnable: {reason}", { reason: providerRunBlockerLabel(provider, t) }));
-      return false;
-    }
-
-    try {
-      setErrorMessage("");
-      setProviderBatchResult(undefined);
-      setCheckingProviderIds([provider.id]);
-      setProviderCheckTargetId(provider.id);
-      const result = await checkProvider(form.cwd.trim(), provider.id);
-      setProviderCheck(result);
-      await refreshProviders();
-      if (!result.ok) {
-        setErrorMessage(`${provider.displayName}: provider check failed (${providerCheckStatusLabel(result)}). ${providerCheckGuidance(result, provider)}`);
-        return false;
-      }
-      return true;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      return false;
-    } finally {
-      setCheckingProviderIds([]);
-    }
-  }
-
   async function rerunRun(sourceRun: RunSession): Promise<void> {
     try {
       const workspaceCwd = readRunWorkspaceCwd(sourceRun, form.cwd.trim());
       await runWithRequest(buildRerunRequest(sourceRun), workspaceCwd);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function refreshApprovals(cwd = form.cwd.trim(), runId?: string): Promise<void> {
-    if (!cwd.trim()) {
-      setApprovals([]);
-      return;
-    }
-
-    setApprovalsLoading(true);
-    try {
-      setErrorMessage("");
-      const response = await listApprovals(cwd.trim(), { runId });
-      setApprovals((current) => (runId ? mergeApprovalsForRun(current, response.approvals, runId) : response.approvals));
-      await refreshExternalActionDetails(cwd.trim(), response.approvals);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setApprovalsLoading(false);
-    }
-  }
-
-  async function refreshExternalActionDetails(cwd: string, sourceApprovals: readonly ApprovalRequest[]): Promise<void> {
-    const actionIds = [...new Set(sourceApprovals.map((approval) => approval.externalWorkActionId).filter(Boolean))] as string[];
-    if (actionIds.length === 0) {
-      return;
-    }
-
-    const loaded = await Promise.all(
-      actionIds.map(async (actionId) => {
-        try {
-          const response = await getExternalWorkAction(cwd, actionId);
-          return response.action;
-        } catch {
-          return undefined;
-        }
-      }),
-    );
-    const nextEntries = loaded.filter((item): item is ExternalWorkActionView => Boolean(item));
-    if (nextEntries.length === 0) {
-      return;
-    }
-    setExternalActionDetails((current) => ({
-      ...current,
-      ...Object.fromEntries(nextEntries.map((item) => [item.action.id, item])),
-    }));
-  }
-
-  function applyExternalActionMutation(response: ExternalWorkActionMutationResponse): void {
-    setExternalActionDetails((current) => {
-      const existing = current[response.action.id];
-      return {
-        ...current,
-        [response.action.id]: {
-          action: response.action,
-          externalWork: existing?.externalWork,
-          approval: response.approval ?? existing?.approval,
-          artifacts: response.artifacts,
-        },
-      };
-    });
-    const approval = response.approval;
-    if (approval) {
-      setApprovals((current) => upsertApproval(current, approval));
-      setSelectedApprovalId(approval.id);
-    }
-  }
-
-  async function executeExternalAction(actionId: string): Promise<void> {
-    const cwd = form.cwd.trim();
-    if (!cwd || externalActionBusy[actionId]) {
-      return;
-    }
-
-    setExternalActionBusy((current) => ({ ...current, [actionId]: "execute" }));
-    try {
-      setErrorMessage("");
-      const response = await executeExternalWorkAction(cwd, actionId);
-      applyExternalActionMutation(response);
-      await refreshApprovals(cwd);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setExternalActionBusy((current) => removeRecordKey(current, actionId));
-    }
-  }
-
-  async function cancelExternalAction(actionId: string, reason?: string): Promise<void> {
-    const cwd = form.cwd.trim();
-    if (!cwd || externalActionBusy[actionId]) {
-      return;
-    }
-
-    setExternalActionBusy((current) => ({ ...current, [actionId]: "cancel" }));
-    try {
-      setErrorMessage("");
-      const response = await cancelExternalWorkAction(cwd, actionId, { reason });
-      applyExternalActionMutation(response);
-      await refreshApprovals(cwd);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setExternalActionBusy((current) => removeRecordKey(current, actionId));
     }
   }
 
@@ -3047,310 +2047,6 @@ export function AppShell(): JSX.Element {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setApprovalPolicyLoading(false);
-    }
-  }
-
-  async function resolveApproval(approvalId: string, decision: ApprovalResolution, reason?: string): Promise<void> {
-    if (resolvingApprovalsRef.current.has(approvalId)) {
-      return;
-    }
-
-    resolvingApprovalsRef.current.add(approvalId);
-    setResolvingApprovals((current) => ({ ...current, [approvalId]: decision }));
-    try {
-      setErrorMessage("");
-      const approvalBeforeResolution =
-        approvals.find((approval) => approval.id === approvalId) ?? activeRunApprovals.find((approval) => approval.id === approvalId);
-      const response =
-        decision === "approve"
-          ? await approveApproval(form.cwd.trim(), approvalId, reason)
-          : await denyApproval(form.cwd.trim(), approvalId, reason);
-      setSelectedApprovalId(response.approval.id);
-      setApprovals((current) => upsertApproval(current, response.approval));
-
-      const resolvedRunId = response.approval.runId || approvalBeforeResolution?.runId;
-      const resolvedMediaJobId = response.approval.mediaJobId || approvalBeforeResolution?.mediaJobId;
-      const resolvedExternalActionId = response.approval.externalWorkActionId || approvalBeforeResolution?.externalWorkActionId;
-      const workspaceCwd = form.cwd.trim();
-      await refreshApprovals(workspaceCwd, resolvedRunId);
-      if (resolvedExternalActionId) {
-        await refreshExternalActionDetails(workspaceCwd, [response.approval]);
-      }
-      if (resolvedRunId && (resolvedRunId === activeRunId || resolvedRunId === lookupRunId || resolvedRunId === approvalRepairRunId)) {
-        await Promise.all([loadRun(resolvedRunId, workspaceCwd), refreshRuns(workspaceCwd)]);
-        window.setTimeout(() => {
-          void loadRun(resolvedRunId, workspaceCwd);
-          void refreshRuns(workspaceCwd);
-          void refreshApprovals(workspaceCwd, resolvedRunId);
-        }, 750);
-      }
-      if (resolvedMediaJobId) {
-        await refreshMediaJobs(workspaceCwd);
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      resolvingApprovalsRef.current.delete(approvalId);
-      setResolvingApprovals((current) => removeRecordKey(current, approvalId));
-    }
-  }
-
-  async function addMcpServer(formState: McpServerFormState): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      throw new Error(t("Local workspace is not ready."));
-    }
-    setMcpBusyAction("save");
-    setMcpBusyServerId("");
-    try {
-      setErrorMessage("");
-      const response = await createMcpServer(workspaceCwd, formState);
-      setMcpServers((current) => [response.server, ...current.filter((server) => server.id !== response.server.id)]);
-      await refreshMcp(workspaceCwd);
-    } finally {
-      setMcpBusyAction(undefined);
-      setMcpBusyServerId("");
-    }
-  }
-
-  async function saveMcpServer(serverId: string, formState: McpServerFormState): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      throw new Error(t("Local workspace is not ready."));
-    }
-    setMcpBusyAction("save");
-    setMcpBusyServerId(serverId);
-    try {
-      setErrorMessage("");
-      const response = await updateMcpServer(workspaceCwd, serverId, formState);
-      setMcpServers((current) => current.map((server) => (server.id === response.server.id ? response.server : server)));
-      await refreshMcp(workspaceCwd);
-    } finally {
-      setMcpBusyAction(undefined);
-      setMcpBusyServerId("");
-    }
-  }
-
-  async function runMcpServerCheck(serverId: string): Promise<boolean> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      setErrorMessage(t("Local workspace is not ready."));
-      return false;
-    }
-    setMcpBusyAction("check");
-    setMcpBusyServerId(serverId);
-    try {
-      setErrorMessage("");
-      const response = await checkMcpServer(workspaceCwd, serverId);
-      setMcpServers((current) => current.map((server) => (server.id === response.server.id ? response.server : server)));
-      return true;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      return false;
-    } finally {
-      setMcpBusyAction(undefined);
-      setMcpBusyServerId("");
-    }
-  }
-
-  async function syncMcpTools(serverId: string): Promise<boolean> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      setErrorMessage(t("Local workspace is not ready."));
-      return false;
-    }
-    setMcpBusyAction("sync");
-    setMcpBusyServerId(serverId);
-    try {
-      setErrorMessage("");
-      const response = await syncMcpServerTools(workspaceCwd, serverId);
-      setMcpServers((current) => current.map((server) => (server.id === response.server.id ? response.server : server)));
-      setMcpTools((current) => [
-        ...current.filter((tool) => tool.serverId !== serverId),
-        ...response.tools,
-      ]);
-      return true;
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      return false;
-    } finally {
-      setMcpBusyAction(undefined);
-      setMcpBusyServerId("");
-    }
-  }
-
-  async function removeMcpServer(serverId: string): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      setErrorMessage(t("Local workspace is not ready."));
-      return;
-    }
-    setMcpBusyAction("delete");
-    setMcpBusyServerId(serverId);
-    try {
-      setErrorMessage("");
-      await deleteMcpServer(workspaceCwd, serverId);
-      setMcpServers((current) => current.filter((server) => server.id !== serverId));
-      setMcpTools((current) => current.filter((tool) => tool.serverId !== serverId));
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setMcpBusyAction(undefined);
-      setMcpBusyServerId("");
-    }
-  }
-
-  async function saveProviderWithPreflight(): Promise<{ readonly ok: boolean; readonly errorMessage?: string }> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd) {
-      return { ok: false, errorMessage: "本地工作区未就绪" };
-    }
-
-    const nextProviderForm = { ...providerForm, enabled: true };
-    const checkingId = editingProviderId || "provider_draft_check";
-    try {
-      setProviderSaveMessage("");
-      setProviderCheck(undefined);
-      setProviderCheckTargetId(checkingId);
-      setProviderBatchResult(undefined);
-      setCheckingProviderIds([checkingId]);
-
-      const draftCheck = await checkProviderDraft(workspaceCwd, nextProviderForm);
-      setProviderCheck(draftCheck);
-      if (!draftCheck.ok) {
-        return { ok: false, errorMessage: draftCheck.message };
-      }
-
-      const response = editingProviderId
-        ? await updateProvider(workspaceCwd, editingProviderId, nextProviderForm)
-        : await createProvider(workspaceCwd, nextProviderForm);
-      const savedProvider = response.provider;
-      setEditingProviderId(savedProvider.id);
-      setProviderForm({
-        ...providerToForm(savedProvider, providerTemplates),
-        apiKey: nextProviderForm.clearApiKey ? "" : nextProviderForm.apiKey,
-      });
-      await applyProviderToRun(savedProvider);
-
-      setProviderCheckTargetId(savedProvider.id);
-      const savedCheck = await checkProvider(workspaceCwd, savedProvider.id);
-      setProviderCheck(savedCheck);
-      await refreshProviders();
-      if (!savedCheck.ok) {
-        return { ok: false, errorMessage: savedCheck.message };
-      }
-
-      setProviderSaveMessage(t("Model preset saved successfully."));
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, errorMessage: error instanceof Error ? error.message : String(error) };
-    } finally {
-      setCheckingProviderIds([]);
-    }
-  }
-
-  async function removeProvider(providerId: string): Promise<void> {
-    try {
-      setErrorMessage("");
-      setProviderCheck(undefined);
-      setProviderCheckTargetId("");
-      setProviderBatchResult(undefined);
-      await deleteProvider(form.cwd.trim(), providerId);
-      if (editingProviderId === providerId) {
-        setEditingProviderId("");
-        setProviderForm(defaultProviderForm);
-      }
-      if (form.providerPresetId === providerId) {
-        setForm((current) => ({ ...current, providerPresetId: "" }));
-      }
-      await refreshProviders();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function runProviderCheck(providerId: string): Promise<void> {
-    try {
-      setErrorMessage("");
-      setProviderBatchResult(undefined);
-      setCheckingProviderIds([providerId]);
-      setProviderCheckTargetId(providerId);
-      const provider = providers.find((item) => item.id === providerId);
-      if (provider && !provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat") && providerSecretReady(provider)) {
-        await updateProvider(form.cwd.trim(), providerId, { ...providerToForm(provider), enabled: true });
-        if (editingProviderId === providerId) {
-          setProviderForm((current) => ({ ...current, enabled: true }));
-        }
-      }
-      const result = await checkProvider(form.cwd.trim(), providerId);
-      setProviderCheck(result);
-      await refreshProviders();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setCheckingProviderIds([]);
-    }
-  }
-
-  async function runProviderBatchCheck(): Promise<void> {
-    const candidates = providers.filter(canBatchCheckProvider);
-    if (candidates.length === 0) {
-      setErrorMessage(t("No enabled chat providers to check."));
-      return;
-    }
-
-    try {
-      setErrorMessage("");
-      setProviderCheck(undefined);
-      setProviderCheckTargetId("");
-      setProviderBatchResult(undefined);
-      setCheckingProviderIds(candidates.map((provider) => provider.id));
-
-      let readyCount = 0;
-      let failedCount = 0;
-      for (const provider of candidates) {
-        const result = await checkProvider(form.cwd.trim(), provider.id);
-        if (result.ok) {
-          readyCount += 1;
-        } else {
-          failedCount += 1;
-        }
-      }
-
-      await refreshProviders();
-      setProviderBatchResult({
-        message: t("Checked {count} chat providers: {readyCount} ready, {failedCount} failed.", {
-          count: candidates.length,
-          readyCount,
-          failedCount,
-        }),
-        failedCount,
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setCheckingProviderIds([]);
-    }
-  }
-
-  function editProvider(provider: ProviderPreset): void {
-    setEditingProviderId(provider.id);
-    setSelectedProviderTemplateId("");
-    setProviderCheck(undefined);
-    setProviderCheckTargetId("");
-    setProviderBatchResult(undefined);
-    setProviderForm(providerToForm(provider, providerTemplates));
-    if (provider.apiKeyRef?.startsWith("local:")) {
-      void loadProviderSecretIntoForm(provider.id);
-    }
-  }
-
-  async function loadProviderSecretIntoForm(providerId: string): Promise<void> {
-    try {
-      const secret = await getProviderSecret(form.cwd.trim(), providerId);
-      setProviderForm((current) => ({ ...current, apiKey: secret.apiKey, clearApiKey: false }));
-    } catch {
-      setProviderForm((current) => current);
     }
   }
 
@@ -3446,15 +2142,11 @@ export function AppShell(): JSX.Element {
   }
 
   function openProvidersFromRun(runToRepair?: RunSession): void {
-    const providerPresetId = runToRepair ? readRunProviderPresetId(runToRepair) : "";
-    const provider = providerPresetId ? providers.find((item) => item.id === providerPresetId) : undefined;
-    if (runToRepair) {
-      setProviderRepairRunId(runToRepair.id);
-    }
-    if (provider) {
-      editProvider(provider);
-    }
-    openPlainView("providers");
+    void handleDomainEvent({
+      type: "provider.repairRequested",
+      providerPresetId: runToRepair ? readRunProviderPresetId(runToRepair) : undefined,
+      sourceRunId: runToRepair?.id,
+    });
   }
 
   async function openTaskFromRun(runToRepair: RunSession): Promise<void> {
@@ -3489,7 +2181,7 @@ export function AppShell(): JSX.Element {
           ? await retryWorkUnit(cwd, workUnitId)
           : await reconcileWorkUnit(cwd, workUnitId);
       if (action === "cancel" && response.workUnit.linkedRunId && response.workUnit.linkedRunId === activeRunId) {
-        abortRef.current?.abort();
+        abortCurrentRun();
         setIsRunning(false);
       }
       await Promise.all([
@@ -3555,8 +2247,14 @@ export function AppShell(): JSX.Element {
               : "workspace"
         }
       >
-        {activeView === "workspace" ? (
-          <WorkspaceClientView
+        <LazyPageErrorBoundary
+          resetKey={`${activeView}:${selectedAiTeammate?.id ?? ""}`}
+          title={t("Page failed to load")}
+          retryLabel={t("Reload")}
+        >
+          <Suspense fallback={<div className="client-empty-state"><span>{t("Loading")}</span></div>}>
+            {activeView === "workspace" ? (
+              <WorkspaceClientView
             cwd={form.cwd}
             daemonHealthy={daemonHealthy}
             providerLabel={`${form.provider}/${form.model}`}
@@ -3634,9 +2332,9 @@ export function AppShell(): JSX.Element {
                 void applyProviderToRun(provider);
               }
             }}
-            onAddChannelTeammate={(teammateId) => addChannelTeammate(teammateId)}
-            onRemoveChannelTeammate={(teammateId) => removeChannelTeammate(teammateId)}
-            onSetDefaultChannelTeammate={(teammateId) => setDefaultChannelTeammate(teammateId)}
+            onAddChannelTeammate={(teammateId) => addChannelTeammate(selectedChannelId, teammateId)}
+            onRemoveChannelTeammate={(teammateId) => removeChannelTeammate(selectedChannelId, teammateId)}
+            onSetDefaultChannelTeammate={(teammateId) => setDefaultChannelTeammate(selectedChannelId, teammateId)}
             onOpenTeammates={() => openPlainView("teammates")}
             onRefreshChannels={() => void refreshChannels()}
             onCreateChannel={() => void saveChannel()}
@@ -3688,24 +2386,24 @@ export function AppShell(): JSX.Element {
             onReconcileWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "reconcile")}
             onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
             onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers")}
-          />
-        ) : (
-          <>
-            {activeView === "providers" || (activeView === "teammates" && selectedAiTeammate) ? null : (
-              <div className="workspace-head">
-                <div>
-                  <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
-                  <p>{selectedAiTeammate ? selectedAiTeammate.description : t(viewDescription(activeView))}</p>
-                </div>
-                {activeView === "teammates" ? (
-                  <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
-                ) : activeView === "mcp" ? null : (
-                  <StatusBadge status={latestStatus} />
+              />
+            ) : (
+              <>
+                {activeView === "providers" || (activeView === "teammates" && selectedAiTeammate) ? null : (
+                  <div className="workspace-head">
+                    <div>
+                      <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
+                      <p>{selectedAiTeammate ? selectedAiTeammate.description : t(viewDescription(activeView))}</p>
+                    </div>
+                    {activeView === "teammates" ? (
+                      <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
+                    ) : activeView === "mcp" ? null : (
+                      <StatusBadge status={latestStatus} />
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
-            {activeView === "teammates" && selectedAiTeammate ? (
-              <TeammateWorkspace
+                {activeView === "teammates" && selectedAiTeammate ? (
+                  <TeammateWorkspace
                 cwd={form.cwd}
                 teammate={selectedAiTeammate}
                 providers={providers}
@@ -3718,9 +2416,9 @@ export function AppShell(): JSX.Element {
                 onRefreshTeammates={() => refreshAiTeammates(form.cwd.trim())}
                 onRefreshChannels={() => refreshChannels()}
                 onRefreshTasks={(channelId) => refreshTasks(channelId)}
-              />
-            ) : activeView === "teammates" ? (
-              <AiTeammatesPage
+                  />
+                ) : activeView === "teammates" ? (
+                  <AiTeammatesPage
                 skillPack={builtinSkillPack}
                 providers={providers}
                 channels={channels}
@@ -3730,9 +2428,9 @@ export function AppShell(): JSX.Element {
                 onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
                 onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
                 onOpenProviders={() => openPlainView("providers")}
-              />
-            ) : activeView === "mcp" ? (
-              <McpToolsPage
+                  />
+                ) : activeView === "mcp" ? (
+                  <McpToolsPage
                 servers={mcpServers}
                 tools={mcpTools}
                 isLoading={mcpLoading}
@@ -3746,9 +2444,9 @@ export function AppShell(): JSX.Element {
                 onDelete={(serverId) => void removeMcpServer(serverId)}
                 onCheck={runMcpServerCheck}
                 onSyncTools={syncMcpTools}
-              />
-            ) : activeView === "runs" ? (
-              <RunHistory
+                  />
+                ) : activeView === "runs" ? (
+                  <RunHistory
                 cwd={form.cwd}
                 runs={runs}
                 selectedRunId={activeRunId}
@@ -3778,9 +2476,9 @@ export function AppShell(): JSX.Element {
                 onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
                 onEditTask={(sourceRun) => void openTaskFromRun(sourceRun)}
                 onSelect={(runId) => void selectRun(runId)}
-              />
-            ) : activeView === "providers" ? (
-              <ProviderSettings
+                  />
+                ) : activeView === "providers" ? (
+                  <ProviderSettings
                 cwd={form.cwd}
                 providers={providers}
                 templates={providerTemplates}
@@ -3798,22 +2496,10 @@ export function AppShell(): JSX.Element {
                 repairRun={providerRepairRun}
                 isRunning={isRunning}
                 onFormChange={setProviderForm}
-                onTemplateSelect={(template) => {
-                  setProviderRepairRunId("");
-                  setEditingProviderId("");
-                  setSelectedProviderTemplateId(template.templateId);
-                  setProviderCheck(undefined);
-                  setProviderCheckTargetId("");
-                  setProviderForm(providerTemplateToForm(template, t));
-                }}
+                onTemplateSelect={selectProviderTemplate}
                 onNew={() => {
-                  setProviderRepairRunId("");
-                  setEditingProviderId("");
                   const customTemplate = providerFormToTemplate(customOpenAICompatibleForm);
-                  setSelectedProviderTemplateId(customTemplate.templateId);
-                  setProviderCheck(undefined);
-                  setProviderCheckTargetId("");
-                  setProviderForm(providerTemplateToForm(customTemplate, t));
+                  startNewProviderFromTemplate(customTemplate);
                 }}
                 onSave={saveProviderWithPreflight}
                 onRefresh={() => void refreshProviders()}
@@ -3826,9 +2512,9 @@ export function AppShell(): JSX.Element {
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onClearRepair={() => setProviderRepairRunId("")}
-              />
-            ) : activeView === "media" ? (
-              <MediaJobsPage
+                  />
+                ) : activeView === "media" ? (
+                  <MediaJobsPage
                 cwd={form.cwd}
                 providers={providers}
                 jobs={mediaJobs}
@@ -3844,9 +2530,9 @@ export function AppShell(): JSX.Element {
                 onSelectJob={setSelectedMediaJobId}
                 onRun={(jobId) => void executeMediaJob(jobId)}
                 onOpenProviders={() => openPlainView("providers")}
-              />
-            ) : activeView === "settings" ? (
-              <SettingsPage
+                  />
+                ) : activeView === "settings" ? (
+                  <SettingsPage
                 cwd={form.cwd}
                 policy={approvalPolicy}
                 form={approvalPolicyForm}
@@ -3878,9 +2564,9 @@ export function AppShell(): JSX.Element {
                     setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
                   }
                 }}
-              />
-            ) : (
-              <ApprovalsPage
+                  />
+                ) : (
+                  <ApprovalsPage
                 cwd={form.cwd}
                 approvals={approvals}
                 repairRunId={approvalRepairRunId}
@@ -3902,10 +2588,12 @@ export function AppShell(): JSX.Element {
                 onCancelExternalAction={(actionId) => void cancelExternalAction(actionId, "Cancelled from Web Inbox")}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onClearRepair={() => setApprovalRepairRunId("")}
-              />
+                  />
+                )}
+              </>
             )}
-          </>
-        )}
+          </Suspense>
+        </LazyPageErrorBoundary>
       </section>
       {showInspector ? (
         <aside className={inspectorCollapsed ? "right-panel collapsed" : "right-panel"} aria-label={t("Inspector")}>
@@ -4047,22 +2735,6 @@ function latestChannelMessageTimestamp(messages: readonly ChannelMessage[]): str
   return messages.reduce((latest, message) => message.updatedAt > latest ? message.updatedAt : latest, "");
 }
 
-function mergeChannelMessages(
-  olderMessages: readonly ChannelMessage[],
-  currentMessages: readonly ChannelMessage[],
-): readonly ChannelMessage[] {
-  const seen = new Set<string>();
-  const merged: ChannelMessage[] = [];
-  for (const message of [...olderMessages, ...currentMessages]) {
-    if (seen.has(message.id)) {
-      continue;
-    }
-    seen.add(message.id);
-    merged.push(message);
-  }
-  return merged;
-}
-
 function buildSidebarTeammateNotifications(
   approvals: readonly ApprovalRequest[],
   tasks: readonly Task[],
@@ -4081,59 +2753,6 @@ function buildSidebarTeammateNotifications(
   }
 
   return Object.fromEntries([...counts.entries()].map(([teammateId, count]) => [teammateId, { count }]));
-}
-
-function buildMemoryScopesForTeammate(
-  channelIds: readonly string[],
-  memorySources: readonly string[],
-): ReplaceTeammateMemoryScopesRequest["scopes"] {
-  const scopes: ReplaceTeammateMemoryScopesRequest["scopes"][number][] = [
-    { kind: "private-chat-summary", enabled: true },
-  ];
-  if (memorySources.includes("private-notes")) {
-    scopes.push({ kind: "private-notes", enabled: true });
-  }
-  for (const channelId of channelIds) {
-    if (memorySources.includes("project-files") || memorySources.includes("agents-md")) {
-      scopes.push({ kind: "channel-brief", channelId, enabled: true });
-    }
-    if (memorySources.includes("skill-pack")) {
-      scopes.push({ kind: "channel-decisions", channelId, enabled: true });
-    }
-  }
-  return scopes;
-}
-
-function toContractApprovalProfile(
-  profile: (typeof builtinTeammateTemplates)[number]["approvalProfile"],
-): CreateAiTeammateRequest["approvalProfile"] {
-  return {
-    mode: profile.mode,
-    risk: profile.risk,
-    requiredForTools: profile.requiredForTools?.filter(isContractToolName),
-    requiredForActions: profile.requiredForActions?.filter(isContractApprovalAction),
-  };
-}
-
-function isContractToolName(value: string): value is NonNullable<CreateAiTeammateRequest["allowedTools"]>[number] {
-  return value === "read" || value === "grep" || value === "find" || value === "ls" || value === "bash" || value === "edit" || value === "write";
-}
-
-function isContractApprovalAction(
-  value: string,
-): value is NonNullable<CreateAiTeammateRequest["approvalProfile"]["requiredForActions"]>[number] {
-  return (
-    value === "write" ||
-    value === "edit" ||
-    value === "bash" ||
-    value === "git_commit" ||
-    value === "git_push" ||
-    value === "external_send" ||
-    value === "deploy" ||
-    value === "media_cost" ||
-    value === "credential_change" ||
-    value === "provider_change"
-  );
 }
 
 function mergeWorkflowSteps(

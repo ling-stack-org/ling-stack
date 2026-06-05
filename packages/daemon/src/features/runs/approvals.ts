@@ -18,6 +18,10 @@ import {
 } from "@ling-stack/core";
 import type { PiRunnerApprovalRequest, PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { isRecord } from "../../shared/validation.js";
+import {
+  appendExecutionActionArtifactEvents,
+  createExecutionActionPreviewArtifacts,
+} from "./action-artifacts.js";
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
@@ -89,6 +93,7 @@ export function createRunApprovalHandler(options: {
   readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
   readonly signal?: AbortSignal;
+  readonly extraSecrets?: readonly (string | undefined)[];
 }): PiRunnerRunOptions["onApprovalRequired"] {
   return async (request: PiRunnerApprovalRequest) => {
     const approvalInput = toCreateApprovalRequestInput(options.run, request);
@@ -101,7 +106,17 @@ export function createRunApprovalHandler(options: {
     }
 
     if (policyDecision.decision === "deny") {
-      const denied = options.store.createApprovalRequest(approvalInput, new Date().toISOString());
+      const createdAt = new Date().toISOString();
+      const denied = options.store.createApprovalRequest(approvalInput, createdAt);
+      const previewArtifacts = createExecutionActionPreviewArtifacts({
+        store: options.store,
+        run: options.run,
+        approval: denied,
+        toolName: request.toolName,
+        toolArgs: request.input,
+        now: createdAt,
+        extraSecrets: options.extraSecrets,
+      });
       const resolved = options.store.denyApprovalRequest(
         denied.id,
         { reason: policyDecision.reason },
@@ -110,7 +125,13 @@ export function createRunApprovalHandler(options: {
       if (!resolved) {
         throw new Error(`Approval request not found after policy denial: ${denied.id}`);
       }
-      const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(resolved));
+      const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(resolved, previewArtifacts));
+      appendExecutionActionArtifactEvents({
+        artifacts: previewArtifacts,
+        approval: resolved,
+        role: "preview",
+        appendAndMaybeStream: options.appendAndMaybeStream,
+      });
       streamOrAppendApprovalDecisionEvent({
         store: options.store,
         approval: resolved,
@@ -125,7 +146,17 @@ export function createRunApprovalHandler(options: {
       };
     }
 
-    const approval = options.store.createApprovalRequest(approvalInput, new Date().toISOString());
+    const createdAt = new Date().toISOString();
+    const approval = options.store.createApprovalRequest(approvalInput, createdAt);
+    const previewArtifacts = createExecutionActionPreviewArtifacts({
+      store: options.store,
+      run: options.run,
+      approval,
+      toolName: request.toolName,
+      toolArgs: request.input,
+      now: createdAt,
+      extraSecrets: options.extraSecrets,
+    });
     const waitingAt = new Date().toISOString();
     options.store.transitionRunStatus({
       runId: options.run.id,
@@ -134,7 +165,13 @@ export function createRunApprovalHandler(options: {
       actor: "system",
       now: waitingAt,
     });
-    const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(approval));
+    const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(approval, previewArtifacts));
+    appendExecutionActionArtifactEvents({
+      artifacts: previewArtifacts,
+      approval,
+      role: "preview",
+      appendAndMaybeStream: options.appendAndMaybeStream,
+    });
 
     const resolvedApproval = await waitForApprovalDecision(options.store, approval.id, options.signal);
     const resolvedAt = new Date().toISOString();
@@ -285,7 +322,7 @@ function approvalDecisionEventType(approval: ApprovalRequest): Extract<RunEventT
   return "approval_denied";
 }
 
-function approvalRequestEventPayload(approval: ApprovalRequest): Record<string, unknown> {
+function approvalRequestEventPayload(approval: ApprovalRequest, previewArtifacts: readonly { readonly id: string }[] = []): Record<string, unknown> {
   return {
     approvalId: approval.id,
     toolCallId: approval.toolCallId,
@@ -294,6 +331,7 @@ function approvalRequestEventPayload(approval: ApprovalRequest): Record<string, 
     title: approval.title,
     description: approval.description,
     payload: approval.payload,
+    previewArtifactIds: previewArtifacts.map((artifact) => artifact.id),
     expiresAt: approval.expiresAt,
   };
 }

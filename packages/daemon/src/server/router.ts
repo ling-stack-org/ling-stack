@@ -38,6 +38,7 @@ import {
   handleChannelWorkflowStepsCollection,
   handleChannelWorkflowsCollection,
 } from "../features/channels/workflows.js";
+import { createWorkflowStepContextArtifact } from "../features/channels/workflow-step-packets.js";
 import {
   handleExternalWorkActionCancel,
   handleExternalWorkActionDetail,
@@ -126,8 +127,10 @@ import {
   handleListRuntimeActive,
   handleListRuntimeSemaphores,
   handleListRuntimeStuck,
+  handleListRunners,
   handleListStateTransitions,
   handleListWorkUnits,
+  handleRuntimeSettings,
   handleWorkUnitRoute,
 } from "../runtime/routes.js";
 import {
@@ -517,6 +520,16 @@ export async function routeRequest(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/runners") {
+    handleListRunners(response, url, storeRegistry, runnerRegistry);
+    return;
+  }
+
+  if (url.pathname === "/runtime/settings") {
+    await handleRuntimeSettings(request, response, url, storeRegistry, runnerRegistry, config.maxBodyBytes);
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/runtime") {
     handleGetRuntime(response, url, storeRegistry, runtimeSupervisor);
     return;
@@ -679,7 +692,30 @@ export async function routeRequest(
           mcpBroker,
           {
             onRunReady: (runId) => {
-              store.updateChannelWorkflowStep(workflowStep.id, { taskId, runId }, new Date().toISOString());
+              const now = new Date().toISOString();
+              store.updateChannelWorkflowStep(workflowStep.id, { taskId, runId }, now);
+              const run = store.getRun(runId);
+              if (run) {
+                try {
+                  const latestStep = store.getChannelWorkflowStep(workflowStep.id) ?? workflowStep;
+                  const artifact = createWorkflowStepContextArtifact({
+                    store,
+                    workflow,
+                    step: latestStep,
+                    run,
+                    runRequest,
+                    now,
+                  });
+                  const stepWithLatestMetadata = store.getChannelWorkflowStep(workflowStep.id) ?? latestStep;
+                  store.updateChannelWorkflowStep(
+                    workflowStep.id,
+                    { metadata: { ...stepWithLatestMetadata.metadata, contextArtifactId: artifact.id } },
+                    now,
+                  );
+                } catch {
+                  // Context artifacts are audit evidence; a write failure must not orphan an already-started run.
+                }
+              }
               resolveOnce(runId);
             },
             afterRunTerminal: (terminalRun) => {

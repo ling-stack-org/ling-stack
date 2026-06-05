@@ -206,6 +206,7 @@ export type RunEventType =
   | "run_continuation_starting"
   | "run_continuation_started"
   | "run_intervention_failed"
+  | "stale_runner_completion_ignored"
   | "result";
 
 export const runInterventionModes = ["queue_followup", "interrupt_redirect"] as const;
@@ -344,6 +345,7 @@ export interface RunSession {
   readonly taskId: string;
   readonly channelId?: string;
   readonly teammateId?: string;
+  readonly workflowStepId?: string;
   readonly selectedSkillId?: string;
   readonly providerPresetId?: string;
   readonly providerName: string;
@@ -380,6 +382,7 @@ export interface CreateRunInput {
   readonly taskId: string;
   readonly channelId?: string;
   readonly teammateId?: string;
+  readonly workflowStepId?: string;
   readonly selectedSkillId?: string;
   readonly providerPresetId?: string;
   readonly providerName: string;
@@ -453,6 +456,7 @@ export interface ListRunEventsOptions {
 export interface ListRunsOptions {
   readonly status?: RunStatus;
   readonly teammateId?: string;
+  readonly workflowStepId?: string;
   readonly threadId?: string;
   readonly limit?: number;
 }
