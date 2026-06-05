@@ -3132,9 +3132,11 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   expect(workbenchBounds?.workbench.right).toBeLessThanOrEqual((workbenchBounds?.workspaceContent.right ?? 0) + 1.5);
   expect(workbenchBounds ? workbenchBounds.workspaceContent.right - workbenchBounds.workbench.right : 0).toBeLessThanOrEqual(1.5);
   await expect(page.locator(".workspace-head .status-badge")).toHaveCount(0);
-  await expect(page.getByText("聊天能力")).toBeVisible();
+  await expect(page.getByText("已保存")).toBeVisible();
+  await expect(page.getByText("聊天模型")).toBeVisible();
+  await expect(page.getByText("媒体模型")).toBeVisible();
   await expect(page.getByText("Chat-capable")).toHaveCount(0);
-  await expect(page.getByText(/个聊天 \/ .*个媒体/)).toBeVisible();
+  await expect(page.locator(".provider-capability-summary")).not.toContainText("模板");
   await expect(page.getByRole("button", { name: "添加模型" })).toBeVisible();
   await expect(page.getByText("修复队列")).toHaveCount(0);
   await expect(page.getByText("Repair queue")).toHaveCount(0);
@@ -3143,7 +3145,9 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(page.getByText("New preset")).toHaveCount(0);
   await expect(page.getByLabel("Model Workbench context")).toHaveCount(0);
   const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
-  await expect(missingKeyGatewayRow.getByRole("button", { name: "启用" })).toBeVisible();
+  await expect(missingKeyGatewayRow.getByRole("button", { name: "设为默认" })).toBeVisible();
+  await expect(missingKeyGatewayRow.getByRole("button", { name: "设为默认" })).toBeDisabled();
+  await expect(missingKeyGatewayRow.getByRole("button", { name: "停用" })).toBeVisible();
   await expect(missingKeyGatewayRow.getByRole("button", { name: "使用" })).toHaveCount(0);
   const tableLayout = await missingKeyGatewayRow.evaluate((row) => {
     const cells = Array.from(row.children).map((cell) => {
@@ -3152,9 +3156,11 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
     });
     return cells;
   });
-  for (let index = 0; index < tableLayout.length - 1; index += 1) {
+  for (let index = 0; index < tableLayout.length - 2; index += 1) {
     expect(tableLayout[index].right).toBeLessThanOrEqual(tableLayout[index + 1].left + 0.5);
   }
+  await expect(missingKeyGatewayRow.locator(".provider-actions")).toBeVisible();
+  await expect(missingKeyGatewayRow.locator(".provider-actions")).toHaveCSS("opacity", "1");
   await missingKeyGatewayRow.hover();
   const actionLayout = await missingKeyGatewayRow.evaluate((row) => {
     const actionCell = row.children[row.children.length - 1]?.getBoundingClientRect();
@@ -3169,6 +3175,22 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   expect(actionLayout).toBeDefined();
   expect(actionLayout?.actions.left).toBeGreaterThanOrEqual((actionLayout?.actionCell.left ?? 0) - 0.5);
   expect(actionLayout?.actions.right).toBeLessThanOrEqual((actionLayout?.actionCell.right ?? 0) + 0.5);
+  await page.locator(".provider-table-shell").evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+  const stickyActionLayout = await missingKeyGatewayRow.evaluate((row) => {
+    const shell = row.closest(".provider-table-shell")?.getBoundingClientRect();
+    const actionCell = row.children[row.children.length - 1]?.getBoundingClientRect();
+    return shell && actionCell
+      ? {
+        shell: { left: shell.left, right: shell.right },
+        actionCell: { left: actionCell.left, right: actionCell.right },
+      }
+      : undefined;
+  });
+  expect(stickyActionLayout).toBeDefined();
+  expect(stickyActionLayout?.actionCell.right).toBeLessThanOrEqual((stickyActionLayout?.shell.right ?? 0) + 1);
+  expect(stickyActionLayout?.actionCell.left).toBeGreaterThanOrEqual((stickyActionLayout?.shell.left ?? 0) - 1);
 
   await page.getByRole("button", { name: "添加模型" }).first().click();
   const editor = page.getByRole("dialog", { name: "新建预设" });
@@ -3311,6 +3333,134 @@ test("model workbench save validates before persisting and keeps errors inside t
   await expect.poll(() =>
     state.providers.some((provider) => isRecord(provider) && provider.displayName === "Custom OpenAI-compatible")
   ).toBe(false);
+});
+
+test("model workbench saves Doubao chat presets when live model check is inconclusive", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state, {
+    templates: createDefaultProviderTemplates(),
+    providerCheckModelUnsupportedProviderIds: ["doubao"],
+  });
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  await page.getByRole("button", { name: "添加模型" }).first().click();
+  const editor = page.getByRole("dialog", { name: "新建预设" });
+  await page.getByRole("tab", { name: /国内模型/ }).click();
+  await page.getByRole("button", { name: /豆包 Ark/ }).click();
+  await page.getByLabel("API Key", { exact: true }).fill("ark-test-key");
+  await page.getByRole("button", { name: "获取模型" }).click();
+
+  const modelCards = page.locator(".provider-model-card");
+  await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toHaveCount(0);
+  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toHaveCount(0);
+  await modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" }).click();
+
+  await page.getByRole("button", { name: "保存" }).click();
+
+  await expect(editor).toHaveCount(0);
+  await expect(page.locator(".provider-batch-result.warning")).toContainText("已保存，但模型检查未通过。请确认 Base URL、模型权限或推理接入点。");
+  await expect(page.getByText(/Provider rejected the endpoint or model/)).toHaveCount(0);
+  const doubaoRow = page.locator(".provider-row").filter({ hasText: "豆包 Ark" });
+  await expect(doubaoRow).toBeVisible();
+  await expect(doubaoRow).toContainText("模型不支持");
+  await expect(doubaoRow).not.toContainText("当前默认");
+  await expect.poll(() =>
+    state.providers.some((provider) =>
+      isRecord(provider) &&
+      provider.providerId === "doubao" &&
+      provider.model === "doubao-1-5-pro-32k-250115" &&
+      typeof provider.apiKeyRef === "string" &&
+      provider.apiKeyRef.startsWith("local:")
+    )
+  ).toBe(true);
+  await expect.poll(() =>
+    state.channels.every((channel) =>
+      !isRecord(channel) ||
+      channel.defaultProviderPresetId !== state.providers.find((provider) => isRecord(provider) && provider.providerId === "doubao")?.id
+    )
+  ).toBe(true);
+});
+
+test("model workbench media templates can fetch media-only model candidates", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  await page.getByRole("button", { name: "添加模型" }).first().click();
+  await page.getByRole("tab", { name: /^媒体/ }).click();
+  await page.getByRole("button", { name: /Seedream 图片/ }).click();
+  await page.getByLabel("API Key", { exact: true }).fill("ark-media-key");
+
+  const fetchModels = page.getByRole("button", { name: "获取模型" });
+  await expect(fetchModels).toBeEnabled();
+  await fetchModels.click();
+
+  const modelCards = page.locator(".provider-model-card");
+  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-turbo-260128" })).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toHaveCount(0);
+  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toHaveCount(0);
+  await expect(page.getByText("已隐藏 1 个其他媒体模型，请切换到对应媒体提供商查看。")).toBeVisible();
+
+  await page.getByRole("button", { name: /Seedance 视频/ }).click();
+  await expect(page.getByLabel("API Key", { exact: true })).toHaveValue("ark-media-key");
+  await expect(page.getByLabel("提供商 ID")).toHaveValue("seedance");
+  await expect(page.getByLabel("能力")).toHaveValue("video_generate");
+  await fetchModels.click();
+  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toBeVisible();
+  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toHaveCount(0);
+  await expect(modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" })).toHaveCount(0);
+});
+
+test("model workbench edits media presets in the matching media template group", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createMediaProvider({
+      id: "provider_seedream",
+      kind: "seedream",
+      displayName: "Seedream Image",
+      providerId: "seedream",
+      model: "doubao-seedream-5-0-260128",
+    }),
+    createMediaProvider({
+      id: "provider_seedance",
+      kind: "seedance",
+      displayName: "Seedance Video",
+      providerId: "seedance",
+      model: "doubao-seedance-1-0-pro-250528",
+      capabilities: ["video_generate"],
+    }),
+  ];
+  await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "模型工作台" }).click();
+  const seedreamRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
+  await seedreamRow.getByRole("button", { name: "编辑" }).click();
+  const editor = page.getByRole("dialog", { name: "编辑预设" });
+  await expect(editor.getByRole("tab", { name: /媒体/ })).toHaveAttribute("aria-selected", "true");
+  await expect(editor.getByRole("button", { name: /Seedream 图片/ })).toBeVisible();
+  await expect(editor.getByLabel("提供商 ID")).toHaveValue("seedream");
+  await page.getByRole("button", { name: "关闭模型预设编辑器" }).click();
+
+  const seedanceRow = page.locator(".provider-row").filter({ hasText: "Seedance Video" });
+  await seedanceRow.getByRole("button", { name: "编辑" }).click();
+  const seedanceEditor = page.getByRole("dialog", { name: "编辑预设" });
+  await expect(seedanceEditor.getByRole("tab", { name: /媒体/ })).toHaveAttribute("aria-selected", "true");
+  await expect(seedanceEditor.getByRole("button", { name: /Seedance 视频/ })).toBeVisible();
+  await expect(seedanceEditor.getByLabel("提供商 ID")).toHaveValue("seedance");
 });
 
 test("MCP tool access page creates servers without exposing secret values", async ({ page }) => {
@@ -4439,7 +4589,9 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
-  await expect(page.getByText("Chat-capable")).toBeVisible();
+  await expect(page.getByText("Saved presets")).toBeVisible();
+  await expect(page.getByText("Chat models")).toBeVisible();
+  await expect(page.getByText("Media models")).toBeVisible();
   await expect(page.getByText("Coding ready")).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
@@ -4453,15 +4605,19 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" })).toContainText("auth failed");
   const readyLocalRelayRow = page.locator(".provider-row").filter({ hasText: "Ready Local Relay" });
   await expect(readyLocalRelayRow).toContainText("check ready");
-  await expect(readyLocalRelayRow.getByRole("button", { name: "Stop using" })).toBeVisible();
-  await readyLocalRelayRow.getByRole("button", { name: "Stop using" }).click();
-  await expect(readyLocalRelayRow.getByRole("button", { name: "Use" })).toBeVisible();
+  await expect(readyLocalRelayRow.locator(".provider-state.enabled")).toHaveCount(1);
+  await expect(readyLocalRelayRow).toContainText("Current default");
+  await expect(readyLocalRelayRow.getByRole("button", { name: "Clear default" })).toBeVisible();
+  await readyLocalRelayRow.getByRole("button", { name: "Clear default" }).click();
+  await expect(readyLocalRelayRow.getByRole("button", { name: "Set default" })).toBeVisible();
   await expect.poll(() =>
     state.channels.every((channel) => !isRecord(channel) || channel.defaultProviderPresetId === undefined)
   ).toBe(true);
-  await expect(readyLocalRelayRow.locator(".provider-state.enabled")).toHaveCount(0);
-  await expect(readyLocalRelayRow.locator(".provider-state.disabled")).toHaveCount(1);
-  await expect(page.locator(".provider-row").filter({ hasText: "Seedream Image" })).toContainText("Coding task: blocked");
+  await expect(readyLocalRelayRow.locator(".provider-state.enabled")).toHaveCount(1);
+  await expect(readyLocalRelayRow.locator(".provider-state.disabled")).toHaveCount(0);
+  const seedreamRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
+  await expect(seedreamRow).toContainText("Media task");
+  await expect(seedreamRow).toContainText("Coding task: blocked");
   const legacyOpenAiRow = page.locator(".provider-row").filter({ hasText: "Legacy OpenAI Without Stored Endpoint" });
   await expect(legacyOpenAiRow).toContainText("https://api.openai.com/v1");
   await legacyOpenAiRow.getByRole("button", { name: "Edit" }).click();
@@ -4477,8 +4633,8 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.getByLabel("Provider ID")).toBeEnabled();
   await expect(page.getByLabel("API protocol")).toBeEnabled();
   await page.getByRole("button", { name: "Close model preset editor" }).click();
-  await expect(openAiProxyRow.getByRole("button", { name: "Use" })).toBeVisible();
-  await openAiProxyRow.getByRole("button", { name: "Use" }).click();
+  await expect(openAiProxyRow.getByRole("button", { name: "Set default" })).toBeVisible();
+  await openAiProxyRow.getByRole("button", { name: "Set default" }).click();
   await expect.poll(() =>
     state.channels.some((channel) =>
       isRecord(channel) &&
@@ -4486,14 +4642,22 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
       channel.defaultProviderPresetId === "provider_openai_proxy"
     )
   ).toBe(true);
-  await expect(openAiProxyRow.getByRole("button", { name: "Stop using" })).toBeVisible();
+  await expect(openAiProxyRow.getByRole("button", { name: "Clear default" })).toBeVisible();
   await expect(openAiProxyRow.locator(".provider-state.enabled")).toHaveCount(1);
+  await expect(readyLocalRelayRow.locator(".provider-state.enabled")).toHaveCount(1);
 
   await page.reload();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
   const reloadedOpenAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
-  await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Stop using" })).toBeVisible();
+  await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Clear default" })).toBeVisible();
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.enabled")).toHaveCount(1);
+  await reloadedOpenAiProxyRow.getByRole("button", { name: "Disable" }).click();
+  await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Enable" })).toBeVisible();
+  await expect(reloadedOpenAiProxyRow.locator(".provider-state.disabled")).toHaveCount(1);
+  await expect(reloadedOpenAiProxyRow).not.toContainText("Current default");
+  await expect.poll(() =>
+    state.channels.every((channel) => !isRecord(channel) || channel.defaultProviderPresetId !== "provider_openai_proxy")
+  ).toBe(true);
   await expect(page.getByText(/Ready: .* passed preflight/)).toHaveCount(0);
   await expect(page.getByText("All saved chat providers are either preflight-ready or intentionally out of the run path.")).toHaveCount(0);
 
@@ -4540,11 +4704,20 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.getByText("env:CUSTOM_MODEL_API_KEY")).toHaveCount(0);
   await page.getByRole("button", { name: "Fetch models" }).click();
   const modelCards = page.locator(".provider-model-card");
-  await expect(modelCards).toHaveCount(2);
+  await expect(modelCards).toHaveCount(3);
   await expect(modelCards.filter({ hasText: "Custom model" })).toHaveCount(0);
   await expect(modelCards.filter({ hasText: "cliproxy-gpt-4o" })).toBeVisible();
-  await modelCards.filter({ hasText: "cliproxy-claude-sonnet" }).click();
-  await expect(page.getByRole("textbox", { name: "Model", exact: true })).toHaveValue("cliproxy-claude-sonnet");
+  await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toHaveCount(0);
+  await expect(modelCards.filter({ hasText: "doubao-seedance-1-0-pro-250528" })).toHaveCount(0);
+  await expect(page.getByText("2 media models are hidden. Add media models separately from the Media templates.")).toBeVisible();
+  await modelCards.filter({ hasText: "cliproxy-gpt-4o" }).click();
+  await expect(page.getByRole("textbox", { name: "Model", exact: true })).toHaveValue("cliproxy-gpt-4o");
+  await expect(page.getByLabel("API protocol")).toHaveValue("openai-completions");
+  await expect(page.getByLabel("Capabilities")).toHaveValue("chat, tool_call, reasoning");
+  await expect(modelCards).toHaveCount(3);
+  await modelCards.filter({ hasText: "doubao-1-5-pro-32k-250115" }).click();
+  await expect(page.getByRole("textbox", { name: "Model", exact: true })).toHaveValue("doubao-1-5-pro-32k-250115");
+  await expect(page.getByLabel("API protocol")).toHaveValue("openai-completions");
   await expect(page.getByLabel("Capabilities")).toHaveValue("chat, tool_call, reasoning");
 
   await page.getByRole("button", { name: "Save" }).click();
@@ -4555,9 +4728,12 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(customProviderRow.locator(".provider-meta-line").first()).toContainText("Model:");
   await expect(customProviderRow.locator(".provider-meta-line").first()).toContainText("API protocol:");
   await expect(customProviderRow.locator(".provider-meta-line").first()).not.toContainText("custom-openai-compatible");
-  await expect(customProviderRow.getByRole("button", { name: "Stop using" })).toBeVisible();
-  await customProviderRow.getByRole("button", { name: "Stop using" }).click();
-  await expect(customProviderRow.getByRole("button", { name: "Use" })).toBeVisible();
+  await expect(customProviderRow).not.toContainText("Current default");
+  await expect(customProviderRow.getByRole("button", { name: "Set default" })).toBeVisible();
+  await customProviderRow.getByRole("button", { name: "Set default" }).click();
+  await expect(customProviderRow.getByRole("button", { name: "Clear default" })).toBeVisible();
+  await customProviderRow.getByRole("button", { name: "Clear default" }).click();
+  await expect(customProviderRow.getByRole("button", { name: "Set default" })).toBeVisible();
   await expect(page.getByRole("dialog", { name: "New preset" })).toHaveCount(0);
   await expect.poll(() =>
     state.providers.some((provider) =>
@@ -4581,6 +4757,118 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByRole("dialog", { name: "Edit preset" }).getByText("API key missing. Add an API key before running a live check.")).toBeVisible();
   await expect(customProviderRow).toContainText("key ready");
+});
+
+test("model workbench status counts align with saved chat and media presets", async ({ page }) => {
+  const readyCheck = {
+    ok: true,
+    code: "ready",
+    message: "Provider is reachable and accepted the configured model.",
+    checkedAt: "2026-05-25T00:00:00.000Z",
+  };
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [
+    createMediaProvider({
+      id: "provider_seedance_image",
+      kind: "seedance",
+      displayName: "Seedance Video",
+      providerId: "seedance",
+      model: "doubao-seedance-1-0-pro-250528",
+      capabilities: ["video_generate"],
+      lastCheck: readyCheck,
+    }),
+    createMediaProvider({
+      id: "provider_seedream_image",
+      displayName: "Seedream Image",
+      lastCheck: readyCheck,
+    }),
+    createChatProvider({
+      id: "provider_chat_ready",
+      displayName: "Ready Local Relay",
+      lastCheck: readyCheck,
+    }),
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  const statusTabs = page.locator(".provider-status-tabs");
+  await expect(statusTabs.getByRole("button", { name: /Available 3/ })).toBeVisible();
+  await expect(statusTabs.getByRole("button", { name: /Needs config 0/ })).toBeVisible();
+  await expect(statusTabs.getByRole("button", { name: /Disabled providers 0/ })).toBeVisible();
+  const summary = page.locator(".provider-capability-summary");
+  await expect(summary).toContainText("Saved presets 3");
+  await expect(summary).toContainText("Chat models 1");
+  await expect(summary).toContainText("Media models 2");
+  await expect(summary).toContainText("Coding ready 1");
+  await expect(summary).toContainText("Missing secrets 0");
+  await expect(summary).not.toContainText("Templates");
+
+  await statusTabs.getByRole("button", { name: /Available 3/ }).click();
+  await expect(page.locator(".provider-row")).toHaveCount(3);
+  await statusTabs.getByRole("button", { name: /Needs config 0/ }).click();
+  await expect(page.locator(".provider-row")).toHaveCount(0);
+});
+
+test("model workbench row checks show inline feedback without spinning batch check", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providerCheckDelayMs = 800;
+  state.providers = [
+    createChatProvider({
+      id: "provider_ready",
+      displayName: "Ready Local Relay",
+      lastCheck: undefined,
+    }),
+    createChatProvider({
+      id: "provider_failed",
+      displayName: "Auth Failed Gateway",
+      lastCheck: undefined,
+    }),
+    createMediaProvider({
+      id: "provider_seedream",
+      displayName: "Seedream Image",
+      lastCheck: undefined,
+    }),
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  const checkAllButton = page.getByRole("button", { name: "Check all" });
+  const readyRow = page.locator(".provider-row").filter({ hasText: "Ready Local Relay" });
+  await readyRow.getByRole("button", { name: "Check" }).click();
+  await expect(readyRow.getByRole("button", { name: "Check" }).locator(".spin")).toHaveCount(1);
+  await expect(checkAllButton).toBeDisabled();
+  await expect(checkAllButton.locator(".spin")).toHaveCount(0);
+  const readyFeedback = page.locator(".provider-check-feedback-row.ok").filter({ hasText: "Check passed" });
+  await expect(readyFeedback).toContainText("Provider is reachable and accepted the configured model.");
+  await expect(readyFeedback).toContainText("Ready for run.");
+  await expect(readyFeedback).toHaveCount(0, { timeout: 3500 });
+
+  const failedRow = page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" });
+  await failedRow.getByRole("button", { name: "Check" }).click();
+  const failedFeedback = page.locator(".provider-check-feedback-row.bad").filter({ hasText: "Check failed" });
+  await expect(failedFeedback).toContainText("Invalid API key.");
+  await expect(page.locator(".provider-check-feedback-row")).toHaveCount(1);
+
+  const mediaRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
+  await mediaRow.getByRole("button", { name: "Check" }).click();
+  const mediaFeedback = page.locator(".provider-check-feedback-row.ok").filter({ hasText: "Generated a real image successfully." });
+  await expect(mediaFeedback).toContainText("Check passed");
+  await expect(mediaFeedback).not.toContainText("Media vendor transport");
+  await expect(mediaFeedback).not.toContainText("no live vendor");
+  await expect(page.locator(".provider-check-feedback-row")).toHaveCount(1);
+  await expect(mediaFeedback).toHaveCount(0, { timeout: 3500 });
+
+  await page.reload();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Model Workbench" }).click();
+  await page.getByRole("button", { name: "Check all" }).click();
+  await expect(checkAllButton.locator(".spin")).toHaveCount(1);
+  await expect(page.locator(".provider-check-feedback-row")).toHaveCount(0);
+  await expect(page.locator(".provider-batch-result")).toContainText("Checked 3 model presets");
+  await expect(page.locator(".provider-batch-result")).toContainText("2 ready, 1 failed");
+  await expect(page.locator(".provider-batch-result")).toContainText("Chat 2 / media 1");
+  await expect(page.locator(".provider-batch-result")).toHaveCount(0, { timeout: 3500 });
 });
 
 test("workspace task runs only expose preflight-ready coding providers", async ({ page }) => {
@@ -4872,8 +5160,8 @@ test("row check enables a configured disabled chat provider before checking", as
   const disabledRow = page.locator(".provider-row").filter({ hasText: "Configured Disabled Relay" });
   await disabledRow.getByRole("button", { name: "Check" }).click();
 
-  await expect(disabledRow.locator(".provider-state.enabled")).toHaveCount(0);
-  await expect(disabledRow.getByRole("button", { name: "Use" })).toBeVisible();
+  await expect(disabledRow.locator(".provider-state.enabled")).toHaveCount(1);
+  await expect(disabledRow.getByRole("button", { name: "Set default" })).toBeVisible();
   await expect(disabledRow).toContainText("check ready");
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
@@ -5463,10 +5751,10 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
       model: "seedream",
       api: "media-job",
       apiKeyRef: "env:SEEDREAM_API_KEY",
-      apiKeyConfigured: false,
+      apiKeyConfigured: true,
       headers: {},
       input: ["text", "image"],
-      compat: {},
+      compat: { mediaVendorTransport: { mode: "live" } },
       capabilities: ["image_generate", "image_edit"],
       enabled: true,
       createdAt: "2026-05-23T00:00:00.000Z",
@@ -5569,10 +5857,28 @@ test("media jobs page lists, runs, and creates media jobs", async ({ page }) => 
 
   const existingJob = page.locator(".media-job-row").filter({ hasText: "Existing product mockup." });
   await expect(existingJob).toContainText("Existing product mockup.");
+  state.approvals.unshift({
+    id: "approval_media_job_existing",
+    mediaJobId: "media_job_existing",
+    actionType: "media_cost",
+    risk: "high",
+    title: "Approve media job cost",
+    description: "Seedream Image image_generate requires approval before live media execution.",
+    payload: {
+      type: "media_cost",
+      providerPresetId: "provider_seedream",
+      model: "seedream",
+      operation: "image_generate",
+      promptPreview: "Existing product mockup.",
+    },
+    status: "approved",
+    createdAt: "2026-05-23T00:02:00.000Z",
+    expiresAt: "2099-01-01T00:02:00.000Z",
+  });
   await existingJob.getByRole("button", { name: "Run" }).click();
   await expect(existingJob).toContainText("succeeded");
-  await expect(existingJob.locator(".artifact-row")).toContainText("Image generate static result");
-  await expect(existingJob.locator(".artifact-row")).toHaveAttribute("href", /\/artifacts\/artifact_media_job_existing\/content/);
+  await expect(existingJob.locator(".artifact-row")).toContainText("Seedream image result");
+  await expect(existingJob.locator(".artifact-main-link")).toHaveAttribute("href", /\/artifacts\/artifact_media_job_existing\/content/);
 
   await page.getByRole("textbox", { name: "Prompt" }).fill("New campaign image.");
   await page.getByRole("button", { name: "Create media job" }).click();
@@ -5640,7 +5946,7 @@ test("media jobs page surfaces live media cost approvals", async ({ page }) => {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Jobs" }).click();
   await jobRow.getByRole("button", { name: "Run" }).click();
   await expect(jobRow).toContainText("succeeded");
-  await expect(jobRow.locator(".artifact-row")).toContainText("Image generate live result");
+  await expect(jobRow.locator(".artifact-row")).toContainText("Seedream image result");
 });
 
 async function readSidebarSelection(page: Page): Promise<{ readonly activeNav: string[]; readonly selectedRows: string[] }> {
@@ -6921,6 +7227,14 @@ function buildProviderCheckResult(provider: Record<string, unknown>): Record<str
   if (String(provider.displayName).includes("Auth Failed")) {
     return { ok: false, code: "auth_failed", message: "Invalid API key.", checkedAt };
   }
+  if (provider.api === "media-job") {
+    return {
+      ok: true,
+      code: "live_image_probe_ready",
+      message: "生成真实图片成功",
+      checkedAt,
+    };
+  }
   return { ok: true, code: "ready", message: "Provider is reachable and accepted the configured model.", checkedAt };
 }
 
@@ -6939,6 +7253,7 @@ async function mockDaemon(
     readonly defaultWorkspaceCwd?: string;
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
+    readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
   } = {},
 ): Promise<void> {
   await page.route("http://127.0.0.1:17891/**", async (route) => {
@@ -6953,6 +7268,7 @@ async function handleDaemonRoute(
     readonly defaultWorkspaceCwd?: string;
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
+    readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
   },
 ): Promise<void> {
   const request = route.request();
@@ -7692,6 +8008,20 @@ async function handleDaemonRoute(
       });
       return;
     }
+    if (
+      typeof body.providerId === "string" &&
+      options.providerCheckModelUnsupportedProviderIds?.includes(body.providerId)
+    ) {
+      await route.fulfill({
+        json: {
+          ok: false,
+          code: "model_unsupported",
+          message: "Provider rejected the endpoint or model with HTTP 404. Check baseUrl and model.",
+          checkedAt: "2026-05-25T00:11:00.000Z",
+        },
+      });
+      return;
+    }
     await route.fulfill({ json: buildProviderCheckResult(createProviderFromBody(body, "provider_draft_check")) });
     return;
   }
@@ -7701,6 +8031,46 @@ async function handleDaemonRoute(
       return;
     }
     const body = await request.postDataJSON() as Record<string, unknown>;
+    if (body.providerId === "doubao" && body.apiKey === "ark-test-key") {
+      await route.fulfill({
+        json: {
+          source: "https://ark.cn-beijing.volces.com/api/v3/models",
+          models: [
+            { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
+            { id: "doubao-seedance-1-0-pro-250528", ownedBy: "volcengine" },
+            { id: "doubao-1-5-pro-32k-250115", ownedBy: "volcengine" },
+          ],
+        },
+      });
+      return;
+    }
+    if (body.api === "media-job" && body.providerId === "seedream" && body.apiKey === "ark-media-key") {
+      await route.fulfill({
+        json: {
+          source: "https://ark.cn-beijing.volces.com/api/v3/models",
+          models: [
+            { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
+            { id: "doubao-seedream-5-0-turbo-260128", ownedBy: "volcengine" },
+            { id: "doubao-seedance-1-0-pro-250528", ownedBy: "volcengine" },
+            { id: "doubao-1-5-pro-32k-250115", ownedBy: "volcengine" },
+          ],
+        },
+      });
+      return;
+    }
+    if (body.api === "media-job" && body.providerId === "seedance" && body.apiKey === "ark-media-key") {
+      await route.fulfill({
+        json: {
+          source: "https://ark.cn-beijing.volces.com/api/v3/models",
+          models: [
+            { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
+            { id: "doubao-seedance-1-0-pro-250528", ownedBy: "volcengine" },
+            { id: "doubao-1-5-pro-32k-250115", ownedBy: "volcengine" },
+          ],
+        },
+      });
+      return;
+    }
     if (body.baseUrl !== "https://api.example.com/v1" || body.apiKey !== "test-visible-key") {
       await route.fulfill({ status: 400, json: { error: "unexpected_model_probe", body } });
       return;
@@ -7710,6 +8080,9 @@ async function handleDaemonRoute(
         source: "https://api.example.com/v1/models",
         models: [
           { id: "cliproxy-gpt-4o", ownedBy: "cliproxy" },
+          { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
+          { id: "doubao-seedance-1-0-pro-250528", ownedBy: "volcengine" },
+          { id: "doubao-1-5-pro-32k-250115", ownedBy: "volcengine" },
           { id: "cliproxy-claude-sonnet", ownedBy: "cliproxy" },
         ],
       },
@@ -7777,6 +8150,21 @@ async function handleDaemonRoute(
     }
     if (state.providerCheckDelayMs) {
       await new Promise((resolve) => setTimeout(resolve, state.providerCheckDelayMs));
+    }
+    if (
+      typeof provider.providerId === "string" &&
+      options.providerCheckModelUnsupportedProviderIds?.includes(provider.providerId)
+    ) {
+      const result = {
+        ok: false,
+        code: "model_unsupported",
+        message: "Provider rejected the endpoint or model with HTTP 404. Check baseUrl and model.",
+        checkedAt: "2026-05-25T00:11:00.000Z",
+      };
+      provider.lastCheck = result;
+      provider.updatedAt = result.checkedAt;
+      await route.fulfill({ json: result });
+      return;
     }
     const result = buildProviderCheckResult(provider);
     provider.lastCheck = result;
@@ -9153,14 +9541,28 @@ async function handleDaemonRoute(
         return;
       }
     }
+    if (!liveGate) {
+      job.status = "failed";
+      job.errorMessage = "当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。";
+      await route.fulfill({
+        status: 400,
+        json: {
+          error: "live_media_transport_required",
+          message: job.errorMessage,
+          mediaJob: job,
+          artifacts: [],
+        },
+      });
+      return;
+    }
     const artifact: MockArtifact = {
       id: `artifact_${job.id}`,
       mediaJobId: job.id,
-      type: "markdown",
-      path: `media_jobs/${job.id}/static-result.md`,
-      title: liveGate ? "Image generate live result" : "Image generate static result",
-      contentType: "text/markdown; charset=utf-8",
-      sizeBytes: 192,
+      type: "image",
+      path: `media_jobs/${job.id}/seedream-image.png`,
+      title: "Seedream image result",
+      contentType: "image/png",
+      sizeBytes: 4096,
       createdAt: "2026-05-23T00:03:00.000Z",
     };
     job.status = "succeeded";

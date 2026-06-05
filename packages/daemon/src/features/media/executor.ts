@@ -1,6 +1,7 @@
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import { basename, extname, resolve as resolvePath } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   DEFAULT_WORKSPACE_ID,
   redactSecrets,
@@ -79,6 +80,11 @@ type MediaCostApprovalGateResult =
   | { readonly kind: "waiting_for_approval"; readonly mediaJob: MediaJob; readonly approval: ApprovalRequest }
   | { readonly kind: "blocked"; readonly mediaJob: MediaJob; readonly approval: ApprovalRequest };
 
+export interface MediaJobExecutionResult {
+  readonly statusCode: number;
+  readonly body: Record<string, unknown>;
+}
+
 export async function handleRunMediaJob(
   response: ServerResponse,
   url: URL,
@@ -93,23 +99,44 @@ export async function handleRunMediaJob(
     return;
   }
 
+  const result = await runMediaJobExecution({
+    cwd,
+    storeRegistry,
+    secretResolver,
+    mediaJobId,
+    hooks,
+  });
+  writeJson(response, result.statusCode, result.body);
+}
+
+export async function runMediaJobExecution(input: {
+  readonly cwd: string;
+  readonly storeRegistry: RunStoreRegistry;
+  readonly secretResolver: SecretResolver;
+  readonly mediaJobId: string;
+  readonly hooks: RunMediaJobHooks;
+}): Promise<MediaJobExecutionResult> {
   let store: RunStore | undefined;
   let job: MediaJob | undefined;
   let supervised: MediaRuntimeHandle | undefined;
   let startedExecution = false;
   try {
-    store = storeRegistry.getStore(cwd);
-    job = store.getMediaJob(mediaJobId);
+    store = input.storeRegistry.getStore(input.cwd);
+    job = store.getMediaJob(input.mediaJobId);
     if (!job) {
-      writeJson(response, 404, { error: "media_job_not_found", message: `Media job not found: ${mediaJobId}` });
-      return;
+      return {
+        statusCode: 404,
+        body: { error: "media_job_not_found", message: `Media job not found: ${input.mediaJobId}` },
+      };
     }
     if (!isRunnableMediaJobStatus(job.status)) {
-      writeJson(response, 409, {
-        error: "media_job_not_runnable",
-        message: `Media job cannot be run from status ${job.status}: ${mediaJobId}`,
-      });
-      return;
+      return {
+        statusCode: 409,
+        body: {
+          error: "media_job_not_runnable",
+          message: `Media job cannot be run from status ${job.status}: ${input.mediaJobId}`,
+        },
+      };
     }
 
     const provider = assertMediaJobProvider(store, {
@@ -117,28 +144,43 @@ export async function handleRunMediaJob(
       operation: job.operation,
       prompt: job.prompt,
       input: job.input,
-    }, secretResolver);
-    const mediaSecret = provider.apiKeyRef ? resolveProviderSecret(store, provider, secretResolver) : undefined;
+    }, input.secretResolver);
+    const liveReadiness = resolveLiveMediaExecutionReadiness(store, provider, job.operation, input.secretResolver);
+    if (!liveReadiness.ok) {
+      const failed = store.updateMediaJobStatus(
+        job.id,
+        { status: "failed", errorMessage: liveReadiness.message },
+        new Date().toISOString(),
+      ) ?? job;
+      return {
+        statusCode: 400,
+        body: {
+          error: liveReadiness.code,
+          message: liveReadiness.message,
+          mediaJob: failed,
+          artifacts: [],
+        },
+      };
+    }
+    const mediaSecret = provider.apiKeyRef ? resolveProviderSecret(store, provider, input.secretResolver) : undefined;
     const mediaSecretValues = [mediaSecret?.value];
 
-    const approvalGate = applyMediaCostApprovalGate(store, job, provider, hooks);
+    const approvalGate = applyMediaCostApprovalGate(store, job, provider, input.hooks);
     if (approvalGate.kind === "waiting_for_approval") {
-      writeJson(response, 200, { mediaJob: approvalGate.mediaJob, approval: approvalGate.approval, artifacts: [] });
-      return;
+      return { statusCode: 200, body: { mediaJob: approvalGate.mediaJob, approval: approvalGate.approval, artifacts: [] } };
     }
     if (approvalGate.kind === "blocked") {
-      writeJson(response, 200, { mediaJob: approvalGate.mediaJob, approval: approvalGate.approval, artifacts: [] });
-      return;
+      return { statusCode: 200, body: { mediaJob: approvalGate.mediaJob, approval: approvalGate.approval, artifacts: [] } };
     }
 
-    supervised = hooks.startRuntimeWorkUnit({
+    supervised = input.hooks.startRuntimeWorkUnit({
       store,
       kind: "media_job",
       ownerType: "media_job",
       ownerId: job.id,
       providerPresetId: job.providerPresetId,
       linkedMediaJobId: job.id,
-      idempotencyKey: `media_job:${job.id}:${job.status}`,
+      idempotencyKey: `media_job:${job.id}:${randomUUID()}`,
       request: {
         mediaJobId: job.id,
         providerPresetId: job.providerPresetId,
@@ -173,7 +215,7 @@ export async function handleRunMediaJob(
     startedExecution = true;
 
     const requestedAt = new Date().toISOString();
-    const execution = await executeMediaAdapterJob(createMediaAdapterForProvider(store, provider, secretResolver), {
+    const execution = await executeMediaAdapterJob(createMediaAdapterForProvider(store, provider, input.secretResolver), {
       jobId: job.id,
       provider: {
         id: provider.id,
@@ -201,7 +243,7 @@ export async function handleRunMediaJob(
         },
         new Date().toISOString(),
       ) ?? job;
-      hooks.transitionRuntimeWorkUnitTerminal({
+      input.hooks.transitionRuntimeWorkUnitTerminal({
         store,
         workUnitId: supervised.workUnit.id,
         attemptId: supervised.attempt.id,
@@ -213,11 +255,34 @@ export async function handleRunMediaJob(
         errorCode: "media_adapter_failed",
         errorMessage: execution.errorMessage ?? "Media adapter execution failed.",
       });
-      writeJson(response, 200, { mediaJob: failed, artifacts: [] });
-      return;
+      return { statusCode: 200, body: { mediaJob: failed, artifacts: [] } };
     }
 
     const completedAt = new Date().toISOString();
+    if (!mediaExecutionHasRequiredArtifact(execution.artifacts, job.operation)) {
+      const message = "媒体供应商没有返回可用的图片或视频结果，请检查模型、权限和返回格式。";
+      const failed = store.updateMediaJobStatus(
+        job.id,
+        {
+          status: "failed",
+          errorMessage: message,
+        },
+        completedAt,
+      ) ?? job;
+      input.hooks.transitionRuntimeWorkUnitTerminal({
+        store,
+        workUnitId: supervised.workUnit.id,
+        attemptId: supervised.attempt.id,
+        event: "runner_failed",
+        attemptStatus: "failed",
+        runtimeEventType: "work_unit_failed",
+        actor: "provider",
+        now: completedAt,
+        errorCode: "media_artifact_missing",
+        errorMessage: message,
+      });
+      return { statusCode: 200, body: { mediaJob: failed, artifacts: [] } };
+    }
     const artifacts = createMediaJobArtifacts(store, job, execution.artifacts, completedAt, mediaSecretValues);
     const artifactIds = [...new Set([...job.artifactIds, ...artifacts.map((artifact) => artifact.id)])];
     const succeeded = store.updateMediaJobStatus(
@@ -239,7 +304,7 @@ export async function handleRunMediaJob(
         data: { artifactId: artifact.id, title: artifact.title, path: artifact.path },
       });
     }
-    hooks.transitionRuntimeWorkUnitTerminal({
+    input.hooks.transitionRuntimeWorkUnitTerminal({
       store,
       workUnitId: supervised.workUnit.id,
       attemptId: supervised.attempt.id,
@@ -250,17 +315,17 @@ export async function handleRunMediaJob(
       now: completedAt,
     });
 
-    writeJson(response, 200, { mediaJob: succeeded, artifacts });
+    return { statusCode: 200, body: { mediaJob: succeeded, artifacts } };
   } catch (error) {
     const statusCode = error instanceof HttpError ? error.statusCode : startedExecution ? 500 : 400;
     const provider = store && job ? store.getProviderPreset(job.providerPresetId) : undefined;
-    const mediaSecret = store && provider?.apiKeyRef ? resolveProviderSecret(store, provider, secretResolver) : undefined;
+    const mediaSecret = store && provider?.apiKeyRef ? resolveProviderSecret(store, provider, input.secretResolver) : undefined;
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [mediaSecret?.value]);
     const failed = store && job && startedExecution
       ? store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, new Date().toISOString())
       : undefined;
     if (store && supervised) {
-      hooks.transitionRuntimeWorkUnitTerminal({
+      input.hooks.transitionRuntimeWorkUnitTerminal({
         store,
         workUnitId: supervised.workUnit.id,
         attemptId: supervised.attempt.id,
@@ -273,16 +338,122 @@ export async function handleRunMediaJob(
         errorMessage: message,
       });
     }
-    writeJson(response, statusCode, {
-      error: error instanceof HttpError ? error.code : startedExecution ? "media_job_execution_failed" : "bad_request",
-      message,
-      ...(failed ? { mediaJob: failed } : {}),
-    });
+    return {
+      statusCode,
+      body: {
+        error: error instanceof HttpError ? error.code : startedExecution ? "media_job_execution_failed" : "bad_request",
+        message,
+        ...(failed ? { mediaJob: failed } : {}),
+      },
+    };
   } finally {
     if (store && supervised) {
       store.releaseRuntimeSemaphoreSlotsForOwner(supervised.attempt.id, new Date().toISOString(), "media-job-finished");
     }
   }
+}
+
+export function syncMediaJobForApprovalDecision(input: {
+  readonly cwd: string;
+  readonly store: RunStore;
+  readonly storeRegistry: RunStoreRegistry;
+  readonly secretResolver: SecretResolver;
+  readonly approval: ApprovalRequest;
+  readonly hooks: RunMediaJobHooks;
+  readonly now: string;
+}): MediaJob | undefined {
+  const { approval } = input;
+  if (approval.actionType !== "media_cost" || !approval.mediaJobId) {
+    return undefined;
+  }
+
+  const job = input.store.getMediaJob(approval.mediaJobId);
+  if (!job) {
+    return undefined;
+  }
+
+  if (approval.status === "approved") {
+    const currentJob = job.status === "waiting_for_approval"
+      ? input.store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, input.now) ?? job
+      : job;
+    void runMediaJobExecution({
+      cwd: input.cwd,
+      storeRegistry: input.storeRegistry,
+      secretResolver: input.secretResolver,
+      mediaJobId: job.id,
+      hooks: input.hooks,
+    }).catch((error) => {
+      const latest = input.store.getMediaJob(job.id);
+      if (!latest || latest.status === "succeeded" || latest.status === "failed" || latest.status === "cancelled") {
+        return;
+      }
+      const provider = input.store.getProviderPreset(latest.providerPresetId);
+      const mediaSecret = provider?.apiKeyRef ? resolveProviderSecret(input.store, provider, input.secretResolver) : undefined;
+      const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [mediaSecret?.value]);
+      input.store.updateMediaJobStatus(latest.id, { status: "failed", errorMessage: message }, new Date().toISOString());
+    });
+    return input.store.getMediaJob(job.id) ?? currentJob;
+  }
+
+  if ((approval.status === "denied" || approval.status === "expired") && job.status === "waiting_for_approval") {
+    return failMediaJobForApprovalDecision(input.store, job, approval);
+  }
+
+  return job;
+}
+
+function resolveLiveMediaExecutionReadiness(
+  store: RunStore,
+  provider: ProviderPreset,
+  operation: MediaJob["operation"],
+  secretResolver: SecretResolver,
+): { readonly ok: true } | { readonly ok: false; readonly code: string; readonly message: string } {
+  const gate = resolveMediaVendorTransportGateConfig(provider.compat);
+  if (!gate.ok) {
+    return {
+      ok: false,
+      code: gate.errorCode ?? "invalid_request",
+      message: gate.errorMessage ?? "媒体模型真实生成配置无效，请在模型工作台重新保存。",
+    };
+  }
+  if (gate.config?.mode !== "live") {
+    return {
+      ok: false,
+      code: "live_media_transport_required",
+      message: "当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。",
+    };
+  }
+  if (!provider.baseUrl) {
+    return { ok: false, code: "bad_request", message: "媒体模型缺少 Base URL，请在模型工作台补充后重试。" };
+  }
+  if (!provider.apiKeyRef) {
+    return { ok: false, code: "secret_missing", message: "媒体模型缺少 API Key，请在模型工作台补充后重试。" };
+  }
+  const secret = resolveProviderSecret(store, provider, secretResolver);
+  if (!secret.configured) {
+    return { ok: false, code: "secret_missing", message: "媒体模型 API Key 尚未配置，请在模型工作台保存密钥后重试。" };
+  }
+  if (provider.kind !== "seedream" || operation !== "image_generate") {
+    return {
+      ok: false,
+      code: "unsupported_capability",
+      message: "当前只支持 Seedream 图片生成的真实执行，其他媒体模型暂未接入真实生成。",
+    };
+  }
+  return { ok: true };
+}
+
+function mediaExecutionHasRequiredArtifact(
+  artifacts: readonly MediaExecutionArtifact[],
+  operation: MediaJob["operation"],
+): boolean {
+  if (operation === "image_generate" || operation === "image_edit") {
+    return artifacts.some((artifact) => artifact.type === "image" && artifact.contentBytes !== undefined);
+  }
+  if (operation === "video_generate") {
+    return artifacts.some((artifact) => artifact.type === "video" && artifact.contentBytes !== undefined);
+  }
+  return false;
 }
 
 function applyMediaCostApprovalGate(

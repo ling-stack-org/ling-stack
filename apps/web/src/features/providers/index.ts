@@ -1,2 +1,2 @@
 export { ProviderSettings } from "./ProviderSettings.js";
-export type { ProviderBatchResult } from "./types.js";
+export type { ProviderBatchResult, ProviderCheckScope } from "./types.js";

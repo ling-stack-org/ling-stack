@@ -1,4 +1,11 @@
-import type { CreateMediaJobInput, ProviderPreset, ResolvedSecret, RunStore, SecretResolver } from "@ling-stack/core";
+import {
+  normalizeProviderBaseUrlForAdapter,
+  type CreateMediaJobInput,
+  type ProviderPreset,
+  type ResolvedSecret,
+  type RunStore,
+  type SecretResolver,
+} from "@ling-stack/core";
 import {
   createDefaultMediaAdapterRegistry,
   createLiveMediaVendorTransport,
@@ -35,7 +42,7 @@ export function createMediaAdapterForProvider(store: RunStore, provider: Provide
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: gate.config?.mode === "live"
       ? createLiveMediaVendorTransport({
-        baseUrl: provider.baseUrl,
+        baseUrl: provider.baseUrl ? normalizeProviderBaseUrlForAdapter(provider) : undefined,
         apiKeyRef: provider.apiKeyRef,
         apiKeyConfigured: secret.configured,
         apiKey: secret.value,

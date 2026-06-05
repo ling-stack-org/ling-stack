@@ -1135,7 +1135,19 @@ function providerFormToPayload(form: ProviderFormState): ProviderMutationRequest
     reasoning: form.reasoning,
     contextWindow: form.contextWindow ? Number(form.contextWindow) : undefined,
     maxTokens: form.maxTokens ? Number(form.maxTokens) : undefined,
+    compat: providerFormCompat(form),
   };
+}
+
+function providerFormCompat(form: ProviderFormState): Record<string, unknown> | undefined {
+  const capabilities = splitCsv(form.capabilitiesText);
+  if (form.api === "media-job" && form.kind === "seedream" && capabilities.includes("image_generate")) {
+    return { mediaVendorTransport: { mode: "live" } };
+  }
+  if (form.api === "media-job") {
+    return {};
+  }
+  return undefined;
 }
 
 function mcpServerFormToPayload(form: McpServerFormState): McpServerMutationRequest {

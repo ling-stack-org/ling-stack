@@ -70,7 +70,7 @@ import {
   handleExternalWorkReconcile,
 } from "../features/external-work/sync.js";
 import { handleListUsedMemoryEvents, handleMemoryCollection, handleMemoryItem, handleMemoryRecall } from "../features/memory/routes.js";
-import { handleRunMediaJob } from "../features/media/executor.js";
+import { handleRunMediaJob, syncMediaJobForApprovalDecision } from "../features/media/executor.js";
 import { handleMediaJobRoute, handleMediaJobsCollection } from "../features/media/routes.js";
 import { handleMcpServerItem, handleMcpServersCollection, handleMcpToolsCollection } from "../features/mcp/routes.js";
 import {
@@ -1140,7 +1140,34 @@ export async function routeRequest(
 
   const approvalRoute = parseApprovalRoute(url.pathname);
   if (approvalRoute) {
-    await handleApprovalItem(request, response, config, storeRegistry, approvalRoute);
+    await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, ({ cwd, store, approval, now }) =>
+      syncMediaJobForApprovalDecision({
+        cwd,
+        store,
+        storeRegistry,
+        secretResolver,
+        approval,
+        now,
+        hooks: {
+          expirePendingMediaApprovals: (approvalStore, pendingMediaJobId) => {
+            expireStalePendingApprovals(approvalStore, { mediaJobId: pendingMediaJobId });
+          },
+          startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
+          transitionRuntimeWorkUnitTerminal: (input) => {
+            transitionWorkUnitTerminal(input.store, {
+              workUnitId: input.workUnitId,
+              attemptId: input.attemptId,
+              event: input.event,
+              attemptStatus: input.attemptStatus,
+              runtimeEventType: input.runtimeEventType,
+              actor: input.actor,
+              now: input.now,
+              errorCode: input.errorCode,
+              errorMessage: input.errorMessage,
+            });
+          },
+        },
+      }));
     return;
   }
 

@@ -160,7 +160,6 @@ import { defaultTools } from "../lib/tools.js";
 import {
   canUseProviderForRun,
   customOpenAICompatibleForm,
-  isMediaProvider,
   providerFormToTemplate,
   providerPreflightReady,
   providerRunBlockerLabel,
@@ -335,6 +334,38 @@ export function AppShell(): JSX.Element {
         setForm((current) => ({ ...current, providerPresetId: "" }));
       }
     },
+    clearProviderUsage: async (providerId) => {
+      const workspaceCwd = form.cwd.trim();
+      if (taskRunProviderId === providerId) {
+        setTaskRunProviderId("");
+      }
+      if (form.providerPresetId === providerId) {
+        setForm((current) => ({ ...current, providerPresetId: "" }));
+      }
+
+      const channelsUsingProvider = channels.filter((channel) => channel.defaultProviderPresetId === providerId);
+      if (!workspaceCwd || channelsUsingProvider.length === 0) {
+        return;
+      }
+
+      setChannels((current) =>
+        current.map((channel) =>
+          channel.defaultProviderPresetId === providerId ? { ...channel, defaultProviderPresetId: undefined } : channel,
+        ),
+      );
+      setChannelEditForm((current) =>
+        current.defaultProviderPresetId === providerId ? { ...current, defaultProviderPresetId: "" } : current,
+      );
+      await Promise.all(
+        channelsUsingProvider.map((channel) =>
+          updateChannel(workspaceCwd, channel.id, {
+            ...channelToForm(channel, workspaceCwd),
+            defaultProviderPresetId: "",
+          }),
+        ),
+      );
+      await refreshChannels(workspaceCwd);
+    },
   });
   const {
     providers,
@@ -345,9 +376,11 @@ export function AppShell(): JSX.Element {
     selectedProviderTemplateId,
     providerCheck,
     providerCheckTargetId,
+    providerCheckScope,
     checkingProviderIds,
     providerBatchResult,
     providerSaveMessage,
+    providerSaveMessageTone,
     providerRepairRunId,
   } = providersDomain.state;
   const {
@@ -363,6 +396,8 @@ export function AppShell(): JSX.Element {
     editProvider,
     selectProviderTemplate,
     startNewProviderFromTemplate,
+    toggleProviderEnabled,
+    clearProviderCheckFeedback,
     resetForCwd: resetProvidersForCwd,
   } = providersDomain.actions;
   const teammatesDomain = useTeammatesDomain({
@@ -426,6 +461,7 @@ export function AppShell(): JSX.Element {
     cwd: form.cwd.trim(),
     translate: t,
     setErrorMessage,
+    providers,
     upsertApproval: upsertApprovalRecord,
     refreshApprovals: (cwd) => refreshApprovals(cwd),
   });
@@ -834,16 +870,6 @@ export function AppShell(): JSX.Element {
       status: selectedTask.status,
     });
   }, [selectedTaskId, tasks]);
-
-  useEffect(() => {
-    setMediaJobForm((current) => {
-      if (current.providerPresetId && providers.some((provider) => provider.id === current.providerPresetId)) {
-        return current;
-      }
-      const firstMediaProvider = providers.find(isMediaProvider);
-      return firstMediaProvider ? { ...current, providerPresetId: firstMediaProvider.id } : current;
-    });
-  }, [providers]);
 
   useEffect(() => {
     if (selectedApprovalId && approvals.some((approval) => approval.id === selectedApprovalId)) {
@@ -2489,8 +2515,10 @@ export function AppShell(): JSX.Element {
                 errorMessage={errorMessage}
                 checkResult={providerCheck}
                 checkedProviderId={providerCheckTargetId}
+                checkScope={providerCheckScope}
                 batchResult={providerBatchResult}
                 successMessage={providerSaveMessage}
+                successMessageTone={providerSaveMessageTone}
                 selectedProviderId={selectedProviderIdForRun}
                 selectedTemplateId={selectedProviderTemplateId}
                 repairRun={providerRepairRun}
@@ -2509,8 +2537,10 @@ export function AppShell(): JSX.Element {
                 onCheckBatch={() => void runProviderBatchCheck()}
                 onUse={applyProviderToRun}
                 onStopUse={clearProviderFromRun}
+                onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onClearCheckFeedback={clearProviderCheckFeedback}
                 onClearRepair={() => setProviderRepairRunId("")}
                   />
                 ) : activeView === "media" ? (

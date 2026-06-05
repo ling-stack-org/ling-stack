@@ -10,8 +10,10 @@ import type {
   ApprovalRequest,
   MediaJob,
   MediaJobFormState,
+  ProviderPreset,
   RunArtifact,
 } from "../../types.js";
+import { canUseMediaProviderForOperation } from "../../lib/providers.js";
 
 export const defaultMediaJobForm: MediaJobFormState = {
   providerPresetId: "",
@@ -44,6 +46,7 @@ export function useMediaDomain(input: {
   readonly cwd: string;
   readonly translate: (value: string) => string;
   readonly setErrorMessage: (message: string) => void;
+  readonly providers: readonly ProviderPreset[];
   readonly upsertApproval: (approval: ApprovalRequest) => void;
   readonly refreshApprovals: (cwd: string) => Promise<void>;
 }): MediaController {
@@ -64,6 +67,19 @@ export function useMediaDomain(input: {
     }
     setSelectedMediaJobId(mediaJobs[0]?.id ?? "");
   }, [mediaJobs, selectedMediaJobId]);
+
+  useEffect(() => {
+    setMediaJobForm((current) => {
+      if (
+        current.providerPresetId &&
+        input.providers.some((provider) => provider.id === current.providerPresetId && canUseMediaProviderForOperation(provider, current.operation))
+      ) {
+        return current;
+      }
+      const firstMediaProvider = input.providers.find((provider) => canUseMediaProviderForOperation(provider, current.operation));
+      return firstMediaProvider ? { ...current, providerPresetId: firstMediaProvider.id } : current;
+    });
+  }, [input.providers]);
 
   async function refreshMediaJobs(cwd = input.cwd): Promise<void> {
     if (!cwd) {
@@ -99,6 +115,11 @@ export function useMediaDomain(input: {
     }
     if (!mediaJobForm.prompt.trim()) {
       input.setErrorMessage("请输入 media prompt");
+      return;
+    }
+    const selectedProvider = input.providers.find((provider) => provider.id === mediaJobForm.providerPresetId);
+    if (!selectedProvider || !canUseMediaProviderForOperation(selectedProvider, mediaJobForm.operation)) {
+      input.setErrorMessage("当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。");
       return;
     }
 

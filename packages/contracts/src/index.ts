@@ -2651,6 +2651,7 @@ export interface ApprovalListResponse {
 
 export interface ApprovalMutationResponse {
   readonly approval: ApprovalRequest;
+  readonly mediaJob?: MediaJob;
 }
 
 export interface ResolveApprovalRequest {
