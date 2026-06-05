@@ -62,6 +62,12 @@ Still out of scope for this slice:
 - OpenClaw/ACP adapter.
 - UI picker for non-Pi backends.
 
+Adapter follow-up design:
+
+- [Runner Adapters](runner-adapters.md) defines the feature-flagged Codex app-server
+  and OpenClaw/ACP adapter slices, shared conformance requirements, session-handle
+  rules, and approval/security boundaries.
+
 Implemented follow-up hardening:
 
 - [Execution And Orchestration Hardening](execution-orchestration-hardening.md) defined

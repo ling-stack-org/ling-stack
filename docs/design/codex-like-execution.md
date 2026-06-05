@@ -851,6 +851,173 @@ Optional later polish:
 - Add adapter tests for resume handle lifecycle.
 - Keep explicit Ling resume context as fallback.
 
+## Future Slices
+
+These slices are deliberately after the current hardening work. They improve fidelity,
+but they are not required for the implemented Codex-like thread/action/resume baseline.
+
+### Slice 9: Non-Approval Action Lifecycle
+
+Current state:
+
+- `ExecutionAction` is an approval-backed read model.
+- Approval-backed actions can expose waiting/approved/denied/expired/cancelled state.
+- Preview and result artifacts are available when approval/tool metadata can derive
+  them.
+
+Future goal:
+
+- represent non-approval actions with the same action model;
+- show `proposed`, `executing`, `succeeded`, and `failed` states even when no human
+  approval was required;
+- keep action identity stable across run events, runtime events, and artifacts.
+
+Implementation shape:
+
+```ts
+interface ExecutionActionRecord {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId?: string;
+  readonly runId?: string;
+  readonly workUnitId?: string;
+  readonly toolCallId?: string;
+  readonly actionType: ExecutionActionType;
+  readonly status: ExecutionActionStatus;
+  readonly targetRefs: readonly ExecutionActionTargetRef[];
+  readonly previewArtifactIds: readonly string[];
+  readonly resultArtifactIds: readonly string[];
+}
+```
+
+Start as a hybrid:
+
+1. continue deriving approval-backed actions from approval rows;
+2. derive non-approval actions from tool events and runtime events;
+3. add a durable table only when derived identity is not stable enough.
+
+Tests:
+
+- read-only bash action appears as `executing` then `succeeded`;
+- failed tool call appears as `failed` with result artifact/error metadata;
+- non-approval action does not create an approval request;
+- action ids remain stable after daemon restart.
+
+### Slice 10: Git Commit/Push Preview Extraction
+
+Current state:
+
+- generic shell command approvals can show command text and existing risk metadata;
+- result artifacts can be linked after execution when tool artifacts are emitted.
+
+Future goal:
+
+- detect `git commit`, `git push`, branch update, tag, and release-like commands before
+  approval;
+- create deterministic preview artifacts with exact refs and diff summary;
+- fail closed for high-risk git actions when preview cannot be generated.
+
+Preview builders:
+
+```text
+git commit
+  -> current branch
+  -> staged file list
+  -> staged diff stat
+  -> commit message
+
+git push
+  -> local branch
+  -> remote branch
+  -> ahead/behind count
+  -> commits to be pushed
+  -> protected branch warning
+```
+
+Rules:
+
+- use `git` plumbing where possible;
+- do not parse shell strings as the only source of truth when command arguments are
+  ambiguous;
+- if the command is compound, classify the git sub-action and include the raw command;
+- never approve a push by comparing strings alone. Resolve refs.
+
+Tests:
+
+- staged commit preview includes staged paths and diff stat;
+- push preview includes remote, branch, and commit list;
+- force push is critical risk;
+- ambiguous shell command produces a fail-closed preview error.
+
+### Slice 11: Scope Analysis
+
+Current state:
+
+- write safety mostly relies on allowed write paths, approval policy, and action payload
+  facts.
+
+Future goal:
+
+- classify the blast radius of an action before execution;
+- surface scope in approval cards, Run evidence, and thread evidence.
+
+Scope dimensions:
+
+```ts
+type ExecutionScope =
+  | "read_only"
+  | "workspace_write"
+  | "git_history"
+  | "network"
+  | "credential"
+  | "provider_config"
+  | "deployment"
+  | "external_system";
+```
+
+Implementation:
+
+- deterministic local classifier first;
+- model-assisted classifier only as an advisory note behind deterministic facts;
+- scope score is additive to approval risk, not a replacement for policy;
+- scope facts become preview artifacts for high-risk actions.
+
+Tests:
+
+- file write outside allowed paths is critical and denied;
+- credential/provider mutations classify correctly;
+- deploy-like command classifies as deployment/external system;
+- classifier never lowers explicit policy risk.
+
+### Slice 12: Thread Unification And Route Page
+
+Current state:
+
+- task runs, workflow-step runs, and continuations use durable `LingThread`;
+- Run History provides the thread-first detail surface;
+- channel discussion and teammate-direct thread unification remains incomplete.
+
+Future goal:
+
+- make channel discussion and teammate-direct work first-class `LingThread` owners;
+- add an optional route-level thread page outside Run History;
+- use the same evidence bundle and resume preview everywhere.
+
+Implementation:
+
+- create/reuse `LingThread(kind="channel_discussion")` for channel AI replies;
+- create/reuse `LingThread(kind="teammate_direct")` for private teammate messages;
+- link generated reply runs/work units to the thread id;
+- add `GET /threads/:id` route-level Web page only after the data model is unified.
+
+Tests:
+
+- channel AI reply creates or reuses a channel discussion thread;
+- teammate direct reply creates or reuses a teammate direct thread;
+- evidence bundle includes messages, runs, actions, artifacts, and state transitions;
+- resume preview works for terminal discussion/direct threads;
+- route-level page renders the same evidence as Run History detail.
+
 ## Test Plan
 
 Core/store:

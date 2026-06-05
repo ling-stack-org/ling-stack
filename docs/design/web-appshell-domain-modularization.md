@@ -1087,6 +1087,182 @@ Implementation status:
 - Verified `corepack pnpm --filter @ling-stack/web typecheck`.
 - Verified `corepack pnpm --filter @ling-stack/web build`.
 
+### Slice 10: Strict Shell Cleanup
+
+Scope:
+
+- Move remaining Workspace mutation/workflow command composition out of `AppShell`.
+- Move approval policy settings state out of `AppShell`.
+- Move runtime/work-unit diagnostics state out of `AppShell`.
+- Keep `AppShell` as the explicit router and coordinator, not a domain state container.
+
+Non-goals:
+
+- Do not add Redux, Zustand, or another global store.
+- Do not let domains import or call each other directly.
+- Do not hide cross-domain behavior behind implicit pub/sub.
+- Do not change page UX while moving ownership.
+
+Target AppShell responsibilities:
+
+```text
+AppShell
+  -> workspace cwd bootstrap
+  -> view selection
+  -> sidebar state
+  -> domain controller creation
+  -> handleDomainEvent(event)
+  -> lazy page rendering
+  -> modal shell wiring
+```
+
+Everything else should be owned by a domain controller or a small shell controller.
+
+#### Slice 10A: Workspace Command Controller
+
+Problem:
+
+- `WorkspaceController` owns channel/task/workflow read models and state.
+- `AppShell` still composes some channel/task/workflow mutations because commands need
+  provider, run, approval, or teammate context.
+
+Design:
+
+Create a command-facing layer inside the workspace domain:
+
+```ts
+interface WorkspaceCommandController {
+  readonly createChannel: (input: ChannelFormState) => Promise<void>;
+  readonly updateChannel: (id: string, input: ChannelFormState) => Promise<void>;
+  readonly createTask: (input: TaskFormState) => Promise<void>;
+  readonly updateTask: (id: string, input: TaskEditFormState) => Promise<void>;
+  readonly startTaskRun: (taskId: string, input: TaskRunCommandInput) => Promise<void>;
+  readonly startWorkflowStep: (stepId: string, input: WorkflowStepCommandInput) => Promise<void>;
+  readonly orchestrateWorkflow: (workflowId: string) => Promise<void>;
+  readonly cancelWorkflow: (workflowId: string) => Promise<void>;
+}
+```
+
+Inputs from other domains stay explicit:
+
+```ts
+interface WorkspaceCommandInputs {
+  readonly getProviderForRun: () => ProviderPreset | undefined;
+  readonly getApprovalProfile: () => ApprovalPolicy;
+  readonly refreshRuns: () => Promise<void>;
+  readonly emitEvent: EmitDomainEvent;
+}
+```
+
+Rules:
+
+- Workspace domain can receive callbacks from `AppShell`.
+- Workspace domain must not import Providers, Runs, Approvals, or Teammates domains.
+- Command completion emits typed `DomainEvent`.
+- Refreshes use latest-wins request guards.
+
+Exit criteria:
+
+- `AppShell` no longer imports channel/task/workflow mutation APIs.
+- `AppShell` no longer owns task/workflow command busy state.
+- Workflow created/advanced/cancelled/retried events still refresh Runs, Approvals,
+  Runtime, and Workspace through `handleDomainEvent`.
+
+#### Slice 10B: Settings Shell Controller
+
+Problem:
+
+- Approval policy settings and runtime settings are still shell-owned.
+
+Design:
+
+Create `domains/settings/use-settings-domain.ts` or `app/use-shell-settings.ts`.
+
+Own:
+
+- daemon health state if not kept directly in AppShell;
+- approval policy load/save/form;
+- runtime diagnostics/settings load/save;
+- work-unit diagnostics actions;
+- settings page save status/errors.
+
+Exit criteria:
+
+- `AppShell` imports only shell bootstrap APIs or no APIs;
+- `SettingsPage` receives a `SettingsController`;
+- approval policy and runtime settings updates emit domain events when they affect Runs
+  or Approvals.
+
+#### Slice 10C: Runtime Diagnostics Controller
+
+Problem:
+
+- Runtime diagnostics and work-unit actions are cross-cutting but not true shell state.
+
+Design:
+
+Create `domains/runtime/use-runtime-domain.ts`.
+
+Own:
+
+- `getRuntimeDiagnostics`;
+- `listResourceLeases`;
+- `listWorkUnits`;
+- `getWorkUnit`;
+- `cancelWorkUnit`;
+- `retryWorkUnit`;
+- `reconcileWorkUnit`;
+- state transition filters if they remain runtime-focused.
+
+Events:
+
+```ts
+| { readonly type: "runtime.refreshed" }
+| { readonly type: "workUnit.cancelled"; readonly workUnitId: string; readonly runId?: string }
+| { readonly type: "workUnit.retried"; readonly workUnitId: string; readonly runId?: string }
+| { readonly type: "workUnit.reconciled"; readonly workUnitId: string }
+```
+
+Exit criteria:
+
+- `AppShell` no longer imports runtime/work-unit APIs.
+- Run and Workspace refresh after runtime actions happens through `handleDomainEvent`.
+
+#### Slice 10D: Import Guard
+
+Add a lightweight static check:
+
+```bash
+rg -n 'from "../api\\.js"' apps/web/src/app/AppShell.tsx
+```
+
+Allowed only if the remaining import is explicitly listed in this document. The target
+end state is zero direct API imports in `AppShell`.
+
+Optional stricter check:
+
+```bash
+rg -n 'listRuns|streamRun|listApprovals|listChannels|createChannel|startChannelWorkflowStep|listProviders|listMediaJobs|listMcp|listExternalWork' apps/web/src/app/AppShell.tsx
+```
+
+#### Slice 10 Tests
+
+- `corepack pnpm --filter @ling-stack/web typecheck`
+- `corepack pnpm --filter @ling-stack/web build`
+- Run History thread e2e.
+- Workspace workflow e2e.
+- Settings runtime/approval policy smoke.
+- `wc -l apps/web/src/app/AppShell.tsx` decreases or remains stable with fewer direct
+  imports.
+- direct API import guard passes.
+
+Implementation order:
+
+1. Extract Runtime diagnostics controller first. It has the fewest dependencies.
+2. Extract Settings controller.
+3. Extract Workspace command controller.
+4. Add import guard once migration is complete.
+
 ## 11. Test And Performance Exit Criteria
 
 ### Required Commands Per Slice

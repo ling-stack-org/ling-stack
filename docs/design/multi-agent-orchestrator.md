@@ -71,6 +71,11 @@ Still pending:
 
 - Parallel branches and custom auto-startable templates.
 
+Advanced follow-up design:
+
+- [Orchestrator Advanced](orchestrator-advanced.md) defines the parallel branch scheduler,
+  custom auto-startable template schema, fan-in packet behavior, and additional tests.
+
 Implemented hardening:
 
 - [Execution And Orchestration Hardening](execution-orchestration-hardening.md) defines
