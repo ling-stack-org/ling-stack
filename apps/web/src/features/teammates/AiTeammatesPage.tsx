@@ -95,6 +95,10 @@ export function AiTeammatesPage({
   const workflow = skillPack?.workflowTemplates.find((item) => item.id === "autoplan-lite") ?? skillPack?.workflowTemplates[0];
   const skillById = useMemo(() => new Map(skills.map((skill) => [skill.id, skill])), [skills]);
   const providerOptions = useMemo(() => providers.filter((provider) => !isMediaProvider(provider)), [providers]);
+  const activeLocalTeammates = useMemo(
+    () => localTeammates.filter((teammate) => !teammate.disabled),
+    [localTeammates],
+  );
   const [selectedTemplateId, setSelectedTemplateId] = useState(() => templates[0]?.id ?? "");
   const [templateFilter, setTemplateFilter] = useState<TeammateTemplateFilter>("all");
   const [draftName, setDraftName] = useState(() => templates[0] ? t(templates[0].name) : t("Custom teammate"));
@@ -376,16 +380,16 @@ export function AiTeammatesPage({
               <Users size={16} />
               <h2>{t("Workspace teammates")}</h2>
             </span>
-            <small>{t("{count} configured", { count: localTeammates.length })}</small>
+            <small>{t("{count} configured", { count: activeLocalTeammates.length })}</small>
           </div>
-          {localTeammates.length === 0 ? (
+          {activeLocalTeammates.length === 0 ? (
             <div className="client-empty-state teammate-empty">
               <Bot size={18} />
               <span>{t("No workspace teammates")}</span>
             </div>
           ) : (
             <div className="teammate-draft-list">
-              {localTeammates.map((draft) => {
+              {activeLocalTeammates.map((draft) => {
                 const template = draft.templateId ? templates.find((item) => item.id === draft.templateId) : undefined;
                 const draftChannels = draft.channelIds
                   .map((channelId) => channels.find((channel) => channel.id === channelId)?.name)

@@ -33,6 +33,7 @@ export function AiTeammateInspector({
   }
   const strictSkills = skillPack.skills.filter((skill) => skill.approvalProfile.mode === "strict");
   const workflow = skillPack.workflowTemplates[0];
+  const activeLocalTeammateCount = localTeammates.filter((teammate) => !teammate.disabled).length;
   return (
     <div className="workspace-context-stack">
       <section className="context-panel-card inspector teammate-pack-card">
@@ -46,7 +47,7 @@ export function AiTeammateInspector({
           <MetaRow label={t("Version")} value={skillPack.version} />
           <MetaRow label={t("Templates")} value={String(skillPack.teammateTemplates.length)} />
           <MetaRow label={t("Skills")} value={String(skillPack.skills.length)} />
-          <MetaRow label={t("Local teammates")} value={String(localTeammates.length)} />
+          <MetaRow label={t("Local teammates")} value={String(activeLocalTeammateCount)} />
         </div>
         <div className="inspector-block">
           <h3>{t("Strict approval")}</h3>

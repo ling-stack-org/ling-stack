@@ -12,7 +12,8 @@ export interface LocalTeammateDraft {
   readonly memorySources: readonly string[];
   readonly pinned: boolean;
   readonly hidden: boolean;
+  readonly disabled: boolean;
   readonly createdAt: string;
 }
 
-export type LocalTeammateCreateInput = Omit<LocalTeammateDraft, "id" | "createdAt" | "pinned" | "hidden">;
+export type LocalTeammateCreateInput = Omit<LocalTeammateDraft, "id" | "createdAt" | "pinned" | "hidden" | "disabled">;

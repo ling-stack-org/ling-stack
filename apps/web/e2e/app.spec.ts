@@ -3620,9 +3620,19 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "AI Teammates" }).first().click();
   await expect(page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" })).toBeVisible();
   await expect(page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" }).locator(".teammate-status-dot.ready")).toBeVisible();
-  await expect(page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" }).getByLabel("Teammate actions")).toBeVisible();
+  const lingEngineerRow = page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" });
+  await expect(lingEngineerRow.getByLabel("Teammate actions")).toBeVisible();
   await expect(page.getByLabel("Workflow")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
+
+  await lingEngineerRow.getByLabel("Teammate actions").click();
+  await lingEngineerRow.getByRole("menuitem", { name: "Delete" }).click();
+  await expect.poll(() => {
+    const teammate = state.aiTeammates.find((item) => isRecord(item) && item.displayName === "Ling Engineer");
+    return isRecord(teammate) ? `${String(teammate.status)}:${String(teammate.hidden)}` : "missing";
+  }).toBe("disabled:true");
+  await expect(lingEngineerRow).toHaveCount(0);
+  await expect(page.getByLabel("Workspace teammates")).toContainText("No workspace teammates");
 });
 
 test("AI teammate private workspace sends blocked chat replies and persists settings", async ({ page }) => {
