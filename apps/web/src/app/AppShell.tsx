@@ -186,7 +186,7 @@ import { PageInspector } from "../features/inspector/PageInspector.js";
 import { MediaJobsPage } from "../features/media/index.js";
 import { McpToolsPage } from "../features/mcp/index.js";
 import { SidebarNavigation, type SidebarNotification } from "../features/navigation/SidebarNavigation.js";
-import { ProviderSettings, type ProviderBatchResult } from "../features/providers/index.js";
+import { ProviderSettings, type ProviderBatchResult, type ProviderCheckScope } from "../features/providers/index.js";
 import { RunHistory } from "../features/runs/index.js";
 import { SettingsPage } from "../features/settings/index.js";
 import type {
@@ -222,11 +222,14 @@ import { useRunControl } from "../lib/use-run-control.js";
 import { defaultTools } from "../lib/tools.js";
 import {
   canBatchCheckProvider,
+  canWorkbenchBatchCheckProvider,
+  canUseMediaProviderForOperation,
   canUseProviderForRun,
   customOpenAICompatibleForm,
   defaultProviderForm,
   isMediaProvider,
   providerFormToTemplate,
+  providerCheckDisplayMessage,
   providerCheckGuidance,
   providerCheckStatusLabel,
   providerPreflightReady,
@@ -234,6 +237,7 @@ import {
   providerRunPreflightBlocker,
   providerSecretReady,
   providerEffectiveBaseUrl,
+  providerMatchingTemplate,
   providerTemplateToForm,
   providerToForm,
 } from "../lib/providers.js";
@@ -380,9 +384,11 @@ export function AppShell(): JSX.Element {
   const [selectedProviderTemplateId, setSelectedProviderTemplateId] = useState("");
   const [providerCheck, setProviderCheck] = useState<ProviderCheckResult | undefined>();
   const [providerCheckTargetId, setProviderCheckTargetId] = useState("");
+  const [providerCheckScope, setProviderCheckScope] = useState<ProviderCheckScope | undefined>();
   const [checkingProviderIds, setCheckingProviderIds] = useState<readonly string[]>([]);
   const [providerBatchResult, setProviderBatchResult] = useState<ProviderBatchResult | undefined>();
   const [providerSaveMessage, setProviderSaveMessage] = useState("");
+  const [providerSaveMessageTone, setProviderSaveMessageTone] = useState<"ok" | "warning">("ok");
   const [providerRepairRunId, setProviderRepairRunId] = useState("");
   const [mediaJobs, setMediaJobs] = useState<readonly MediaJob[]>([]);
   const [mediaJobArtifacts, setMediaJobArtifacts] = useState<Record<string, readonly RunArtifact[]>>({});
@@ -1027,10 +1033,13 @@ export function AppShell(): JSX.Element {
 
   useEffect(() => {
     setMediaJobForm((current) => {
-      if (current.providerPresetId && providers.some((provider) => provider.id === current.providerPresetId)) {
+      if (
+        current.providerPresetId &&
+        providers.some((provider) => provider.id === current.providerPresetId && canUseMediaProviderForOperation(provider, current.operation))
+      ) {
         return current;
       }
-      const firstMediaProvider = providers.find(isMediaProvider);
+      const firstMediaProvider = providers.find((provider) => canUseMediaProviderForOperation(provider, current.operation));
       return firstMediaProvider ? { ...current, providerPresetId: firstMediaProvider.id } : current;
     });
   }, [providers]);
@@ -1419,6 +1428,11 @@ export function AppShell(): JSX.Element {
     }
     if (!mediaJobForm.prompt.trim()) {
       setErrorMessage("请输入 media prompt");
+      return;
+    }
+    const selectedProvider = providers.find((provider) => provider.id === mediaJobForm.providerPresetId);
+    if (!selectedProvider || !canUseMediaProviderForOperation(selectedProvider, mediaJobForm.operation)) {
+      setErrorMessage("当前没有可真实生成的媒体模型，请先在模型工作台配置媒体模型。");
       return;
     }
 
@@ -3067,6 +3081,9 @@ export function AppShell(): JSX.Element {
           : await denyApproval(form.cwd.trim(), approvalId, reason);
       setSelectedApprovalId(response.approval.id);
       setApprovals((current) => upsertApproval(current, response.approval));
+      if (response.mediaJob) {
+        setMediaJobs((current) => [response.mediaJob!, ...current.filter((job) => job.id !== response.mediaJob!.id)]);
+      }
 
       const resolvedRunId = response.approval.runId || approvalBeforeResolution?.runId;
       const resolvedMediaJobId = response.approval.mediaJobId || approvalBeforeResolution?.mediaJobId;
@@ -3200,7 +3217,7 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function saveProviderWithPreflight(): Promise<{ readonly ok: boolean; readonly errorMessage?: string }> {
+  async function saveProviderWithPreflight(): Promise<{ readonly ok: boolean; readonly errorMessage?: string; readonly warningMessage?: string }> {
     const workspaceCwd = form.cwd.trim();
     if (!workspaceCwd) {
       return { ok: false, errorMessage: "本地工作区未就绪" };
@@ -3211,14 +3228,15 @@ export function AppShell(): JSX.Element {
     try {
       setProviderSaveMessage("");
       setProviderCheck(undefined);
+      setProviderCheckScope("save");
       setProviderCheckTargetId(checkingId);
       setProviderBatchResult(undefined);
       setCheckingProviderIds([checkingId]);
 
       const draftCheck = await checkProviderDraft(workspaceCwd, nextProviderForm);
       setProviderCheck(draftCheck);
-      if (!draftCheck.ok) {
-        return { ok: false, errorMessage: draftCheck.message };
+      if (!draftCheck.ok && providerCheckBlocksSave(draftCheck)) {
+        return { ok: false, errorMessage: providerCheckDisplayMessage(draftCheck, { api: nextProviderForm.api }, t) };
       }
 
       const response = editingProviderId
@@ -3230,16 +3248,26 @@ export function AppShell(): JSX.Element {
         ...providerToForm(savedProvider, providerTemplates),
         apiKey: nextProviderForm.clearApiKey ? "" : nextProviderForm.apiKey,
       });
-      await applyProviderToRun(savedProvider);
+
+      if (savedProvider.api === "media-job") {
+        await refreshProviders();
+        setProviderSaveMessageTone("ok");
+        setProviderSaveMessage(t("Model preset saved successfully."));
+        return { ok: true };
+      }
 
       setProviderCheckTargetId(savedProvider.id);
       const savedCheck = await checkProvider(workspaceCwd, savedProvider.id);
       setProviderCheck(savedCheck);
       await refreshProviders();
       if (!savedCheck.ok) {
-        return { ok: false, errorMessage: savedCheck.message };
+        const warningMessage = t(providerSaveWarningMessage(savedCheck));
+        setProviderSaveMessageTone("warning");
+        setProviderSaveMessage(warningMessage);
+        return { ok: true, warningMessage };
       }
 
+      setProviderSaveMessageTone("ok");
       setProviderSaveMessage(t("Model preset saved successfully."));
       return { ok: true };
     } catch (error) {
@@ -3249,10 +3277,32 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  function providerCheckBlocksSave(result: ProviderCheckResult): boolean {
+    return [
+      "bad_request",
+      "provider_disabled",
+      "secret_missing",
+      "secret_store_unavailable",
+      "model_api_mismatch",
+      "unsupported_capability",
+    ].includes(result.code ?? "");
+  }
+
+  function providerSaveWarningMessage(result: ProviderCheckResult): string {
+    if (result.code === "model_unsupported") {
+      return "Saved, but model check failed. Verify Base URL, model access, or inference endpoint.";
+    }
+    if (result.code === "auth_failed") {
+      return "Saved, but authentication check failed. Verify the API key and account permission.";
+    }
+    return "Saved, but provider check failed. Review the configuration and run Check again.";
+  }
+
   async function removeProvider(providerId: string): Promise<void> {
     try {
       setErrorMessage("");
       setProviderCheck(undefined);
+      setProviderCheckScope(undefined);
       setProviderCheckTargetId("");
       setProviderBatchResult(undefined);
       await deleteProvider(form.cwd.trim(), providerId);
@@ -3273,6 +3323,8 @@ export function AppShell(): JSX.Element {
     try {
       setErrorMessage("");
       setProviderBatchResult(undefined);
+      setProviderCheck(undefined);
+      setProviderCheckScope("row");
       setCheckingProviderIds([providerId]);
       setProviderCheckTargetId(providerId);
       const provider = providers.find((item) => item.id === providerId);
@@ -3292,23 +3344,40 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  function clearProviderCheckFeedback(providerId: string): void {
+    if (providerCheckScope !== "row" || providerCheckTargetId !== providerId) {
+      return;
+    }
+    setProviderCheck(undefined);
+    setProviderCheckScope(undefined);
+    setProviderCheckTargetId("");
+  }
+
   async function runProviderBatchCheck(): Promise<void> {
-    const candidates = providers.filter(canBatchCheckProvider);
+    const candidates = providers.filter(canWorkbenchBatchCheckProvider);
     if (candidates.length === 0) {
-      setErrorMessage(t("No enabled chat providers to check."));
+      setErrorMessage(t("No enabled model presets to check."));
       return;
     }
 
     try {
       setErrorMessage("");
       setProviderCheck(undefined);
+      setProviderCheckScope("batch");
       setProviderCheckTargetId("");
       setProviderBatchResult(undefined);
       setCheckingProviderIds(candidates.map((provider) => provider.id));
 
       let readyCount = 0;
       let failedCount = 0;
+      let chatCount = 0;
+      let mediaCount = 0;
       for (const provider of candidates) {
+        if (isMediaProvider(provider)) {
+          mediaCount += 1;
+        } else {
+          chatCount += 1;
+        }
         const result = await checkProvider(form.cwd.trim(), provider.id);
         if (result.ok) {
           readyCount += 1;
@@ -3318,14 +3387,20 @@ export function AppShell(): JSX.Element {
       }
 
       await refreshProviders();
-      setProviderBatchResult({
-        message: t("Checked {count} chat providers: {readyCount} ready, {failedCount} failed.", {
+      const nextBatchResult = {
+        message: t("Checked {count} model presets: {readyCount} ready, {failedCount} failed. Chat {chatCount} / media {mediaCount}.", {
           count: candidates.length,
           readyCount,
           failedCount,
+          chatCount,
+          mediaCount,
         }),
         failedCount,
-      });
+      };
+      setProviderBatchResult(nextBatchResult);
+      window.setTimeout(() => {
+        setProviderBatchResult((current) => current === nextBatchResult ? undefined : current);
+      }, 2000);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -3335,8 +3410,9 @@ export function AppShell(): JSX.Element {
 
   function editProvider(provider: ProviderPreset): void {
     setEditingProviderId(provider.id);
-    setSelectedProviderTemplateId("");
+    setSelectedProviderTemplateId(providerMatchingTemplate(provider, providerTemplates)?.templateId ?? "custom-openai-compatible");
     setProviderCheck(undefined);
+    setProviderCheckScope(undefined);
     setProviderCheckTargetId("");
     setProviderBatchResult(undefined);
     setProviderForm(providerToForm(provider, providerTemplates));
@@ -3389,6 +3465,63 @@ export function AppShell(): JSX.Element {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
       await refreshChannels(workspaceCwd);
+    }
+  }
+
+  async function toggleProviderEnabled(provider: ProviderPreset, enabled: boolean): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      setErrorMessage(t("Local workspace is not ready."));
+      return;
+    }
+
+    const shouldClearDefault = !enabled;
+    try {
+      setErrorMessage("");
+      setProviderBatchResult(undefined);
+      const response = await updateProvider(workspaceCwd, provider.id, { ...providerToForm(provider, providerTemplates), enabled });
+      if (editingProviderId === provider.id) {
+        setProviderForm((current) => ({ ...current, enabled: response.provider.enabled }));
+      }
+      setProviders((current) => current.map((item) => (item.id === provider.id ? response.provider : item)));
+
+      if (shouldClearDefault) {
+        if (taskRunProviderId === provider.id) {
+          setTaskRunProviderId("");
+        }
+        if (form.providerPresetId === provider.id) {
+          setForm((current) => ({ ...current, providerPresetId: "" }));
+        }
+
+        const channelsUsingProvider = channels.filter((channel) => channel.defaultProviderPresetId === provider.id);
+        if (channelsUsingProvider.length > 0) {
+          setChannels((current) =>
+            current.map((channel) =>
+              channel.defaultProviderPresetId === provider.id ? { ...channel, defaultProviderPresetId: undefined } : channel
+            )
+          );
+          setChannelEditForm((current) =>
+            current.defaultProviderPresetId === provider.id ? { ...current, defaultProviderPresetId: "" } : current
+          );
+          await Promise.all(
+            channelsUsingProvider.map((channel) =>
+              updateChannel(workspaceCwd, channel.id, {
+                ...channelToForm(channel, workspaceCwd),
+                defaultProviderPresetId: "",
+              })
+            )
+          );
+          await refreshChannels(workspaceCwd);
+        }
+      }
+
+      await refreshProviders();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      await refreshProviders(workspaceCwd);
+      if (shouldClearDefault) {
+        await refreshChannels(workspaceCwd);
+      }
     }
   }
 
@@ -3791,8 +3924,10 @@ export function AppShell(): JSX.Element {
                 errorMessage={errorMessage}
                 checkResult={providerCheck}
                 checkedProviderId={providerCheckTargetId}
+                checkScope={providerCheckScope}
                 batchResult={providerBatchResult}
                 successMessage={providerSaveMessage}
+                successMessageTone={providerSaveMessageTone}
                 selectedProviderId={selectedProviderIdForRun}
                 selectedTemplateId={selectedProviderTemplateId}
                 repairRun={providerRepairRun}
@@ -3803,8 +3938,20 @@ export function AppShell(): JSX.Element {
                   setEditingProviderId("");
                   setSelectedProviderTemplateId(template.templateId);
                   setProviderCheck(undefined);
+                  setProviderCheckScope(undefined);
                   setProviderCheckTargetId("");
-                  setProviderForm(providerTemplateToForm(template, t));
+                  setProviderForm((current) => {
+                    const nextForm = providerTemplateToForm(template, t);
+                    if (current.api !== "media-job" || template.api !== "media-job") {
+                      return nextForm;
+                    }
+                    return {
+                      ...nextForm,
+                      apiKey: current.apiKey,
+                      clearApiKey: current.clearApiKey,
+                      baseUrl: nextForm.baseUrl || current.baseUrl,
+                    };
+                  });
                 }}
                 onNew={() => {
                   setProviderRepairRunId("");
@@ -3812,6 +3959,7 @@ export function AppShell(): JSX.Element {
                   const customTemplate = providerFormToTemplate(customOpenAICompatibleForm);
                   setSelectedProviderTemplateId(customTemplate.templateId);
                   setProviderCheck(undefined);
+                  setProviderCheckScope(undefined);
                   setProviderCheckTargetId("");
                   setProviderForm(providerTemplateToForm(customTemplate, t));
                 }}
@@ -3823,8 +3971,10 @@ export function AppShell(): JSX.Element {
                 onCheckBatch={() => void runProviderBatchCheck()}
                 onUse={applyProviderToRun}
                 onStopUse={clearProviderFromRun}
+                onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}
                 onRerun={(sourceRun) => void rerunRun(sourceRun)}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onClearCheckFeedback={clearProviderCheckFeedback}
                 onClearRepair={() => setProviderRepairRunId("")}
               />
             ) : activeView === "media" ? (

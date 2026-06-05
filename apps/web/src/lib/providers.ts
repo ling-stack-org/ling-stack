@@ -1,9 +1,17 @@
 import type {
   ProviderCheckResult,
   ProviderFormState,
+  ProviderModelOption,
   ProviderPreset,
   ProviderTemplate,
 } from "../types.js";
+import {
+  filterChatModelOptions as filterCoreChatModelOptions,
+  filterMediaModelOptions as filterCoreMediaModelOptions,
+  isMediaOnlyModelId,
+  mediaModelKind,
+  providerMediaKind,
+} from "@ling-stack/core/provider-adapters";
 
 type ProviderTranslate = (key: string, values?: Readonly<Record<string, string | number>>) => string;
 
@@ -78,14 +86,22 @@ export function providerEffectiveBaseUrl(
   return provider.baseUrl ?? providerTemplateBaseUrl(provider, templates);
 }
 
+export function providerMatchingTemplate(
+  provider: Pick<ProviderPreset, "api" | "kind" | "providerId">,
+  templates: readonly ProviderTemplate[],
+): ProviderTemplate | undefined {
+  return (
+    templates.find((template) => template.providerId === provider.providerId && template.kind === provider.kind && template.api === provider.api) ??
+    templates.find((template) => template.providerId === provider.providerId && template.kind === provider.kind) ??
+    templates.find((template) => template.kind === provider.kind && template.api === provider.api)
+  );
+}
+
 function providerTemplateBaseUrl(
   provider: Pick<ProviderPreset, "api" | "kind" | "providerId">,
   templates: readonly ProviderTemplate[],
 ): string {
-  const matchingTemplate =
-    templates.find((template) => template.providerId === provider.providerId && template.kind === provider.kind && template.api === provider.api) ??
-    templates.find((template) => template.providerId === provider.providerId && template.kind === provider.kind) ??
-    templates.find((template) => template.kind === provider.kind && template.api === provider.api);
+  const matchingTemplate = providerMatchingTemplate(provider, templates);
   return matchingTemplate?.baseUrl ?? "";
 }
 
@@ -133,6 +149,45 @@ export function providerFormToTemplate(form: ProviderFormState): ProviderTemplat
   };
 }
 
+export function providerFormWithSelectedModel(
+  form: ProviderFormState,
+  model: Pick<ProviderModelOption, "id" | "displayName">,
+  sourceForm?: ProviderFormState,
+): { readonly form: ProviderFormState; readonly notice?: string } {
+  const mediaMatch = inferMediaModelProtocol(model.id);
+  if (!mediaMatch) {
+    if (sourceForm && form.api === "media-job") {
+      return {
+        form: { ...sourceForm, model: model.id },
+        notice: "Selected a chat model. API protocol was restored to the source provider.",
+      };
+    }
+    return { form: { ...form, model: model.id } };
+  }
+
+  return {
+    form: {
+      ...form,
+      kind: mediaMatch.kind,
+      displayName: shouldReplaceProviderDisplayName(form.displayName, form.providerId)
+        ? mediaMatch.displayName
+        : form.displayName,
+      providerId: mediaMatch.providerId,
+      model: model.id,
+      api: "media-job",
+      baseUrl: form.baseUrl || mediaMatch.baseUrl,
+      capabilitiesText: mediaMatch.capabilitiesText,
+      inputText: mediaMatch.inputText,
+      reasoning: false,
+      contextWindow: "",
+      maxTokens: "",
+      enabled: true,
+      authHeader: true,
+    },
+    notice: "Selected a media model. API protocol was switched to Media job automatically.",
+  };
+}
+
 export function splitProviderCsv(value: string): readonly string[] {
   return value
     .split(",")
@@ -148,6 +203,18 @@ export function canBatchCheckProvider(provider: ProviderPreset): boolean {
   return provider.enabled && provider.api !== "media-job" && provider.capabilities.includes("chat");
 }
 
+export function canWorkbenchBatchCheckProvider(provider: ProviderPreset): boolean {
+  return provider.enabled;
+}
+
+export function isWorkbenchReadyProvider(provider: ProviderPreset): boolean {
+  return provider.enabled && providerSecretReady(provider) && provider.lastCheck?.ok === true;
+}
+
+export function isWorkbenchNeedsConfigProvider(provider: ProviderPreset): boolean {
+  return provider.enabled && !isWorkbenchReadyProvider(provider);
+}
+
 export function providerSecretReady(provider: ProviderPreset): boolean {
   return !providerNeedsSecret(provider) || provider.apiKeyConfigured;
 }
@@ -158,6 +225,27 @@ export function providerNeedsSecret(provider: Pick<ProviderPreset, "api" | "auth
 
 export function isMediaProvider(provider: ProviderPreset): boolean {
   return provider.api === "media-job";
+}
+
+export function isLiveMediaProvider(provider: ProviderPreset): boolean {
+  return (
+    isMediaProvider(provider) &&
+    provider.enabled &&
+    providerSecretReady(provider) &&
+    isRecord(provider.compat) &&
+    isRecord(provider.compat.mediaVendorTransport) &&
+    provider.compat.mediaVendorTransport.mode === "live"
+  );
+}
+
+export function canUseMediaProviderForOperation(
+  provider: ProviderPreset,
+  operation: "image_generate" | "image_edit" | "video_generate",
+): boolean {
+  if (!isLiveMediaProvider(provider) || !provider.capabilities.includes(operation)) {
+    return false;
+  }
+  return provider.kind === "seedream" && operation === "image_generate";
 }
 
 export function providerCodingTaskLabel(provider: ProviderPreset, t?: ProviderTranslate): string {
@@ -289,6 +377,82 @@ export function groupProviderTemplates(templates: readonly ProviderTemplate[]): 
   return groups.filter((group) => group.templates.length > 0);
 }
 
+function inferMediaModelProtocol(modelId: string): {
+  readonly kind: ProviderFormState["kind"];
+  readonly displayName: string;
+  readonly providerId: string;
+  readonly baseUrl: string;
+  readonly capabilitiesText: string;
+  readonly inputText: string;
+} | undefined {
+  const kind = mediaModelKind(modelId);
+  if (kind === "seedream") {
+    return {
+      kind: "seedream",
+      displayName: "Seedream Image",
+      providerId: "seedream",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      capabilitiesText: "image_generate, image_edit",
+      inputText: "text, image",
+    };
+  }
+  if (kind === "seedance") {
+    return {
+      kind: "seedance",
+      displayName: "Seedance Video",
+      providerId: "seedance",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      capabilitiesText: "video_generate",
+      inputText: "text, image",
+    };
+  }
+  if (kind === "jimeng") {
+    return {
+      kind: "jimeng",
+      displayName: "Jimeng Image",
+      providerId: "jimeng",
+      baseUrl: "https://visual.volcengineapi.com",
+      capabilitiesText: "image_generate, image_edit",
+      inputText: "text, image",
+    };
+  }
+  return undefined;
+}
+
+export function isMediaModelOption(model: Pick<ProviderModelOption, "id">): boolean {
+  return isMediaOnlyModelId(model.id);
+}
+
+export function filterChatModelOptions(models: readonly ProviderModelOption[]): readonly ProviderModelOption[] {
+  return filterCoreChatModelOptions(models);
+}
+
+export function filterMediaModelOptions(
+  models: readonly ProviderModelOption[],
+  form: Pick<ProviderFormState, "kind" | "providerId">,
+): readonly ProviderModelOption[] {
+  return filterCoreMediaModelOptions(models, providerMediaKind(form));
+}
+
+export function hiddenNonMatchingMediaModelCount(
+  models: readonly ProviderModelOption[],
+  form: Pick<ProviderFormState, "kind" | "providerId">,
+): number {
+  const mediaCount = models.filter(isMediaModelOption).length;
+  return mediaCount - filterMediaModelOptions(models, form).length;
+}
+
+function shouldReplaceProviderDisplayName(displayName: string, providerId: string): boolean {
+  const value = `${displayName} ${providerId}`.toLowerCase();
+  return (
+    !displayName.trim() ||
+    value.includes("doubao") ||
+    value.includes("ark") ||
+    value.includes("custom") ||
+    value.includes("openai-compatible")
+  );
+}
+
 export function providerCheckStatusLabel(result: ProviderCheckResult, t?: ProviderTranslate): string {
   if (result.ok) {
     return translateProviderText(t, "ready");
@@ -307,6 +471,9 @@ export function providerCheckStatusLabel(result: ProviderCheckResult, t?: Provid
   }
   if (result.code === "model_unsupported") {
     return translateProviderText(t, "model unsupported");
+  }
+  if (result.code === "model_api_mismatch") {
+    return translateProviderText(t, "protocol mismatch");
   }
   if (result.code === "provider_disabled") {
     return translateProviderText(t, "disabled");
@@ -330,6 +497,9 @@ export function providerCheckMessage(result: ProviderCheckResult, t?: ProviderTr
   if (result.code === "model_unsupported") {
     return translateProviderText(t, "The configured model is not available from this endpoint.");
   }
+  if (result.code === "model_api_mismatch") {
+    return translateProviderText(t, result.message);
+  }
   if (result.code === "provider_disabled") {
     return translateProviderText(t, "Provider preset is disabled.");
   }
@@ -339,8 +509,22 @@ export function providerCheckMessage(result: ProviderCheckResult, t?: ProviderTr
   return translateProviderText(t, result.message);
 }
 
-export function providerCheckGuidance(result: ProviderCheckResult, provider: ProviderPreset | undefined, t?: ProviderTranslate): string {
+export function providerCheckDisplayMessage(result: ProviderCheckResult, provider: Pick<ProviderPreset, "api"> | undefined, t?: ProviderTranslate): string {
+  return providerCheckMessage(result, t);
+}
+
+export function providerCheckDisplayGuidance(result: ProviderCheckResult, provider: Pick<ProviderPreset, "api"> | undefined, t?: ProviderTranslate): string {
+  if (result.ok && provider?.api === "media-job") {
+    return "";
+  }
+  return providerCheckGuidance(result, provider, t);
+}
+
+export function providerCheckGuidance(result: ProviderCheckResult, provider: Pick<ProviderPreset, "api"> | undefined, t?: ProviderTranslate): string {
   if (result.ok) {
+    if (provider?.api === "media-job") {
+      return translateProviderText(t, "Media job configuration is ready. Use this provider from Media Jobs.");
+    }
     return translateProviderText(t, "Ready for run. You can select this preset from Workspace or a channel.");
   }
 
@@ -356,11 +540,17 @@ export function providerCheckGuidance(result: ProviderCheckResult, provider: Pro
   if (result.code === "model_unsupported") {
     return translateProviderText(t, "Check the model name, API protocol, and Base URL path for this provider.");
   }
+  if (result.code === "model_api_mismatch") {
+    return translateProviderText(t, "Switch the API protocol to Media job, or choose a chat model for this provider.");
+  }
   if (result.code === "provider_disabled") {
     return translateProviderText(t, "Enable the preset before using it for runs.");
   }
   if (result.code === "unsupported_capability") {
     return translateProviderText(t, "This preset needs chat capability before it can run coding tasks.");
+  }
+  if (result.code === "unsupported_live_probe") {
+    return translateProviderText(t, "This media provider cannot run a real check yet. Use a supported Seedream or Seedance media template, or configure the model from Media Jobs.");
   }
   if (result.code === "rate_limited") {
     return translateProviderText(t, "The endpoint is reachable. Wait or switch credentials, then run Check again.");
@@ -370,6 +560,10 @@ export function providerCheckGuidance(result: ProviderCheckResult, provider: Pro
 
 export function extractEnvRef(text: string): string | undefined {
   return text.match(/(?:env|keychain):[A-Za-z0-9._/-]+/)?.[0];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function translateProviderText(

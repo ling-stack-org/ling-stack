@@ -1,4 +1,5 @@
 import {
+  isMediaOnlyModelId,
   providerApis,
   providerCapabilities,
   providerKinds,
@@ -199,6 +200,9 @@ function validateProviderPresetShape(input: {
       throw new Error("media-job providers must include a media capability");
     }
     return;
+  }
+  if (isMediaOnlyModelId(input.model)) {
+    throw new Error("This is a media model. Choose a media task protocol or select a chat model.");
   }
   if (!input.capabilities.includes("chat")) {
     throw new Error("coding provider presets must include chat capability");

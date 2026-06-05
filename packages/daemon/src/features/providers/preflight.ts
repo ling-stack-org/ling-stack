@@ -1,13 +1,16 @@
 import {
+  normalizeProviderBaseUrlForAdapter,
+  isMediaOnlyModelId,
   type ProviderCheckResult,
   type ProviderPreset,
   type ResolvedSecret,
   type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
-import { resolveMediaVendorTransportGateConfig } from "@ling-stack/providers";
+import { executeMediaJob as executeMediaAdapterJob, resolveMediaVendorTransportGateConfig } from "@ling-stack/providers";
 import { readLimitedResponseText } from "../../shared/http.js";
 import { validateUrl } from "../../shared/validation.js";
+import { createMediaAdapterForProvider } from "../media/provider.js";
 import { providerSecretStatus, resolveProviderSecret } from "./secrets.js";
 
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
@@ -43,11 +46,22 @@ export async function checkProviderPreset(
   if (preset.api !== "media-job" && !preset.capabilities.includes("chat")) {
     return { ok: false, code: "unsupported_capability", message: "Provider preset cannot run chat tasks.", checkedAt };
   }
+  if (preset.api !== "media-job" && isMediaOnlyModelId(preset.model)) {
+    throw new Error("This is a media model. Choose a media task protocol or select a chat model.");
+  }
   if (!preset.enabled) {
     return { ok: false, code: "provider_disabled", message: "Provider preset is disabled.", checkedAt };
   }
 
   if (preset.api === "media-job") {
+    if (preset.kind !== "seedream" || !preset.capabilities.includes("image_generate")) {
+      return {
+        ok: false,
+        code: "unsupported_live_probe",
+        message: `${preset.displayName} does not support a real check yet.`,
+        checkedAt,
+      };
+    }
     const gate = resolveMediaVendorTransportGateConfig(preset.compat);
     if (!gate.ok) {
       return {
@@ -73,20 +87,7 @@ export async function checkProviderPreset(
           checkedAt,
         };
       }
-      if (preset.kind !== "seedream" || !preset.capabilities.includes("image_generate")) {
-        return {
-          ok: false,
-          code: "unsupported_capability",
-          message: "Live media vendor transport currently supports Seedream image_generate only.",
-          checkedAt,
-        };
-      }
-      return {
-        ok: true,
-        code: "static_check",
-        message: "Seedream image_generate live transport configuration is complete. Provider check does not create media or make generation requests.",
-        checkedAt,
-      };
+      return await probeLiveSeedreamProvider(store, preset, checkedAt, secretResolver);
     }
     return {
       ok: true,
@@ -154,13 +155,56 @@ function buildProviderCheckUrl(preset: ProviderPreset): string {
 }
 
 function normalizeProviderBaseUrl(preset: ProviderPreset): string {
-  if (preset.baseUrl) {
-    return preset.baseUrl.replace(/\/+$/, "");
+  return normalizeProviderBaseUrlForAdapter(preset);
+}
+
+async function probeLiveSeedreamProvider(
+  store: RunStore,
+  preset: ProviderPreset,
+  checkedAt: string,
+  secretResolver: SecretResolver,
+): Promise<ProviderCheckResult> {
+  const execution = await executeMediaAdapterJob(createMediaAdapterForProvider(store, preset, secretResolver), {
+    jobId: "provider_check_seedream_live",
+    provider: {
+      id: preset.id,
+      kind: preset.kind,
+      displayName: preset.displayName,
+      providerId: preset.providerId,
+      model: preset.model,
+      api: preset.api,
+      baseUrl: preset.baseUrl,
+      apiKeyRef: preset.apiKeyRef,
+      capabilities: preset.capabilities,
+    },
+    operation: "image_generate",
+    prompt: "Generate a small provider check image.",
+    input: { response_format: "url", size: "1024x1024", stream: false },
+    requestedAt: checkedAt,
+  });
+  if (execution.status === "failed") {
+    return {
+      ok: false,
+      code: execution.errorCode ?? "provider_error",
+      message: execution.errorMessage ?? "Seedream live image check failed.",
+      checkedAt,
+    };
   }
-  if (preset.api === "anthropic-messages" || preset.kind === "anthropic") {
-    return "https://api.anthropic.com/v1";
+  const hasImage = execution.artifacts.some((artifact) => artifact.type === "image" && artifact.contentBytes !== undefined);
+  if (!hasImage) {
+    return {
+      ok: false,
+      code: "media_artifact_missing",
+      message: "Seedream live image check did not return a usable image.",
+      checkedAt,
+    };
   }
-  return "https://api.openai.com/v1";
+  return {
+    ok: true,
+    code: "live_image_probe_ready",
+    message: "生成真实图片成功",
+    checkedAt,
+  };
 }
 
 function buildProviderCheckHeaders(store: RunStore, preset: ProviderPreset, secretResolver: SecretResolver): Record<string, string> {

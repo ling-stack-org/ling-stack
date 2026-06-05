@@ -3,9 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { createSqliteRunStore, defaultProviderTemplates } from "../dist/index.js";
+import { createSqliteRunStore, defaultProviderTemplates, filterMediaModelOptions } from "../dist/index.js";
 
-test("default provider templates include Seedream live HTTP base URL without enabling live mode", () => {
+test("default provider templates include Seedream live HTTP transport config", () => {
   const seedream = defaultProviderTemplates().find((template) => template.templateId === "seedream-image");
 
   assert.ok(seedream);
@@ -15,7 +15,7 @@ test("default provider templates include Seedream live HTTP base URL without ena
   assert.equal(seedream.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
   assert.equal(seedream.apiKeyRef, "env:SEEDREAM_API_KEY");
   assert.deepEqual(seedream.capabilities, ["image_generate", "image_edit"]);
-  assert.equal(seedream.compat, undefined);
+  assert.deepEqual(seedream.compat, { mediaVendorTransport: { mode: "live" } });
   assert.equal(seedream.enabled, false);
 });
 
@@ -32,6 +32,27 @@ test("official provider templates expose fixed default base URLs", () => {
   assert.equal(byId.get("seedream-image")?.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
   assert.equal(byId.get("jimeng-image")?.baseUrl, "https://visual.volcengineapi.com");
   assert.equal(byId.get("seedance-video")?.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
+});
+
+test("provider media model filtering respects the selected media provider", () => {
+  const models = [
+    { id: "doubao-seedream-5-0-260128" },
+    { id: "doubao-seedream-5-0-turbo-260128" },
+    { id: "doubao-seedance-1-0-pro-250528" },
+    { id: "jimeng-image" },
+    { id: "doubao-seed-2-0-lite-260215" },
+  ];
+
+  assert.deepEqual(filterMediaModelOptions(models, "seedream").map((model) => model.id), [
+    "doubao-seedream-5-0-260128",
+    "doubao-seedream-5-0-turbo-260128",
+  ]);
+  assert.deepEqual(filterMediaModelOptions(models, "seedance").map((model) => model.id), [
+    "doubao-seedance-1-0-pro-250528",
+  ]);
+  assert.deepEqual(filterMediaModelOptions(models, "jimeng").map((model) => model.id), [
+    "jimeng-image",
+  ]);
 });
 
 test("sqlite store persists provider check results", async () => {

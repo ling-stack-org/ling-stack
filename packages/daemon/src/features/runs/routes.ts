@@ -6,8 +6,10 @@ import {
   defaultApprovalToolDecisions,
   syncExternalWorkActionForApproval,
   type ApprovalPolicyUpdateInput,
+  type ApprovalRequest,
   type ApprovalStatus,
   type ApprovalToolDecision,
+  type MediaJob,
   type RunEventEnvelope,
   type RunStore,
   type RunStatus,
@@ -374,6 +376,7 @@ export async function handleApprovalItem(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   route: { readonly approvalId: string; readonly action?: "approve" | "deny" },
+  onApprovalResolved?: (input: { readonly cwd: string; readonly store: RunStore; readonly approval: ApprovalRequest; readonly now: string }) => MediaJob | undefined,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -419,7 +422,8 @@ export async function handleApprovalItem(
     }
     appendApprovalDecisionEvent(store, updated);
     syncExternalWorkActionForApproval(store, updated, now);
-    writeJson(response, 200, { approval: updated });
+    const mediaJob = onApprovalResolved?.({ cwd, store, approval: updated, now });
+    writeJson(response, 200, { approval: updated, ...(mediaJob ? { mediaJob } : {}) });
   } catch (error) {
     writeJson(response, 400, {
       error: error instanceof Error && error.message.includes("not pending") ? "approval_not_pending" : "bad_request",

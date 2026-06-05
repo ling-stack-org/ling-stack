@@ -1,4 +1,8 @@
 import {
+  builtinMediaModelCandidates,
+  filterMediaModelOptions,
+  normalizeProviderBaseUrlForAdapter,
+  providerMediaKind,
   type ProviderModelListRequest,
   type ProviderModelListResponse,
   type ProviderModelOption,
@@ -25,7 +29,7 @@ export async function listProviderModels(
     validateUrl(preset.baseUrl, "baseUrl");
   }
   if (preset.api === "media-job") {
-    throw new HttpError(400, "unsupported_capability", "Model discovery is available for chat providers only.");
+    return await listMediaProviderModels(store, preset, input, secretResolver);
   }
   if (!["openai-completions", "openai-responses", "anthropic-messages"].includes(preset.api)) {
     throw new HttpError(400, "unsupported_capability", `Model discovery is not implemented for ${preset.api}.`);
@@ -57,6 +61,60 @@ export async function listProviderModels(
   } catch (error) {
     if (error instanceof HttpError) {
       throw error;
+    }
+    throw new HttpError(
+      400,
+      "network_failed",
+      `Provider model discovery failed: ${redactTextWithSecrets(error instanceof Error ? error.message : String(error), [secret.value])}`,
+    );
+  }
+}
+
+async function listMediaProviderModels(
+  store: RunStore,
+  preset: ProviderPreset,
+  input: ProviderModelListRequest,
+  secretResolver: SecretResolver,
+): Promise<ProviderModelListResponse> {
+  const mediaKind = providerMediaKind(preset);
+  const builtin = builtinMediaModelCandidates(mediaKind);
+  const secret = resolveProviderModelListSecret(store, preset, input, secretResolver);
+  if (preset.authHeader === false && !secret.configured) {
+    return { source: "builtin:media-models", models: builtin };
+  }
+  if ((preset.authHeader !== false || preset.apiKeyRef) && !secret.configured) {
+    throw new HttpError(400, "secret_missing", "API key missing. Add an API key before fetching models.");
+  }
+
+  const source = buildProviderModelsUrl(preset);
+  try {
+    const response = await fetch(source, {
+      method: "GET",
+      headers: buildProviderModelsHeaders(preset, secret),
+      signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      if (builtin.length > 0) {
+        return { source: "builtin:media-models", models: builtin };
+      }
+      throw new HttpError(
+        response.status === 401 || response.status === 403 ? 401 : 400,
+        response.status === 401 || response.status === 403 ? "auth_failed" : "provider_error",
+        await providerModelListFailureMessage(response, secret.value),
+      );
+    }
+    const body = await response.json() as unknown;
+    const models = filterMediaModelOptions(parseProviderModelsResponse(body), mediaKind);
+    return {
+      source,
+      models: models.length > 0 ? models : builtin,
+    };
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw error;
+    }
+    if (builtin.length > 0) {
+      return { source: "builtin:media-models", models: builtin };
     }
     throw new HttpError(
       400,
@@ -114,13 +172,7 @@ function buildProviderModelsUrl(preset: ProviderPreset): string {
 }
 
 function normalizeProviderBaseUrl(preset: ProviderPreset): string {
-  if (preset.baseUrl) {
-    return preset.baseUrl.replace(/\/+$/, "");
-  }
-  if (preset.api === "anthropic-messages" || preset.kind === "anthropic") {
-    return "https://api.anthropic.com/v1";
-  }
-  return "https://api.openai.com/v1";
+  return normalizeProviderBaseUrlForAdapter(preset);
 }
 
 function buildProviderModelsHeaders(preset: ProviderPreset, secret: ResolvedSecret): Record<string, string> {
