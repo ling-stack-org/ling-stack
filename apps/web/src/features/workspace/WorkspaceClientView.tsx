@@ -155,6 +155,24 @@ type ComposerSendState = "idle" | "sending" | "failed";
 type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
 type MessageBubbleTone = "chat" | "chat-blocked" | "system" | "work" | "approval" | "protocol" | "runtime";
 type ChannelNotificationLevel = "all" | "mentions" | "muted";
+type AttentionProgressTone = "success" | "running" | "waiting" | "blocked" | "failed" | "neutral";
+
+interface AttentionContextRow {
+  readonly id: string;
+  readonly icon: ReactNode;
+  readonly label: string;
+  readonly value: string;
+  readonly onOpen?: () => void;
+}
+
+interface AttentionProgressRow {
+  readonly id: string;
+  readonly icon: ReactNode;
+  readonly tone: AttentionProgressTone;
+  readonly primary: string;
+  readonly secondary?: string;
+  readonly onOpen?: () => void;
+}
 
 interface PendingAttachmentItem {
   readonly localId: string;
@@ -2555,12 +2573,80 @@ export function WorkspaceClientView({
   );
 
   const channelHasChatContent = channelMessages.length > 0 || channelContextSummaries.length > 0;
-  const attentionProgressItems = channelHasChatContent
+  const attentionContextRowCandidates: readonly (AttentionContextRow | undefined)[] = [
+    selectedChannel ? {
+      id: "channel",
+      icon: <Hash size={18} />,
+      label: t("Current channel"),
+      value: selectedChannel.name,
+    } : undefined,
+    selectedChannel ? {
+      id: "local",
+      icon: <Command size={18} />,
+      label: t("Local"),
+      value: selectedChannel.boundPath?.trim() || cwd,
+    } : undefined,
+    defaultTeammate ? {
+      id: "default-teammate",
+      icon: <UserPlus size={18} />,
+      label: t("Default teammate"),
+      value: defaultTeammate.label,
+      onOpen: () => {
+        setAttentionQueueOpen(false);
+        setTeammateManagerOpen(true);
+      },
+    } : undefined,
+    effectiveProvider ? {
+      id: "provider",
+      icon: <Activity size={18} />,
+      label: t("Provider"),
+      value: effectiveProvider.displayName,
+      onOpen: () => onOpenProviders(latestRun),
+    } : undefined,
+    selectedChannel ? {
+      id: "permission",
+      icon: <SlidersHorizontal size={18} />,
+      label: t("Permission mode"),
+      value: sessionPermissionModeLabel(permissionMode, t),
+      onOpen: () => openSidePanelView("settings"),
+    } : undefined,
+  ];
+  const attentionContextRows: readonly AttentionContextRow[] = attentionContextRowCandidates.filter((row): row is AttentionContextRow => row !== undefined);
+  const attentionProgressRowCandidates: readonly (AttentionProgressRow | undefined)[] = channelHasChatContent
     ? [
-        selectedTask ? `${selectedTask.title} · ${t(selectedTask.status)}` : "",
-        latestRun ? `${t("Latest run")} · ${t(latestRun.status)}` : "",
-        pendingApprovalCount > 0 ? t("{count} pending approvals", { count: pendingApprovalCount }) : t("Waiting for proposal confirmation"),
-      ].filter(Boolean)
+        selectedTask ? {
+          id: "current-task",
+          icon: <SquareTerminal size={18} />,
+          tone: selectedTask.status === "blocked" ? "blocked" : selectedTask.status === "failed" ? "failed" : selectedTask.status === "done" ? "success" : selectedTask.status === "running" ? "running" : "neutral",
+          primary: selectedTask.title,
+          secondary: `${t("Current task")} · ${t(selectedTask.status)}`,
+          onOpen: () => selectTask(selectedTask.id),
+        } : undefined,
+        latestRun ? {
+          id: "latest-run",
+          icon: runProgressIcon(latestRun.status),
+          tone: runProgressTone(latestRun.status),
+          primary: `${t("Latest run")} · ${t(latestRun.status)}`,
+          secondary: readRunTitle(latestRun),
+          onOpen: () => openRunInPanel(latestRun.id),
+        } : undefined,
+        pendingApprovalCount > 0 ? {
+          id: "pending-approval",
+          icon: <ShieldCheck size={18} />,
+          tone: "waiting",
+          primary: t("Approval needed"),
+          secondary: t("{count} pending approvals", { count: pendingApprovalCount }),
+          onOpen: () => openApprovalInPanel(selectedApproval),
+        } : {
+          id: "proposal-confirmation",
+          icon: <Clock3 size={18} />,
+          tone: "waiting",
+          primary: t("Waiting for proposal confirmation"),
+        },
+      ]
+    : [];
+  const attentionProgressRows: readonly AttentionProgressRow[] = channelHasChatContent
+    ? attentionProgressRowCandidates.filter((row): row is AttentionProgressRow => row !== undefined)
     : [];
 
   function openSidePanelView(view: ChannelDrawerRootView): void {
@@ -2851,10 +2937,11 @@ export function WorkspaceClientView({
         {attentionQueueVisible ? (
           <div className="channel-attention-popover">
             <AttentionQueue
+              contextRows={attentionContextRows}
               items={attentionQueueItems}
               expanded={attentionProgressExpanded}
               onExpandedChange={setAttentionProgressExpanded}
-              progressItems={attentionProgressItems}
+              progressRows={attentionProgressRows}
               onOpenItem={openAttentionQueueItem}
             />
           </div>
@@ -5061,16 +5148,18 @@ function ActivityFilterToolbar({
 }
 
 function AttentionQueue({
+  contextRows,
   items,
   expanded,
   onExpandedChange,
-  progressItems,
+  progressRows,
   onOpenItem,
 }: {
+  readonly contextRows: readonly AttentionContextRow[];
   readonly items: readonly ChannelAttentionQueueItem[];
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
-  readonly progressItems: readonly string[];
+  readonly progressRows: readonly AttentionProgressRow[];
   readonly onOpenItem: (item: ChannelAttentionQueueItem) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
@@ -5080,9 +5169,38 @@ function AttentionQueue({
   const visibleItems = items.slice(0, 5);
   return (
     <section className="attention-queue compact" aria-label={t("Attention queue")}>
-      {progressItems.length > 0 ? (
+      {contextRows.length > 0 ? (
+        <div className="attention-context-section">
+          <div className="attention-section-head">
+            <strong>{t("Environment")}</strong>
+          </div>
+          <div className="attention-context-list" aria-label={t("Environment")}>
+            {contextRows.map((row) => {
+              const content = (
+                <>
+                  <span className="attention-row-icon">{row.icon}</span>
+                  <span className="attention-context-copy">
+                    <small>{row.label}</small>
+                    <strong>{row.value}</strong>
+                  </span>
+                </>
+              );
+              return row.onOpen ? (
+                <button key={row.id} className="attention-context-row interactive" type="button" onClick={row.onOpen}>
+                  {content}
+                </button>
+              ) : (
+                <div key={row.id} className="attention-context-row">
+                  {content}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+      {progressRows.length > 0 ? (
         <div className="attention-progress-preview">
-          <div className="attention-progress-head">
+          <div className="attention-section-head attention-progress-head">
             <strong>{t("Progress")}</strong>
             <button
               className="icon-button attention-progress-toggle"
@@ -5097,17 +5215,31 @@ function AttentionQueue({
           </div>
           {expanded ? (
             <div className="attention-progress-list" aria-label={t("Progress")}>
-              {progressItems.slice(0, 3).map((item, index) => (
-                <span key={`${item}:${index}`}>
-                  {index < progressItems.length - 1 ? <CheckCircle2 size={14} /> : <Clock3 size={14} />}
-                  <small>{item}</small>
-                </span>
-              ))}
+              {progressRows.slice(0, 4).map((row) => {
+                const content = (
+                  <>
+                    <span className={`attention-row-icon ${row.tone}`}>{row.icon}</span>
+                    <span className="attention-progress-copy">
+                      <strong>{row.primary}</strong>
+                      {row.secondary ? <small>{row.secondary}</small> : null}
+                    </span>
+                  </>
+                );
+                return row.onOpen ? (
+                  <button key={row.id} className={`attention-progress-row ${row.tone} interactive`} type="button" onClick={row.onOpen}>
+                    {content}
+                  </button>
+                ) : (
+                  <div key={row.id} className={`attention-progress-row ${row.tone}`}>
+                    {content}
+                  </div>
+                );
+              })}
             </div>
           ) : null}
         </div>
       ) : null}
-      <div className="attention-queue-head">
+      <div className="attention-section-head attention-queue-head">
         <strong>{t("Attention")}</strong>
         <small>{items.length}</small>
       </div>
@@ -5908,6 +6040,41 @@ function readRunTitle(run: RunSession): string {
     }
   }
   return run.taskId;
+}
+
+function runProgressTone(status: RunSession["status"]): AttentionProgressTone {
+  if (status === "succeeded") {
+    return "success";
+  }
+  if (status === "running" || status === "queued") {
+    return "running";
+  }
+  if (status === "waiting_for_approval") {
+    return "waiting";
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  return "neutral";
+}
+
+function runProgressIcon(status: RunSession["status"]): JSX.Element {
+  if (status === "succeeded") {
+    return <CheckCircle2 size={18} />;
+  }
+  if (status === "running") {
+    return <Loader2 className="spin" size={18} />;
+  }
+  if (status === "waiting_for_approval") {
+    return <ShieldCheck size={18} />;
+  }
+  if (status === "failed") {
+    return <CircleAlert size={18} />;
+  }
+  if (status === "cancelled") {
+    return <X size={18} />;
+  }
+  return <Clock3 size={18} />;
 }
 
 function splitLines(value: string): string[] {

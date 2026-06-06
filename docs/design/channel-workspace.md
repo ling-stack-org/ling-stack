@@ -2219,12 +2219,12 @@ Current MVP implementation status:
 
 - [x] Define v1.25 attention/progress popover refinement in
   `docs/design/channel-workspace-v1.25.md`.
-- [ ] Add context rows above progress using only existing channel/workspace state.
-- [ ] Replace card-like progress preview with compact status rows.
-- [ ] Restyle top attention items as lightweight rows with one status pill.
-- [ ] Keep branch/change/commit-push state optional until a real workspace status source
+- [x] Add context rows above progress using only existing channel/workspace state.
+- [x] Replace card-like progress preview with compact status rows.
+- [x] Restyle top attention items as lightweight rows with one status pill.
+- [x] Keep branch/change/commit-push state optional until a real workspace status source
   exists.
-- [ ] Add targeted browser checks for desktop, mobile, drawer-open, no-current-work, and
+- [x] Add targeted browser checks for desktop, mobile, drawer-open, no-current-work, and
   Chinese-label popover states.
 
 ## Validation Plan

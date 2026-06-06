@@ -1488,9 +1488,9 @@ test("channel activity filter chips keep daylight channel tokens", async ({ page
   await page.goto("/");
 
   await openChannelChatTools(page);
-  const activityFilters = page.getByLabel("Activity filters");
-  await activityFilters.getByRole("button", { name: "Filter activity" }).click();
-  await expect(activityFilters.getByLabel("Filter panel")).toBeVisible();
+  const activityFilters = channelEventFilters(page);
+  await channelEventFilterToggle(activityFilters).click();
+  await expect(activityFilters.locator(".activity-filter-panel")).toBeVisible();
   await activityFilters.getByLabel("Activity attention filters").locator(".activity-filter-chip").filter({ hasText: "Failed" }).click();
   const filterChipSurfaces = await page.evaluate(() => {
     const selectors = [".activity-filter-chip", ".activity-filter-chip.attention.active"];
@@ -2329,7 +2329,7 @@ test("channel activity derives task run approval transition and workflow events"
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const messageBubble = page.locator(".message-bubble").filter({ hasText: "Timeline source message" });
+  const messageBubble = page.locator(".channel-message-row").filter({ hasText: "Timeline source message" });
   const taskEventBubble = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" });
   const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" });
   const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
@@ -2337,7 +2337,19 @@ test("channel activity derives task run approval transition and workflow events"
   const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" });
   const activityDetails = page.getByLabel("Activity details");
   const openDetailsFrom = async (bubble: Locator, expectedText: string) => {
-    await bubble.getByRole("button", { name: "Details" }).click();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const detailsButton = bubble.getByRole("button", { name: "Details" });
+        await expect(detailsButton).toBeVisible();
+        await detailsButton.click({ timeout: 1_000 });
+        break;
+      } catch (error) {
+        if (attempt === 2) {
+          throw error;
+        }
+        await page.waitForTimeout(50);
+      }
+    }
     await expect(activityDetails).toBeVisible();
     await expect(activityDetails).toContainText(expectedText);
     await expect(activityDetails).toContainText("Source summary");
@@ -2406,7 +2418,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(activityDetails).toHaveCount(0);
 
   await openChannelChatTools(page);
-  const activityFilters = page.getByLabel("Activity filters");
+  const activityFilters = channelEventFilters(page);
   const activityFeed = page.getByLabel("Channel message feed");
   const searchInput = activityFilters.getByPlaceholder("Search activity");
   const savedViewSelect = activityFilters.locator('select[aria-label="Saved views"]');
@@ -2418,8 +2430,8 @@ test("channel activity derives task run approval transition and workflow events"
     await savedViewSelect.selectOption(value ?? "");
   };
   const openFilterPanel = async () => {
-    if (await activityFilters.getByLabel("Filter panel").count() === 0) {
-      await activityFilters.getByRole("button", { name: "Filter activity" }).click();
+    if (await activityFilters.locator(".activity-filter-panel").count() === 0) {
+      await channelEventFilterToggle(activityFilters).click();
     }
   };
   const categoryChip = (label: string) => activityFilters.getByLabel("Activity categories").locator(".activity-filter-chip").filter({ hasText: label });
@@ -2436,7 +2448,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(savedViewSelect).toContainText("Runtime (3)");
   await expect(activityFilters.getByLabel("Activity categories")).toHaveCount(0);
   await openFilterPanel();
-  await expect(activityFilters.getByLabel("Filter panel")).toBeVisible();
+  await expect(activityFilters.locator(".activity-filter-panel")).toBeVisible();
   await expect(categoryChip("All")).toContainText("7");
   await expect(categoryChip("Messages")).toContainText("1");
   await expect(categoryChip("Work")).toContainText("2");
@@ -2445,6 +2457,8 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(categoryChip("Runtime")).toContainText("3");
 
   const attentionQueue = page.getByRole("region", { name: "Attention queue" });
+  await expect(attentionQueue.getByLabel("Environment")).toContainText("Current channel");
+  await expect(attentionQueue.getByLabel("Environment")).toContainText("Engineering");
   await expect(attentionQueue).toContainText("Attention");
   await expect(attentionQueue).toContainText("5");
   await expect(attentionQueue.getByLabel("Attention counts")).toContainText("Blocked 1");
@@ -2480,8 +2494,10 @@ test("channel activity derives task run approval transition and workflow events"
       };
     };
     return {
+      environmentTitle: read(".attention-context-section .attention-section-head strong"),
       progressTitle: read(".attention-progress-head strong"),
-      progressRow: read(".attention-progress-list small"),
+      progressPrimary: read(".attention-progress-copy strong"),
+      progressSecondary: read(".attention-progress-copy small"),
       progressIcon: readIcon(".attention-progress-list svg"),
       attentionTitle: read(".attention-queue-head strong"),
       attentionCount: read(".attention-queue-head small"),
@@ -2493,8 +2509,10 @@ test("channel activity derives task run approval transition and workflow events"
       detailsButtonCount: document.querySelectorAll(".attention-queue-details").length,
     };
   });
+  expect(attentionTypography.environmentTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
   expect(attentionTypography.progressTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
-  expect(attentionTypography.progressRow).toEqual({ fontSize: "12px", fontWeight: "500", lineHeight: "17px" });
+  expect(attentionTypography.progressPrimary).toEqual({ fontSize: "12px", fontWeight: "500", lineHeight: "17px" });
+  expect(attentionTypography.progressSecondary).toEqual({ fontSize: "12px", fontWeight: "400", lineHeight: "17px" });
   expect(attentionTypography.progressIcon).toEqual({ width: 18, height: 18, strokeWidth: "2.4px" });
   expect(attentionTypography.attentionTitle).toEqual({ fontSize: "14px", fontWeight: "600", lineHeight: "20px" });
   expect(attentionTypography.attentionCount).toEqual({ fontSize: "12px", fontWeight: "500", lineHeight: "17px" });
@@ -2811,7 +2829,7 @@ test("channel activity triage actions create follow-up records and preserve loca
 
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await openChannelChatTools(page);
-  const activityFilters = page.getByLabel("Activity filters");
+  const activityFilters = channelEventFilters(page);
   const searchInput = activityFilters.getByPlaceholder("Search activity");
   const composer = page.getByPlaceholder("Message this channel or @ an AI teammate");
   const attentionQueue = page.getByLabel("Attention queue");
@@ -2986,7 +3004,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await openChannelChatTools(page);
   await expect(page.getByPlaceholder("Search activity")).toBeVisible();
   await expect(page.locator('select[aria-label="Saved views"]')).toContainText("Needs attention");
-  await page.getByRole("button", { name: "Filter activity" }).click();
+  await channelEventFilterToggle(page).click();
   await expect(page.getByLabel("Activity categories").getByRole("button", { name: /Messages/ })).toBeVisible();
   await expect(page.getByLabel("Activity attention filters").getByRole("button", { name: /Needs attention/ })).toBeVisible();
   await expect(page.getByRole("region", { name: "Attention queue" })).toBeVisible();
@@ -6000,6 +6018,17 @@ async function openChannelSidePanel(page: Page, name: "Progress" | "Files" | "Co
   await panel.hover();
 }
 
+const channelEventFiltersLabel = /Activity filters|Channel event filters|动态筛选|频道事件筛选/;
+const channelEventFilterToggleLabel = /Filter activity|Filter channel events|筛选动态|筛选频道事件/;
+
+function channelEventFilters(page: Page): Locator {
+  return page.getByLabel(channelEventFiltersLabel);
+}
+
+function channelEventFilterToggle(scope: Page | Locator): Locator {
+  return scope.getByRole("button", { name: channelEventFilterToggleLabel });
+}
+
 async function openChannelChatTools(page: Page): Promise<void> {
   const searchInput = page.getByPlaceholder(/Search activity|搜索动态/).first();
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -6007,7 +6036,7 @@ async function openChannelChatTools(page: Page): Promise<void> {
       return;
     }
     await page.locator(".channel-more-button").click();
-    await page.locator(".channel-more-item").filter({ hasText: /Activity filters|动态筛选/ }).click();
+    await page.locator(".channel-more-item").filter({ hasText: channelEventFilterToggleLabel }).click();
     await page.waitForTimeout(50);
   }
   await expect(searchInput).toBeVisible();

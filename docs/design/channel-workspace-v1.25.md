@@ -2,7 +2,8 @@
 
 ## Status
 
-Design proposal for the next channel UI polish slice.
+Implemented in the web channel workspace polish slice. This remains a frontend-only
+refinement: no daemon API, database table, or browser-side Git probe was added.
 
 ## Summary
 
