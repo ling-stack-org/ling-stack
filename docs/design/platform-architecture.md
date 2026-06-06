@@ -39,6 +39,12 @@ The runtime supervisor is the kernel-facing execution owner for work units. Web,
 desktop, CLI, and future clients can all control the same workspace at the same time,
 but they must connect to one daemon runtime rather than starting client-specific
 runtimes. The detailed design lives in [Runtime Supervisor](runtime-supervisor.md).
+The phased plan for evolving this daemon into a Codex app-server-like local control
+plane lives in [Runtime Control Plane Roadmap](runtime-control-plane-roadmap.md).
+The mid-term control-plane implementation breakdown lives in
+[Runtime Control Plane Mid-Term Implementation Plan](runtime-control-plane-mid-term-implementation-plan.md).
+The long-term transport, processor, registry, subscription, and worker layering plan
+lives in [Runtime Control Plane Long-Term Implementation Plan](runtime-control-plane-long-term-implementation-plan.md).
 
 ## Architecture Principles
 

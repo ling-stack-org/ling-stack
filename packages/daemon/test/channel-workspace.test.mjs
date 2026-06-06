@@ -1777,6 +1777,13 @@ test("skill import draft publishes registry skills and teammate bindings use eff
     assert.equal(published.skills[0].id, "custom-qa-review");
     const listed = await getJson(`${daemon.url}/skills?cwd=${encodeURIComponent(cwd)}`);
     assert.ok(listed.skills.some((skill) => skill.id === "custom-qa-review" && skill.source === "custom"));
+    const refreshed = await postJson(`${daemon.url}/skills/refresh?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.ok(refreshed.skills.some((skill) => skill.id === "implement" && skill.source === "builtin"));
+    assert.ok(refreshed.skills.some((skill) => skill.id === "custom-qa-review" && skill.source === "custom"));
+    assert.equal(typeof refreshed.refreshedAt, "string");
+    assert.equal(typeof refreshed.registryGeneration, "number");
+    const refreshedAgain = await postJson(`${daemon.url}/skills/refresh?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(refreshedAgain.registryGeneration > refreshed.registryGeneration, true);
 
     const teammateId = "teammate_builtin_engineer";
     const updated = await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/skills?cwd=${encodeURIComponent(cwd)}`, {

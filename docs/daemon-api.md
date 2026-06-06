@@ -325,6 +325,7 @@ decide whether a skill can run.
 
 ```http
 GET /skills?cwd=/path/to/project
+POST /skills/refresh?cwd=/path/to/project
 POST /skills/import-draft?cwd=/path/to/project
 GET /skills/import-drafts/:id?cwd=/path/to/project
 POST /skills/import-drafts/:id/publish?cwd=/path/to/project
@@ -333,6 +334,23 @@ DELETE /skills/:id?cwd=/path/to/project
 
 `GET /skills` returns built-in definitions projected from `gstack-default` plus published
 workspace registry definitions. Built-in definitions are not duplicated into SQLite.
+
+`POST /skills/refresh` recomputes the effective registry and returns a process-local
+`registryGeneration` plus `refreshedAt`. In the current slice this is a lightweight
+explicit refresh hook over built-ins and SQLite-backed custom skills; future local
+file/plugin scanners should attach to the same endpoint instead of adding client-side
+registry guesses.
+
+Refresh response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "refreshedAt": "2026-06-06T00:00:00.000Z",
+  "registryGeneration": 1,
+  "skills": []
+}
+```
 
 `POST /skills/import-draft` accepts Ling-native JSON or markdown/`SKILL.md` content and
 returns a reviewed draft. Draft creation does not bind the skill to any teammate and does

@@ -144,6 +144,23 @@ test("builds automation draft endpoints without transforming daemon responses", 
   assert.equal(mock.calls[6].url, "http://daemon.test/automation-drafts/draft%201?cwd=%2Frepo+path");
 });
 
+test("lists and refreshes skills through expected routes", async () => {
+  const responses = [
+    { cwd: "/repo", skills: [] },
+    { cwd: "/repo", refreshedAt: "2026-06-06T00:00:00.000Z", registryGeneration: 1, skills: [] },
+  ];
+  const mock = createFetchMock(responses);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  assert.deepEqual(await client.listSkills("/repo path"), responses[0]);
+  assert.deepEqual(await client.refreshSkills("/repo path"), responses[1]);
+
+  assert.equal(mock.calls[0].method, "GET");
+  assert.equal(mock.calls[0].url, "http://daemon.test/skills?cwd=%2Frepo+path");
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/skills/refresh?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {});
+});
 
 test("gets external work status with channel and workflow path", async () => {
   const mock = createFetchMock({ cwd: "/repo", workflow: { valid: true } });

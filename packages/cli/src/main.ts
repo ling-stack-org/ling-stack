@@ -372,8 +372,20 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
   const snapshot = await readDaemonStateSnapshot(options.cwd);
   const daemon = await probeDaemonHealth(options);
   const dependencyUnavailable = !daemon.ok;
-  const [providersResult, channelsResult, tasksResult, approvalPolicyResult, activeLeasesResult, staleWorkResult, mcpServersResult] = dependencyUnavailable
+  const [
+    providersResult,
+    channelsResult,
+    tasksResult,
+    approvalPolicyResult,
+    activeLeasesResult,
+    staleWorkResult,
+    mcpServersResult,
+    skillsResult,
+    memoryReviewPolicyResult,
+  ] = dependencyUnavailable
     ? [
+      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
+      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
       skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
       skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
       skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
@@ -390,6 +402,8 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
       requestDoctorJson(options, "GET", "/runtime/leases", { cwd: options.cwd, status: "active" }),
       requestDoctorJson(options, "GET", "/runtime/stuck", { cwd: options.cwd }),
       requestDoctorJson(options, "GET", "/mcp/servers", { cwd: options.cwd }),
+      requestDoctorJson(options, "GET", "/skills", { cwd: options.cwd }),
+      requestDoctorJson(options, "GET", "/memory/review-policy", { cwd: options.cwd }),
     ]);
 
   const providers = providersResult.ok ? readArray(providersResult.body, "providers") : [];
@@ -407,7 +421,14 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
   const activeLeases = activeLeasesResult.ok ? readArray(activeLeasesResult.body, "leases") : [];
   const staleWorkUnits = staleWorkResult.ok ? readArray(staleWorkResult.body, "workUnits") : [];
   const mcpServers = mcpServersResult.ok ? readArray(mcpServersResult.body, "servers") : [];
+  const skills = skillsResult.ok ? readArray(skillsResult.body, "skills") : [];
+  const builtinSkills = skills.filter((skill) => readString(skill, "reviewStatus") === "builtin");
+  const publishedSkills = skills.filter((skill) => readString(skill, "reviewStatus") === "published");
   const approvalPolicyOk = approvalPolicyResult.ok && isRecord(readField(approvalPolicyResult.body, "policy"));
+  const memoryReviewPolicy = memoryReviewPolicyResult.ok ? readField(memoryReviewPolicyResult.body, "policy") : undefined;
+  const memoryReviewPolicyOk = isRecord(memoryReviewPolicy) &&
+    typeof readString(memoryReviewPolicy, "workspaceId") === "string" &&
+    typeof readString(memoryReviewPolicy, "mode") === "string";
   const next = buildDoctorNextSteps({
     providers,
     runnableProviders,
@@ -488,6 +509,25 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
       approvalPolicyOk
         ? okCheck("approval_policy.load", "policy", "approval policy loads", {})
         : failCheck("approval_policy.load", "policy", "approval policy cannot be loaded", {}, "Run ling-stack policy show.")),
+    dependencyCheck("skills.registry", "skills", skillsResult, () =>
+      skills.length > 0
+        ? okCheck("skills.registry", "skills", "effective skill registry loads", {
+          total: skills.length,
+          builtin: builtinSkills.length,
+          published: publishedSkills.length,
+        })
+        : warningCheck("skills.registry", "skills", "effective skill registry is empty", {
+          total: skills.length,
+          builtin: builtinSkills.length,
+          published: publishedSkills.length,
+        }, "Restart the daemon or refresh skills from the settings UI.")),
+    dependencyCheck("memory.review_policy", "memory", memoryReviewPolicyResult, () =>
+      memoryReviewPolicyOk
+        ? okCheck("memory.review_policy", "memory", "memory review policy loads", {
+          workspaceId: readString(memoryReviewPolicy, "workspaceId"),
+          mode: readString(memoryReviewPolicy, "mode"),
+        })
+        : failCheck("memory.review_policy", "memory", "memory review policy cannot be loaded", {}, "Inspect the daemon memory review-policy route.")),
     dependencyCheck("runtime.leases", "runtime", activeLeasesResult, () =>
       activeLeases.length === 0
         ? okCheck("runtime.leases", "runtime", "no active leases", { activeLeases: 0 })

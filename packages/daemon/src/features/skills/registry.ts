@@ -9,6 +9,8 @@ import {
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 
+let skillRegistryGeneration = 0;
+
 export function listEffectiveSkillRegistryEntries(store: RunStore): SkillRegistryEntry[] {
   const builtInTimestamp = new Date(0).toISOString();
   const builtInEntries = listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID).map((definition): SkillRegistryEntry => ({
@@ -35,6 +37,19 @@ export function listEffectiveSkillRegistryEntries(store: RunStore): SkillRegistr
     seen.add(entry.id);
     return true;
   });
+}
+
+export function refreshEffectiveSkillRegistryEntries(store: RunStore): {
+  readonly refreshedAt: string;
+  readonly registryGeneration: number;
+  readonly skills: readonly SkillRegistryEntry[];
+} {
+  skillRegistryGeneration += 1;
+  return {
+    refreshedAt: new Date().toISOString(),
+    registryGeneration: skillRegistryGeneration,
+    skills: listEffectiveSkillRegistryEntries(store),
+  };
 }
 
 export function listExecutableSkillDefinitions(store: RunStore): readonly SkillDefinition[] {

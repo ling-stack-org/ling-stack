@@ -5,7 +5,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { SkillRoute } from "../../server/routes.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
-import { listEffectiveSkillRegistryEntries } from "./registry.js";
+import { listEffectiveSkillRegistryEntries, refreshEffectiveSkillRegistryEntries } from "./registry.js";
 import { parseSkillImportDraftRequest } from "./schemas.js";
 
 export async function handleSkillRoute(
@@ -30,6 +30,16 @@ export async function handleSkillRoute(
         return;
       }
       writeJson(response, 200, { cwd, skills: listEffectiveSkillRegistryEntries(store) });
+      return;
+    }
+
+    if (url.pathname === "/skills/refresh") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/refresh` });
+        return;
+      }
+      const refreshed = refreshEffectiveSkillRegistryEntries(store);
+      writeJson(response, 200, { cwd, ...refreshed });
       return;
     }
 

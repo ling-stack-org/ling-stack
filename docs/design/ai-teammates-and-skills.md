@@ -17,6 +17,8 @@ behavior for teammates is covered by [Ling Memory v1](ling-memory-v1.md).
 The concrete import, persona draft, Effective Skill UI, and skill-aware run implementation
 slice is covered by [Ling Skill Import v1](ling-skill-import-v1.md). Automatic
 multi-teammate execution is covered by [Multi-Agent Orchestrator](multi-agent-orchestrator.md).
+The broader daemon and registry evolution is covered by
+[Runtime Control Plane Roadmap](runtime-control-plane-roadmap.md).
 
 ## Model
 
@@ -151,6 +153,26 @@ Runtime-only gstack commands such as `gstack-upgrade`, browser-cookie import,
 gbrain sync/setup, iOS device automation, and other host-specific tools remain outside
 the built-in Ling pack until Ling has first-class capability and approval models for
 those surfaces.
+
+## Template Defaults And Durable Overrides
+
+Built-in teammate templates should behave as template defaults plus durable user
+overrides, not as seed-once records that drift permanently after first creation.
+
+When a built-in template gains a default skill, existing built-in teammates should
+backfill the missing template binding unless the user has explicitly overridden that
+skill. Backfill must be non-destructive:
+
+- preserve existing enabled/disabled state for template bindings;
+- preserve custom user-added skill bindings;
+- avoid recreating tombstoned built-in teammates;
+- avoid resetting teammate persona, provider, channel, or memory settings;
+- keep active runs on the skill snapshot they started with.
+
+This keeps Ling closer to Codex-style effective capability resolution while preserving
+Ling's durable teammate and audit model.
+The implementation breakdown lives in
+[Runtime Control Plane Short-Term Implementation Plan](runtime-control-plane-short-term-implementation-plan.md).
 
 Default workflow:
 

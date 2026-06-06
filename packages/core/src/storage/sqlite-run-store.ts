@@ -149,6 +149,7 @@ import { GSTACK_DEFAULT_SKILL_PACK_ID, listDefaultTeammateTemplates } from "../b
 import {
   createSkillImportDraftId,
   createSkillPackId,
+  type AiTeammateTemplate,
   type AiTeammateRoleKey,
   type CreateSkillImportDraftInput,
   type ListSkillRegistryOptions,
@@ -10232,13 +10233,7 @@ export class SqliteRunStore implements RunStore {
       }
       const existing = this.getAiTeammate(teammateId);
       if (existing) {
-        if (this.listTeammateSkillBindings(teammateId).length === 0) {
-          this.replaceTeammateSkillBindings(
-            teammateId,
-            template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
-            now,
-          );
-        }
+        this.backfillTemplateSkillBindings(teammateId, template, now);
         this.database
           .prepare("UPDATE channels SET default_teammate_id = ?, updated_at = ? WHERE default_teammate_id = ?")
           .run(teammateId, now, template.id);
@@ -10276,6 +10271,36 @@ export class SqliteRunStore implements RunStore {
         .prepare("UPDATE tasks SET assignee_teammate_id = ?, updated_at = ? WHERE assignee_teammate_id = ?")
         .run(teammateId, now, template.id);
     }
+  }
+
+  private backfillTemplateSkillBindings(teammateId: string, template: AiTeammateTemplate, now: string): boolean {
+    const existingSkillIds = new Set(this.listTeammateSkillBindings(teammateId).map((binding) => binding.skillId));
+    const missingSkillIds = template.defaultSkillIds.filter((skillId) => !existingSkillIds.has(skillId));
+    if (missingSkillIds.length === 0) {
+      return false;
+    }
+
+    const insert = this.database.prepare(`
+      INSERT INTO teammate_skill_bindings (
+        teammate_id,
+        skill_id,
+        source,
+        enabled,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, 'template', 1, ?, ?)
+    `);
+    this.database.exec("BEGIN");
+    try {
+      for (const skillId of missingSkillIds) {
+        insert.run(teammateId, skillId, now, now);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return true;
   }
 
   private hasMigration(version: number): boolean {
@@ -12761,7 +12786,12 @@ function countWhere(database: DatabaseSync, table: string, whereClause: string, 
 }
 
 function parseJson(value: string): unknown {
-  return JSON.parse(value) as unknown;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse JSON from SQLite: ${message}`);
+  }
 }
 
 function parseNullableJson(value: string | undefined): unknown {
