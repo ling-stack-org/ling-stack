@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -13,22 +13,27 @@ test("doctor reports a ready workspace", async () => {
   const daemon = await startDoctorDaemon();
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-"));
   try {
+    await prepareDoctorWorkspace(cwd);
     const result = await runCli(daemon.url, cwd, ["doctor"]);
 
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /Ling Stack doctor/);
-    assert.match(result.stdout, /Daemon: ok/);
-    assert.match(result.stdout, /Providers: 1 total, 1 runnable, 1 preflight ready/);
-    assert.match(result.stdout, /Channels: 1 total, 1 with default provider/);
-    assert.match(result.stdout, /Tasks: 1 total/);
-    assert.match(result.stdout, /Approval policy: ok/);
-    assert.match(result.stdout, /Ready: yes/);
+    assert.match(result.stdout, /daemon\.health\s+daemon is reachable/);
+    assert.match(result.stdout, /workspace\.paths\s+runtime paths exist/);
+    assert.match(result.stdout, /workspace\.sqlite\s+database file exists/);
+    assert.match(result.stdout, /providers\.configured\s+1 runnable provider\(s\) configured/);
+    assert.match(result.stdout, /providers\.preflight\s+1 provider\(s\) passed preflight/);
+    assert.match(result.stdout, /channels\.configured\s+1 channel\(s\) configured/);
+    assert.match(result.stdout, /approval_policy\.load\s+approval policy loads/);
+    assert.match(result.stdout, /runtime\.leases\s+no active leases/);
     assert.ok(daemon.requests.includes("GET /health"));
     assert.ok(daemon.requests.includes("GET /providers"));
     assert.ok(daemon.requests.includes("GET /channels"));
     assert.ok(daemon.requests.includes("GET /tasks"));
     assert.ok(daemon.requests.includes("GET /approval-policy"));
     assert.ok(daemon.requests.includes("GET /runtime/leases"));
+    assert.ok(daemon.requests.includes("GET /runtime/stuck"));
+    assert.ok(daemon.requests.includes("GET /mcp/servers"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -46,11 +51,12 @@ test("doctor exits non-zero and prints next step when provider preflight is miss
   });
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-"));
   try {
+    await prepareDoctorWorkspace(cwd);
     const result = await runCli(daemon.url, cwd, ["doctor"]);
 
     assert.equal(result.code, 4);
-    assert.match(result.stdout, /Providers: 1 total, 1 runnable, 0 preflight ready/);
-    assert.match(result.stdout, /Ready: no/);
+    assert.match(result.stdout, /Status: fail/);
+    assert.match(result.stdout, /providers\.preflight\s+no runnable provider has a successful preflight check/);
     assert.match(result.stdout, /ling-stack provider check-all/);
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -62,37 +68,61 @@ test("doctor json exposes readiness counters", async () => {
   const daemon = await startDoctorDaemon();
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-"));
   try {
+    await prepareDoctorWorkspace(cwd);
     const result = await runCli(daemon.url, cwd, ["doctor", "--json"]);
     const body = JSON.parse(result.stdout);
 
     assert.equal(result.code, 0, result.stderr);
-    assert.equal(body.ok, true);
-    assert.equal(body.daemon.url, daemon.url);
-    assert.equal(body.workspace.cwd, cwd);
-    assert.deepEqual(body.providers, {
-      total: 1,
-      runnable: 1,
-      preflightReady: 1,
-      unchecked: 0,
-      failed: 0,
-    });
-    assert.deepEqual(body.channels, {
-      total: 1,
-      withDefaultProvider: 1,
-    });
-    assert.deepEqual(body.tasks, {
-      total: 1,
-    });
-    assert.deepEqual(body.approvalPolicy, {
-      ok: true,
-    });
-    assert.deepEqual(body.runtime, {
-      activeLeases: 0,
-    });
-    assert.deepEqual(body.next, []);
+    assert.equal(body.schemaVersion, 1);
+    assert.equal(body.cwd, cwd);
+    assert.equal(body.daemonUrl, daemon.url);
+    assert.ok(["ok", "warning"].includes(body.overallStatus));
+    const checks = new Map(body.checks.map((check) => [check.id, check]));
+    assert.equal(checks.get("providers.configured").details.total, 1);
+    assert.equal(checks.get("providers.configured").details.runnable, 1);
+    assert.equal(checks.get("providers.preflight").details.preflightReady, 1);
+    assert.equal(checks.get("channels.configured").details.total, 1);
+    assert.equal(checks.get("runtime.leases").details.activeLeases, 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
+  }
+});
+
+test("doctor json continues when daemon is down", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-down-"));
+  try {
+    await prepareDoctorWorkspace(cwd);
+    const result = await runCli("http://127.0.0.1:9", cwd, ["doctor", "--json"]);
+    const body = JSON.parse(result.stdout);
+
+    assert.equal(result.code, 4);
+    assert.equal(body.schemaVersion, 1);
+    assert.equal(body.overallStatus, "fail");
+    const checks = new Map(body.checks.map((check) => [check.id, check]));
+    assert.equal(checks.get("daemon.health").status, "fail");
+    assert.equal(checks.get("daemon.process_state").status, "ok");
+    assert.equal(checks.get("workspace.paths").status, "ok");
+    assert.equal(checks.get("workspace.sqlite").status, "ok");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("doctor json redacts secret-like daemon URL fields", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-redact-"));
+  try {
+    await prepareDoctorWorkspace(cwd);
+    const result = await runCli("http://user:supersecret@127.0.0.1:9?api_key=sk-test-secret", cwd, ["doctor", "--json"]);
+    const text = result.stdout + result.stderr;
+    const body = JSON.parse(result.stdout);
+
+    assert.equal(result.code, 4);
+    assert.match(body.daemonUrl, /<redacted>/);
+    assert.doesNotMatch(text, /supersecret/);
+    assert.doesNotMatch(text, /sk-test-secret/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
   }
 });
 
@@ -122,6 +152,11 @@ function runCli(daemonUrl, cwd, args) {
       });
     });
   });
+}
+
+async function prepareDoctorWorkspace(cwd) {
+  await mkdir(resolve(cwd, ".ling-stack"), { recursive: true });
+  await writeFile(resolve(cwd, ".ling-stack", "ling-stack.sqlite"), "", "utf8");
 }
 
 async function startDoctorDaemon(overrides = {}) {
@@ -181,6 +216,16 @@ async function startDoctorDaemon(overrides = {}) {
 
     if (request.method === "GET" && url.pathname === "/runtime/leases") {
       writeJson(response, 200, { cwd: url.searchParams.get("cwd"), leases: [] });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/runtime/stuck") {
+      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), workUnits: [] });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/mcp/servers") {
+      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), servers: [] });
       return;
     }
 

@@ -4,6 +4,8 @@ The daemon is the local process that connects the future CLI, web UI, and deskto
 
 ## Start
 
+Current manual foreground start:
+
 ```bash
 corepack pnpm --filter @ling-stack/daemon build
 node packages/daemon/dist/cli.js
@@ -22,6 +24,10 @@ Provider presets can reference secrets from the daemon process environment:
 LOCAL_RELAY_API_KEY=sk-local
 ```
 
+Background daemon lifecycle commands are not part of the current HTTP API contract.
+The P0 design for `ling-stack daemon start`, `status`, `stop`, `restart`, `logs`, and
+read-only doctor checks lives in [Daemon Lifecycle and Doctor P0](design/daemon-lifecycle-p0.md).
+
 ## Health
 
 ```http
@@ -31,8 +37,18 @@ GET /health
 Response:
 
 ```json
-{"ok":true,"service":"ling-stack-daemon"}
+{
+  "ok": true,
+  "service": "ling-stack-daemon",
+  "defaultWorkspaceCwd": "/path/to/workspace"
+}
 ```
+
+This endpoint is the live process reachability check. The current implementation does
+not expose lifecycle metadata such as pid, version, started time, host, port, state
+path, or log path. The P0 daemon lifecycle design may extend `/health` with those
+fields after `.ling-stack/daemon/daemon.json` and `.ling-stack/logs/daemon.log` exist.
+Until then, clients must treat those fields as optional and unavailable.
 
 ## Channels and Tasks
 

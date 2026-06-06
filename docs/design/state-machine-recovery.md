@@ -228,6 +228,26 @@ After daemon restart, Ling Stack should rebuild active state from durable record
 
 Browser refresh and SSE disconnect must not imply cancellation. The client should reconnect and query durable state. Explicit cancellation must use a cancel API.
 
+### Daemon Lifecycle Boundary
+
+The P0 daemon lifecycle commands in [Daemon Lifecycle and Doctor P0](daemon-lifecycle-p0.md)
+are process controls, not recovery engines:
+
+- `ling-stack daemon stop` signals a Ling-managed daemon process and refuses to stop
+  active work by default.
+- `ling-stack daemon stop --force` and `ling-stack daemon restart --force` are explicit
+  operator actions. They may cause active runner attempts to be lost, but they still do
+  not rewrite durable task, run, approval, lease, or semaphore rows directly.
+- Durable recovery after restart remains owned by the runtime supervisor and these state
+  machines. Startup recovery reconciles lost attempts, stale leases, pending approvals,
+  and terminal task/run mismatches from persisted records.
+- Doctor is read-only. It may report stale pid files, stale listeners, active leases,
+  stuck work, and recovery risks, but it must not expire leases, cancel runs, or repair
+  SQLite state.
+
+This split keeps lifecycle commands scriptable without creating a second state mutation
+path beside compare-and-set transitions.
+
 ## Event Log Contract
 
 Every accepted transition should emit a durable event:

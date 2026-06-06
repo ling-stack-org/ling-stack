@@ -67,7 +67,10 @@ Not implemented yet:
 
 - background daemon start,
 - daemon stop,
+- daemon restart and log inspection,
 - shell completion generation,
+- Codex-style check-row doctor output,
+- stdin-aware direct runs,
 - desktop packaging.
 
 ## Design Principles
@@ -80,6 +83,7 @@ Not implemented yet:
 - CLI commands should be stable enough to document in README.
 - CLI should expose exact daemon errors instead of hiding them.
 - CLI should expose channel concurrency and active lease state so stuck runs are diagnosable without opening Web.
+- CLI run automation should keep stdout machine-consumable: default stdout is reserved for the final assistant text where possible, progress goes to stderr, and JSON mode emits JSONL only.
 
 ## Command Groups
 
@@ -90,6 +94,8 @@ ling-stack doctor
 ling-stack daemon start
 ling-stack daemon status
 ling-stack daemon stop
+ling-stack daemon restart
+ling-stack daemon logs
 
 ling-stack provider add
 ling-stack provider list
@@ -129,6 +135,120 @@ ling-stack ui
 ```
 
 Aliases can be added later. v0.1 should prefer explicit commands.
+
+## Codex CLI Borrowing Backlog
+
+Reference snapshot: upstream `openai/codex` at `345cf6e`.
+
+The goal is not to clone Codex CLI. Ling Stack should borrow the parts that harden the local operator loop: diagnostics, daemon lifecycle, run I/O contracts, completion, MCP status boundaries, and maintainable CLI module boundaries.
+
+P0 detailed design lives in [Daemon Lifecycle and Doctor P0](daemon-lifecycle-p0.md).
+
+### P0 Enabler: CLI Module Split
+
+The current CLI implementation is concentrated in `packages/cli/src/index.ts`. That file
+already contains command dispatch, argument parsing, daemon API calls, SSE parsing,
+doctor aggregation, daemon foreground startup, Web UI launch, output formatting, and
+domain-specific request builders.
+
+Before adding daemon lifecycle and check-row doctor behavior, split the executable
+entrypoint from the implementation and isolate new P0 daemon/doctor stateful behavior
+into focused modules. This is a mechanical hardening step, not a framework migration.
+
+Borrow from Codex at the boundary level:
+
+- Keep a thin executable entrypoint.
+- Keep command handlers separate from command parsing.
+- Keep transport/API helpers separate from presentation.
+- Keep doctor checks as data-producing units before rendering human or JSON output.
+- Keep daemon lifecycle helpers separate from product commands that call the daemon HTTP API.
+
+Do not borrow Codex wholesale:
+
+- Do not switch to app-server JSON-RPC.
+- Do not add a large CLI framework only to match Codex.
+- Do not change command names, output contracts, or daemon API behavior during the split.
+
+P0 module layout:
+
+```text
+packages/cli/src/
+  index.ts
+  main.ts
+packages/cli/src/daemon/
+  state.ts
+  process.ts
+  logs.ts
+
+packages/cli/src/doctor/
+  checks.ts
+  report.ts
+```
+
+The existing command handlers may stay in `main.ts` for the P0 lifecycle/doctor slice
+as long as the new daemon lifecycle and doctor check-row behavior does not add more
+stateful code to the executable entrypoint. A full command-by-command split remains the
+recommended follow-up before shell completion generation.
+
+Acceptance criteria:
+
+- `packages/cli/src/index.ts` only bootstraps `main()`.
+- New daemon lifecycle state/process/log code lives under `packages/cli/src/daemon/`.
+- New doctor check-row model lives under `packages/cli/src/doctor/`.
+- Existing CLI tests pass without snapshot or output changes.
+- The split does not introduce a command framework dependency.
+
+### P0: Doctor and Daemon Lifecycle
+
+- Replace the current aggregate `doctor` report with a flat check-row model:
+  - `id`,
+  - `category`,
+  - `status`,
+  - `summary`,
+  - `details`,
+  - `issues`,
+  - `remediation`,
+  - `durationMs`.
+- Render the same check rows as human output and redacted JSON.
+- Keep doctor read-only. It may inspect daemon state, workspace paths, SQLite health, provider readiness, keychain/secret status, active leases, stale runs, Web reachability, and WORKFLOW status, but it must not repair state or start long-lived services.
+- Treat missing daemon state as `ok/not running`; treat stale pid/socket/listener state as `warning`; reserve `fail` for conditions that block normal CLI use.
+- Implement background daemon lifecycle commands:
+  - `ling-stack daemon start`,
+  - `ling-stack daemon status`,
+  - `ling-stack daemon stop`,
+  - `ling-stack daemon restart`,
+  - `ling-stack daemon logs`.
+- Persist daemon pid, state, and log paths under `.ling-stack/` or the chosen runtime state directory, and have doctor inspect those files passively.
+
+### P1: Run I/O and Automation Contract
+
+- Add stdin-aware prompt handling:
+  - `ling-stack run -` reads the prompt from stdin,
+  - no prompt plus piped stdin reads the prompt from stdin,
+  - prompt plus piped stdin appends the pipe as a fenced `<stdin>...</stdin>` context block.
+- Reject invalid prompt encodings clearly; prompt input should be UTF-8, with BOM handling if implemented.
+- Make `ling-stack run --json` a strict JSONL stream on stdout. Human progress, warnings, and recovery notices go to stderr.
+- Add `--output-last-message <file>` so shell automation can capture the final assistant message without parsing the event stream.
+- Consider `--output-schema <file>` after the runner supports structured final responses.
+- Keep presentation logic in CLI event processors/printers, not in the runner or daemon orchestration path.
+
+### P1: Completion
+
+- Add `ling-stack completion <bash|zsh|fish>` after CLI command metadata is stable.
+- If the CLI remains hand-parsed, generate and test static completion scripts rather than pretending completion will stay automatic.
+- If command/help maintenance keeps growing, revisit a structured parser such as commander, yargs, clipanion, or cac so completion and help output come from one command model.
+
+### P2: MCP Status Boundaries
+
+- Keep persisted MCP server config separate from runtime/auth state.
+- MCP status checks should create a short-lived connection/snapshot, collect server info/tools/resources/auth status, then tear it down.
+- Secret values and OAuth tokens must stay in Keychain or explicit secret refs; they must not be written to WORKFLOW files, SQLite rows, logs, doctor JSON, or run artifacts.
+- Stdio MCP launching should separate protocol ownership from process placement: the broker owns MCP methods, while the launcher owns child process/stdin/stdout placement.
+
+### Not Borrowing Yet
+
+- Do not replace the Ling daemon HTTP API with Codex app-server JSON-RPC just to match Codex. Borrow the internal separation instead: transport/client handling, request processors, slow-client backpressure, initialize/handshake gates, and serialization scopes where Ling has a concrete concurrency problem.
+- Do not add a hidden bypass around approval policy for CLI convenience. CLI runs remain product runs through daemon policy.
 
 ## Global Options
 
@@ -1055,7 +1175,8 @@ ling-stack task create --prompt-file prompt.md
 Rules:
 
 - if both inline prompt and `--prompt-file` are present, return bad CLI usage,
-- `--prompt-file -` may read stdin later, but not required for v0.1,
+- `--prompt-file -` and `run -` read stdin,
+- if positional prompt text is present and stdin is piped, append stdin as a `<stdin>...</stdin>` context block,
 - prompt files should be read as UTF-8.
 
 ## Streaming Output
@@ -1087,13 +1208,6 @@ If stream disconnects after `runId` is known:
 ## JSON Output for Runs
 
 For `ling-stack run --json`, do not mix progress text into stdout.
-
-Options:
-
-1. stream JSONL event envelopes to stdout,
-2. or return a final JSON object after run completes.
-
-Recommendation for v0.1:
 
 ```bash
 ling-stack run --json
@@ -1133,26 +1247,46 @@ The CLI must not add a hidden bypass for normal product runs. Any future develop
 
 ## Module Plan
 
-Recommended files:
+Current gap: the historical implementation grew as a single-file CLI. P0 splits the
+executable entrypoint and isolates the new daemon lifecycle and doctor check-row modules.
+The deeper command-by-command split should happen before completion generation, when the
+command metadata needs to become stable and reusable.
+
+Implemented P0 file shape:
 
 ```text
 packages/cli/src/index.ts
+packages/cli/src/main.ts
+packages/cli/src/daemon/state.ts
+packages/cli/src/daemon/process.ts
+packages/cli/src/daemon/logs.ts
+packages/cli/src/doctor/checks.ts
+```
+
+Recommended next structural split:
+
+```text
+packages/cli/src/dispatch.ts
+packages/cli/src/args.ts
+packages/cli/src/config.ts
+packages/cli/src/errors.ts
+packages/cli/src/api/client.ts
+packages/cli/src/output/table.ts
+packages/cli/src/output/json.ts
+packages/cli/src/output/errors.ts
+packages/cli/src/sse.ts
 packages/cli/src/commands/init.ts
 packages/cli/src/commands/daemon.ts
+packages/cli/src/commands/doctor.ts
 packages/cli/src/commands/provider.ts
 packages/cli/src/commands/channel.ts
 packages/cli/src/commands/task.ts
 packages/cli/src/commands/run.ts
 packages/cli/src/commands/runs.ts
 packages/cli/src/commands/approvals.ts
+packages/cli/src/commands/policy.ts
+packages/cli/src/commands/external-work.ts
 packages/cli/src/commands/ui.ts
-packages/cli/src/api/client.ts
-packages/cli/src/output/table.ts
-packages/cli/src/output/json.ts
-packages/cli/src/output/errors.ts
-packages/cli/src/sse.ts
-packages/cli/src/config.ts
-packages/cli/src/args.ts
 ```
 
 Avoid a large CLI framework unless argument parsing becomes painful. A small parser is enough for v0.1; add a library later if needed.
@@ -1244,13 +1378,13 @@ Recommendation: start small. The current command set is simple enough to parse d
 
 Question: should `ling-stack daemon start` daemonize in v0.1?
 
-Recommendation: foreground first. Background process management is platform-specific and can wait until desktop packaging or a service manager design exists.
+Recommendation: foreground remains the simplest development path, but background lifecycle is now a required CLI hardening follow-up. Implement it with explicit pid/state/log files first; desktop packaging or service-manager integration can come later.
 
 ### JSON Run Output
 
 Question: should `ling-stack run --json` output final JSON or JSONL events?
 
-Recommendation: JSONL events. Runs are streams, and automation can consume one event per line.
+Recommendation: JSONL events only. Runs are streams, automation can consume one event per line, and non-JSON progress belongs on stderr.
 
 ### Channel and Task Timing
 

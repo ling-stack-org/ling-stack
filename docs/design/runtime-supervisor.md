@@ -125,6 +125,12 @@ Startup rules:
 
 The lock file is a local single-machine guard, not a distributed consensus mechanism.
 
+Daemon process lifecycle state is separate from this runtime lock. `daemon start`,
+`status`, `stop`, `restart`, `logs`, and the P0 doctor checks are specified in
+[Daemon Lifecycle and Doctor P0](daemon-lifecycle-p0.md). Lifecycle commands may signal
+the daemon process, but they must not directly edit work units, runs, approvals, leases,
+or semaphore slots.
+
 ## Package Boundaries
 
 ### `packages/core`

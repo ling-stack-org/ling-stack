@@ -160,6 +160,11 @@ workspace. The supervisor owns active work units, runner attempts, heartbeats, l
 semaphores, cancellation, retry, and startup recovery. The detailed target design lives
 in [Runtime Supervisor](design/runtime-supervisor.md).
 
+Daemon process lifecycle is a separate local operator concern. `daemon start`, `status`,
+`stop`, `restart`, `logs`, and doctor checks may observe or signal the process, but they
+must not directly edit durable work-unit, run, approval, lease, or semaphore state. That
+P0 boundary lives in [Daemon Lifecycle and Doctor P0](design/daemon-lifecycle-p0.md).
+
 ## Future Platform Architecture
 
 The aggressive long-term direction is a platform kernel plus extension host:

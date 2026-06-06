@@ -15,6 +15,8 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [v0.1 detailed design](docs/v0.1-detailed-design.md)
 - [Architecture Decision Records](docs/adr/README.md)
 - [Daemon API](docs/daemon-api.md)
+- [CLI v0.1](docs/design/cli-v0.1.md)
+- [Daemon lifecycle and doctor P0](docs/design/daemon-lifecycle-p0.md)
 - [Provider adapters](docs/provider-adapters.md)
 - [Seedream live smoke](docs/seedream-live-smoke.md)
 - [External work live smoke](docs/external-work-live-smoke.md)
@@ -482,6 +484,8 @@ docs/
   architecture.md
   v0.1-detailed-design.md
   daemon-api.md
+  design/cli-v0.1.md
+  design/daemon-lifecycle-p0.md
   design/provider-presets.md
   design/approval-policy.md
   provider-adapters.md
