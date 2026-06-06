@@ -78,6 +78,7 @@ export function createDaemonServer(
   const context: DaemonContext = {
     config: resolvedConfig,
     runnerRegistry,
+    extensionRegistry,
     storeRegistry,
     activeRuns,
     runtimeSupervisor,

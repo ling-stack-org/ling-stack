@@ -229,6 +229,23 @@ export function parseMcpServerRoute(
   return undefined;
 }
 
+export function parseManagedPluginRoute(
+  pathname: string,
+): { readonly pluginId: string; readonly action?: "enable" | "disable" | "check" | "apply-preset" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "plugins") {
+    return { pluginId: segments[1] };
+  }
+  if (
+    segments.length === 3 &&
+    segments[0] === "plugins" &&
+    (segments[2] === "enable" || segments[2] === "disable" || segments[2] === "check" || segments[2] === "apply-preset")
+  ) {
+    return { pluginId: segments[1], action: segments[2] };
+  }
+  return undefined;
+}
+
 export function parseChannelAttachmentRoute(
   pathname: string,
 ): { readonly attachmentId: string; readonly action?: "content" } | undefined {

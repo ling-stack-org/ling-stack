@@ -2880,6 +2880,137 @@ export interface McpServerToolSyncResponse {
   readonly tools: readonly McpTool[];
 }
 
+export type ManagedPluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
+export type ManagedPluginStatus = "available" | "enabled" | "disabled" | "blocked";
+export type ManagedPluginHealthStatus = "unknown" | "ready" | "failed" | "disabled" | "expired";
+export type ManagedPluginContributionKind =
+  | "mcp-server"
+  | "tool"
+  | "skill-pack"
+  | "runner"
+  | "provider"
+  | "channel-source"
+  | "memory"
+  | "automation"
+  | "ui-feature";
+export type ManagedPluginSideEffectLevel = "none" | "read" | "write" | "write-network" | "external" | "credential" | "deploy";
+export type ManagedPluginDefaultApproval = "allow" | "ask" | "deny";
+
+export interface ManagedPluginSecretRequirement {
+  readonly ref: string;
+  readonly label: string;
+  readonly purpose?: string;
+  readonly required?: boolean;
+}
+
+export interface ManagedPluginApprovalDefault {
+  readonly contributionId: string;
+  readonly decision: ManagedPluginDefaultApproval;
+  readonly reason?: string;
+}
+
+export interface ManagedPluginContributionView {
+  readonly kind: ManagedPluginContributionKind;
+  readonly id: string;
+  readonly label: string;
+  readonly capabilities: readonly string[];
+  readonly sideEffectLevel?: ManagedPluginSideEffectLevel;
+  readonly defaultApproval?: ManagedPluginDefaultApproval;
+  readonly linkedResourceId?: string;
+  readonly linkedResourcePresent?: boolean;
+  readonly enabled: boolean;
+}
+
+export interface ManagedPluginHealthSnapshot {
+  readonly pluginId: string;
+  readonly checkedAt: string;
+  readonly expiresAt: string;
+  readonly status: ManagedPluginHealthStatus;
+  readonly message?: string;
+  readonly details?: unknown;
+}
+
+export interface ManagedPluginEvent {
+  readonly id: string;
+  readonly pluginId: string;
+  readonly type:
+    | "enabled"
+    | "disabled"
+    | "preset_applied"
+    | "checked"
+    | "contribution_linked"
+    | "contribution_disabled";
+  readonly actor: "local-user" | "system";
+  readonly message?: string;
+  readonly data?: unknown;
+  readonly createdAt: string;
+}
+
+export interface ManagedPluginLinkedResource {
+  readonly kind: ManagedPluginContributionKind;
+  readonly id: string;
+  readonly present: boolean;
+  readonly enabled?: boolean;
+  readonly displayName?: string;
+}
+
+export interface ManagedPluginView {
+  readonly id: string;
+  readonly displayName: string;
+  readonly version: string;
+  readonly sourceKind: ManagedPluginSourceKind;
+  readonly status: ManagedPluginStatus;
+  readonly description?: string;
+  readonly homepageUrl?: string;
+  readonly trustSummary: string;
+  readonly contributions: readonly ManagedPluginContributionView[];
+  readonly requiredSecrets?: readonly ManagedPluginSecretRequirement[];
+  readonly defaultApprovals?: readonly ManagedPluginApprovalDefault[];
+  readonly health?: ManagedPluginHealthSnapshot;
+  readonly linkedResources: readonly ManagedPluginLinkedResource[];
+  readonly events?: readonly ManagedPluginEvent[];
+  readonly disabledReason?: string;
+  readonly actions: {
+    readonly canEnable: boolean;
+    readonly canDisable: boolean;
+    readonly canCheck: boolean;
+    readonly canApplyPreset: boolean;
+  };
+}
+
+export interface ManagedPluginListResponse {
+  readonly cwd: string;
+  readonly plugins: readonly ManagedPluginView[];
+}
+
+export interface ManagedPluginDetailResponse {
+  readonly plugin: ManagedPluginView;
+}
+
+export interface ManagedPluginMutationResponse {
+  readonly plugin: ManagedPluginView;
+}
+
+export interface ManagedPluginCheckResponse {
+  readonly plugin: ManagedPluginView;
+  readonly health: ManagedPluginHealthSnapshot;
+}
+
+export interface ManagedPluginApplyPresetRequest {
+  readonly options?: Record<string, unknown>;
+}
+
+export interface ManagedPluginDisableRequest {
+  readonly reason?: string;
+}
+
+export interface ManagedPluginApplyPresetResponse {
+  readonly plugin: ManagedPluginView;
+  readonly linkedMcpServer?: McpServer;
+  readonly statusSnapshot?: McpRuntimeStatusSnapshot;
+  readonly tools: readonly McpTool[];
+}
+
 export type ApprovalActionType =
   | "read"
   | "grep"

@@ -96,6 +96,7 @@ import { useApprovalsDomain } from "../domains/approvals/use-approvals-domain.js
 import { useExternalWorkDomain } from "../domains/external-work/use-external-work-domain.js";
 import { useMediaDomain } from "../domains/media/use-media-domain.js";
 import { useMcpDomain } from "../domains/mcp/use-mcp-domain.js";
+import { usePluginsDomain } from "../domains/plugins/use-plugins-domain.js";
 import { useProvidersDomain } from "../domains/providers/use-providers-domain.js";
 import { useRuntimeDomain } from "../domains/runtime/use-runtime-domain.js";
 import { useRunCommandController } from "../domains/runs/use-run-command-controller.js";
@@ -481,6 +482,26 @@ export function AppShell(): JSX.Element {
     removeMcpServer,
     resetForCwd: resetMcpForCwd,
   } = mcpDomain.actions;
+  const pluginsDomain = usePluginsDomain({
+    cwd: form.cwd.trim(),
+    translate: t,
+    setErrorMessage,
+  });
+  const {
+    plugins,
+    pluginsLoading,
+    pluginBusyId,
+    pluginBusyAction,
+    latestApplyResult: latestPluginApplyResult,
+  } = pluginsDomain.state;
+  const {
+    refreshPlugins,
+    applyPluginPreset,
+    checkPlugin,
+    enablePlugin,
+    disablePlugin,
+    resetForCwd: resetPluginsForCwd,
+  } = pluginsDomain.actions;
   const externalWorkDomain = useExternalWorkDomain({
     cwd: form.cwd.trim(),
     selectedChannelId,
@@ -818,6 +839,7 @@ export function AppShell(): JSX.Element {
       void refreshApprovalPolicy();
       void refreshRuntimeSettings();
       void refreshExternalWorkStatus();
+      void refreshPlugins();
     }
   }, [activeView]);
 
@@ -918,6 +940,7 @@ export function AppShell(): JSX.Element {
     resetTeammatesForCwd();
     resetMediaForCwd();
     resetMcpForCwd();
+    resetPluginsForCwd();
     resetExternalWorkForCwd();
     resetRuntimeForCwd();
     resetSettingsForCwd();
@@ -2488,6 +2511,11 @@ export function AppShell(): JSX.Element {
                 runtimeSettingsForm={runtimeSettingsForm}
                 selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
                 externalWorkStatus={externalWorkStatus}
+                plugins={plugins}
+                pluginsLoading={pluginsLoading}
+                pluginBusyId={pluginBusyId}
+                pluginBusyAction={pluginBusyAction}
+                latestPluginApplyResult={latestPluginApplyResult}
                 isLoading={approvalPolicyLoading}
                 runtimeSettingsLoading={runtimeSettingsLoading}
                 runtimeSettingsAction={runtimeSettingsAction}
@@ -2505,6 +2533,11 @@ export function AppShell(): JSX.Element {
                 onRefreshRuntimeSettings={() => void refreshRuntimeSettings()}
                 onSaveRuntimeSettings={() => void saveRuntimeSettings()}
                 onRefreshExternalWork={() => void refreshExternalWorkStatus()}
+                onRefreshPlugins={() => void refreshPlugins()}
+                onApplyPluginPreset={(pluginId) => void applyPluginPreset(pluginId)}
+                onCheckPlugin={(pluginId) => void checkPlugin(pluginId)}
+                onEnablePlugin={(pluginId) => void enablePlugin(pluginId)}
+                onDisablePlugin={(pluginId) => void disablePlugin(pluginId)}
                 onExternalWorkAction={(action) => void runExternalWorkStatusAction(action)}
                 onConfigureExternalWorkWorkflow={(input) => configureExternalWorkWorkflowAction(input)}
                 onConfigureExternalWorkSecret={(token) => configureExternalWorkSecretAction(token)}
@@ -2520,6 +2553,10 @@ export function AppShell(): JSX.Element {
                     setActiveView("workspace");
                     setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
                   }
+                }}
+                onOpenMcpSettings={() => {
+                  setActiveView("mcp");
+                  setActiveSidebarTarget("mcp");
                 }}
                   />
                 ) : (

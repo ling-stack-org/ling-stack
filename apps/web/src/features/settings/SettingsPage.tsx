@@ -12,6 +12,7 @@ import {
   Play,
   Power,
   PowerOff,
+  Plug,
   RefreshCw,
   Save,
   Settings,
@@ -32,10 +33,14 @@ import type {
   ExternalWorkStatusResponse,
   RunnerListItem,
   WorkspaceRuntimeSettings,
+  ManagedPluginApplyPresetResponse,
+  ManagedPluginView,
 } from "../../types.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
+import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
+import type { PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 
-type SettingsSection = "external-work" | "interface" | "runtime" | "approval-policy" | "skill-library";
+type SettingsSection = "external-work" | "interface" | "runtime" | "approval-policy" | "skill-library" | "plugins";
 
 export function SettingsPage({
   cwd,
@@ -46,6 +51,11 @@ export function SettingsPage({
   runtimeSettingsForm,
   selectedChannel,
   externalWorkStatus,
+  plugins,
+  pluginsLoading,
+  pluginBusyId,
+  pluginBusyAction,
+  latestPluginApplyResult,
   isLoading,
   runtimeSettingsLoading,
   runtimeSettingsAction,
@@ -63,12 +73,18 @@ export function SettingsPage({
   onRefreshRuntimeSettings,
   onSaveRuntimeSettings,
   onRefreshExternalWork,
+  onRefreshPlugins,
+  onApplyPluginPreset,
+  onCheckPlugin,
+  onEnablePlugin,
+  onDisablePlugin,
   onExternalWorkAction,
   onConfigureExternalWorkWorkflow,
   onConfigureExternalWorkSecret,
   onDeleteExternalWorkSecret,
   onOpenExternalWorkRecords,
   onOpenExternalWorkTriage,
+  onOpenMcpSettings,
 }: {
   readonly cwd: string;
   readonly policy: ApprovalPolicy | undefined;
@@ -78,6 +94,11 @@ export function SettingsPage({
   readonly runtimeSettingsForm: RuntimeSettingsFormState;
   readonly selectedChannel: Channel | undefined;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
+  readonly plugins: readonly ManagedPluginView[];
+  readonly pluginsLoading: boolean;
+  readonly pluginBusyId: string;
+  readonly pluginBusyAction: PluginBusyAction | undefined;
+  readonly latestPluginApplyResult?: ManagedPluginApplyPresetResponse;
   readonly isLoading: boolean;
   readonly runtimeSettingsLoading: boolean;
   readonly runtimeSettingsAction: "save" | undefined;
@@ -95,6 +116,11 @@ export function SettingsPage({
   readonly onRefreshRuntimeSettings: () => void;
   readonly onSaveRuntimeSettings: () => void;
   readonly onRefreshExternalWork: () => void;
+  readonly onRefreshPlugins: () => void;
+  readonly onApplyPluginPreset: (pluginId: string) => void;
+  readonly onCheckPlugin: (pluginId: string) => void;
+  readonly onEnablePlugin: (pluginId: string) => void;
+  readonly onDisablePlugin: (pluginId: string) => void;
   readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => void;
   readonly onConfigureExternalWorkWorkflow: (input: {
     readonly sourceKind: "github" | "linear";
@@ -105,6 +131,7 @@ export function SettingsPage({
   readonly onDeleteExternalWorkSecret: () => Promise<void>;
   readonly onOpenExternalWorkRecords: () => void;
   readonly onOpenExternalWorkTriage: () => void;
+  readonly onOpenMcpSettings: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [externalWorkToken, setExternalWorkToken] = useState("");
@@ -198,6 +225,17 @@ export function SettingsPage({
           <span>
             <strong>{t("Skill Library")}</strong>
             <small>{t("Skill definitions and imports")}</small>
+          </span>
+        </button>
+        <button
+          className={activeSection === "plugins" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("plugins")}
+        >
+          <span className="settings-section-icon"><Plug size={16} /></span>
+          <span>
+            <strong>{t("Plugins")}</strong>
+            <small>{t("Managed capabilities")}</small>
           </span>
         </button>
       </nav>
@@ -628,6 +666,22 @@ export function SettingsPage({
       </section>
       ) : null}
       {activeSection === "skill-library" ? <SkillLibrarySettingsPanel cwd={cwd} /> : null}
+      {activeSection === "plugins" ? (
+        <PluginManagerSettingsPanel
+          cwd={cwd}
+          plugins={plugins}
+          isLoading={pluginsLoading}
+          busyPluginId={pluginBusyId}
+          busyAction={pluginBusyAction}
+          latestApplyResult={latestPluginApplyResult}
+          onRefresh={onRefreshPlugins}
+          onApplyPreset={onApplyPluginPreset}
+          onCheck={onCheckPlugin}
+          onEnable={onEnablePlugin}
+          onDisable={onDisablePlugin}
+          onOpenMcpSettings={onOpenMcpSettings}
+        />
+      ) : null}
       </div>
     </div>
   );
