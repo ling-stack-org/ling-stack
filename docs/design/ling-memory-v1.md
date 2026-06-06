@@ -4,6 +4,9 @@ Status: Design direction
 Date: 2026-06-04
 Scope: Scoped automatic recall, multi-agent memory ownership, retrieval provider interfaces, provenance, and promotion workflow
 
+Detailed implementation breakdown:
+[Memory Review Policy Implementation Plan](memory-review-policy-implementation.md).
+
 ## Summary
 
 Ling Memory v1 turns the current memory-scope metadata into a real memory runtime for
@@ -340,6 +343,10 @@ inspectable.
 ## Write And Promotion Flow
 
 Memory should not write every token automatically. Writes should be candidate-based.
+That does not mean every candidate needs a human click before it can help. The default
+product should combine Codex-style background memory/reflection jobs with Ling-specific
+policy gates so low-risk local memory can become useful without turning memory into a
+manual triage burden.
 
 ```text
 source event
@@ -347,7 +354,8 @@ source event
   -> assign scope
   -> attach source refs
   -> mark candidate
-  -> review or auto-accept under narrow policy
+  -> classify by memory review policy
+  -> auto-activate, hold as candidate, route to manual review, or quarantine
   -> active memory
 ```
 
@@ -370,6 +378,81 @@ task/run memory -> channel or workspace memory
 ```
 
 Cross-boundary promotion must preserve source refs and should surface a review step.
+
+## Memory Review Policy
+
+Memory review is a policy classifier, not a blanket manual gate. Ling should support
+three workspace-level modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `conservative` | Most extracted memories stay as candidates until reviewed. |
+| `balanced` | Low-risk same-scope memories can become active; high-impact changes go to review. |
+| `fast` | Same-scope memories auto-activate more often; cross-scope and sensitive changes still require review. |
+
+Default mode should be `balanced`.
+
+The classifier returns one of four outcomes:
+
+| Outcome | Meaning |
+| --- | --- |
+| `auto-active` | Safe enough to enter active recall immediately, with source refs and audit. |
+| `auto-candidate` | Stored as a candidate, visible in memory surfaces, but not default recalled. |
+| `manual-review` | Routed to the promotion inbox or review center before active/shared/persona use. |
+| `quarantine` | Blocked from recall and promotion until explicitly inspected or discarded. |
+
+Suggested default policy:
+
+| Candidate type | Default outcome |
+| --- | --- |
+| User explicitly says "remember this" inside the current scope | `auto-active` unless sensitive or permission-related |
+| Current run files, commands, and test summary | `auto-active` as task/run working memory, preferably with expiry |
+| Teammate private preference from direct chat | `auto-candidate`; `auto-active` only when high-confidence and non-sensitive |
+| Channel-local decision with clear source | `auto-candidate` or channel `auto-active` under `fast` mode |
+| Repeated task/run lesson seen 2-3 times | `auto-candidate`, then policy-assisted promotion |
+| Workspace shared memory | `manual-review` unless the user explicitly confirmed it |
+| Cross-scope promotion | `manual-review` |
+| Teammate persona/profile update | `manual-review` |
+| Conflicting or low-confidence memory | `manual-review` |
+| Private, sensitive, or secret-adjacent content | `manual-review` or `quarantine` depending on sensitivity |
+| Permission, tool, approval, provider, deploy, credential, or external-send inference | `quarantine`; memory must never grant authority |
+
+The promotion inbox should therefore prioritize high-impact review items instead of
+interrupting on every memory candidate. The first Web read model may still list all
+candidate memories so users have one place to inspect, edit, approve, reject, or keep
+them as candidates; manual-review and quarantine decisions should be called out with
+stronger attention. It should focus on:
+
+- workspace shared memory;
+- cross-channel, cross-teammate, or task/run-to-workspace promotion;
+- persona/profile changes;
+- conflicts and low-confidence candidates;
+- private or sensitivity-boundary candidates;
+- any candidate that would otherwise affect default recall outside its source scope.
+
+Manual review should borrow the Codex approval-card interaction pattern:
+
+```text
+inspect source refs
+-> edit title/body/scope/sensitivity
+-> approve, reject, archive, or keep as candidate
+```
+
+But it is not the same as runtime approval. Tool approvals block a side effect before it
+happens. Memory manual review blocks a candidate from becoming active, shared, or
+persona-affecting. It should usually be asynchronous and low-interruption. It should
+only interrupt a current run when the run is about to rely on a memory candidate that is
+not yet active and policy requires explicit confirmation.
+
+Reflection or consolidation jobs may create candidates automatically, but they must not:
+
+- silently write workspace shared memory;
+- silently write active memory;
+- mutate teammate persona or profile;
+- grant tools, approvals, provider access, deploy access, credentials, or external-send
+  permission;
+- access or index secrets;
+- leak private teammate or channel context across scopes.
 
 ## AGENT.md And Persona Memory
 
@@ -401,8 +484,11 @@ GET /memory?cwd=/path/to/workspace&scopeType=channel&ownerId=channel_...
 POST /memory?cwd=/path/to/workspace
 PATCH /memory/:id?cwd=/path/to/workspace
 POST /memory/recall?cwd=/path/to/workspace
-POST /memory/:id/promote?cwd=/path/to/workspace
 GET /memory/used?cwd=/path/to/workspace&runId=run_...
+GET /memory/review-policy?cwd=/path/to/workspace
+PATCH /memory/review-policy?cwd=/path/to/workspace
+GET /memory/promotion-inbox?cwd=/path/to/workspace
+POST /memory/:id/review?cwd=/path/to/workspace
 ```
 
 The API should return source refs and review state. It should not return secret-adjacent
@@ -511,8 +597,13 @@ a specific embedding model or vector database.
 ### Phase 4: Candidate Writes And Promotion
 
 - Extract memory candidates from private chat, channel decisions, and task/run summaries.
-- Add promotion inbox.
-- Add cross-scope promotion flow.
+- Add memory review policy with `conservative`, `balanced`, and `fast` modes.
+- Add promotion inbox that prioritizes high-impact `manual-review` candidates while
+  still allowing the first Web read model to list ordinary candidates for inspection.
+- Add cross-scope promotion flow with source inspection and edit-before-approve.
+- Keep reflection/consolidation jobs candidate-only. They may run the review classifier
+  and record that a candidate was low-risk, but `auto-active` classifications are stored
+  as `auto-candidate` until a user or later policy surface promotes them.
 
 ### Phase 5: Persona Sources
 
@@ -527,7 +618,7 @@ a specific embedding model or vector database.
 | Private memory leaks to another teammate | Scope resolver excludes other teammate owners by default |
 | Channel memory leaks to unrelated work | Channel membership or explicit task assignment required |
 | Vector hit is treated as fact | Used memory includes provenance and high-risk actions require source inspection |
-| Noisy auto-ingestion degrades memory quality | Candidate writes and review state before active memory |
+| Noisy auto-ingestion degrades memory quality | Review policy routes low-risk items to auto-active, normal items to candidates, and high-impact items to manual review |
 | Shared memory gets polluted by one-off facts | Promotion workflow required for shared memory |
 | Persona drift from automatic summaries | Persona updates become profile candidates, not automatic rewrites |
 | Secret-adjacent data gets indexed | Sensitivity filter blocks indexing and recall |

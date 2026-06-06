@@ -102,7 +102,7 @@ grant.
 
 ## Built-In Pack: `gstack-default`
 
-`gstack-default` is a Ling-native template pack inspired by gstack's virtual engineering team model. It borrows the role and workflow shape, not the full gstack runtime instruction files.
+`gstack-default` is a Ling-native template pack inspired by gstack's virtual engineering team model. It borrows the role, workflow, and generic skill taxonomy, not the full gstack runtime instruction files or machine-specific tools.
 
 Default teammate templates:
 
@@ -121,13 +121,36 @@ Default skills:
 - `plan-ceo-review`
 - `plan-eng-review`
 - `plan-design-review`
+- `plan-devex-review`
+- `autoplan`
+- `spec`
+- `design-consultation`
+- `design-shotgun`
+- `design-html`
 - `implement`
 - `investigate`
+- `health`
 - `review`
+- `design-review`
 - `qa`
+- `qa-only`
+- `devex-review`
+- `benchmark`
 - `cso`
+- `landing-report`
+- `setup-deploy`
 - `ship`
+- `land-and-deploy`
+- `canary`
+- `document-generate`
 - `document-release`
+- `retro`
+- `learn`
+
+Runtime-only gstack commands such as `gstack-upgrade`, browser-cookie import,
+gbrain sync/setup, iOS device automation, and other host-specific tools remain outside
+the built-in Ling pack until Ling has first-class capability and approval models for
+those surfaces.
 
 Default workflow:
 

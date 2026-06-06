@@ -1948,6 +1948,112 @@
   -webkit-line-clamp: 2;
 }
 
+.teammate-memory-policy-row select {
+  width: 150px;
+  min-width: 0;
+}
+
+.teammate-memory-review-head,
+.teammate-memory-review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.teammate-memory-review-head {
+  margin-top: 4px;
+}
+
+.teammate-memory-review-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.teammate-memory-review-message {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.teammate-memory-review-list {
+  display: grid;
+  gap: 10px;
+}
+
+.teammate-memory-review-card {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid rgba(33, 38, 42, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.teammate-memory-review-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.teammate-memory-review-card-head span,
+.teammate-memory-review-meta,
+.teammate-memory-edit-form {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.teammate-memory-review-card strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-memory-review-card small,
+.teammate-memory-review-card p,
+.teammate-memory-review-meta span {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.38;
+}
+
+.teammate-memory-review-meta {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.teammate-memory-edit-form {
+  padding: 8px;
+  border: 1px solid rgba(33, 38, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(248, 247, 243, 0.56);
+}
+
+.teammate-memory-edit-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.teammate-memory-edit-form input,
+.teammate-memory-edit-form textarea,
+.teammate-memory-edit-form select {
+  width: 100%;
+}
+
+.teammate-memory-review-actions {
+  justify-content: flex-start;
+}
+
 .teammate-channel-row {
   grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
 }

@@ -16,11 +16,51 @@ export type MemoryReviewState = "candidate" | "active" | "disabled" | "archived"
 
 export type MemorySensitivity = "normal" | "private" | "secret-adjacent";
 
+export type MemoryReviewMode = "conservative" | "balanced" | "fast";
+
+export type MemoryReviewOutcome = "auto-active" | "auto-candidate" | "manual-review" | "quarantine";
+
+export type MemoryReviewConfidence = "low" | "medium" | "high";
+
+export type MemoryCandidateSourceKind =
+  | "manual_user"
+  | "private_chat"
+  | "channel_decision"
+  | "task_run_summary"
+  | "reflection_job"
+  | "persona_source"
+  | "import";
+
+export type MemoryReviewAction = "approve" | "edit_and_approve" | "keep_candidate" | "reject" | "archive" | "quarantine";
+
 export interface MemorySourceRef {
   readonly type: MemorySourceType;
   readonly id: string;
   readonly label?: string;
   readonly url?: string;
+}
+
+export interface MemoryReviewPolicy {
+  readonly workspaceId: string;
+  readonly mode: MemoryReviewMode;
+  readonly autoActiveSameScope: boolean;
+  readonly autoActiveUserExplicit: boolean;
+  readonly requireManualForWorkspace: boolean;
+  readonly requireManualForPersona: boolean;
+  readonly requireManualForCrossScope: boolean;
+  readonly quarantineSecretAdjacent: boolean;
+  readonly updatedAt: string;
+}
+
+export interface MemoryReviewPolicyUpdateInput {
+  readonly workspaceId?: string;
+  readonly mode?: MemoryReviewMode;
+  readonly autoActiveSameScope?: boolean;
+  readonly autoActiveUserExplicit?: boolean;
+  readonly requireManualForWorkspace?: boolean;
+  readonly requireManualForPersona?: boolean;
+  readonly requireManualForCrossScope?: boolean;
+  readonly quarantineSecretAdjacent?: boolean;
 }
 
 export interface MemoryObject {
@@ -41,6 +81,79 @@ export interface MemoryObject {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly lastUsedAt?: string;
+}
+
+export interface MemoryReviewDecision {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly memoryId: string;
+  readonly outcome: MemoryReviewOutcome;
+  readonly mode: MemoryReviewMode;
+  readonly reasonCode: string;
+  readonly reason: string;
+  readonly confidence: MemoryReviewConfidence;
+  readonly requiresManualReview: boolean;
+  readonly quarantineReason?: string;
+  readonly targetReviewState: MemoryReviewState;
+  readonly targetSensitivity: MemorySensitivity;
+  readonly sourceRefs: readonly MemorySourceRef[];
+  readonly decidedBy: "policy" | "local-user" | "system";
+  readonly createdAt: string;
+}
+
+export interface CreateMemoryReviewDecisionInput {
+  readonly id?: string;
+  readonly workspaceId?: string;
+  readonly memoryId: string;
+  readonly outcome: MemoryReviewOutcome;
+  readonly mode: MemoryReviewMode;
+  readonly reasonCode: string;
+  readonly reason: string;
+  readonly confidence: MemoryReviewConfidence;
+  readonly requiresManualReview: boolean;
+  readonly quarantineReason?: string;
+  readonly targetReviewState: MemoryReviewState;
+  readonly targetSensitivity: MemorySensitivity;
+  readonly sourceRefs?: readonly MemorySourceRef[];
+  readonly decidedBy: "policy" | "local-user" | "system";
+}
+
+export interface MemoryReviewActionRecord {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly memoryId: string;
+  readonly action: MemoryReviewAction;
+  readonly previousReviewState: MemoryReviewState;
+  readonly nextReviewState: MemoryReviewState;
+  readonly sourceRefs: readonly MemorySourceRef[];
+  readonly editedMemory?: MemoryObjectUpdateInput;
+  readonly reason?: string;
+  readonly actor: "local-user" | "system";
+  readonly createdAt: string;
+}
+
+export interface ApplyMemoryReviewActionInput {
+  readonly workspaceId?: string;
+  readonly memoryId: string;
+  readonly action: MemoryReviewAction;
+  readonly editedMemory?: MemoryObjectUpdateInput;
+  readonly reason?: string;
+  readonly actor: "local-user" | "system";
+}
+
+export interface ListMemoryPromotionInboxOptions {
+  readonly workspaceId?: string;
+  readonly scopeType?: MemoryScopeType;
+  readonly ownerId?: string;
+  readonly sensitivity?: MemorySensitivity;
+  readonly limit?: number;
+}
+
+export interface MemoryPromotionInboxItem {
+  readonly memory: MemoryObject;
+  readonly decision?: MemoryReviewDecision;
+  readonly sourceSummary: string;
+  readonly recommendedAction: MemoryReviewAction;
 }
 
 export interface CreateMemoryObjectInput {
@@ -204,4 +317,12 @@ export function createMemoryObjectId(): string {
 
 export function createUsedMemoryEventId(): string {
   return `used_memory_${randomUUID().replaceAll("-", "")}`;
+}
+
+export function createMemoryReviewDecisionId(): string {
+  return `memory_review_decision_${randomUUID().replaceAll("-", "")}`;
+}
+
+export function createMemoryReviewActionId(): string {
+  return `memory_review_action_${randomUUID().replaceAll("-", "")}`;
 }

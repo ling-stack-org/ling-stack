@@ -453,6 +453,75 @@ Supported scope kinds:
 channel-brief, channel-decisions, private-chat-summary, private-notes
 ```
 
+### Ling Memory
+
+```http
+GET /memory?cwd=/path/to/project
+POST /memory?cwd=/path/to/project
+PATCH /memory/:id?cwd=/path/to/project
+GET /memory/consolidation-jobs?cwd=/path/to/project
+POST /memory/consolidation-jobs?cwd=/path/to/project
+POST /memory/recall?cwd=/path/to/project
+GET /memory/used?cwd=/path/to/project
+GET /memory/review-policy?cwd=/path/to/project
+PATCH /memory/review-policy?cwd=/path/to/project
+GET /memory/promotion-inbox?cwd=/path/to/project
+POST /memory/:id/review?cwd=/path/to/project
+```
+
+Manual memory created through `POST /memory` may still default to active. Extracted
+or reflected memory should create candidates and then use the review policy and
+promotion inbox before active/shared/persona recall.
+
+`POST /memory/consolidation-jobs` is an explicit trigger, not an automatic daemon
+startup scheduler. It creates a durable job record, runs the memory review classifier,
+creates a candidate memory, records the review decision, and returns the created
+candidate. Even if the classifier would otherwise return `auto-active`, consolidation
+jobs store the output as `auto-candidate` with `reasonCode:
+"consolidation_candidate_only"`.
+
+```json
+{
+  "kind": "task_run_lesson",
+  "sourceScopeType": "channel",
+  "confidence": "high",
+  "candidate": {
+    "scopeType": "channel",
+    "ownerId": "channel_...",
+    "title": "Consolidated run lesson",
+    "body": "When Model Workbench width regresses, check the workspace frame before editing cards.",
+    "tags": ["model-workbench"],
+    "sourceRefs": [
+      { "type": "run-event", "id": "run_event_...", "label": "Run succeeded" }
+    ]
+  }
+}
+```
+
+Review policy modes are `conservative`, `balanced`, and `fast`; the default is
+`balanced`. Candidate and disabled memories are not returned by default recall.
+`POST /memory/:id/review` accepts actions:
+
+```text
+approve, edit_and_approve, keep_candidate, reject, archive, quarantine
+```
+
+For `edit_and_approve`, pass changed memory fields under `editedMemory`:
+
+```json
+{
+  "action": "edit_and_approve",
+  "editedMemory": {
+    "title": "Provider routing order",
+    "body": "Provider routing resolves teammate, explicit run, channel default, then workspace selected.",
+    "scopeType": "workspace",
+    "ownerId": "workspace_default",
+    "sensitivity": "normal"
+  },
+  "reason": "Stable workspace rule confirmed by user."
+}
+```
+
 ### Private Thread And Messages
 
 ```http

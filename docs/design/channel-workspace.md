@@ -1789,6 +1789,11 @@ Current MVP implementation status:
   current channel, progress is bound to current-channel work, run IDs and raw audit
   payloads stay out of the default channel detail UI, and run actions try to resolve back
   to the linked task inside the channel before falling back to the run page,
+- v1.25 now refines the attention/progress popover with a Codex-inspired information
+  hierarchy: available environment context first, compact progress rows second, attention
+  counts and top actionable items third. It borrows Codex's glanceable floating status
+  model without copying its single-agent repo assumptions, dark panel styling, or raw
+  execution detail surface,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.
@@ -2209,6 +2214,18 @@ Current MVP implementation status:
   approval, file, runtime, and lineage evidence.
 - [ ] Add targeted browser checks for left drawer stability, composer width consistency,
   centered empty states, folded evidence, and Model Workbench duplicate-column removal.
+
+### Phase 33: Codex-Inspired Attention Popover
+
+- [x] Define v1.25 attention/progress popover refinement in
+  `docs/design/channel-workspace-v1.25.md`.
+- [ ] Add context rows above progress using only existing channel/workspace state.
+- [ ] Replace card-like progress preview with compact status rows.
+- [ ] Restyle top attention items as lightweight rows with one status pill.
+- [ ] Keep branch/change/commit-push state optional until a real workspace status source
+  exists.
+- [ ] Add targeted browser checks for desktop, mobile, drawer-open, no-current-work, and
+  Chinese-label popover states.
 
 ## Validation Plan
 

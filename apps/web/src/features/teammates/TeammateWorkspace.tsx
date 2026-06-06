@@ -36,7 +36,9 @@ import {
   createTeammatePersonaDraft,
   deleteAttachment,
   deleteTeammateAvatar,
+  getMemoryReviewPolicy,
   listMemoryObjects,
+  listMemoryPromotionInbox,
   listSkills,
   listTeammateActivity,
   listTeammateChannels,
@@ -53,7 +55,9 @@ import {
   replaceTeammateChannels,
   replaceTeammateMcpBindings,
   replaceTeammateSkills,
+  reviewMemory,
   streamTeammateDirectMessage,
+  updateMemoryReviewPolicy,
   uploadTeammateAvatar,
   uploadTeammatePrivateAttachment,
 } from "../../api.js";
@@ -75,6 +79,10 @@ import type {
   Channel,
   EffectiveTeammateSkill,
   MemoryObject,
+  MemoryPromotionInboxItem,
+  MemoryReviewAction,
+  MemoryReviewMode,
+  MemoryReviewPolicy,
   McpServer,
   McpTool,
   ProviderPreset,
@@ -135,6 +143,12 @@ interface PersonaImportForm {
   readonly content: string;
 }
 
+interface MemoryReviewEditForm {
+  readonly title: string;
+  readonly body: string;
+  readonly sensitivity: MemoryObject["sensitivity"];
+}
+
 interface TeammateSkillRowModel {
   readonly id: string;
   readonly skill: SkillDefinition | undefined;
@@ -189,6 +203,13 @@ export function TeammateWorkspace({
   const [mcpBindings, setMcpBindings] = useState<readonly TeammateMcpBinding[]>([]);
   const [memoryScopes, setMemoryScopes] = useState<readonly TeammateMemoryScope[]>([]);
   const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
+  const [memoryPromotionInbox, setMemoryPromotionInbox] = useState<readonly MemoryPromotionInboxItem[]>([]);
+  const [memoryReviewPolicy, setMemoryReviewPolicy] = useState<MemoryReviewPolicy | undefined>();
+  const [memoryReviewingId, setMemoryReviewingId] = useState("");
+  const [memoryReviewMessage, setMemoryReviewMessage] = useState("");
+  const [memoryPolicySaving, setMemoryPolicySaving] = useState(false);
+  const [memoryEditId, setMemoryEditId] = useState("");
+  const [memoryEditForm, setMemoryEditForm] = useState<MemoryReviewEditForm>({ title: "", body: "", sensitivity: "normal" });
   const [usedMemoryEvents, setUsedMemoryEvents] = useState<readonly UsedMemoryEvent[]>([]);
   const [tasks, setTasks] = useState<readonly Task[]>([]);
   const [activityItems, setActivityItems] = useState<readonly TeammateActivityItem[]>([]);
@@ -305,7 +326,7 @@ export function TeammateWorkspace({
     { id: "permissions", label: t("Permissions") },
     { id: "channels", label: t("Channels"), count: memberships.length },
     { id: "skills", label: t("Skills"), count: enabledSkillCount },
-    { id: "memory", label: t("Memory"), count: memoryScopes.length },
+    { id: "memory", label: t("Memory"), count: memoryPromotionInbox.length || memoryScopes.length },
     { id: "mcp", label: t("MCP") },
     { id: "danger", label: t("Danger zone"), danger: true },
   ];
@@ -411,6 +432,8 @@ export function TeammateWorkspace({
         mcpBindingsResponse,
         memoryResponse,
         memoryObjectsResponse,
+        memoryReviewPolicyResponse,
+        memoryPromotionInboxResponse,
         usedMemoryResponse,
         taskResponse,
         activityResponse,
@@ -425,6 +448,8 @@ export function TeammateWorkspace({
         listTeammateMcpBindings(workspaceCwd, teammate.id),
         listTeammateMemoryScopes(workspaceCwd, teammate.id),
         listMemoryObjects(workspaceCwd),
+        getMemoryReviewPolicy(workspaceCwd),
+        listMemoryPromotionInbox(workspaceCwd),
         listUsedMemoryEvents(workspaceCwd, { teammateId: teammate.id, limit: 100 }),
         listTeammateTasks(workspaceCwd, teammate.id),
         listTeammateActivity(workspaceCwd, teammate.id),
@@ -441,6 +466,8 @@ export function TeammateWorkspace({
       setMcpBindings(mcpBindingsResponse.bindings);
       setMemoryScopes(memoryResponse.scopes);
       setMemoryObjects(memoryObjectsResponse.memories);
+      setMemoryReviewPolicy(memoryReviewPolicyResponse.policy);
+      setMemoryPromotionInbox(memoryPromotionInboxResponse.items);
       setUsedMemoryEvents(usedMemoryResponse.events);
       setTasks(taskResponse.tasks);
       setActivityItems(activityResponse.items);
@@ -499,18 +526,105 @@ export function TeammateWorkspace({
           }
         }
       });
-      const [activityResponse, usedMemoryResponse, memoryObjectsResponse] = await Promise.all([
+      const [activityResponse, usedMemoryResponse, memoryObjectsResponse, memoryReviewPolicyResponse, memoryPromotionInboxResponse] = await Promise.all([
         listTeammateActivity(cwd.trim(), teammate.id),
         listUsedMemoryEvents(cwd.trim(), { teammateId: teammate.id, limit: 100 }),
         listMemoryObjects(cwd.trim()),
+        getMemoryReviewPolicy(cwd.trim()),
+        listMemoryPromotionInbox(cwd.trim()),
       ]);
       setActivityItems(activityResponse.items);
       setUsedMemoryEvents(usedMemoryResponse.events);
       setMemoryObjects(memoryObjectsResponse.memories);
+      setMemoryReviewPolicy(memoryReviewPolicyResponse.policy);
+      setMemoryPromotionInbox(memoryPromotionInboxResponse.items);
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
       setSending(false);
+    }
+  }
+
+  async function refreshMemoryReviewData(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      return;
+    }
+    const [memoryObjectsResponse, memoryReviewPolicyResponse, memoryPromotionInboxResponse] = await Promise.all([
+      listMemoryObjects(workspaceCwd),
+      getMemoryReviewPolicy(workspaceCwd),
+      listMemoryPromotionInbox(workspaceCwd),
+    ]);
+    setMemoryObjects(memoryObjectsResponse.memories);
+    setMemoryReviewPolicy(memoryReviewPolicyResponse.policy);
+    setMemoryPromotionInbox(memoryPromotionInboxResponse.items);
+  }
+
+  async function changeMemoryReviewMode(mode: MemoryReviewMode): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || memoryPolicySaving || memoryReviewPolicy?.mode === mode) {
+      return;
+    }
+    setMemoryPolicySaving(true);
+    try {
+      setWorkspaceError("");
+      setMemoryReviewMessage("");
+      const response = await updateMemoryReviewPolicy(workspaceCwd, { mode });
+      setMemoryReviewPolicy(response.policy);
+      setMemoryReviewMessage(t("Memory review mode updated"));
+      await refreshMemoryReviewData();
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMemoryPolicySaving(false);
+    }
+  }
+
+  function startMemoryEdit(item: MemoryPromotionInboxItem): void {
+    setMemoryEditId(item.memory.id);
+    setMemoryEditForm({
+      title: item.memory.title,
+      body: item.memory.body,
+      sensitivity: item.memory.sensitivity,
+    });
+  }
+
+  async function applyMemoryReview(item: MemoryPromotionInboxItem, action: MemoryReviewAction): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || memoryReviewingId) {
+      return;
+    }
+    setMemoryReviewingId(item.memory.id);
+    try {
+      setWorkspaceError("");
+      setMemoryReviewMessage("");
+      await reviewMemory(
+        workspaceCwd,
+        item.memory.id,
+        action === "edit_and_approve"
+          ? {
+            action,
+            editedMemory: {
+              title: memoryEditForm.title.trim() || item.memory.title,
+              body: memoryEditForm.body.trim() || item.memory.body,
+              sensitivity: memoryEditForm.sensitivity,
+            },
+            reason: "Reviewed in teammate memory tab.",
+          }
+          : {
+            action,
+            reason: "Reviewed in teammate memory tab.",
+          },
+      );
+      if (action !== "keep_candidate") {
+        setMemoryEditId((current) => current === item.memory.id ? "" : current);
+      }
+      await refreshMemoryReviewData();
+      setMemoryReviewMessage(t(memoryReviewActionMessage(action)));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMemoryReviewingId("");
     }
   }
 
@@ -1822,7 +1936,7 @@ export function TeammateWorkspace({
               <Bot size={16} />
               <h2>{t("Memory")}</h2>
             </span>
-            <small>{memoryScopes.length}</small>
+            <small>{memoryPromotionInbox.length ? `${memoryPromotionInbox.length} ${t("Review")}` : `${memoryScopes.length}`}</small>
           </div>
           <article className="teammate-data-row">
             <span>
@@ -1831,6 +1945,112 @@ export function TeammateWorkspace({
             </span>
             <StatusBadge status="optional" />
           </article>
+          <article className="teammate-data-row teammate-memory-policy-row">
+            <span>
+              <strong>{t("Memory review mode")}</strong>
+              <small>{t(memoryReviewModeDescription(memoryReviewPolicy?.mode ?? "balanced"))}</small>
+            </span>
+            <select
+              aria-label={t("Memory review mode")}
+              value={memoryReviewPolicy?.mode ?? "balanced"}
+              onChange={(event) => void changeMemoryReviewMode(event.currentTarget.value as MemoryReviewMode)}
+              disabled={loading || memoryPolicySaving}
+            >
+              <option value="conservative">{t("Conservative")}</option>
+              <option value="balanced">{t("Balanced")}</option>
+              <option value="fast">{t("Fast")}</option>
+            </select>
+          </article>
+          <div className="teammate-memory-review-head">
+            <span>
+              <ShieldCheck size={15} />
+              <strong>{t("Promotion inbox")}</strong>
+            </span>
+            <button className="secondary-button compact-button" type="button" onClick={() => void refreshMemoryReviewData()} disabled={loading || Boolean(memoryReviewingId)}>
+              <RefreshCw size={14} />
+              {t("Refresh")}
+            </button>
+          </div>
+          {memoryReviewMessage ? <small className="teammate-memory-review-message">{memoryReviewMessage}</small> : null}
+          {memoryPromotionInbox.length === 0 ? (
+            <div className="client-empty-state teammate-empty compact">
+              <span>{t("No memory candidates need review")}</span>
+            </div>
+          ) : (
+            <div className="teammate-memory-review-list">
+              {memoryPromotionInbox.map((item) => {
+                const editing = memoryEditId === item.memory.id;
+                const busy = memoryReviewingId === item.memory.id;
+                return (
+                  <article key={item.memory.id} className="teammate-memory-review-card">
+                    <div className="teammate-memory-review-card-head">
+                      <span>
+                        <strong>{item.memory.title}</strong>
+                        <small>{item.memory.scopeType}:{memoryOwnerLabel(item.memory, channelsById, teammate, t)}</small>
+                      </span>
+                      <StatusBadge status={item.memory.reviewState === "candidate" ? "pending" : item.memory.reviewState} />
+                    </div>
+                    <p>{truncateMemoryBody(item.memory.body)}</p>
+                    <div className="teammate-memory-review-meta">
+                      <span>{t("Source")}: {item.sourceSummary}</span>
+                      <span>{t("Sensitivity")}: {item.memory.sensitivity}</span>
+                      <span>{t("Action")}: {item.recommendedAction}</span>
+                      {item.decision ? <span>{t("Reason")}: {item.decision.reason}</span> : null}
+                    </div>
+                    {editing ? (
+                      <div className="teammate-memory-edit-form">
+                        <label>
+                          {t("Title")}
+                          <input value={memoryEditForm.title} onChange={(event) => setMemoryEditForm((current) => ({ ...current, title: event.currentTarget.value }))} />
+                        </label>
+                        <label>
+                          {t("Body")}
+                          <textarea value={memoryEditForm.body} rows={4} onChange={(event) => setMemoryEditForm((current) => ({ ...current, body: event.currentTarget.value }))} />
+                        </label>
+                        <label>
+                          {t("Sensitivity")}
+                          <select value={memoryEditForm.sensitivity} onChange={(event) => setMemoryEditForm((current) => ({ ...current, sensitivity: event.currentTarget.value as MemoryObject["sensitivity"] }))}>
+                            <option value="normal">{t("normal")}</option>
+                            <option value="private">{t("private")}</option>
+                            <option value="secret-adjacent">{t("secret-adjacent")}</option>
+                          </select>
+                        </label>
+                      </div>
+                    ) : null}
+                    <div className="teammate-memory-review-actions">
+                      {editing ? (
+                        <button className="primary-button compact-button" type="button" onClick={() => void applyMemoryReview(item, "edit_and_approve")} disabled={busy}>
+                          {busy ? <Loader2 className="spin" size={14} /> : <Save size={14} />}
+                          {t("Save and approve")}
+                        </button>
+                      ) : (
+                        <button className="primary-button compact-button" type="button" onClick={() => void applyMemoryReview(item, "approve")} disabled={busy}>
+                          {busy ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                          {t("Approve")}
+                        </button>
+                      )}
+                      <button className="secondary-button compact-button" type="button" onClick={() => editing ? setMemoryEditId("") : startMemoryEdit(item)} disabled={busy}>
+                        {editing ? <X size={14} /> : <Settings size={14} />}
+                        {editing ? t("Cancel edit") : t("Edit")}
+                      </button>
+                      <button className="secondary-button compact-button" type="button" onClick={() => void applyMemoryReview(item, "keep_candidate")} disabled={busy}>
+                        <RefreshCw size={14} />
+                        {t("Keep candidate")}
+                      </button>
+                      <button className="secondary-button danger compact-button" type="button" onClick={() => void applyMemoryReview(item, "reject")} disabled={busy}>
+                        <Trash2 size={14} />
+                        {t("Reject")}
+                      </button>
+                      <button className="secondary-button danger compact-button" type="button" onClick={() => void applyMemoryReview(item, "quarantine")} disabled={busy}>
+                        <ShieldCheck size={14} />
+                        {t("Quarantine")}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
           {memoryScopes.length === 0 ? (
             <div className="client-empty-state teammate-empty">
               <Bot size={18} />
@@ -2429,6 +2649,52 @@ function mcpToolEffectLabel(sideEffectLevel: McpTool["sideEffectLevel"], t: (key
     return t("Deploy");
   }
   return sideEffectLevel;
+}
+
+function memoryOwnerLabel(memory: MemoryObject, channelsById: ReadonlyMap<string, Channel>, teammate: AiTeammate, t: Translate): string {
+  if (memory.scopeType === "channel") {
+    return channelsById.get(memory.ownerId)?.name ?? memory.ownerId;
+  }
+  if (memory.scopeType === "teammate" && memory.ownerId === teammate.id) {
+    return teammate.displayName;
+  }
+  if (memory.scopeType === "workspace") {
+    return t("Workspace");
+  }
+  return memory.ownerId;
+}
+
+function truncateMemoryBody(value: string, limit = 220): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > limit ? `${normalized.slice(0, limit - 3)}...` : normalized;
+}
+
+function memoryReviewModeDescription(mode: MemoryReviewMode): string {
+  switch (mode) {
+    case "conservative":
+      return "Most extracted memories stay candidates until reviewed.";
+    case "balanced":
+      return "Low-risk same-scope memories can become active; high-impact items still need review.";
+    case "fast":
+      return "Same-scope memories auto-activate more often; cross-scope and sensitive items still need review.";
+  }
+}
+
+function memoryReviewActionMessage(action: MemoryReviewAction): string {
+  switch (action) {
+    case "approve":
+      return "Memory approved";
+    case "edit_and_approve":
+      return "Memory edited and approved";
+    case "keep_candidate":
+      return "Memory kept as candidate";
+    case "reject":
+      return "Memory rejected";
+    case "archive":
+      return "Memory archived";
+    case "quarantine":
+      return "Memory quarantined";
+  }
 }
 
 function normalizeManualSkillId(value: string): string {

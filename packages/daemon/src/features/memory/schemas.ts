@@ -1,6 +1,14 @@
 import type {
+  ApplyMemoryReviewActionInput,
+  MemoryCandidateSourceKind,
+  MemoryConsolidationJobKind,
+  MemoryConsolidationJobStatus,
   MemoryObjectUpdateInput,
   MemoryRecallIntent,
+  MemoryReviewAction,
+  MemoryReviewConfidence,
+  MemoryReviewMode,
+  MemoryReviewPolicyUpdateInput,
   MemoryReviewState,
   MemoryScopeType,
   MemorySensitivity,
@@ -17,6 +25,25 @@ import {
   readStringAllowEmpty,
   removeUndefined,
 } from "../../shared/validation.js";
+
+export interface ParsedMemoryConsolidationJobRequest {
+  readonly kind: MemoryConsolidationJobKind;
+  readonly sourceKind?: MemoryCandidateSourceKind;
+  readonly sourceScopeType?: MemoryScopeType;
+  readonly crossesScopeBoundary?: boolean;
+  readonly userExplicitRemember?: boolean;
+  readonly confidence?: MemoryReviewConfidence;
+  readonly candidate: {
+    readonly scopeType: MemoryScopeType;
+    readonly ownerId: string;
+    readonly title: string;
+    readonly body: string;
+    readonly tags?: readonly string[];
+    readonly sourceRefs?: readonly MemorySourceRef[];
+    readonly sensitivity?: MemorySensitivity;
+    readonly createdBy?: string;
+  };
+}
 
 export function parseCreateMemoryObjectInput(value: unknown): {
   readonly scopeType: MemoryScopeType;
@@ -53,6 +80,36 @@ export function parseCreateMemoryObjectInput(value: unknown): {
   return input;
 }
 
+export function parseCreateMemoryConsolidationJobRequest(value: unknown): ParsedMemoryConsolidationJobRequest {
+  if (!isRecord(value)) {
+    throw new Error("Memory consolidation job request must be a JSON object");
+  }
+  const candidateValue = value.candidate;
+  if (!isRecord(candidateValue)) {
+    throw new Error("candidate must be a JSON object");
+  }
+  const candidate = {
+    scopeType: readMemoryScopeType(candidateValue, "scopeType"),
+    ownerId: readString(candidateValue, "ownerId"),
+    title: readString(candidateValue, "title"),
+    body: readString(candidateValue, "body"),
+    tags: readOptionalStringArray(candidateValue, "tags"),
+    sourceRefs: readOptionalMemorySourceRefs(candidateValue, "sourceRefs"),
+    sensitivity: readOptionalMemorySensitivity(candidateValue, "sensitivity"),
+    createdBy: readOptionalString(candidateValue, "createdBy"),
+  };
+  validateMemoryInput(candidate);
+  return removeUndefined({
+    kind: readMemoryConsolidationJobKind(value, "kind"),
+    sourceKind: readOptionalMemoryCandidateSourceKind(value, "sourceKind"),
+    sourceScopeType: readOptionalMemoryScopeType(value, "sourceScopeType"),
+    crossesScopeBoundary: readOptionalBoolean(value, "crossesScopeBoundary"),
+    userExplicitRemember: readOptionalBoolean(value, "userExplicitRemember"),
+    confidence: readOptionalMemoryReviewConfidence(value, "confidence"),
+    candidate,
+  });
+}
+
 export function parseMemoryObjectUpdateInput(value: unknown): MemoryObjectUpdateInput {
   if (!isRecord(value)) {
     throw new Error("Memory update must be a JSON object");
@@ -74,6 +131,39 @@ export function parseMemoryObjectUpdateInput(value: unknown): MemoryObjectUpdate
   };
   validateMemoryInput(input);
   return input;
+}
+
+export function parseMemoryReviewPolicyUpdateInput(value: unknown): Omit<MemoryReviewPolicyUpdateInput, "workspaceId"> {
+  if (!isRecord(value)) {
+    throw new Error("Memory review policy update must be a JSON object");
+  }
+  return removeUndefined({
+    mode: readOptionalMemoryReviewMode(value, "mode"),
+    autoActiveSameScope: readOptionalBoolean(value, "autoActiveSameScope"),
+    autoActiveUserExplicit: readOptionalBoolean(value, "autoActiveUserExplicit"),
+    requireManualForWorkspace: readOptionalBoolean(value, "requireManualForWorkspace"),
+    requireManualForPersona: readOptionalBoolean(value, "requireManualForPersona"),
+    requireManualForCrossScope: readOptionalBoolean(value, "requireManualForCrossScope"),
+    quarantineSecretAdjacent: readOptionalBoolean(value, "quarantineSecretAdjacent"),
+  });
+}
+
+export function parseApplyMemoryReviewActionInput(memoryId: string, value: unknown): ApplyMemoryReviewActionInput {
+  if (!isRecord(value)) {
+    throw new Error("Memory review action must be a JSON object");
+  }
+  const action = readMemoryReviewAction(value, "action");
+  const editedValue = value.editedMemory;
+  if (action === "edit_and_approve" && editedValue === undefined) {
+    throw new Error("editedMemory is required for edit_and_approve");
+  }
+  return removeUndefined({
+    memoryId,
+    action,
+    editedMemory: editedValue === undefined ? undefined : parseMemoryObjectUpdateInput(editedValue),
+    reason: readOptionalString(value, "reason"),
+    actor: readMemoryReviewActionActor(value, "actor"),
+  });
 }
 
 export function parseMemoryRecallRequest(value: unknown): {
@@ -134,6 +224,22 @@ export function readOptionalMemorySensitivityQuery(url: URL): MemorySensitivity 
   return value;
 }
 
+export function readOptionalMemoryConsolidationJobKindQuery(url: URL): MemoryConsolidationJobKind | undefined {
+  const value = url.searchParams.get("kind");
+  return value === null ? undefined : requireMemoryConsolidationJobKind(value, "kind");
+}
+
+export function readOptionalMemoryConsolidationJobStatusQuery(url: URL): MemoryConsolidationJobStatus | undefined {
+  const value = url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (value !== "queued" && value !== "running" && value !== "succeeded" && value !== "failed" && value !== "cancelled") {
+    throw new Error("status must be one of: queued, running, succeeded, failed, cancelled");
+  }
+  return value;
+}
+
 function readMemoryScopeType(record: Record<string, unknown>, key: string): MemoryScopeType {
   return requireMemoryScopeType(readString(record, key), key);
 }
@@ -150,6 +256,36 @@ function requireMemoryScopeType(value: string, key: string): MemoryScopeType {
   return value;
 }
 
+function readMemoryConsolidationJobKind(record: Record<string, unknown>, key: string): MemoryConsolidationJobKind {
+  return requireMemoryConsolidationJobKind(readString(record, key), key);
+}
+
+function requireMemoryConsolidationJobKind(value: string, key: string): MemoryConsolidationJobKind {
+  if (value !== "private_chat_summary" && value !== "channel_decision_summary" && value !== "task_run_lesson" && value !== "workspace_consolidation") {
+    throw new Error(`${key} must be one of: private_chat_summary, channel_decision_summary, task_run_lesson, workspace_consolidation`);
+  }
+  return value;
+}
+
+function readOptionalMemoryCandidateSourceKind(record: Record<string, unknown>, key: string): MemoryCandidateSourceKind | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    value !== "manual_user" &&
+    value !== "private_chat" &&
+    value !== "channel_decision" &&
+    value !== "task_run_summary" &&
+    value !== "reflection_job" &&
+    value !== "persona_source" &&
+    value !== "import"
+  ) {
+    throw new Error(`${key} must be one of: manual_user, private_chat, channel_decision, task_run_summary, reflection_job, persona_source, import`);
+  }
+  return value;
+}
+
 function readOptionalMemoryReviewState(record: Record<string, unknown>, key: string): MemoryReviewState | undefined {
   const value = readOptionalString(record, key);
   if (value === undefined) {
@@ -157,6 +293,44 @@ function readOptionalMemoryReviewState(record: Record<string, unknown>, key: str
   }
   if (value !== "candidate" && value !== "active" && value !== "disabled" && value !== "archived" && value !== "rejected") {
     throw new Error(`${key} must be one of: candidate, active, disabled, archived, rejected`);
+  }
+  return value;
+}
+
+function readOptionalMemoryReviewConfidence(record: Record<string, unknown>, key: string): MemoryReviewConfidence | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "low" && value !== "medium" && value !== "high") {
+    throw new Error(`${key} must be one of: low, medium, high`);
+  }
+  return value;
+}
+
+function readOptionalMemoryReviewMode(record: Record<string, unknown>, key: string): MemoryReviewMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "conservative" && value !== "balanced" && value !== "fast") {
+    throw new Error(`${key} must be one of: conservative, balanced, fast`);
+  }
+  return value;
+}
+
+function readMemoryReviewAction(record: Record<string, unknown>, key: string): MemoryReviewAction {
+  const value = readString(record, key);
+  if (value !== "approve" && value !== "edit_and_approve" && value !== "keep_candidate" && value !== "reject" && value !== "archive" && value !== "quarantine") {
+    throw new Error(`${key} must be one of: approve, edit_and_approve, keep_candidate, reject, archive, quarantine`);
+  }
+  return value;
+}
+
+function readMemoryReviewActionActor(record: Record<string, unknown>, key: string): "local-user" | "system" {
+  const value = readOptionalString(record, key) ?? "local-user";
+  if (value !== "local-user" && value !== "system") {
+    throw new Error(`${key} must be one of: local-user, system`);
   }
   return value;
 }

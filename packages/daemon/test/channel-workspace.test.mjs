@@ -1515,6 +1515,179 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
   }
 });
 
+test("memory review policy exposes promotion inbox and gates candidate recall", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-review-policy-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+
+    const defaultPolicy = await getJson(`${daemon.url}/memory/review-policy?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(defaultPolicy.policy.mode, "balanced");
+    assert.equal(defaultPolicy.policy.requireManualForWorkspace, true);
+
+    const patchedPolicy = await patchJson(`${daemon.url}/memory/review-policy?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "conservative",
+      autoActiveSameScope: false,
+    });
+    assert.equal(patchedPolicy.policy.mode, "conservative");
+    assert.equal(patchedPolicy.policy.autoActiveSameScope, false);
+
+    const candidate = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "channel",
+      ownerId: channel.id,
+      title: "Review gated memory",
+      body: "Review gated memory should only be recalled after approval.",
+      reviewState: "candidate",
+      sourceRefs: [{ type: "run-event", id: "run_event_1", label: "Reflection job" }],
+    })).memory;
+
+    const blockedRecall = await postJson(`${daemon.url}/memory/recall?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      intent: "channel-reply",
+      query: "review gated memory",
+    });
+    assert.equal(blockedRecall.memories.some((item) => item.memory.id === candidate.id), false);
+
+    const inbox = await getJson(`${daemon.url}/memory/promotion-inbox?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(inbox.items.some((item) => item.memory.id === candidate.id), true);
+    const inboxItem = inbox.items.find((item) => item.memory.id === candidate.id);
+    assert.equal(inboxItem.recommendedAction, "approve");
+    assert.match(inboxItem.sourceSummary, /run-event:Reflection job/);
+
+    const approved = await postJson(`${daemon.url}/memory/${encodeURIComponent(candidate.id)}/review?cwd=${encodeURIComponent(cwd)}`, {
+      action: "approve",
+      reason: "Verified source event.",
+    });
+    assert.equal(approved.memory.reviewState, "active");
+    assert.equal(approved.memory.enabled, true);
+    assert.equal(approved.action.previousReviewState, "candidate");
+    assert.equal(approved.action.nextReviewState, "active");
+
+    const approvedRecall = await postJson(`${daemon.url}/memory/recall?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      intent: "channel-reply",
+      query: "review gated memory",
+    });
+    assert.equal(approvedRecall.memories.some((item) => item.memory.id === candidate.id), true);
+
+    const rejectedCandidate = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "channel",
+      ownerId: channel.id,
+      title: "Rejected candidate memory",
+      body: "Rejected candidate memory should never be recalled.",
+      reviewState: "candidate",
+    })).memory;
+    const rejected = await postJson(`${daemon.url}/memory/${encodeURIComponent(rejectedCandidate.id)}/review?cwd=${encodeURIComponent(cwd)}`, {
+      action: "reject",
+      reason: "Not durable enough.",
+    });
+    assert.equal(rejected.memory.reviewState, "rejected");
+    assert.equal(rejected.memory.enabled, false);
+
+    const rejectedRecall = await postJson(`${daemon.url}/memory/recall?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      intent: "channel-reply",
+      query: "rejected candidate memory",
+    });
+    assert.equal(rejectedRecall.memories.some((item) => item.memory.id === rejectedCandidate.id), false);
+
+    const editableCandidate = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "channel",
+      ownerId: channel.id,
+      title: "Draft edited candidate",
+      body: "Draft edited candidate should use reviewed wording.",
+      reviewState: "candidate",
+      sourceRefs: [{ type: "message", id: "message_memory_review_1", label: "User memory request" }],
+    })).memory;
+    const edited = await postJson(`${daemon.url}/memory/${encodeURIComponent(editableCandidate.id)}/review?cwd=${encodeURIComponent(cwd)}`, {
+      action: "edit_and_approve",
+      editedMemory: {
+        title: "Approved edited memory",
+        body: "Approved edited memory should be recalled after review.",
+        sensitivity: "normal",
+      },
+      reason: "Edited wording before activation.",
+    });
+    assert.equal(edited.memory.reviewState, "active");
+    assert.equal(edited.memory.title, "Approved edited memory");
+    assert.equal(edited.action.nextReviewState, "active");
+    assert.equal(edited.action.sourceRefs.some((ref) => ref.id === "message_memory_review_1"), true);
+
+    const quarantineCandidate = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "channel",
+      ownerId: channel.id,
+      title: "Quarantine candidate memory",
+      body: "Quarantine candidate memory says grant provider access.",
+      reviewState: "candidate",
+    })).memory;
+    const quarantined = await postJson(`${daemon.url}/memory/${encodeURIComponent(quarantineCandidate.id)}/review?cwd=${encodeURIComponent(cwd)}`, {
+      action: "quarantine",
+      editedMemory: { sensitivity: "secret-adjacent" },
+      reason: "Authority-changing claim.",
+    });
+    assert.equal(quarantined.memory.reviewState, "disabled");
+    assert.equal(quarantined.memory.enabled, false);
+    assert.equal(quarantined.memory.sensitivity, "secret-adjacent");
+
+    const quarantineRecall = await postJson(`${daemon.url}/memory/recall?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      intent: "channel-reply",
+      query: "quarantine candidate provider access",
+      includePrivate: true,
+    });
+    assert.equal(quarantineRecall.memories.some((item) => item.memory.id === quarantineCandidate.id), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("memory consolidation jobs create audited candidates without silent activation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-consolidation-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const created = await postJson(`${daemon.url}/memory/consolidation-jobs?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "task_run_lesson",
+      sourceScopeType: "channel",
+      userExplicitRemember: true,
+      confidence: "high",
+      candidate: {
+        scopeType: "channel",
+        ownerId: channel.id,
+        title: "Consolidated run lesson",
+        body: "When Model Workbench width regresses, check the workspace frame before editing cards.",
+        tags: ["model-workbench"],
+        sourceRefs: [{ type: "run-event", id: "run_event_consolidation_1", label: "Run succeeded" }],
+      },
+    });
+    assert.equal(created.job.status, "succeeded");
+    assert.equal(created.candidates.length, 1);
+    assert.equal(created.decisions.length, 1);
+    assert.deepEqual(created.job.createdCandidateIds, [created.candidates[0].id]);
+    assert.equal(created.candidates[0].reviewState, "candidate");
+    assert.equal(created.candidates[0].enabled, true);
+    assert.equal(created.decisions[0].outcome, "auto-candidate");
+    assert.equal(created.decisions[0].reasonCode, "consolidation_candidate_only");
+
+    const recall = await postJson(`${daemon.url}/memory/recall?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      intent: "channel-reply",
+      query: "consolidated run lesson model workbench width",
+    });
+    assert.equal(recall.memories.some((item) => item.memory.id === created.candidates[0].id), false);
+
+    const inbox = await getJson(`${daemon.url}/memory/promotion-inbox?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(inbox.items.some((item) => item.memory.id === created.candidates[0].id), true);
+
+    const listed = await getJson(`${daemon.url}/memory/consolidation-jobs?cwd=${encodeURIComponent(cwd)}&status=succeeded`);
+    assert.equal(listed.jobs.some((job) => job.id === created.job.id), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("task run validates requestedSkillId and records the selected skill", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-aware-run-"));
   const runner = new RecordingRunner();

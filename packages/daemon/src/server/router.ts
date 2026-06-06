@@ -69,7 +69,16 @@ import {
   handleExternalLinearPoll,
   handleExternalWorkReconcile,
 } from "../features/external-work/sync.js";
-import { handleListUsedMemoryEvents, handleMemoryCollection, handleMemoryItem, handleMemoryRecall } from "../features/memory/routes.js";
+import {
+  handleListUsedMemoryEvents,
+  handleMemoryCollection,
+  handleMemoryConsolidationJobs,
+  handleMemoryItem,
+  handleMemoryPromotionInbox,
+  handleMemoryRecall,
+  handleMemoryReviewAction,
+  handleMemoryReviewPolicy,
+} from "../features/memory/routes.js";
 import { handleRunMediaJob, syncMediaJobForApprovalDecision } from "../features/media/executor.js";
 import { handleMediaJobRoute, handleMediaJobsCollection } from "../features/media/routes.js";
 import { handleMcpServerItem, handleMcpServersCollection, handleMcpToolsCollection } from "../features/mcp/routes.js";
@@ -139,6 +148,7 @@ import {
 } from "../runtime/work-units.js";
 import {
   matchSingleSegmentRoute,
+  parseMemoryRoute,
   parseApprovalRoute,
   parseArtifactRoute,
   parseChannelAttachmentRoute,
@@ -504,8 +514,33 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/memory/consolidation-jobs") {
+    await handleMemoryConsolidationJobs(request, response, config, storeRegistry);
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/memory/used") {
     handleListUsedMemoryEvents(response, url, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/memory/review-policy") {
+    await handleMemoryReviewPolicy(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/memory/promotion-inbox") {
+    if (request.method === "GET") {
+      handleMemoryPromotionInbox(response, url, storeRegistry);
+      return;
+    }
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /memory/promotion-inbox` });
+    return;
+  }
+
+  const nestedMemoryRoute = parseMemoryRoute(url.pathname);
+  if (nestedMemoryRoute?.kind === "review") {
+    await handleMemoryReviewAction(request, response, config, storeRegistry, nestedMemoryRoute.memoryId);
     return;
   }
 

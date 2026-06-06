@@ -270,6 +270,8 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
       now,
     );
     assert.deepEqual(skillBindings.map((item) => [item.skillId, item.source, item.enabled]), [
+      ["design-html", "template", true],
+      ["health", "template", true],
       ["implement", "template", false],
       ["investigate", "template", true],
       ["plan-eng-review", "user", true],
@@ -281,6 +283,8 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
       "2026-05-29T01:00:01.000Z",
     );
     assert.deepEqual(deletedUserSkillBindings.map((item) => [item.skillId, item.source, item.enabled]), [
+      ["design-html", "template", true],
+      ["health", "template", true],
       ["implement", "template", false],
       ["investigate", "template", true],
       ["review", "template", true],

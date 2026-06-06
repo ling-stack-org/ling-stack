@@ -278,6 +278,15 @@ import {
   type UpdateMediaJobStatusInput,
 } from "../media-types.js";
 import {
+  createMemoryConsolidationJobId,
+  type CreateMemoryConsolidationJobInput,
+  type ListMemoryConsolidationJobsOptions,
+  type MemoryConsolidationJob,
+  type MemoryConsolidationJobKind,
+  type MemoryConsolidationJobStatus,
+  type UpdateMemoryConsolidationJobInput,
+} from "../memory-consolidation-types.js";
+import {
   createMcpServerId,
   type CreateMcpServerInput,
   type ListMcpServersOptions,
@@ -293,22 +302,36 @@ import {
   type UpdateMcpServerInput,
 } from "../mcp-types.js";
 import {
+  createMemoryReviewActionId,
+  createMemoryReviewDecisionId,
   createMemoryObjectId,
   createUsedMemoryEventId,
+  type ApplyMemoryReviewActionInput,
   type CreateMemoryObjectInput,
+  type CreateMemoryReviewDecisionInput,
   type CreateUsedMemoryEventInput,
   type ListMemoryObjectsOptions,
+  type ListMemoryPromotionInboxOptions,
   type ListUsedMemoryEventsOptions,
   type MemoryObject,
   type MemoryObjectUpdateInput,
+  type MemoryPromotionInboxItem,
   type MemoryRecallRequest,
   type MemoryRecallResult,
+  type MemoryReviewAction,
+  type MemoryReviewActionRecord,
+  type MemoryReviewDecision,
+  type MemoryReviewMode,
+  type MemoryReviewOutcome,
+  type MemoryReviewPolicy,
+  type MemoryReviewPolicyUpdateInput,
   type MemoryReviewState,
   type MemoryScopeType,
   type MemorySensitivity,
   type MemorySourceRef,
   type UsedMemoryEvent,
 } from "../memory-types.js";
+import { createDefaultMemoryReviewPolicy } from "../memory-review-policy.js";
 import { redactSecrets } from "../redaction.js";
 import { parseSecretRef } from "../secrets.js";
 import { appendEventLogLine } from "./event-log.js";
@@ -381,6 +404,10 @@ const RUN_WORKFLOW_STEP_OWNER_MIGRATION_VERSION = 33;
 const RUN_WORKFLOW_STEP_OWNER_MIGRATION_NAME = "add_run_workflow_step_owner";
 const MCP_STATUS_SNAPSHOTS_MIGRATION_VERSION = 34;
 const MCP_STATUS_SNAPSHOTS_MIGRATION_NAME = "create_mcp_status_snapshots";
+const MEMORY_REVIEW_POLICY_MIGRATION_VERSION = 35;
+const MEMORY_REVIEW_POLICY_MIGRATION_NAME = "create_memory_review_policy";
+const MEMORY_CONSOLIDATION_JOBS_MIGRATION_VERSION = 36;
+const MEMORY_CONSOLIDATION_JOBS_MIGRATION_NAME = "create_memory_consolidation_jobs";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -3035,6 +3062,112 @@ export class SqliteRunStore implements RunStore {
     return this.listTeammateMemoryScopes(teammateId);
   }
 
+  createMemoryConsolidationJob(input: CreateMemoryConsolidationJobInput, now: string): MemoryConsolidationJob {
+    const id = input.id ?? createMemoryConsolidationJobId();
+    const job: MemoryConsolidationJob = {
+      id,
+      workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      kind: input.kind,
+      sourceRefs: normalizeMemorySourceRefs(input.sourceRefs ?? []),
+      status: input.status ?? "queued",
+      createdCandidateIds: normalizeStringList(input.createdCandidateIds ?? []),
+      errorMessage: input.errorMessage,
+      createdAt: now,
+      updatedAt: now,
+    };
+    validateMemoryConsolidationJob(job);
+    this.database
+      .prepare(`
+        INSERT INTO memory_consolidation_jobs (
+          id,
+          workspace_id,
+          kind,
+          source_refs_json,
+          status,
+          created_candidate_ids_json,
+          error_message,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        job.id,
+        job.workspaceId,
+        job.kind,
+        stringifyJson(job.sourceRefs),
+        job.status,
+        stringifyJson(job.createdCandidateIds),
+        job.errorMessage ?? null,
+        job.createdAt,
+        job.updatedAt,
+      );
+    const created = this.getMemoryConsolidationJob(job.id);
+    if (!created) {
+      throw new Error(`Failed to create memory consolidation job: ${job.id}`);
+    }
+    return created;
+  }
+
+  getMemoryConsolidationJob(id: string): MemoryConsolidationJob | undefined {
+    const row = this.database.prepare(memoryConsolidationJobSelectSql("WHERE id = ?")).get(id);
+    return row ? mapMemoryConsolidationJob(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  listMemoryConsolidationJobs(options: ListMemoryConsolidationJobsOptions = {}): MemoryConsolidationJob[] {
+    const clauses: string[] = ["workspace_id = ?"];
+    const params: (string | number)[] = [options.workspaceId ?? DEFAULT_WORKSPACE_ID];
+    if (options.kind) {
+      clauses.push("kind = ?");
+      params.push(options.kind);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${memoryConsolidationJobSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map((row) => mapMemoryConsolidationJob(row as Record<string, SQLOutputValue>));
+  }
+
+  updateMemoryConsolidationJob(id: string, input: UpdateMemoryConsolidationJobInput, now: string): MemoryConsolidationJob | undefined {
+    const existing = this.getMemoryConsolidationJob(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: MemoryConsolidationJob = {
+      ...existing,
+      sourceRefs: input.sourceRefs ? normalizeMemorySourceRefs(input.sourceRefs) : existing.sourceRefs,
+      status: input.status ?? existing.status,
+      createdCandidateIds: input.createdCandidateIds ? normalizeStringList(input.createdCandidateIds) : existing.createdCandidateIds,
+      errorMessage: nullableUpdate(input.errorMessage, existing.errorMessage),
+      updatedAt: now,
+    };
+    validateMemoryConsolidationJob(next);
+    this.database
+      .prepare(`
+        UPDATE memory_consolidation_jobs
+        SET
+          source_refs_json = ?,
+          status = ?,
+          created_candidate_ids_json = ?,
+          error_message = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        stringifyJson(next.sourceRefs),
+        next.status,
+        stringifyJson(next.createdCandidateIds),
+        next.errorMessage ?? null,
+        next.updatedAt,
+        id,
+      );
+    return this.getMemoryConsolidationJob(id);
+  }
+
   createMemoryObject(input: CreateMemoryObjectInput, now: string): MemoryObject {
     const id = input.id ?? createMemoryObjectId();
     const memory: MemoryObject = {
@@ -3212,6 +3345,241 @@ export class SqliteRunStore implements RunStore {
       );
 
     return this.getMemoryObject(id);
+  }
+
+  getMemoryReviewPolicy(workspaceId = DEFAULT_WORKSPACE_ID): MemoryReviewPolicy {
+    const row = this.database
+      .prepare(`
+        SELECT
+          workspace_id,
+          mode,
+          auto_active_same_scope,
+          auto_active_user_explicit,
+          require_manual_for_workspace,
+          require_manual_for_persona,
+          require_manual_for_cross_scope,
+          quarantine_secret_adjacent,
+          updated_at
+        FROM memory_review_policy
+        WHERE workspace_id = ?
+      `)
+      .get(workspaceId);
+    return row ? mapMemoryReviewPolicy(row as Record<string, SQLOutputValue>) : createDefaultMemoryReviewPolicy(workspaceId);
+  }
+
+  updateMemoryReviewPolicy(input: MemoryReviewPolicyUpdateInput, now: string): MemoryReviewPolicy {
+    const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
+    const existing = this.getMemoryReviewPolicy(workspaceId);
+    const next: MemoryReviewPolicy = {
+      workspaceId,
+      mode: input.mode ?? existing.mode,
+      autoActiveSameScope: input.autoActiveSameScope ?? existing.autoActiveSameScope,
+      autoActiveUserExplicit: input.autoActiveUserExplicit ?? existing.autoActiveUserExplicit,
+      requireManualForWorkspace: input.requireManualForWorkspace ?? existing.requireManualForWorkspace,
+      requireManualForPersona: input.requireManualForPersona ?? existing.requireManualForPersona,
+      requireManualForCrossScope: input.requireManualForCrossScope ?? existing.requireManualForCrossScope,
+      quarantineSecretAdjacent: input.quarantineSecretAdjacent ?? existing.quarantineSecretAdjacent,
+      updatedAt: now,
+    };
+    validateMemoryReviewPolicy(next);
+    this.database
+      .prepare(`
+        INSERT INTO memory_review_policy (
+          workspace_id,
+          mode,
+          auto_active_same_scope,
+          auto_active_user_explicit,
+          require_manual_for_workspace,
+          require_manual_for_persona,
+          require_manual_for_cross_scope,
+          quarantine_secret_adjacent,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET
+          mode = excluded.mode,
+          auto_active_same_scope = excluded.auto_active_same_scope,
+          auto_active_user_explicit = excluded.auto_active_user_explicit,
+          require_manual_for_workspace = excluded.require_manual_for_workspace,
+          require_manual_for_persona = excluded.require_manual_for_persona,
+          require_manual_for_cross_scope = excluded.require_manual_for_cross_scope,
+          quarantine_secret_adjacent = excluded.quarantine_secret_adjacent,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        next.workspaceId,
+        next.mode,
+        next.autoActiveSameScope ? 1 : 0,
+        next.autoActiveUserExplicit ? 1 : 0,
+        next.requireManualForWorkspace ? 1 : 0,
+        next.requireManualForPersona ? 1 : 0,
+        next.requireManualForCrossScope ? 1 : 0,
+        next.quarantineSecretAdjacent ? 1 : 0,
+        next.updatedAt,
+      );
+    return this.getMemoryReviewPolicy(workspaceId);
+  }
+
+  recordMemoryReviewDecision(input: CreateMemoryReviewDecisionInput, now: string): MemoryReviewDecision {
+    const memory = this.getMemoryObject(input.memoryId);
+    if (!memory) {
+      throw new Error(`Memory object not found: ${input.memoryId}`);
+    }
+    const decision: MemoryReviewDecision = {
+      id: input.id ?? createMemoryReviewDecisionId(),
+      workspaceId: input.workspaceId ?? memory.workspaceId,
+      memoryId: input.memoryId,
+      outcome: input.outcome,
+      mode: input.mode,
+      reasonCode: input.reasonCode,
+      reason: input.reason,
+      confidence: input.confidence,
+      requiresManualReview: input.requiresManualReview,
+      quarantineReason: input.quarantineReason,
+      targetReviewState: input.targetReviewState,
+      targetSensitivity: input.targetSensitivity,
+      sourceRefs: ensureMemorySourceRefs(input.memoryId, normalizeMemorySourceRefs(input.sourceRefs ?? memory.sourceRefs)),
+      decidedBy: input.decidedBy,
+      createdAt: now,
+    };
+    validateMemoryReviewDecision(decision);
+    this.database
+      .prepare(`
+        INSERT INTO memory_review_decisions (
+          id,
+          workspace_id,
+          memory_id,
+          outcome,
+          mode,
+          reason_code,
+          reason,
+          confidence,
+          requires_manual_review,
+          quarantine_reason,
+          target_review_state,
+          target_sensitivity,
+          source_refs_json,
+          decided_by,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        decision.id,
+        decision.workspaceId,
+        decision.memoryId,
+        decision.outcome,
+        decision.mode,
+        decision.reasonCode,
+        decision.reason,
+        decision.confidence,
+        decision.requiresManualReview ? 1 : 0,
+        decision.quarantineReason ?? null,
+        decision.targetReviewState,
+        decision.targetSensitivity,
+        stringifyJson(decision.sourceRefs),
+        decision.decidedBy,
+        decision.createdAt,
+      );
+    return decision;
+  }
+
+  getLatestMemoryReviewDecision(memoryId: string): MemoryReviewDecision | undefined {
+    const row = this.database
+      .prepare(memoryReviewDecisionSelectSql("WHERE memory_id = ? ORDER BY created_at DESC, id DESC LIMIT 1"))
+      .get(memoryId);
+    return row ? mapMemoryReviewDecision(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  listMemoryPromotionInbox(options: ListMemoryPromotionInboxOptions = {}): MemoryPromotionInboxItem[] {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    const candidates = [
+      ...this.listMemoryObjects({ workspaceId: options.workspaceId, scopeType: options.scopeType, ownerId: options.ownerId, sensitivity: options.sensitivity, reviewState: "candidate", limit: 500 }),
+      ...this.listMemoryObjects({ workspaceId: options.workspaceId, scopeType: options.scopeType, ownerId: options.ownerId, sensitivity: options.sensitivity, reviewState: "disabled", limit: 500 }),
+    ];
+    const seen = new Set<string>();
+    const items: MemoryPromotionInboxItem[] = [];
+    for (const memory of candidates) {
+      if (seen.has(memory.id)) {
+        continue;
+      }
+      seen.add(memory.id);
+      const decision = this.getLatestMemoryReviewDecision(memory.id);
+      if (
+        memory.reviewState === "disabled" &&
+        (!decision || (decision.outcome !== "manual-review" && decision.outcome !== "quarantine"))
+      ) {
+        continue;
+      }
+      items.push({
+        memory,
+        decision,
+        sourceSummary: summarizeMemorySourceRefs(memory.sourceRefs),
+        recommendedAction: recommendMemoryReviewAction(memory, decision),
+      });
+      if (items.length >= limit) {
+        break;
+      }
+    }
+    return items;
+  }
+
+  applyMemoryReviewAction(input: ApplyMemoryReviewActionInput, now: string): { readonly memory: MemoryObject; readonly action: MemoryReviewActionRecord } {
+    const existing = this.getMemoryObject(input.memoryId);
+    if (!existing) {
+      throw new Error(`Memory object not found: ${input.memoryId}`);
+    }
+    const workspaceId = input.workspaceId ?? existing.workspaceId;
+    if (workspaceId !== existing.workspaceId) {
+      throw new Error("Memory review workspace does not match memory object");
+    }
+    const update = memoryUpdateForReviewAction(input, existing);
+    const updated = this.updateMemoryObject(input.memoryId, update, now);
+    if (!updated) {
+      throw new Error(`Failed to update memory object: ${input.memoryId}`);
+    }
+    const action: MemoryReviewActionRecord = {
+      id: createMemoryReviewActionId(),
+      workspaceId,
+      memoryId: input.memoryId,
+      action: input.action,
+      previousReviewState: existing.reviewState,
+      nextReviewState: updated.reviewState,
+      sourceRefs: updated.sourceRefs,
+      editedMemory: input.editedMemory,
+      reason: input.reason,
+      actor: input.actor,
+      createdAt: now,
+    };
+    validateMemoryReviewActionRecord(action);
+    this.database
+      .prepare(`
+        INSERT INTO memory_review_actions (
+          id,
+          workspace_id,
+          memory_id,
+          action,
+          previous_review_state,
+          next_review_state,
+          source_refs_json,
+          edited_memory_json,
+          reason,
+          actor,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        action.id,
+        action.workspaceId,
+        action.memoryId,
+        action.action,
+        action.previousReviewState,
+        action.nextReviewState,
+        stringifyJson(action.sourceRefs),
+        action.editedMemory ? stringifyJson(action.editedMemory) : null,
+        action.reason ?? null,
+        action.actor,
+        action.createdAt,
+      );
+    return { memory: updated, action };
   }
 
   recallMemory(input: MemoryRecallRequest): MemoryRecallResult {
@@ -8309,6 +8677,110 @@ export class SqliteRunStore implements RunStore {
       }
     }
 
+    const hasMemoryReviewPolicyMigration = this.hasMigration(MEMORY_REVIEW_POLICY_MIGRATION_VERSION);
+    if (
+      !hasMemoryReviewPolicyMigration ||
+      !this.hasTable("memory_review_policy") ||
+      !this.hasTable("memory_review_decisions") ||
+      !this.hasTable("memory_review_actions") ||
+      !this.hasColumn("memory_review_actions", "source_refs_json")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS memory_review_policy (
+          workspace_id TEXT PRIMARY KEY,
+          mode TEXT NOT NULL,
+          auto_active_same_scope INTEGER NOT NULL,
+          auto_active_user_explicit INTEGER NOT NULL,
+          require_manual_for_workspace INTEGER NOT NULL,
+          require_manual_for_persona INTEGER NOT NULL,
+          require_manual_for_cross_scope INTEGER NOT NULL,
+          quarantine_secret_adjacent INTEGER NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_review_decisions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          outcome TEXT NOT NULL,
+          mode TEXT NOT NULL,
+          reason_code TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          confidence TEXT NOT NULL,
+          requires_manual_review INTEGER NOT NULL,
+          quarantine_reason TEXT,
+          target_review_state TEXT NOT NULL,
+          target_sensitivity TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          decided_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(memory_id) REFERENCES memory_objects(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_review_decisions_memory
+        ON memory_review_decisions(memory_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_review_decisions_workspace_outcome
+        ON memory_review_decisions(workspace_id, outcome, created_at);
+
+        CREATE TABLE IF NOT EXISTS memory_review_actions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          previous_review_state TEXT NOT NULL,
+          next_review_state TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL DEFAULT '[]',
+          edited_memory_json TEXT,
+          reason TEXT,
+          actor TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(memory_id) REFERENCES memory_objects(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_review_actions_memory
+        ON memory_review_actions(memory_id, created_at);
+      `);
+      if (this.hasTable("memory_review_actions") && !this.hasColumn("memory_review_actions", "source_refs_json")) {
+        this.database.exec("ALTER TABLE memory_review_actions ADD COLUMN source_refs_json TEXT NOT NULL DEFAULT '[]';");
+      }
+
+      if (!hasMemoryReviewPolicyMigration) {
+        this.recordMigration(MEMORY_REVIEW_POLICY_MIGRATION_VERSION, MEMORY_REVIEW_POLICY_MIGRATION_NAME);
+      }
+    }
+
+    const hasMemoryConsolidationJobsMigration = this.hasMigration(MEMORY_CONSOLIDATION_JOBS_MIGRATION_VERSION);
+    if (!hasMemoryConsolidationJobsMigration || !this.hasTable("memory_consolidation_jobs")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS memory_consolidation_jobs (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_candidate_ids_json TEXT NOT NULL,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_consolidation_jobs_workspace
+        ON memory_consolidation_jobs(workspace_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_consolidation_jobs_kind
+        ON memory_consolidation_jobs(workspace_id, kind, updated_at);
+      `);
+
+      if (!hasMemoryConsolidationJobsMigration) {
+        this.recordMigration(MEMORY_CONSOLIDATION_JOBS_MIGRATION_VERSION, MEMORY_CONSOLIDATION_JOBS_MIGRATION_NAME);
+      }
+    }
+
     const hasSkillAwareRunMigration = this.hasMigration(SKILL_AWARE_RUN_MIGRATION_VERSION);
     if (
       !hasSkillAwareRunMigration ||
@@ -9359,6 +9831,20 @@ function mapMemoryObject(row: Record<string, SQLOutputValue>): MemoryObject {
   });
 }
 
+function mapMemoryConsolidationJob(row: Record<string, SQLOutputValue>): MemoryConsolidationJob {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    kind: readString(row, "kind") as MemoryConsolidationJobKind,
+    sourceRefs: parseMemorySourceRefs(readString(row, "source_refs_json")),
+    status: readString(row, "status") as MemoryConsolidationJobStatus,
+    createdCandidateIds: parseJsonStringArray(readString(row, "created_candidate_ids_json")),
+    errorMessage: readNullableString(row, "error_message"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
 function mapUsedMemoryEvent(row: Record<string, SQLOutputValue>): UsedMemoryEvent {
   return omitUndefined({
     id: readString(row, "id"),
@@ -9372,6 +9858,40 @@ function mapUsedMemoryEvent(row: Record<string, SQLOutputValue>): UsedMemoryEven
     runId: readNullableString(row, "run_id"),
     responseId: readNullableString(row, "response_id"),
     policyVersion: readString(row, "policy_version"),
+    createdAt: readString(row, "created_at"),
+  });
+}
+
+function mapMemoryReviewPolicy(row: Record<string, SQLOutputValue>): MemoryReviewPolicy {
+  return {
+    workspaceId: readString(row, "workspace_id"),
+    mode: readString(row, "mode") as MemoryReviewMode,
+    autoActiveSameScope: readBoolean(row, "auto_active_same_scope"),
+    autoActiveUserExplicit: readBoolean(row, "auto_active_user_explicit"),
+    requireManualForWorkspace: readBoolean(row, "require_manual_for_workspace"),
+    requireManualForPersona: readBoolean(row, "require_manual_for_persona"),
+    requireManualForCrossScope: readBoolean(row, "require_manual_for_cross_scope"),
+    quarantineSecretAdjacent: readBoolean(row, "quarantine_secret_adjacent"),
+    updatedAt: readString(row, "updated_at"),
+  };
+}
+
+function mapMemoryReviewDecision(row: Record<string, SQLOutputValue>): MemoryReviewDecision {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    memoryId: readString(row, "memory_id"),
+    outcome: readString(row, "outcome") as MemoryReviewOutcome,
+    mode: readString(row, "mode") as MemoryReviewMode,
+    reasonCode: readString(row, "reason_code"),
+    reason: readString(row, "reason"),
+    confidence: readString(row, "confidence") as MemoryReviewDecision["confidence"],
+    requiresManualReview: readBoolean(row, "requires_manual_review"),
+    quarantineReason: readNullableString(row, "quarantine_reason"),
+    targetReviewState: readString(row, "target_review_state") as MemoryReviewState,
+    targetSensitivity: readString(row, "target_sensitivity") as MemorySensitivity,
+    sourceRefs: parseMemorySourceRefs(readString(row, "source_refs_json")),
+    decidedBy: readString(row, "decided_by") as MemoryReviewDecision["decidedBy"],
     createdAt: readString(row, "created_at"),
   });
 }
@@ -10373,6 +10893,23 @@ function memoryObjectSelectSql(whereClause: string): string {
   `;
 }
 
+function memoryConsolidationJobSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      kind,
+      source_refs_json,
+      status,
+      created_candidate_ids_json,
+      error_message,
+      created_at,
+      updated_at
+    FROM memory_consolidation_jobs
+    ${whereClause}
+  `;
+}
+
 function memoryUsedEventSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -10389,6 +10926,29 @@ function memoryUsedEventSelectSql(whereClause: string): string {
       policy_version,
       created_at
     FROM memory_used_events
+    ${whereClause}
+  `;
+}
+
+function memoryReviewDecisionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      memory_id,
+      outcome,
+      mode,
+      reason_code,
+      reason,
+      confidence,
+      requires_manual_review,
+      quarantine_reason,
+      target_review_state,
+      target_sensitivity,
+      source_refs_json,
+      decided_by,
+      created_at
+    FROM memory_review_decisions
     ${whereClause}
   `;
 }
@@ -11500,8 +12060,85 @@ function validateMemoryObject(memory: MemoryObject): void {
   }
 }
 
+function validateMemoryConsolidationJob(job: MemoryConsolidationJob): void {
+  if (!job.workspaceId.trim()) {
+    throw new Error("workspaceId must be a non-empty string");
+  }
+  if (!isMemoryConsolidationJobKind(job.kind)) {
+    throw new Error("memory consolidation job kind is not supported");
+  }
+  if (!isMemoryConsolidationJobStatus(job.status)) {
+    throw new Error("memory consolidation job status is not supported");
+  }
+}
+
+function validateMemoryReviewPolicy(policy: MemoryReviewPolicy): void {
+  if (!policy.workspaceId.trim()) {
+    throw new Error("workspaceId must be a non-empty string");
+  }
+  if (!isMemoryReviewMode(policy.mode)) {
+    throw new Error("memory review mode is not supported");
+  }
+}
+
+function validateMemoryReviewDecision(decision: MemoryReviewDecision): void {
+  if (!decision.memoryId.trim()) {
+    throw new Error("memoryId must be a non-empty string");
+  }
+  if (!isMemoryReviewOutcome(decision.outcome)) {
+    throw new Error("memory review outcome is not supported");
+  }
+  if (!isMemoryReviewMode(decision.mode)) {
+    throw new Error("memory review mode is not supported");
+  }
+  if (!isMemoryReviewState(decision.targetReviewState)) {
+    throw new Error("targetReviewState is not supported");
+  }
+  if (!isMemorySensitivity(decision.targetSensitivity)) {
+    throw new Error("targetSensitivity is not supported");
+  }
+  if (decision.confidence !== "low" && decision.confidence !== "medium" && decision.confidence !== "high") {
+    throw new Error("memory review confidence is not supported");
+  }
+  if (decision.decidedBy !== "policy" && decision.decidedBy !== "local-user" && decision.decidedBy !== "system") {
+    throw new Error("memory review decision actor is not supported");
+  }
+}
+
+function validateMemoryReviewActionRecord(action: MemoryReviewActionRecord): void {
+  if (!isMemoryReviewAction(action.action)) {
+    throw new Error("memory review action is not supported");
+  }
+  if (!isMemoryReviewState(action.previousReviewState) || !isMemoryReviewState(action.nextReviewState)) {
+    throw new Error("memory review action state is not supported");
+  }
+  if (action.actor !== "local-user" && action.actor !== "system") {
+    throw new Error("memory review action actor is not supported");
+  }
+}
+
 function isMemoryScopeType(value: unknown): value is MemoryScopeType {
   return value === "workspace" || value === "channel" || value === "teammate" || value === "task" || value === "run";
+}
+
+function isMemoryConsolidationJobKind(value: unknown): value is MemoryConsolidationJobKind {
+  return value === "private_chat_summary" || value === "channel_decision_summary" || value === "task_run_lesson" || value === "workspace_consolidation";
+}
+
+function isMemoryConsolidationJobStatus(value: unknown): value is MemoryConsolidationJobStatus {
+  return value === "queued" || value === "running" || value === "succeeded" || value === "failed" || value === "cancelled";
+}
+
+function isMemoryReviewMode(value: unknown): value is MemoryReviewMode {
+  return value === "conservative" || value === "balanced" || value === "fast";
+}
+
+function isMemoryReviewOutcome(value: unknown): value is MemoryReviewOutcome {
+  return value === "auto-active" || value === "auto-candidate" || value === "manual-review" || value === "quarantine";
+}
+
+function isMemoryReviewAction(value: unknown): value is MemoryReviewAction {
+  return value === "approve" || value === "edit_and_approve" || value === "keep_candidate" || value === "reject" || value === "archive" || value === "quarantine";
 }
 
 function isMemoryReviewState(value: unknown): value is MemoryReviewState {
@@ -11555,6 +12192,48 @@ function memoryAllowedForRecall(
     return false;
   }
   return allowedScopes.some((scope) => scope.scopeType === memory.scopeType && scope.ownerId === memory.ownerId);
+}
+
+function memoryUpdateForReviewAction(input: ApplyMemoryReviewActionInput, existing: MemoryObject): MemoryObjectUpdateInput {
+  switch (input.action) {
+    case "approve":
+      return { reviewState: "active", enabled: true };
+    case "edit_and_approve":
+      return {
+        ...(input.editedMemory ?? {}),
+        reviewState: "active",
+        enabled: true,
+      };
+    case "keep_candidate":
+      return { reviewState: "candidate", enabled: true };
+    case "reject":
+      return { reviewState: "rejected", enabled: false };
+    case "archive":
+      return { reviewState: "archived", enabled: false };
+    case "quarantine":
+      return {
+        reviewState: "disabled",
+        enabled: false,
+        sensitivity: input.editedMemory?.sensitivity ?? (existing.sensitivity === "secret-adjacent" ? "secret-adjacent" : existing.sensitivity),
+      };
+  }
+}
+
+function summarizeMemorySourceRefs(sourceRefs: readonly MemorySourceRef[]): string {
+  if (sourceRefs.length === 0) {
+    return "manual";
+  }
+  return sourceRefs.slice(0, 3).map((ref) => `${ref.type}:${ref.label ?? ref.id}`).join(", ");
+}
+
+function recommendMemoryReviewAction(memory: MemoryObject, decision: MemoryReviewDecision | undefined): MemoryReviewAction {
+  if (decision?.outcome === "quarantine" || memory.sensitivity === "secret-adjacent") {
+    return "quarantine";
+  }
+  if (decision?.outcome === "manual-review") {
+    return "approve";
+  }
+  return memory.reviewState === "disabled" ? "archive" : "approve";
 }
 
 function tokenizeMemoryQuery(query: string): readonly string[] {

@@ -52,6 +52,7 @@ import type {
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
   CreateMemoryObjectRequest,
+  CreateMemoryConsolidationJobRequest,
   CreateMediaJobRequest,
   CreateRunInterventionRequest,
   CreateTaskRequest,
@@ -104,10 +105,17 @@ import type {
   MediaJobArtifactListResponse,
   MediaJobListResponse,
   MediaJobMutationResponse,
+  ApplyMemoryReviewActionRequest,
   MemoryListResponse,
+  MemoryConsolidationJobListResponse,
+  MemoryConsolidationJobMutationResponse,
   MemoryMutationResponse,
+  MemoryPromotionInboxResponse,
   MemoryRecallRequest,
   MemoryRecallResponse,
+  MemoryReviewPolicyResponse,
+  MemoryReviewPolicyUpdateRequest,
+  MemoryReviewMutationResponse,
   McpServerListResponse,
   McpServerCheckResponse,
   McpServerMutationRequest,
@@ -345,8 +353,47 @@ export class LingDaemonClient {
     return this.post("/memory", { cwd }, input);
   }
 
+  async listMemoryConsolidationJobs(
+    cwd: string,
+    options: {
+      readonly kind?: string;
+      readonly status?: string;
+      readonly limit?: number;
+    } = {},
+  ): Promise<MemoryConsolidationJobListResponse> {
+    return this.get("/memory/consolidation-jobs", { cwd, ...options });
+  }
+
+  async createMemoryConsolidationJob(cwd: string, input: CreateMemoryConsolidationJobRequest): Promise<MemoryConsolidationJobMutationResponse> {
+    return this.post("/memory/consolidation-jobs", { cwd }, input);
+  }
+
   async updateMemoryObject(cwd: string, memoryId: string, input: UpdateMemoryObjectRequest): Promise<MemoryMutationResponse> {
     return this.patch(`/memory/${encodeURIComponent(memoryId)}`, { cwd }, input);
+  }
+
+  async getMemoryReviewPolicy(cwd: string): Promise<MemoryReviewPolicyResponse> {
+    return this.get("/memory/review-policy", { cwd });
+  }
+
+  async updateMemoryReviewPolicy(cwd: string, input: MemoryReviewPolicyUpdateRequest): Promise<MemoryReviewPolicyResponse> {
+    return this.patch("/memory/review-policy", { cwd }, input);
+  }
+
+  async listMemoryPromotionInbox(
+    cwd: string,
+    options: {
+      readonly scopeType?: string;
+      readonly ownerId?: string;
+      readonly sensitivity?: string;
+      readonly limit?: number;
+    } = {},
+  ): Promise<MemoryPromotionInboxResponse> {
+    return this.get("/memory/promotion-inbox", { cwd, ...options });
+  }
+
+  async reviewMemory(cwd: string, memoryId: string, input: ApplyMemoryReviewActionRequest): Promise<MemoryReviewMutationResponse> {
+    return this.post(`/memory/${encodeURIComponent(memoryId)}/review`, { cwd }, input);
   }
 
   async recallMemory(cwd: string, input: MemoryRecallRequest): Promise<MemoryRecallResponse> {

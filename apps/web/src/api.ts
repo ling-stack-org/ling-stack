@@ -51,6 +51,7 @@ import type {
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
   CreateMemoryObjectRequest,
+  CreateMemoryConsolidationJobRequest,
   CreateMediaJobRequest,
   CreateRunInterventionRequest,
   DaemonHealthResponse,
@@ -87,10 +88,17 @@ import type {
   MediaJobArtifactListResponse,
   MediaJobListResponse,
   MediaJobMutationResponse,
+  ApplyMemoryReviewActionRequest,
   MemoryListResponse,
+  MemoryConsolidationJobListResponse,
+  MemoryConsolidationJobMutationResponse,
   MemoryMutationResponse,
+  MemoryPromotionInboxResponse,
   MemoryRecallRequest,
   MemoryRecallResponse,
+  MemoryReviewMutationResponse,
+  MemoryReviewPolicyResponse,
+  MemoryReviewPolicyUpdateRequest,
   McpServerFormState,
   McpServerCheckResponse,
   McpServerListResponse,
@@ -394,8 +402,47 @@ export async function createMemoryObject(cwd: string, input: CreateMemoryObjectR
   return daemonClient.createMemoryObject(cwd, input);
 }
 
+export async function listMemoryConsolidationJobs(
+  cwd: string,
+  options: {
+    readonly kind?: string;
+    readonly status?: string;
+    readonly limit?: number;
+  } = {},
+): Promise<MemoryConsolidationJobListResponse> {
+  return daemonClient.listMemoryConsolidationJobs(cwd, options);
+}
+
+export async function createMemoryConsolidationJob(cwd: string, input: CreateMemoryConsolidationJobRequest): Promise<MemoryConsolidationJobMutationResponse> {
+  return daemonClient.createMemoryConsolidationJob(cwd, input);
+}
+
 export async function updateMemoryObject(cwd: string, memoryId: string, input: UpdateMemoryObjectRequest): Promise<MemoryMutationResponse> {
   return daemonClient.updateMemoryObject(cwd, memoryId, input);
+}
+
+export async function getMemoryReviewPolicy(cwd: string): Promise<MemoryReviewPolicyResponse> {
+  return daemonClient.getMemoryReviewPolicy(cwd);
+}
+
+export async function updateMemoryReviewPolicy(cwd: string, input: MemoryReviewPolicyUpdateRequest): Promise<MemoryReviewPolicyResponse> {
+  return daemonClient.updateMemoryReviewPolicy(cwd, input);
+}
+
+export async function listMemoryPromotionInbox(
+  cwd: string,
+  options: {
+    readonly scopeType?: string;
+    readonly ownerId?: string;
+    readonly sensitivity?: string;
+    readonly limit?: number;
+  } = {},
+): Promise<MemoryPromotionInboxResponse> {
+  return daemonClient.listMemoryPromotionInbox(cwd, options);
+}
+
+export async function reviewMemory(cwd: string, memoryId: string, input: ApplyMemoryReviewActionRequest): Promise<MemoryReviewMutationResponse> {
+  return daemonClient.reviewMemory(cwd, memoryId, input);
 }
 
 export async function recallMemory(cwd: string, input: MemoryRecallRequest): Promise<MemoryRecallResponse> {

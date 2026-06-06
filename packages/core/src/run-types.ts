@@ -165,15 +165,29 @@ import type {
 } from "./mcp-types.js";
 import type {
   CreateMemoryObjectInput,
+  ApplyMemoryReviewActionInput,
+  CreateMemoryReviewDecisionInput,
   CreateUsedMemoryEventInput,
   ListMemoryObjectsOptions,
+  ListMemoryPromotionInboxOptions,
   ListUsedMemoryEventsOptions,
   MemoryObject,
   MemoryObjectUpdateInput,
+  MemoryPromotionInboxItem,
   MemoryRecallRequest,
   MemoryRecallResult,
+  MemoryReviewActionRecord,
+  MemoryReviewDecision,
+  MemoryReviewPolicy,
+  MemoryReviewPolicyUpdateInput,
   UsedMemoryEvent,
 } from "./memory-types.js";
+import type {
+  CreateMemoryConsolidationJobInput,
+  ListMemoryConsolidationJobsOptions,
+  MemoryConsolidationJob,
+  UpdateMemoryConsolidationJobInput,
+} from "./memory-consolidation-types.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
@@ -668,10 +682,20 @@ export interface RunStore {
     scopes: readonly ReplaceTeammateMemoryScopeInput[],
     now: string,
   ): TeammateMemoryScope[];
+  createMemoryConsolidationJob(input: CreateMemoryConsolidationJobInput, now: string): MemoryConsolidationJob;
+  getMemoryConsolidationJob(id: string): MemoryConsolidationJob | undefined;
+  listMemoryConsolidationJobs(options?: ListMemoryConsolidationJobsOptions): MemoryConsolidationJob[];
+  updateMemoryConsolidationJob(id: string, input: UpdateMemoryConsolidationJobInput, now: string): MemoryConsolidationJob | undefined;
   createMemoryObject(input: CreateMemoryObjectInput, now: string): MemoryObject;
   getMemoryObject(id: string): MemoryObject | undefined;
   listMemoryObjects(options?: ListMemoryObjectsOptions): MemoryObject[];
   updateMemoryObject(id: string, input: MemoryObjectUpdateInput, now: string): MemoryObject | undefined;
+  getMemoryReviewPolicy(workspaceId?: string): MemoryReviewPolicy;
+  updateMemoryReviewPolicy(input: MemoryReviewPolicyUpdateInput, now: string): MemoryReviewPolicy;
+  recordMemoryReviewDecision(input: CreateMemoryReviewDecisionInput, now: string): MemoryReviewDecision;
+  getLatestMemoryReviewDecision(memoryId: string): MemoryReviewDecision | undefined;
+  listMemoryPromotionInbox(options?: ListMemoryPromotionInboxOptions): MemoryPromotionInboxItem[];
+  applyMemoryReviewAction(input: ApplyMemoryReviewActionInput, now: string): { readonly memory: MemoryObject; readonly action: MemoryReviewActionRecord };
   recallMemory(input: MemoryRecallRequest): MemoryRecallResult;
   recordUsedMemoryEvent(input: CreateUsedMemoryEventInput, now: string): UsedMemoryEvent;
   listUsedMemoryEvents(options?: ListUsedMemoryEventsOptions): UsedMemoryEvent[];
