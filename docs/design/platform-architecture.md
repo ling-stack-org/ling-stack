@@ -835,7 +835,30 @@ Core, providers, and runner-pi expose built-in extension metadata, and daemon as
 the default internal registry at startup. Execution still flows through the existing
 daemon, approval policy, leases, state machines, providers, and runner paths.
 
-### Phase 4: Workflow Engine
+### Phase 4: Internal/Bundled Plugin Manager
+
+Add Codex-like plugin management for internal, bundled, and trusted local capabilities
+before opening third-party APIs. The design lives in [Plugin Manager](plugin-manager.md);
+the Stage 1-3 implementation plan lives in
+[Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md).
+
+Initial scope:
+
+- safe plugin catalog and Settings surface,
+- built-in registry metadata visibility,
+- bundled/trusted-local plugin descriptors,
+- MCP preset apply flow,
+- `cua-driver` as the first trusted local high-risk preset,
+- health checks, approval defaults, and audit events.
+
+Explicitly defer:
+
+- third-party plugin API,
+- marketplace installation,
+- arbitrary external code loading,
+- untrusted plugin sandboxing.
+
+### Phase 5: Workflow Engine
 
 Move multi-agent workflows into a workflow engine that compiles templates into explicit
 workflow and step state machines.
@@ -843,7 +866,7 @@ workflow and step state machines.
 This is the right time to connect `gstack-default`, custom AI teammates, and future
 `AGENTS.md` imports to real execution.
 
-### Phase 5: GitHub Automation
+### Phase 6: GitHub Automation
 
 Add GitHub as:
 
@@ -856,7 +879,7 @@ Add GitHub as:
 Start with read-only PR review artifacts, then add approval-gated comments, then stricter
 actions such as request-changes, approve, push, merge, and release.
 
-### Phase 6: Desktop Shell
+### Phase 7: Desktop Shell
 
 Build the desktop shell around the daemon and shared UI:
 
@@ -870,11 +893,12 @@ Build the desktop shell around the daemon and shared UI:
 Desktop should not fork the product model.
 The detailed plan lives in [Desktop Shell](desktop-shell.md).
 
-### Phase 7: External Plugin SDK
+### Phase 8: External Plugin SDK
 
-Only after internal registries are stable:
+Only after internal registries and internal/bundled plugin management are stable:
 
 - Publish plugin manifest contract.
+- Publish third-party plugin API and restricted host context.
 - Add version compatibility checks.
 - Add external plugin loading.
 - Add stronger sandboxing.

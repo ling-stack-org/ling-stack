@@ -302,6 +302,20 @@ import {
   type UpdateMcpServerInput,
 } from "../mcp-types.js";
 import {
+  createManagedPluginEventId,
+  type CreateManagedPluginEventInput,
+  type ListManagedPluginEventsOptions,
+  type ListManagedPluginsOptions,
+  type ManagedPluginContributionRecord,
+  type ManagedPluginDescriptor,
+  type ManagedPluginEvent,
+  type ManagedPluginHealthSnapshot,
+  type ManagedPluginRecord,
+  type UpdateManagedPluginInput,
+  type UpsertManagedPluginContributionInput,
+  type UpsertManagedPluginInput,
+} from "../plugin-manager-types.js";
+import {
   createMemoryReviewActionId,
   createMemoryReviewDecisionId,
   createMemoryObjectId,
@@ -408,6 +422,8 @@ const MEMORY_REVIEW_POLICY_MIGRATION_VERSION = 35;
 const MEMORY_REVIEW_POLICY_MIGRATION_NAME = "create_memory_review_policy";
 const MEMORY_CONSOLIDATION_JOBS_MIGRATION_VERSION = 36;
 const MEMORY_CONSOLIDATION_JOBS_MIGRATION_NAME = "create_memory_consolidation_jobs";
+const MANAGED_PLUGINS_MIGRATION_VERSION = 37;
+const MANAGED_PLUGINS_MIGRATION_NAME = "create_managed_plugins";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -6746,6 +6762,248 @@ export class SqliteRunStore implements RunStore {
       .map(mapTeammateMcpBinding);
   }
 
+  listManagedPlugins(options: ListManagedPluginsOptions = {}): ManagedPluginRecord[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.enabled !== undefined) {
+      clauses.push("enabled = ?");
+      params.push(options.enabled ? 1 : 0);
+    }
+    if (options.sourceKind) {
+      clauses.push("source_kind = ?");
+      params.push(options.sourceKind);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 500);
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.database
+      .prepare(`${managedPluginSelectSql(whereClause)} ORDER BY source_kind ASC, id ASC LIMIT ?`)
+      .all(...params)
+      .map(mapManagedPlugin);
+  }
+
+  getManagedPlugin(pluginId: string): ManagedPluginRecord | undefined {
+    const row = this.database.prepare(managedPluginSelectSql("WHERE id = ?")).get(pluginId);
+    return row ? mapManagedPlugin(row) : undefined;
+  }
+
+  upsertManagedPlugin(input: UpsertManagedPluginInput, now: string): ManagedPluginRecord {
+    const existing = this.getManagedPlugin(input.id);
+    const createdAt = existing?.createdAt ?? now;
+    this.database
+      .prepare(`
+        INSERT INTO managed_plugins (
+          id,
+          source_kind,
+          version,
+          enabled,
+          disabled_reason,
+          descriptor_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          source_kind = excluded.source_kind,
+          version = excluded.version,
+          enabled = excluded.enabled,
+          disabled_reason = excluded.disabled_reason,
+          descriptor_json = excluded.descriptor_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        input.id,
+        input.sourceKind,
+        input.version,
+        input.enabled ? 1 : 0,
+        input.disabledReason ?? null,
+        stringifyJson(input.descriptor),
+        createdAt,
+        now,
+      );
+    const record = this.getManagedPlugin(input.id);
+    if (!record) {
+      throw new Error(`Failed to persist managed plugin: ${input.id}`);
+    }
+    return record;
+  }
+
+  updateManagedPlugin(pluginId: string, input: UpdateManagedPluginInput, now: string): ManagedPluginRecord | undefined {
+    const existing = this.getManagedPlugin(pluginId);
+    if (!existing) {
+      return undefined;
+    }
+    const next: ManagedPluginRecord = {
+      ...existing,
+      version: input.version ?? input.descriptor?.version ?? existing.version,
+      enabled: input.enabled ?? existing.enabled,
+      disabledReason: nullableUpdate(input.disabledReason, existing.disabledReason),
+      descriptor: input.descriptor ?? existing.descriptor,
+      updatedAt: now,
+    };
+    this.database
+      .prepare(`
+        UPDATE managed_plugins
+        SET version = ?,
+            enabled = ?,
+            disabled_reason = ?,
+            descriptor_json = ?,
+            updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.version,
+        next.enabled ? 1 : 0,
+        next.disabledReason ?? null,
+        stringifyJson(next.descriptor),
+        now,
+        pluginId,
+      );
+    return this.getManagedPlugin(pluginId);
+  }
+
+  replaceManagedPluginContributions(
+    pluginId: string,
+    contributions: readonly UpsertManagedPluginContributionInput[],
+    now: string,
+  ): ManagedPluginContributionRecord[] {
+    if (!this.getManagedPlugin(pluginId)) {
+      throw new Error(`Managed plugin not found: ${pluginId}`);
+    }
+    this.database.prepare("DELETE FROM managed_plugin_contributions WHERE plugin_id = ?").run(pluginId);
+    const insert = this.database.prepare(`
+      INSERT INTO managed_plugin_contributions (
+        plugin_id,
+        contribution_kind,
+        contribution_id,
+        linked_resource_id,
+        enabled,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const contribution of dedupeManagedPluginContributionInputs(contributions)) {
+      insert.run(
+        pluginId,
+        contribution.contributionKind,
+        contribution.contributionId,
+        contribution.linkedResourceId ?? null,
+        contribution.enabled === false ? 0 : 1,
+        now,
+        now,
+      );
+    }
+    return this.listManagedPluginContributions(pluginId);
+  }
+
+  listManagedPluginContributions(pluginId?: string): ManagedPluginContributionRecord[] {
+    const whereClause = pluginId ? "WHERE plugin_id = ?" : "";
+    const params = pluginId ? [pluginId] : [];
+    return this.database
+      .prepare(`${managedPluginContributionSelectSql(whereClause)} ORDER BY plugin_id ASC, contribution_kind ASC, contribution_id ASC`)
+      .all(...params)
+      .map(mapManagedPluginContribution);
+  }
+
+  upsertManagedPluginHealthSnapshot(snapshot: ManagedPluginHealthSnapshot, now: string): ManagedPluginHealthSnapshot {
+    if (!this.getManagedPlugin(snapshot.pluginId)) {
+      throw new Error(`Managed plugin not found: ${snapshot.pluginId}`);
+    }
+    this.database
+      .prepare(`
+        INSERT INTO managed_plugin_health_snapshots (
+          plugin_id,
+          status_json,
+          checked_at,
+          expires_at,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(plugin_id) DO UPDATE SET
+          status_json = excluded.status_json,
+          checked_at = excluded.checked_at,
+          expires_at = excluded.expires_at,
+          updated_at = excluded.updated_at
+      `)
+      .run(snapshot.pluginId, stringifyJson(snapshot), snapshot.checkedAt, snapshot.expiresAt, now, now);
+    const stored = this.getManagedPluginHealthSnapshot(snapshot.pluginId);
+    if (!stored) {
+      throw new Error(`Failed to persist managed plugin health snapshot: ${snapshot.pluginId}`);
+    }
+    return stored;
+  }
+
+  getManagedPluginHealthSnapshot(pluginId: string, now?: string): ManagedPluginHealthSnapshot | undefined {
+    const row = this.database
+      .prepare("SELECT status_json, expires_at FROM managed_plugin_health_snapshots WHERE plugin_id = ?")
+      .get(pluginId);
+    if (!row) {
+      return undefined;
+    }
+    const snapshot = parseManagedPluginHealthSnapshot(readString(row, "status_json"));
+    const expiresAt = readString(row, "expires_at");
+    if (now && expiresAt <= now) {
+      return {
+        ...snapshot,
+        status: "expired",
+        message: snapshot.message ?? "Plugin health snapshot expired.",
+      };
+    }
+    return snapshot;
+  }
+
+  appendManagedPluginEvent(input: CreateManagedPluginEventInput, now: string): ManagedPluginEvent {
+    if (!this.getManagedPlugin(input.pluginId)) {
+      throw new Error(`Managed plugin not found: ${input.pluginId}`);
+    }
+    const event: ManagedPluginEvent = {
+      id: input.id ?? createManagedPluginEventId(),
+      pluginId: input.pluginId,
+      type: input.type,
+      actor: input.actor ?? "local-user",
+      message: input.message,
+      data: input.data,
+      createdAt: now,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO managed_plugin_events (
+          id,
+          plugin_id,
+          type,
+          actor,
+          message,
+          data_json,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        event.id,
+        event.pluginId,
+        event.type,
+        event.actor,
+        event.message ?? null,
+        event.data === undefined ? null : stringifyJson(redactSecrets(event.data)),
+        event.createdAt,
+      );
+    return event;
+  }
+
+  listManagedPluginEvents(options: ListManagedPluginEventsOptions = {}): ManagedPluginEvent[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.pluginId) {
+      clauses.push("plugin_id = ?");
+      params.push(options.pluginId);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.database
+      .prepare(`${managedPluginEventSelectSql(whereClause)} ORDER BY created_at ASC LIMIT ?`)
+      .all(...params)
+      .map(mapManagedPluginEvent);
+  }
+
   createMediaJob(input: CreateMediaJobInput, now: string): MediaJob {
     const job: MediaJob = {
       id: createMediaJobId(),
@@ -8781,6 +9039,74 @@ export class SqliteRunStore implements RunStore {
       }
     }
 
+    const hasManagedPluginsMigration = this.hasMigration(MANAGED_PLUGINS_MIGRATION_VERSION);
+    if (
+      !hasManagedPluginsMigration ||
+      !this.hasTable("managed_plugins") ||
+      !this.hasTable("managed_plugin_contributions") ||
+      !this.hasTable("managed_plugin_health_snapshots") ||
+      !this.hasTable("managed_plugin_events")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS managed_plugins (
+          id TEXT PRIMARY KEY,
+          source_kind TEXT NOT NULL,
+          version TEXT NOT NULL,
+          enabled INTEGER NOT NULL,
+          disabled_reason TEXT,
+          descriptor_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS managed_plugin_contributions (
+          plugin_id TEXT NOT NULL,
+          contribution_kind TEXT NOT NULL,
+          contribution_id TEXT NOT NULL,
+          linked_resource_id TEXT,
+          enabled INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(plugin_id, contribution_kind, contribution_id),
+          FOREIGN KEY(plugin_id) REFERENCES managed_plugins(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_managed_plugin_contributions_linked
+        ON managed_plugin_contributions(linked_resource_id);
+
+        CREATE TABLE IF NOT EXISTS managed_plugin_health_snapshots (
+          plugin_id TEXT PRIMARY KEY,
+          status_json TEXT NOT NULL,
+          checked_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(plugin_id) REFERENCES managed_plugins(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_managed_plugin_health_expires
+        ON managed_plugin_health_snapshots(expires_at);
+
+        CREATE TABLE IF NOT EXISTS managed_plugin_events (
+          id TEXT PRIMARY KEY,
+          plugin_id TEXT NOT NULL,
+          type TEXT NOT NULL,
+          actor TEXT NOT NULL,
+          message TEXT,
+          data_json TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(plugin_id) REFERENCES managed_plugins(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_managed_plugin_events_plugin_created
+        ON managed_plugin_events(plugin_id, created_at);
+      `);
+
+      if (!hasManagedPluginsMigration) {
+        this.recordMigration(MANAGED_PLUGINS_MIGRATION_VERSION, MANAGED_PLUGINS_MIGRATION_NAME);
+      }
+    }
+
     const hasSkillAwareRunMigration = this.hasMigration(SKILL_AWARE_RUN_MIGRATION_VERSION);
     if (
       !hasSkillAwareRunMigration ||
@@ -10216,6 +10542,43 @@ function mapTeammateMcpBinding(row: Record<string, SQLOutputValue>): TeammateMcp
   };
 }
 
+function mapManagedPlugin(row: Record<string, SQLOutputValue>): ManagedPluginRecord {
+  return omitUndefined({
+    id: readString(row, "id"),
+    sourceKind: readString(row, "source_kind") as ManagedPluginRecord["sourceKind"],
+    version: readString(row, "version"),
+    enabled: readBoolean(row, "enabled"),
+    disabledReason: readNullableString(row, "disabled_reason"),
+    descriptor: parseManagedPluginDescriptor(readString(row, "descriptor_json")),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapManagedPluginContribution(row: Record<string, SQLOutputValue>): ManagedPluginContributionRecord {
+  return omitUndefined({
+    pluginId: readString(row, "plugin_id"),
+    contributionKind: readString(row, "contribution_kind") as ManagedPluginContributionRecord["contributionKind"],
+    contributionId: readString(row, "contribution_id"),
+    linkedResourceId: readNullableString(row, "linked_resource_id"),
+    enabled: readBoolean(row, "enabled"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapManagedPluginEvent(row: Record<string, SQLOutputValue>): ManagedPluginEvent {
+  return omitUndefined({
+    id: readString(row, "id"),
+    pluginId: readString(row, "plugin_id"),
+    type: readString(row, "type") as ManagedPluginEvent["type"],
+    actor: readString(row, "actor") as ManagedPluginEvent["actor"],
+    message: readNullableString(row, "message"),
+    data: parseNullableJson(readNullableString(row, "data_json")),
+    createdAt: readString(row, "created_at"),
+  });
+}
+
 function mapApprovalRequest(row: Record<string, SQLOutputValue>): ApprovalRequest {
   return omitUndefined({
     id: readString(row, "id"),
@@ -11351,6 +11714,52 @@ function teammateMcpBindingSelectSql(whereClause: string): string {
   `;
 }
 
+function managedPluginSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      source_kind,
+      version,
+      enabled,
+      disabled_reason,
+      descriptor_json,
+      created_at,
+      updated_at
+    FROM managed_plugins
+    ${whereClause}
+  `;
+}
+
+function managedPluginContributionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      plugin_id,
+      contribution_kind,
+      contribution_id,
+      linked_resource_id,
+      enabled,
+      created_at,
+      updated_at
+    FROM managed_plugin_contributions
+    ${whereClause}
+  `;
+}
+
+function managedPluginEventSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      plugin_id,
+      type,
+      actor,
+      message,
+      data_json,
+      created_at
+    FROM managed_plugin_events
+    ${whereClause}
+  `;
+}
+
 function approvalPolicySelectSql(whereClause: string): string {
   return `
     SELECT
@@ -11533,6 +11942,18 @@ function countWhere(database: DatabaseSync, table: string, whereClause: string, 
 
 function parseJson(value: string): unknown {
   return JSON.parse(value) as unknown;
+}
+
+function parseNullableJson(value: string | undefined): unknown {
+  return value === undefined ? undefined : parseJson(value);
+}
+
+function parseManagedPluginDescriptor(value: string): ManagedPluginDescriptor {
+  return parseJson(value) as ManagedPluginDescriptor;
+}
+
+function parseManagedPluginHealthSnapshot(value: string): ManagedPluginHealthSnapshot {
+  return parseJson(value) as ManagedPluginHealthSnapshot;
 }
 
 function parseOptionalRunnerFallbackReason(value: string | undefined): RunnerFallbackReason | undefined {
@@ -12348,6 +12769,16 @@ function dedupeTeammateMcpBindingInputs(
     byServer.set(binding.serverId, binding);
   }
   return [...byServer.values()];
+}
+
+function dedupeManagedPluginContributionInputs(
+  contributions: readonly UpsertManagedPluginContributionInput[],
+): readonly UpsertManagedPluginContributionInput[] {
+  const byContribution = new Map<string, UpsertManagedPluginContributionInput>();
+  for (const contribution of contributions) {
+    byContribution.set(`${contribution.contributionKind}:${contribution.contributionId}`, contribution);
+  }
+  return [...byContribution.values()];
 }
 
 function protectDefaultSkillBindings(

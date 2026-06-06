@@ -68,6 +68,7 @@ export interface DaemonDependencies {
 export interface DaemonContext {
   readonly config: ResolvedDaemonConfig;
   readonly runnerRegistry: RunnerRegistry;
+  readonly extensionRegistry: LingExtensionRegistry;
   readonly storeRegistry: RunStoreRegistry;
   readonly activeRuns: ActiveRunRegistry;
   readonly runtimeSupervisor: RuntimeSupervisor;

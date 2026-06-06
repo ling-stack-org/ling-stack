@@ -384,6 +384,29 @@ test("uses expected routes for delete, cancel, check, and artifact URLs", async 
   assert.equal(client.attachmentContentUrl("attachment 1", "/repo"), "http://daemon.test/attachments/attachment%201/content?cwd=%2Frepo");
 });
 
+test("uses expected managed plugin routes", async () => {
+  const mock = createFetchMock({ plugin: { id: "trusted-local:cua-driver" }, plugins: [] });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.listManagedPlugins("/repo path");
+  await client.getManagedPlugin("/repo path", "trusted-local:cua-driver");
+  await client.applyManagedPluginPreset("/repo path", "trusted-local:cua-driver", { options: { command: "/bin/cua-driver" } });
+  await client.checkManagedPlugin("/repo path", "trusted-local:cua-driver");
+  await client.enableManagedPlugin("/repo path", "trusted-local:cua-driver");
+  await client.disableManagedPlugin("/repo path", "trusted-local:cua-driver", { reason: "pause" });
+
+  assert.equal(mock.calls[0].method, "GET");
+  assert.equal(mock.calls[0].url, "http://daemon.test/plugins?cwd=%2Frepo+path");
+  assert.equal(mock.calls[1].url, "http://daemon.test/plugins/trusted-local%3Acua-driver?cwd=%2Frepo+path");
+  assert.equal(mock.calls[2].method, "POST");
+  assert.equal(mock.calls[2].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/apply-preset?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[2].body), { options: { command: "/bin/cua-driver" } });
+  assert.equal(mock.calls[3].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/check?cwd=%2Frepo+path");
+  assert.equal(mock.calls[4].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/enable?cwd=%2Frepo+path");
+  assert.equal(mock.calls[5].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/disable?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[5].body), { reason: "pause" });
+});
+
 test("uses expected teammate private data lifecycle routes", async () => {
   const mock = createFetchMock({ ok: true });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });

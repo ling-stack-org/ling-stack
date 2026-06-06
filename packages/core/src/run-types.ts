@@ -189,6 +189,19 @@ import type {
   UpdateMemoryConsolidationJobInput,
 } from "./memory-consolidation-types.js";
 
+import type {
+  CreateManagedPluginEventInput,
+  ListManagedPluginEventsOptions,
+  ListManagedPluginsOptions,
+  ManagedPluginContributionRecord,
+  ManagedPluginEvent,
+  ManagedPluginHealthSnapshot,
+  ManagedPluginRecord,
+  UpdateManagedPluginInput,
+  UpsertManagedPluginContributionInput,
+  UpsertManagedPluginInput,
+} from "./plugin-manager-types.js";
+
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
 export function createLingThreadId(): string {
@@ -864,6 +877,20 @@ export interface RunStore {
     now: string,
   ): TeammateMcpBinding[];
   listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[];
+  listManagedPlugins(options?: ListManagedPluginsOptions): ManagedPluginRecord[];
+  getManagedPlugin(pluginId: string): ManagedPluginRecord | undefined;
+  upsertManagedPlugin(input: UpsertManagedPluginInput, now: string): ManagedPluginRecord;
+  updateManagedPlugin(pluginId: string, input: UpdateManagedPluginInput, now: string): ManagedPluginRecord | undefined;
+  replaceManagedPluginContributions(
+    pluginId: string,
+    contributions: readonly UpsertManagedPluginContributionInput[],
+    now: string,
+  ): ManagedPluginContributionRecord[];
+  listManagedPluginContributions(pluginId?: string): ManagedPluginContributionRecord[];
+  upsertManagedPluginHealthSnapshot(snapshot: ManagedPluginHealthSnapshot, now: string): ManagedPluginHealthSnapshot;
+  getManagedPluginHealthSnapshot(pluginId: string, now?: string): ManagedPluginHealthSnapshot | undefined;
+  appendManagedPluginEvent(input: CreateManagedPluginEventInput, now: string): ManagedPluginEvent;
+  listManagedPluginEvents(options?: ListManagedPluginEventsOptions): ManagedPluginEvent[];
   listSkillRegistryEntries(options?: ListSkillRegistryOptions): SkillRegistryEntry[];
   getSkillRegistryEntry(id: string): SkillRegistryEntry | undefined;
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft;

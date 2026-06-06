@@ -123,6 +123,13 @@ import type {
   McpServerStatusResponse,
   McpServerToolSyncResponse,
   McpToolListResponse,
+  ManagedPluginApplyPresetRequest,
+  ManagedPluginApplyPresetResponse,
+  ManagedPluginCheckResponse,
+  ManagedPluginDetailResponse,
+  ManagedPluginDisableRequest,
+  ManagedPluginListResponse,
+  ManagedPluginMutationResponse,
   ProviderCheckResult,
   ProviderDraftCheckRequest,
   ProviderListResponse,
@@ -1009,6 +1016,34 @@ export class LingDaemonClient {
 
   async listMcpTools(cwd: string, serverId?: string): Promise<McpToolListResponse> {
     return this.get("/mcp/tools", { cwd, serverId });
+  }
+
+  async listManagedPlugins(cwd: string): Promise<ManagedPluginListResponse> {
+    return this.get("/plugins", { cwd });
+  }
+
+  async getManagedPlugin(cwd: string, pluginId: string): Promise<ManagedPluginDetailResponse> {
+    return this.get(`/plugins/${encodeURIComponent(pluginId)}`, { cwd });
+  }
+
+  async enableManagedPlugin(cwd: string, pluginId: string): Promise<ManagedPluginMutationResponse> {
+    return this.post(`/plugins/${encodeURIComponent(pluginId)}/enable`, { cwd }, {});
+  }
+
+  async disableManagedPlugin(cwd: string, pluginId: string, input: ManagedPluginDisableRequest = {}): Promise<ManagedPluginMutationResponse> {
+    return this.post(`/plugins/${encodeURIComponent(pluginId)}/disable`, { cwd }, input);
+  }
+
+  async checkManagedPlugin(cwd: string, pluginId: string): Promise<ManagedPluginCheckResponse> {
+    return this.post(`/plugins/${encodeURIComponent(pluginId)}/check`, { cwd }, {});
+  }
+
+  async applyManagedPluginPreset(
+    cwd: string,
+    pluginId: string,
+    input: ManagedPluginApplyPresetRequest = {},
+  ): Promise<ManagedPluginApplyPresetResponse> {
+    return this.post(`/plugins/${encodeURIComponent(pluginId)}/apply-preset`, { cwd }, input);
   }
 
   async listApprovals(cwd: string, options: ListApprovalsRequest = {}): Promise<ApprovalListResponse> {

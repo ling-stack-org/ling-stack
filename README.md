@@ -44,6 +44,8 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Web modularization](docs/design/web-modularization.md)
 - [Contracts / API Client](docs/design/contracts-api-client.md)
 - [Internal Registry / Plugin SDK](docs/design/internal-registry-plugin-sdk.md)
+- [Plugin Manager](docs/design/plugin-manager.md)
+- [Plugin Manager implementation plan](docs/design/plugin-manager-implementation-plan.md)
 - [Runner Registry](docs/design/runner-registry.md)
 - [Multi-Agent Orchestrator](docs/design/multi-agent-orchestrator.md)
 - [Codex-like Execution](docs/design/codex-like-execution.md)

@@ -8,6 +8,11 @@ Ling Stack should become extensible, but v0.1 should not start with an external 
 marketplace or dynamic code loading. The first step is to make internal capabilities use
 one typed registration model.
 
+The next product-facing layer is [Plugin Manager](plugin-manager.md). Its Stage 1-3
+implementation is detailed in [Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md).
+Together, those documents define Codex-like management for internal, bundled, and
+trusted local capabilities without opening a third-party plugin API yet.
+
 Current local extension points already exist in different forms:
 
 - `packages/providers` has `MediaAdapterRegistry`.
@@ -186,6 +191,7 @@ It must not expose secrets or dynamic code paths.
 - No plugin install UI.
 - No dynamic loading from arbitrary disk paths.
 - No third-party sandbox.
+- No third-party plugin API.
 - No plugin direct database access.
 - No plugin direct state mutation.
 
@@ -216,5 +222,6 @@ Required tests:
 ## Assumptions
 
 - Internal registry comes before external plugin support.
+- Internal and bundled plugin management comes before third-party plugin APIs.
 - Package boundaries may later require a new ADR when implementation starts.
 - Registry metadata is useful even before all execution paths are routed through it.

@@ -107,6 +107,12 @@ import type {
   McpServerStatusResponse,
   McpServerToolSyncResponse,
   McpToolListResponse,
+  ManagedPluginApplyPresetRequest,
+  ManagedPluginApplyPresetResponse,
+  ManagedPluginCheckResponse,
+  ManagedPluginDisableRequest,
+  ManagedPluginListResponse,
+  ManagedPluginMutationResponse,
   ProviderCheckResult,
   ProviderFormState,
   ProviderListResponse,
@@ -909,6 +915,30 @@ export async function syncMcpServerTools(cwd: string, serverId: string): Promise
 
 export async function listMcpTools(cwd: string, serverId?: string): Promise<McpToolListResponse> {
   return daemonClient.listMcpTools(cwd, serverId);
+}
+
+export async function listManagedPlugins(cwd: string): Promise<ManagedPluginListResponse> {
+  return daemonClient.listManagedPlugins(cwd);
+}
+
+export async function enableManagedPlugin(cwd: string, pluginId: string): Promise<ManagedPluginMutationResponse> {
+  return daemonClient.enableManagedPlugin(cwd, pluginId);
+}
+
+export async function disableManagedPlugin(cwd: string, pluginId: string, input: ManagedPluginDisableRequest = {}): Promise<ManagedPluginMutationResponse> {
+  return daemonClient.disableManagedPlugin(cwd, pluginId, input);
+}
+
+export async function checkManagedPlugin(cwd: string, pluginId: string): Promise<ManagedPluginCheckResponse> {
+  return daemonClient.checkManagedPlugin(cwd, pluginId);
+}
+
+export async function applyManagedPluginPreset(
+  cwd: string,
+  pluginId: string,
+  input: ManagedPluginApplyPresetRequest = {},
+): Promise<ManagedPluginApplyPresetResponse> {
+  return daemonClient.applyManagedPluginPreset(cwd, pluginId, input);
 }
 
 export async function listApprovals(
