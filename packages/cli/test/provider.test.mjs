@@ -125,7 +125,7 @@ test("run can skip provider preflight", async () => {
     const result = await runCli(daemon.url, cwd, ["run", "--provider", provider.id, "--skip-preflight", "--prompt", "hello"]);
 
     assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /Run: run_1/);
+    assert.match(result.stderr, /Run: run_1/);
     assert.equal(daemon.runRequests.length, 1);
     assert.equal(daemon.runRequests[0].providerPresetId, provider.id);
     assert.equal(daemon.runRequests[0].skipProviderPreflight, true);
@@ -142,7 +142,7 @@ test("task run can skip provider preflight", async () => {
     const result = await runCli(daemon.url, cwd, ["task", "run", "task_1", "--provider", provider.id, "--skip-preflight"]);
 
     assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /Run: run_1/);
+    assert.match(result.stderr, /Run: run_1/);
     assert.equal(daemon.runRequests.length, 1);
     assert.equal(daemon.runRequests[0].providerPresetId, provider.id);
     assert.equal(daemon.runRequests[0].skipProviderPreflight, true);
@@ -154,13 +154,14 @@ test("task run can skip provider preflight", async () => {
 
 function runCli(daemonUrl, cwd, args) {
   return new Promise((resolveResult) => {
-    execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
+    const child = execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
       resolveResult({
         code: typeof error?.code === "number" ? error.code : 0,
         stdout,
         stderr,
       });
     });
+    child.stdin?.end();
   });
 }
 

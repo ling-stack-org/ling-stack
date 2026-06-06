@@ -143,6 +143,8 @@ Reference snapshot: upstream `openai/codex` at `345cf6e`.
 The goal is not to clone Codex CLI. Ling Stack should borrow the parts that harden the local operator loop: diagnostics, daemon lifecycle, run I/O contracts, completion, MCP status boundaries, and maintainable CLI module boundaries.
 
 P0 detailed design lives in [Daemon Lifecycle and Doctor P0](daemon-lifecycle-p0.md).
+P1 detailed design lives in [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md).
+P1 implementation breakdown lives in [CLI Run I/O and Completion P1 Implementation Plan](cli-run-io-completion-p1-implementation-plan.md).
 
 ### P0 Enabler: CLI Module Split
 
@@ -222,6 +224,10 @@ Acceptance criteria:
 
 ### P1: Run I/O and Automation Contract
 
+Status: implemented.
+
+Detailed design: [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md).
+
 - Add stdin-aware prompt handling:
   - `ling-stack run -` reads the prompt from stdin,
   - no prompt plus piped stdin reads the prompt from stdin,
@@ -233,6 +239,10 @@ Acceptance criteria:
 - Keep presentation logic in CLI event processors/printers, not in the runner or daemon orchestration path.
 
 ### P1: Completion
+
+Status: implemented for static `bash`, `zsh`, and `fish` scripts.
+
+Detailed design: [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md).
 
 - Add `ling-stack completion <bash|zsh|fish>` after CLI command metadata is stable.
 - If the CLI remains hand-parsed, generate and test static completion scripts rather than pretending completion will stay automatic.
@@ -1249,8 +1259,9 @@ The CLI must not add a hidden bypass for normal product runs. Any future develop
 
 Current gap: the historical implementation grew as a single-file CLI. P0 splits the
 executable entrypoint and isolates the new daemon lifecycle and doctor check-row modules.
-The deeper command-by-command split should happen before completion generation, when the
-command metadata needs to become stable and reusable.
+The deeper command-by-command split should happen before completion generation. The P1
+run I/O and completion plan in [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md)
+defines the next run-specific modules and command metadata shape.
 
 Implemented P0 file shape:
 

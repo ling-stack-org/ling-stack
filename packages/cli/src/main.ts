@@ -28,6 +28,16 @@ import {
   type DoctorReport,
   type DoctorStatus,
 } from "./doctor/checks.js";
+import { CliError, errorMessage } from "./errors.js";
+import { generateCompletionScript, supportedCompletionShells, type CompletionShell } from "./completion/scripts.js";
+import { parseRunStreamRecord, type RunEventEnvelope, type RunStreamRecord } from "./run/events.js";
+import { readRunPromptInput } from "./run/input.js";
+import {
+  createLastMessageCollector,
+  validateLastMessageTarget,
+  writeLastMessageAtomic,
+} from "./run/last-message.js";
+import { createRunOutput, type RunOutput } from "./run/output.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = "17891";
@@ -66,20 +76,6 @@ interface CommandParserSpec {
   readonly stringFlags?: ReadonlySet<string>;
   readonly repeatableFlags?: ReadonlySet<string>;
   readonly booleanFlags?: ReadonlySet<string>;
-}
-
-interface SseBlock {
-  readonly event: string;
-  readonly data: string;
-}
-
-interface RunEventEnvelope {
-  readonly id: string;
-  readonly runId: string;
-  readonly seq: number;
-  readonly ts: string;
-  readonly type: string;
-  readonly data: unknown;
 }
 
 interface RunApprovalSummary {
@@ -143,200 +139,6 @@ interface UiOptions {
   readonly foreground: boolean;
 }
 
-class CliError extends Error {
-  readonly exitCode: number;
-  readonly code: string;
-  readonly status?: number;
-
-  constructor(exitCode: number, code: string, message: string, status?: number) {
-    super(message);
-    this.name = "CliError";
-    this.exitCode = exitCode;
-    this.code = code;
-    this.status = status;
-  }
-}
-
-class RunPrinter {
-  private textOpen = false;
-  private runFailed = false;
-  private approvalDenied = false;
-
-  constructor(private readonly options: GlobalOptions) {}
-
-  printReady(runId: string): void {
-    if (this.options.json) {
-      console.log(JSON.stringify({ type: "ready", runId }));
-      return;
-    }
-    console.log(`Run: ${runId}`);
-  }
-
-  printEvent(envelope: RunEventEnvelope): void {
-    if (this.options.json) {
-      console.log(JSON.stringify(envelope));
-      this.updateExitState(envelope);
-      return;
-    }
-
-    switch (envelope.type) {
-      case "run_created":
-        if (this.options.verbose) {
-          this.line(`Run created: ${envelope.runId}`);
-        }
-        break;
-      case "run_start":
-        this.printRunStart(envelope.data);
-        break;
-      case "assistant_text_delta":
-        this.writeTextDelta(envelope.data);
-        break;
-      case "assistant_thinking_delta":
-        if (this.options.verbose) {
-          this.line(`[thinking] ${readString(envelope.data, "text") ?? summarizeUnknown(envelope.data, 180)}`);
-        }
-        break;
-      case "message_end":
-        this.closeText();
-        break;
-      case "tool_start":
-        this.printToolStart(envelope.data);
-        break;
-      case "tool_update":
-        if (this.options.verbose) {
-          this.line(`Tool update: ${summarizeToolName(envelope.data)} ${summarizeUnknown(readField(envelope.data, "partialResult"), 180)}`);
-        }
-        break;
-      case "tool_end":
-        this.printToolEnd(envelope.data);
-        break;
-      case "approval_requested":
-        this.printApprovalRequested(envelope.data);
-        break;
-      case "approval_approved":
-        this.line(`Approval approved: ${readString(envelope.data, "approvalId") ?? "<unknown>"}`);
-        break;
-      case "approval_denied":
-        this.line(`Approval denied: ${readString(envelope.data, "approvalId") ?? "<unknown>"}`);
-        break;
-      case "approval_expired":
-        this.line(`Approval expired: ${readString(envelope.data, "approvalId") ?? "<unknown>"}`);
-        break;
-      case "run_error":
-        this.line(`Run failed: ${readString(envelope.data, "message") ?? summarizeUnknown(envelope.data, 240)}`);
-        break;
-      case "run_end":
-        this.line(`Run ended: ${readString(envelope.data, "taskId") ?? envelope.runId}`);
-        break;
-      case "result":
-        this.line(`Result: ${summarizeResult(envelope.data)}`);
-        break;
-      default:
-        if (this.options.verbose) {
-          this.line(`${envelope.type}: ${summarizeUnknown(envelope.data, 240)}`);
-        }
-    }
-
-    this.updateExitState(envelope);
-  }
-
-  finish(): void {
-    this.closeText();
-  }
-
-  exitCode(): number {
-    if (this.approvalDenied) {
-      return 5;
-    }
-    if (this.runFailed) {
-      return 6;
-    }
-    return 0;
-  }
-
-  private updateExitState(envelope: RunEventEnvelope): void {
-    if (envelope.type === "run_error") {
-      this.runFailed = true;
-    }
-    if (envelope.type === "approval_denied" || envelope.type === "approval_expired") {
-      this.approvalDenied = true;
-    }
-  }
-
-  private printRunStart(data: unknown): void {
-    const provider = readString(data, "provider");
-    const model = readString(data, "model");
-    const cwd = readString(data, "cwd");
-    const suffix = [provider, model].filter(Boolean).join("/");
-    this.line(`Started${suffix ? `: ${suffix}` : ""}${cwd ? ` (${cwd})` : ""}`);
-  }
-
-  private writeTextDelta(data: unknown): void {
-    const text = readString(data, "text");
-    if (!text) {
-      return;
-    }
-    process.stdout.write(text);
-    this.textOpen = true;
-  }
-
-  private printToolStart(data: unknown): void {
-    const toolName = summarizeToolName(data);
-    const args = readField(data, "args");
-    this.line(`Tool start: ${toolName}${args === undefined ? "" : ` ${summarizeUnknown(args, 180)}`}`);
-  }
-
-  private printToolEnd(data: unknown): void {
-    const toolName = summarizeToolName(data);
-    const isError = readBoolean(data, "isError") ?? false;
-    const result = readField(data, "result");
-    this.line(`Tool end: ${toolName} ${isError ? "error" : "ok"}${result === undefined ? "" : ` ${summarizeUnknown(result, 180)}`}`);
-  }
-
-  private printApprovalRequested(data: unknown): void {
-    const approvalId = readString(data, "approvalId") ?? "<unknown>";
-    const actionType = readString(data, "actionType") ?? "action";
-    const risk = readString(data, "risk") ?? "unknown";
-    const title = readString(data, "title") ?? "Approval requested";
-    const description = readString(data, "description");
-    const payload = readField(data, "payload");
-
-    this.line("");
-    console.log("Approval requested");
-    console.log(`  ID: ${approvalId}`);
-    console.log(`  Action: ${actionType}`);
-    console.log(`  Risk: ${risk}`);
-    console.log(`  Title: ${title}`);
-    if (description) {
-      console.log(`  Description: ${description}`);
-    }
-    const payloadSummary = summarizeApprovalPayload(payload);
-    if (payloadSummary) {
-      console.log(`  Payload: ${payloadSummary}`);
-    }
-    console.log("  Approve:");
-    console.log(`    ling-stack --daemon-url ${shellQuote(this.options.daemonUrl)} --cwd ${shellQuote(this.options.cwd)} approvals approve ${shellQuote(approvalId)}`);
-    console.log("  Deny:");
-    console.log(`    ling-stack --daemon-url ${shellQuote(this.options.daemonUrl)} --cwd ${shellQuote(this.options.cwd)} approvals deny ${shellQuote(approvalId)}`);
-  }
-
-  private line(value: string): void {
-    this.closeText();
-    if (value.length > 0) {
-      console.log(value);
-    } else {
-      console.log();
-    }
-  }
-
-  private closeText(): void {
-    if (this.textOpen) {
-      process.stdout.write("\n");
-      this.textOpen = false;
-    }
-  }
-}
-
 export async function main(): Promise<void> {
   let parsed: ParsedGlobalArgs | undefined;
   try {
@@ -387,6 +189,8 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleExternalWork(rest, parsed.options);
     case "ui":
       return await handleUi(rest, parsed.options);
+    case "completion":
+      return handleCompletion(rest, parsed.options);
     default:
       throw new CliError(2, "unknown_command", `Unknown command: ${command}`);
   }
@@ -1483,9 +1287,26 @@ async function handleUi(args: readonly string[], options: GlobalOptions): Promis
   return 0;
 }
 
+function handleCompletion(args: readonly string[], options: GlobalOptions): number {
+  if (options.json) {
+    throw new CliError(2, "unsupported_json", "completion outputs shell script and does not support --json.");
+  }
+  const parsed = parseCommandArgs(args);
+  const shell = singlePositional(parsed.positionals, "completion <bash|zsh|fish>");
+  if (!isCompletionShell(shell)) {
+    throw new CliError(2, "bad_completion_shell", `completion shell must be one of: ${supportedCompletionShells.join(", ")}`);
+  }
+  process.stdout.write(generateCompletionScript(shell));
+  return 0;
+}
+
+function isCompletionShell(value: string): value is CompletionShell {
+  return (supportedCompletionShells as readonly string[]).includes(value);
+}
+
 async function handleRun(args: readonly string[], options: GlobalOptions): Promise<number> {
   const parsed = parseCommandArgs(args, {
-    stringFlags: new Set(["provider", "title", "task", "thinking", "system-prompt", "agent-dir", "prompt", "prompt-file"]),
+    stringFlags: new Set(["provider", "title", "task", "thinking", "system-prompt", "agent-dir", "prompt", "prompt-file", "output-last-message"]),
     repeatableFlags: new Set(["tool", "append-system-prompt"]),
     booleanFlags: new Set(["skip-preflight"]),
   });
@@ -1495,10 +1316,18 @@ async function handleRun(args: readonly string[], options: GlobalOptions): Promi
     throw new CliError(2, "missing_provider", "ling-stack run requires --provider <providerPresetId> for CLI v0.1.");
   }
 
-  const prompt = await readPrompt(parsed);
-  if (!prompt) {
-    throw new CliError(2, "missing_prompt", "ling-stack run requires prompt text, --prompt <text>, or --prompt-file <path>.");
+  const outputLastMessagePath = getFlag(parsed, "output-last-message");
+  if (outputLastMessagePath) {
+    await validateLastMessageTarget(outputLastMessagePath);
   }
+  const promptInput = await readRunPromptInput({
+    prompt: getFlag(parsed, "prompt"),
+    promptFile: getFlag(parsed, "prompt-file"),
+    positionals: parsed.positionals,
+    stdin: process.stdin,
+    fileBaseCwd: process.cwd(),
+  });
+  const prompt = promptInput.prompt;
 
   const thinkingLevel = getFlag(parsed, "thinking") ?? "medium";
   if (!VALID_THINKING_LEVELS.has(thinkingLevel)) {
@@ -1530,10 +1359,32 @@ async function handleRun(args: readonly string[], options: GlobalOptions): Promi
     agentDir: getFlag(parsed, "agent-dir"),
   });
 
-  const printer = new RunPrinter(options);
-  await streamRun(options, body, printer);
-  printer.finish();
-  return printer.exitCode();
+  const output = createCliRunOutput(options);
+  const lastMessage = outputLastMessagePath ? createLastMessageCollector() : undefined;
+  try {
+    await streamRun(options, body, (record) => {
+      if (record.kind === "ready") {
+        output.handleReady(record.runId);
+        return;
+      }
+      lastMessage?.handleEvent(record.envelope);
+      output.handleEvent(record.envelope);
+    });
+  } finally {
+    output.finish();
+  }
+  const exitCode = output.exitCode();
+  if (exitCode !== 0) {
+    return exitCode;
+  }
+  if (outputLastMessagePath) {
+    const message = lastMessage?.lastCompletedMessage();
+    if (message === undefined) {
+      throw new CliError(4, "no_final_message", "Run completed without a final assistant message.");
+    }
+    await writeLastMessageAtomic(outputLastMessagePath, message);
+  }
+  return 0;
 }
 
 async function handleProvider(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -1987,10 +1838,19 @@ async function handleTaskRun(args: readonly string[], options: GlobalOptions): P
     appendSystemPrompt: getFlagValues(parsed, "append-system-prompt"),
     agentDir: getFlag(parsed, "agent-dir"),
   });
-  const printer = new RunPrinter(options);
-  await streamRun(options, body, printer);
-  printer.finish();
-  return printer.exitCode();
+  const output = createCliRunOutput(options);
+  try {
+    await streamRun(options, body, (record) => {
+      if (record.kind === "ready") {
+        output.handleReady(record.runId);
+        return;
+      }
+      output.handleEvent(record.envelope);
+    });
+  } finally {
+    output.finish();
+  }
+  return output.exitCode();
 }
 
 async function handleTaskRemove(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -2797,16 +2657,25 @@ async function handleExternalWorkGitHubCiRun(args: readonly string[], options: G
     appendSystemPrompt: getFlagValues(parsed, "append-system-prompt"),
     agentDir: getFlag(parsed, "agent-dir"),
   });
-  const printer = new RunPrinter(options);
-  await streamRun(
-    options,
-    body,
-    printer,
-    `/external-work/github/ci/triage/${encodeURIComponent(triageId)}/run`,
-    { cwd: options.cwd },
-  );
-  printer.finish();
-  return printer.exitCode();
+  const output = createCliRunOutput(options);
+  try {
+    await streamRun(
+      options,
+      body,
+      (record) => {
+        if (record.kind === "ready") {
+          output.handleReady(record.runId);
+          return;
+        }
+        output.handleEvent(record.envelope);
+      },
+      `/external-work/github/ci/triage/${encodeURIComponent(triageId)}/run`,
+      { cwd: options.cwd },
+    );
+  } finally {
+    output.finish();
+  }
+  return output.exitCode();
 }
 
 async function handleExternalWorkReconcile(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -3181,7 +3050,7 @@ async function requestJson(
 async function streamRun(
   options: GlobalOptions,
   body: unknown,
-  printer: RunPrinter,
+  handleRecord: (record: RunStreamRecord) => void,
   path = "/runs",
   query: Record<string, QueryValue> = {},
 ): Promise<void> {
@@ -3217,59 +3086,34 @@ async function streamRun(
     const blocks = buffer.split(/\r?\n\r?\n/);
     buffer = blocks.pop() ?? "";
     for (const block of blocks) {
-      handleSseBlock(block, printer);
+      handleRunStreamBlock(block, handleRecord);
     }
   }
 
   buffer += decoder.decode();
   if (buffer.trim().length > 0) {
-    handleSseBlock(buffer, printer);
+    handleRunStreamBlock(buffer, handleRecord);
   }
 }
 
-function handleSseBlock(block: string, printer: RunPrinter): void {
-  const parsed = parseSseBlock(block);
-  if (!parsed) {
-    return;
+function handleRunStreamBlock(block: string, handleRecord: (record: RunStreamRecord) => void): void {
+  const record = parseRunStreamRecord(block);
+  if (record) {
+    handleRecord(record);
   }
-  const data = parseJson(parsed.data, `Invalid SSE JSON for event ${parsed.event}`);
-  if (parsed.event === "ready") {
-    const runId = readString(data, "runId");
-    if (!runId) {
-      throw new CliError(4, "bad_sse_event", "ready event did not include runId");
-    }
-    printer.printReady(runId);
-    return;
-  }
-  if (!isRunEventEnvelope(data)) {
-    throw new CliError(4, "bad_sse_event", `SSE event ${parsed.event} did not contain a run event envelope`);
-  }
-  printer.printEvent(data);
 }
 
-function parseSseBlock(block: string): SseBlock | undefined {
-  const lines = block.split("\n");
-  let event = "message";
-  const dataLines: string[] = [];
-
-  for (const rawLine of lines) {
-    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-    if (line.startsWith(":")) {
-      continue;
-    }
-    if (line.startsWith("event:")) {
-      event = line.slice("event:".length).trim();
-      continue;
-    }
-    if (line.startsWith("data:")) {
-      dataLines.push(line.slice("data:".length).trimStart());
-    }
-  }
-
-  if (dataLines.length === 0) {
-    return undefined;
-  }
-  return { event, data: dataLines.join("\n") };
+function createCliRunOutput(options: GlobalOptions): RunOutput {
+  return createRunOutput({
+    json: options.json,
+    verbose: options.verbose,
+    daemonUrl: options.daemonUrl,
+    cwd: options.cwd,
+    writers: {
+      stdout: process.stdout,
+      stderr: process.stderr,
+    },
+  });
 }
 
 async function readPrompt(parsed: ParsedCommandArgs, options: { readonly includePositionals?: boolean } = {}): Promise<string> {
@@ -4889,13 +4733,6 @@ function printCliError(error: unknown, options: GlobalOptions): void {
   console.error(`message: ${cliError.message}`);
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
-
 function isRunEventEnvelope(value: unknown): value is RunEventEnvelope {
   return (
     isRecord(value) &&
@@ -5023,6 +4860,10 @@ function printCommandHelp(command: string, subcommand?: string): void {
     printUiHelp();
     return;
   }
+  if (command === "completion") {
+    printCompletionHelp();
+    return;
+  }
   printHelp();
 }
 
@@ -5033,7 +4874,10 @@ Usage:
   ling-stack [global options] init
   ling-stack [global options] doctor
   ling-stack [global options] daemon status
-  ling-stack [global options] daemon start --foreground
+  ling-stack [global options] daemon start
+  ling-stack [global options] daemon stop
+  ling-stack [global options] daemon restart
+  ling-stack [global options] daemon logs
   ling-stack [global options] provider list
   ling-stack [global options] provider add <kind> --name <name> --provider-id <id> --model <model>
   ling-stack [global options] provider show <id>
@@ -5078,6 +4922,7 @@ Usage:
   ling-stack [global options] approvals approve <id>
   ling-stack [global options] approvals deny <id>
   ling-stack [global options] ui
+  ling-stack [global options] completion <bash|zsh|fish>
 
 Global options:
   --daemon-url <url>   Default: LING_STACK_DAEMON_URL or http://127.0.0.1:17891
@@ -5087,8 +4932,6 @@ Global options:
   --no-color           Reserved for stable non-colored output
   --help, -h           Show help
 
-Planned commands:
-  daemon stop, background daemon start
 `);
 }
 
@@ -5170,19 +5013,36 @@ function printTaskHelp(): void {
 function printRunHelp(): void {
   console.log(`Usage:
   ling-stack run --provider <providerPresetId> [options] <prompt...>
+  ling-stack run --provider <providerPresetId> -
+  cat prompt.md | ling-stack run --provider <providerPresetId>
 
 Options:
   --provider <id>              Provider preset id
   --title <text>               Task title
   --task <id>                  Task id to send to daemon
   --prompt <text>              Prompt text
-  --prompt-file <path>         Read prompt text from file
+  --prompt-file <path|->       Read prompt text from file or stdin
+  --output-last-message <file> Write final assistant message to file
   --tool <name>                Repeatable. Default: read,grep,find,ls
   --thinking <level>           off|minimal|low|medium|high|xhigh. Default: medium
   --system-prompt <text>       Override system prompt
   --append-system-prompt <txt> Repeatable appended system prompt
   --agent-dir <path>           Pi agent directory
   --skip-preflight             Skip provider last-check gate for debugging
+
+Stdin:
+  run - and --prompt-file - read stdin as the primary prompt.
+  Prompt text plus piped stdin appends stdin as a <stdin> context block.
+`);
+}
+
+function printCompletionHelp(): void {
+  console.log(`Usage:
+  ling-stack completion <bash|zsh|fish>
+
+Behavior:
+  Prints a static shell completion script to stdout.
+  Does not install shell files, edit shell profiles, or call the daemon.
 `);
 }
 

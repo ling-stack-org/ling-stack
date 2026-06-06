@@ -592,7 +592,7 @@ test("external-work github ci run streams an explicit local fix run", async () =
       "low",
     ]);
     assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /Run: run_ci_fix_1/);
+    assert.match(result.stderr, /Run: run_ci_fix_1/);
     assert.equal(daemon.requests.at(-1).method, "POST");
     assert.equal(daemon.requests.at(-1).path, "/external-work/github/ci/triage/external_work_ci_triage_1/run");
     assert.deepEqual(daemon.requests.at(-1).body, {
@@ -889,13 +889,14 @@ test("external-work actions propose, list, show, cancel, and execute render acti
 
 function runCli(daemonUrl, cwd, args) {
   return new Promise((resolveResult) => {
-    execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
+    const child = execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
       resolveResult({
         code: typeof error?.code === "number" ? error.code : 0,
         stdout,
         stderr,
       });
     });
+    child.stdin?.end();
   });
 }
 
