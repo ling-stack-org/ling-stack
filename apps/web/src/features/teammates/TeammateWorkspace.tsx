@@ -36,6 +36,7 @@ import {
   createTeammatePersonaDraft,
   deleteAttachment,
   deleteTeammateAvatar,
+  getMemoryHealth,
   getMemoryReviewPolicy,
   listMemoryObjects,
   listMemoryPromotionInbox,
@@ -84,6 +85,7 @@ import type {
   AiTeammate,
   Channel,
   EffectiveTeammateSkill,
+  MemoryHealthReport,
   MemoryObject,
   MemoryPromotionInboxItem,
   MemoryReviewAction,
@@ -209,6 +211,7 @@ export function TeammateWorkspace({
   const [mcpBindings, setMcpBindings] = useState<readonly TeammateMcpBinding[]>([]);
   const [memoryScopes, setMemoryScopes] = useState<readonly TeammateMemoryScope[]>([]);
   const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
+  const [memoryHealthReport, setMemoryHealthReport] = useState<MemoryHealthReport | undefined>();
   const [memoryPromotionInbox, setMemoryPromotionInbox] = useState<readonly MemoryPromotionInboxItem[]>([]);
   const [memoryReviewPolicy, setMemoryReviewPolicy] = useState<MemoryReviewPolicy | undefined>();
   const [memoryReviewingId, setMemoryReviewingId] = useState("");
@@ -448,6 +451,7 @@ export function TeammateWorkspace({
         mcpBindingsResponse,
         memoryResponse,
         memoryObjectsResponse,
+        memoryHealthResponse,
         memoryReviewPolicyResponse,
         memoryPromotionInboxResponse,
         usedMemoryResponse,
@@ -464,6 +468,7 @@ export function TeammateWorkspace({
         listTeammateMcpBindings(workspaceCwd, teammate.id),
         listTeammateMemoryScopes(workspaceCwd, teammate.id),
         listMemoryObjects(workspaceCwd),
+        getMemoryHealth(workspaceCwd, { limit: 8 }),
         getMemoryReviewPolicy(workspaceCwd),
         listMemoryPromotionInbox(workspaceCwd),
         listUsedMemoryEvents(workspaceCwd, { teammateId: teammate.id, limit: 100 }),
@@ -482,6 +487,7 @@ export function TeammateWorkspace({
       setMcpBindings(mcpBindingsResponse.bindings);
       setMemoryScopes(memoryResponse.scopes);
       setMemoryObjects(memoryObjectsResponse.memories);
+      setMemoryHealthReport(memoryHealthResponse.report);
       setMemoryReviewPolicy(memoryReviewPolicyResponse.policy);
       setMemoryPromotionInbox(memoryPromotionInboxResponse.items);
       setUsedMemoryEvents(usedMemoryResponse.events);
@@ -543,16 +549,18 @@ export function TeammateWorkspace({
           }
         }
       });
-      const [activityResponse, usedMemoryResponse, memoryObjectsResponse, memoryReviewPolicyResponse, memoryPromotionInboxResponse] = await Promise.all([
+      const [activityResponse, usedMemoryResponse, memoryObjectsResponse, memoryHealthResponse, memoryReviewPolicyResponse, memoryPromotionInboxResponse] = await Promise.all([
         listTeammateActivity(cwd.trim(), teammate.id),
         listUsedMemoryEvents(cwd.trim(), { teammateId: teammate.id, limit: 100 }),
         listMemoryObjects(cwd.trim()),
+        getMemoryHealth(cwd.trim(), { limit: 8 }),
         getMemoryReviewPolicy(cwd.trim()),
         listMemoryPromotionInbox(cwd.trim()),
       ]);
       setActivityItems(activityResponse.items);
       setUsedMemoryEvents(usedMemoryResponse.events);
       setMemoryObjects(memoryObjectsResponse.memories);
+      setMemoryHealthReport(memoryHealthResponse.report);
       setMemoryReviewPolicy(memoryReviewPolicyResponse.policy);
       setMemoryPromotionInbox(memoryPromotionInboxResponse.items);
     } catch (error) {
@@ -567,12 +575,14 @@ export function TeammateWorkspace({
     if (!workspaceCwd) {
       return;
     }
-    const [memoryObjectsResponse, memoryReviewPolicyResponse, memoryPromotionInboxResponse] = await Promise.all([
+    const [memoryObjectsResponse, memoryHealthResponse, memoryReviewPolicyResponse, memoryPromotionInboxResponse] = await Promise.all([
       listMemoryObjects(workspaceCwd),
+      getMemoryHealth(workspaceCwd, { limit: 8 }),
       getMemoryReviewPolicy(workspaceCwd),
       listMemoryPromotionInbox(workspaceCwd),
     ]);
     setMemoryObjects(memoryObjectsResponse.memories);
+    setMemoryHealthReport(memoryHealthResponse.report);
     setMemoryReviewPolicy(memoryReviewPolicyResponse.policy);
     setMemoryPromotionInbox(memoryPromotionInboxResponse.items);
   }
@@ -1984,6 +1994,45 @@ export function TeammateWorkspace({
             </span>
             <StatusBadge status="optional" />
           </article>
+          <article className="teammate-memory-health-panel">
+            <div className="teammate-memory-health-head">
+              <span>
+                <ShieldCheck size={15} />
+                <strong>{t("Memory health")}</strong>
+              </span>
+              <StatusBadge status={memoryHealthStatus(memoryHealthReport)} />
+            </div>
+            <div className="teammate-memory-health-grid">
+              <span>
+                <strong>{memoryHealthReport?.summary.findings.critical ?? 0}</strong>
+                <small>{t("Critical")}</small>
+              </span>
+              <span>
+                <strong>{memoryHealthReport?.summary.findings.warning ?? 0}</strong>
+                <small>{t("Warnings")}</small>
+              </span>
+              <span>
+                <strong>{memoryHealthReport?.summary.reviewBacklog ?? memoryPromotionInbox.length}</strong>
+                <small>{t("Review backlog")}</small>
+              </span>
+              <span>
+                <strong>{memoryHealthReport?.summary.verifyBeforeUse ?? 0}</strong>
+                <small>{t("Verify before use")}</small>
+              </span>
+            </div>
+            {memoryHealthReport && memoryHealthReport.findings.length > 0 ? (
+              <div className="teammate-memory-health-findings">
+                {memoryHealthReport.findings.slice(0, 4).map((finding) => (
+                  <span key={finding.id} className={`teammate-memory-health-finding ${finding.severity}`}>
+                    <strong>{t(memoryHealthFindingTitle(finding.kind))}</strong>
+                    <small>{finding.memoryId ? `${finding.reviewState ?? ""} · ${finding.memoryId}` : t("Workspace")}</small>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <small className="teammate-memory-review-message">{t("No memory health findings")}</small>
+            )}
+          </article>
           <article className="teammate-data-row teammate-memory-policy-row">
             <span>
               <strong>{t("Memory review mode")}</strong>
@@ -2733,6 +2782,42 @@ function memoryReviewActionMessage(action: MemoryReviewAction): string {
       return "Memory archived";
     case "quarantine":
       return "Memory quarantined";
+  }
+}
+
+function memoryHealthStatus(report: MemoryHealthReport | undefined): string {
+  if (!report) {
+    return "optional";
+  }
+  if (report.summary.findings.critical > 0) {
+    return "failed";
+  }
+  if (report.summary.findings.warning > 0) {
+    return "paused";
+  }
+  return "active";
+}
+
+function memoryHealthFindingTitle(kind: MemoryHealthReport["findings"][number]["kind"]): string {
+  switch (kind) {
+    case "missing_source_refs":
+      return "Missing source";
+    case "expired_candidate":
+      return "Expired candidate";
+    case "volatile_without_verify_before_use":
+      return "Needs verification";
+    case "duplicate_candidate":
+      return "Duplicate candidate";
+    case "superseded_active_memory":
+      return "Superseded active memory";
+    case "secret_adjacent_recallable":
+      return "Secret-adjacent recall";
+    case "authority_changing_claim":
+      return "Authority-changing claim";
+    case "stale_candidate":
+      return "Stale candidate";
+    case "high_review_backlog":
+      return "High review backlog";
   }
 }
 

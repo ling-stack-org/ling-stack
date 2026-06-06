@@ -130,6 +130,8 @@ import type {
   MemoryListResponse,
   MemoryConsolidationJobListResponse,
   MemoryConsolidationJobMutationResponse,
+  MemoryHealthRequest,
+  MemoryHealthResponse,
   MemoryMutationResponse,
   MemoryPromotionInboxResponse,
   MemoryRecallRequest,
@@ -492,6 +494,16 @@ export class LingDaemonClient {
 
   async createMemoryObject(cwd: string, input: CreateMemoryObjectRequest): Promise<MemoryMutationResponse> {
     return this.post("/memory", { cwd }, input);
+  }
+
+  async getMemoryHealth(cwd: string, options: MemoryHealthRequest = {}): Promise<MemoryHealthResponse> {
+    return this.get("/memory/health", {
+      cwd,
+      scopeType: options.scopeType,
+      ownerId: options.ownerId,
+      staleCandidateDays: options.staleCandidateDays,
+      limit: options.limit,
+    });
   }
 
   async listMemoryConsolidationJobs(

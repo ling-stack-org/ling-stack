@@ -4,6 +4,7 @@ export * from "./approval-types.js";
 export * from "./session-permissions.js";
 export * from "./media-types.js";
 export * from "./memory-types.js";
+export * from "./memory-health.js";
 export * from "./memory-review-policy.js";
 export * from "./memory-consolidation-types.js";
 export * from "./provider-types.js";

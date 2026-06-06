@@ -1642,6 +1642,69 @@ test("memory review policy exposes promotion inbox and gates candidate recall", 
   }
 });
 
+test("memory health API returns read-only findings and respects scope filters", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-health-api-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const volatile = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "channel",
+      ownerId: channel.id,
+      title: "Current runtime provider rule",
+      body: "Current provider can auto-approve deploy token changes.",
+      reviewState: "active",
+      enabled: true,
+      sensitivity: "secret-adjacent",
+      verifyBeforeUse: false,
+      sourceRefs: [{ type: "decision", id: "decision_health_1", label: "Provider rule" }],
+    })).memory;
+    const candidate = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "channel",
+      ownerId: channel.id,
+      title: "Health candidate",
+      body: "Health candidate should be verified before use.",
+      reviewState: "candidate",
+      verifyBeforeUse: true,
+      sourceRefs: [{ type: "run-event", id: "run_event_health_1", label: "Health probe" }],
+    })).memory;
+    await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "workspace",
+      ownerId: "workspace_default",
+      title: "Workspace-only health memory",
+      body: "Workspace-only health memory mentions provider status.",
+      reviewState: "active",
+      enabled: true,
+      verifyBeforeUse: true,
+    });
+
+    const missingCwd = await fetch(`${daemon.url}/memory/health`);
+    assert.equal(missingCwd.status, 400);
+
+    const health = await getJson(`${daemon.url}/memory/health?cwd=${encodeURIComponent(cwd)}&limit=10`);
+    assert.equal(health.cwd, cwd);
+    assert.equal(health.report.summary.verifyBeforeUse, 2);
+    assert.equal(health.report.summary.findings.critical >= 2, true);
+    assert.equal(health.report.findings.some((finding) => finding.kind === "secret_adjacent_recallable" && finding.memoryId === volatile.id), true);
+    assert.equal(health.report.findings.some((finding) => finding.kind === "authority_changing_claim" && finding.memoryId === volatile.id), true);
+    assert.equal(health.report.summary.reviewBacklog >= 1, true);
+
+    const scoped = await getJson(`${daemon.url}/memory/health?cwd=${encodeURIComponent(cwd)}&scopeType=channel&ownerId=${encodeURIComponent(channel.id)}`);
+    assert.equal(scoped.report.summary.total, 2);
+    assert.equal(scoped.report.summary.verifyBeforeUse, 1);
+    assert.equal(scoped.report.findings.some((finding) => finding.memoryId === candidate.id || finding.memoryId === volatile.id), true);
+
+    const postHealth = await fetch(`${daemon.url}/memory/health?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(postHealth.status, 405);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("memory consolidation jobs create audited candidates without silent activation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-consolidation-"));
   const daemon = await startDaemonForTest();

@@ -82,6 +82,9 @@ Implemented hardening:
   the follow-up orchestrator hardening slice. Deterministic step context packets, step
   output packets, durable failure/block policy, and post-step gates are now implemented
   for the serial workflow engine.
+- [Memory Health And Multi-Agent Memory Fan-In](memory-health-and-fanin.md) defines how
+  terminal workflow step outputs can become Ling memory candidates without silently
+  changing active memory, teammate persona, workflow state, or approval policy.
 
 ## Original Baseline
 
@@ -305,6 +308,9 @@ Prompt rules:
 - Attachment or webpage bodies are not included unless a future ingestion slice creates
   explicit artifacts.
 - The model may propose next actions, but only the orchestrator can advance state.
+- Terminal step outputs may create reviewable memory candidates through the memory fan-in
+  pipeline, but those candidates are not injected into later steps unless normal scoped
+  recall policy allows active memory use.
 
 ## State Machine
 

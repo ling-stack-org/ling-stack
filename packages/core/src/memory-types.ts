@@ -75,12 +75,59 @@ export interface MemoryObject {
   readonly reviewState: MemoryReviewState;
   readonly enabled: boolean;
   readonly sensitivity: MemorySensitivity;
+  readonly verifyBeforeUse: boolean;
   readonly retrievalProviderId?: string;
   readonly retrievalHandle?: string;
   readonly createdBy?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly lastUsedAt?: string;
+}
+
+export type MemorySelfImprovingKind =
+  | "correction"
+  | "reflection"
+  | "workflow_lesson"
+  | "tool_routing_lesson"
+  | "runtime_recovery_lesson";
+
+export type MemorySelfImprovingTrigger = "manual_review" | "promotion" | "run_review" | "health_review" | "import";
+
+export interface MemorySelfImprovingMetadata {
+  readonly memoryId: string;
+  readonly kind: MemorySelfImprovingKind;
+  readonly trigger: MemorySelfImprovingTrigger;
+  readonly lesson: string;
+  readonly useWhen: readonly string[];
+  readonly doNotUseWhen: readonly string[];
+  readonly validUntil?: string;
+  readonly lastSeenAt?: string;
+  readonly evidenceCount: number;
+  readonly supersededBy?: string;
+  readonly lastUsedAt?: string;
+  readonly useCount: number;
+}
+
+export interface UpsertMemorySelfImprovingMetadataInput {
+  readonly memoryId: string;
+  readonly kind: MemorySelfImprovingKind;
+  readonly trigger: MemorySelfImprovingTrigger;
+  readonly lesson: string;
+  readonly useWhen?: readonly string[];
+  readonly doNotUseWhen?: readonly string[];
+  readonly validUntil?: string | null;
+  readonly lastSeenAt?: string | null;
+  readonly evidenceCount?: number;
+  readonly supersededBy?: string | null;
+  readonly lastUsedAt?: string | null;
+  readonly useCount?: number;
+}
+
+export interface ListMemorySelfImprovingMetadataOptions {
+  readonly workspaceId?: string;
+  readonly memoryId?: string;
+  readonly kind?: MemorySelfImprovingKind;
+  readonly limit?: number;
 }
 
 export interface MemoryReviewDecision {
@@ -168,6 +215,7 @@ export interface CreateMemoryObjectInput {
   readonly reviewState?: MemoryReviewState;
   readonly enabled?: boolean;
   readonly sensitivity?: MemorySensitivity;
+  readonly verifyBeforeUse?: boolean;
   readonly retrievalProviderId?: string;
   readonly retrievalHandle?: string;
   readonly createdBy?: string;
@@ -183,6 +231,7 @@ export interface MemoryObjectUpdateInput {
   readonly reviewState?: MemoryReviewState;
   readonly enabled?: boolean;
   readonly sensitivity?: MemorySensitivity;
+  readonly verifyBeforeUse?: boolean;
   readonly retrievalProviderId?: string | null;
   readonly retrievalHandle?: string | null;
   readonly createdBy?: string | null;

@@ -113,6 +113,8 @@ import type {
   MemoryListResponse,
   MemoryConsolidationJobListResponse,
   MemoryConsolidationJobMutationResponse,
+  MemoryHealthRequest,
+  MemoryHealthResponse,
   MemoryMutationResponse,
   MemoryPromotionInboxResponse,
   MemoryRecallRequest,
@@ -518,6 +520,10 @@ export async function listMemoryObjects(cwd: string): Promise<MemoryListResponse
 
 export async function createMemoryObject(cwd: string, input: CreateMemoryObjectRequest): Promise<MemoryMutationResponse> {
   return daemonClient.createMemoryObject(cwd, input);
+}
+
+export async function getMemoryHealth(cwd: string, options: MemoryHealthRequest = {}): Promise<MemoryHealthResponse> {
+  return daemonClient.getMemoryHealth(cwd, options);
 }
 
 export async function listMemoryConsolidationJobs(

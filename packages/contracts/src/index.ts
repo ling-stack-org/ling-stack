@@ -1941,12 +1941,68 @@ export interface MemoryObject {
   readonly reviewState: MemoryReviewState;
   readonly enabled: boolean;
   readonly sensitivity: MemorySensitivity;
+  readonly verifyBeforeUse: boolean;
   readonly retrievalProviderId?: string;
   readonly retrievalHandle?: string;
   readonly createdBy?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly lastUsedAt?: string;
+}
+
+export type MemoryHealthSeverity = "info" | "warning" | "critical";
+
+export type MemoryHealthFindingKind =
+  | "missing_source_refs"
+  | "expired_candidate"
+  | "volatile_without_verify_before_use"
+  | "duplicate_candidate"
+  | "superseded_active_memory"
+  | "secret_adjacent_recallable"
+  | "authority_changing_claim"
+  | "stale_candidate"
+  | "high_review_backlog";
+
+export interface MemoryHealthFinding {
+  readonly id: string;
+  readonly kind: MemoryHealthFindingKind;
+  readonly severity: MemoryHealthSeverity;
+  readonly memoryId?: string;
+  readonly title: string;
+  readonly message: string;
+  readonly recommendation: string;
+  readonly scopeType?: MemoryScopeType;
+  readonly ownerId?: string;
+  readonly reviewState?: MemoryReviewState;
+  readonly sensitivity?: MemorySensitivity;
+  readonly sourceRefCount?: number;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+}
+
+export interface MemoryHealthSummary {
+  readonly total: number;
+  readonly active: number;
+  readonly candidate: number;
+  readonly disabled: number;
+  readonly archived: number;
+  readonly rejected: number;
+  readonly enabled: number;
+  readonly reviewBacklog: number;
+  readonly staleCandidates: number;
+  readonly verifyBeforeUse: number;
+  readonly findings: {
+    readonly critical: number;
+    readonly warning: number;
+    readonly info: number;
+  };
+}
+
+export interface MemoryHealthReport {
+  readonly generatedAt: string;
+  readonly staleCandidateDays: number;
+  readonly summary: MemoryHealthSummary;
+  readonly findings: readonly MemoryHealthFinding[];
 }
 
 export interface CreateMemoryObjectRequest {
@@ -1959,6 +2015,7 @@ export interface CreateMemoryObjectRequest {
   readonly reviewState?: MemoryReviewState;
   readonly enabled?: boolean;
   readonly sensitivity?: MemorySensitivity;
+  readonly verifyBeforeUse?: boolean;
   readonly retrievalProviderId?: string;
   readonly retrievalHandle?: string;
   readonly createdBy?: string;
@@ -1974,6 +2031,7 @@ export interface UpdateMemoryObjectRequest {
   readonly reviewState?: MemoryReviewState;
   readonly enabled?: boolean;
   readonly sensitivity?: MemorySensitivity;
+  readonly verifyBeforeUse?: boolean;
   readonly retrievalProviderId?: string | null;
   readonly retrievalHandle?: string | null;
   readonly createdBy?: string | null;
@@ -2053,6 +2111,7 @@ export interface CreateMemoryConsolidationJobRequest {
     readonly tags?: readonly string[];
     readonly sourceRefs?: readonly MemorySourceRef[];
     readonly sensitivity?: MemorySensitivity;
+    readonly verifyBeforeUse?: boolean;
     readonly createdBy?: string;
   };
 }
@@ -2064,6 +2123,18 @@ export interface MemoryListResponse {
     readonly status: "not_installed";
     readonly optional: true;
   };
+}
+
+export interface MemoryHealthRequest {
+  readonly scopeType?: MemoryScopeType;
+  readonly ownerId?: string;
+  readonly staleCandidateDays?: number;
+  readonly limit?: number;
+}
+
+export interface MemoryHealthResponse {
+  readonly cwd: string;
+  readonly report: MemoryHealthReport;
 }
 
 export interface MemoryMutationResponse {

@@ -7,6 +7,9 @@ Scope: Scoped automatic recall, multi-agent memory ownership, retrieval provider
 Detailed implementation breakdown:
 [Memory Review Policy Implementation Plan](memory-review-policy-implementation.md).
 
+Follow-up design for health diagnostics and workflow memory fan-in:
+[Memory Health And Multi-Agent Memory Fan-In](memory-health-and-fanin.md).
+
 ## Summary
 
 Ling Memory v1 turns the current memory-scope metadata into a real memory runtime for
@@ -453,6 +456,10 @@ Reflection or consolidation jobs may create candidates automatically, but they m
   permission;
 - access or index secrets;
 - leak private teammate or channel context across scopes.
+
+The follow-up [Memory Health And Multi-Agent Memory Fan-In](memory-health-and-fanin.md)
+design keeps this candidate-only boundary and adds diagnostics for stale, duplicate,
+expired, source-less, secret-adjacent, and authority-changing memory records.
 
 ## AGENT.md And Persona Memory
 

@@ -371,9 +371,13 @@ import {
   type MemoryReviewPolicyUpdateInput,
   type MemoryReviewState,
   type MemoryScopeType,
+  type MemorySelfImprovingKind,
+  type MemorySelfImprovingMetadata,
   type MemorySensitivity,
   type MemorySourceRef,
+  type ListMemorySelfImprovingMetadataOptions,
   type UsedMemoryEvent,
+  type UpsertMemorySelfImprovingMetadataInput,
 } from "../memory-types.js";
 import { createDefaultMemoryReviewPolicy } from "../memory-review-policy.js";
 import { redactSecrets } from "../redaction.js";
@@ -458,6 +462,8 @@ const AUTOMATIONS_MIGRATION_VERSION = 38;
 const AUTOMATIONS_MIGRATION_NAME = "create_automations";
 const AUTOMATION_DRAFTS_MIGRATION_VERSION = 39;
 const AUTOMATION_DRAFTS_MIGRATION_NAME = "create_automation_drafts";
+const MEMORY_HEALTH_MIGRATION_VERSION = 40;
+const MEMORY_HEALTH_MIGRATION_NAME = "add_memory_health_metadata";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -3232,6 +3238,7 @@ export class SqliteRunStore implements RunStore {
       reviewState: input.reviewState ?? "active",
       enabled: input.enabled ?? true,
       sensitivity: input.sensitivity ?? "normal",
+      verifyBeforeUse: input.verifyBeforeUse ?? false,
       retrievalProviderId: input.retrievalProviderId,
       retrievalHandle: input.retrievalHandle,
       createdBy: input.createdBy,
@@ -3254,13 +3261,14 @@ export class SqliteRunStore implements RunStore {
           review_state,
           enabled,
           sensitivity,
+          verify_before_use,
           retrieval_provider_id,
           retrieval_handle,
           created_by,
           created_at,
           updated_at,
           last_used_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         memory.id,
@@ -3274,6 +3282,7 @@ export class SqliteRunStore implements RunStore {
         memory.reviewState,
         memory.enabled ? 1 : 0,
         memory.sensitivity,
+        memory.verifyBeforeUse ? 1 : 0,
         memory.retrievalProviderId ?? null,
         memory.retrievalHandle ?? null,
         memory.createdBy ?? null,
@@ -3348,6 +3357,7 @@ export class SqliteRunStore implements RunStore {
       reviewState: input.reviewState ?? existing.reviewState,
       enabled: input.enabled ?? existing.enabled,
       sensitivity: input.sensitivity ?? existing.sensitivity,
+      verifyBeforeUse: input.verifyBeforeUse ?? existing.verifyBeforeUse,
       retrievalProviderId: nullableUpdate(input.retrievalProviderId, existing.retrievalProviderId),
       retrievalHandle: nullableUpdate(input.retrievalHandle, existing.retrievalHandle),
       createdBy: nullableUpdate(input.createdBy, existing.createdBy),
@@ -3369,6 +3379,7 @@ export class SqliteRunStore implements RunStore {
           review_state = ?,
           enabled = ?,
           sensitivity = ?,
+          verify_before_use = ?,
           retrieval_provider_id = ?,
           retrieval_handle = ?,
           created_by = ?,
@@ -3386,6 +3397,7 @@ export class SqliteRunStore implements RunStore {
         next.reviewState,
         next.enabled ? 1 : 0,
         next.sensitivity,
+        next.verifyBeforeUse ? 1 : 0,
         next.retrievalProviderId ?? null,
         next.retrievalHandle ?? null,
         next.createdBy ?? null,
@@ -3395,6 +3407,107 @@ export class SqliteRunStore implements RunStore {
       );
 
     return this.getMemoryObject(id);
+  }
+
+  getMemorySelfImprovingMetadata(memoryId: string): MemorySelfImprovingMetadata | undefined {
+    const row = this.database.prepare(memorySelfImprovingMetadataSelectSql("WHERE memory_id = ?")).get(memoryId);
+    return row ? mapMemorySelfImprovingMetadata(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  upsertMemorySelfImprovingMetadata(input: UpsertMemorySelfImprovingMetadataInput): MemorySelfImprovingMetadata {
+    if (!this.getMemoryObject(input.memoryId)) {
+      throw new Error(`Memory object not found: ${input.memoryId}`);
+    }
+    if (input.useWhen?.some((item) => !item.trim()) || input.doNotUseWhen?.some((item) => !item.trim())) {
+      throw new Error("useWhen and doNotUseWhen entries must be non-empty strings");
+    }
+    const metadata: MemorySelfImprovingMetadata = {
+      memoryId: input.memoryId,
+      kind: input.kind,
+      trigger: input.trigger,
+      lesson: input.lesson,
+      useWhen: normalizeStringList(input.useWhen ?? []),
+      doNotUseWhen: normalizeStringList(input.doNotUseWhen ?? []),
+      validUntil: nullableUpdate(input.validUntil, undefined),
+      lastSeenAt: nullableUpdate(input.lastSeenAt, undefined),
+      evidenceCount: input.evidenceCount ?? 0,
+      supersededBy: nullableUpdate(input.supersededBy, undefined),
+      lastUsedAt: nullableUpdate(input.lastUsedAt, undefined),
+      useCount: input.useCount ?? 0,
+    };
+    validateMemorySelfImprovingMetadata(metadata);
+    this.database
+      .prepare(`
+        INSERT INTO memory_self_improving_metadata (
+          memory_id,
+          kind,
+          trigger,
+          lesson,
+          use_when_json,
+          do_not_use_when_json,
+          valid_until,
+          last_seen_at,
+          evidence_count,
+          superseded_by,
+          last_used_at,
+          use_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(memory_id) DO UPDATE SET
+          kind = excluded.kind,
+          trigger = excluded.trigger,
+          lesson = excluded.lesson,
+          use_when_json = excluded.use_when_json,
+          do_not_use_when_json = excluded.do_not_use_when_json,
+          valid_until = excluded.valid_until,
+          last_seen_at = excluded.last_seen_at,
+          evidence_count = excluded.evidence_count,
+          superseded_by = excluded.superseded_by,
+          last_used_at = excluded.last_used_at,
+          use_count = excluded.use_count
+      `)
+      .run(
+        metadata.memoryId,
+        metadata.kind,
+        metadata.trigger,
+        metadata.lesson,
+        stringifyJson(metadata.useWhen),
+        stringifyJson(metadata.doNotUseWhen),
+        metadata.validUntil ?? null,
+        metadata.lastSeenAt ?? null,
+        metadata.evidenceCount,
+        metadata.supersededBy ?? null,
+        metadata.lastUsedAt ?? null,
+        metadata.useCount,
+      );
+    const stored = this.getMemorySelfImprovingMetadata(input.memoryId);
+    if (!stored) {
+      throw new Error(`Failed to upsert memory self-improving metadata: ${input.memoryId}`);
+    }
+    return stored;
+  }
+
+  listMemorySelfImprovingMetadata(options: ListMemorySelfImprovingMetadataOptions = {}): MemorySelfImprovingMetadata[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.workspaceId) {
+      clauses.push("memory_id IN (SELECT id FROM memory_objects WHERE workspace_id = ?)");
+      params.push(options.workspaceId);
+    }
+    if (options.memoryId) {
+      clauses.push("memory_id = ?");
+      params.push(options.memoryId);
+    }
+    if (options.kind) {
+      clauses.push("kind = ?");
+      params.push(options.kind);
+    }
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limit = Math.min(Math.max(options.limit ?? 500, 1), 1000);
+    params.push(limit);
+    return this.database
+      .prepare(`${memorySelfImprovingMetadataSelectSql(whereClause)} ORDER BY memory_id ASC LIMIT ?`)
+      .all(...params)
+      .map((row) => mapMemorySelfImprovingMetadata(row as Record<string, SQLOutputValue>));
   }
 
   getMemoryReviewPolicy(workspaceId = DEFAULT_WORKSPACE_ID): MemoryReviewPolicy {
@@ -9432,6 +9545,7 @@ export class SqliteRunStore implements RunStore {
           review_state TEXT NOT NULL,
           enabled INTEGER NOT NULL,
           sensitivity TEXT NOT NULL,
+          verify_before_use INTEGER NOT NULL DEFAULT 0,
           retrieval_provider_id TEXT,
           retrieval_handle TEXT,
           created_by TEXT,
@@ -9582,6 +9696,44 @@ export class SqliteRunStore implements RunStore {
 
       if (!hasMemoryConsolidationJobsMigration) {
         this.recordMigration(MEMORY_CONSOLIDATION_JOBS_MIGRATION_VERSION, MEMORY_CONSOLIDATION_JOBS_MIGRATION_NAME);
+      }
+    }
+
+    const hasMemoryHealthMigration = this.hasMigration(MEMORY_HEALTH_MIGRATION_VERSION);
+    if (
+      !hasMemoryHealthMigration ||
+      !this.hasColumn("memory_objects", "verify_before_use") ||
+      !this.hasTable("memory_self_improving_metadata")
+    ) {
+      if (this.hasTable("memory_objects") && !this.hasColumn("memory_objects", "verify_before_use")) {
+        this.database.exec("ALTER TABLE memory_objects ADD COLUMN verify_before_use INTEGER NOT NULL DEFAULT 0;");
+      }
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS memory_self_improving_metadata (
+          memory_id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          trigger TEXT NOT NULL,
+          lesson TEXT NOT NULL,
+          use_when_json TEXT NOT NULL,
+          do_not_use_when_json TEXT NOT NULL,
+          valid_until TEXT,
+          last_seen_at TEXT,
+          evidence_count INTEGER NOT NULL,
+          superseded_by TEXT,
+          last_used_at TEXT,
+          use_count INTEGER NOT NULL,
+          FOREIGN KEY(memory_id) REFERENCES memory_objects(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_self_improving_metadata_kind
+        ON memory_self_improving_metadata(kind);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_self_improving_metadata_superseded
+        ON memory_self_improving_metadata(superseded_by);
+      `);
+
+      if (!hasMemoryHealthMigration) {
+        this.recordMigration(MEMORY_HEALTH_MIGRATION_VERSION, MEMORY_HEALTH_MIGRATION_NAME);
       }
     }
 
@@ -10969,12 +11121,30 @@ function mapMemoryObject(row: Record<string, SQLOutputValue>): MemoryObject {
     reviewState: readString(row, "review_state") as MemoryReviewState,
     enabled: readBoolean(row, "enabled"),
     sensitivity: readString(row, "sensitivity") as MemorySensitivity,
+    verifyBeforeUse: readBoolean(row, "verify_before_use"),
     retrievalProviderId: readNullableString(row, "retrieval_provider_id"),
     retrievalHandle: readNullableString(row, "retrieval_handle"),
     createdBy: readNullableString(row, "created_by"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
     lastUsedAt: readNullableString(row, "last_used_at"),
+  });
+}
+
+function mapMemorySelfImprovingMetadata(row: Record<string, SQLOutputValue>): MemorySelfImprovingMetadata {
+  return omitUndefined({
+    memoryId: readString(row, "memory_id"),
+    kind: readString(row, "kind") as MemorySelfImprovingKind,
+    trigger: readString(row, "trigger") as MemorySelfImprovingMetadata["trigger"],
+    lesson: readString(row, "lesson"),
+    useWhen: parseJsonStringArray(readString(row, "use_when_json")),
+    doNotUseWhen: parseJsonStringArray(readString(row, "do_not_use_when_json")),
+    validUntil: readNullableString(row, "valid_until"),
+    lastSeenAt: readNullableString(row, "last_seen_at"),
+    evidenceCount: readNumber(row, "evidence_count"),
+    supersededBy: readNullableString(row, "superseded_by"),
+    lastUsedAt: readNullableString(row, "last_used_at"),
+    useCount: readNumber(row, "use_count"),
   });
 }
 
@@ -12066,6 +12236,7 @@ function memoryObjectSelectSql(whereClause: string): string {
       review_state,
       enabled,
       sensitivity,
+      verify_before_use,
       retrieval_provider_id,
       retrieval_handle,
       created_by,
@@ -12073,6 +12244,26 @@ function memoryObjectSelectSql(whereClause: string): string {
       updated_at,
       last_used_at
     FROM memory_objects
+    ${whereClause}
+  `;
+}
+
+function memorySelfImprovingMetadataSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      memory_id,
+      kind,
+      trigger,
+      lesson,
+      use_when_json,
+      do_not_use_when_json,
+      valid_until,
+      last_seen_at,
+      evidence_count,
+      superseded_by,
+      last_used_at,
+      use_count
+    FROM memory_self_improving_metadata
     ${whereClause}
   `;
 }
@@ -13376,6 +13567,27 @@ function validateMemoryObject(memory: MemoryObject): void {
   }
 }
 
+function validateMemorySelfImprovingMetadata(metadata: MemorySelfImprovingMetadata): void {
+  if (!metadata.memoryId.trim()) {
+    throw new Error("memoryId must be a non-empty string");
+  }
+  if (!isMemorySelfImprovingKind(metadata.kind)) {
+    throw new Error("memory self-improving metadata kind is not supported");
+  }
+  if (!isMemorySelfImprovingTrigger(metadata.trigger)) {
+    throw new Error("memory self-improving metadata trigger is not supported");
+  }
+  if (!metadata.lesson.trim()) {
+    throw new Error("lesson must be a non-empty string");
+  }
+  if (metadata.evidenceCount < 0 || metadata.useCount < 0) {
+    throw new Error("memory self-improving metadata counters must be non-negative");
+  }
+  if (metadata.supersededBy === metadata.memoryId) {
+    throw new Error("supersededBy must not equal memoryId");
+  }
+}
+
 function validateMemoryConsolidationJob(job: MemoryConsolidationJob): void {
   if (!job.workspaceId.trim()) {
     throw new Error("workspaceId must be a non-empty string");
@@ -13439,6 +13651,20 @@ function isMemoryScopeType(value: unknown): value is MemoryScopeType {
 
 function isMemoryConsolidationJobKind(value: unknown): value is MemoryConsolidationJobKind {
   return value === "private_chat_summary" || value === "channel_decision_summary" || value === "task_run_lesson" || value === "workspace_consolidation";
+}
+
+function isMemorySelfImprovingKind(value: unknown): value is MemorySelfImprovingKind {
+  return (
+    value === "correction" ||
+    value === "reflection" ||
+    value === "workflow_lesson" ||
+    value === "tool_routing_lesson" ||
+    value === "runtime_recovery_lesson"
+  );
+}
+
+function isMemorySelfImprovingTrigger(value: unknown): value is MemorySelfImprovingMetadata["trigger"] {
+  return value === "manual_review" || value === "promotion" || value === "run_review" || value === "health_review" || value === "import";
 }
 
 function isMemoryConsolidationJobStatus(value: unknown): value is MemoryConsolidationJobStatus {

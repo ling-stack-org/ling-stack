@@ -41,8 +41,16 @@ export interface ParsedMemoryConsolidationJobRequest {
     readonly tags?: readonly string[];
     readonly sourceRefs?: readonly MemorySourceRef[];
     readonly sensitivity?: MemorySensitivity;
+    readonly verifyBeforeUse?: boolean;
     readonly createdBy?: string;
   };
+}
+
+export interface ParsedMemoryHealthQuery {
+  readonly scopeType?: MemoryScopeType;
+  readonly ownerId?: string;
+  readonly staleCandidateDays?: number;
+  readonly limit?: number;
 }
 
 export function parseCreateMemoryObjectInput(value: unknown): {
@@ -55,6 +63,7 @@ export function parseCreateMemoryObjectInput(value: unknown): {
   readonly reviewState?: MemoryReviewState;
   readonly enabled?: boolean;
   readonly sensitivity?: MemorySensitivity;
+  readonly verifyBeforeUse?: boolean;
   readonly retrievalProviderId?: string;
   readonly retrievalHandle?: string;
   readonly createdBy?: string;
@@ -72,6 +81,7 @@ export function parseCreateMemoryObjectInput(value: unknown): {
     reviewState: readOptionalMemoryReviewState(value, "reviewState"),
     enabled: readOptionalBoolean(value, "enabled"),
     sensitivity: readOptionalMemorySensitivity(value, "sensitivity"),
+    verifyBeforeUse: readOptionalBoolean(value, "verifyBeforeUse"),
     retrievalProviderId: readOptionalString(value, "retrievalProviderId"),
     retrievalHandle: readOptionalString(value, "retrievalHandle"),
     createdBy: readOptionalString(value, "createdBy"),
@@ -96,6 +106,7 @@ export function parseCreateMemoryConsolidationJobRequest(value: unknown): Parsed
     tags: readOptionalStringArray(candidateValue, "tags"),
     sourceRefs: readOptionalMemorySourceRefs(candidateValue, "sourceRefs"),
     sensitivity: readOptionalMemorySensitivity(candidateValue, "sensitivity"),
+    verifyBeforeUse: readOptionalBoolean(candidateValue, "verifyBeforeUse"),
     createdBy: readOptionalString(candidateValue, "createdBy"),
   };
   validateMemoryInput(candidate);
@@ -124,6 +135,7 @@ export function parseMemoryObjectUpdateInput(value: unknown): MemoryObjectUpdate
     reviewState: readOptionalMemoryReviewState(value, "reviewState"),
     enabled: readOptionalBoolean(value, "enabled"),
     sensitivity: readOptionalMemorySensitivity(value, "sensitivity"),
+    verifyBeforeUse: readOptionalBoolean(value, "verifyBeforeUse"),
     retrievalProviderId: readNullableString(value, "retrievalProviderId"),
     retrievalHandle: readNullableString(value, "retrievalHandle"),
     createdBy: readNullableString(value, "createdBy"),
@@ -145,6 +157,15 @@ export function parseMemoryReviewPolicyUpdateInput(value: unknown): Omit<MemoryR
     requireManualForPersona: readOptionalBoolean(value, "requireManualForPersona"),
     requireManualForCrossScope: readOptionalBoolean(value, "requireManualForCrossScope"),
     quarantineSecretAdjacent: readOptionalBoolean(value, "quarantineSecretAdjacent"),
+  });
+}
+
+export function parseMemoryHealthQuery(url: URL): ParsedMemoryHealthQuery {
+  return removeUndefined({
+    scopeType: readOptionalMemoryScopeTypeQuery(url),
+    ownerId: url.searchParams.get("ownerId") ?? undefined,
+    staleCandidateDays: readOptionalNumberQuery(url, "staleCandidateDays"),
+    limit: readOptionalNumberQuery(url, "limit"),
   });
 }
 
@@ -333,6 +354,18 @@ function readMemoryReviewActionActor(record: Record<string, unknown>, key: strin
     throw new Error(`${key} must be one of: local-user, system`);
   }
   return value;
+}
+
+function readOptionalNumberQuery(url: URL, key: string): number | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${key} must be a finite number`);
+  }
+  return parsed;
 }
 
 function readOptionalMemorySensitivity(record: Record<string, unknown>, key: string): MemorySensitivity | undefined {

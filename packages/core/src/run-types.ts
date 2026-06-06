@@ -168,6 +168,7 @@ import type {
   ApplyMemoryReviewActionInput,
   CreateMemoryReviewDecisionInput,
   CreateUsedMemoryEventInput,
+  ListMemorySelfImprovingMetadataOptions,
   ListMemoryObjectsOptions,
   ListMemoryPromotionInboxOptions,
   ListUsedMemoryEventsOptions,
@@ -180,7 +181,9 @@ import type {
   MemoryReviewDecision,
   MemoryReviewPolicy,
   MemoryReviewPolicyUpdateInput,
+  MemorySelfImprovingMetadata,
   UsedMemoryEvent,
+  UpsertMemorySelfImprovingMetadataInput,
 } from "./memory-types.js";
 import type {
   CreateMemoryConsolidationJobInput,
@@ -716,6 +719,9 @@ export interface RunStore {
   getMemoryObject(id: string): MemoryObject | undefined;
   listMemoryObjects(options?: ListMemoryObjectsOptions): MemoryObject[];
   updateMemoryObject(id: string, input: MemoryObjectUpdateInput, now: string): MemoryObject | undefined;
+  getMemorySelfImprovingMetadata(memoryId: string): MemorySelfImprovingMetadata | undefined;
+  upsertMemorySelfImprovingMetadata(input: UpsertMemorySelfImprovingMetadataInput): MemorySelfImprovingMetadata;
+  listMemorySelfImprovingMetadata(options?: ListMemorySelfImprovingMetadataOptions): MemorySelfImprovingMetadata[];
   getMemoryReviewPolicy(workspaceId?: string): MemoryReviewPolicy;
   updateMemoryReviewPolicy(input: MemoryReviewPolicyUpdateInput, now: string): MemoryReviewPolicy;
   recordMemoryReviewDecision(input: CreateMemoryReviewDecisionInput, now: string): MemoryReviewDecision;

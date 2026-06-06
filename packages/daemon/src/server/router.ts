@@ -87,6 +87,7 @@ import {
   handleListUsedMemoryEvents,
   handleMemoryCollection,
   handleMemoryConsolidationJobs,
+  handleMemoryHealth,
   handleMemoryItem,
   handleMemoryPromotionInbox,
   handleMemoryRecall,
@@ -631,6 +632,15 @@ export async function routeRequest(
 
   if (url.pathname === "/memory/consolidation-jobs") {
     await handleMemoryConsolidationJobs(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/memory/health") {
+    handleMemoryHealth(response, url, storeRegistry);
+    return;
+  }
+  if (url.pathname === "/memory/health") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /memory/health` });
     return;
   }
 

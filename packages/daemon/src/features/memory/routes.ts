@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { buildMemoryHealthReport } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -11,6 +12,7 @@ import {
   parseCreateMemoryObjectInput,
   parseMemoryReviewPolicyUpdateInput,
   parseMemoryObjectUpdateInput,
+  parseMemoryHealthQuery,
   parseMemoryRecallRequest,
   readOptionalMemoryConsolidationJobKindQuery,
   readOptionalMemoryConsolidationJobStatusQuery,
@@ -18,6 +20,47 @@ import {
   readOptionalMemoryScopeTypeQuery,
   readOptionalMemorySensitivityQuery,
 } from "./schemas.js";
+
+export function handleMemoryHealth(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const query = parseMemoryHealthQuery(url);
+    const store = storeRegistry.getStore(cwd);
+    const memories = store.listMemoryObjects({
+      scopeType: query.scopeType,
+      ownerId: query.ownerId,
+      limit: 500,
+    });
+    const latestDecisionsByMemoryId = new Map(memories.map((memory) => [memory.id, store.getLatestMemoryReviewDecision(memory.id)]));
+    const metadataByMemoryId = new Map(
+      store
+        .listMemorySelfImprovingMetadata({ limit: 1000 })
+        .filter((metadata) => memories.some((memory) => memory.id === metadata.memoryId))
+        .map((metadata) => [metadata.memoryId, metadata]),
+    );
+    writeJson(response, 200, {
+      cwd,
+      report: buildMemoryHealthReport({
+        memories,
+        latestDecisionsByMemoryId,
+        metadataByMemoryId,
+        generatedAt: new Date().toISOString(),
+        staleCandidateDays: query.staleCandidateDays,
+        limit: query.limit,
+      }),
+    });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 export async function handleMemoryCollection(
   request: IncomingMessage,
