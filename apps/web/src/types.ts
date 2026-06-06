@@ -71,10 +71,10 @@ export interface McpServerFormState {
   readonly cwd: string;
   readonly url: string;
   readonly headerName: string;
-  readonly headerValue: string;
+  readonly headerSecretRef: string;
+  readonly bearerTokenRef: string;
   readonly envName: string;
-  readonly envValue: string;
-  readonly clearSecretNames: readonly string[];
+  readonly envSecretRef: string;
   readonly startupTimeoutSec: string;
   readonly toolTimeoutSec: string;
   readonly enabled: boolean;

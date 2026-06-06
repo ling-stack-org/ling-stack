@@ -1,44 +1,77 @@
 import { randomUUID } from "node:crypto";
 import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
-import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { Transport as McpTransport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Tool as SdkMcpTool } from "@modelcontextprotocol/sdk/types.js";
-import type { McpServer, McpServerStatus, McpStreamableHttpTransport, ReplaceMcpServerToolInput } from "@ling-stack/core";
+import type { McpRuntimeStatusSnapshot, McpServer, McpStreamableHttpTransport, ReplaceMcpServerToolInput, SecretStatus } from "@ling-stack/core";
 import type { PiRunnerMcpToolCallResult } from "@ling-stack/runner-pi";
-import type { McpBroker } from "../../context.js";
+import type { McpBroker, McpBrokerOptions } from "../../context.js";
 import { readLimitedResponseText } from "../../shared/http.js";
 import { isRecord, readOptionalString, readString } from "../../shared/validation.js";
+import { createMcpAuthStatus, createMcpStatusSnapshot } from "./status.js";
+import { createDefaultMcpProcessLauncher, type McpProcessLauncher } from "./stdio-launcher.js";
+import { buildMcpHttpHeaders, createMcpTransport, McpSecretResolutionError } from "./transport-factory.js";
 
 export function createDefaultMcpBroker(): McpBroker {
+  const processLauncher = createDefaultMcpProcessLauncher();
   return {
-    async checkServer(server: McpServer, secrets: Readonly<Record<string, string>>): Promise<{ readonly status: McpServerStatus }> {
+    async checkServer(server: McpServer, options: McpBrokerOptions): Promise<{ readonly statusSnapshot: McpRuntimeStatusSnapshot }> {
+      const now = currentMcpNow(options);
       if (!server.enabled) {
         return {
-          status: {
-            kind: "disabled",
+          statusSnapshot: createMcpStatusSnapshot({
+            server,
+            now,
+            status: "disabled",
+            authStatus: createMcpAuthStatus([]),
             message: "MCP server is disabled.",
-            checkedAt: new Date().toISOString(),
-          },
+          }),
         };
       }
       const timeoutMs = (server.startupTimeoutSec ?? 30) * 1000;
-      const serverName = await withMcpClient(server, secrets, async (client) => {
-        await client.ping({ timeout: timeoutMs });
-        return client.getServerVersion()?.name;
-      });
-      return {
-        status: {
-          kind: "ready",
-          message: serverName ? `Connected to ${serverName}.` : `Connected to MCP ${server.transport.type} server.`,
-          checkedAt: new Date().toISOString(),
-        },
-      };
-    },
-    async listTools(server: McpServer, secrets: Readonly<Record<string, string>>): Promise<readonly ReplaceMcpServerToolInput[]> {
-      const timeoutMs = (server.toolTimeoutSec ?? server.startupTimeoutSec ?? 30) * 1000;
+      const startedAt = Date.now();
       try {
-        return await withMcpClient(server, secrets, async (client) => {
+        const { result, secretStatuses } = await withMcpClient(server, options, processLauncher, async (client) => {
+          await client.ping({ timeout: timeoutMs });
+          return client.getServerVersion();
+        });
+        const serverName = result?.name;
+        return {
+          statusSnapshot: createMcpStatusSnapshot({
+            server,
+            now,
+            status: "ready",
+            authStatus: createMcpAuthStatus(secretStatuses),
+            serverInfo: result ? { name: result.name, version: result.version } : undefined,
+            latencyMs: Date.now() - startedAt,
+            message: serverName ? `Connected to ${serverName}.` : `Connected to MCP ${server.transport.type} server.`,
+          }),
+        };
+      } catch (error) {
+        return {
+          statusSnapshot: failedSnapshotFromError(server, now, error, Date.now() - startedAt),
+        };
+      }
+    },
+    async listTools(server: McpServer, options: McpBrokerOptions): Promise<{
+      readonly statusSnapshot: McpRuntimeStatusSnapshot;
+      readonly tools: readonly ReplaceMcpServerToolInput[];
+    }> {
+      const now = currentMcpNow(options);
+      if (!server.enabled) {
+        return {
+          statusSnapshot: createMcpStatusSnapshot({
+            server,
+            now,
+            status: "disabled",
+            authStatus: createMcpAuthStatus([]),
+            message: "MCP server is disabled.",
+          }),
+          tools: [],
+        };
+      }
+      const timeoutMs = (server.toolTimeoutSec ?? server.startupTimeoutSec ?? 30) * 1000;
+      const startedAt = Date.now();
+      try {
+        const { result, secretStatuses } = await withMcpClient(server, options, processLauncher, async (client) => {
           const tools: ReplaceMcpServerToolInput[] = [];
           let cursor: string | undefined;
           do {
@@ -48,22 +81,56 @@ export function createDefaultMcpBroker(): McpBroker {
           } while (cursor);
           return tools;
         });
+        return {
+          statusSnapshot: createMcpStatusSnapshot({
+            server,
+            now,
+            status: "ready",
+            authStatus: createMcpAuthStatus(secretStatuses),
+            toolCount: result.length,
+            latencyMs: Date.now() - startedAt,
+            message: `${result.length} MCP tool(s) discovered.`,
+          }),
+          tools: result,
+        };
       } catch (error) {
         if (server.transport.type !== "streamable-http") {
-          throw error;
+          return {
+            statusSnapshot: failedSnapshotFromError(server, now, error, Date.now() - startedAt),
+            tools: [],
+          };
         }
-        const httpServer = server as McpServer & { readonly transport: McpStreamableHttpTransport };
-        return rawListMcpToolsOverHttp(httpServer, secrets, timeoutMs);
+        try {
+          const httpServer = server as McpServer & { readonly transport: McpStreamableHttpTransport };
+          const { tools, secretStatuses } = await rawListMcpToolsOverHttp(httpServer, options, timeoutMs);
+          return {
+            statusSnapshot: createMcpStatusSnapshot({
+              server,
+              now,
+              status: "ready",
+              authStatus: createMcpAuthStatus(secretStatuses),
+              toolCount: tools.length,
+              latencyMs: Date.now() - startedAt,
+              message: `${tools.length} MCP tool(s) discovered.`,
+            }),
+            tools,
+          };
+        } catch (fallbackError) {
+          return {
+            statusSnapshot: failedSnapshotFromError(server, now, fallbackError, Date.now() - startedAt),
+            tools: [],
+          };
+        }
       }
     },
     async callTool(
       server: McpServer,
-      secrets: Readonly<Record<string, string>>,
+      options: McpBrokerOptions,
       toolName: string,
       input: unknown,
     ): Promise<PiRunnerMcpToolCallResult> {
       const timeoutMs = (server.toolTimeoutSec ?? server.startupTimeoutSec ?? 30) * 1000;
-      return withMcpClient(server, secrets, async (client) => {
+      const { result } = await withMcpClient(server, options, processLauncher, async (client) => {
         const result = await client.callTool(
           {
             name: toolName,
@@ -74,20 +141,29 @@ export function createDefaultMcpBroker(): McpBroker {
         );
         return mcpSdkCallToolResultToRunnerResult(result);
       });
+      return result;
     },
   };
 }
 
 async function withMcpClient<T>(
   server: McpServer,
-  secrets: Readonly<Record<string, string>>,
+  options: McpBrokerOptions,
+  processLauncher: McpProcessLauncher,
   callback: (client: McpClient) => Promise<T>,
-): Promise<T> {
+): Promise<{ readonly result: T; readonly secretStatuses: readonly SecretStatus[] }> {
   const client = new McpClient({ name: "ling-stack-daemon", version: "0.1.0" });
-  const transport = createMcpTransport(server, secrets);
+  const resolved = createMcpTransport({
+    server,
+    secretResolver: options.secretResolver,
+    processLauncher,
+  });
   try {
-    await client.connect(transport, { timeout: (server.startupTimeoutSec ?? 30) * 1000 });
-    return await callback(client);
+    await client.connect(resolved.transport, { timeout: (server.startupTimeoutSec ?? 30) * 1000 });
+    return {
+      result: await callback(client),
+      secretStatuses: resolved.secretStatuses,
+    };
   } finally {
     try {
       await client.close();
@@ -97,69 +173,22 @@ async function withMcpClient<T>(
   }
 }
 
-function createMcpTransport(server: McpServer, secrets: Readonly<Record<string, string>>): McpTransport {
-  if (server.transport.type === "stdio") {
-    const env = {
-      ...getDefaultEnvironment(),
-      ...server.transport.env,
-    };
-    for (const secretName of server.transport.secretEnvNames) {
-      const value = secrets[secretName];
-      if (value !== undefined) {
-        env[secretName] = value;
-      }
-    }
-    return new StdioClientTransport({
-      command: server.transport.command,
-      args: [...server.transport.args],
-      env,
-      cwd: server.transport.cwd,
-      stderr: "pipe",
-    });
-  }
-
-  const httpServer = server as McpServer & { readonly transport: McpStreamableHttpTransport };
-  const headers = buildMcpHttpHeaders(httpServer, secrets);
-  return new StreamableHTTPClientTransport(new URL(httpServer.transport.url), {
-    requestInit: { headers },
-  });
-}
-
-function buildMcpHttpHeaders(server: McpServer & { readonly transport: McpStreamableHttpTransport }, secrets: Readonly<Record<string, string>>): Record<string, string> {
-  const headers: Record<string, string> = { ...server.transport.headers };
-  for (const [headerName, envName] of Object.entries(server.transport.envHeaders)) {
-    const value = process.env[envName];
-    if (value !== undefined) {
-      headers[headerName] = value;
-    }
-  }
-  if (server.transport.bearerTokenEnvVar) {
-    const value = process.env[server.transport.bearerTokenEnvVar];
-    if (value !== undefined && headers.Authorization === undefined) {
-      headers.Authorization = `Bearer ${value}`;
-    }
-  }
-  for (const secretName of server.transport.secretHeaderNames) {
-    const value = secrets[secretName];
-    if (value !== undefined) {
-      headers[secretName] = value;
-    }
-  }
-  return headers;
-}
-
 async function rawListMcpToolsOverHttp(
   server: McpServer & { readonly transport: McpStreamableHttpTransport },
-  secrets: Readonly<Record<string, string>>,
+  options: McpBrokerOptions,
   timeoutMs: number,
-): Promise<readonly ReplaceMcpServerToolInput[]> {
+): Promise<{ readonly tools: readonly ReplaceMcpServerToolInput[]; readonly secretStatuses: readonly SecretStatus[] }> {
   const tools: ReplaceMcpServerToolInput[] = [];
+  const { headers, statuses } = buildMcpHttpHeaders({
+    transport: server.transport,
+    secretResolver: options.secretResolver,
+  });
   let cursor: string | undefined;
   do {
     const response = await fetch(server.transport.url, {
       method: "POST",
       headers: {
-        ...buildMcpHttpHeaders(server, secrets),
+        ...headers,
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
       },
@@ -192,7 +221,34 @@ async function rawListMcpToolsOverHttp(
     tools.push(...rawTools.map((tool) => rawMcpToolToStoreInput(server, tool)));
     cursor = readOptionalString(payload.result, "nextCursor");
   } while (cursor);
-  return tools;
+  return { tools, secretStatuses: statuses };
+}
+
+function currentMcpNow(options: McpBrokerOptions): string {
+  return options.now ? options.now() : new Date().toISOString();
+}
+
+function failedSnapshotFromError(server: McpServer, now: string, error: unknown, latencyMs?: number): McpRuntimeStatusSnapshot {
+  if (error instanceof McpSecretResolutionError) {
+    return createMcpStatusSnapshot({
+      server,
+      now,
+      status: "failed",
+      authStatus: createMcpAuthStatus(error.statuses),
+      latencyMs,
+      errorCode: "mcp_secret_missing",
+      message: error.message,
+    });
+  }
+  return createMcpStatusSnapshot({
+    server,
+    now,
+    status: "failed",
+    authStatus: createMcpAuthStatus([]),
+    latencyMs,
+    errorCode: "mcp_connection_failed",
+    message: error instanceof Error ? error.message : String(error),
+  });
 }
 
 function parseMcpJsonRpcHttpPayload(bodyText: string): unknown {

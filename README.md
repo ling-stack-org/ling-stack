@@ -19,6 +19,8 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Daemon lifecycle and doctor P0](docs/design/daemon-lifecycle-p0.md)
 - [CLI run I/O and completion P1](docs/design/cli-run-io-completion-p1.md)
 - [CLI run I/O and completion P1 implementation plan](docs/design/cli-run-io-completion-p1-implementation-plan.md)
+- [MCP status boundaries P2](docs/design/mcp-status-boundaries-p2.md)
+- [MCP status boundaries P2 implementation plan](docs/design/mcp-status-boundaries-p2-implementation-plan.md)
 - [Provider adapters](docs/provider-adapters.md)
 - [Seedream live smoke](docs/seedream-live-smoke.md)
 - [External work live smoke](docs/external-work-live-smoke.md)

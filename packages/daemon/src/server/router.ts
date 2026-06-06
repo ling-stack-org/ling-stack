@@ -240,7 +240,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/mcp/servers") {
-    await handleMcpServersCollection(request, response, config, storeRegistry);
+    await handleMcpServersCollection(request, response, config, storeRegistry, secretResolver);
     return;
   }
 
@@ -1101,7 +1101,7 @@ export async function routeRequest(
 
   const mcpServerRoute = parseMcpServerRoute(url.pathname);
   if (mcpServerRoute) {
-    await handleMcpServerItem(request, response, config, storeRegistry, mcpBroker, mcpServerRoute);
+    await handleMcpServerItem(request, response, config, storeRegistry, mcpBroker, secretResolver, mcpServerRoute);
     return;
   }
 

@@ -1,9 +1,8 @@
-import type { CreateMcpServerInput, McpServerStatus, McpServerTransport, McpStreamableHttpTransport } from "@ling-stack/core";
-import { isRecord, readNullableNumber, readNullableStringArray, readOptionalBoolean, readOptionalNumber, readOptionalString, readOptionalStringArray, readOptionalStringRecord, readString, readStringAllowEmpty, removeUndefined, validateUrl } from "../../shared/validation.js";
+import type { CreateMcpServerInput, McpServerTransport } from "@ling-stack/core";
+import { isRecord, readNullableNumber, readNullableStringArray, readOptionalBoolean, readOptionalNumber, readOptionalString, readOptionalStringArray, readOptionalStringRecord, readString, validateUrl } from "../../shared/validation.js";
 
 interface McpServerCreateRequest {
   readonly serverInput: CreateMcpServerInput;
-  readonly secrets: Readonly<Record<string, string>>;
 }
 
 interface McpServerUpdateRequest {
@@ -12,20 +11,18 @@ interface McpServerUpdateRequest {
     readonly transport?: McpServerTransport;
     readonly enabled?: boolean;
     readonly required?: boolean;
-    readonly status?: McpServerStatus;
     readonly startupTimeoutSec?: number | null;
     readonly toolTimeoutSec?: number | null;
     readonly enabledTools?: readonly string[] | null;
     readonly disabledTools?: readonly string[];
   };
-  readonly secrets: Readonly<Record<string, string>>;
-  readonly clearSecretNames: readonly string[];
 }
 
 export function parseMcpServerCreateRequest(value: unknown): McpServerCreateRequest {
   if (!isRecord(value)) {
     throw new Error("MCP server request must be a JSON object");
   }
+  rejectRemovedMcpSecretFields(value);
   return {
     serverInput: {
       id: readOptionalString(value, "id"),
@@ -33,13 +30,11 @@ export function parseMcpServerCreateRequest(value: unknown): McpServerCreateRequ
       transport: readMcpServerTransport(value, "transport"),
       enabled: readOptionalBoolean(value, "enabled"),
       required: readOptionalBoolean(value, "required"),
-      status: readOptionalMcpServerStatus(value, "status"),
       startupTimeoutSec: readOptionalNumber(value, "startupTimeoutSec"),
       toolTimeoutSec: readOptionalNumber(value, "toolTimeoutSec"),
       enabledTools: readOptionalStringArray(value, "enabledTools"),
       disabledTools: readOptionalStringArray(value, "disabledTools"),
     },
-    secrets: readOptionalStringRecord(value, "secrets") ?? {},
   };
 }
 
@@ -47,20 +42,18 @@ export function parseMcpServerUpdateRequest(value: unknown): McpServerUpdateRequ
   if (!isRecord(value)) {
     throw new Error("MCP server update must be a JSON object");
   }
+  rejectRemovedMcpSecretFields(value);
   return {
     serverInput: {
       displayName: readOptionalString(value, "displayName"),
       transport: value.transport === undefined ? undefined : readMcpServerTransport(value, "transport"),
       enabled: readOptionalBoolean(value, "enabled"),
       required: readOptionalBoolean(value, "required"),
-      status: readOptionalMcpServerStatus(value, "status"),
       startupTimeoutSec: readNullableNumber(value, "startupTimeoutSec"),
       toolTimeoutSec: readNullableNumber(value, "toolTimeoutSec"),
       enabledTools: readNullableStringArray(value, "enabledTools"),
       disabledTools: readOptionalStringArray(value, "disabledTools"),
     },
-    secrets: readOptionalStringRecord(value, "secrets") ?? {},
-    clearSecretNames: readOptionalStringArray(value, "clearSecretNames") ?? [],
   };
 }
 
@@ -71,25 +64,26 @@ function readMcpServerTransport(record: Record<string, unknown>, key: string): M
   }
   const type = readString(value, "type");
   if (type === "stdio") {
+    rejectLegacyTransportSecretFields(value, ["secretEnvNames"]);
     return {
       type,
       command: readString(value, "command"),
       args: readOptionalStringArray(value, "args") ?? [],
       env: readOptionalStringRecord(value, "env") ?? {},
       cwd: readOptionalString(value, "cwd"),
-      secretEnvNames: readOptionalStringArray(value, "secretEnvNames") ?? [],
+      secretEnvRefs: readOptionalStringRecord(value, "secretEnvRefs") ?? {},
     };
   }
   if (type === "streamable-http") {
+    rejectLegacyTransportSecretFields(value, ["bearerTokenEnvVar", "envHeaders", "secretHeaderNames"]);
     const url = readString(value, "url");
     validateUrl(url, `${key}.url`);
     return {
       type,
       url,
-      bearerTokenEnvVar: readOptionalString(value, "bearerTokenEnvVar"),
       headers: readOptionalStringRecord(value, "headers") ?? {},
-      envHeaders: readOptionalStringRecord(value, "envHeaders") ?? {},
-      secretHeaderNames: readOptionalStringArray(value, "secretHeaderNames") ?? [],
+      secretHeaderRefs: readOptionalStringRecord(value, "secretHeaderRefs") ?? {},
+      bearerTokenRef: readOptionalString(value, "bearerTokenRef"),
       oauthClientId: readOptionalString(value, "oauthClientId"),
       oauthResource: readOptionalString(value, "oauthResource"),
     };
@@ -97,21 +91,18 @@ function readMcpServerTransport(record: Record<string, unknown>, key: string): M
   throw new Error(`${key}.type must be stdio or streamable-http`);
 }
 
-function readOptionalMcpServerStatus(record: Record<string, unknown>, key: string): McpServerStatus | undefined {
-  const value = record[key];
-  if (value === undefined) {
-    return undefined;
+function rejectRemovedMcpSecretFields(record: Record<string, unknown>): void {
+  for (const key of ["secrets", "clearSecretNames", "status"]) {
+    if (record[key] !== undefined) {
+      throw new Error("MCP server secrets and status must use secret refs and status snapshots; raw values and persisted status are not accepted.");
+    }
   }
-  if (!isRecord(value)) {
-    throw new Error(`${key} must be an object`);
+}
+
+function rejectLegacyTransportSecretFields(record: Record<string, unknown>, keys: readonly string[]): void {
+  for (const key of keys) {
+    if (record[key] !== undefined) {
+      throw new Error(`transport.${key} is legacy-only; use secret refs instead.`);
+    }
   }
-  const kind = readString(value, "kind");
-  if (kind !== "unknown" && kind !== "checking" && kind !== "ready" && kind !== "failed" && kind !== "disabled") {
-    throw new Error(`${key}.kind must be unknown, checking, ready, failed, or disabled`);
-  }
-  return removeUndefined({
-    kind,
-    message: readOptionalString(value, "message"),
-    checkedAt: readOptionalString(value, "checkedAt"),
-  }) as McpServerStatus;
 }

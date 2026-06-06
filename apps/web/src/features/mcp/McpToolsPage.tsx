@@ -3,8 +3,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Eye,
-  EyeOff,
   Loader2,
   Pencil,
   Plus,
@@ -15,7 +13,6 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { getMcpServerSecret } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import type {
   McpServer,
@@ -42,10 +39,10 @@ const defaultMcpServerForm: McpServerFormState = {
   cwd: "",
   url: "",
   headerName: "Authorization",
-  headerValue: "",
+  headerSecretRef: "",
+  bearerTokenRef: "",
   envName: "",
-  envValue: "",
-  clearSecretNames: [],
+  envSecretRef: "",
   startupTimeoutSec: "30",
   toolTimeoutSec: "60",
   enabled: true,
@@ -86,8 +83,6 @@ export function McpToolsPage({
   const [editingServerId, setEditingServerId] = useState("");
   const [form, setForm] = useState<McpServerFormState>(defaultMcpServerForm);
   const [sheetError, setSheetError] = useState("");
-  const [showHeaderSecret, setShowHeaderSecret] = useState(false);
-  const [showEnvSecret, setShowEnvSecret] = useState(false);
   const [expandedServerIds, setExpandedServerIds] = useState<ReadonlySet<string>>(() => new Set());
   const [feedbackByServerId, setFeedbackByServerId] = useState<Readonly<Record<string, McpActionFeedback>>>({});
   const toolsByServerId = useMemo(() => {
@@ -104,8 +99,6 @@ export function McpToolsPage({
     setEditingServerId("");
     setForm(defaultMcpServerForm);
     setSheetError("");
-    setShowHeaderSecret(false);
-    setShowEnvSecret(false);
     setSheetOpen(true);
   }
 
@@ -113,41 +106,7 @@ export function McpToolsPage({
     setEditingServerId(server.id);
     setForm(mcpServerToForm(server));
     setSheetError("");
-    setShowHeaderSecret(false);
-    setShowEnvSecret(false);
     setSheetOpen(true);
-    void loadSavedSecret(server);
-  }
-
-  async function loadSavedSecret(server: McpServer): Promise<void> {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd) {
-      return;
-    }
-    const configuredSecretNames = Object.keys(server.secretConfigured ?? {});
-    const secretName = server.transport.type === "stdio"
-      ? (server.transport.secretEnvNames[0] ?? configuredSecretNames[0])
-      : (server.transport.secretHeaderNames[0] ?? configuredSecretNames[0]);
-    if (!secretName) {
-      return;
-    }
-    try {
-      const response = await getMcpServerSecret(workspaceCwd, server.id, secretName);
-      if (!response.configured) {
-        return;
-      }
-      setForm((current) => {
-        if (current.serverId && current.serverId !== server.id) {
-          return current;
-        }
-        const nextClearSecretNames = current.clearSecretNames.filter((name) => name !== secretName);
-        return server.transport.type === "stdio"
-          ? { ...current, envValue: response.secretValue, clearSecretNames: nextClearSecretNames }
-          : { ...current, headerValue: response.secretValue, clearSecretNames: nextClearSecretNames };
-      });
-    } catch (error) {
-      setSheetError(error instanceof Error ? error.message : String(error));
-    }
   }
 
   async function saveServer(): Promise<void> {
@@ -219,52 +178,6 @@ export function McpToolsPage({
         delete next[serverId];
       }
       return next;
-    });
-  }
-
-  function removeClearSecretName(secretName: string): readonly string[] {
-    return form.clearSecretNames.filter((name) => name !== secretName);
-  }
-
-  function addClearSecretName(secretName: string): readonly string[] {
-    const trimmed = secretName.trim();
-    if (!trimmed || form.clearSecretNames.includes(trimmed)) {
-      return form.clearSecretNames;
-    }
-    return [...form.clearSecretNames, trimmed];
-  }
-
-  function updateHeaderSecretValue(value: string): void {
-    const secretName = form.headerName.trim();
-    setForm({
-      ...form,
-      headerValue: value,
-      clearSecretNames: secretName && value ? removeClearSecretName(secretName) : form.clearSecretNames,
-    });
-  }
-
-  function clearHeaderSecretValue(): void {
-    setForm({
-      ...form,
-      headerValue: "",
-      clearSecretNames: addClearSecretName(form.headerName),
-    });
-  }
-
-  function updateEnvSecretValue(value: string): void {
-    const secretName = form.envName.trim();
-    setForm({
-      ...form,
-      envValue: value,
-      clearSecretNames: secretName && value ? removeClearSecretName(secretName) : form.clearSecretNames,
-    });
-  }
-
-  function clearEnvSecretValue(): void {
-    setForm({
-      ...form,
-      envValue: "",
-      clearSecretNames: addClearSecretName(form.envName),
     });
   }
 
@@ -403,7 +316,7 @@ export function McpToolsPage({
               <div>
                 <span className="mcp-sheet-kicker">{t("MCP server")}</span>
                 <h2>{editingServerId ? t("Edit MCP server") : t("Add MCP server")}</h2>
-                <p>{t("Saved local secrets stay hidden until you choose to show them.")}</p>
+                <p>{t("MCP secrets are stored as refs and never read back into this form.")}</p>
               </div>
               <button className="icon-button" type="button" aria-label={t("Close MCP server editor")} onClick={() => setSheetOpen(false)}>
                 <X size={16} />
@@ -475,34 +388,10 @@ export function McpToolsPage({
                       <span>{t("Env secret name")}</span>
                       <input value={form.envName} onChange={(event) => setForm({ ...form, envName: event.target.value })} placeholder="GITHUB_TOKEN" />
                     </label>
-                    <div className="field">
-                      <span>{t("Env secret value")}</span>
-                      <div className="mcp-secret-input">
-                        <input
-                          aria-label={t("Env secret value")}
-                          type={showEnvSecret ? "text" : "password"}
-                          autoComplete="new-password"
-                          value={form.envValue}
-                          onChange={(event) => updateEnvSecretValue(event.target.value)}
-                          placeholder={t("Paste secret")}
-                        />
-                        {form.envValue ? (
-                          <span className="mcp-secret-actions">
-                            <button
-                              className="icon-button mcp-secret-toggle"
-                              type="button"
-                              aria-label={showEnvSecret ? t("Hide Env secret value") : t("Show Env secret value")}
-                              onClick={() => setShowEnvSecret((current) => !current)}
-                            >
-                              {showEnvSecret ? <Eye size={15} /> : <EyeOff size={15} />}
-                            </button>
-                            <button className="icon-button mcp-secret-clear" type="button" aria-label={t("Clear input")} onClick={clearEnvSecretValue}>
-                              <X size={15} />
-                            </button>
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
+                    <label className="field">
+                      <span>{t("Env secret ref")}</span>
+                      <input value={form.envSecretRef} onChange={(event) => setForm({ ...form, envSecretRef: event.target.value })} placeholder="env:GITHUB_TOKEN" />
+                    </label>
                   </div>
                 </section>
               ) : (
@@ -520,34 +409,14 @@ export function McpToolsPage({
                       <span>{t("Header secret name")}</span>
                       <input value={form.headerName} onChange={(event) => setForm({ ...form, headerName: event.target.value })} placeholder="Authorization" />
                     </label>
-                    <div className="field">
-                      <span>{t("Header secret value")}</span>
-                      <div className="mcp-secret-input">
-                        <input
-                          aria-label={t("Header secret value")}
-                          type={showHeaderSecret ? "text" : "password"}
-                          autoComplete="new-password"
-                          value={form.headerValue}
-                          onChange={(event) => updateHeaderSecretValue(event.target.value)}
-                          placeholder={headerSecretPlaceholder(form.headerName, t)}
-                        />
-                        {form.headerValue ? (
-                          <span className="mcp-secret-actions">
-                            <button
-                              className="icon-button mcp-secret-toggle"
-                              type="button"
-                              aria-label={showHeaderSecret ? t("Hide Header secret value") : t("Show Header secret value")}
-                              onClick={() => setShowHeaderSecret((current) => !current)}
-                            >
-                              {showHeaderSecret ? <Eye size={15} /> : <EyeOff size={15} />}
-                            </button>
-                            <button className="icon-button mcp-secret-clear" type="button" aria-label={t("Clear input")} onClick={clearHeaderSecretValue}>
-                              <X size={15} />
-                            </button>
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
+                    <label className="field">
+                      <span>{t("Header secret ref")}</span>
+                      <input value={form.headerSecretRef} onChange={(event) => setForm({ ...form, headerSecretRef: event.target.value })} placeholder="env:MCP_AUTHORIZATION" />
+                    </label>
+                    <label className="field">
+                      <span>{t("Bearer token ref")}</span>
+                      <input value={form.bearerTokenRef} onChange={(event) => setForm({ ...form, bearerTokenRef: event.target.value })} placeholder={t("Optional")} />
+                    </label>
                   </div>
                 </section>
               )}
@@ -600,7 +469,7 @@ export function McpToolsPage({
 
 function mcpServerToForm(server: McpServer): McpServerFormState {
   if (server.transport.type === "stdio") {
-    const envName = server.transport.secretEnvNames[0] ?? "";
+    const envName = Object.keys(server.transport.secretEnvRefs ?? {})[0] ?? server.transport.secretEnvNames?.[0] ?? "";
     return {
       ...defaultMcpServerForm,
       displayName: server.displayName,
@@ -610,13 +479,14 @@ function mcpServerToForm(server: McpServer): McpServerFormState {
       argsText: server.transport.args.join(" "),
       cwd: server.transport.cwd ?? "",
       envName,
+      envSecretRef: envName ? (server.transport.secretEnvRefs?.[envName] ?? "") : "",
       enabled: server.enabled,
       required: server.required,
       startupTimeoutSec: server.startupTimeoutSec ? String(server.startupTimeoutSec) : "",
       toolTimeoutSec: server.toolTimeoutSec ? String(server.toolTimeoutSec) : "",
     };
   }
-  const headerName = server.transport.secretHeaderNames[0] ?? "Authorization";
+  const headerName = Object.keys(server.transport.secretHeaderRefs ?? {})[0] ?? server.transport.secretHeaderNames?.[0] ?? "Authorization";
   return {
     ...defaultMcpServerForm,
     displayName: server.displayName,
@@ -624,6 +494,8 @@ function mcpServerToForm(server: McpServer): McpServerFormState {
     transportType: "streamable-http",
     url: server.transport.url,
     headerName,
+    headerSecretRef: headerName ? (server.transport.secretHeaderRefs?.[headerName] ?? "") : "",
+    bearerTokenRef: server.transport.bearerTokenRef ?? "",
     enabled: server.enabled,
     required: server.required,
     startupTimeoutSec: server.startupTimeoutSec ? String(server.startupTimeoutSec) : "",
@@ -640,6 +512,12 @@ function validateMcpForm(form: McpServerFormState, t: (key: string) => string): 
   }
   if (form.transportType === "streamable-http" && !form.url.trim()) {
     return t("Enter an HTTP MCP server URL.");
+  }
+  if (form.transportType === "stdio" && form.envName.trim() && !form.envSecretRef.trim()) {
+    return t("Enter an env secret ref.");
+  }
+  if (form.transportType === "streamable-http" && form.headerName.trim() && !form.headerSecretRef.trim() && !form.bearerTokenRef.trim()) {
+    return t("Enter a header secret ref or bearer token ref.");
   }
   return "";
 }
@@ -703,10 +581,6 @@ function mcpToolEffectLabel(sideEffectLevel: McpTool["sideEffectLevel"], t: (key
     return t("Deploy");
   }
   return sideEffectLevel;
-}
-
-function headerSecretPlaceholder(headerName: string, t: (key: string) => string): string {
-  return headerName.trim().toLowerCase() === "authorization" ? "Bearer ..." : t("Paste secret");
 }
 
 function hasConfiguredSecret(server: PublicMcpServer): boolean {

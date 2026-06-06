@@ -6,8 +6,8 @@ This document records the secret reference and future keychain design.
 
 Ling Stack supports `env:NAME` secret refs for local development and accepts stable
 `keychain:NAME` refs as a fail-closed contract. Desktop packaging, GitHub automation,
-provider API keys, webhook secrets, and future automation tokens all use this same
-boundary.
+provider API keys, MCP transport secrets, webhook secrets, and future automation tokens
+all use this same boundary.
 
 The goal is to keep a shared SecretResolver abstraction without ever
 storing raw secrets in SQLite, logs, artifacts, Web state, renderer IPC responses, or
@@ -19,12 +19,16 @@ Implemented in v0.1:
 
 - core exports `SecretResolver`, `parseSecretRef()`, `createEnvSecretResolver()`, and `createCompositeSecretResolver()`,
 - `env:` and `keychain:` refs are valid; raw keys, empty names, and unknown schemes are rejected,
-- daemon provider check, run startup, live media transport, and public provider mapping resolve through the injected resolver,
+- daemon provider check, run startup, live media transport, MCP check/sync/tool calls,
+  and public provider/MCP mapping resolve through the injected resolver,
 - daemon exposes read-only `GET /secrets/status`,
 - daemon exposes external-work-specific workflow bootstrap plus Keychain setup/delete
   endpoints for channel-bound `WORKFLOW.md` files,
 - contracts and API client expose secret status DTOs and `getSecretStatus()`,
 - Web and CLI accept/display `keychain:` refs without exposing values,
+- MCP server config stores `secretEnvRefs`, `secretHeaderRefs`, and `bearerTokenRef`
+  only; raw MCP secret reads are disabled and legacy raw SQLite rows are reported as
+  migration-required evidence,
 - Web Settings can save/remove GitHub and Linear external-work tokens through the daemon
   without storing token values in browser storage,
 - run events, run snapshots, provider snapshots, and generated artifacts redact resolved secret values.
@@ -134,6 +138,7 @@ The daemon should use `SecretResolver` for:
 - provider checks,
 - run startup,
 - live media transport,
+- MCP status checks, tool sync, and runner MCP tool calls,
 - GitHub and Linear token use,
 - future webhook secret verification,
 - future automation external actions.
@@ -231,6 +236,7 @@ Resolved secret values must be added to the redaction context before writing:
 
 - run events,
 - provider snapshots,
+- MCP status snapshots,
 - request snapshots,
 - media artifacts,
 - GitHub evidence artifacts,
@@ -259,8 +265,10 @@ Required tests:
 - unavailable keychain resolver reports `secret_store_unavailable`,
 - provider create/update accepts `env:` and `keychain:`,
 - provider create/update rejects raw keys and unknown schemes,
+- MCP create/update accepts secret refs and rejects raw secret payloads,
+- MCP check/sync/tool calls resolve refs only inside trusted daemon paths,
 - `/secrets/status` never returns a value,
-- provider snapshots and artifacts redact resolved secrets,
+- provider and MCP snapshots/artifacts redact resolved secrets,
 - renderer preload never exposes raw secret values.
 
 ## Assumptions

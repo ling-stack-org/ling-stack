@@ -51,6 +51,7 @@ Contracts should include daemon wire types:
 - run/session/event/artifact DTOs,
 - channel/task DTOs,
 - provider preset/template/check DTOs,
+- MCP server, runtime status snapshot, tool catalog, and teammate binding DTOs,
 - approval and approval policy DTOs,
 - media job DTOs,
 - state transition and resource lease DTOs,
@@ -105,6 +106,15 @@ export class LingDaemonClient {
   deleteProvider(cwd: string, providerId: string): Promise<void>;
   checkProvider(cwd: string, providerId: string): Promise<ProviderCheckResult>;
 
+  listMcpServers(cwd: string): Promise<McpServerListResponse>;
+  createMcpServer(cwd: string, input: McpServerMutationRequest): Promise<McpServerMutationResponse>;
+  updateMcpServer(cwd: string, serverId: string, input: McpServerMutationRequest): Promise<McpServerMutationResponse>;
+  deleteMcpServer(cwd: string, serverId: string): Promise<void>;
+  checkMcpServer(cwd: string, serverId: string): Promise<McpServerCheckResponse>;
+  getMcpServerStatus(cwd: string, serverId: string): Promise<McpServerStatusResponse>;
+  syncMcpServerTools(cwd: string, serverId: string): Promise<McpServerToolSyncResponse>;
+  listMcpTools(cwd: string, serverId?: string): Promise<McpToolListResponse>;
+
   listApprovals(cwd: string, options?: ListApprovalsRequest): Promise<ApprovalListResponse>;
   approveApproval(cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse>;
   denyApproval(cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse>;
@@ -145,12 +155,14 @@ The client should preserve the current Web behavior:
 ## Implementation Status
 
 - `packages/contracts` now owns daemon DTOs, status unions, shared primitive unions, and
-  request payload types for channels, tasks, providers, approvals, media jobs, state
-  transitions, resource leases, and secret status.
+  request payload types for channels, tasks, providers, MCP servers/tools/status
+  snapshots, approvals, media jobs, state transitions, resource leases, and secret
+  status.
 - `packages/api-client` now exports `LingDaemonClient`, `LingDaemonError`, and
   `daemonBaseUrlFromEnv`. The client preserves the existing daemon routes, query
   parameters, friendly workspace-path error, artifact URL behavior, and
-  `/secrets/status` read API.
+  `/secrets/status` read API. MCP helpers intentionally omit the removed raw-secret
+  read route and expose `getMcpServerStatus()` instead.
 - `apps/web/src/types.ts` is a compatibility layer: daemon wire types are re-exported
   from `@ling-stack/contracts`, while Web-only form state remains local.
 - `apps/web/src/api.ts` is now a thin wrapper around `LingDaemonClient`; run request
@@ -182,6 +194,8 @@ API client tests should cover:
 - URL/query construction for `cwd`, `limit`, `runId`, `mediaJobId`, transition filters,
   and lease filters.
 - POST/PATCH bodies for channels, tasks, providers, approval policy, and media jobs.
+- MCP list/create/update/delete/check/status/sync-tools routes, including redacted
+  status snapshots and no `getMcpServerSecret()` helper.
 - `approve` and `deny` request bodies.
 - `artifactContentUrl`.
 - friendly error mapping.

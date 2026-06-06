@@ -499,10 +499,35 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
     dependencyCheck("mcp.servers", "mcp", mcpServersResult, () =>
       okCheck("mcp.servers", "mcp", `${mcpServers.length} MCP server(s) configured`, { total: mcpServers.length })),
     dependencyCheck("mcp.secrets", "mcp", mcpServersResult, () => {
-      const missing = mcpServers.filter((server) => readBoolean(server, "enabled") === true && readArray(server, "missingSecrets").length > 0);
+      const missing = mcpServers.filter((server) =>
+        readBoolean(server, "enabled") === true &&
+        readArray(server, "secretStatuses").some((status) => isRecord(status) && readBoolean(status, "configured") !== true));
       return missing.length === 0
         ? okCheck("mcp.secrets", "mcp", "MCP secret status has no blockers", { missing: 0 })
         : warningCheck("mcp.secrets", "mcp", `${missing.length} MCP server(s) have missing secrets`, { missing: missing.length });
+    }),
+    dependencyCheck("mcp.legacy_secrets", "mcp", mcpServersResult, () => {
+      const legacy = mcpServers.filter((server) => readBoolean(server, "legacySecretMigrationRequired") === true);
+      return legacy.length === 0
+        ? okCheck("mcp.legacy_secrets", "mcp", "no legacy MCP raw secrets detected", { legacy: 0 })
+        : warningCheck("mcp.legacy_secrets", "mcp", `${legacy.length} MCP server(s) require secret ref migration`, { legacy: legacy.length }, "Edit MCP servers to use env: or keychain: secret refs.");
+    }),
+    dependencyCheck("mcp.status_snapshots", "mcp", mcpServersResult, () => {
+      const enabled = mcpServers.filter((server) => readBoolean(server, "enabled") === true);
+      const failed = enabled.filter((server) => {
+        const snapshot = readField(server, "statusSnapshot");
+        return isRecord(snapshot) && readString(snapshot, "status") === "failed";
+      });
+      const missing = enabled.filter((server) => !isRecord(readField(server, "statusSnapshot")));
+      if (failed.length > 0) {
+        return warningCheck("mcp.status_snapshots", "mcp", `${failed.length} MCP server status snapshot(s) failed`, {
+          failed: failed.length,
+          missing: missing.length,
+        }, "Run an MCP check after fixing server config or secret refs.");
+      }
+      return missing.length === 0
+        ? okCheck("mcp.status_snapshots", "mcp", "MCP status snapshots are available", { missing: 0 })
+        : warningCheck("mcp.status_snapshots", "mcp", `${missing.length} MCP server(s) have no recent status snapshot`, { missing: missing.length }, "Run an MCP check or sync tools when you need live status.");
     }),
     await checkExternalWorkflow(options.cwd),
   ];

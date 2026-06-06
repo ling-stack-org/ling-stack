@@ -8,7 +8,7 @@ import {
   createSqliteRunStore,
 } from "../dist/index.js";
 
-test("sqlite persists MCP servers, secrets, discovered tools, and teammate bindings", async () => {
+test("sqlite persists MCP server refs, status snapshots, discovered tools, and teammate bindings", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-mcp-store-"));
   const store = createSqliteRunStore(cwd);
   const now = "2026-06-03T00:00:00.000Z";
@@ -22,7 +22,7 @@ test("sqlite persists MCP servers, secrets, discovered tools, and teammate bindi
           type: "streamable-http",
           url: "https://api.githubcopilot.com/mcp/",
           headers: { "X-Client": "Ling Stack" },
-          secretHeaderNames: ["Authorization"],
+          secretHeaderRefs: { Authorization: "env:GITHUB_TOKEN" },
         },
         enabled: true,
         required: true,
@@ -36,22 +36,34 @@ test("sqlite persists MCP servers, secrets, discovered tools, and teammate bindi
     assert.equal(server.id, "mcp_github");
     assert.equal(server.status.kind, "unknown");
     assert.equal(server.transport.type, "streamable-http");
+    assert.deepEqual(server.transport.secretHeaderRefs, { Authorization: "env:GITHUB_TOKEN" });
     assert.deepEqual(server.enabledTools, ["list_pull_requests", "get_ci_status"]);
 
-    store.setMcpServerSecret(server.id, "Authorization", "Bearer secret-token", now);
-    assert.equal(store.hasMcpServerSecret(server.id, "Authorization"), true);
-    assert.equal(store.getMcpServerSecret(server.id, "Authorization"), "Bearer secret-token");
+    assert.throws(
+      () => store.setMcpServerSecret(server.id, "Authorization", "Bearer secret-token", now),
+      /raw secret writes are disabled/,
+    );
+    assert.equal(store.hasMcpServerSecret(server.id, "Authorization"), false);
+    assert.equal(store.countLegacyMcpServerSecrets(server.id), 0);
 
-    const checked = store.updateMcpServerStatus(
-      server.id,
+    const checked = store.upsertMcpStatusSnapshot(
       {
-        kind: "ready",
+        serverId: server.id,
+        status: "ready",
+        authStatus: {
+          kind: "configured",
+          refs: ["env:GITHUB_TOKEN"],
+          missingRefs: [],
+        },
+        missingSecretRefs: [],
         message: "2 tools discovered",
         checkedAt: "2026-06-03T00:01:00.000Z",
+        expiresAt: "2026-06-03T00:06:00.000Z",
       },
       "2026-06-03T00:01:00.000Z",
     );
-    assert.equal(checked?.status.kind, "ready");
+    assert.equal(checked.status, "ready");
+    assert.equal(store.getMcpStatusSnapshot(server.id)?.status, "ready");
 
     const tools = store.replaceMcpServerTools(
       server.id,
@@ -109,7 +121,8 @@ test("sqlite persists MCP servers, secrets, discovered tools, and teammate bindi
     const reopened = createSqliteRunStore(cwd);
     try {
       assert.equal(reopened.getMcpServer(server.id)?.displayName, "GitHub");
-      assert.equal(reopened.hasMcpServerSecret(server.id, "Authorization"), true);
+      assert.deepEqual(reopened.getMcpServer(server.id)?.transport.secretHeaderRefs, { Authorization: "env:GITHUB_TOKEN" });
+      assert.equal(reopened.getMcpStatusSnapshot(server.id)?.status, "ready");
       assert.deepEqual(reopened.listMcpTools({ serverId: server.id }).map((tool) => tool.rawName), [
         "list_pull_requests",
         "merge_pull_request",
@@ -118,6 +131,7 @@ test("sqlite persists MCP servers, secrets, discovered tools, and teammate bindi
 
       assert.equal(reopened.deleteMcpServer(server.id), true);
       assert.equal(reopened.getMcpServer(server.id), undefined);
+      assert.equal(reopened.getMcpStatusSnapshot(server.id), undefined);
       assert.equal(reopened.hasMcpServerSecret(server.id, "Authorization"), false);
       assert.deepEqual(reopened.listMcpTools({ serverId: server.id }), []);
       assert.deepEqual(reopened.listTeammateMcpBindings(engineerId), []);
