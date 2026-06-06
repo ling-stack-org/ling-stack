@@ -303,15 +303,20 @@ import {
 } from "../mcp-types.js";
 import {
   createManagedPluginEventId,
+  createManagedPluginRuntimeSnapshotId,
   type CreateManagedPluginEventInput,
+  type CreateManagedPluginRuntimeSnapshotInput,
   type ListManagedPluginEventsOptions,
   type ListManagedPluginsOptions,
   type ManagedPluginContributionRecord,
   type ManagedPluginDescriptor,
   type ManagedPluginEvent,
   type ManagedPluginHealthSnapshot,
+  type ManagedPluginPackageRecord,
   type ManagedPluginRecord,
+  type ManagedPluginRuntimeSnapshot,
   type UpdateManagedPluginInput,
+  type UpsertManagedPluginPackageInput,
   type UpsertManagedPluginContributionInput,
   type UpsertManagedPluginInput,
 } from "../plugin-manager-types.js";
@@ -424,6 +429,8 @@ const MEMORY_CONSOLIDATION_JOBS_MIGRATION_VERSION = 36;
 const MEMORY_CONSOLIDATION_JOBS_MIGRATION_NAME = "create_memory_consolidation_jobs";
 const MANAGED_PLUGINS_MIGRATION_VERSION = 37;
 const MANAGED_PLUGINS_MIGRATION_NAME = "create_managed_plugins";
+const MANAGED_PLUGIN_PACKAGES_MIGRATION_VERSION = 38;
+const MANAGED_PLUGIN_PACKAGES_MIGRATION_NAME = "create_managed_plugin_packages";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -6982,7 +6989,7 @@ export class SqliteRunStore implements RunStore {
         event.type,
         event.actor,
         event.message ?? null,
-        event.data === undefined ? null : stringifyJson(redactSecrets(event.data)),
+        event.data === undefined ? null : stringifyJson(redactSecrets(redactManagedPluginEventData(event.data))),
         event.createdAt,
       );
     return event;
@@ -7002,6 +7009,130 @@ export class SqliteRunStore implements RunStore {
       .prepare(`${managedPluginEventSelectSql(whereClause)} ORDER BY created_at ASC LIMIT ?`)
       .all(...params)
       .map(mapManagedPluginEvent);
+  }
+
+  upsertManagedPluginPackage(input: UpsertManagedPluginPackageInput, now: string): ManagedPluginPackageRecord {
+    const existing = this.getManagedPluginPackage(input.pluginId);
+    const installedAt = input.installedAt ?? existing?.installedAt ?? now;
+    const status = input.status ?? "installed";
+    this.database
+      .prepare(`
+        INSERT INTO managed_plugin_packages (
+          plugin_id,
+          source_kind,
+          version,
+          status,
+          cache_ref,
+          package_hash,
+          manifest_json,
+          installed_at,
+          updated_at,
+          uninstalled_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(plugin_id) DO UPDATE SET
+          source_kind = excluded.source_kind,
+          version = excluded.version,
+          status = excluded.status,
+          cache_ref = excluded.cache_ref,
+          package_hash = excluded.package_hash,
+          manifest_json = excluded.manifest_json,
+          updated_at = excluded.updated_at,
+          uninstalled_at = excluded.uninstalled_at
+      `)
+      .run(
+        input.pluginId,
+        input.sourceKind,
+        input.version,
+        status,
+        input.cacheRef,
+        input.packageHash ?? null,
+        input.manifestJson,
+        installedAt,
+        now,
+        input.uninstalledAt ?? null,
+      );
+    const record = this.getManagedPluginPackage(input.pluginId);
+    if (!record) {
+      throw new Error(`Failed to persist managed plugin package: ${input.pluginId}`);
+    }
+    return record;
+  }
+
+  markManagedPluginPackageUninstalled(pluginId: string, now: string): ManagedPluginPackageRecord | undefined {
+    const existing = this.getManagedPluginPackage(pluginId);
+    if (!existing) {
+      return undefined;
+    }
+    this.database
+      .prepare(`
+        UPDATE managed_plugin_packages
+        SET status = 'uninstalled',
+            updated_at = ?,
+            uninstalled_at = ?
+        WHERE plugin_id = ?
+      `)
+      .run(now, now, pluginId);
+    return this.getManagedPluginPackage(pluginId);
+  }
+
+  getManagedPluginPackage(pluginId: string): ManagedPluginPackageRecord | undefined {
+    const row = this.database.prepare(managedPluginPackageSelectSql("WHERE plugin_id = ?")).get(pluginId);
+    return row ? mapManagedPluginPackage(row) : undefined;
+  }
+
+  listManagedPluginPackages(options: { readonly status?: ManagedPluginPackageRecord["status"] } = {}): ManagedPluginPackageRecord[] {
+    const whereClause = options.status ? "WHERE status = ?" : "";
+    const params = options.status ? [options.status] : [];
+    return this.database
+      .prepare(`${managedPluginPackageSelectSql(whereClause)} ORDER BY source_kind ASC, plugin_id ASC`)
+      .all(...params)
+      .map(mapManagedPluginPackage);
+  }
+
+  createManagedPluginRuntimeSnapshot(input: CreateManagedPluginRuntimeSnapshotInput): ManagedPluginRuntimeSnapshot {
+    const snapshot: ManagedPluginRuntimeSnapshot = {
+      id: input.id ?? createManagedPluginRuntimeSnapshotId(),
+      runId: input.runId,
+      cwd: input.cwd,
+      pluginIds: input.capabilities.map((item) => item.pluginId),
+      capabilities: input.capabilities,
+      policyOverlays: input.policyOverlays,
+      createdAt: input.createdAt ?? new Date().toISOString(),
+    };
+    this.database
+      .prepare(`
+        INSERT INTO managed_plugin_runtime_snapshots (
+          id,
+          run_id,
+          cwd,
+          plugin_ids_json,
+          capabilities_json,
+          policy_overlays_json,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        snapshot.id,
+        snapshot.runId ?? null,
+        snapshot.cwd,
+        stringifyJson(snapshot.pluginIds),
+        stringifyJson(snapshot.capabilities),
+        stringifyJson(snapshot.policyOverlays),
+        snapshot.createdAt,
+      );
+    return snapshot;
+  }
+
+  getManagedPluginRuntimeSnapshot(id: string): ManagedPluginRuntimeSnapshot | undefined {
+    const row = this.database.prepare(managedPluginRuntimeSnapshotSelectSql("WHERE id = ?")).get(id);
+    return row ? mapManagedPluginRuntimeSnapshot(row) : undefined;
+  }
+
+  getManagedPluginRuntimeSnapshotForRun(runId: string): ManagedPluginRuntimeSnapshot | undefined {
+    const row = this.database
+      .prepare(`${managedPluginRuntimeSnapshotSelectSql("WHERE run_id = ?")} ORDER BY created_at DESC LIMIT 1`)
+      .get(runId);
+    return row ? mapManagedPluginRuntimeSnapshot(row) : undefined;
   }
 
   createMediaJob(input: CreateMediaJobInput, now: string): MediaJob {
@@ -9107,6 +9238,51 @@ export class SqliteRunStore implements RunStore {
       }
     }
 
+    const hasManagedPluginPackagesMigration = this.hasMigration(MANAGED_PLUGIN_PACKAGES_MIGRATION_VERSION);
+    if (
+      !hasManagedPluginPackagesMigration ||
+      !this.hasTable("managed_plugin_packages") ||
+      !this.hasTable("managed_plugin_runtime_snapshots")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS managed_plugin_packages (
+          plugin_id TEXT PRIMARY KEY,
+          source_kind TEXT NOT NULL,
+          version TEXT NOT NULL,
+          status TEXT NOT NULL,
+          cache_ref TEXT NOT NULL,
+          package_hash TEXT,
+          manifest_json TEXT NOT NULL,
+          installed_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          uninstalled_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_managed_plugin_packages_status
+        ON managed_plugin_packages(status);
+
+        CREATE TABLE IF NOT EXISTS managed_plugin_runtime_snapshots (
+          id TEXT PRIMARY KEY,
+          run_id TEXT,
+          cwd TEXT NOT NULL,
+          plugin_ids_json TEXT NOT NULL,
+          capabilities_json TEXT NOT NULL,
+          policy_overlays_json TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_managed_plugin_runtime_snapshots_run
+        ON managed_plugin_runtime_snapshots(run_id);
+
+        CREATE INDEX IF NOT EXISTS idx_managed_plugin_runtime_snapshots_created
+        ON managed_plugin_runtime_snapshots(created_at);
+      `);
+
+      if (!hasManagedPluginPackagesMigration) {
+        this.recordMigration(MANAGED_PLUGIN_PACKAGES_MIGRATION_VERSION, MANAGED_PLUGIN_PACKAGES_MIGRATION_NAME);
+      }
+    }
+
     const hasSkillAwareRunMigration = this.hasMigration(SKILL_AWARE_RUN_MIGRATION_VERSION);
     if (
       !hasSkillAwareRunMigration ||
@@ -10579,6 +10755,83 @@ function mapManagedPluginEvent(row: Record<string, SQLOutputValue>): ManagedPlug
   });
 }
 
+function redactManagedPluginEventData(value: unknown): unknown {
+  return redactManagedPluginEventValue(value, new WeakSet<object>());
+}
+
+function redactManagedPluginEventValue(value: unknown, seen: WeakSet<object>): unknown {
+  if (typeof value === "string") {
+    return looksLikeLocalPath(value) ? "[REDACTED]" : value;
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
+    return value.map((item) => redactManagedPluginEventValue(item, seen));
+  }
+  if (typeof value === "object" && value !== null) {
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      result[key] = shouldRedactManagedPluginEventKey(key)
+        ? "[REDACTED]"
+        : redactManagedPluginEventValue(item, seen);
+    }
+    return result;
+  }
+  return value;
+}
+
+function shouldRedactManagedPluginEventKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[_-]/g, "");
+  return (
+    normalized === "command" ||
+    normalized.endsWith("command") ||
+    normalized.endsWith("path") ||
+    normalized.endsWith("root") ||
+    normalized.endsWith("binary")
+  );
+}
+
+function looksLikeLocalPath(value: string): boolean {
+  return (
+    value.startsWith("/") ||
+    value.startsWith("~/") ||
+    /^[A-Za-z]:[\\/]/.test(value)
+  );
+}
+
+function mapManagedPluginPackage(row: Record<string, SQLOutputValue>): ManagedPluginPackageRecord {
+  return omitUndefined({
+    pluginId: readString(row, "plugin_id"),
+    sourceKind: readString(row, "source_kind") as ManagedPluginPackageRecord["sourceKind"],
+    version: readString(row, "version"),
+    status: readString(row, "status") as ManagedPluginPackageRecord["status"],
+    cacheRef: readString(row, "cache_ref"),
+    packageHash: readNullableString(row, "package_hash"),
+    manifestJson: readString(row, "manifest_json"),
+    installedAt: readString(row, "installed_at"),
+    updatedAt: readString(row, "updated_at"),
+    uninstalledAt: readNullableString(row, "uninstalled_at"),
+  });
+}
+
+function mapManagedPluginRuntimeSnapshot(row: Record<string, SQLOutputValue>): ManagedPluginRuntimeSnapshot {
+  return omitUndefined({
+    id: readString(row, "id"),
+    runId: readNullableString(row, "run_id"),
+    cwd: readString(row, "cwd"),
+    pluginIds: parseJson(readString(row, "plugin_ids_json")) as ManagedPluginRuntimeSnapshot["pluginIds"],
+    capabilities: parseJson(readString(row, "capabilities_json")) as ManagedPluginRuntimeSnapshot["capabilities"],
+    policyOverlays: parseJson(readString(row, "policy_overlays_json")) as ManagedPluginRuntimeSnapshot["policyOverlays"],
+    createdAt: readString(row, "created_at"),
+  });
+}
+
 function mapApprovalRequest(row: Record<string, SQLOutputValue>): ApprovalRequest {
   return omitUndefined({
     id: readString(row, "id"),
@@ -11756,6 +12009,39 @@ function managedPluginEventSelectSql(whereClause: string): string {
       data_json,
       created_at
     FROM managed_plugin_events
+    ${whereClause}
+  `;
+}
+
+function managedPluginPackageSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      plugin_id,
+      source_kind,
+      version,
+      status,
+      cache_ref,
+      package_hash,
+      manifest_json,
+      installed_at,
+      updated_at,
+      uninstalled_at
+    FROM managed_plugin_packages
+    ${whereClause}
+  `;
+}
+
+function managedPluginRuntimeSnapshotSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      run_id,
+      cwd,
+      plugin_ids_json,
+      capabilities_json,
+      policy_overlays_json,
+      created_at
+    FROM managed_plugin_runtime_snapshots
     ${whereClause}
   `;
 }

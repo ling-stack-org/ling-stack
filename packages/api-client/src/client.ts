@@ -149,8 +149,14 @@ import type {
   ManagedPluginCheckResponse,
   ManagedPluginDetailResponse,
   ManagedPluginDisableRequest,
+  ManagedPluginInstallRequest,
+  ManagedPluginInstallResponse,
   ManagedPluginListResponse,
   ManagedPluginMutationResponse,
+  ManagedPluginRefreshPackageResponse,
+  ManagedPluginRuntimePreviewResponse,
+  ManagedPluginUninstallRequest,
+  ManagedPluginUninstallResponse,
   PluginPackageDetailResponse,
   PluginPackageValidationResponse,
   PluginSourceListResponse,
@@ -1200,6 +1206,34 @@ export class LingDaemonClient {
     input: ManagedPluginApplyPresetRequest = {},
   ): Promise<ManagedPluginApplyPresetResponse> {
     return this.post(`/plugins/${encodeURIComponent(pluginId)}/apply-preset`, { cwd }, input);
+  }
+
+  async installManagedPlugin(
+    cwd: string,
+    pluginId: string,
+    input: ManagedPluginInstallRequest = {},
+  ): Promise<ManagedPluginInstallResponse> {
+    return this.post(`/plugins/${encodeURIComponent(pluginId)}/install`, { cwd }, input);
+  }
+
+  async uninstallManagedPlugin(
+    cwd: string,
+    pluginId: string,
+    input: ManagedPluginUninstallRequest = {},
+  ): Promise<ManagedPluginUninstallResponse> {
+    return this.post(`/plugins/${encodeURIComponent(pluginId)}/uninstall`, { cwd }, input);
+  }
+
+  async refreshManagedPluginPackage(
+    cwd: string,
+    pluginId: string,
+    input: ManagedPluginInstallRequest = {},
+  ): Promise<ManagedPluginRefreshPackageResponse> {
+    return this.post(`/plugins/${encodeURIComponent(pluginId)}/refresh-package`, { cwd }, input);
+  }
+
+  async getManagedPluginRuntimePreview(cwd: string, pluginId: string): Promise<ManagedPluginRuntimePreviewResponse> {
+    return this.get(`/plugins/${encodeURIComponent(pluginId)}/runtime-preview`, { cwd });
   }
 
   async listPluginSources(cwd: string): Promise<PluginSourceListResponse> {

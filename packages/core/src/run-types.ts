@@ -191,13 +191,17 @@ import type {
 
 import type {
   CreateManagedPluginEventInput,
+  CreateManagedPluginRuntimeSnapshotInput,
   ListManagedPluginEventsOptions,
   ListManagedPluginsOptions,
   ManagedPluginContributionRecord,
   ManagedPluginEvent,
   ManagedPluginHealthSnapshot,
+  ManagedPluginPackageRecord,
   ManagedPluginRecord,
+  ManagedPluginRuntimeSnapshot,
   UpdateManagedPluginInput,
+  UpsertManagedPluginPackageInput,
   UpsertManagedPluginContributionInput,
   UpsertManagedPluginInput,
 } from "./plugin-manager-types.js";
@@ -891,6 +895,13 @@ export interface RunStore {
   getManagedPluginHealthSnapshot(pluginId: string, now?: string): ManagedPluginHealthSnapshot | undefined;
   appendManagedPluginEvent(input: CreateManagedPluginEventInput, now: string): ManagedPluginEvent;
   listManagedPluginEvents(options?: ListManagedPluginEventsOptions): ManagedPluginEvent[];
+  upsertManagedPluginPackage(input: UpsertManagedPluginPackageInput, now: string): ManagedPluginPackageRecord;
+  markManagedPluginPackageUninstalled(pluginId: string, now: string): ManagedPluginPackageRecord | undefined;
+  getManagedPluginPackage(pluginId: string): ManagedPluginPackageRecord | undefined;
+  listManagedPluginPackages(options?: { readonly status?: ManagedPluginPackageRecord["status"] }): ManagedPluginPackageRecord[];
+  createManagedPluginRuntimeSnapshot(input: CreateManagedPluginRuntimeSnapshotInput): ManagedPluginRuntimeSnapshot;
+  getManagedPluginRuntimeSnapshot(id: string): ManagedPluginRuntimeSnapshot | undefined;
+  getManagedPluginRuntimeSnapshotForRun(runId: string): ManagedPluginRuntimeSnapshot | undefined;
   listSkillRegistryEntries(options?: ListSkillRegistryOptions): SkillRegistryEntry[];
   getSkillRegistryEntry(id: string): SkillRegistryEntry | undefined;
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft;

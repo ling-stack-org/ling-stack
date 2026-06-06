@@ -311,6 +311,25 @@
   color: #991b1b;
 }
 
+.settings-plugin-runtime-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #c8d4e8;
+  background: #f3f7fd;
+  color: #264265;
+  font-size: 13px;
+}
+
+.settings-plugin-runtime-preview.blocked,
+.settings-plugin-runtime-preview.disabled {
+  border-color: #e2d4bc;
+  background: #fffaf0;
+  color: #7c4a03;
+}
+
 .settings-plugin-list {
   display: grid;
   gap: 10px;

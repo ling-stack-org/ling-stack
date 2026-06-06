@@ -132,8 +132,14 @@ import type {
   ManagedPluginApplyPresetResponse,
   ManagedPluginCheckResponse,
   ManagedPluginDisableRequest,
+  ManagedPluginInstallRequest,
+  ManagedPluginInstallResponse,
   ManagedPluginListResponse,
   ManagedPluginMutationResponse,
+  ManagedPluginRefreshPackageResponse,
+  ManagedPluginRuntimePreviewResponse,
+  ManagedPluginUninstallRequest,
+  ManagedPluginUninstallResponse,
   PluginPackageDetailResponse,
   PluginPackageValidationResponse,
   PluginSourceListResponse,
@@ -1067,6 +1073,34 @@ export async function applyManagedPluginPreset(
   input: ManagedPluginApplyPresetRequest = {},
 ): Promise<ManagedPluginApplyPresetResponse> {
   return daemonClient.applyManagedPluginPreset(cwd, pluginId, input);
+}
+
+export async function installManagedPlugin(
+  cwd: string,
+  pluginId: string,
+  input: ManagedPluginInstallRequest = {},
+): Promise<ManagedPluginInstallResponse> {
+  return daemonClient.installManagedPlugin(cwd, pluginId, input);
+}
+
+export async function uninstallManagedPlugin(
+  cwd: string,
+  pluginId: string,
+  input: ManagedPluginUninstallRequest = {},
+): Promise<ManagedPluginUninstallResponse> {
+  return daemonClient.uninstallManagedPlugin(cwd, pluginId, input);
+}
+
+export async function refreshManagedPluginPackage(
+  cwd: string,
+  pluginId: string,
+  input: ManagedPluginInstallRequest = {},
+): Promise<ManagedPluginRefreshPackageResponse> {
+  return daemonClient.refreshManagedPluginPackage(cwd, pluginId, input);
+}
+
+export async function getManagedPluginRuntimePreview(cwd: string, pluginId: string): Promise<ManagedPluginRuntimePreviewResponse> {
+  return daemonClient.getManagedPluginRuntimePreview(cwd, pluginId);
 }
 
 export async function listPluginSources(cwd: string): Promise<PluginSourceListResponse> {

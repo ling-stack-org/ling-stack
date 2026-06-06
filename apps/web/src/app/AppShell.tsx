@@ -493,6 +493,7 @@ export function AppShell(): JSX.Element {
     pluginBusyId,
     pluginBusyAction,
     latestApplyResult: latestPluginApplyResult,
+    latestRuntimePreview: latestPluginRuntimePreview,
     latestNotice: latestPluginNotice,
   } = pluginsDomain.state;
   const {
@@ -500,6 +501,10 @@ export function AppShell(): JSX.Element {
     applyPluginPreset,
     checkPlugin,
     validatePackage,
+    installPlugin,
+    uninstallPlugin,
+    refreshPluginPackage,
+    previewPluginRuntime,
     enablePlugin,
     disablePlugin,
     resetForCwd: resetPluginsForCwd,
@@ -2518,6 +2523,7 @@ export function AppShell(): JSX.Element {
                 pluginBusyId={pluginBusyId}
                 pluginBusyAction={pluginBusyAction}
                 latestPluginApplyResult={latestPluginApplyResult}
+                latestPluginRuntimePreview={latestPluginRuntimePreview}
                 latestPluginNotice={latestPluginNotice}
                 isLoading={approvalPolicyLoading}
                 runtimeSettingsLoading={runtimeSettingsLoading}
@@ -2540,6 +2546,10 @@ export function AppShell(): JSX.Element {
                 onApplyPluginPreset={(pluginId) => void applyPluginPreset(pluginId)}
                 onCheckPlugin={(pluginId) => void checkPlugin(pluginId)}
                 onValidatePluginPackage={(pluginId) => void validatePackage(pluginId)}
+                onInstallPlugin={(pluginId) => void installPlugin(pluginId)}
+                onUninstallPlugin={(pluginId) => void uninstallPlugin(pluginId)}
+                onRefreshPluginPackage={(pluginId) => void refreshPluginPackage(pluginId)}
+                onPreviewPluginRuntime={(pluginId) => void previewPluginRuntime(pluginId)}
                 onEnablePlugin={(pluginId) => void enablePlugin(pluginId)}
                 onDisablePlugin={(pluginId) => void disablePlugin(pluginId)}
                 onExternalWorkAction={(action) => void runExternalWorkStatusAction(action)}

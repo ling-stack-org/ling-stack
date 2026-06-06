@@ -1,8 +1,11 @@
 import {
   Activity,
   CheckCircle2,
+  Download,
+  Eye,
   ExternalLink,
   Loader2,
+  PackageCheck,
   Plug,
   Power,
   PowerOff,
@@ -14,7 +17,7 @@ import {
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { MetaRow, StatusBadge } from "../../shared/components/index.js";
-import type { ManagedPluginApplyPresetResponse, ManagedPluginView } from "../../types.js";
+import type { ManagedPluginApplyPresetResponse, ManagedPluginRuntimePreviewResponse, ManagedPluginView } from "../../types.js";
 import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 
 export function PluginManagerSettingsPanel({
@@ -24,11 +27,16 @@ export function PluginManagerSettingsPanel({
   busyPluginId,
   busyAction,
   latestApplyResult,
+  latestRuntimePreview,
   latestNotice,
   onRefresh,
   onApplyPreset,
   onCheck,
   onValidatePackage,
+  onInstall,
+  onUninstall,
+  onRefreshPackage,
+  onRuntimePreview,
   onEnable,
   onDisable,
   onOpenMcpSettings,
@@ -39,11 +47,16 @@ export function PluginManagerSettingsPanel({
   readonly busyPluginId: string;
   readonly busyAction: PluginBusyAction | undefined;
   readonly latestApplyResult?: ManagedPluginApplyPresetResponse;
+  readonly latestRuntimePreview?: ManagedPluginRuntimePreviewResponse;
   readonly latestNotice?: PluginActionNotice;
   readonly onRefresh: () => void;
   readonly onApplyPreset: (pluginId: string) => void;
   readonly onCheck: (pluginId: string) => void;
   readonly onValidatePackage: (pluginId: string) => void;
+  readonly onInstall: (pluginId: string) => void;
+  readonly onUninstall: (pluginId: string) => void;
+  readonly onRefreshPackage: (pluginId: string) => void;
+  readonly onRuntimePreview: (pluginId: string) => void;
   readonly onEnable: (pluginId: string) => void;
   readonly onDisable: (pluginId: string) => void;
   readonly onOpenMcpSettings: () => void;
@@ -96,6 +109,17 @@ export function PluginManagerSettingsPanel({
         </div>
       ) : null}
 
+      {latestRuntimePreview ? (
+        <div className={`settings-plugin-runtime-preview ${latestRuntimePreview.preview.status}`} role="status" aria-live="polite">
+          <Eye size={16} />
+          <span>
+            {t("Runtime preview")}: {latestRuntimePreview.plugin.displayName} · {latestRuntimePreview.preview.status}
+            {latestRuntimePreview.preview.policyOverlays.length ? ` · ${latestRuntimePreview.preview.policyOverlays.length} ${t("policy overlays")}` : ""}
+            {latestRuntimePreview.preview.blockers.length ? ` · ${latestRuntimePreview.preview.blockers[0]}` : ""}
+          </span>
+        </div>
+      ) : null}
+
       {plugins.length === 0 ? (
         <div className="empty-state compact-empty">
           {isLoading ? <Loader2 className="spin" /> : <Plug />}
@@ -119,6 +143,7 @@ export function PluginManagerSettingsPanel({
                 </div>
                 <div className="settings-plugin-meta-grid">
                   <MetaRow label={t("Health")} value={healthLabel(plugin)} compact />
+                  <MetaRow label={t("Package")} value={packageLabel(plugin)} compact />
                   <MetaRow label={t("Contributions")} value={String(plugin.contributions.length)} compact />
                   <MetaRow label={t("Linked resources")} value={linkedResourceLabel(plugin)} compact />
                   <MetaRow label={t("Latest event")} value={latestEventLabel(plugin)} compact />
@@ -131,8 +156,14 @@ export function PluginManagerSettingsPanel({
                 ) : null}
                 {plugin.sourceKind === "bundled" ? (
                   <div className="settings-plugin-package-note">
-                    <ShieldCheck size={15} />
-                    <span>{t("Bundled package metadata only. Apply preset remains in the trusted local preset.")}</span>
+                    <PackageCheck size={15} />
+                    <span>{plugin.package?.status === "installed" ? t("Bundled package installed for this workspace.") : t("Bundled package metadata only. Install before runtime injection.")}</span>
+                  </div>
+                ) : null}
+                {plugin.runtimePreview?.blockers.length ? (
+                  <div className="settings-plugin-warning">
+                    <XCircle size={15} />
+                    <span>{plugin.runtimePreview.blockers[0]}</span>
                   </div>
                 ) : null}
                 <div className="settings-plugin-contributions">
@@ -167,6 +198,39 @@ export function PluginManagerSettingsPanel({
                     {t("Check")}
                   </button>
                 ) : null}
+                {plugin.actions.canInstall ? (
+                  <button
+                    className="secondary-button compact-button"
+                    type="button"
+                    onClick={() => onInstall(plugin.id)}
+                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
+                  >
+                    {busyPluginId === plugin.id && busyAction === "install" ? <Loader2 className="spin" size={15} /> : <Download size={15} />}
+                    {t("Install")}
+                  </button>
+                ) : null}
+                {plugin.actions.canRuntimePreview ? (
+                  <button
+                    className="ghost-button compact-button"
+                    type="button"
+                    onClick={() => onRuntimePreview(plugin.id)}
+                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
+                  >
+                    {busyPluginId === plugin.id && busyAction === "runtime-preview" ? <Loader2 className="spin" size={15} /> : <Eye size={15} />}
+                    {t("Runtime preview")}
+                  </button>
+                ) : null}
+                {plugin.actions.canRefreshPackage ? (
+                  <button
+                    className="ghost-button compact-button"
+                    type="button"
+                    onClick={() => onRefreshPackage(plugin.id)}
+                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
+                  >
+                    {busyPluginId === plugin.id && busyAction === "refresh-package" ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+                    {t("Refresh package")}
+                  </button>
+                ) : null}
                 {plugin.sourceKind === "bundled" ? (
                   <button
                     className="ghost-button compact-button"
@@ -198,6 +262,17 @@ export function PluginManagerSettingsPanel({
                   >
                     {busyPluginId === plugin.id && busyAction === "disable" ? <Loader2 className="spin" size={15} /> : <PowerOff size={15} />}
                     {t("Disable")}
+                  </button>
+                ) : null}
+                {plugin.actions.canUninstall ? (
+                  <button
+                    className="danger-ghost-button compact-button"
+                    type="button"
+                    onClick={() => onUninstall(plugin.id)}
+                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
+                  >
+                    {busyPluginId === plugin.id && busyAction === "uninstall" ? <Loader2 className="spin" size={15} /> : <PowerOff size={15} />}
+                    {t("Uninstall")}
                   </button>
                 ) : null}
               </div>
@@ -235,6 +310,14 @@ function healthLabel(plugin: ManagedPluginView): string {
   }
   const checked = formatDateTime(plugin.health.checkedAt);
   return plugin.health.message ? `${plugin.health.status} · ${checked} · ${plugin.health.message}` : `${plugin.health.status} · ${checked}`;
+}
+
+function packageLabel(plugin: ManagedPluginView): string {
+  if (!plugin.package) {
+    return plugin.sourceKind === "bundled" ? "not installed" : "n/a";
+  }
+  const hash = plugin.package.packageHash ? plugin.package.packageHash.slice(0, 12) : "no hash";
+  return `${plugin.package.status} · ${plugin.package.version} · ${hash}`;
 }
 
 function linkedResourceLabel(plugin: ManagedPluginView): string {

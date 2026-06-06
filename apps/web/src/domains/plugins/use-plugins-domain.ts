@@ -4,13 +4,17 @@ import {
   checkManagedPlugin,
   disableManagedPlugin,
   enableManagedPlugin,
+  getManagedPluginRuntimePreview,
+  installManagedPlugin,
   listManagedPlugins,
+  refreshManagedPluginPackage,
+  uninstallManagedPlugin,
   validatePluginPackage,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
-import type { ManagedPluginApplyPresetResponse, ManagedPluginView } from "../../types.js";
+import type { ManagedPluginApplyPresetResponse, ManagedPluginRuntimePreviewResponse, ManagedPluginView } from "../../types.js";
 
-export type PluginBusyAction = "apply" | "check" | "enable" | "disable" | "validate";
+export type PluginBusyAction = "apply" | "check" | "enable" | "disable" | "validate" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
 
 export interface PluginActionNotice {
   readonly pluginId: string;
@@ -25,6 +29,7 @@ export interface PluginsState {
   readonly pluginBusyId: string;
   readonly pluginBusyAction: PluginBusyAction | undefined;
   readonly latestApplyResult?: ManagedPluginApplyPresetResponse;
+  readonly latestRuntimePreview?: ManagedPluginRuntimePreviewResponse;
   readonly latestNotice?: PluginActionNotice;
 }
 
@@ -33,6 +38,10 @@ export interface PluginsActions {
   readonly applyPluginPreset: (pluginId: string) => Promise<void>;
   readonly checkPlugin: (pluginId: string) => Promise<void>;
   readonly validatePackage: (pluginId: string) => Promise<void>;
+  readonly installPlugin: (pluginId: string) => Promise<void>;
+  readonly uninstallPlugin: (pluginId: string) => Promise<void>;
+  readonly refreshPluginPackage: (pluginId: string) => Promise<void>;
+  readonly previewPluginRuntime: (pluginId: string) => Promise<void>;
   readonly enablePlugin: (pluginId: string) => Promise<void>;
   readonly disablePlugin: (pluginId: string) => Promise<void>;
   readonly resetForCwd: () => void;
@@ -50,6 +59,7 @@ export function usePluginsDomain(input: {
   const [pluginBusyId, setPluginBusyId] = useState("");
   const [pluginBusyAction, setPluginBusyAction] = useState<PluginBusyAction | undefined>();
   const [latestApplyResult, setLatestApplyResult] = useState<ManagedPluginApplyPresetResponse | undefined>();
+  const [latestRuntimePreview, setLatestRuntimePreview] = useState<ManagedPluginRuntimePreviewResponse | undefined>();
   const [latestNotice, setLatestNotice] = useState<PluginActionNotice | undefined>();
   const [error, setError] = useState<DomainError | undefined>();
 
@@ -127,6 +137,56 @@ export function usePluginsDomain(input: {
     }
   }
 
+  async function installPlugin(pluginId: string): Promise<void> {
+    await mutatePlugin(pluginId, "install", async (cwd) => (await installManagedPlugin(cwd, pluginId)).plugin, (plugin) =>
+      plugin.package?.packageHash
+        ? `${input.translate("Plugin package installed.")} ${plugin.package.packageHash.slice(0, 12)}`
+        : input.translate("Plugin package installed."));
+  }
+
+  async function uninstallPlugin(pluginId: string): Promise<void> {
+    await mutatePlugin(pluginId, "uninstall", async (cwd) => (await uninstallManagedPlugin(cwd, pluginId)).plugin, () =>
+      input.translate("Plugin package uninstalled."));
+  }
+
+  async function refreshPluginPackage(pluginId: string): Promise<void> {
+    await mutatePlugin(pluginId, "refresh-package", async (cwd) => (await refreshManagedPluginPackage(cwd, pluginId)).plugin, () =>
+      input.translate("Plugin package refreshed."));
+  }
+
+  async function previewPluginRuntime(pluginId: string): Promise<void> {
+    const workspaceCwd = input.cwd.trim();
+    if (!workspaceCwd) {
+      input.setErrorMessage(input.translate("Local workspace is not ready."));
+      return;
+    }
+    setPluginBusyId(pluginId);
+    setPluginBusyAction("runtime-preview");
+    try {
+      input.setErrorMessage("");
+      setError(undefined);
+      const response = await getManagedPluginRuntimePreview(workspaceCwd, pluginId);
+      setLatestRuntimePreview(response);
+      setPlugins((current) => upsertPlugin(current, response.plugin));
+      setLatestNotice({
+        pluginId,
+        action: "runtime-preview",
+        tone: response.preview.status === "injectable" ? "success" : "error",
+        message: response.preview.blockers.length
+          ? `${input.translate("Runtime preview blocked.")} ${response.preview.blockers[0]}`
+          : input.translate("Runtime preview ready."),
+      });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError({ scope: "mutation", message });
+      setLatestNotice({ pluginId, action: "runtime-preview", tone: "error", message });
+      input.setErrorMessage(message);
+    } finally {
+      setPluginBusyId("");
+      setPluginBusyAction(undefined);
+    }
+  }
+
   async function enablePlugin(pluginId: string): Promise<void> {
     await mutatePlugin(pluginId, "enable", async (cwd) => (await enableManagedPlugin(cwd, pluginId)).plugin, () =>
       input.translate("Plugin enabled."));
@@ -185,6 +245,7 @@ export function usePluginsDomain(input: {
     setPluginBusyId("");
     setPluginBusyAction(undefined);
     setLatestApplyResult(undefined);
+    setLatestRuntimePreview(undefined);
     setLatestNotice(undefined);
     setError(undefined);
   }
@@ -196,6 +257,7 @@ export function usePluginsDomain(input: {
       pluginBusyId,
       pluginBusyAction,
       latestApplyResult,
+      latestRuntimePreview,
       latestNotice,
     },
     actions: {
@@ -203,6 +265,10 @@ export function usePluginsDomain(input: {
       applyPluginPreset,
       checkPlugin,
       validatePackage,
+      installPlugin,
+      uninstallPlugin,
+      refreshPluginPackage,
+      previewPluginRuntime,
       enablePlugin,
       disablePlugin,
       resetForCwd,

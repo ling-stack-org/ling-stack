@@ -220,12 +220,26 @@ test("settings plugins page applies and controls the CUA trusted-local preset wi
   await expect(pluginsPanel).toContainText("bundled:cua-driver");
   await expect(pluginsPanel).toContainText("Runs a user-installed local binary through MCP");
   await expect(pluginsPanel).not.toContainText("Marketplace");
-  await expect(pluginsPanel).not.toContainText("Install");
 
   const bundledRow = pluginsPanel.locator(".settings-plugin-row").filter({ hasText: "bundled:cua-driver" });
   await expect(bundledRow).toContainText("bundled");
-  await expect(bundledRow).toContainText("Package metadata only");
+  await expect(bundledRow).toContainText("not installed");
   await expect(bundledRow.getByRole("button", { name: "Apply preset" })).toHaveCount(0);
+  await bundledRow.getByRole("button", { name: "Install" }).click();
+  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin package installed.");
+  await expect(bundledRow).toContainText("installed");
+  await expect(bundledRow).toContainText("mockhash1234");
+  await bundledRow.getByRole("button", { name: "Runtime preview" }).click();
+  await expect(pluginsPanel.locator(".settings-plugin-runtime-preview")).toContainText("disabled");
+  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Runtime preview blocked.");
+  await bundledRow.getByRole("button", { name: "Enable" }).click();
+  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin enabled.");
+  await bundledRow.getByRole("button", { name: "Runtime preview" }).click();
+  await expect(pluginsPanel.locator(".settings-plugin-runtime-preview")).toContainText("injectable");
+  await expect(pluginsPanel.locator(".settings-plugin-runtime-preview")).toContainText("2 policy overlays");
+  await bundledRow.getByRole("button", { name: "Uninstall" }).click();
+  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin package uninstalled.");
+  await expect(bundledRow).toContainText("uninstalled");
   await bundledRow.getByRole("button", { name: "Validate package" }).click();
   await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Package validation passed.");
 

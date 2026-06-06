@@ -9,6 +9,8 @@ export interface LingStackRuntimePaths {
   readonly artifactsDir: string;
   readonly attachmentsDir: string;
   readonly piDir: string;
+  readonly pluginsDir: string;
+  readonly pluginCacheDir: string;
 }
 
 export function resolveRuntimePaths(cwd: string): LingStackRuntimePaths {
@@ -21,6 +23,8 @@ export function resolveRuntimePaths(cwd: string): LingStackRuntimePaths {
     artifactsDir: join(rootDir, "artifacts"),
     attachmentsDir: join(rootDir, "attachments"),
     piDir: join(rootDir, "pi"),
+    pluginsDir: join(rootDir, "plugins"),
+    pluginCacheDir: join(rootDir, "plugins", "cache"),
   };
 }
 
@@ -30,6 +34,8 @@ export function ensureRuntimePaths(paths: LingStackRuntimePaths): void {
   mkdirSync(paths.artifactsDir, { recursive: true });
   mkdirSync(paths.attachmentsDir, { recursive: true });
   mkdirSync(paths.piDir, { recursive: true });
+  mkdirSync(paths.pluginsDir, { recursive: true });
+  mkdirSync(paths.pluginCacheDir, { recursive: true });
 }
 
 export function getRunEventLogPath(paths: LingStackRuntimePaths, runId: string): string {

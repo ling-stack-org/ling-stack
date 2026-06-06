@@ -40,6 +40,8 @@ import {
 import { renderUsedMemoryPrompt } from "../memory/prompt.js";
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import { listBundledPackageDescriptors } from "../plugins/source-index.js";
+import { createManagedPluginRuntimeSnapshot } from "../plugins/runtime-injection.js";
 import {
   createRunApprovalHandler,
   mergeApprovalProfiles,
@@ -397,6 +399,13 @@ export async function executeRunRequest(
         runId,
       },
     });
+    const managedPluginRuntime = createManagedPluginRuntimeSnapshot({
+      cwd: runRequest.cwd,
+      runId,
+      store,
+      descriptors: listBundledPackageDescriptors(),
+      now: createdAt,
+    });
     run = store.createRun({
       id: runId,
       cwd: runRequest.cwd,
@@ -421,6 +430,7 @@ export async function executeRunRequest(
         runtimeSettings,
         selectedSkillId: selectedSkill?.skillId,
         mcpToolAccess,
+        managedPluginRuntime,
       },
       workUnitId: workUnit.id,
       threadId: thread.id,

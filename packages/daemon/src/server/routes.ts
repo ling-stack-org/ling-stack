@@ -231,7 +231,10 @@ export function parseMcpServerRoute(
 
 export function parseManagedPluginRoute(
   pathname: string,
-): { readonly pluginId: string; readonly action?: "enable" | "disable" | "check" | "apply-preset" | "validate-package" } | undefined {
+): {
+  readonly pluginId: string;
+  readonly action?: "enable" | "disable" | "check" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
+} | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "plugins") {
     return { pluginId: segments[1] };
@@ -244,7 +247,11 @@ export function parseManagedPluginRoute(
       segments[2] === "disable" ||
       segments[2] === "check" ||
       segments[2] === "apply-preset" ||
-      segments[2] === "validate-package"
+      segments[2] === "validate-package" ||
+      segments[2] === "install" ||
+      segments[2] === "uninstall" ||
+      segments[2] === "refresh-package" ||
+      segments[2] === "runtime-preview"
     )
   ) {
     return { pluginId: segments[1], action: segments[2] };
