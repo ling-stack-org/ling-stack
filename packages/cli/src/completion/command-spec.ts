@@ -124,6 +124,13 @@ export const commandSpec: CommandSpec = {
       ], { name: "id", valueHint: "run" }),
       command("cancel", "Cancel run", [], [], { name: "id", valueHint: "run" }),
     ]),
+    command("automations", "Manage automations", [
+      command("scheduler", "Manage local automation scheduler", [
+        command("start", "Start local automation scheduler"),
+        command("status", "Show local automation scheduler status"),
+        command("stop", "Stop local automation scheduler"),
+      ]),
+    ]),
     command("external-work", "Manage external work", [
       command("github", "GitHub workflows", [
         command("import", "Import GitHub payload", [], externalWorkCommonOptions()),

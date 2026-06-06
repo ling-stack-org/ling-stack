@@ -185,6 +185,8 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
       return await handleApprovals(rest, parsed.options);
     case "runs":
       return await handleRuns(rest, parsed.options);
+    case "automations":
+      return await handleAutomations(rest, parsed.options);
     case "external-work":
       return await handleExternalWork(rest, parsed.options);
     case "ui":
@@ -2134,6 +2136,64 @@ async function handleRunsCancel(args: readonly string[], options: GlobalOptions)
   console.log(`Run cancelled: ${runId}`);
   console.log(`Active runner: ${readBoolean(response, "active") ?? false ? "yes" : "no"}`);
   console.log(`Status: ${readString(run, "status") ?? "cancelled"}`);
+  return 0;
+}
+
+async function handleAutomations(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "scheduler", ...rest] = args;
+  if (subcommand === "scheduler") {
+    return await handleAutomationScheduler(rest, options);
+  }
+  throw new CliError(2, "unknown_command", `Unknown automations command: ${subcommand}`);
+}
+
+async function handleAutomationScheduler(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [subcommand = "status", ...rest] = args;
+  if (subcommand === "start") {
+    return await handleAutomationSchedulerStart(rest, options);
+  }
+  if (subcommand === "status" || subcommand === "list") {
+    return await handleAutomationSchedulerStatus(rest, options);
+  }
+  if (subcommand === "stop") {
+    return await handleAutomationSchedulerStop(rest, options);
+  }
+  throw new CliError(2, "unknown_command", `Unknown automations scheduler command: ${subcommand}`);
+}
+
+async function handleAutomationSchedulerStart(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  assertNoPositionals(parsed.positionals, "automations scheduler start");
+  const response = await requestJson(options, "POST", "/automations/scheduler/start", { cwd: options.cwd }, {});
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printAutomationSchedulerMutation(response, "Automation scheduler started");
+  return 0;
+}
+
+async function handleAutomationSchedulerStatus(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  assertNoPositionals(parsed.positionals, "automations scheduler status");
+  const response = await requestJson(options, "GET", "/automations/scheduler", { cwd: options.cwd });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printAutomationSchedulerList(response);
+  return 0;
+}
+
+async function handleAutomationSchedulerStop(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  assertNoPositionals(parsed.positionals, "automations scheduler stop");
+  const response = await requestJson(options, "POST", "/automations/scheduler/stop", { cwd: options.cwd }, {});
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printAutomationSchedulerMutation(response, "Automation scheduler stopped");
   return 0;
 }
 
@@ -4573,6 +4633,60 @@ function printExternalWorkBackgroundList(response: unknown): void {
   );
 }
 
+function printAutomationSchedulerMutation(response: unknown, title: string): void {
+  const scheduler = readRequiredRecord(response, "scheduler");
+  console.log(`${title}: ${readString(scheduler, "id") ?? ""}`);
+  console.log(`Duplicate: ${readBoolean(response, "duplicate") ?? false}`);
+  console.log(`Status: ${readString(scheduler, "status") ?? ""}`);
+  console.log(`Automations: ${readNumber(scheduler, "automationCount") ?? 0}`);
+  console.log(`Tick count: ${readNumber(scheduler, "tickCount") ?? 0}`);
+  console.log(`Next run: ${readString(scheduler, "nextRunAt") ?? ""}`);
+  const lastError = readString(scheduler, "lastErrorMessage");
+  if (lastError) {
+    console.log(`Last error: ${lastError}`);
+  }
+}
+
+function printAutomationSchedulerList(response: unknown): void {
+  const schedulers = readArray(response, "schedulers");
+  console.log("Automation schedulers:");
+  if (schedulers.length === 0) {
+    console.log("No automation schedulers found.");
+    return;
+  }
+  printTable(
+    ["ID", "Status", "Automations", "Ticks", "Next Run", "Last Run", "Error"],
+    schedulers.map((scheduler) => [
+      truncate(readString(scheduler, "id") ?? "", 34),
+      readString(scheduler, "status") ?? "",
+      String(readNumber(scheduler, "automationCount") ?? 0),
+      String(readNumber(scheduler, "tickCount") ?? 0),
+      truncate(readString(scheduler, "nextRunAt") ?? "", 24),
+      truncate(readString(scheduler, "lastRunAt") ?? "", 24),
+      truncate(readString(scheduler, "lastErrorMessage") ?? "", 42),
+    ]),
+  );
+  for (const scheduler of schedulers) {
+    const items = readArray(scheduler, "items");
+    if (items.length === 0) {
+      continue;
+    }
+    console.log("");
+    console.log(`Items for ${readString(scheduler, "id") ?? "scheduler"}:`);
+    printTable(
+      ["Automation", "Title", "Next Run", "Last Run", "Last Automation Run", "Error"],
+      items.map((item) => [
+        truncate(readString(item, "automationId") ?? "", 30),
+        truncate(readString(item, "title") ?? "", 28),
+        truncate(readString(item, "nextRunAt") ?? "", 24),
+        truncate(readString(item, "lastRunAt") ?? "", 24),
+        truncate(readString(item, "lastAutomationRunId") ?? "", 28),
+        truncate(readString(item, "lastErrorMessage") ?? "", 36),
+      ]),
+    );
+  }
+}
+
 function printExternalWorkCiTriage(response: unknown): void {
   console.log("External work CI triage:");
   console.log(`Triaged: ${readNumber(response, "triaged") ?? 0}`);
@@ -4913,6 +5027,10 @@ function printCommandHelp(command: string, subcommand?: string): void {
     printRunsHelp();
     return;
   }
+  if (command === "automations") {
+    printAutomationsHelp();
+    return;
+  }
   if (command === "external-work") {
     printExternalWorkHelp();
     return;
@@ -4968,6 +5086,9 @@ Usage:
   ling-stack [global options] runs show <id>
   ling-stack [global options] runs events <id>
   ling-stack [global options] runs cancel <id>
+  ling-stack [global options] automations scheduler start
+  ling-stack [global options] automations scheduler status
+  ling-stack [global options] automations scheduler stop
   ling-stack [global options] external-work github import --channel <id> --event-type <event> --payload-file <payload.json>
   ling-stack [global options] external-work github poll --channel <id> [--workflow-path WORKFLOW.md]
   ling-stack [global options] external-work github background start --channel <id> [--workflow-path WORKFLOW.md]
@@ -5108,6 +5229,18 @@ function printCompletionHelp(): void {
 Behavior:
   Prints a static shell completion script to stdout.
   Does not install shell files, edit shell profiles, or call the daemon.
+`);
+}
+
+function printAutomationsHelp(): void {
+  console.log(`Usage:
+  ling-stack automations scheduler start
+  ling-stack automations scheduler status
+  ling-stack automations scheduler stop
+
+Behavior:
+  Controls the explicit process-local automation scheduler for the current workspace.
+  Start registers enabled scheduled automations; status lists in-memory scheduler state; stop clears timers.
 `);
 }
 
