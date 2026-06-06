@@ -23,3 +23,15 @@ export function parseManagedPluginDisableRequest(value: unknown): { readonly rea
     reason: readOptionalString(value, "reason"),
   };
 }
+
+export function parseManagedPluginValidatePackageRequest(value: unknown): { readonly options: Readonly<Record<string, unknown>> } {
+  if (value === undefined || value === null) {
+    return { options: {} };
+  }
+  if (!isRecord(value)) {
+    throw new Error("Plugin package validation request body must be an object.");
+  }
+  return {
+    options: readOptionalObject(value, "options") ?? {},
+  };
+}

@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { createCompositeSecretResolver } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
+import { loadPluginPackageFromRoot } from "../dist/features/plugins/manifest.js";
 
 const cuaPluginId = "trusted-local:cua-driver";
+const bundledCuaPluginId = "bundled:cua-driver";
 
 test("daemon exposes managed plugin catalog with built-ins and trusted local presets", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-catalog-"));
@@ -18,13 +20,86 @@ test("daemon exposes managed plugin catalog with built-ins and trusted local pre
     assert.equal(ids.has("runner:pi"), true);
     assert.equal(ids.has("tool:read"), true);
     assert.equal(ids.has(cuaPluginId), true);
+    assert.equal(ids.has(bundledCuaPluginId), true);
 
     const cua = catalog.plugins.find((plugin) => plugin.id === cuaPluginId);
     assert.equal(cua.sourceKind, "trusted-local-preset");
     assert.equal(cua.actions.canApplyPreset, process.platform === "darwin");
+    const bundledCua = catalog.plugins.find((plugin) => plugin.id === bundledCuaPluginId);
+    assert.equal(bundledCua.sourceKind, "bundled");
+    assert.equal(bundledCua.actions.canApplyPreset, false);
+    assert.deepEqual(bundledCua.contributions.map((contribution) => contribution.kind), ["mcp-server"]);
     assert.equal(JSON.stringify(catalog).includes("secret-token"), false);
   } finally {
     await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon exposes bundled plugin sources packages and side-effect-free validation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-package-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const sources = await getJson(`${daemon.url}/plugins/sources?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(sources.sources.length, 1);
+    assert.equal(sources.sources[0].sourceKind, "bundled");
+    assert.equal(sources.sources[0].pluginCount >= 1, true);
+    assert.equal("packageRoot" in sources.sources[0], false);
+    assert.equal(JSON.stringify(sources.sources).includes(cwd), false);
+
+    const detail = await getJson(`${daemon.url}/plugins/packages/${encodeURIComponent(bundledCuaPluginId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.package.id, bundledCuaPluginId);
+    assert.equal(detail.package.manifest.id, bundledCuaPluginId);
+    assert.equal(detail.validation.ok, true);
+    assert.equal(detail.validation.compiledDescriptor.id, bundledCuaPluginId);
+    assert.equal(JSON.stringify(detail).includes("CuaDriver.app"), false);
+
+    const validation = await postJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/validate-package?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(validation.validation.ok, true);
+    assert.equal(validation.plugin.id, bundledCuaPluginId);
+
+    const servers = await getJson(`${daemon.url}/mcp/servers?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(servers.servers, []);
+    const teammateBindings = await getJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/mcp?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(teammateBindings.bindings, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon rejects invalid plugin package contribution paths with redacted diagnostics", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-invalid-"));
+  const packageRoot = join(cwd, "plugin");
+  const outside = join(cwd, "outside");
+  await mkdir(join(packageRoot, ".ling-plugin"), { recursive: true });
+  await mkdir(outside, { recursive: true });
+  await writeFile(join(outside, "mcp-server.json"), "{}\n");
+  await symlink(join(outside, "mcp-server.json"), join(packageRoot, "escape.json"));
+  await writeFile(
+    join(packageRoot, ".ling-plugin", "plugin.json"),
+    JSON.stringify({
+      id: "bundled:invalid-path",
+      displayName: "Invalid Path",
+      version: "0.1.0",
+      lingInterfaceVersion: "1",
+      sourceKind: "bundled",
+      trustLevel: "internal",
+      trustSummary: "Invalid package for testing.",
+      contributions: [
+        { kind: "mcp-server", id: "mcp:absolute", path: "/tmp/server.json" },
+        { kind: "skill-pack", id: "skill:traversal", path: "../skills" },
+        { kind: "provider", id: "provider:escape", path: "./escape.json" },
+      ],
+    }),
+  );
+  try {
+    const result = loadPluginPackageFromRoot(packageRoot);
+    assert.equal(result.validation.ok, false);
+    assert.equal(result.validation.errors.length >= 3, true);
+    assert.equal(JSON.stringify(result.validation).includes(packageRoot), false);
+    assert.equal(JSON.stringify(result.validation).includes(outside), false);
+  } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });

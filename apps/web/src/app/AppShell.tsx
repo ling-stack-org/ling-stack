@@ -493,11 +493,13 @@ export function AppShell(): JSX.Element {
     pluginBusyId,
     pluginBusyAction,
     latestApplyResult: latestPluginApplyResult,
+    latestNotice: latestPluginNotice,
   } = pluginsDomain.state;
   const {
     refreshPlugins,
     applyPluginPreset,
     checkPlugin,
+    validatePackage,
     enablePlugin,
     disablePlugin,
     resetForCwd: resetPluginsForCwd,
@@ -2516,6 +2518,7 @@ export function AppShell(): JSX.Element {
                 pluginBusyId={pluginBusyId}
                 pluginBusyAction={pluginBusyAction}
                 latestPluginApplyResult={latestPluginApplyResult}
+                latestPluginNotice={latestPluginNotice}
                 isLoading={approvalPolicyLoading}
                 runtimeSettingsLoading={runtimeSettingsLoading}
                 runtimeSettingsAction={runtimeSettingsAction}
@@ -2536,6 +2539,7 @@ export function AppShell(): JSX.Element {
                 onRefreshPlugins={() => void refreshPlugins()}
                 onApplyPluginPreset={(pluginId) => void applyPluginPreset(pluginId)}
                 onCheckPlugin={(pluginId) => void checkPlugin(pluginId)}
+                onValidatePluginPackage={(pluginId) => void validatePackage(pluginId)}
                 onEnablePlugin={(pluginId) => void enablePlugin(pluginId)}
                 onDisablePlugin={(pluginId) => void disablePlugin(pluginId)}
                 onExternalWorkAction={(action) => void runExternalWorkStatusAction(action)}

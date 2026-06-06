@@ -82,7 +82,12 @@ import {
 import { handleRunMediaJob, syncMediaJobForApprovalDecision } from "../features/media/executor.js";
 import { handleMediaJobRoute, handleMediaJobsCollection } from "../features/media/routes.js";
 import { handleMcpServerItem, handleMcpServersCollection, handleMcpToolsCollection } from "../features/mcp/routes.js";
-import { handlePluginItem, handlePluginsCollection } from "../features/plugins/routes.js";
+import {
+  handlePluginItem,
+  handlePluginPackageItem,
+  handlePluginSourcesCollection,
+  handlePluginsCollection,
+} from "../features/plugins/routes.js";
 import {
   handleProviderDraftCheck,
   handleProviderItem,
@@ -166,6 +171,7 @@ import {
   parseExternalWorkCiTriageRunRoute,
   parseLingThreadRoute,
   parseManagedPluginRoute,
+  parsePluginPackageRoute,
   parseMcpServerRoute,
   parseMediaJobRoute,
   parseProviderRoute,
@@ -264,6 +270,17 @@ export async function routeRequest(
 
   if (url.pathname === "/plugins") {
     await handlePluginsCollection(request, response, config, storeRegistry, extensionRegistry);
+    return;
+  }
+
+  if (url.pathname === "/plugins/sources") {
+    await handlePluginSourcesCollection(request, response, config);
+    return;
+  }
+
+  const pluginPackageRoute = parsePluginPackageRoute(url.pathname);
+  if (pluginPackageRoute) {
+    await handlePluginPackageItem(request, response, config, pluginPackageRoute.pluginId);
     return;
   }
 

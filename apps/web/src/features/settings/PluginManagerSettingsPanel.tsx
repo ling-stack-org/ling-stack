@@ -15,7 +15,7 @@ import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { MetaRow, StatusBadge } from "../../shared/components/index.js";
 import type { ManagedPluginApplyPresetResponse, ManagedPluginView } from "../../types.js";
-import type { PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
+import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 
 export function PluginManagerSettingsPanel({
   cwd,
@@ -24,9 +24,11 @@ export function PluginManagerSettingsPanel({
   busyPluginId,
   busyAction,
   latestApplyResult,
+  latestNotice,
   onRefresh,
   onApplyPreset,
   onCheck,
+  onValidatePackage,
   onEnable,
   onDisable,
   onOpenMcpSettings,
@@ -37,9 +39,11 @@ export function PluginManagerSettingsPanel({
   readonly busyPluginId: string;
   readonly busyAction: PluginBusyAction | undefined;
   readonly latestApplyResult?: ManagedPluginApplyPresetResponse;
+  readonly latestNotice?: PluginActionNotice;
   readonly onRefresh: () => void;
   readonly onApplyPreset: (pluginId: string) => void;
   readonly onCheck: (pluginId: string) => void;
+  readonly onValidatePackage: (pluginId: string) => void;
   readonly onEnable: (pluginId: string) => void;
   readonly onDisable: (pluginId: string) => void;
   readonly onOpenMcpSettings: () => void;
@@ -85,6 +89,13 @@ export function PluginManagerSettingsPanel({
         </div>
       ) : null}
 
+      {latestNotice ? (
+        <div className={`settings-plugin-action-notice ${latestNotice.tone}`} role="status" aria-live="polite">
+          {latestNotice.tone === "success" ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+          <span>{latestNotice.message}</span>
+        </div>
+      ) : null}
+
       {plugins.length === 0 ? (
         <div className="empty-state compact-empty">
           {isLoading ? <Loader2 className="spin" /> : <Plug />}
@@ -118,6 +129,12 @@ export function PluginManagerSettingsPanel({
                     <span>{plugin.disabledReason}</span>
                   </div>
                 ) : null}
+                {plugin.sourceKind === "bundled" ? (
+                  <div className="settings-plugin-package-note">
+                    <ShieldCheck size={15} />
+                    <span>{t("Bundled package metadata only. Apply preset remains in the trusted local preset.")}</span>
+                  </div>
+                ) : null}
                 <div className="settings-plugin-contributions">
                   {plugin.contributions.map((contribution) => (
                     <span key={`${contribution.kind}:${contribution.id}`} className={contribution.enabled ? "settings-plugin-token" : "settings-plugin-token disabled"}>
@@ -148,6 +165,17 @@ export function PluginManagerSettingsPanel({
                   >
                     {busyPluginId === plugin.id && busyAction === "check" ? <Loader2 className="spin" size={15} /> : <Activity size={15} />}
                     {t("Check")}
+                  </button>
+                ) : null}
+                {plugin.sourceKind === "bundled" ? (
+                  <button
+                    className="ghost-button compact-button"
+                    type="button"
+                    onClick={() => onValidatePackage(plugin.id)}
+                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
+                  >
+                    {busyPluginId === plugin.id && busyAction === "validate" ? <Loader2 className="spin" size={15} /> : <ShieldCheck size={15} />}
+                    {t("Validate package")}
                   </button>
                 ) : null}
                 {plugin.actions.canEnable ? (

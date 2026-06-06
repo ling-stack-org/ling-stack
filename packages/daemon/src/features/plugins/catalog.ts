@@ -11,6 +11,7 @@ import type {
   RunStore,
 } from "@ling-stack/core";
 import { CUA_DRIVER_PLUGIN_ID, CUA_DRIVER_MCP_SERVER_ID, listTrustedLocalPresetDescriptors } from "./presets.js";
+import { listBundledPackageDescriptors } from "./source-index.js";
 
 const sourceOrder = new Map([
   ["built-in", 0],
@@ -102,6 +103,9 @@ function buildDescriptorMap(
   const descriptors = new Map<string, ManagedPluginDescriptor>();
   for (const extension of extensionRegistry.list()) {
     const descriptor = extensionToManagedPluginDescriptor(extension);
+    descriptors.set(descriptor.id, descriptor);
+  }
+  for (const descriptor of listBundledPackageDescriptors()) {
     descriptors.set(descriptor.id, descriptor);
   }
   for (const descriptor of listTrustedLocalPresetDescriptors()) {
@@ -242,7 +246,7 @@ function createManagedPluginView(input: {
     actions: {
       canEnable: !blocked && status !== "enabled",
       canDisable: status === "enabled",
-      canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || input.descriptor.sourceKind === "built-in",
+      canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || input.descriptor.sourceKind === "built-in" || input.descriptor.sourceKind === "bundled",
       canApplyPreset: !blocked && input.descriptor.id === CUA_DRIVER_PLUGIN_ID,
     },
   };

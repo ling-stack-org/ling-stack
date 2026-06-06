@@ -1,0 +1,7 @@
+{
+  "id": "mcp:cua-driver",
+  "transport": "stdio",
+  "command": "cua-driver",
+  "args": ["mcp"],
+  "managedBy": "ling-plugin-shell"
+}

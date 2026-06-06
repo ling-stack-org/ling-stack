@@ -30,11 +30,17 @@ import {
 import {
   parseManagedPluginApplyPresetRequest,
   parseManagedPluginDisableRequest,
+  parseManagedPluginValidatePackageRequest,
 } from "./schemas.js";
 import { toPublicMcpServer } from "../mcp/secrets.js";
+import {
+  getBundledPluginPackage,
+  listPluginSourceViews,
+  toPluginPackageView,
+} from "./source-index.js";
 
 export type ManagedPluginRoute =
-  | { readonly pluginId: string; readonly action?: "enable" | "disable" | "check" | "apply-preset" };
+  | { readonly pluginId: string; readonly action?: "enable" | "disable" | "check" | "apply-preset" | "validate-package" };
 
 export async function handlePluginsCollection(
   request: IncomingMessage,
@@ -68,6 +74,52 @@ export async function handlePluginsCollection(
   }
 }
 
+export async function handlePluginSourcesCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /plugins/sources` });
+    return;
+  }
+  writeJson(response, 200, { cwd, sources: listPluginSourceViews() });
+}
+
+export async function handlePluginPackageItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  pluginId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /plugins/packages/:id` });
+    return;
+  }
+  const pluginPackage = getBundledPluginPackage(pluginId);
+  if (!pluginPackage) {
+    writeJson(response, 404, { error: "plugin_package_not_found", message: `Plugin package not found: ${pluginId}` });
+    return;
+  }
+  writeJson(response, 200, {
+    cwd,
+    package: toPluginPackageView(pluginPackage),
+    validation: pluginPackage.validation,
+  });
+}
+
 export async function handlePluginItem(
   request: IncomingMessage,
   response: ServerResponse,
@@ -87,6 +139,32 @@ export async function handlePluginItem(
 
   try {
     const store = storeRegistry.getStore(cwd);
+    if (request.method === "POST" && route.action === "validate-package") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      parseManagedPluginValidatePackageRequest(body);
+      const validationPackage = getBundledPluginPackage(route.pluginId);
+      if (!validationPackage) {
+        writeJson(response, 404, { error: "plugin_package_not_found", message: `Plugin package not found: ${route.pluginId}` });
+        return;
+      }
+      const plugin = validationPackage.validation.compiledDescriptor
+        ? getManagedPluginView({
+            extensionRegistry,
+            store,
+            pluginId: validationPackage.validation.compiledDescriptor.id,
+            now: new Date().toISOString(),
+            includeEvents: true,
+          })
+        : undefined;
+      writeJson(response, 200, {
+        cwd,
+        ...(plugin ? { plugin } : {}),
+        package: toPluginPackageView(validationPackage),
+        validation: validationPackage.validation,
+      });
+      return;
+    }
+
     const descriptor = getManagedPluginDescriptor(extensionRegistry, store, route.pluginId);
     if (!descriptor) {
       throw new HttpError(404, "plugin_not_found", `Plugin not found: ${route.pluginId}`);

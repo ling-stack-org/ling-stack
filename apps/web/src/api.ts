@@ -2,6 +2,24 @@ import { LingDaemonClient, daemonBaseUrlFromEnv } from "@ling-stack/api-client";
 import type {
   AiTeammateListResponse,
   AiTeammateMutationResponse,
+  AutomationDetailResponse,
+  AutomationDraftDetailResponse,
+  AutomationDraftListRequest,
+  AutomationDraftListResponse,
+  AutomationDraftMutationResponse,
+  AutomationDraftPreviewResponse,
+  AutomationListRequest,
+  AutomationListResponse,
+  AutomationMutationResponse,
+  AutomationPreviewResponse,
+  AutomationRunCancelRequest,
+  AutomationRunDetailResponse,
+  AutomationRunListRequest,
+  AutomationRunListResponse,
+  AutomationRunMutationResponse,
+  AutomationRunRequest,
+  AutomationSchedulerListResponse,
+  AutomationSchedulerMutationResponse,
   ApprovalListResponse,
   ApprovalMutationResponse,
   ApprovalPolicyFormState,
@@ -45,6 +63,9 @@ import type {
   CreateChannelMessageRequest,
   CreateChannelRequest,
   CreateAiTeammateRequest,
+  ConfirmAutomationDraftResponse,
+  CreateAutomationDraftRequest,
+  CreateAutomationRequest,
   CreateTeammateDirectMessageRequest,
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowTemplateCompileRequest,
@@ -113,6 +134,9 @@ import type {
   ManagedPluginDisableRequest,
   ManagedPluginListResponse,
   ManagedPluginMutationResponse,
+  PluginPackageDetailResponse,
+  PluginPackageValidationResponse,
+  PluginSourceListResponse,
   ProviderCheckResult,
   ProviderFormState,
   ProviderListResponse,
@@ -121,6 +145,7 @@ import type {
   ProviderMutationResponse,
   ProviderSecretResponse,
   ProviderTemplateListResponse,
+  PreviewContentResponse,
   ListResourceLeasesRequest,
   ResourceLeaseListResponse,
   ReplaceTeammateChannelMembershipRequest,
@@ -171,6 +196,8 @@ import type {
   TeammatePersonaDraftResponse,
   TeammateSkillBindingListResponse,
   UpdateAiTeammateRequest,
+  UpdateAutomationDraftRequest,
+  UpdateAutomationRequest,
   UpdateChannelBriefRequest,
   UpdateChannelContextSummaryRequest,
   UpdateChannelDecisionRequest,
@@ -198,6 +225,94 @@ const daemonClient = new LingDaemonClient({ baseUrl: daemonBaseUrl });
 
 export async function getDaemonHealth(): Promise<DaemonHealthResponse> {
   return daemonClient.getHealth();
+}
+
+export async function listAutomations(cwd: string, options: AutomationListRequest = {}): Promise<AutomationListResponse> {
+  return daemonClient.listAutomations(cwd, options);
+}
+
+export async function createAutomation(cwd: string, input: CreateAutomationRequest): Promise<AutomationMutationResponse> {
+  return daemonClient.createAutomation(cwd, input);
+}
+
+export async function listAutomationDrafts(cwd: string, options: AutomationDraftListRequest = {}): Promise<AutomationDraftListResponse> {
+  return daemonClient.listAutomationDrafts(cwd, options);
+}
+
+export async function createAutomationDraft(cwd: string, input: CreateAutomationDraftRequest): Promise<AutomationDraftMutationResponse> {
+  return daemonClient.createAutomationDraft(cwd, input);
+}
+
+export async function getAutomationDraft(cwd: string, draftId: string): Promise<AutomationDraftDetailResponse> {
+  return daemonClient.getAutomationDraft(cwd, draftId);
+}
+
+export async function updateAutomationDraft(
+  cwd: string,
+  draftId: string,
+  input: UpdateAutomationDraftRequest,
+): Promise<AutomationDraftMutationResponse> {
+  return daemonClient.updateAutomationDraft(cwd, draftId, input);
+}
+
+export async function discardAutomationDraft(cwd: string, draftId: string): Promise<AutomationDraftMutationResponse> {
+  return daemonClient.discardAutomationDraft(cwd, draftId);
+}
+
+export async function previewAutomationDraft(cwd: string, draftId: string): Promise<AutomationDraftPreviewResponse> {
+  return daemonClient.previewAutomationDraft(cwd, draftId);
+}
+
+export async function confirmAutomationDraft(cwd: string, draftId: string): Promise<ConfirmAutomationDraftResponse> {
+  return daemonClient.confirmAutomationDraft(cwd, draftId);
+}
+
+export async function getAutomation(cwd: string, automationId: string): Promise<AutomationDetailResponse> {
+  return daemonClient.getAutomation(cwd, automationId);
+}
+
+export async function updateAutomation(cwd: string, automationId: string, input: UpdateAutomationRequest): Promise<AutomationMutationResponse> {
+  return daemonClient.updateAutomation(cwd, automationId, input);
+}
+
+export async function archiveAutomation(cwd: string, automationId: string): Promise<AutomationMutationResponse> {
+  return daemonClient.archiveAutomation(cwd, automationId);
+}
+
+export async function previewAutomation(cwd: string, automationId: string): Promise<AutomationPreviewResponse> {
+  return daemonClient.previewAutomation(cwd, automationId);
+}
+
+export async function runAutomation(cwd: string, automationId: string, input: AutomationRunRequest = {}): Promise<AutomationRunMutationResponse> {
+  return daemonClient.runAutomation(cwd, automationId, input);
+}
+
+export async function listAutomationRuns(cwd: string, options: AutomationRunListRequest = {}): Promise<AutomationRunListResponse> {
+  return daemonClient.listAutomationRuns(cwd, options);
+}
+
+export async function getAutomationRun(cwd: string, automationRunId: string): Promise<AutomationRunDetailResponse> {
+  return daemonClient.getAutomationRun(cwd, automationRunId);
+}
+
+export async function cancelAutomationRun(
+  cwd: string,
+  automationRunId: string,
+  input: AutomationRunCancelRequest = {},
+): Promise<AutomationRunMutationResponse> {
+  return daemonClient.cancelAutomationRun(cwd, automationRunId, input);
+}
+
+export async function startAutomationScheduler(cwd: string): Promise<AutomationSchedulerMutationResponse> {
+  return daemonClient.startAutomationScheduler(cwd);
+}
+
+export async function listAutomationSchedulers(cwd: string): Promise<AutomationSchedulerListResponse> {
+  return daemonClient.listAutomationSchedulers(cwd);
+}
+
+export async function stopAutomationScheduler(cwd: string): Promise<AutomationSchedulerMutationResponse> {
+  return daemonClient.stopAutomationScheduler(cwd);
 }
 
 export async function listSkills(cwd: string): Promise<SkillRegistryListResponse> {
@@ -578,6 +693,19 @@ export function attachmentContentUrlById(attachmentId: string, cwd?: string): st
   return daemonClient.attachmentContentUrl(attachmentId, cwd);
 }
 
+export async function previewAttachmentContent(
+  cwd: string,
+  attachmentId: string,
+  options: {
+    readonly maxBytes?: number;
+    readonly scope?: "channel" | "teammate_private";
+    readonly channelId?: string;
+    readonly teammateId?: string;
+  } = {},
+): Promise<PreviewContentResponse> {
+  return daemonClient.previewAttachmentContent(cwd, attachmentId, options);
+}
+
 export async function listChannelLinkPreviews(cwd: string, channelId: string): Promise<ChannelLinkPreviewListResponse> {
   return daemonClient.listChannelLinkPreviews(cwd, channelId);
 }
@@ -941,6 +1069,18 @@ export async function applyManagedPluginPreset(
   return daemonClient.applyManagedPluginPreset(cwd, pluginId, input);
 }
 
+export async function listPluginSources(cwd: string): Promise<PluginSourceListResponse> {
+  return daemonClient.listPluginSources(cwd);
+}
+
+export async function getPluginPackage(cwd: string, pluginId: string): Promise<PluginPackageDetailResponse> {
+  return daemonClient.getPluginPackage(cwd, pluginId);
+}
+
+export async function validatePluginPackage(cwd: string, pluginId: string): Promise<PluginPackageValidationResponse> {
+  return daemonClient.validatePluginPackage(cwd, pluginId);
+}
+
 export async function listApprovals(
   cwd: string,
   options: { readonly status?: string; readonly runId?: string; readonly mediaJobId?: string } = {},
@@ -1088,6 +1228,10 @@ export async function listMediaJobArtifacts(mediaJobId: string, cwd?: string): P
 
 export function artifactContentUrl(artifactId: string, cwd?: string): string {
   return daemonClient.artifactContentUrl(artifactId, cwd);
+}
+
+export async function previewArtifactContent(cwd: string, artifactId: string, maxBytes?: number): Promise<PreviewContentResponse> {
+  return daemonClient.previewArtifactContent(cwd, artifactId, maxBytes);
 }
 
 export async function cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {

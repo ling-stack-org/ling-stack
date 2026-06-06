@@ -3763,6 +3763,11 @@
   box-shadow: none;
 }
 
+.teammate-workspace.settings-mode > .teammate-mcp-panel {
+  overflow: hidden;
+  background: transparent;
+}
+
 .teammate-config-card {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
