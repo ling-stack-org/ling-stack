@@ -1998,7 +1998,7 @@ export function WorkspaceClientView({
                       id: "reply",
                       label: t("Reply in topic"),
                       icon: <Reply size={11} />,
-                      className: "message-reply-button",
+                      className: "message-reply-button message-meta-action",
                       onClick: () => openThreadForMessage(message),
                     },
                   ]}

@@ -390,9 +390,13 @@ export function useWorkspaceDomain(input: {
     channelId = selectedChannelId,
     channelRuns: readonly RunSession[] = [],
   ): Promise<void> {
-    if (!cwd || !channelId || channelRuns.length === 0) {
+    if (!cwd || !channelId) {
       setChannelArtifactsByRun({});
       setChannelArtifactErrorsByRun({});
+      setChannelRunArtifactsLoading(false);
+      return;
+    }
+    if (channelRuns.length === 0) {
       setChannelRunArtifactsLoading(false);
       return;
     }

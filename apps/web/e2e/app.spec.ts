@@ -1337,9 +1337,10 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect.poll(() => state.lastChannelMessageRequest?.providerPresetId).toBe("provider_local");
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Files" }).click();
-  await expect(page.getByText("brief.txt")).toBeVisible();
-  await expect(page.getByText("shot.png")).toBeVisible();
-  await expect(page.getByText("Example Domain")).toBeVisible();
+  const channelFilesPanel = page.locator(".channel-files");
+  await expect(channelFilesPanel.getByText("brief.txt")).toBeVisible();
+  await expect(channelFilesPanel.getByText("shot.png")).toBeVisible();
+  await expect(channelFilesPanel.getByText("Example Domain")).toBeVisible();
 
   const sentMessage = page.locator(".message-bubble").filter({ hasText: "@Engineer please refine the channel requirements" });
   const teammateReply = page.locator(".message-bubble").filter({ hasText: "收到，我会按频道上下文推进。" });
@@ -1914,7 +1915,7 @@ test("channel files tab aggregates run artifacts and keeps other channel artifac
       updatedAt: "2026-05-25T00:20:00.000Z",
     },
   ];
-  state.artifactsByRun.run_failed = [
+  state.artifactsByRun[state.runs[0].id] = [
     {
       id: "artifact_channel_report",
       runId: "run_failed",
@@ -1959,7 +1960,7 @@ test("channel files tab aggregates run artifacts and keeps other channel artifac
   await expect(runGroup).toContainText("Inspect workspace");
   await expect(runGroup.locator(".session-file-list")).not.toBeVisible();
   await expect(runGroup.locator(".artifact-row").first()).toContainText("Channel report");
-  await expect(runGroup.locator(".artifact-row").first()).toHaveAttribute(
+  await expect(runGroup.locator(".artifact-row").first().locator(".artifact-main-link")).toHaveAttribute(
     "href",
     /\/artifacts\/artifact_channel_report\/content\?cwd=%2Ftmp%2Fling-stack-workspace/,
   );
@@ -5542,7 +5543,7 @@ test("run detail renders artifact rows from the daemon API", async ({ page }) =>
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
   await expect(page.locator(".artifact-row")).toHaveCount(3);
   await expect(page.locator(".artifact-row").first()).toContainText("Generated report");
-  await expect(page.locator(".artifact-row").first()).toHaveAttribute("href", /\/artifacts\/artifact_report\/content/);
+  await expect(page.locator(".artifact-row").first().locator(".artifact-main-link")).toHaveAttribute("href", /\/artifacts\/artifact_report\/content/);
   const imageRow = page.locator(".artifact-row").filter({ hasText: "Seedream image 1" });
   await expect(imageRow).toContainText("image");
   await expect(imageRow).toContainText("2.0 KB");
