@@ -62,6 +62,7 @@ import type {
   LocalTeammateDraft,
 } from "../features/teammates/index.js";
 import {
+  LazyAutomationsPage as AutomationsPage,
   LazyAiTeammatesPage as AiTeammatesPage,
   LazyApprovalsPage as ApprovalsPage,
   LazyMediaJobsPage as MediaJobsPage,
@@ -93,6 +94,7 @@ import {
   readRunWorkspaceCwd,
 } from "../lib/run-evidence.js";
 import { useApprovalsDomain } from "../domains/approvals/use-approvals-domain.js";
+import { useAutomationsDomain } from "../domains/automations/use-automations-domain.js";
 import { useExternalWorkDomain } from "../domains/external-work/use-external-work-domain.js";
 import { useMediaDomain } from "../domains/media/use-media-domain.js";
 import { useMcpDomain } from "../domains/mcp/use-mcp-domain.js";
@@ -181,6 +183,7 @@ export function AppShell(): JSX.Element {
   const [orchestratingWorkflowId, setOrchestratingWorkflowId] = useState("");
   const [taskRepairRunId, setTaskRepairRunId] = useState("");
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
+  const [threadPageTargetId, setThreadPageTargetId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
@@ -304,6 +307,47 @@ export function AppShell(): JSX.Element {
     resetSelectedChannelActivity,
     resetForCwd: resetWorkspaceForCwd,
   } = workspaceDomain.actions;
+  const automationsDomain = useAutomationsDomain({
+    cwd: form.cwd.trim(),
+    channels,
+    selectedChannelId,
+    translate: t,
+    setErrorMessage,
+  });
+  const {
+    automations,
+    automationRuns,
+    automationDrafts,
+    templates: automationTemplates,
+    selectedAutomationId,
+    selectedDraftId,
+    previewByAutomationId,
+    draftPreviewById,
+    loading: automationsLoading,
+    mutatingAutomationId,
+    mutatingDraftId,
+    schedulers: automationSchedulers,
+    schedulerAction: automationSchedulerAction,
+  } = automationsDomain.state;
+  const {
+    setSelectedAutomationId,
+    setSelectedDraftId,
+    refreshAutomations,
+    createFromTemplate: createAutomationFromTemplate,
+    createManualDraft,
+    createChatDraft,
+    updateDraft,
+    previewDraft,
+    confirmDraft,
+    discardDraft,
+    previewSelectedAutomation,
+    runSelectedAutomation,
+    archiveSelectedAutomation,
+    setSelectedSchedule,
+    startScheduler: startAutomationSchedulerAction,
+    stopScheduler: stopAutomationSchedulerAction,
+    resetForCwd: resetAutomationsForCwd,
+  } = automationsDomain.actions;
   const providersDomain = useProvidersDomain({
     cwd: form.cwd.trim(),
     translate: t,
@@ -616,6 +660,7 @@ export function AppShell(): JSX.Element {
     if (view === "approvals") {
       setApprovalRepairRunId("");
     }
+    setThreadPageTargetId("");
     setChannelCreateOpen(false);
     setActiveView(view);
     setActiveSidebarTarget(view);
@@ -832,6 +877,9 @@ export function AppShell(): JSX.Element {
       void refreshProviders();
       void refreshMediaJobs();
     }
+    if (activeView === "automations") {
+      void refreshAutomations();
+    }
     if (activeView === "approvals") {
       void refreshApprovals();
     }
@@ -938,6 +986,7 @@ export function AppShell(): JSX.Element {
     resetWorkspaceForCwd(cwd);
     resetProvidersForCwd();
     resetTeammatesForCwd();
+    resetAutomationsForCwd();
     resetMediaForCwd();
     resetMcpForCwd();
     resetPluginsForCwd();
@@ -2157,7 +2206,7 @@ export function AppShell(): JSX.Element {
     setSelectedTaskId(runToRepair.taskId);
   }
 
-  const showInspector = !["workspace", "providers", "mcp", "teammates", "runs", "approvals", "media", "settings"].includes(activeView);
+  const showInspector = !["workspace", "providers", "mcp", "teammates", "runs", "threads", "automations", "approvals", "media", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
@@ -2352,7 +2401,7 @@ export function AppShell(): JSX.Element {
                     </div>
                     {activeView === "teammates" ? (
                       <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
-                    ) : activeView === "mcp" || activeView === "settings" ? null : (
+                    ) : activeView === "mcp" || activeView === "automations" || activeView === "settings" ? null : (
                       <StatusBadge status={latestStatus} />
                     )}
                   </div>
@@ -2436,11 +2485,52 @@ export function AppShell(): JSX.Element {
                   <ThreadPage
                 cwd={form.cwd}
                 isRunning={isRunning}
+                initialThreadId={threadPageTargetId}
                 onRefreshRuns={() => void refreshRuns()}
                 onSelectRun={(runId) => {
                   setActiveView("runs");
                   setActiveSidebarTarget("runs");
                   void selectRun(runId);
+                }}
+                  />
+                ) : activeView === "automations" ? (
+                  <AutomationsPage
+                cwd={form.cwd}
+                channels={channels}
+                automations={automations}
+                automationRuns={automationRuns}
+                automationDrafts={automationDrafts}
+                templates={automationTemplates}
+                selectedAutomationId={selectedAutomationId}
+                selectedDraftId={selectedDraftId}
+                previewByAutomationId={previewByAutomationId}
+                draftPreviewById={draftPreviewById}
+                isLoading={automationsLoading}
+                mutatingAutomationId={mutatingAutomationId}
+                mutatingDraftId={mutatingDraftId}
+                schedulers={automationSchedulers}
+                schedulerAction={automationSchedulerAction}
+                onRefresh={() => void refreshAutomations()}
+                onStartScheduler={() => void startAutomationSchedulerAction()}
+                onStopScheduler={() => void stopAutomationSchedulerAction()}
+                onCreateFromTemplate={createAutomationFromTemplate}
+                onCreateManualDraft={createManualDraft}
+                onCreateChatDraft={createChatDraft}
+                onSelectAutomation={setSelectedAutomationId}
+                onSelectDraft={setSelectedDraftId}
+                onUpdateDraft={updateDraft}
+                onPreviewDraft={previewDraft}
+                onConfirmDraft={confirmDraft}
+                onDiscardDraft={discardDraft}
+                onPreview={() => void previewSelectedAutomation()}
+                onRun={() => void runSelectedAutomation()}
+                onArchive={() => void archiveSelectedAutomation()}
+                onSetSchedule={(trigger) => void setSelectedSchedule(trigger)}
+                onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                onOpenThread={(threadId) => {
+                  setThreadPageTargetId(threadId);
+                  setActiveView("threads");
+                  setActiveSidebarTarget("threads");
                 }}
                   />
                 ) : activeView === "providers" ? (

@@ -1,4 +1,4 @@
-export type ViewId = "workspace" | "teammates" | "runs" | "threads" | "providers" | "mcp" | "media" | "approvals" | "settings";
+export type ViewId = "workspace" | "teammates" | "runs" | "threads" | "automations" | "providers" | "mcp" | "media" | "approvals" | "settings";
 export type SidebarViewTarget = ViewId | "tasks";
 export type SidebarConversationKind = "teammate" | "direct";
 export type SidebarTarget = SidebarViewTarget | `channel:${string}` | `${SidebarConversationKind}:${string}`;
@@ -47,6 +47,9 @@ export function viewTitle(view: ViewId): string {
   if (view === "threads") {
     return "Threads";
   }
+  if (view === "automations") {
+    return "Automations";
+  }
   if (view === "mcp") {
     return "Tool Access";
   }
@@ -74,6 +77,9 @@ export function viewDescription(view: ViewId): string {
   }
   if (view === "threads") {
     return "查看长期线程的 lineage、证据、动作审计和 resume context。";
+  }
+  if (view === "automations") {
+    return "创建、预览并运行可重复的 AI teammate 工作。";
   }
   if (view === "mcp") {
     return "统一管理 MCP 工具服务，并按 AI 队友单独授权。";

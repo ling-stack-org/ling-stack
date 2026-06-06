@@ -188,7 +188,6 @@ import type {
   MemoryConsolidationJob,
   UpdateMemoryConsolidationJobInput,
 } from "./memory-consolidation-types.js";
-
 import type {
   CreateManagedPluginEventInput,
   ListManagedPluginEventsOptions,
@@ -201,6 +200,20 @@ import type {
   UpsertManagedPluginContributionInput,
   UpsertManagedPluginInput,
 } from "./plugin-manager-types.js";
+import type {
+  AutomationDraft,
+  AutomationDefinition,
+  AutomationRun,
+  CreateAutomationDefinitionInput,
+  CreateAutomationDraftInput,
+  CreateAutomationRunInput,
+  ListAutomationDefinitionsOptions,
+  ListAutomationDraftsOptions,
+  ListAutomationRunsOptions,
+  UpdateAutomationDefinitionInput,
+  UpdateAutomationDraftInput,
+  UpdateAutomationRunInput,
+} from "./automation-types.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
@@ -252,7 +265,7 @@ export const runInterventionStatuses = [
 ] as const;
 export type RunInterventionStatus = (typeof runInterventionStatuses)[number];
 
-export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work";
+export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work" | "automation";
 export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
 
 export interface LingThread {
@@ -877,6 +890,26 @@ export interface RunStore {
     now: string,
   ): TeammateMcpBinding[];
   listTeammateMcpBindings(teammateId: string): TeammateMcpBinding[];
+  createAutomationDefinition(input: CreateAutomationDefinitionInput, now: string): AutomationDefinition;
+  getAutomationDefinition(automationId: string): AutomationDefinition | undefined;
+  listAutomationDefinitions(options?: ListAutomationDefinitionsOptions): AutomationDefinition[];
+  updateAutomationDefinition(
+    automationId: string,
+    input: UpdateAutomationDefinitionInput,
+    now: string,
+  ): AutomationDefinition | undefined;
+  archiveAutomationDefinition(automationId: string, now: string): AutomationDefinition | undefined;
+  createAutomationDraft(input: CreateAutomationDraftInput, now: string): AutomationDraft;
+  getAutomationDraft(draftId: string): AutomationDraft | undefined;
+  listAutomationDrafts(options?: ListAutomationDraftsOptions): AutomationDraft[];
+  updateAutomationDraft(draftId: string, input: UpdateAutomationDraftInput, now: string): AutomationDraft | undefined;
+  discardAutomationDraft(draftId: string, now: string): AutomationDraft | undefined;
+  confirmAutomationDraft(draftId: string, automationId: string, now: string): AutomationDraft | undefined;
+  createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun;
+  getAutomationRun(automationRunId: string): AutomationRun | undefined;
+  findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined;
+  listAutomationRuns(options?: ListAutomationRunsOptions): AutomationRun[];
+  updateAutomationRun(automationRunId: string, input: UpdateAutomationRunInput, now: string): AutomationRun | undefined;
   listManagedPlugins(options?: ListManagedPluginsOptions): ManagedPluginRecord[];
   getManagedPlugin(pluginId: string): ManagedPluginRecord | undefined;
   upsertManagedPlugin(input: UpsertManagedPluginInput, now: string): ManagedPluginRecord;

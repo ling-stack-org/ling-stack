@@ -84,6 +84,12 @@ interface MockState {
   artifactsByRun: Record<string, MockArtifact[]>;
   artifactsByMediaJob: Record<string, MockArtifact[]>;
   threads: MockLingThread[];
+  automations: MockAutomationDefinition[];
+  automationDrafts: MockAutomationDraft[];
+  automationRuns: MockAutomationRun[];
+  automationSchedulers: MockAutomationScheduler[];
+  automationSchedulerStartCalls: number;
+  automationSchedulerStopCalls: number;
   executionActions: MockExecutionAction[];
 }
 
@@ -105,6 +111,92 @@ interface MockLingThread {
   createdAt: string;
   updatedAt: string;
   archivedAt?: string;
+}
+
+interface MockAutomationDefinition {
+  id: string;
+  workspaceId: string;
+  channelId?: string;
+  threadId: string;
+  title: string;
+  description?: string;
+  kind: string;
+  status: string;
+  trigger: Record<string, unknown>;
+  target: Record<string, unknown>;
+  promptTemplate: Record<string, unknown>;
+  executionPolicy: Record<string, unknown>;
+  outputPolicy: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  lastRunId?: string;
+  nextRunAt?: string;
+  lastErrorMessage?: string;
+}
+
+interface MockAutomationDraft {
+  id: string;
+  source: string;
+  status: string;
+  workspaceId: string;
+  channelId?: string;
+  title?: string;
+  description?: string;
+  kind?: string;
+  trigger?: Record<string, unknown>;
+  target?: Record<string, unknown>;
+  promptTemplate?: Record<string, unknown>;
+  executionPolicy?: Record<string, unknown>;
+  outputPolicy?: Record<string, unknown>;
+  missingFields: string[];
+  warnings: Array<Record<string, unknown>>;
+  createdAt: string;
+  updatedAt: string;
+  proposedByRunId?: string;
+  proposedByThreadId?: string;
+  confirmedAutomationId?: string;
+  discardedAt?: string;
+}
+
+interface MockAutomationRun {
+  id: string;
+  automationId: string;
+  workspaceId: string;
+  channelId?: string;
+  threadId: string;
+  runId?: string;
+  triggerType: string;
+  scheduledFor?: string;
+  firedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  status: string;
+  idempotencyKey: string;
+  contextPreviewArtifactId?: string;
+  outputArtifactIds: string[];
+  skipReason?: string;
+  errorMessage?: string;
+}
+
+interface MockAutomationScheduler {
+  id: string;
+  cwd: string;
+  status: string;
+  startedAt: string;
+  stoppedAt?: string;
+  automationCount: number;
+  tickCount: number;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  lastErrorMessage?: string;
+  items: Array<{
+    automationId: string;
+    title: string;
+    nextRunAt?: string;
+    lastRunAt?: string;
+    lastAutomationRunId?: string;
+    lastErrorMessage?: string;
+  }>;
 }
 
 interface MockRun {
@@ -452,6 +544,60 @@ test("workspace opens as a task workbench with task context in the inspector", a
   await expect(page.locator(".right-panel")).toHaveCount(0);
   await expect(sidePanel).toHaveCount(0);
   await expect(page.locator("article.task-detail")).toHaveCount(0);
+});
+
+test("automations page creates, previews, runs, links runs, and controls the local scheduler", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [createChatProvider()];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
+  await expect(page.getByRole("heading", { name: "Automations", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Templates" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Manual setup" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create through chat" })).toBeVisible();
+  await expect(page.getByLabel("Automation scheduler status")).toContainText("Stopped");
+
+  await page.getByRole("button", { name: "Templates" }).click();
+  const templateDialog = page.getByRole("dialog", { name: "Templates" });
+  await expect(templateDialog.getByRole("button", { name: /Daily Brief/ })).toBeVisible();
+  await expect(templateDialog.getByRole("button", { name: /Weekly Review/ })).toBeVisible();
+  await templateDialog.getByRole("button", { name: /Daily Brief/ }).click();
+  await expect.poll(() => state.automationDrafts.length).toBe(1);
+  await expect.poll(() => state.automations.length).toBe(0);
+  await expect(page.locator(".automation-detail-panel").getByRole("heading", { name: "Draft review" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Preview" }).click();
+  await expect(page.locator(".automation-preview pre")).toContainText("Ship automations P0 and P1");
+
+  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect.poll(() => state.automations.length).toBe(1);
+  await expect(page.getByRole("heading", { name: "Daily Brief" })).toBeVisible();
+  await expect(page.getByText("No runs yet")).toBeVisible();
+
+  await page.getByRole("button", { name: "Preview" }).click();
+  await expect(page.locator(".automation-preview pre")).toContainText("Ship automations P0 and P1");
+
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect.poll(() => state.automationRuns.length).toBe(1);
+  await expect(page.getByText("Recent automation runs")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open run" })).toBeVisible();
+  await page.getByRole("button", { name: "Open run" }).click();
+  await expect(page.getByRole("heading", { name: "Run history" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Automation context: Daily Brief/ })).toBeVisible();
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("button", { name: "Daily 09:00" }).click();
+  await page.getByLabel("Automation scheduler status").getByRole("button", { name: "Start" }).click();
+  await expect.poll(() => state.automationSchedulerStartCalls).toBe(1);
+  await expect(page.getByLabel("Automation scheduler status")).toContainText("running");
+  await page.getByLabel("Automation scheduler status").getByRole("button", { name: "Stop" }).click();
+  await expect.poll(() => state.automationSchedulerStopCalls).toBe(1);
+  await expect(page.getByLabel("Automation scheduler status")).toContainText("stopped");
 });
 
 test("channel drawers match the accepted HTML layout", async ({ page }) => {
@@ -6200,6 +6346,12 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     artifactsByRun: {},
     artifactsByMediaJob: {},
     threads: [],
+    automations: [],
+    automationDrafts: [],
+    automationRuns: [],
+    automationSchedulers: [],
+    automationSchedulerStartCalls: 0,
+    automationSchedulerStopCalls: 0,
     executionActions: [],
   };
 }
@@ -6207,6 +6359,345 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
 function filterOptionalSearchParam(url: URL, key: string, value: string | undefined): boolean {
   const expected = url.searchParams.get(key);
   return !expected || value === expected;
+}
+
+function createMockAutomationTemplates(): Array<Record<string, unknown>> {
+  return [
+    {
+      id: "daily_brief",
+      kind: "daily_brief",
+      title: "Daily Brief",
+      description: "Summarize the latest channel context, recent runs, approvals, and external work.",
+      category: "briefing",
+      tags: ["daily", "summary"],
+      requirements: [{ field: "target", label: "Target", required: true }],
+      defaultTrigger: { type: "manual" },
+      defaultPromptTemplate: createMockAutomationPromptTemplate("daily_brief"),
+      defaultExecutionPolicy: { allowedTools: ["read", "grep", "find", "ls"], approvalProfile: { mode: "none" } },
+      defaultOutputPolicy: { destinations: [{ type: "automation_thread" }, { type: "markdown_artifact" }], artifactFormat: "markdown" },
+    },
+    {
+      id: "weekly_review",
+      kind: "weekly_review",
+      title: "Weekly Review",
+      description: "Review the week across decisions, runs, approvals, and external work.",
+      category: "briefing",
+      tags: ["weekly", "review"],
+      requirements: [{ field: "target", label: "Target", required: true }],
+      defaultTrigger: { type: "manual" },
+      defaultPromptTemplate: createMockAutomationPromptTemplate("weekly_review"),
+      defaultExecutionPolicy: { allowedTools: ["read", "grep", "find", "ls"], approvalProfile: { mode: "none" } },
+      defaultOutputPolicy: { destinations: [{ type: "automation_thread" }, { type: "markdown_artifact" }], artifactFormat: "markdown" },
+    },
+  ];
+}
+
+function createMockAutomationPromptTemplate(kind: string): Record<string, unknown> {
+  return {
+    templateVersion: 1,
+    systemPurpose: `Mock ${kind} automation`,
+    promptMarkdown: kind === "weekly_review" ? "Write this week's project review." : "Write today's brief.",
+    contextSelectors: [
+      { kind: "channel_brief" },
+      { kind: "recent_runs", limit: 8 },
+      { kind: "pending_approvals", limit: 8 },
+    ],
+    maxContextItems: 32,
+  };
+}
+
+function createMockAutomationDefinition(state: MockState, body: Record<string, unknown>, channelId: string): MockAutomationDefinition {
+  const kind = typeof body.kind === "string" ? body.kind : "daily_brief";
+  const title = typeof body.title === "string" ? body.title : kind === "weekly_review" ? "Weekly Review" : "Daily Brief";
+  const id = `automation_${state.automations.length + 1}`;
+  const threadId = `thread_${id}`;
+  const now = "2026-06-06T00:10:00.000Z";
+  return {
+    id,
+    workspaceId: "workspace_default",
+    channelId,
+    threadId,
+    title,
+    description: typeof body.description === "string" ? body.description : undefined,
+    kind,
+    status: typeof body.status === "string" ? body.status : "enabled",
+    trigger: isRecord(body.trigger) ? body.trigger : { type: "manual" },
+    target: isRecord(body.target)
+      ? body.target
+      : { scope: "channel", workspaceId: "workspace_default", channelId, cwd },
+    promptTemplate: isRecord(body.promptTemplate) ? body.promptTemplate : createMockAutomationPromptTemplate(kind),
+    executionPolicy: isRecord(body.executionPolicy)
+      ? body.executionPolicy
+      : { allowedTools: ["read", "grep", "find", "ls"], approvalProfile: { mode: "none" } },
+    outputPolicy: isRecord(body.outputPolicy)
+      ? body.outputPolicy
+      : { destinations: [{ type: "automation_thread" }, { type: "markdown_artifact" }], artifactFormat: "markdown" },
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function createMockAutomationDraft(state: MockState, body: Record<string, unknown>): MockAutomationDraft {
+  const partial = isRecord(body.partialAutomation) ? body.partialAutomation : {};
+  const source = typeof body.source === "string" ? body.source : "manual";
+  const templateId = typeof body.templateId === "string" ? body.templateId : undefined;
+  const template = createMockAutomationTemplates().find((item) => item.id === templateId || item.kind === templateId);
+  const prompt = typeof body.prompt === "string" ? body.prompt : undefined;
+  const channelId = typeof partial.channelId === "string" ? partial.channelId : undefined;
+  const now = "2026-06-06T00:08:00.000Z";
+  const draft: MockAutomationDraft = {
+    id: `automation_draft_${state.automationDrafts.length + 1}`,
+    source,
+    status: "draft",
+    workspaceId: "workspace_default",
+    channelId,
+    title: typeof partial.title === "string"
+      ? partial.title
+      : template && typeof template.title === "string"
+        ? template.title
+        : prompt
+          ? prompt.slice(0, 72)
+          : undefined,
+    description: typeof partial.description === "string"
+      ? partial.description
+      : template && typeof template.description === "string"
+        ? template.description
+        : source === "chat"
+          ? "Chat-assisted automation draft. Review before confirming."
+          : undefined,
+    kind: typeof partial.kind === "string"
+      ? partial.kind
+      : template && typeof template.kind === "string"
+        ? template.kind
+        : source === "manual" || source === "chat"
+          ? "custom_prompt"
+          : undefined,
+    trigger: isRecord(partial.trigger)
+      ? partial.trigger
+      : template && isRecord(template.defaultTrigger)
+        ? template.defaultTrigger
+        : { type: "manual" },
+    target: isRecord(partial.target)
+      ? partial.target
+      : channelId
+        ? { scope: "channel", workspaceId: "workspace_default", channelId, cwd }
+        : undefined,
+    promptTemplate: isRecord(partial.promptTemplate)
+      ? partial.promptTemplate
+      : template && isRecord(template.defaultPromptTemplate)
+        ? template.defaultPromptTemplate
+        : prompt
+          ? {
+              templateVersion: 1,
+              systemPurpose: "Mock chat automation",
+              promptMarkdown: prompt,
+              contextSelectors: [{ kind: "channel_brief" }],
+              maxContextItems: 16,
+            }
+          : undefined,
+    executionPolicy: isRecord(partial.executionPolicy)
+      ? partial.executionPolicy
+      : template && isRecord(template.defaultExecutionPolicy)
+        ? template.defaultExecutionPolicy
+        : { allowedTools: ["read", "grep", "find", "ls"], approvalProfile: { mode: "none" } },
+    outputPolicy: isRecord(partial.outputPolicy)
+      ? partial.outputPolicy
+      : template && isRecord(template.defaultOutputPolicy)
+        ? template.defaultOutputPolicy
+        : { destinations: [{ type: "automation_thread" }, { type: "markdown_artifact" }], artifactFormat: "markdown" },
+    missingFields: [],
+    warnings: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  return validateMockAutomationDraft(draft);
+}
+
+function updateMockAutomationDraft(draft: MockAutomationDraft, body: Record<string, unknown>): MockAutomationDraft {
+  const partial = isRecord(body.partialAutomation) ? body.partialAutomation : body;
+  return validateMockAutomationDraft({
+    ...draft,
+    channelId: typeof partial.channelId === "string" ? partial.channelId : draft.channelId,
+    title: typeof partial.title === "string" ? partial.title : draft.title,
+    description: typeof partial.description === "string" ? partial.description : draft.description,
+    kind: typeof partial.kind === "string" ? partial.kind : draft.kind,
+    trigger: isRecord(partial.trigger) ? partial.trigger : draft.trigger,
+    target: isRecord(partial.target) ? partial.target : draft.target,
+    promptTemplate: isRecord(partial.promptTemplate) ? partial.promptTemplate : draft.promptTemplate,
+    executionPolicy: isRecord(partial.executionPolicy) ? partial.executionPolicy : draft.executionPolicy,
+    outputPolicy: isRecord(partial.outputPolicy) ? partial.outputPolicy : draft.outputPolicy,
+    updatedAt: "2026-06-06T00:09:00.000Z",
+  });
+}
+
+function validateMockAutomationDraft(draft: MockAutomationDraft): MockAutomationDraft {
+  const missingFields: string[] = [];
+  if (!draft.title) {
+    missingFields.push("title");
+  }
+  if (!draft.kind) {
+    missingFields.push("kind");
+  }
+  if (!draft.trigger) {
+    missingFields.push("trigger");
+  }
+  if (!draft.target) {
+    missingFields.push("target");
+  }
+  if (!draft.promptTemplate) {
+    missingFields.push("promptTemplate");
+  }
+  if (!draft.outputPolicy) {
+    missingFields.push("outputPolicy");
+  }
+  return {
+    ...draft,
+    missingFields,
+    warnings: [],
+    status: draft.confirmedAutomationId
+      ? "confirmed"
+      : draft.discardedAt
+        ? "discarded"
+        : missingFields.length === 0
+          ? "ready_for_confirmation"
+          : "needs_user_input",
+  };
+}
+
+function createMockAutomationDefinitionFromDraft(state: MockState, draft: MockAutomationDraft): MockAutomationDefinition {
+  return createMockAutomationDefinition(
+    state,
+    {
+      kind: draft.kind,
+      title: draft.title,
+      description: draft.description,
+      trigger: draft.trigger,
+      target: draft.target,
+      promptTemplate: draft.promptTemplate,
+      executionPolicy: draft.executionPolicy,
+      outputPolicy: draft.outputPolicy,
+    },
+    draft.channelId ?? "channel_engineering",
+  );
+}
+
+function createMockAutomationThread(automation: MockAutomationDefinition): MockLingThread {
+  return {
+    id: automation.threadId,
+    workspaceId: "workspace_default",
+    kind: "automation",
+    channelId: automation.channelId,
+    title: automation.title,
+    objective: typeof automation.promptTemplate.promptMarkdown === "string" ? automation.promptTemplate.promptMarkdown : automation.title,
+    status: "open",
+    createdAt: automation.createdAt,
+    updatedAt: automation.updatedAt,
+  };
+}
+
+function createMockAutomationContext(automation: MockAutomationDefinition, state: MockState): Record<string, unknown> {
+  const channel = state.channels.find((item) => isRecord(item) && item.id === automation.channelId);
+  const channelName = isRecord(channel) && typeof channel.name === "string" ? channel.name : "workspace";
+  const contextMarkdown = [
+    `# Automation Context`,
+    "",
+    `Automation: ${automation.title}`,
+    `Target: ${channelName}`,
+    "",
+    `## Channel Brief`,
+    "",
+    "Ship automations P0 and P1 with evidence.",
+  ].join("\n");
+  return {
+    renderedPrompt: `${automation.title}\n\n${contextMarkdown}`,
+    contextMarkdown,
+    selectedRefs: [{ kind: "channel_brief", id: automation.channelId, label: channelName }],
+    warnings: [],
+  };
+}
+
+function createMockAutomationRunResult(
+  state: MockState,
+  automation: MockAutomationDefinition,
+  idempotencyKey: string,
+): {
+  automation: MockAutomationDefinition;
+  automationRun: MockAutomationRun;
+  thread: MockLingThread | undefined;
+  run: MockRun;
+  context: Record<string, unknown>;
+} {
+  const now = "2026-06-06T00:25:00.000Z";
+  const runId = `run_automation_${state.automationRuns.length + 1}`;
+  const automationRunId = `automation_run_${state.automationRuns.length + 1}`;
+  const context = createMockAutomationContext(automation, state);
+  const run: MockRun = {
+    id: runId,
+    status: "succeeded",
+    cwd,
+    taskId: `automation-${automation.id}`,
+    channelId: automation.channelId,
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "dpv4",
+    taskSnapshot: { id: `automation-${automation.id}`, title: automation.title },
+    providerSnapshot: { provider: "local-relay", model: "dpv4" },
+    requestSnapshot: {
+      cwd,
+      threadId: automation.threadId,
+      task: { id: `automation-${automation.id}`, title: automation.title, prompt: context.renderedPrompt },
+      approvalProfile: { mode: "none" },
+      appendSystemPrompt: ["This is a Ling automation run."],
+    },
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId: automation.threadId,
+    createdAt: now,
+    startedAt: now,
+    updatedAt: now,
+    endedAt: now,
+  };
+  const contextArtifact: MockArtifact = {
+    id: `artifact_${automationRunId}_context`,
+    runId,
+    type: "markdown",
+    path: `automation-context/${runId}-${automationRunId}.md`,
+    title: `Automation context: ${automation.title}`,
+    contentType: "text/markdown; charset=utf-8",
+    createdAt: now,
+  };
+  const automationRun: MockAutomationRun = {
+    id: automationRunId,
+    automationId: automation.id,
+    workspaceId: "workspace_default",
+    channelId: automation.channelId,
+    threadId: automation.threadId,
+    runId,
+    triggerType: "manual",
+    firedAt: now,
+    startedAt: now,
+    completedAt: now,
+    status: "succeeded",
+    idempotencyKey,
+    contextPreviewArtifactId: contextArtifact.id,
+    outputArtifactIds: [],
+  };
+  state.runs.unshift(run);
+  state.automationRuns.unshift(automationRun);
+  state.artifactsByRun[runId] = [contextArtifact];
+  const updatedAutomation = { ...automation, lastRunId: automationRun.id, updatedAt: now };
+  state.automations = state.automations.map((item) => item.id === automation.id ? updatedAutomation : item);
+  state.threads = state.threads.map((thread) =>
+    thread.id === automation.threadId
+      ? { ...thread, lastRunId: runId, updatedAt: now }
+      : thread
+  );
+  return {
+    automation: updatedAutomation,
+    automationRun,
+    thread: state.threads.find((thread) => thread.id === automation.threadId),
+    run,
+    context,
+  };
 }
 
 function deriveMockThreadFromRuns(state: MockState, threadId: string): MockLingThread | undefined {
@@ -7328,6 +7819,262 @@ async function handleDaemonRoute(
   if (request.method() === "GET" && path === "/providers") {
     await route.fulfill({ json: { cwd, providers: state.providers } });
     return;
+  }
+  if (request.method() === "GET" && path === "/automations") {
+    const includeArchived = url.searchParams.get("includeArchived") === "true";
+    const scheduledOnly = url.searchParams.get("scheduledOnly") === "true";
+    const automations = state.automations
+      .filter((automation) => includeArchived || automation.status !== "archived")
+      .filter((automation) => filterOptionalSearchParam(url, "status", automation.status))
+      .filter((automation) => filterOptionalSearchParam(url, "kind", automation.kind))
+      .filter((automation) => filterOptionalSearchParam(url, "channelId", automation.channelId))
+      .filter((automation) => !scheduledOnly || automation.trigger.type === "schedule");
+    await route.fulfill({ json: { cwd, automations, templates: createMockAutomationTemplates() } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/automations") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const channelId = typeof body.channelId === "string" ? body.channelId : "channel_engineering";
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!channel) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found" } });
+      return;
+    }
+    const automation = createMockAutomationDefinition(state, body, channelId);
+    const thread = createMockAutomationThread(automation);
+    state.threads.unshift(thread);
+    state.automations.unshift(automation);
+    await route.fulfill({ status: 201, json: { cwd, automation, thread } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/automation-drafts") {
+    const includeTerminal = url.searchParams.get("includeTerminal") === "true";
+    const drafts = state.automationDrafts
+      .filter((draft) => includeTerminal || (draft.status !== "confirmed" && draft.status !== "discarded"))
+      .filter((draft) => filterOptionalSearchParam(url, "status", draft.status))
+      .filter((draft) => filterOptionalSearchParam(url, "source", draft.source))
+      .filter((draft) => filterOptionalSearchParam(url, "channelId", draft.channelId));
+    await route.fulfill({ json: { cwd, drafts, templates: createMockAutomationTemplates() } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/automation-drafts") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const partial = isRecord(body.partialAutomation) ? body.partialAutomation : {};
+    const channelId = typeof partial.channelId === "string" ? partial.channelId : undefined;
+    if (channelId && !state.channels.some((item) => isRecord(item) && item.id === channelId)) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found" } });
+      return;
+    }
+    const draft = createMockAutomationDraft(state, body);
+    state.automationDrafts.unshift(draft);
+    await route.fulfill({ status: 201, json: { cwd, draft } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/automations/scheduler/start") {
+    state.automationSchedulerStartCalls += 1;
+    const existing = state.automationSchedulers.find((scheduler) => scheduler.status === "running");
+    if (existing) {
+      await route.fulfill({ json: { cwd, scheduler: existing, duplicate: true } });
+      return;
+    }
+    const scheduled = state.automations.filter((automation) => automation.status === "enabled" && automation.trigger.type === "schedule");
+    const scheduler: MockAutomationScheduler = {
+      id: `automation_scheduler_${state.automationSchedulers.length + 1}`,
+      cwd,
+      status: "running",
+      startedAt: "2026-06-06T00:20:00.000Z",
+      automationCount: scheduled.length,
+      tickCount: 0,
+      nextRunAt: scheduled.length > 0 ? "2026-06-06T00:21:00.000Z" : undefined,
+      items: scheduled.map((automation) => ({
+        automationId: automation.id,
+        title: automation.title,
+        nextRunAt: "2026-06-06T00:21:00.000Z",
+      })),
+    };
+    state.automationSchedulers = [scheduler];
+    await route.fulfill({ json: { cwd, scheduler, duplicate: false } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/automations/scheduler") {
+    await route.fulfill({ json: { cwd, schedulers: state.automationSchedulers } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/automations/scheduler/stop") {
+    state.automationSchedulerStopCalls += 1;
+    const scheduler = state.automationSchedulers[0];
+    if (!scheduler) {
+      await route.fulfill({ status: 404, json: { error: "automation_scheduler_not_found" } });
+      return;
+    }
+    const stopped = {
+      ...scheduler,
+      status: "stopped",
+      stoppedAt: "2026-06-06T00:22:00.000Z",
+      nextRunAt: undefined,
+      items: scheduler.items.map((item) => ({ ...item, nextRunAt: undefined })),
+    };
+    state.automationSchedulers = [stopped];
+    await route.fulfill({ json: { cwd, scheduler: stopped } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/automation-runs") {
+    const automationRuns = state.automationRuns
+      .filter((run) => filterOptionalSearchParam(url, "automationId", run.automationId))
+      .filter((run) => filterOptionalSearchParam(url, "runId", run.runId))
+      .filter((run) => filterOptionalSearchParam(url, "status", run.status));
+    await route.fulfill({ json: { cwd, automationRuns } });
+    return;
+  }
+  const automationRunRouteMatch = /^\/automation-runs\/([^/]+)(?:\/cancel)?$/.exec(path);
+  if (automationRunRouteMatch) {
+    const automationRunId = decodeURIComponent(automationRunRouteMatch[1]);
+    const automationRun = state.automationRuns.find((item) => item.id === automationRunId);
+    if (!automationRun) {
+      await route.fulfill({ status: 404, json: { error: "automation_run_not_found" } });
+      return;
+    }
+    if (request.method() === "GET" && !path.endsWith("/cancel")) {
+      await route.fulfill({
+        json: {
+          cwd,
+          automationRun,
+          automation: state.automations.find((item) => item.id === automationRun.automationId),
+          thread: state.threads.find((item) => item.id === automationRun.threadId),
+          run: automationRun.runId ? state.runs.find((item) => item.id === automationRun.runId) : undefined,
+        },
+      });
+      return;
+    }
+    if (request.method() === "POST" && path.endsWith("/cancel")) {
+      const cancelled = { ...automationRun, status: "cancelled", completedAt: "2026-06-06T00:30:00.000Z" };
+      state.automationRuns = state.automationRuns.map((item) => item.id === automationRun.id ? cancelled : item);
+      await route.fulfill({ json: { cwd, automationRun: cancelled } });
+      return;
+    }
+  }
+  const automationDraftRouteMatch = /^\/automation-drafts\/([^/]+)(?:\/(preview|confirm))?$/.exec(path);
+  if (automationDraftRouteMatch) {
+    const draftId = decodeURIComponent(automationDraftRouteMatch[1]);
+    const action = automationDraftRouteMatch[2];
+    const draft = state.automationDrafts.find((item) => item.id === draftId);
+    if (!draft) {
+      await route.fulfill({ status: 404, json: { error: "automation_draft_not_found" } });
+      return;
+    }
+    if (request.method() === "GET" && !action) {
+      await route.fulfill({ json: { cwd, draft } });
+      return;
+    }
+    if (request.method() === "PATCH" && !action) {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const updated = updateMockAutomationDraft(draft, body);
+      state.automationDrafts = state.automationDrafts.map((item) => item.id === draft.id ? updated : item);
+      await route.fulfill({ json: { cwd, draft: updated } });
+      return;
+    }
+    if (request.method() === "DELETE" && !action) {
+      const discarded = { ...draft, status: "discarded", discardedAt: "2026-06-06T00:12:00.000Z", updatedAt: "2026-06-06T00:12:00.000Z" };
+      state.automationDrafts = state.automationDrafts.map((item) => item.id === draft.id ? discarded : item);
+      await route.fulfill({ json: { cwd, draft: discarded } });
+      return;
+    }
+    if (request.method() === "POST" && action === "preview") {
+      if (draft.status !== "ready_for_confirmation") {
+        await route.fulfill({ status: 409, json: { error: "automation_draft_not_ready", draft } });
+        return;
+      }
+      const automation = createMockAutomationDefinitionFromDraft(state, draft);
+      await route.fulfill({ json: { cwd, draft, context: createMockAutomationContext(automation, state) } });
+      return;
+    }
+    if (request.method() === "POST" && action === "confirm") {
+      if (draft.status === "confirmed" && draft.confirmedAutomationId) {
+        const automation = state.automations.find((item) => item.id === draft.confirmedAutomationId);
+        await route.fulfill({ json: { cwd, draft, automation, thread: automation ? state.threads.find((item) => item.id === automation.threadId) : undefined } });
+        return;
+      }
+      if (draft.status !== "ready_for_confirmation") {
+        await route.fulfill({ status: 409, json: { error: "automation_draft_not_ready", draft } });
+        return;
+      }
+      const automation = createMockAutomationDefinitionFromDraft(state, draft);
+      const thread = createMockAutomationThread(automation);
+      const confirmed = { ...draft, status: "confirmed", confirmedAutomationId: automation.id, updatedAt: "2026-06-06T00:13:00.000Z" };
+      state.threads.unshift(thread);
+      state.automations.unshift(automation);
+      state.automationDrafts = state.automationDrafts.map((item) => item.id === draft.id ? confirmed : item);
+      await route.fulfill({ status: 201, json: { cwd, draft: confirmed, automation, thread } });
+      return;
+    }
+  }
+  const automationRouteMatch = /^\/automations\/([^/]+)(?:\/(preview|run))?$/.exec(path);
+  if (automationRouteMatch) {
+    const automationId = decodeURIComponent(automationRouteMatch[1]);
+    const action = automationRouteMatch[2];
+    const automation = state.automations.find((item) => item.id === automationId);
+    if (!automation) {
+      await route.fulfill({ status: 404, json: { error: "automation_not_found" } });
+      return;
+    }
+    const thread = state.threads.find((item) => item.id === automation.threadId);
+    if (request.method() === "GET" && !action) {
+      await route.fulfill({
+        json: {
+          cwd,
+          automation,
+          thread,
+          runs: state.automationRuns.filter((run) => run.automationId === automation.id),
+        },
+      });
+      return;
+    }
+    if (request.method() === "PATCH" && !action) {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const updated = {
+        ...automation,
+        ...body,
+        updatedAt: "2026-06-06T00:15:00.000Z",
+      };
+      state.automations = state.automations.map((item) => item.id === automation.id ? updated : item);
+      await route.fulfill({ json: { cwd, automation: updated, thread } });
+      return;
+    }
+    if (request.method() === "DELETE" && !action) {
+      const archived = { ...automation, status: "archived", updatedAt: "2026-06-06T00:16:00.000Z" };
+      state.automations = state.automations.map((item) => item.id === automation.id ? archived : item);
+      await route.fulfill({ json: { cwd, automation: archived, thread } });
+      return;
+    }
+    if (request.method() === "POST" && action === "preview") {
+      await route.fulfill({ json: { cwd, automation, context: createMockAutomationContext(automation, state) } });
+      return;
+    }
+    if (request.method() === "POST" && action === "run") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      if (automation.status !== "enabled") {
+        await route.fulfill({ status: 409, json: { error: "automation_not_runnable" } });
+        return;
+      }
+      const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : `automation:${automation.id}:manual:${state.automationRuns.length + 1}`;
+      const duplicate = state.automationRuns.find((run) => run.idempotencyKey === idempotencyKey);
+      if (duplicate) {
+        await route.fulfill({
+          status: 202,
+          json: {
+            cwd,
+            automation,
+            automationRun: duplicate,
+            thread,
+            run: duplicate.runId ? state.runs.find((run) => run.id === duplicate.runId) : undefined,
+          },
+        });
+        return;
+      }
+      const result = createMockAutomationRunResult(state, automation, idempotencyKey);
+      await route.fulfill({ status: 202, json: { cwd, ...result } });
+      return;
+    }
   }
   if (request.method() === "GET" && path === "/memory") {
     await route.fulfill({

@@ -11,11 +11,13 @@ import { ThreadDetailPanel } from "./RunHistory.js";
 export function ThreadPage({
   cwd,
   isRunning,
+  initialThreadId,
   onRefreshRuns,
   onSelectRun,
 }: {
   readonly cwd: string;
   readonly isRunning: boolean;
+  readonly initialThreadId?: string;
   readonly onRefreshRuns: () => void;
   readonly onSelectRun: (runId: string) => void;
 }): JSX.Element {
@@ -44,7 +46,9 @@ export function ThreadPage({
       setSelectedThreadId((current) =>
         current && response.threads.some((thread) => thread.id === current)
           ? current
-          : response.threads[0]?.id ?? "",
+          : initialThreadId && response.threads.some((thread) => thread.id === initialThreadId)
+            ? initialThreadId
+            : response.threads[0]?.id ?? "",
       );
     } catch (error) {
       if (error instanceof LingDaemonError && error.status === 404) {
@@ -67,6 +71,12 @@ export function ThreadPage({
     void refreshThreads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd]);
+
+  useEffect(() => {
+    if (initialThreadId && threads.some((thread) => thread.id === initialThreadId)) {
+      setSelectedThreadId(initialThreadId);
+    }
+  }, [initialThreadId, threads]);
 
   return (
     <div className="run-history-layout thread-page-layout">

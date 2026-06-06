@@ -21,6 +21,7 @@ import {
   type ResolvedDaemonConfig,
 } from "./config.js";
 import type { DaemonContext, DaemonDependencies, RunnerAdapter } from "./context.js";
+import { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
 import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
@@ -75,6 +76,14 @@ export function createDaemonServer(
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
   const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig);
+  const automationSchedulers = new AutomationSchedulerRegistry(
+    runnerRegistry,
+    storeRegistry,
+    activeRuns,
+    runtimeSupervisor,
+    secretResolver,
+    mcpBroker,
+  );
   const context: DaemonContext = {
     config: resolvedConfig,
     runnerRegistry,
@@ -87,6 +96,7 @@ export function createDaemonServer(
     mcpBroker,
     externalWorkFetch,
     backgroundSchedulers,
+    automationSchedulers,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -120,6 +130,7 @@ export function createDaemonServer(
         activeRuns.cancelAll();
         runtimeSupervisor.releaseAll();
         backgroundSchedulers.stopAll();
+        automationSchedulers.stopAll();
         server.close((error) => {
           storeRegistry.closeAll();
           if (error) {

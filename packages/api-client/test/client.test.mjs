@@ -88,6 +88,63 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[16].url, "http://daemon.test/secrets/status?ref=keychain%3Aprovider+1&purpose=provider_api_key");
 });
 
+test("builds automation draft endpoints without transforming daemon responses", async () => {
+  const responses = [
+    { cwd: "/repo", drafts: [] },
+    { cwd: "/repo", draft: { id: "draft 1" } },
+    { cwd: "/repo", draft: { id: "draft 1" } },
+    { cwd: "/repo", draft: { id: "draft 1" } },
+    { cwd: "/repo", draft: { id: "draft 1" }, context: { contextMarkdown: "preview" } },
+    { cwd: "/repo", draft: { id: "draft 1" }, automation: { id: "automation 1" } },
+    { cwd: "/repo", draft: { id: "draft 1" } },
+  ];
+  const mock = createFetchMock(responses);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
+
+  assert.deepEqual(await client.listAutomationDrafts("/repo path", {
+    status: "ready_for_confirmation",
+    source: "chat",
+    channelId: "channel 1",
+    includeTerminal: true,
+    limit: 10,
+  }), responses[0]);
+  assert.deepEqual(await client.createAutomationDraft("/repo path", {
+    source: "template",
+    templateId: "ci_failure_summary",
+    partialAutomation: { channelId: "channel 1" },
+  }), responses[1]);
+  assert.deepEqual(await client.getAutomationDraft("/repo path", "draft 1"), responses[2]);
+  assert.deepEqual(await client.updateAutomationDraft("/repo path", "draft 1", {
+    partialAutomation: { title: "CI draft" },
+  }), responses[3]);
+  assert.deepEqual(await client.previewAutomationDraft("/repo path", "draft 1"), responses[4]);
+  assert.deepEqual(await client.confirmAutomationDraft("/repo path", "draft 1"), responses[5]);
+  assert.deepEqual(await client.discardAutomationDraft("/repo path", "draft 1"), responses[6]);
+
+  assert.equal(mock.calls[0].method, "GET");
+  assert.equal(mock.calls[0].url, "http://daemon.test/automation-drafts?cwd=%2Frepo+path&status=ready_for_confirmation&source=chat&channelId=channel+1&includeTerminal=true&limit=10");
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/automation-drafts?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+    source: "template",
+    templateId: "ci_failure_summary",
+    partialAutomation: { channelId: "channel 1" },
+  });
+  assert.equal(mock.calls[2].method, "GET");
+  assert.equal(mock.calls[2].url, "http://daemon.test/automation-drafts/draft%201?cwd=%2Frepo+path");
+  assert.equal(mock.calls[3].method, "PATCH");
+  assert.deepEqual(JSON.parse(mock.calls[3].body), {
+    partialAutomation: { title: "CI draft" },
+  });
+  assert.equal(mock.calls[4].method, "POST");
+  assert.equal(mock.calls[4].url, "http://daemon.test/automation-drafts/draft%201/preview?cwd=%2Frepo+path");
+  assert.equal(mock.calls[5].method, "POST");
+  assert.equal(mock.calls[5].url, "http://daemon.test/automation-drafts/draft%201/confirm?cwd=%2Frepo+path");
+  assert.equal(mock.calls[6].method, "DELETE");
+  assert.equal(mock.calls[6].url, "http://daemon.test/automation-drafts/draft%201?cwd=%2Frepo+path");
+});
+
+
 test("gets external work status with channel and workflow path", async () => {
   const mock = createFetchMock({ cwd: "/repo", workflow: { valid: true } });
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch: mock.fetch });
@@ -622,6 +679,102 @@ test("manages GitHub external work background schedulers without transforming da
   assert.equal(mock.calls[2].method, "POST");
   assert.equal(mock.calls[2].url, "http://daemon.test/external-work/background/external_work_background_1/stop?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[2].body), {});
+});
+
+test("manages automations and local automation scheduler with expected routes", async () => {
+  const automation = {
+    id: "automation_1",
+    title: "Daily Brief",
+    kind: "daily_brief",
+    status: "enabled",
+  };
+  const automationRun = {
+    id: "automation_run_1",
+    automationId: automation.id,
+    status: "running",
+  };
+  const scheduler = {
+    id: "automation_scheduler_1",
+    cwd: "/repo",
+    status: "running",
+    startedAt: "2026-06-06T00:00:00.000Z",
+    automationCount: 1,
+    tickCount: 0,
+    items: [],
+  };
+  const responses = [
+    { cwd: "/repo", automations: [automation], templates: [] },
+    { cwd: "/repo", automation },
+    { cwd: "/repo", automation, runs: [automationRun] },
+    { cwd: "/repo", automation: { ...automation, title: "Daily Brief v2" } },
+    { cwd: "/repo", automation: { ...automation, status: "archived" } },
+    { cwd: "/repo", automation, context: { renderedPrompt: "prompt", contextMarkdown: "context", selectedRefs: [], warnings: [] } },
+    { cwd: "/repo", automation, automationRun },
+    { cwd: "/repo", automationRuns: [automationRun] },
+    { cwd: "/repo", automationRun },
+    { cwd: "/repo", automationRun: { ...automationRun, status: "cancelled" } },
+    { cwd: "/repo", scheduler, duplicate: false },
+    { cwd: "/repo", schedulers: [scheduler] },
+    { cwd: "/repo", scheduler: { ...scheduler, status: "stopped" } },
+  ];
+  const mock = createFetchMock(responses);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  assert.deepEqual(await client.listAutomations("/repo path", {
+    status: "enabled",
+    kind: "daily_brief",
+    channelId: "channel 1",
+    includeArchived: true,
+    scheduledOnly: false,
+    limit: 25,
+  }), responses[0]);
+  assert.deepEqual(await client.createAutomation("/repo", { kind: "daily_brief", title: "Daily Brief", channelId: "channel 1" }), responses[1]);
+  assert.deepEqual(await client.getAutomation("/repo", "automation 1"), responses[2]);
+  assert.deepEqual(await client.updateAutomation("/repo", "automation 1", { title: "Daily Brief v2" }), responses[3]);
+  assert.deepEqual(await client.archiveAutomation("/repo", "automation 1"), responses[4]);
+  assert.deepEqual(await client.previewAutomation("/repo", "automation 1"), responses[5]);
+  assert.deepEqual(await client.runAutomation("/repo", "automation 1", { idempotencyKey: "slot 1" }), responses[6]);
+  assert.deepEqual(await client.listAutomationRuns("/repo", { automationId: "automation 1", runId: "run 1", status: "succeeded", limit: 10 }), responses[7]);
+  assert.deepEqual(await client.getAutomationRun("/repo", "automation run 1"), responses[8]);
+  assert.deepEqual(await client.cancelAutomationRun("/repo", "automation run 1", { reason: "stop" }), responses[9]);
+  assert.deepEqual(await client.startAutomationScheduler("/repo"), responses[10]);
+  assert.deepEqual(await client.listAutomationSchedulers("/repo"), responses[11]);
+  assert.deepEqual(await client.stopAutomationScheduler("/repo"), responses[12]);
+
+  assert.equal(mock.calls[0].method, "GET");
+  assert.equal(mock.calls[0].url, "http://daemon.test/automations?cwd=%2Frepo+path&status=enabled&kind=daily_brief&channelId=channel+1&includeArchived=true&scheduledOnly=false&limit=25");
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/automations?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), { kind: "daily_brief", title: "Daily Brief", channelId: "channel 1" });
+  assert.equal(mock.calls[2].method, "GET");
+  assert.equal(mock.calls[2].url, "http://daemon.test/automations/automation%201?cwd=%2Frepo");
+  assert.equal(mock.calls[3].method, "PATCH");
+  assert.equal(mock.calls[3].url, "http://daemon.test/automations/automation%201?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[3].body), { title: "Daily Brief v2" });
+  assert.equal(mock.calls[4].method, "DELETE");
+  assert.equal(mock.calls[4].url, "http://daemon.test/automations/automation%201?cwd=%2Frepo");
+  assert.equal(mock.calls[4].body, undefined);
+  assert.equal(mock.calls[5].method, "POST");
+  assert.equal(mock.calls[5].url, "http://daemon.test/automations/automation%201/preview?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[5].body), {});
+  assert.equal(mock.calls[6].method, "POST");
+  assert.equal(mock.calls[6].url, "http://daemon.test/automations/automation%201/run?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[6].body), { idempotencyKey: "slot 1" });
+  assert.equal(mock.calls[7].method, "GET");
+  assert.equal(mock.calls[7].url, "http://daemon.test/automation-runs?cwd=%2Frepo&automationId=automation+1&runId=run+1&status=succeeded&limit=10");
+  assert.equal(mock.calls[8].method, "GET");
+  assert.equal(mock.calls[8].url, "http://daemon.test/automation-runs/automation%20run%201?cwd=%2Frepo");
+  assert.equal(mock.calls[9].method, "POST");
+  assert.equal(mock.calls[9].url, "http://daemon.test/automation-runs/automation%20run%201/cancel?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[9].body), { reason: "stop" });
+  assert.equal(mock.calls[10].method, "POST");
+  assert.equal(mock.calls[10].url, "http://daemon.test/automations/scheduler/start?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[10].body), {});
+  assert.equal(mock.calls[11].method, "GET");
+  assert.equal(mock.calls[11].url, "http://daemon.test/automations/scheduler?cwd=%2Frepo");
+  assert.equal(mock.calls[12].method, "POST");
+  assert.equal(mock.calls[12].url, "http://daemon.test/automations/scheduler/stop?cwd=%2Frepo");
+  assert.deepEqual(JSON.parse(mock.calls[12].body), {});
 });
 
 test("triages GitHub external work CI without transforming daemon response", async () => {

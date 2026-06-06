@@ -9,6 +9,17 @@ import type {
 import type { RunRequest } from "./schemas.js";
 
 export function ensureLingThreadForRun(store: RunStore, runRequest: RunRequest, now: string): LingThread {
+  if (runRequest.threadId) {
+    const requestedThread = store.getLingThread(runRequest.threadId);
+    if (!requestedThread) {
+      throw new Error(`Ling thread not found: ${runRequest.threadId}`);
+    }
+    if (requestedThread.status === "archived") {
+      throw new Error(`Ling thread is archived: ${runRequest.threadId}`);
+    }
+    return requestedThread;
+  }
+
   const parentThread = findParentLingThread(store, runRequest.parentRunId);
   if (parentThread && parentThread.status !== "archived") {
     return parentThread;

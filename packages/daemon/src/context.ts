@@ -13,6 +13,7 @@ import type {
 } from "@ling-stack/runner-pi";
 import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "./config.js";
+import type { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
 import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import type { ActiveRunRegistry } from "./runtime/active-runs.js";
 import type { RunStoreFactory } from "./runtime/store-registry.js";
@@ -77,4 +78,5 @@ export interface DaemonContext {
   readonly mcpBroker: McpBroker;
   readonly externalWorkFetch?: typeof globalThis.fetch;
   readonly backgroundSchedulers: ExternalWorkBackgroundSchedulerRegistry;
+  readonly automationSchedulers: AutomationSchedulerRegistry;
 }

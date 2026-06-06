@@ -41,6 +41,8 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [External work status surface](docs/design/external-work-status-surface.md)
 - [External work GA hardening](docs/design/external-work-ga-hardening.md)
 - [GitHub automation](docs/design/github-automation.md)
+- [Automations](docs/design/automations.md)
+- [Automations implementation plan](docs/design/automations-implementation-plan.md)
 - [Web modularization](docs/design/web-modularization.md)
 - [Contracts / API Client](docs/design/contracts-api-client.md)
 - [Internal Registry / Plugin SDK](docs/design/internal-registry-plugin-sdk.md)

@@ -18,6 +18,12 @@ export const LazyThreadPage = lazy(() =>
   })),
 );
 
+export const LazyAutomationsPage = lazy(() =>
+  import("../features/automations/AutomationsPage.js").then((module) => ({
+    default: module.AutomationsPage,
+  })),
+);
+
 export const LazySettingsPage = lazy(() =>
   import("../features/settings/SettingsPage.js").then((module) => ({
     default: module.SettingsPage,

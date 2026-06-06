@@ -4,6 +4,20 @@ import type { RunSession, RunStore } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import {
+  handleAutomationItem,
+  handleAutomationDraftItem,
+  handleAutomationDraftsCollection,
+  handleAutomationRunItem,
+  handleAutomationRunsCollection,
+  handleAutomationSchedulerCollection,
+  handleAutomationSchedulerStart,
+  handleAutomationSchedulerStop,
+  handleAutomationsCollection,
+  parseAutomationRoute,
+  parseAutomationDraftRoute,
+  parseAutomationRunRoute,
+} from "../features/automations/routes.js";
+import {
   handleChannelAttachmentItem,
   handleChannelAttachmentsCollection,
 } from "../features/channels/attachments.js";
@@ -195,6 +209,7 @@ export async function routeRequest(
     mcpBroker,
     externalWorkFetch,
     backgroundSchedulers,
+    automationSchedulers,
   } = context;
   setCorsHeaders(response);
 
@@ -259,6 +274,82 @@ export async function routeRequest(
 
   if (url.pathname === "/mcp/tools") {
     handleMcpToolsCollection(request, response, url, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/automations") {
+    await handleAutomationsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/automation-runs") {
+    await handleAutomationRunsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/automation-drafts") {
+    await handleAutomationDraftsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/automations/scheduler/start") {
+    await handleAutomationSchedulerStart(request, response, config, automationSchedulers);
+    return;
+  }
+
+  if (url.pathname === "/automations/scheduler") {
+    await handleAutomationSchedulerCollection(request, response, config, automationSchedulers);
+    return;
+  }
+
+  if (url.pathname === "/automations/scheduler/stop") {
+    await handleAutomationSchedulerStop(request, response, config, automationSchedulers);
+    return;
+  }
+
+  const automationRoute = parseAutomationRoute(url.pathname);
+  if (automationRoute) {
+    await handleAutomationItem(
+      request,
+      response,
+      config,
+      storeRegistry,
+      automationRoute,
+      async (runRequest, hooks) =>
+        await startDetachedRunAndResolveReady((onRunReady) =>
+          executeRunRequest(
+            runRequest,
+            createDetachedRunExecutionSink(),
+            runnerRegistry,
+            storeRegistry,
+            activeRuns,
+            runtimeSupervisor,
+            secretResolver,
+            mcpBroker,
+            {
+              onRunReady: (runId) => {
+                hooks.onRunReady?.(runId);
+                onRunReady(runId);
+              },
+              afterRunTerminal: (terminalRun) => {
+                hooks.afterRunTerminal?.(terminalRun);
+                maybeContinueRunInterventions(terminalRun);
+              },
+            },
+          )),
+    );
+    return;
+  }
+
+  const automationDraftRoute = parseAutomationDraftRoute(url.pathname);
+  if (automationDraftRoute) {
+    await handleAutomationDraftItem(request, response, config, storeRegistry, automationDraftRoute);
+    return;
+  }
+
+  const automationRunRoute = parseAutomationRunRoute(url.pathname);
+  if (automationRunRoute) {
+    await handleAutomationRunItem(request, response, config, storeRegistry, activeRuns, automationRunRoute);
     return;
   }
 

@@ -316,6 +316,35 @@ import {
   type UpsertManagedPluginInput,
 } from "../plugin-manager-types.js";
 import {
+  createAutomationDraftId,
+  createAutomationId,
+  createAutomationRunId,
+  type AutomationDraft,
+  type AutomationDraftField,
+  type AutomationDraftSource,
+  type AutomationDraftStatus,
+  type AutomationDefinition,
+  type AutomationExecutionPolicy,
+  type AutomationKind,
+  type AutomationOutputPolicy,
+  type AutomationPromptTemplate,
+  type AutomationRun,
+  type AutomationRunStatus,
+  type AutomationStatus,
+  type AutomationTarget,
+  type AutomationTrigger,
+  type CreateAutomationDefinitionInput,
+  type CreateAutomationDraftInput,
+  type CreateAutomationRunInput,
+  type ListAutomationDefinitionsOptions,
+  type ListAutomationDraftsOptions,
+  type ListAutomationRunsOptions,
+  type UpdateAutomationDefinitionInput,
+  type UpdateAutomationDraftInput,
+  type UpdateAutomationRunInput,
+} from "../automation-types.js";
+import { validateAutomationDraft } from "../automation-drafts.js";
+import {
   createMemoryReviewActionId,
   createMemoryReviewDecisionId,
   createMemoryObjectId,
@@ -424,6 +453,10 @@ const MEMORY_CONSOLIDATION_JOBS_MIGRATION_VERSION = 36;
 const MEMORY_CONSOLIDATION_JOBS_MIGRATION_NAME = "create_memory_consolidation_jobs";
 const MANAGED_PLUGINS_MIGRATION_VERSION = 37;
 const MANAGED_PLUGINS_MIGRATION_NAME = "create_managed_plugins";
+const AUTOMATIONS_MIGRATION_VERSION = 38;
+const AUTOMATIONS_MIGRATION_NAME = "create_automations";
+const AUTOMATION_DRAFTS_MIGRATION_VERSION = 39;
+const AUTOMATION_DRAFTS_MIGRATION_NAME = "create_automation_drafts";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -6762,6 +6795,518 @@ export class SqliteRunStore implements RunStore {
       .map(mapTeammateMcpBinding);
   }
 
+  createAutomationDefinition(input: CreateAutomationDefinitionInput, now: string): AutomationDefinition {
+    const definition: AutomationDefinition = {
+      id: input.id ?? createAutomationId(),
+      workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      threadId: input.threadId,
+      title: input.title,
+      description: input.description,
+      kind: input.kind,
+      status: input.status ?? "enabled",
+      trigger: input.trigger,
+      target: input.target,
+      promptTemplate: input.promptTemplate,
+      executionPolicy: input.executionPolicy,
+      outputPolicy: input.outputPolicy,
+      createdAt: now,
+      updatedAt: now,
+      nextRunAt: input.nextRunAt,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO automation_definitions (
+          id,
+          workspace_id,
+          channel_id,
+          thread_id,
+          title,
+          description,
+          kind,
+          status,
+          trigger_json,
+          target_json,
+          prompt_template_json,
+          execution_policy_json,
+          output_policy_json,
+          created_at,
+          updated_at,
+          last_run_id,
+          next_run_at,
+          last_error_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        definition.id,
+        definition.workspaceId,
+        definition.channelId ?? null,
+        definition.threadId,
+        definition.title,
+        definition.description ?? null,
+        definition.kind,
+        definition.status,
+        stringifyJson(definition.trigger),
+        stringifyJson(definition.target),
+        stringifyJson(definition.promptTemplate),
+        stringifyJson(definition.executionPolicy),
+        stringifyJson(definition.outputPolicy),
+        definition.createdAt,
+        definition.updatedAt,
+        null,
+        definition.nextRunAt ?? null,
+        null,
+      );
+    const stored = this.getAutomationDefinition(definition.id);
+    if (!stored) {
+      throw new Error(`Failed to persist automation definition: ${definition.id}`);
+    }
+    return stored;
+  }
+
+  getAutomationDefinition(automationId: string): AutomationDefinition | undefined {
+    const row = this.database.prepare(automationDefinitionSelectSql("WHERE id = ?")).get(automationId);
+    return row ? mapAutomationDefinition(row) : undefined;
+  }
+
+  listAutomationDefinitions(options: ListAutomationDefinitionsOptions = {}): AutomationDefinition[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    } else if (!options.includeArchived) {
+      clauses.push("status != 'archived'");
+    }
+    if (options.kind) {
+      clauses.push("kind = ?");
+      params.push(options.kind);
+    }
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.scheduledOnly) {
+      clauses.push("json_extract(trigger_json, '$.type') = 'schedule'");
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${automationDefinitionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapAutomationDefinition);
+  }
+
+  updateAutomationDefinition(
+    automationId: string,
+    input: UpdateAutomationDefinitionInput,
+    now: string,
+  ): AutomationDefinition | undefined {
+    const existing = this.getAutomationDefinition(automationId);
+    if (!existing) {
+      return undefined;
+    }
+    const next: AutomationDefinition = {
+      ...existing,
+      channelId: nullableUpdate(input.channelId, existing.channelId),
+      threadId: input.threadId ?? existing.threadId,
+      title: input.title ?? existing.title,
+      description: nullableUpdate(input.description, existing.description),
+      kind: input.kind ?? existing.kind,
+      status: input.status ?? existing.status,
+      trigger: input.trigger ?? existing.trigger,
+      target: input.target ?? existing.target,
+      promptTemplate: input.promptTemplate ?? existing.promptTemplate,
+      executionPolicy: input.executionPolicy ?? existing.executionPolicy,
+      outputPolicy: input.outputPolicy ?? existing.outputPolicy,
+      updatedAt: now,
+      lastRunId: nullableUpdate(input.lastRunId, existing.lastRunId),
+      nextRunAt: nullableUpdate(input.nextRunAt, existing.nextRunAt),
+      lastErrorMessage: nullableUpdate(input.lastErrorMessage, existing.lastErrorMessage),
+    };
+    this.database
+      .prepare(`
+        UPDATE automation_definitions
+        SET channel_id = ?,
+            thread_id = ?,
+            title = ?,
+            description = ?,
+            kind = ?,
+            status = ?,
+            trigger_json = ?,
+            target_json = ?,
+            prompt_template_json = ?,
+            execution_policy_json = ?,
+            output_policy_json = ?,
+            updated_at = ?,
+            last_run_id = ?,
+            next_run_at = ?,
+            last_error_message = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.channelId ?? null,
+        next.threadId,
+        next.title,
+        next.description ?? null,
+        next.kind,
+        next.status,
+        stringifyJson(next.trigger),
+        stringifyJson(next.target),
+        stringifyJson(next.promptTemplate),
+        stringifyJson(next.executionPolicy),
+        stringifyJson(next.outputPolicy),
+        next.updatedAt,
+        next.lastRunId ?? null,
+        next.nextRunAt ?? null,
+        next.lastErrorMessage ?? null,
+        automationId,
+      );
+    return this.getAutomationDefinition(automationId);
+  }
+
+  archiveAutomationDefinition(automationId: string, now: string): AutomationDefinition | undefined {
+    return this.updateAutomationDefinition(automationId, { status: "archived", nextRunAt: null }, now);
+  }
+
+  createAutomationDraft(input: CreateAutomationDraftInput, now: string): AutomationDraft {
+    const draft = validateAutomationDraft({
+      id: input.id ?? createAutomationDraftId(),
+      source: input.source,
+      status: input.status ?? "draft",
+      workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId ?? input.target?.channelId,
+      title: input.title,
+      description: input.description,
+      kind: input.kind,
+      trigger: input.trigger,
+      target: input.target,
+      promptTemplate: input.promptTemplate,
+      executionPolicy: input.executionPolicy,
+      outputPolicy: input.outputPolicy,
+      missingFields: [],
+      warnings: [],
+      createdAt: now,
+      updatedAt: now,
+      proposedByRunId: input.proposedByRunId,
+      proposedByThreadId: input.proposedByThreadId,
+    });
+    this.database
+      .prepare(`
+        INSERT INTO automation_drafts (
+          id,
+          workspace_id,
+          channel_id,
+          source,
+          status,
+          draft_json,
+          missing_fields_json,
+          warnings_json,
+          proposed_by_run_id,
+          proposed_by_thread_id,
+          confirmed_automation_id,
+          discarded_at,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        draft.id,
+        draft.workspaceId,
+        draft.channelId ?? null,
+        draft.source,
+        draft.status,
+        stringifyJson(automationDraftPayload(draft)),
+        stringifyJson(draft.missingFields),
+        stringifyJson(draft.warnings),
+        draft.proposedByRunId ?? null,
+        draft.proposedByThreadId ?? null,
+        null,
+        null,
+        draft.createdAt,
+        draft.updatedAt,
+      );
+    const stored = this.getAutomationDraft(draft.id);
+    if (!stored) {
+      throw new Error(`Failed to persist automation draft: ${draft.id}`);
+    }
+    return stored;
+  }
+
+  getAutomationDraft(draftId: string): AutomationDraft | undefined {
+    const row = this.database.prepare(automationDraftSelectSql("WHERE id = ?")).get(draftId);
+    return row ? mapAutomationDraft(row) : undefined;
+  }
+
+  listAutomationDrafts(options: ListAutomationDraftsOptions = {}): AutomationDraft[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    } else if (!options.includeTerminal) {
+      clauses.push("status NOT IN ('confirmed', 'discarded')");
+    }
+    if (options.source) {
+      clauses.push("source = ?");
+      params.push(options.source);
+    }
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${automationDraftSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapAutomationDraft);
+  }
+
+  updateAutomationDraft(draftId: string, input: UpdateAutomationDraftInput, now: string): AutomationDraft | undefined {
+    const existing = this.getAutomationDraft(draftId);
+    if (!existing || existing.status === "confirmed" || existing.status === "discarded") {
+      return existing;
+    }
+    const next = validateAutomationDraft({
+      ...existing,
+      channelId: nullableUpdate(input.channelId, existing.channelId),
+      title: nullableUpdate(input.title, existing.title),
+      description: nullableUpdate(input.description, existing.description),
+      kind: nullableUpdate(input.kind, existing.kind),
+      trigger: nullableUpdate(input.trigger, existing.trigger),
+      target: nullableUpdate(input.target, existing.target),
+      promptTemplate: nullableUpdate(input.promptTemplate, existing.promptTemplate),
+      executionPolicy: nullableUpdate(input.executionPolicy, existing.executionPolicy),
+      outputPolicy: nullableUpdate(input.outputPolicy, existing.outputPolicy),
+      proposedByRunId: nullableUpdate(input.proposedByRunId, existing.proposedByRunId),
+      proposedByThreadId: nullableUpdate(input.proposedByThreadId, existing.proposedByThreadId),
+      updatedAt: now,
+    });
+    this.writeAutomationDraft(next);
+    return this.getAutomationDraft(draftId);
+  }
+
+  discardAutomationDraft(draftId: string, now: string): AutomationDraft | undefined {
+    const existing = this.getAutomationDraft(draftId);
+    if (!existing || existing.status === "confirmed") {
+      return existing;
+    }
+    const next: AutomationDraft = {
+      ...existing,
+      status: "discarded",
+      discardedAt: now,
+      updatedAt: now,
+    };
+    this.writeAutomationDraft(next);
+    return this.getAutomationDraft(draftId);
+  }
+
+  confirmAutomationDraft(draftId: string, automationId: string, now: string): AutomationDraft | undefined {
+    const existing = this.getAutomationDraft(draftId);
+    if (!existing || existing.status === "discarded") {
+      return existing;
+    }
+    const next: AutomationDraft = {
+      ...existing,
+      status: "confirmed",
+      confirmedAutomationId: automationId,
+      updatedAt: now,
+    };
+    this.writeAutomationDraft(next);
+    return this.getAutomationDraft(draftId);
+  }
+
+  private writeAutomationDraft(draft: AutomationDraft): void {
+    this.database
+      .prepare(`
+        UPDATE automation_drafts
+        SET channel_id = ?,
+            status = ?,
+            draft_json = ?,
+            missing_fields_json = ?,
+            warnings_json = ?,
+            proposed_by_run_id = ?,
+            proposed_by_thread_id = ?,
+            confirmed_automation_id = ?,
+            discarded_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        draft.channelId ?? null,
+        draft.status,
+        stringifyJson(automationDraftPayload(draft)),
+        stringifyJson(draft.missingFields),
+        stringifyJson(draft.warnings),
+        draft.proposedByRunId ?? null,
+        draft.proposedByThreadId ?? null,
+        draft.confirmedAutomationId ?? null,
+        draft.discardedAt ?? null,
+        draft.updatedAt,
+        draft.id,
+      );
+  }
+
+  createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun {
+    const existing = this.findAutomationRunByIdempotencyKey(input.idempotencyKey);
+    if (existing) {
+      throw new Error(`Automation run idempotency key already exists: ${input.idempotencyKey}`);
+    }
+    const run: AutomationRun = {
+      id: input.id ?? createAutomationRunId(),
+      automationId: input.automationId,
+      workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      threadId: input.threadId,
+      runId: input.runId,
+      triggerType: input.triggerType,
+      scheduledFor: input.scheduledFor,
+      firedAt: input.firedAt ?? now,
+      startedAt: input.startedAt,
+      completedAt: input.completedAt,
+      status: input.status ?? "queued",
+      idempotencyKey: input.idempotencyKey,
+      contextPreviewArtifactId: input.contextPreviewArtifactId,
+      outputArtifactIds: input.outputArtifactIds ?? [],
+      skipReason: input.skipReason,
+      errorMessage: input.errorMessage,
+    };
+    this.database
+      .prepare(`
+        INSERT INTO automation_runs (
+          id,
+          automation_id,
+          workspace_id,
+          channel_id,
+          thread_id,
+          run_id,
+          trigger_type,
+          scheduled_for,
+          fired_at,
+          started_at,
+          completed_at,
+          status,
+          idempotency_key,
+          context_preview_artifact_id,
+          output_artifact_ids_json,
+          skip_reason,
+          error_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        run.id,
+        run.automationId,
+        run.workspaceId,
+        run.channelId ?? null,
+        run.threadId,
+        run.runId ?? null,
+        run.triggerType,
+        run.scheduledFor ?? null,
+        run.firedAt,
+        run.startedAt ?? null,
+        run.completedAt ?? null,
+        run.status,
+        run.idempotencyKey,
+        run.contextPreviewArtifactId ?? null,
+        stringifyJson(run.outputArtifactIds),
+        run.skipReason ?? null,
+        run.errorMessage ?? null,
+      );
+    const stored = this.getAutomationRun(run.id);
+    if (!stored) {
+      throw new Error(`Failed to persist automation run: ${run.id}`);
+    }
+    return stored;
+  }
+
+  getAutomationRun(automationRunId: string): AutomationRun | undefined {
+    const row = this.database.prepare(automationRunSelectSql("WHERE id = ?")).get(automationRunId);
+    return row ? mapAutomationRun(row) : undefined;
+  }
+
+  findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined {
+    const row = this.database.prepare(automationRunSelectSql("WHERE idempotency_key = ?")).get(idempotencyKey);
+    return row ? mapAutomationRun(row) : undefined;
+  }
+
+  listAutomationRuns(options: ListAutomationRunsOptions = {}): AutomationRun[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.automationId) {
+      clauses.push("automation_id = ?");
+      params.push(options.automationId);
+    }
+    if (options.runId) {
+      clauses.push("run_id = ?");
+      params.push(options.runId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${automationRunSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY fired_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapAutomationRun);
+  }
+
+  updateAutomationRun(automationRunId: string, input: UpdateAutomationRunInput, now: string): AutomationRun | undefined {
+    const existing = this.getAutomationRun(automationRunId);
+    if (!existing) {
+      return undefined;
+    }
+    const next: AutomationRun = {
+      ...existing,
+      runId: nullableUpdate(input.runId, existing.runId),
+      startedAt: nullableUpdate(input.startedAt, existing.startedAt),
+      completedAt: nullableUpdate(input.completedAt, existing.completedAt),
+      status: input.status ?? existing.status,
+      contextPreviewArtifactId: nullableUpdate(input.contextPreviewArtifactId, existing.contextPreviewArtifactId),
+      outputArtifactIds: input.outputArtifactIds ?? existing.outputArtifactIds,
+      skipReason: nullableUpdate(input.skipReason, existing.skipReason),
+      errorMessage: nullableUpdate(input.errorMessage, existing.errorMessage),
+    };
+    this.database
+      .prepare(`
+        UPDATE automation_runs
+        SET run_id = ?,
+            started_at = ?,
+            completed_at = ?,
+            status = ?,
+            context_preview_artifact_id = ?,
+            output_artifact_ids_json = ?,
+            skip_reason = ?,
+            error_message = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.runId ?? null,
+        next.startedAt ?? null,
+        next.completedAt ?? null,
+        next.status,
+        next.contextPreviewArtifactId ?? null,
+        stringifyJson(next.outputArtifactIds),
+        next.skipReason ?? null,
+        next.errorMessage ?? null,
+        automationRunId,
+      );
+    const stored = this.getAutomationRun(automationRunId);
+    if (stored) {
+      this.updateAutomationDefinition(
+        stored.automationId,
+        {
+          lastRunId: stored.id,
+          lastErrorMessage: stored.status === "failed" ? stored.errorMessage ?? "Automation run failed." : null,
+        },
+        now,
+      );
+    }
+    return stored;
+  }
+
   listManagedPlugins(options: ListManagedPluginsOptions = {}): ManagedPluginRecord[] {
     const clauses: string[] = [];
     const params: (string | number)[] = [];
@@ -9533,6 +10078,112 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(MCP_STATUS_SNAPSHOTS_MIGRATION_VERSION, MCP_STATUS_SNAPSHOTS_MIGRATION_NAME);
       }
     }
+
+    const hasAutomationsMigration = this.hasMigration(AUTOMATIONS_MIGRATION_VERSION);
+    if (!hasAutomationsMigration || !this.hasTable("automation_definitions") || !this.hasTable("automation_runs")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS automation_definitions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT,
+          thread_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          trigger_json TEXT NOT NULL,
+          target_json TEXT NOT NULL,
+          prompt_template_json TEXT NOT NULL,
+          execution_policy_json TEXT NOT NULL,
+          output_policy_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_run_id TEXT,
+          next_run_at TEXT,
+          last_error_message TEXT,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(thread_id) REFERENCES ling_threads(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS automation_runs (
+          id TEXT PRIMARY KEY,
+          automation_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT,
+          thread_id TEXT NOT NULL,
+          run_id TEXT,
+          trigger_type TEXT NOT NULL,
+          scheduled_for TEXT,
+          fired_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT,
+          status TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          context_preview_artifact_id TEXT,
+          output_artifact_ids_json TEXT NOT NULL,
+          skip_reason TEXT,
+          error_message TEXT,
+          FOREIGN KEY(automation_id) REFERENCES automation_definitions(id) ON DELETE CASCADE,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(thread_id) REFERENCES ling_threads(id) ON DELETE CASCADE,
+          FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_automation_definitions_status
+        ON automation_definitions(status);
+
+        CREATE INDEX IF NOT EXISTS idx_automation_definitions_kind
+        ON automation_definitions(kind);
+
+        CREATE INDEX IF NOT EXISTS idx_automation_definitions_channel
+        ON automation_definitions(channel_id);
+
+        CREATE INDEX IF NOT EXISTS idx_automation_runs_automation
+        ON automation_runs(automation_id, fired_at);
+
+        CREATE INDEX IF NOT EXISTS idx_automation_runs_run
+        ON automation_runs(run_id);
+
+        CREATE INDEX IF NOT EXISTS idx_automation_runs_status
+        ON automation_runs(status);
+      `);
+      if (!hasAutomationsMigration) {
+        this.recordMigration(AUTOMATIONS_MIGRATION_VERSION, AUTOMATIONS_MIGRATION_NAME);
+      }
+    }
+
+    const hasAutomationDraftsMigration = this.hasMigration(AUTOMATION_DRAFTS_MIGRATION_VERSION);
+    if (!hasAutomationDraftsMigration || !this.hasTable("automation_drafts")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS automation_drafts (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT,
+          source TEXT NOT NULL,
+          status TEXT NOT NULL,
+          draft_json TEXT NOT NULL,
+          missing_fields_json TEXT NOT NULL,
+          warnings_json TEXT NOT NULL,
+          proposed_by_run_id TEXT,
+          proposed_by_thread_id TEXT,
+          confirmed_automation_id TEXT,
+          discarded_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(confirmed_automation_id) REFERENCES automation_definitions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_automation_drafts_status
+        ON automation_drafts(workspace_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_automation_drafts_confirmed_automation
+        ON automation_drafts(confirmed_automation_id);
+      `);
+      if (!hasAutomationDraftsMigration) {
+        this.recordMigration(AUTOMATION_DRAFTS_MIGRATION_VERSION, AUTOMATION_DRAFTS_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -9880,6 +10531,78 @@ function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
   });
 }
 
+function mapAutomationDefinition(row: Record<string, SQLOutputValue>): AutomationDefinition {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readNullableString(row, "channel_id"),
+    threadId: readString(row, "thread_id"),
+    title: readString(row, "title"),
+    description: readNullableString(row, "description"),
+    kind: readString(row, "kind") as AutomationKind,
+    status: readString(row, "status") as AutomationStatus,
+    trigger: parseAutomationTrigger(readString(row, "trigger_json")),
+    target: parseAutomationTarget(readString(row, "target_json")),
+    promptTemplate: parseAutomationPromptTemplate(readString(row, "prompt_template_json")),
+    executionPolicy: parseAutomationExecutionPolicy(readString(row, "execution_policy_json")),
+    outputPolicy: parseAutomationOutputPolicy(readString(row, "output_policy_json")),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    lastRunId: readNullableString(row, "last_run_id"),
+    nextRunAt: readNullableString(row, "next_run_at"),
+    lastErrorMessage: readNullableString(row, "last_error_message"),
+  });
+}
+
+function mapAutomationDraft(row: Record<string, SQLOutputValue>): AutomationDraft {
+  const payload = parseJsonObject(readString(row, "draft_json"));
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readNullableString(row, "channel_id"),
+    source: readString(row, "source") as AutomationDraftSource,
+    status: readString(row, "status") as AutomationDraftStatus,
+    title: readOptionalStringValue(payload.title),
+    description: readOptionalStringValue(payload.description),
+    kind: readOptionalStringValue(payload.kind) as AutomationKind | undefined,
+    trigger: payload.trigger as AutomationTrigger | undefined,
+    target: payload.target as AutomationTarget | undefined,
+    promptTemplate: payload.promptTemplate as AutomationPromptTemplate | undefined,
+    executionPolicy: payload.executionPolicy as AutomationExecutionPolicy | undefined,
+    outputPolicy: payload.outputPolicy as AutomationOutputPolicy | undefined,
+    missingFields: parseJsonStringArray(readString(row, "missing_fields_json")).filter(isAutomationDraftField),
+    warnings: parseJson(readString(row, "warnings_json")) as AutomationDraft["warnings"],
+    proposedByRunId: readNullableString(row, "proposed_by_run_id"),
+    proposedByThreadId: readNullableString(row, "proposed_by_thread_id"),
+    confirmedAutomationId: readNullableString(row, "confirmed_automation_id"),
+    discardedAt: readNullableString(row, "discarded_at"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapAutomationRun(row: Record<string, SQLOutputValue>): AutomationRun {
+  return omitUndefined({
+    id: readString(row, "id"),
+    automationId: readString(row, "automation_id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readNullableString(row, "channel_id"),
+    threadId: readString(row, "thread_id"),
+    runId: readNullableString(row, "run_id"),
+    triggerType: readString(row, "trigger_type") as AutomationRun["triggerType"],
+    scheduledFor: readNullableString(row, "scheduled_for"),
+    firedAt: readString(row, "fired_at"),
+    startedAt: readNullableString(row, "started_at"),
+    completedAt: readNullableString(row, "completed_at"),
+    status: readString(row, "status") as AutomationRunStatus,
+    idempotencyKey: readString(row, "idempotency_key"),
+    contextPreviewArtifactId: readNullableString(row, "context_preview_artifact_id"),
+    outputArtifactIds: parseJsonStringArray(readString(row, "output_artifact_ids_json")),
+    skipReason: readNullableString(row, "skip_reason"),
+    errorMessage: readNullableString(row, "error_message"),
+  });
+}
+
 function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
   return omitUndefined({
     id: readString(row, "id"),
@@ -9990,6 +10713,79 @@ function lingThreadSelectSql(whereClause: string): string {
       updated_at,
       archived_at
     FROM ling_threads
+    ${whereClause}
+  `;
+}
+
+function automationDefinitionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      thread_id,
+      title,
+      description,
+      kind,
+      status,
+      trigger_json,
+      target_json,
+      prompt_template_json,
+      execution_policy_json,
+      output_policy_json,
+      created_at,
+      updated_at,
+      last_run_id,
+      next_run_at,
+      last_error_message
+    FROM automation_definitions
+    ${whereClause}
+  `;
+}
+
+function automationDraftSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      source,
+      status,
+      draft_json,
+      missing_fields_json,
+      warnings_json,
+      proposed_by_run_id,
+      proposed_by_thread_id,
+      confirmed_automation_id,
+      discarded_at,
+      created_at,
+      updated_at
+    FROM automation_drafts
+    ${whereClause}
+  `;
+}
+
+function automationRunSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      automation_id,
+      workspace_id,
+      channel_id,
+      thread_id,
+      run_id,
+      trigger_type,
+      scheduled_for,
+      fired_at,
+      started_at,
+      completed_at,
+      status,
+      idempotency_key,
+      context_preview_artifact_id,
+      output_artifact_ids_json,
+      skip_reason,
+      error_message
+    FROM automation_runs
     ${whereClause}
   `;
 }
@@ -11935,6 +12731,30 @@ function stringifyJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function automationDraftPayload(draft: AutomationDraft): Record<string, unknown> {
+  return omitUndefined({
+    title: draft.title,
+    description: draft.description,
+    kind: draft.kind,
+    trigger: draft.trigger,
+    target: draft.target,
+    promptTemplate: draft.promptTemplate,
+    executionPolicy: draft.executionPolicy,
+    outputPolicy: draft.outputPolicy,
+  });
+}
+
+function isAutomationDraftField(value: string): value is AutomationDraftField {
+  return (
+    value === "title" ||
+    value === "kind" ||
+    value === "trigger" ||
+    value === "target" ||
+    value === "promptTemplate" ||
+    value === "outputPolicy"
+  );
+}
+
 function countWhere(database: DatabaseSync, table: string, whereClause: string, params: readonly (string | number)[]): number {
   const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${whereClause}`).get(...params) as Record<string, SQLOutputValue> | undefined;
   return row ? readNumber(row, "count") : 0;
@@ -12403,6 +13223,51 @@ function parseApprovalProfile(value: string): SkillApprovalProfile {
     throw new Error("Expected approval profile mode from SQLite");
   }
   return parsed as unknown as SkillApprovalProfile;
+}
+
+function parseAutomationTrigger(value: string): AutomationTrigger {
+  const parsed = parseJsonObject(value);
+  if (parsed.type !== "manual" && parsed.type !== "schedule" && parsed.type !== "monitor") {
+    throw new Error("Expected automation trigger from SQLite");
+  }
+  return parsed as unknown as AutomationTrigger;
+}
+
+function parseAutomationTarget(value: string): AutomationTarget {
+  const parsed = parseJsonObject(value);
+  if (
+    parsed.scope !== "workspace" &&
+    parsed.scope !== "channel" &&
+    parsed.scope !== "task" &&
+    parsed.scope !== "thread" &&
+    parsed.scope !== "external_work"
+  ) {
+    throw new Error("Expected automation target from SQLite");
+  }
+  if (typeof parsed.workspaceId !== "string") {
+    throw new Error("Expected automation target workspaceId from SQLite");
+  }
+  return parsed as unknown as AutomationTarget;
+}
+
+function parseAutomationPromptTemplate(value: string): AutomationPromptTemplate {
+  const parsed = parseJsonObject(value);
+  if (typeof parsed.templateVersion !== "number" || typeof parsed.promptMarkdown !== "string" || !Array.isArray(parsed.contextSelectors)) {
+    throw new Error("Expected automation prompt template from SQLite");
+  }
+  return parsed as unknown as AutomationPromptTemplate;
+}
+
+function parseAutomationExecutionPolicy(value: string): AutomationExecutionPolicy {
+  return parseJsonObject(value) as unknown as AutomationExecutionPolicy;
+}
+
+function parseAutomationOutputPolicy(value: string): AutomationOutputPolicy {
+  const parsed = parseJsonObject(value);
+  if (!Array.isArray(parsed.destinations) || parsed.artifactFormat !== "markdown") {
+    throw new Error("Expected automation output policy from SQLite");
+  }
+  return parsed as unknown as AutomationOutputPolicy;
 }
 
 function normalizeStringList(values: readonly string[]): string[] {

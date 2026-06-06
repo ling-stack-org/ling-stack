@@ -1,6 +1,24 @@
 import type {
   AiTeammateListResponse,
   AiTeammateMutationResponse,
+  AutomationDetailResponse,
+  AutomationDraftDetailResponse,
+  AutomationDraftListRequest,
+  AutomationDraftListResponse,
+  AutomationDraftMutationResponse,
+  AutomationDraftPreviewResponse,
+  AutomationListRequest,
+  AutomationListResponse,
+  AutomationMutationResponse,
+  AutomationPreviewResponse,
+  AutomationRunCancelRequest,
+  AutomationRunDetailResponse,
+  AutomationRunListRequest,
+  AutomationRunListResponse,
+  AutomationRunMutationResponse,
+  AutomationRunRequest,
+  AutomationSchedulerListResponse,
+  AutomationSchedulerMutationResponse,
   ApprovalListResponse,
   ApprovalMutationResponse,
   ApprovalPolicyResponse,
@@ -45,6 +63,9 @@ import type {
   CreateChannelMessageRequest,
   CreateChannelRequest,
   CreateAiTeammateRequest,
+  ConfirmAutomationDraftResponse,
+  CreateAutomationDraftRequest,
+  CreateAutomationRequest,
   CreateTeammateDirectMessageRequest,
   CreateTeammatePrivateAttachmentRequest,
   CreateChannelWorkflowFromHandoffRequest,
@@ -192,6 +213,8 @@ import type {
   TeammatePersonaDraftResponse,
   TeammateSkillBindingListResponse,
   UpdateAiTeammateRequest,
+  UpdateAutomationDraftRequest,
+  UpdateAutomationRequest,
   UsedMemoryListResponse,
   WorkUnitDetailResponse,
   WorkUnitEventsResponse,
@@ -244,6 +267,111 @@ export class LingDaemonClient {
       service: typeof body.service === "string" ? body.service : undefined,
       defaultWorkspaceCwd: typeof body.defaultWorkspaceCwd === "string" ? body.defaultWorkspaceCwd : undefined,
     };
+  }
+
+  async listAutomations(cwd: string, options: AutomationListRequest = {}): Promise<AutomationListResponse> {
+    return this.get("/automations", {
+      cwd,
+      status: options.status,
+      kind: options.kind,
+      channelId: options.channelId,
+      includeArchived: options.includeArchived,
+      scheduledOnly: options.scheduledOnly,
+      limit: options.limit,
+    });
+  }
+
+  async createAutomation(cwd: string, input: CreateAutomationRequest): Promise<AutomationMutationResponse> {
+    return this.post("/automations", { cwd }, input);
+  }
+
+  async listAutomationDrafts(cwd: string, options: AutomationDraftListRequest = {}): Promise<AutomationDraftListResponse> {
+    return this.get("/automation-drafts", {
+      cwd,
+      status: options.status,
+      source: options.source,
+      channelId: options.channelId,
+      includeTerminal: options.includeTerminal,
+      limit: options.limit,
+    });
+  }
+
+  async createAutomationDraft(cwd: string, input: CreateAutomationDraftRequest): Promise<AutomationDraftMutationResponse> {
+    return this.post("/automation-drafts", { cwd }, input);
+  }
+
+  async getAutomationDraft(cwd: string, draftId: string): Promise<AutomationDraftDetailResponse> {
+    return this.get(`/automation-drafts/${encodeURIComponent(draftId)}`, { cwd });
+  }
+
+  async updateAutomationDraft(cwd: string, draftId: string, input: UpdateAutomationDraftRequest): Promise<AutomationDraftMutationResponse> {
+    return this.patch(`/automation-drafts/${encodeURIComponent(draftId)}`, { cwd }, input);
+  }
+
+  async discardAutomationDraft(cwd: string, draftId: string): Promise<AutomationDraftMutationResponse> {
+    return this.requestJson("DELETE", `/automation-drafts/${encodeURIComponent(draftId)}`, { cwd });
+  }
+
+  async previewAutomationDraft(cwd: string, draftId: string, input: Record<string, never> = {}): Promise<AutomationDraftPreviewResponse> {
+    return this.post(`/automation-drafts/${encodeURIComponent(draftId)}/preview`, { cwd }, input);
+  }
+
+  async confirmAutomationDraft(cwd: string, draftId: string, input: Record<string, never> = {}): Promise<ConfirmAutomationDraftResponse> {
+    return this.post(`/automation-drafts/${encodeURIComponent(draftId)}/confirm`, { cwd }, input);
+  }
+
+  async getAutomation(cwd: string, automationId: string): Promise<AutomationDetailResponse> {
+    return this.get(`/automations/${encodeURIComponent(automationId)}`, { cwd });
+  }
+
+  async updateAutomation(cwd: string, automationId: string, input: UpdateAutomationRequest): Promise<AutomationMutationResponse> {
+    return this.patch(`/automations/${encodeURIComponent(automationId)}`, { cwd }, input);
+  }
+
+  async archiveAutomation(cwd: string, automationId: string): Promise<AutomationMutationResponse> {
+    return this.requestJson("DELETE", `/automations/${encodeURIComponent(automationId)}`, { cwd });
+  }
+
+  async previewAutomation(cwd: string, automationId: string, input: Record<string, never> = {}): Promise<AutomationPreviewResponse> {
+    return this.post(`/automations/${encodeURIComponent(automationId)}/preview`, { cwd }, input);
+  }
+
+  async runAutomation(cwd: string, automationId: string, input: AutomationRunRequest = {}): Promise<AutomationRunMutationResponse> {
+    return this.post(`/automations/${encodeURIComponent(automationId)}/run`, { cwd }, input);
+  }
+
+  async listAutomationRuns(cwd: string, options: AutomationRunListRequest = {}): Promise<AutomationRunListResponse> {
+    return this.get("/automation-runs", {
+      cwd,
+      automationId: options.automationId,
+      runId: options.runId,
+      status: options.status,
+      limit: options.limit,
+    });
+  }
+
+  async getAutomationRun(cwd: string, automationRunId: string): Promise<AutomationRunDetailResponse> {
+    return this.get(`/automation-runs/${encodeURIComponent(automationRunId)}`, { cwd });
+  }
+
+  async cancelAutomationRun(
+    cwd: string,
+    automationRunId: string,
+    input: AutomationRunCancelRequest = {},
+  ): Promise<AutomationRunMutationResponse> {
+    return this.post(`/automation-runs/${encodeURIComponent(automationRunId)}/cancel`, { cwd }, input);
+  }
+
+  async startAutomationScheduler(cwd: string): Promise<AutomationSchedulerMutationResponse> {
+    return this.post("/automations/scheduler/start", { cwd }, {});
+  }
+
+  async listAutomationSchedulers(cwd: string): Promise<AutomationSchedulerListResponse> {
+    return this.get("/automations/scheduler", { cwd });
+  }
+
+  async stopAutomationScheduler(cwd: string): Promise<AutomationSchedulerMutationResponse> {
+    return this.post("/automations/scheduler/stop", { cwd }, {});
   }
 
   async listSkills(cwd: string): Promise<SkillRegistryListResponse> {
@@ -1290,6 +1418,19 @@ export class LingDaemonClient {
 
   private patch<T>(path: string, query: Query = {}, body?: unknown): Promise<T> {
     return this.request("PATCH", path, query, body);
+  }
+
+  private async requestJson<T>(method: string, path: string, query: Query = {}, body?: unknown): Promise<T> {
+    const init: RequestInit = { method };
+    if (body !== undefined) {
+      init.headers = { "Content-Type": "application/json" };
+      init.body = JSON.stringify(body);
+    }
+    const response = await this.fetchImpl(this.url(path, query), init);
+    if (!response.ok) {
+      throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
+    }
+    return (await response.json()) as T;
   }
 
   private async request<T>(method: string, path: string, query: Query = {}, body?: unknown): Promise<T> {
