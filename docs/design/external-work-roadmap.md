@@ -15,6 +15,9 @@ The source-of-truth design boundaries remain:
 - [External Work Phase 5 Implementation](external-work-phase-5-implementation.md)
 - [External Work Phase 6 Implementation](external-work-phase-6-implementation.md)
 - [External Work Phase 7 Implementation](external-work-phase-7-implementation.md)
+- [External Work Multi-Forge Adapters](external-work-multi-forge-adapters.md)
+- [External Work Phase 8.0 Adapter Registry Implementation](external-work-phase-8.0-adapter-registry-implementation.md)
+- [External Work Phase 8.1 Workspace Git Remote Implementation](external-work-phase-8.1-workspace-git-remote-implementation.md)
 - [External Work Status Surface](external-work-status-surface.md)
 - [External Work GA Hardening](external-work-ga-hardening.md)
 
@@ -93,6 +96,11 @@ There are three different "done" lines:
 | GA.2 | Planned | Recovery docs and audit export. |
 | GA.3 | Planned | Admin policy controls for sources, actions, hooks, and background operation. |
 | GA.4 | Planned | Security review, redaction review, and GA release checklist. |
+| 8.0 | Planned | Adapter registry refactor for GitHub and Linear with no behavior change. |
+| 8.1 | Planned | Explicit `workspace.gitRemoteUrl` checkout hint, separate from source provider identity. |
+| 8.2 | Planned | GitLab read-only merge request and issue adapter. |
+| 8.3 | Planned | Gitea/Forgejo read-only pull request and issue adapter. |
+| 8.4 | Planned | Bitbucket Cloud read-only pull request and issue adapter. |
 
 ## Phase 5 First Slice
 

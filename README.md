@@ -331,6 +331,12 @@ scheduler-state, workspace, hook, and artifact paths, and do not propose or exec
 Linear mutations. Linear workflows use `source.kind: linear`, `source.projectSlug`, and
 an optional `source.secretRef: env:LINEAR_TOKEN`.
 
+Repository-local external-work configuration should be copied from
+`WORKFLOW.example.md` to `WORKFLOW.md`. The root `WORKFLOW.md` is ignored because it may
+contain local repository targets and machine-specific secret refs. Keep raw token values
+out of both files: use `env:GITHUB_TOKEN`, `env:LINEAR_TOKEN`, or a `keychain:...`
+secret reference.
+
 For live poll/reconcile, prefer authenticated GitHub reads. The user-facing setup path
 is Web Settings -> External Work: if `WORKFLOW.md` is missing or invalid, paste a GitHub
 URL or enter `owner/repo`, then click `Create WORKFLOW.md` / `Repair WORKFLOW.md`; after

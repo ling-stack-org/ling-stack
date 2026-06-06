@@ -17,6 +17,7 @@ apps/web/test-results/
 
 # local runtime state
 .ling-stack/
+WORKFLOW.md
 *.log
 
 # system

@@ -1,12 +1,12 @@
 ---
 source:
   kind: github
-  repository: tianxiaochannel-oss88/ling-stack
+  repository: owner/repo
   events:
     - pull_request.opened
     - pull_request.synchronize
     - issue.opened
-  secretRef: keychain:LING_STACK_GITHUB_TIANXIAOCHANNEL_OSS88_LING_STACK_TOKEN
+  secretRef: env:GITHUB_TOKEN
 scheduler:
   reconcileOnStartup: false
 agent:
