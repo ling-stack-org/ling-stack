@@ -12,6 +12,9 @@ The next product-facing layer is [Plugin Manager](plugin-manager.md). Its Stage 
 implementation is detailed in [Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md).
 Together, those documents define Codex-like management for internal, bundled, and
 trusted local capabilities without opening a third-party plugin API yet.
+The Plugin Manager design also tracks the Codex-derived follow-up layers for package
+manifests, source indexes, install cache, runtime capability injection, and MCP/app/hook
+policy overlays.
 
 Current local extension points already exist in different forms:
 

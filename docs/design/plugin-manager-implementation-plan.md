@@ -11,6 +11,9 @@ Implemented plan for [Plugin Manager](plugin-manager.md), limited to slices 1-3:
 This plan intentionally excludes bundled manifest loading, isolated local plugin runtime,
 third-party plugin APIs, marketplace installation, and untrusted sandboxing.
 
+This document also records the follow-up Stage 4-5 implementation design so the later
+work can be picked up without reopening the product boundary.
+
 ## Outcome
 
 After slices 1-3, Ling Stack should let a user:
@@ -27,6 +30,28 @@ After slices 1-3, Ling Stack should let a user:
 
 This is enough for the current plugin-management need. It does not create an external
 plugin ecosystem.
+
+## Codex-Derived Follow-Up Layers
+
+Codex's open-source plugin manager is useful as a reference because it separates plugin
+governance into five layers: manifest/schema, marketplace/source, install cache, runtime
+capability injection, and MCP/app/hook policy overlay. Stage 1-3 intentionally implements
+only the current Ling need: managed catalog state, safe MCP preset application, and health
+visibility.
+
+The remaining layers should be sequenced after Stage 1-3 is stable:
+
+| Layer | Next Ling step | Not in Stage 1-3 |
+| --- | --- | --- |
+| Manifest/schema | Define `.ling-plugin/plugin.json`, validate id/version/interface/contribution paths, and compile it into `ManagedPluginDescriptor`. | No external SDK contract yet. |
+| Marketplace/source | Add a local/bundled index for trusted packages. | No public marketplace, Git install, remote source resolver, or third-party API. |
+| Install cache | Materialize trusted local and bundled packages under a Ling-owned versioned cache. | No arbitrary npm/package manager install. |
+| Runtime capability injection | Inject enabled package skills, MCP servers, apps, and hooks into session/run capability snapshots. | No bypass around teammate bindings or approval policy. |
+| MCP/app/hook policy overlay | Add per-plugin policy overrides for contributed MCP servers, app connectors, hooks, and tools. | No automatic authorization from install or enable. |
+
+This backlog is deliberately narrower than copying Codex wholesale. Ling should continue
+to use its daemon APIs, runner registry, MCP broker, and approval policy as the authority
+boundary.
 
 ## Existing Code To Reuse
 
@@ -212,6 +237,27 @@ export interface ManagedPluginEvent {
 
 Keep descriptors separate from records. Descriptors are catalog truth. Records are
 workspace state.
+
+Stage 1-3 descriptors are not package manifests. A future manifest should compile into
+these descriptors and records after validation, rather than becoming a second runtime
+truth source.
+
+Future manifest fields should cover:
+
+- stable plugin id, display name, version, and compatible Ling interface version;
+- source tier and trust level;
+- declared contribution paths for skills, MCP servers, apps, hooks, providers, runners,
+  memory, automations, or UI features;
+- required secrets by name only, never secret values;
+- default approval posture and side-effect classifications;
+- platform requirements and health-check declarations.
+
+Manifest path rules should be strict:
+
+- contribution paths must be relative to the plugin root;
+- paths must not escape the package through `..`, symlinks, or absolute paths;
+- manifest parsing should produce redacted diagnostics;
+- parsed manifests should grant no execution authority until enabled and policy-checked.
 
 ## Store Model
 
@@ -653,6 +699,13 @@ Definition of done:
 - MCP server deletion from the advanced MCP page should leave plugin contributions in a
   missing-linked-resource state instead of crashing catalog rendering.
 - Every side-effecting plugin management route must be idempotent where possible.
+- Package manifest parsing must not grant authority, execute code, or read secrets.
+- Install/cache operations must materialize packages into Ling-owned directories before
+  runtime injection reads package files.
+- Runtime capability injection must happen through a captured run/session capability
+  snapshot so disabling a plugin affects new runs predictably.
+- Per-plugin MCP/app/hook policy overlays must be applied before capabilities reach a
+  teammate or runner.
 
 ## Failure Modes
 
@@ -714,3 +767,465 @@ Recommended PR sequence:
 
 Do not combine slices 4-6 from the main design into this implementation unless stage
 1-3 is already stable and covered by tests.
+
+## Stage 4-5 Detailed Design
+
+Stage 4-5 turns the Stage 1-3 control plane into a package-aware plugin system for
+built-in, bundled, and trusted local plugins. It still does not create a third-party
+marketplace or allow arbitrary remote code loading.
+
+### Shared Principles
+
+- Keep Stage 1-3 managed plugin records as the product-facing state model.
+- Treat package manifests as inputs that compile into managed descriptors, linked
+  resources, and policy defaults.
+- Materialize package contents into a Ling-owned cache before runtime injection reads
+  package files.
+- Freeze enabled plugin capabilities into a run/session snapshot before the runner starts.
+- Apply per-plugin MCP/app/hook policy overlays before capabilities reach teammates,
+  runners, or model context.
+- Keep install, enable, runtime injection, and teammate authorization separate.
+- Do not silently install or update external binaries such as `CuaDriver.app`.
+
+### Stage 4: Manifest/Schema And Bundled Source
+
+Stage 4 introduces the package format and trusted source index. It should not execute
+package code.
+
+Suggested files:
+
+```text
+packages/core/src/plugin-package-types.ts
+packages/plugin-sdk/src/manifest.ts
+packages/daemon/src/features/plugins/manifest.ts
+packages/daemon/src/features/plugins/source-index.ts
+packages/daemon/src/features/plugins/bundled-index.ts
+packages/daemon/src/features/plugins/bundled/cua-driver/.ling-plugin/plugin.json
+packages/daemon/src/features/plugins/bundled/cua-driver/README.md
+```
+
+The package entry point is:
+
+```text
+.ling-plugin/plugin.json
+```
+
+Initial manifest shape:
+
+```ts
+export interface LingPluginPackageManifest {
+  readonly id: string;
+  readonly displayName: string;
+  readonly version: string;
+  readonly lingInterfaceVersion: string;
+  readonly sourceKind: "bundled" | "trusted-local";
+  readonly trustLevel: "internal" | "internal-isolated" | "trusted-local-preset";
+  readonly description?: string;
+  readonly homepageUrl?: string;
+  readonly trustSummary: string;
+  readonly platforms?: readonly ("darwin" | "linux" | "win32")[];
+  readonly contributions: readonly LingPluginPackageContribution[];
+  readonly requiredSecrets?: readonly ManagedPluginSecretRequirement[];
+  readonly defaultApprovals?: readonly ManagedPluginApprovalDefault[];
+  readonly healthChecks?: readonly ManagedPluginHealthCheck[];
+}
+
+export type LingPluginPackageContribution =
+  | { readonly kind: "mcp-server"; readonly id: string; readonly path: string }
+  | { readonly kind: "skill-pack"; readonly id: string; readonly path: string }
+  | { readonly kind: "app"; readonly id: string; readonly path: string }
+  | { readonly kind: "hook"; readonly id: string; readonly path: string }
+  | { readonly kind: "runner"; readonly id: string; readonly path: string }
+  | { readonly kind: "provider"; readonly id: string; readonly path: string }
+  | { readonly kind: "ui-feature"; readonly id: string; readonly path: string };
+```
+
+Validation rules:
+
+- `id` must be stable and globally unique within Ling's plugin catalog.
+- `version` must be semver-compatible for bundled packages.
+- `lingInterfaceVersion` must match a supported loader version.
+- contribution ids must be unique within the plugin.
+- contribution paths must start inside the plugin root and must not be absolute.
+- `..`, empty path segments, and symlink escapes are rejected after canonicalization.
+- manifests may declare secret names but must never contain secret values.
+- unknown contribution kinds are rejected in Stage 4.
+- parse errors return redacted diagnostics and do not expose raw env, tokens, or absolute
+  user paths unless the path is already a user-selected local plugin root.
+
+Bundled source index:
+
+```ts
+export interface BundledPluginIndex {
+  readonly version: 1;
+  readonly plugins: readonly BundledPluginIndexEntry[];
+}
+
+export interface BundledPluginIndexEntry {
+  readonly id: string;
+  readonly sourceKind: "bundled";
+  readonly packageRoot: string;
+  readonly pinnedVersion: string;
+  readonly sha256?: string;
+  readonly defaultInstalled?: boolean;
+}
+```
+
+Source rules:
+
+- bundled package roots are controlled by the Ling distribution;
+- trusted local package roots must be user-selected or explicitly configured;
+- Git, remote URL, npm, and marketplace source resolvers are out of scope;
+- duplicate source entries resolve deterministically by source tier, package id, then
+  version;
+- Stage 4 can show installable bundled plugins even before Stage 5 cache materialization.
+
+Daemon API additions:
+
+```http
+GET /plugins/sources?cwd=/path/to/workspace
+GET /plugins/packages/:id?cwd=/path/to/workspace
+POST /plugins/:id/validate-package?cwd=/path/to/workspace
+```
+
+`validate-package` should parse and validate only. It must not create MCP servers, install
+packages, enable plugins, or authorize tools.
+
+Stage 4 definition of done:
+
+- bundled package manifests parse into `ManagedPluginDescriptor`;
+- invalid paths, duplicate ids, incompatible interface versions, and unsupported
+  contribution kinds are rejected;
+- bundled CUA plugin shell appears as installable metadata;
+- no package code executes during listing or validation;
+- Stage 1-3 plugin UI can display package-derived descriptors.
+
+### Stage 4 CUA Bundled Plugin Shell
+
+CUA should be the first bundled package, but only as a Ling plugin shell. The package does
+not contain `CuaDriver.app` or a `cua-driver` binary.
+
+Example manifest:
+
+```json
+{
+  "id": "bundled:cua-driver",
+  "displayName": "Cua Driver",
+  "version": "0.1.0",
+  "lingInterfaceVersion": "1",
+  "sourceKind": "bundled",
+  "trustLevel": "trusted-local-preset",
+  "description": "Connects Ling to an already installed Cua Driver MCP server.",
+  "trustSummary": "Controls native macOS apps through Accessibility and Screen Recording permissions.",
+  "platforms": ["darwin"],
+  "contributions": [
+    {
+      "kind": "mcp-server",
+      "id": "mcp:cua-driver",
+      "path": "./mcp-server.json"
+    }
+  ],
+  "healthChecks": [
+    {
+      "id": "cua-driver-binary",
+      "kind": "command",
+      "label": "cua-driver binary"
+    },
+    {
+      "id": "macos-tcc",
+      "kind": "platform-permission",
+      "label": "Accessibility and Screen Recording"
+    }
+  ]
+}
+```
+
+The package may include a `README.md` with install guidance, but Ling should expose it as
+help text only. Any download/open-link action must be user-confirmed.
+
+### Stage 5: Install Cache
+
+Stage 5 materializes validated packages into a Ling-owned cache and links workspace state
+to the cached package. The cache should be content-addressed or version-pinned enough to
+make rollbacks and audit possible.
+
+Suggested files:
+
+```text
+packages/daemon/src/features/plugins/package-cache.ts
+packages/daemon/src/features/plugins/install.ts
+packages/daemon/src/features/plugins/runtime-injection.ts
+packages/daemon/src/features/plugins/policy-overlay.ts
+```
+
+Suggested cache layout:
+
+```text
+<ling-data-root>/plugins/cache/
+  bundled/
+    cua-driver/
+      0.1.0/
+        package/
+        manifest.compiled.json
+        install.json
+```
+
+Cache install rules:
+
+- install into a temporary staging directory first;
+- validate manifest and contribution paths from the staged directory;
+- compute a package hash before activation;
+- atomically move staged content into the final cache path;
+- never execute package files during install;
+- store only redacted install diagnostics;
+- uninstall disables future resolution but keeps historical run evidence;
+- package cache deletion must not delete MCP audit history or teammate assignment history.
+
+Suggested store additions:
+
+```ts
+export interface ManagedPluginPackageRecord {
+  readonly pluginId: string;
+  readonly sourceKind: "bundled" | "trusted-local";
+  readonly version: string;
+  readonly cachePath: string;
+  readonly packageHash?: string;
+  readonly manifestJson: string;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ManagedPluginRuntimeSnapshot {
+  readonly id: string;
+  readonly runId?: string;
+  readonly cwd: string;
+  readonly pluginIds: readonly string[];
+  readonly mcpServerIds: readonly string[];
+  readonly skillPackIds: readonly string[];
+  readonly appIds: readonly string[];
+  readonly hookIds: readonly string[];
+  readonly policyOverlayIds: readonly string[];
+  readonly createdAt: string;
+}
+```
+
+Potential SQLite tables:
+
+```sql
+CREATE TABLE IF NOT EXISTS managed_plugin_packages (
+  plugin_id TEXT PRIMARY KEY,
+  source_kind TEXT NOT NULL,
+  version TEXT NOT NULL,
+  cache_path TEXT NOT NULL,
+  package_hash TEXT,
+  manifest_json TEXT NOT NULL,
+  installed_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS managed_plugin_runtime_snapshots (
+  id TEXT PRIMARY KEY,
+  run_id TEXT,
+  cwd TEXT NOT NULL,
+  plugin_ids_json TEXT NOT NULL,
+  capabilities_json TEXT NOT NULL,
+  policy_overlays_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+```
+
+Daemon API additions:
+
+```http
+POST /plugins/:id/install?cwd=/path/to/workspace
+POST /plugins/:id/uninstall?cwd=/path/to/workspace
+POST /plugins/:id/refresh-package?cwd=/path/to/workspace
+GET /plugins/:id/runtime-preview?cwd=/path/to/workspace
+```
+
+`install` materializes the package and creates managed package state. It does not enable
+the plugin, create teammate bindings, or grant tool permission.
+
+### Stage 5: Runtime Capability Injection
+
+Runtime injection converts enabled installed packages into a run/session capability
+snapshot.
+
+Injection sequence:
+
+1. Resolve enabled managed plugins for the workspace.
+2. Load compiled package descriptors from cache.
+3. Resolve linked MCP servers, skill packs, apps, and hooks.
+4. Apply platform blockers and health expiry rules.
+5. Apply per-plugin policy overlays.
+6. Build a `ManagedPluginRuntimeSnapshot`.
+7. Attach the snapshot to the run/session before the runner starts.
+8. Use the snapshot for model context, MCP server availability, tool policy, and audit.
+
+Runtime rules:
+
+- disabled plugins are excluded from new snapshots;
+- existing runs keep their captured snapshot for audit stability;
+- missing cached packages mark the plugin as `blocked` for new runs;
+- runtime injection never reads unvalidated package paths;
+- package-provided MCP servers still initialize through the MCP broker;
+- package-provided tools still route through approval policy;
+- skill packs and hooks are capabilities, not permissions.
+
+Suggested runtime preview response:
+
+```ts
+export interface ManagedPluginRuntimePreview {
+  readonly pluginId: string;
+  readonly status: "injectable" | "blocked" | "disabled";
+  readonly mcpServers: readonly ManagedPluginLinkedResource[];
+  readonly skillPacks: readonly ManagedPluginLinkedResource[];
+  readonly apps: readonly ManagedPluginLinkedResource[];
+  readonly hooks: readonly ManagedPluginLinkedResource[];
+  readonly policyOverlays: readonly ManagedPluginPolicyOverlayView[];
+  readonly blockers: readonly string[];
+}
+```
+
+### Stage 5: MCP/App/Hook Policy Overlay
+
+Policy overlays let a package provide defaults while the workspace and user keep final
+authority.
+
+Precedence:
+
+1. admin or workspace deny rules,
+2. user/team override,
+3. teammate explicit assignment,
+4. plugin policy overlay,
+5. MCP broker/tool annotations,
+6. package defaults.
+
+Suggested policy overlay shape:
+
+```ts
+export interface ManagedPluginPolicyOverlay {
+  readonly id: string;
+  readonly pluginId: string;
+  readonly contributionId: string;
+  readonly targetKind: "mcp-server" | "mcp-tool" | "app" | "hook";
+  readonly targetId: string;
+  readonly defaultApproval: "allow" | "ask" | "deny";
+  readonly sideEffectLevel: ManagedPluginSideEffectLevel;
+  readonly reason: string;
+}
+```
+
+Hard rules:
+
+- `allow` is valid only for clearly read-only operations.
+- screenshots and screen extraction are sensitive read operations and should default to
+  `ask` unless explicitly scoped later.
+- GUI mutation, app launch, recording, replay, config mutation, filesystem writes,
+  credential access, deploy, and external network mutation default to `ask` or `deny`.
+- hooks must declare when they run and whether they can block a run.
+- app connectors must respect app-level enablement before exposing actions.
+
+CUA policy overlay:
+
+| Capability family | Default |
+| --- | --- |
+| binary/version/status checks | `allow` when read-only |
+| permission status checks | `allow` when read-only |
+| app/window listing | `allow` only when read-only annotations are present |
+| screenshot/screen extraction | `ask` |
+| click/type/key/drag/scroll/set value | `ask` |
+| launch/quit/config mutation | `ask` or `deny` |
+| recording/replay | `ask` or `deny` |
+
+### Stage 5: Isolated Local Contract
+
+`internal-isolated` plugins should run in a child process or worker host only after the
+manifest/cache path is stable. This is not needed for the CUA shell if it only contributes
+an MCP server descriptor.
+
+Allowed host context:
+
+- read declared package assets;
+- request declared secret values at execution time only;
+- emit health/status events;
+- propose linked resources;
+- call scoped MCP/app/hook registration helpers.
+
+Denied host context:
+
+- direct SQLite handles;
+- raw Keychain access;
+- direct task/run state mutation;
+- bypassing resource leases;
+- bypassing approval policy;
+- unscoped filesystem or network access;
+- modifying teammate bindings.
+
+Stage 5 definition of done:
+
+- bundled package install is idempotent and auditable;
+- cache activation is atomic;
+- package uninstall disables future runtime resolution without deleting history;
+- enabled installed packages appear in runtime previews;
+- new runs receive plugin capability snapshots;
+- disabled plugins are absent from new snapshots;
+- CUA bundled shell installs and injects the linked MCP server only after binary/path
+  confirmation;
+- CUA tools keep conservative approval defaults.
+
+### Stage 4-5 Test Plan
+
+Backend:
+
+```bash
+corepack pnpm --filter @ling-stack/plugin-sdk test
+corepack pnpm --filter @ling-stack/core test
+corepack pnpm --filter @ling-stack/daemon test
+corepack pnpm --filter @ling-stack/daemon typecheck
+```
+
+Frontend:
+
+```bash
+corepack pnpm --filter @ling-stack/web typecheck
+corepack pnpm --filter @ling-stack/web build
+```
+
+Required tests:
+
+- valid bundled manifest compiles into a managed descriptor;
+- path traversal, absolute paths, symlink escapes, duplicate ids, and incompatible
+  interface versions are rejected;
+- source index ordering is deterministic;
+- install writes through a staging directory and activates atomically;
+- repeated install is idempotent;
+- uninstall disables future runtime resolution but keeps historical records;
+- runtime preview excludes disabled plugins;
+- run/session snapshot freezes enabled plugin capabilities;
+- policy overlay precedence cannot weaken workspace/user deny rules;
+- CUA shell install does not require or contain `CuaDriver.app`;
+- missing CUA binary produces a redacted blocker;
+- CUA screenshot and GUI mutation tools default to `ask`;
+- no install path creates teammate tool bindings automatically.
+
+Suggested PR sequence:
+
+1. Manifest types and validator.
+2. Bundled source index and CUA package shell.
+3. Package cache install/uninstall.
+4. Runtime preview and capability snapshot.
+5. Policy overlay resolver.
+6. CUA bundled install flow wired through existing plugin UI.
+
+## Post Stage 1-3 Backlog
+
+After the implemented Stage 1-3 surface is stable, the next work should be:
+
+1. Define `.ling-plugin/plugin.json` and schema validation.
+2. Add a local/bundled source index and versioned install cache.
+3. Compile package manifests into managed descriptors, linked resources, and redacted
+   health metadata.
+4. Inject enabled package skills, MCP servers, apps, and hooks into run/session snapshots.
+5. Add per-plugin MCP/app/hook policy overlays.
+6. Only then consider Git/remote marketplaces and third-party plugin APIs.

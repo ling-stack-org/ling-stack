@@ -10,6 +10,10 @@ registry work. It deliberately targets Codex-like internal and bundled plugin go
 first. Third-party plugin APIs, marketplace installation, and untrusted sandboxing remain
 later work.
 
+The Codex source model should be treated as a layer model to borrow gradually, not as a
+drop-in runtime replacement. Ling should keep its existing daemon, runner registry, MCP
+broker, teammate bindings, and approval policy as the execution authority.
+
 Related docs:
 
 - [Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md)
@@ -53,6 +57,11 @@ Only stage 1 is in scope for the next slice.
 Stage 1 should support built-in, bundled, and trusted local preset capabilities. It should
 not support arbitrary third-party code loading, marketplace install, npm package install,
 or external plugin SDK APIs.
+
+Codex's plugin system splits this problem into manifest/schema, marketplace/source,
+install cache, runtime capability injection, and policy overlays for MCP servers, apps,
+and hooks. Stage 1-3 only needs the internal parts of those layers. Public source
+resolution, third-party install APIs, and remote marketplaces stay deferred.
 
 ## Goals
 
@@ -109,11 +118,48 @@ flowchart TD
 The plugin manager is a control plane. It describes, enables, disables, configures, and
 audits capabilities. It does not execute plugin code directly.
 
+## Codex-Inspired Layer Model
+
+OpenAI Codex's implementation treats plugins as local bundles that can contribute skills,
+MCP servers, app connectors, hooks, and metadata. The runtime does not invoke a plugin
+object directly; it exposes the enabled bundle's underlying capabilities to the session
+under config and policy.
+
+Ling should borrow the same separation of concerns:
+
+| Layer | Ling meaning | Stage posture |
+| --- | --- | --- |
+| Manifest/schema | A package-level declaration of id, version, interface metadata, skills, MCP servers, apps, hooks, and assets. | Stage 1 descriptors cover managed metadata; a strict package manifest belongs to Stage 2. |
+| Marketplace/source | An index of plugins and their built-in, bundled, trusted local, Git, or remote source. | Stage 1 uses built-in descriptors and trusted local presets only. Bundled/local indexes come next; Git and remote sources are later. |
+| Install cache | A Ling-owned materialized plugin directory with versioned state. | Stage 1 persists managed state and linked resources; Stage 2 adds a package cache for trusted local and bundled bundles. |
+| Runtime capability injection | Merge enabled plugin skills, MCP servers, apps, hooks, and summaries into session/runtime capabilities. | Stage 1 surfaces contributions and applies MCP presets; later stages inject package capabilities into run snapshots. |
+| MCP/app/hook policy overlay | User/workspace/admin policy over plugin-provided MCP servers, app connectors, hooks, and tools. | Stage 1 preserves existing MCP and approval gates; later stages add per-plugin overlays. |
+
+Important boundaries:
+
+- Manifest paths and package metadata never grant authority by themselves.
+- Installation is control-plane state, not automatic teammate authorization.
+- Runtime injection must go through the same run snapshot, MCP broker, teammate binding,
+  resource lease, and approval policy boundaries as hand-written configuration.
+- Desktop automation such as `cua-driver` needs a policy overlay because screenshots,
+  clicks, typing, app launch, recording, and replay are high-risk capabilities.
+- Third-party plugin APIs can remain deferred until Ling has production evidence from
+  internal, bundled, and trusted local plugins.
+
 ## Plugin Descriptor
 
-Stage 1 should use a descriptor that is stricter than a future external plugin manifest.
-It can be generated for built-ins, loaded from bundled assets, or defined as a trusted
-local preset.
+Stage 1 should use a descriptor that is narrower than a future package manifest. It can
+be generated for built-ins, loaded from controlled bundled assets, or defined as a trusted
+local preset. It is intentionally not a third-party SDK contract.
+
+Future package manifests should be stricter about filesystem shape and path resolution:
+all contribution paths must be relative to the plugin root, must not escape the bundle,
+and must declare their intended contribution type before any runtime loader reads them.
+A likely package entry point is:
+
+```text
+.ling-plugin/plugin.json
+```
 
 ```ts
 export type PluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
@@ -153,6 +199,10 @@ export interface PluginContribution {
 ```
 
 Descriptors are metadata. They do not grant tools to a teammate by themselves.
+
+When Stage 2 introduces package manifests, the manifest should compile into the same
+managed descriptor and linked resource records. Runtime code should depend on the
+compiled descriptor, not parse package files during every run.
 
 ## Persistent Model
 
@@ -348,24 +398,32 @@ Rules:
 - Add disable behavior that disables linked contributions.
 - Add audit events for enable, disable, apply, check.
 
-### Slice 4: Bundled Plugin Manifests
+### Slice 4: Manifest/Schema And Bundled Source
 
 - Load manifests from a controlled bundled directory.
 - Validate descriptors and Ling version compatibility.
 - Support bundled MCP server, skill-pack, runner, and provider contributions.
 - Still no arbitrary third-party install.
 
-### Slice 5: Isolated Local Plugin Contract
+Detailed implementation notes are tracked in
+[Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md#stage-4-5-detailed-design).
 
+### Slice 5: Install Cache, Runtime Injection, And Isolated Local Contract
+
+- Add a Ling-owned package cache for trusted local and bundled bundles.
+- Compile manifests into managed descriptors and linked resources.
 - Add worker/child-process host context for internal-isolated plugins.
 - Expose only scoped context methods.
+- Inject enabled package skills, MCP servers, apps, and hooks into run/session capability
+  snapshots.
+- Add per-plugin MCP/app/hook policy overlays before capabilities reach a run.
 - Use high-risk built-in automation to pressure-test the boundary.
 
 ### Slice 6: Third-Party Plugin API
 
 - Publish a stable external manifest and host context.
-- Add version pinning, source trust review, stronger sandboxing, uninstall cleanup, and
-  compatibility checks.
+- Add version pinning, source trust review, source indexes, stronger sandboxing,
+  uninstall cleanup, and compatibility checks.
 - Consider marketplace only after the security model has production evidence.
 
 ## Test Plan
