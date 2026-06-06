@@ -63,15 +63,21 @@ import {
 } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
+import { attachmentCanPreview } from "../../lib/previews.js";
 import { providerPreflightReady } from "../../lib/providers.js";
 import { readSseResponse } from "../../sse.js";
 import {
   AvatarInitial,
+  ComposerFileReferenceToken,
   MessageComposer,
   MetaRow,
   StatusBadge,
   UsedMemorySummary,
+  composerWorkspaceFileParts,
   filterUsedMemoryEventsByResponse,
+  parseComposerInputParts,
+  removeComposerInputRawToken,
+  serializeComposerInputParts,
 } from "../../shared/components/index.js";
 import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationFeed, ConversationShell, ConversationStatusStrip, MessageFooterActions, MessageRow } from "../../shared/conversation/index.js";
 import type {
@@ -261,6 +267,16 @@ export function TeammateWorkspace({
   const memoryById = useMemo(() => new Map(memoryObjects.map((memory) => [memory.id, memory])), [memoryObjects]);
   const privateAttachmentById = useMemo(() => new Map(privateAttachments.map((attachment) => [attachment.id, attachment])), [privateAttachments]);
   const pendingAttachments = useMemo(() => pendingAttachmentIds.map((id) => privateAttachmentById.get(id)).filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment)), [pendingAttachmentIds, privateAttachmentById]);
+  const composerInputParts = parseComposerInputParts(messageDraft, {
+    cwd: cwd.trim(),
+    attachments: pendingAttachmentIds.map((attachmentId) => ({ attachmentId })),
+    skills: effectiveSkills.map((skill) => ({ id: skill.skillId, label: skill.skill.name })),
+  });
+  const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
+  const composerFileReferenceTokens = composerFileReferenceParts.map((part, index) => ({
+    part,
+    occurrenceIndex: composerFileReferenceParts.slice(0, index).filter((candidate) => candidate.raw === part.raw).length,
+  }));
   const enabledSkillCount = useMemo(() => skillBindings.filter((binding) => binding.enabled).length, [skillBindings]);
   const skillRows = useMemo((): readonly TeammateSkillRowModel[] => {
     const registryRows = skillDefinitions.map((skill) => ({
@@ -479,8 +495,9 @@ export function TeammateWorkspace({
   }
 
   async function sendPrivateMessage(): Promise<void> {
-    const body = messageDraft.trim();
-    const attachmentIds = pendingAttachmentIds;
+    const serializedInput = serializeComposerInputParts(composerInputParts);
+    const body = serializedInput.body.trim();
+    const attachmentIds = [...serializedInput.attachmentIds];
     if ((!body && attachmentIds.length === 0) || sending) {
       return;
     }
@@ -654,6 +671,10 @@ export function TeammateWorkspace({
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  function removeComposerFileReference(raw: string, occurrenceIndex: number): void {
+    setMessageDraft((current) => removeComposerInputRawToken(current, raw, occurrenceIndex));
   }
 
   function copyMessageText(text: string): void {
@@ -1135,7 +1156,7 @@ export function TeammateWorkspace({
             <TeammateAvatar teammate={teammate} cwd={cwd} />
             <div>
               <span className="teammate-pack-label">{t(`role.${teammate.roleKey}`)}</span>
-              <h2>{teammate.displayName}</h2>
+              <h1>{teammate.displayName}</h1>
               <p>{t("Private conversation only visible between you and {name}", { name: teammate.displayName })}</p>
             </div>
           </div>
@@ -1263,6 +1284,8 @@ export function TeammateWorkspace({
                     createdAtLabel={formatDateTime(message.createdAt)}
                     statusNode={<StatusBadge status={message.status} />}
                     body={message.body}
+                    bodyCwd={cwd}
+                    bodyCompact
                     attachmentsNode={message.attachmentIds.length > 0 ? (
                       <ConversationAttachmentStrip
                         className="teammate-message-attachments"
@@ -1278,6 +1301,13 @@ export function TeammateWorkspace({
                             target: "_blank",
                             rel: "noreferrer",
                             icon: <Paperclip size={13} />,
+                            previewRequest: attachmentCanPreview(attachment) ? {
+                              source: "attachment",
+                              cwd: cwd.trim(),
+                              attachmentId: attachment.id,
+                              scope: "teammate_private",
+                              teammateId: teammate.id,
+                            } : undefined,
                           }))}
                       />
                     ) : null}
@@ -1340,8 +1370,17 @@ export function TeammateWorkspace({
               onChange={setMessageDraft}
               onSend={sendPrivateMessage}
               onAttachFiles={(files) => void uploadPrivateFiles(Array.from(files))}
-              previewContent={pendingAttachments.length > 0 ? (
+              previewContent={pendingAttachments.length > 0 || composerFileReferenceParts.length > 0 ? (
                 <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
+                  {composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
+                    <ComposerFileReferenceToken
+                      key={`${part.raw}-${index}`}
+                      path={part.path}
+                      line={part.line}
+                      removeLabel={t("Remove file reference")}
+                      onRemove={() => removeComposerFileReference(part.raw, occurrenceIndex)}
+                    />
+                  ))}
                   {pendingAttachments.map((attachment) => (
                     <div key={attachment.id} className="composer-preview-card file ready">
                       <span className="composer-preview-file-icon" aria-hidden="true">

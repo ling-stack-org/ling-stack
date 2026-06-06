@@ -8,6 +8,7 @@ import { isPathInsideRoot, normalizeArtifactPath } from "../../shared/path.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { setCorsHeaders, writeJson } from "../../shared/response.js";
 import { formatTimestampSlug } from "../../shared/time.js";
+import { buildAttachmentPreview } from "../previews/content-preview.js";
 import { validateChannelMessageOwner } from "./protocol.js";
 import { parseChannelAttachmentRequest, type ChannelAttachmentRequest } from "./schemas.js";
 
@@ -76,7 +77,7 @@ export async function handleChannelAttachmentItem(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
-  route: { readonly attachmentId: string; readonly action?: "content" },
+  route: { readonly attachmentId: string; readonly action?: "content" | "preview" },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -97,6 +98,15 @@ export async function handleChannelAttachmentItem(
 
     if (request.method === "GET" && route.action === "content") {
       handleGetAttachmentContent(response, store, resolvedAttachment);
+      return;
+    }
+
+    if (request.method === "GET" && route.action === "preview") {
+      if (!attachmentPreviewScopeMatches(url, resolvedAttachment)) {
+        writeJson(response, 404, { error: "attachment_not_found", message: "Attachment preview was not found for this scope." });
+        return;
+      }
+      handleGetAttachmentPreview(response, url, store, resolvedAttachment);
       return;
     }
 
@@ -127,6 +137,29 @@ export async function handleChannelAttachmentItem(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function attachmentPreviewScopeMatches(url: URL, attachment: ChannelAttachment | TeammatePrivateAttachment): boolean {
+  const scope = url.searchParams.get("scope");
+  const channelId = url.searchParams.get("channelId");
+  const teammateId = url.searchParams.get("teammateId");
+  if ("scope" in attachment) {
+    if (scope && scope !== "teammate_private") {
+      return false;
+    }
+    if (channelId) {
+      return false;
+    }
+    return !teammateId || teammateId === attachment.teammateId;
+  }
+
+  if (scope && scope !== "channel") {
+    return false;
+  }
+  if (teammateId) {
+    return false;
+  }
+  return !channelId || channelId === attachment.channelId;
 }
 
 function persistChannelAttachment(store: RunStore, channelId: string, input: ChannelAttachmentRequest): ChannelAttachment {
@@ -311,6 +344,34 @@ function handleGetAttachmentContent(response: ServerResponse, store: RunStore, a
   }
 }
 
+function handleGetAttachmentPreview(response: ServerResponse, url: URL, store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): void {
+  let contentPath: string;
+  try {
+    contentPath = resolveAttachmentContentPath(store, attachment);
+  } catch (error) {
+    writeJson(response, 403, {
+      error: "attachment_outside_root",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  try {
+    const maxBytes = readOptionalIntegerQuery(url, "maxBytes", 1);
+    writeJson(response, 200, buildAttachmentPreview({
+      attachment,
+      contentPath,
+      maxBytes,
+      imageUrl: attachment.kind === "image" ? attachmentContentUrl(url, attachment.id) : undefined,
+    }));
+  } catch (error) {
+    writeJson(response, 404, {
+      error: "attachment_preview_not_found",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export function deleteAttachmentContent(store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): void {
   try {
     unlinkSync(resolveAttachmentContentPath(store, attachment));
@@ -327,8 +388,17 @@ export function deleteAttachmentPath(store: RunStore, path: string): void {
   }
 }
 
-function resolveAttachmentContentPath(store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): string {
+export function resolveAttachmentContentPath(store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment): string {
   return resolveAttachmentPath(store, attachment.path);
+}
+
+function attachmentContentUrl(url: URL, attachmentId: string): string {
+  const previewCwd = url.searchParams.get("cwd");
+  const query = new URLSearchParams();
+  if (previewCwd) {
+    query.set("cwd", previewCwd);
+  }
+  return `${url.origin}/attachments/${encodeURIComponent(attachmentId)}/content${query.size > 0 ? `?${query.toString()}` : ""}`;
 }
 
 function resolveAttachmentPath(store: RunStore, path: string): string {

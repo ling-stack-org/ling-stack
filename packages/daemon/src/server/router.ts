@@ -120,6 +120,7 @@ import {
   handleCancelRun,
   handleGetArtifact,
   handleGetArtifactContent,
+  handleGetArtifactPreview,
   handleGetRun,
   handleGetRunEvents,
   handleListRunArtifacts,
@@ -789,6 +790,10 @@ export async function routeRequest(
   }
   if (request.method === "GET" && artifactRoute?.kind === "content") {
     handleGetArtifactContent(response, url, storeRegistry, artifactRoute.artifactId);
+    return;
+  }
+  if (request.method === "GET" && artifactRoute?.kind === "preview") {
+    handleGetArtifactPreview(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
 

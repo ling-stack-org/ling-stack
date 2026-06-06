@@ -27,6 +27,7 @@ import {
   expireStaleApproval,
   expireStalePendingApprovals,
 } from "./approvals.js";
+import { buildArtifactPreview } from "../previews/content-preview.js";
 import { inferArtifactContentType, resolveArtifactContentPath } from "./artifacts.js";
 import { parseRunRequest, type RunRequest } from "./schemas.js";
 
@@ -230,6 +231,57 @@ export function handleGetArtifactContent(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+export function handleGetArtifactPreview(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  artifactId: string,
+): void {
+  const lookup = storeRegistry.findStoreForArtifact(artifactId, url.searchParams.get("cwd") ?? undefined);
+  if (!lookup) {
+    writeJson(response, 404, {
+      error: "artifact_not_found",
+      message: "Artifact was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
+    });
+    return;
+  }
+
+  let artifactPath: string;
+  try {
+    artifactPath = resolveArtifactContentPath(lookup.store, lookup.artifact);
+  } catch (error) {
+    writeJson(response, 403, {
+      error: "artifact_outside_root",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  try {
+    const maxBytes = readOptionalIntegerQuery(url, "maxBytes", 1);
+    writeJson(response, 200, buildArtifactPreview({
+      artifact: lookup.artifact,
+      contentPath: artifactPath,
+      maxBytes,
+      imageUrl: lookup.artifact.type === "image" ? artifactContentUrl(url, lookup.artifact.id) : undefined,
+    }));
+  } catch (error) {
+    writeJson(response, 404, {
+      error: "artifact_preview_not_found",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function artifactContentUrl(url: URL, artifactId: string): string {
+  const previewCwd = url.searchParams.get("cwd");
+  const query = new URLSearchParams();
+  if (previewCwd) {
+    query.set("cwd", previewCwd);
+  }
+  return `${url.origin}/artifacts/${encodeURIComponent(artifactId)}/content${query.size > 0 ? `?${query.toString()}` : ""}`;
 }
 
 export function handleCancelRun(

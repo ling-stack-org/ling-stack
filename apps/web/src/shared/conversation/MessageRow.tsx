@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 
 export type MessageRowAuthorType = "local-user" | "ai-teammate" | "system";
 
@@ -11,6 +12,8 @@ export interface MessageRowProps {
   readonly createdAtLabel?: string;
   readonly statusNode?: ReactNode;
   readonly body?: string;
+  readonly bodyCwd?: string;
+  readonly bodyCompact?: boolean;
   readonly bodyNode?: ReactNode;
   readonly attachmentsNode?: ReactNode;
   readonly evidenceNode?: ReactNode;
@@ -27,24 +30,36 @@ export function MessageRow({
   createdAtLabel,
   statusNode,
   body,
+  bodyCwd,
+  bodyCompact,
   bodyNode,
   attachmentsNode,
   evidenceNode,
   errorNode,
   actionsNode,
 }: MessageRowProps): JSX.Element {
-  const rootClassName = ["conversation-message-row", authorType, className].filter(Boolean).join(" ");
+  const legacySideClass = authorType === "local-user" ? "message-bubble-own" : "message-bubble-peer";
+  const legacyToneClass = authorType === "system" ? "message-bubble-system" : "message-bubble-chat";
+  const rootClassName = [
+    "conversation-message-row",
+    "message-bubble",
+    "message-bubble-inline",
+    legacyToneClass,
+    legacySideClass,
+    authorType,
+    className,
+  ].filter(Boolean).join(" ");
 
   return (
     <article id={id} className={rootClassName}>
       {avatar}
-      <div>
+      <div className="message-content">
         <header>
           <strong>{authorName}</strong>
           {createdAtLabel ? <time>{createdAtLabel}</time> : null}
           {statusNode}
         </header>
-        {bodyNode ?? (body ? <p>{body}</p> : null)}
+        {bodyNode ?? (body ? <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} /> : null)}
         {attachmentsNode}
         {evidenceNode}
         {errorNode}

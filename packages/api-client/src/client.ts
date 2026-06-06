@@ -160,6 +160,7 @@ import type {
   ProviderMutationResponse,
   ProviderSecretResponse,
   ProviderTemplateListResponse,
+  PreviewContentResponse,
   ResourceLeaseListResponse,
   RunnerListResponse,
   RuntimeDiagnosticsResponse,
@@ -849,6 +850,25 @@ export class LingDaemonClient {
     await this.request("DELETE", `/attachments/${encodeURIComponent(attachmentId)}`, { cwd });
   }
 
+  async previewAttachmentContent(
+    cwd: string,
+    attachmentId: string,
+    options: {
+      readonly maxBytes?: number;
+      readonly scope?: "channel" | "teammate_private";
+      readonly channelId?: string;
+      readonly teammateId?: string;
+    } = {},
+  ): Promise<PreviewContentResponse> {
+    return this.get(`/attachments/${encodeURIComponent(attachmentId)}/preview`, {
+      cwd,
+      maxBytes: options.maxBytes,
+      scope: options.scope,
+      channelId: options.channelId,
+      teammateId: options.teammateId,
+    });
+  }
+
   attachmentContentUrl(attachmentId: string, cwd?: string): string {
     return this.url(`/attachments/${encodeURIComponent(attachmentId)}/content`, { cwd });
   }
@@ -1402,6 +1422,10 @@ export class LingDaemonClient {
 
   artifactContentUrl(artifactId: string, cwd?: string): string {
     return this.url(`/artifacts/${encodeURIComponent(artifactId)}/content`, { cwd });
+  }
+
+  async previewArtifactContent(cwd: string, artifactId: string, maxBytes?: number): Promise<PreviewContentResponse> {
+    return this.get(`/artifacts/${encodeURIComponent(artifactId)}/preview`, { cwd, maxBytes });
   }
 
   private get<T>(path: string, query: Query = {}): Promise<T> {

@@ -27,6 +27,7 @@ thread, expand the work that matters, and inspect exact evidence when needed.
 This document connects existing Ling Stack designs:
 
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Codex-Inspired File And Text Display v1](codex-inspired-file-text-display-v1.md)
 - [Channel Workspace v1.21 Codex-Style Chat Workspace](channel-workspace-v1.21.md)
 - [Channel Workspace v1.22 Long Conversation Virtual Feed](channel-workspace-v1.22.md)
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
@@ -74,10 +75,12 @@ Do not borrow:
 This design borrows interaction shape from the current open-source Codex CLI, not its
 terminal aesthetic.
 
-References checked on 2026-06-05:
+References checked on 2026-06-06:
 
 - [OpenAI Codex open-source repository](https://github.com/openai/codex)
-- [Codex TUI `chatwidget.rs`](https://github.com/openai/codex/blob/main/codex-rs/tui/src/chatwidget.rs)
+- Codex TUI `chatwidget/`, `history_cell/`, `markdown_render.rs`, and
+  `diff_render.rs`
+- Codex app-server protocol `ThreadItem`, `UserInput`, and `FileUpdateChange`
 
 The relevant Codex ideas are:
 

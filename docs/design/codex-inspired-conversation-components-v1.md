@@ -10,6 +10,9 @@ disclosure, and drawer behavior
 This document turns
 [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md) into
 implementable UI detail.
+[Codex-Inspired File And Text Display v1](codex-inspired-file-text-display-v1.md)
+extends this component model for message body rendering, local file links, artifact
+previews, and diff/file-change evidence.
 
 The Codex-style pattern to borrow is not the terminal look. It is the information shape:
 
@@ -67,6 +70,9 @@ apps/web/src/shared/conversation/
   ConversationVirtualFeed.tsx
   ConversationItem.tsx
   MessageRow.tsx
+  MessageBodyRenderer.tsx
+  ArtifactPreview.tsx
+  FileChangeEvidencePanel.tsx
   ConversationSummaryRow.tsx
   ConversationEmptyState.tsx
   EvidenceDisclosure.tsx
