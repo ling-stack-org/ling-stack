@@ -787,12 +787,22 @@ textarea {
   white-space: pre-wrap;
 }
 
+.message-content .message-body-renderer {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.52;
+}
+
 .message-bubble-inline .message-content p {
   padding-left: 27px;
 }
 
 .message-bubble-own .message-content p {
   padding-left: 0;
+}
+
+.message-bubble-own .message-content .message-body-renderer {
+  color: var(--text-strong);
 }
 
 .message-mention-token {

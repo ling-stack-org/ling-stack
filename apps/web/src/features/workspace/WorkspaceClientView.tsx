@@ -83,6 +83,7 @@ import {
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
+import { attachmentCanPreview } from "../../lib/previews.js";
 import { buildRunRepairHint, displayLinkedRunStatus, readRunWorkspaceCwd } from "../../lib/run-evidence.js";
 import { defaultTools, riskyTools } from "../../lib/tools.js";
 import {
@@ -100,13 +101,18 @@ import { CiTriageAuditPanel } from "../external-work/CiTriageAuditPanel.js";
 import {
   ArtifactRow,
   AvatarInitial,
+  ComposerFileReferenceToken,
   MetaRow,
   RunRepairHintBanner,
   StatusBadge,
   UsedMemorySummary,
+  composerWorkspaceFileParts,
   filterUsedMemoryEventsByResponse,
+  parseComposerInputParts,
+  removeComposerInputRawToken,
+  serializeComposerInputParts,
 } from "../../shared/components/index.js";
-import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, MessageFooterActions, MessageRow, RightDrawer } from "../../shared/conversation/index.js";
+import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, MessageBodyRenderer, MessageFooterActions, MessageRow, RightDrawer } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -1570,6 +1576,10 @@ export function WorkspaceClientView({
     setMessageMentions((current) => current.filter((mention) => mention.id !== mentionId));
   }
 
+  function removeComposerFileReference(raw: string, occurrenceIndex: number): void {
+    setMessageDraft((current) => removeComposerInputRawToken(current, raw, occurrenceIndex));
+  }
+
   function insertMentionTrigger(): void {
     const textarea = composerTextareaRef.current;
     const start = textarea?.selectionStart ?? messageDraft.length;
@@ -1762,12 +1772,14 @@ export function WorkspaceClientView({
     if (!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent) {
       return;
     }
-    const body = messageDraft.trim();
+    const serializedInput = serializeComposerInputParts(composerInputParts);
+    const body = serializedInput.body.trim();
     const pastedUrls = extractUrls(body);
     const newPreviews: ChannelLinkPreview[] = [];
-    const attachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
+    const attachmentIds = [...serializedInput.attachmentIds];
     const pendingPreviewRecords = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview] : []);
-    const shouldRequestAi = messageMentions.some((mention) => mention.kind === "ai-teammate");
+    const mentions = mergeMentions(messageMentions, findMentionsInText(body, teammateOptions));
+    const shouldRequestAi = mentions.some((mention) => mention.kind === "ai-teammate");
     setComposerBusy(true);
     setSendState("sending");
     setSendError("");
@@ -1791,7 +1803,7 @@ export function WorkspaceClientView({
       const linkPreviews = [...pendingPreviewRecords, ...newPreviews];
       await onSendMessage({
         body,
-        mentions: messageMentions,
+        mentions,
         attachmentIds,
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
         requestAiReply: shouldRequestAi,
@@ -1890,9 +1902,19 @@ export function WorkspaceClientView({
 
   const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
   const readyLinkPreviewIds = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview.id] : []);
+  const composerInputParts = parseComposerInputParts(messageDraft, {
+    cwd,
+    attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
+    teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
+  });
+  const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
+  const composerFileReferenceTokens = composerFileReferenceParts.map((part, index) => ({
+    part,
+    occurrenceIndex: composerFileReferenceParts.slice(0, index).filter((candidate) => candidate.raw === part.raw).length,
+  }));
   const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0;
   const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
-  const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0;
+  const pendingMessageAssetsVisible = pendingAttachments.length > 0 || pendingLinkPreviews.length > 0 || messageMentions.length > 0 || composerFileReferenceParts.length > 0;
 
   function renderMessageFeedActivityItem(item: ChannelActivityItem): ReactNode {
     if (item.kind === "message") {
@@ -1921,10 +1943,10 @@ export function WorkspaceClientView({
               createdAtLabel={formatDateTime(message.createdAt)}
               statusNode={message.kind === "ai_reply" ? <small className="conversation-message-tag">AI</small> : null}
               bodyNode={(
-                <p>
+                <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                   {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-                  {renderMessageBody(pendingAiReply ? t("AI teammate is replying...") : message.body)}
-                </p>
+                  <MessageBodyRenderer text={pendingAiReply ? t("AI teammate is replying...") : message.body} cwd={cwd} compact />
+                </div>
               )}
               attachmentsNode={messageAttachments.length > 0 ? (
                 <ConversationAttachmentStrip
@@ -1936,6 +1958,13 @@ export function WorkspaceClientView({
                     target: "_blank",
                     rel: "noreferrer",
                     icon: attachment.kind === "image" ? <ImageIcon size={13} /> : <FileText size={13} />,
+                    previewRequest: attachmentCanPreview(attachment) ? {
+                      source: "attachment",
+                      cwd,
+                      attachmentId: attachment.id,
+                      scope: "channel",
+                      channelId: message.channelId,
+                    } : undefined,
                   }))}
                 />
               ) : null}
@@ -2372,6 +2401,15 @@ export function WorkspaceClientView({
                   <X size={13} />
                 </button>
               </div>
+            ))}
+            {composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
+              <ComposerFileReferenceToken
+                key={`${part.raw}-${index}`}
+                path={part.path}
+                line={part.line}
+                removeLabel={t("Remove file reference")}
+                onRemove={() => removeComposerFileReference(part.raw, occurrenceIndex)}
+              />
             ))}
             {messageMentions.map((mention) => (
               <span key={mention.id} className="pending-asset composer-preview-mention ready">
@@ -3119,6 +3157,7 @@ export function WorkspaceClientView({
                 </div>
                 {activeThreadRoot ? (
                   <ThreadReplyPanel
+                    cwd={cwd}
                     rootMessage={activeThreadRoot}
                     replies={activeThreadMessages}
                     teammates={teammateOptions}
@@ -4760,7 +4799,10 @@ function MessageBubble({
             {metaAction ? <span className="message-meta-action">{metaAction}</span> : null}
           </div>
         )}
-        <p>{pending ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}{renderMessageBody(body)}</p>
+        <div className={pending ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
+          {pending ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
+          <MessageBodyRenderer text={body} compact />
+        </div>
         {action ? <div className="message-action">{action}</div> : null}
       </div>
       {inlineAuthor && side === "end" ? avatar : null}
@@ -4888,6 +4930,7 @@ function ChannelExecutionProposalCard({
 }
 
 function ThreadReplyPanel({
+  cwd,
   rootMessage,
   replies,
   teammates,
@@ -4900,6 +4943,7 @@ function ThreadReplyPanel({
   onSend,
   onClose,
 }: {
+  readonly cwd: string;
   readonly rootMessage: ChannelMessage;
   readonly replies: readonly ChannelMessage[];
   readonly teammates: readonly ChannelMention[];
@@ -4930,7 +4974,7 @@ function ThreadReplyPanel({
         {rootMessageIsOwn ? null : (
           <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates, t("Deleted teammate")) })}</small>
         )}
-        <p>{renderMessageBody(rootMessage.body)}</p>
+        <MessageBodyRenderer text={rootMessage.body} cwd={cwd} compact />
         <UsedMemorySummary
           compact
           events={filterUsedMemoryEventsByResponse(usedMemoryEvents, rootMessage.id)}
@@ -4950,7 +4994,7 @@ function ThreadReplyPanel({
                   {reply.kind === "ai_reply" ? <small>AI</small> : null}
                 </div>
               )}
-              <p>{renderMessageBody(reply.body)}</p>
+              <MessageBodyRenderer text={reply.body} cwd={cwd} compact />
               <UsedMemorySummary
                 compact
                 events={filterUsedMemoryEventsByResponse(usedMemoryEvents, reply.id)}
@@ -4987,15 +5031,6 @@ function ThreadReplyPanel({
       </div>
     </aside>
   );
-}
-
-function renderMessageBody(body: string): ReactNode {
-  return body.split(/(@[A-Za-z0-9][A-Za-z0-9_.-]*)/g).map((part, index) => {
-    if (part.startsWith("@")) {
-      return <span key={`${part}-${index}`} className="message-mention-token">{part}</span>;
-    }
-    return part;
-  });
 }
 
 function ActivityFilterToolbar({

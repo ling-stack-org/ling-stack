@@ -1,8 +1,11 @@
 export { ArtifactRow } from "./ArtifactRow.js";
 export { AvatarInitial, type AvatarTone } from "./AvatarInitial.js";
+export { ComposerFileReferenceToken, type ComposerFileReferenceTokenProps } from "./ComposerFileReferenceToken.js";
+export { ComposerMentionToken, type ComposerMentionTokenProps } from "./ComposerMentionToken.js";
 export { LingStackLogo } from "./LingStackLogo.js";
 export { MessageComposer, type MessageComposerProps } from "./MessageComposer.js";
 export { MetaRow } from "./MetaRow.js";
 export { RunRepairHintBanner } from "./RunRepairHintBanner.js";
 export { StatusBadge } from "./StatusBadge.js";
 export { UsedMemorySummary, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";
+export { composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "./composer-input-parts.js";

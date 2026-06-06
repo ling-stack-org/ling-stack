@@ -16,7 +16,9 @@ import {
 } from "../../lib/approvals.js";
 import { formatEventData, formatUnknownPreview, readDataField, readDataString } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
+import { fileChangeStatusFromApproval } from "../../lib/file-change-evidence.js";
 import { ArtifactRow } from "../../shared/components/index.js";
+import { FileChangeEvidencePanel } from "../../shared/conversation/index.js";
 import type { ApprovalRequest, ExternalWorkActionView } from "../../types.js";
 import type { ApprovalResolution } from "./types.js";
 
@@ -263,6 +265,15 @@ function ExternalActionAuditPanel({
       ) : null}
       {artifacts.length > 0 ? (
         <div className="external-action-artifacts" aria-label={t("External action artifacts")}>
+          {cwd ? (
+            <FileChangeEvidencePanel
+              cwd={cwd}
+              artifacts={artifacts}
+              status={fileChangeStatusFromApproval(approval)}
+              approvalId={approval.id}
+              compact
+            />
+          ) : null}
           {artifacts.map((artifact) => <ArtifactRow key={artifact.id} artifact={artifact} cwd={cwd} />)}
         </div>
       ) : null}

@@ -60,7 +60,8 @@ import {
   UsedMemorySummary,
   filterUsedMemoryEventsByResponse,
 } from "../../shared/components/index.js";
-import { ConversationEvidenceBundlePanel, ConversationSummaryRow } from "../../shared/conversation/index.js";
+import { ConversationEvidenceBundlePanel, ConversationSummaryRow, FileChangeEvidencePanel, MessageBodyRenderer } from "../../shared/conversation/index.js";
+import { fileChangeStatusFromRun } from "../../lib/file-change-evidence.js";
 import { EventRow } from "./EventRow.js";
 import type {
   ApprovalRequest,
@@ -1653,7 +1654,7 @@ function RunEvidencePanel({
           icon={<CheckCircle2 size={16} />}
           title={taskLabel}
           statusNode={<StatusBadge status={run.status} />}
-          body={<p className={`run-evidence-copy${run.status === "failed" ? " error" : ""}`}>{evidenceMessage}</p>}
+          body={<MessageBodyRenderer className={`run-evidence-copy${run.status === "failed" ? " error" : ""}`} text={evidenceMessage} cwd={cwd} compact />}
           metaItems={[
             { id: "provider", label: t("Provider"), value: providerLabel },
             { id: "tools", label: t("Tool events"), value: String(toolSummary.total) },
@@ -1836,6 +1837,12 @@ function RunEvidencePanel({
 
       <div className="run-evidence-block">
         <strong>{t("Artifacts")}</strong>
+        <FileChangeEvidencePanel
+          cwd={artifactCwd}
+          artifacts={artifacts}
+          status={fileChangeStatusFromRun(run)}
+          sourceRunId={run.id}
+        />
         {artifacts.length === 0 ? (
           <div className="artifact-empty-state">
             <span>{t("No artifacts recorded for this run")}</span>

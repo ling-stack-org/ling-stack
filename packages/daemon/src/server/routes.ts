@@ -121,13 +121,16 @@ export function parseWorkUnitRoute(pathname: string): WorkUnitRoute | undefined 
   return undefined;
 }
 
-export function parseArtifactRoute(pathname: string): { kind: "artifact"; artifactId: string } | { kind: "content"; artifactId: string } | undefined {
+export function parseArtifactRoute(pathname: string): { kind: "artifact"; artifactId: string } | { kind: "content"; artifactId: string } | { kind: "preview"; artifactId: string } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "artifacts") {
     return { kind: "artifact", artifactId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "artifacts" && segments[2] === "content") {
     return { kind: "content", artifactId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "artifacts" && segments[2] === "preview") {
+    return { kind: "preview", artifactId: segments[1] };
   }
   return undefined;
 }
@@ -248,13 +251,16 @@ export function parseManagedPluginRoute(
 
 export function parseChannelAttachmentRoute(
   pathname: string,
-): { readonly attachmentId: string; readonly action?: "content" } | undefined {
+): { readonly attachmentId: string; readonly action?: "content" | "preview" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "attachments") {
     return { attachmentId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "attachments" && segments[2] === "content") {
     return { attachmentId: segments[1], action: "content" };
+  }
+  if (segments.length === 3 && segments[0] === "attachments" && segments[2] === "preview") {
+    return { attachmentId: segments[1], action: "preview" };
   }
   return undefined;
 }

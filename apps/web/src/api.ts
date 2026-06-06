@@ -142,6 +142,7 @@ import type {
   ProviderMutationResponse,
   ProviderSecretResponse,
   ProviderTemplateListResponse,
+  PreviewContentResponse,
   ListResourceLeasesRequest,
   ResourceLeaseListResponse,
   ReplaceTeammateChannelMembershipRequest,
@@ -689,6 +690,19 @@ export function attachmentContentUrlById(attachmentId: string, cwd?: string): st
   return daemonClient.attachmentContentUrl(attachmentId, cwd);
 }
 
+export async function previewAttachmentContent(
+  cwd: string,
+  attachmentId: string,
+  options: {
+    readonly maxBytes?: number;
+    readonly scope?: "channel" | "teammate_private";
+    readonly channelId?: string;
+    readonly teammateId?: string;
+  } = {},
+): Promise<PreviewContentResponse> {
+  return daemonClient.previewAttachmentContent(cwd, attachmentId, options);
+}
+
 export async function listChannelLinkPreviews(cwd: string, channelId: string): Promise<ChannelLinkPreviewListResponse> {
   return daemonClient.listChannelLinkPreviews(cwd, channelId);
 }
@@ -1199,6 +1213,10 @@ export async function listMediaJobArtifacts(mediaJobId: string, cwd?: string): P
 
 export function artifactContentUrl(artifactId: string, cwd?: string): string {
   return daemonClient.artifactContentUrl(artifactId, cwd);
+}
+
+export async function previewArtifactContent(cwd: string, artifactId: string, maxBytes?: number): Promise<PreviewContentResponse> {
+  return daemonClient.previewArtifactContent(cwd, artifactId, maxBytes);
 }
 
 export async function cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {

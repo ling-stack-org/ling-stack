@@ -1,4 +1,8 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { Eye } from "lucide-react";
+import { useI18n } from "../../i18n.js";
+import type { PreviewRequest } from "../../lib/previews.js";
+import { ArtifactPreviewDrawer } from "./ArtifactPreviewDrawer.js";
 
 export interface ConversationAttachmentChip {
   readonly id: string;
@@ -10,6 +14,7 @@ export interface ConversationAttachmentChip {
   readonly rel?: string;
   readonly title?: string;
   readonly onClick?: () => void;
+  readonly previewRequest?: PreviewRequest;
 }
 
 export interface ConversationAttachmentStripProps {
@@ -23,6 +28,9 @@ export function ConversationAttachmentStrip({
   chipClassName,
   attachments,
 }: ConversationAttachmentStripProps): JSX.Element | null {
+  const { t } = useI18n();
+  const [activePreview, setActivePreview] = useState<ConversationAttachmentChip | undefined>();
+
   if (attachments.length === 0) {
     return null;
   }
@@ -40,33 +48,50 @@ export function ConversationAttachmentStrip({
             {attachment.meta ? <small>{attachment.meta}</small> : null}
           </>
         );
-        if (attachment.href) {
-          return (
-            <a
-              key={attachment.id}
-              className={resolvedChipClassName}
-              href={attachment.href}
-              target={attachment.target}
-              rel={attachment.rel}
-              title={attachment.title ?? attachment.label}
-              onClick={attachment.onClick}
-            >
-              {content}
-            </a>
-          );
-        }
         return (
-          <button
-            key={attachment.id}
-            className={resolvedChipClassName}
-            type="button"
-            title={attachment.title ?? attachment.label}
-            onClick={attachment.onClick}
-          >
-            {content}
-          </button>
+          <span key={attachment.id} className="conversation-attachment-item">
+            {attachment.href ? (
+              <a
+                className={resolvedChipClassName}
+                href={attachment.href}
+                target={attachment.target}
+                rel={attachment.rel}
+                title={attachment.title ?? attachment.label}
+                onClick={attachment.onClick}
+              >
+                {content}
+              </a>
+            ) : (
+              <button
+                className={resolvedChipClassName}
+                type="button"
+                title={attachment.title ?? attachment.label}
+                onClick={attachment.onClick}
+              >
+                {content}
+              </button>
+            )}
+            {attachment.previewRequest ? (
+              <button
+                className="conversation-attachment-preview-button"
+                type="button"
+                aria-label={`${t("Preview")}: ${attachment.label}`}
+                title={`${t("Preview")}: ${attachment.label}`}
+                onClick={() => setActivePreview(attachment)}
+              >
+                <Eye size={13} aria-hidden="true" />
+              </button>
+            ) : null}
+          </span>
         );
       })}
+      <ArtifactPreviewDrawer
+        request={activePreview?.previewRequest}
+        openHref={activePreview?.href}
+        downloadHref={activePreview?.href}
+        downloadName={activePreview?.label}
+        onClose={() => setActivePreview(undefined)}
+      />
     </div>
   );
 }
