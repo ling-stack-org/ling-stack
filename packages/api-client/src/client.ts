@@ -182,6 +182,7 @@ import type {
   SkillImportPublishResponse,
   SkillRegistryListResponse,
   SkillRegistryMutationResponse,
+  SkillRegistryRefreshResponse,
   StateTransitionListResponse,
   TaskListResponse,
   TaskMutationResponse,
@@ -377,6 +378,10 @@ export class LingDaemonClient {
 
   async listSkills(cwd: string): Promise<SkillRegistryListResponse> {
     return this.get("/skills", { cwd });
+  }
+
+  async refreshSkills(cwd: string): Promise<SkillRegistryRefreshResponse> {
+    return this.post("/skills/refresh", { cwd }, {});
   }
 
   async createSkillImportDraft(cwd: string, input: SkillImportDraftRequest): Promise<SkillImportDraftResponse> {

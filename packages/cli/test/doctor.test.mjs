@@ -25,12 +25,16 @@ test("doctor reports a ready workspace", async () => {
     assert.match(result.stdout, /providers\.preflight\s+1 provider\(s\) passed preflight/);
     assert.match(result.stdout, /channels\.configured\s+1 channel\(s\) configured/);
     assert.match(result.stdout, /approval_policy\.load\s+approval policy loads/);
+    assert.match(result.stdout, /skills\.registry\s+effective skill registry loads/);
+    assert.match(result.stdout, /memory\.review_policy\s+memory review policy loads/);
     assert.match(result.stdout, /runtime\.leases\s+no active leases/);
     assert.ok(daemon.requests.includes("GET /health"));
     assert.ok(daemon.requests.includes("GET /providers"));
     assert.ok(daemon.requests.includes("GET /channels"));
     assert.ok(daemon.requests.includes("GET /tasks"));
     assert.ok(daemon.requests.includes("GET /approval-policy"));
+    assert.ok(daemon.requests.includes("GET /skills"));
+    assert.ok(daemon.requests.includes("GET /memory/review-policy"));
     assert.ok(daemon.requests.includes("GET /runtime/leases"));
     assert.ok(daemon.requests.includes("GET /runtime/stuck"));
     assert.ok(daemon.requests.includes("GET /mcp/servers"));
@@ -82,6 +86,10 @@ test("doctor json exposes readiness counters", async () => {
     assert.equal(checks.get("providers.configured").details.runnable, 1);
     assert.equal(checks.get("providers.preflight").details.preflightReady, 1);
     assert.equal(checks.get("channels.configured").details.total, 1);
+    assert.equal(checks.get("skills.registry").details.total, 2);
+    assert.equal(checks.get("skills.registry").details.builtin, 1);
+    assert.equal(checks.get("skills.registry").details.published, 1);
+    assert.equal(checks.get("memory.review_policy").details.mode, "manual-review");
     assert.equal(checks.get("runtime.leases").details.activeLeases, 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -106,6 +114,32 @@ test("doctor json continues when daemon is down", async () => {
     assert.equal(checks.get("workspace.sqlite").status, "ok");
   } finally {
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("doctor flags missing skills and memory routes without refreshing or repairing", async () => {
+  const daemon = await startDoctorDaemon({
+    missingRoutes: ["/skills", "/memory/review-policy"],
+  });
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-routes-"));
+  try {
+    await prepareDoctorWorkspace(cwd);
+    const result = await runCli(daemon.url, cwd, ["doctor", "--json"]);
+    const body = JSON.parse(result.stdout);
+
+    assert.equal(result.code, 4);
+    assert.equal(body.overallStatus, "fail");
+    const checks = new Map(body.checks.map((check) => [check.id, check]));
+    assert.equal(checks.get("skills.registry").status, "fail");
+    assert.equal(checks.get("skills.registry").details.error.status, 404);
+    assert.equal(checks.get("memory.review_policy").status, "fail");
+    assert.equal(checks.get("memory.review_policy").details.error.status, 404);
+    assert.ok(daemon.requests.includes("GET /skills"));
+    assert.ok(daemon.requests.includes("GET /memory/review-policy"));
+    assert.ok(!daemon.requests.includes("POST /skills/refresh"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
   }
 });
 
@@ -164,6 +198,8 @@ async function startDoctorDaemon(overrides = {}) {
   const providers = overrides.providers ?? [readyProvider()];
   const channels = overrides.channels ?? [readyChannel()];
   const tasks = overrides.tasks ?? [readyTask()];
+  const skills = overrides.skills ?? [readyBuiltinSkill(), readyPublishedSkill()];
+  const missingRoutes = new Set(overrides.missingRoutes ?? []);
   const policy = overrides.policy ?? {
     workspaceId: "workspace_default",
     toolDecisions: {
@@ -179,10 +215,26 @@ async function startDoctorDaemon(overrides = {}) {
     createdAt: "2026-05-21T00:00:00.000Z",
     updatedAt: "2026-05-21T00:00:00.000Z",
   };
+  const reviewPolicy = overrides.reviewPolicy ?? {
+    workspaceId: "workspace_default",
+    mode: "manual-review",
+    autoActiveSameScope: false,
+    autoActiveUserExplicit: false,
+    requireManualForWorkspace: true,
+    requireManualForPersona: true,
+    requireManualForCrossScope: true,
+    quarantineSecretAdjacent: true,
+    updatedAt: "2026-05-21T00:00:00.000Z",
+  };
 
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     requests.push(`${request.method} ${url.pathname}`);
+
+    if (missingRoutes.has(url.pathname)) {
+      writeJson(response, 404, { error: "not_found" });
+      return;
+    }
 
     if (request.method === "GET" && url.pathname === "/health") {
       writeJson(response, 200, { ok: true, service: "ling-stack-daemon" });
@@ -211,6 +263,16 @@ async function startDoctorDaemon(overrides = {}) {
 
     if (request.method === "GET" && url.pathname === "/approval-policy") {
       writeJson(response, 200, { cwd: url.searchParams.get("cwd"), policy });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/skills") {
+      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), skills });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/memory/review-policy") {
+      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), policy: reviewPolicy });
       return;
     }
 
@@ -272,6 +334,37 @@ function readyProvider() {
       message: "ready",
       checkedAt: "2026-05-21T00:00:00.000Z",
     },
+  };
+}
+
+function readyBuiltinSkill() {
+  return readySkill("qa", "builtin");
+}
+
+function readyPublishedSkill() {
+  return readySkill("workspace-code-review", "published");
+}
+
+function readySkill(id, reviewStatus) {
+  return {
+    id,
+    workspaceId: "workspace_default",
+    packId: reviewStatus === "builtin" ? "gstack-default" : "workspace-custom",
+    source: reviewStatus === "builtin" ? "builtin" : "custom",
+    definition: {
+      id,
+      name: id,
+      description: `Skill ${id}`,
+      tools: [],
+      prompts: [],
+    },
+    visibility: {
+      workspaceVisible: true,
+      promotableToWorkspace: true,
+    },
+    reviewStatus,
+    createdAt: "2026-05-21T00:00:00.000Z",
+    updatedAt: "2026-05-21T00:00:00.000Z",
   };
 }
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -36,6 +37,73 @@ test("sqlite seeds durable builtin AI teammates and migrates legacy template ref
       assert.equal(reopened.getTask(task.id).assigneeTeammateId, engineerId);
     } finally {
       reopened.close();
+    }
+  } finally {
+    if (!closed) {
+      store.close();
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite backfills current template skill defaults for existing builtin teammates without resetting overrides", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ai-teammate-skill-backfill-"));
+  const store = createSqliteRunStore(cwd);
+  const qaId = createBuiltinAiTeammateId("qa");
+  const databasePath = store.paths.databasePath;
+  const oldCreatedAt = "2026-05-29T00:00:00.000Z";
+  let closed = false;
+  try {
+    store.close();
+    closed = true;
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec("BEGIN");
+      database.prepare("DELETE FROM teammate_skill_bindings WHERE teammate_id = ?").run(qaId);
+      const insert = database.prepare(`
+        INSERT INTO teammate_skill_bindings (
+          teammate_id,
+          skill_id,
+          source,
+          enabled,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      insert.run(qaId, "investigate", "template", 1, oldCreatedAt, oldCreatedAt);
+      insert.run(qaId, "qa", "template", 0, oldCreatedAt, oldCreatedAt);
+      insert.run(qaId, "health", "user", 1, oldCreatedAt, oldCreatedAt);
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    } finally {
+      database.close();
+    }
+
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      const bindings = reopened.listTeammateSkillBindings(qaId);
+      const bySkill = new Map(bindings.map((binding) => [binding.skillId, binding]));
+      for (const skillId of ["qa", "qa-only", "investigate", "design-review", "devex-review", "benchmark"]) {
+        assert.ok(bySkill.has(skillId), `${skillId} should be present after template backfill`);
+      }
+      assert.equal(bySkill.get("qa").enabled, false, "existing disabled template binding should stay disabled");
+      assert.equal(bySkill.get("qa").updatedAt, oldCreatedAt, "existing template binding should not be rewritten");
+      assert.equal(bySkill.get("health").source, "user", "custom user binding should stay present");
+      assert.equal(bySkill.get("qa-only").source, "template");
+      assert.equal(bySkill.get("qa-only").enabled, true);
+      assert.equal(bindings.length, 7);
+    } finally {
+      reopened.close();
+    }
+
+    const reopenedAgain = createSqliteRunStore(cwd);
+    try {
+      assert.equal(reopenedAgain.listTeammateSkillBindings(qaId).length, 7, "backfill should be idempotent");
+    } finally {
+      reopenedAgain.close();
     }
   } finally {
     if (!closed) {

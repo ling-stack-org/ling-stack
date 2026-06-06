@@ -3773,6 +3773,12 @@ export interface SkillRegistryListResponse {
   readonly skills: readonly SkillRegistryEntry[];
 }
 
+export interface SkillRegistryRefreshResponse {
+  readonly cwd: string;
+  readonly refreshedAt: string;
+  readonly registryGeneration: number;
+  readonly skills: readonly SkillRegistryEntry[];
+}
 
 export interface SkillImportDraftRequest {
   readonly content: string;

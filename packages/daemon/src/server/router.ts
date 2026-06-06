@@ -614,7 +614,7 @@ export async function routeRequest(
   }
 
   const skillRoute = parseSkillRoute(url.pathname);
-  if (url.pathname === "/skills" || url.pathname === "/skills/import-draft" || skillRoute) {
+  if (url.pathname === "/skills" || url.pathname === "/skills/refresh" || url.pathname === "/skills/import-draft" || skillRoute) {
     await handleSkillRoute(request, response, config, storeRegistry, skillRoute);
     return;
   }
