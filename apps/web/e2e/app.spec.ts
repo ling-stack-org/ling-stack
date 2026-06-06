@@ -17,7 +17,6 @@ interface MockState {
   providerSecrets: Record<string, string>;
   mcpServers: MockMcpServer[];
   mcpTools: MockMcpTool[];
-  mcpServerSecrets: Record<string, Record<string, string>>;
   teammateMcpBindings: MockTeammateMcpBinding[];
   channels: unknown[];
   channelMessages: unknown[];
@@ -399,6 +398,7 @@ interface MockMcpServer {
   env: Record<string, string>;
   headers: Record<string, string>;
   secretNames: string[];
+  secretRefs: Record<string, string>;
   enabled: boolean;
   status: "unknown" | "ready" | "failed" | "disabled";
   lastCheck?: {
@@ -3485,7 +3485,7 @@ test("MCP tool access page creates servers without exposing secret values", asyn
   await sheet.getByLabel("传输方式").selectOption("streamable-http");
   await sheet.getByLabel("服务地址").fill("https://api.githubcopilot.com/mcp");
   await sheet.getByLabel("Header 密钥名称").fill("X-Goog-Api-Key");
-  await sheet.getByLabel("Header 密钥值").fill("AQ.test-secret-token");
+  await sheet.getByLabel("Header 密钥引用").fill("env:GOOG_API_KEY");
   await sheet.getByRole("button", { name: "保存服务" }).click();
 
   const serverRow = page.locator(".mcp-server-row").filter({ hasText: "GitHub MCP" });
@@ -3493,7 +3493,7 @@ test("MCP tool access page creates servers without exposing secret values", asyn
   await expect(serverRow).toContainText("HTTP");
   await expect(serverRow).toContainText("密钥已配置");
   await expect(page.locator("body")).not.toContainText("AQ.test-secret-token");
-  await expect.poll(() => state.mcpServerSecrets.github?.["X-Goog-Api-Key"]).toBe("AQ.test-secret-token");
+  await expect.poll(() => state.mcpServers.find((server) => server.serverKey === "github")?.secretRefs["X-Goog-Api-Key"]).toBe("env:GOOG_API_KEY");
 
   await serverRow.getByRole("button", { name: "检查连接" }).click();
   await expect(serverRow).toContainText("就绪");
@@ -3508,22 +3508,14 @@ test("MCP tool access page creates servers without exposing secret values", asyn
   await expect(editSheet).toBeVisible();
   await expect(editSheet.getByText("Required for assigned teammates")).toHaveCount(0);
   await expect(editSheet.getByRole("switch", { name: "启用服务" })).toBeVisible();
-  const secretInput = editSheet.getByLabel("Header 密钥值", { exact: true });
-  await expect(secretInput).toHaveAttribute("placeholder", "粘贴密钥");
-  await expect(secretInput).toHaveAttribute("type", "password");
-  await expect(secretInput).toHaveValue("AQ.test-secret-token");
-  await editSheet.getByRole("button", { name: "显示 Header 密钥值" }).click();
-  await expect(secretInput).toHaveAttribute("type", "text");
-  await editSheet.getByRole("button", { name: "隐藏 Header 密钥值" }).click();
-  await expect(secretInput).toHaveAttribute("type", "password");
+  await expect(editSheet.getByLabel("Header 密钥引用")).toHaveValue("env:GOOG_API_KEY");
+  await expect(editSheet.getByLabel("Header 密钥值", { exact: true })).toHaveCount(0);
+  await expect(editSheet.getByRole("button", { name: /显示 Header 密钥值|隐藏 Header 密钥值/ })).toHaveCount(0);
   await editSheet.getByText("高级设置").click();
   await expect(editSheet.getByText("设为关键依赖")).toBeVisible();
   await expect(editSheet.getByText("开启后，已授权队友在该服务不可用时将停止执行，避免缺少关键工具时继续运行。")).toBeVisible();
-  await editSheet.getByRole("button", { name: "清除输入" }).click();
-  await expect(secretInput).toHaveValue("");
   await editSheet.getByRole("button", { name: "保存服务" }).click();
-  await expect.poll(() => state.mcpServerSecrets.github?.["X-Goog-Api-Key"]).toBeUndefined();
-  await expect(serverRow).toContainText("未配置密钥");
+  await expect.poll(() => state.mcpServers.find((server) => server.serverKey === "github")?.secretRefs["X-Goog-Api-Key"]).toBe("env:GOOG_API_KEY");
 
   await expect(page.locator(".mcp-tool-row").filter({ hasText: "Search repositories" })).toHaveCount(0);
   await serverRow.getByRole("button", { name: "同步工具列表" }).click();
@@ -6070,7 +6062,6 @@ function createBaseState(options: { approvalStatus: "pending" | "expired" }): Mo
     providerSecrets: {},
     mcpServers: [],
     mcpTools: [],
-    mcpServerSecrets: {},
     teammateMcpBindings: [],
     channels: [
       {
@@ -6993,6 +6984,7 @@ function createMockMcpServer(overrides: Partial<MockMcpServer> = {}): MockMcpSer
     env: {},
     headers: {},
     secretNames: [],
+    secretRefs: {},
     enabled: true,
     status: "ready",
     lastCheck: {
@@ -7054,11 +7046,16 @@ function createMockMcpServerFromBody(body: Record<string, unknown>, id: string, 
     url: typeof transportRecord.url === "string" && transportRecord.url.trim() ? transportRecord.url.trim() : existing?.url,
     env: isRecord(transportRecord.env) ? Object.fromEntries(Object.entries(transportRecord.env).filter(([, value]) => typeof value === "string")) as Record<string, string> : existing?.env ?? {},
     headers: isRecord(transportRecord.headers) ? Object.fromEntries(Object.entries(transportRecord.headers).filter(([, value]) => typeof value === "string")) as Record<string, string> : existing?.headers ?? {},
-    secretNames: Array.isArray(transportRecord.secretHeaderNames)
-      ? transportRecord.secretHeaderNames.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-      : Array.isArray(transportRecord.secretEnvNames)
-        ? transportRecord.secretEnvNames.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    secretNames: isRecord(transportRecord.secretHeaderRefs)
+      ? Object.keys(transportRecord.secretHeaderRefs).filter((item) => item.trim().length > 0)
+      : isRecord(transportRecord.secretEnvRefs)
+        ? Object.keys(transportRecord.secretEnvRefs).filter((item) => item.trim().length > 0)
         : existing?.secretNames ?? [],
+    secretRefs: isRecord(transportRecord.secretHeaderRefs)
+      ? Object.fromEntries(Object.entries(transportRecord.secretHeaderRefs).filter(([, value]) => typeof value === "string")) as Record<string, string>
+      : isRecord(transportRecord.secretEnvRefs)
+        ? Object.fromEntries(Object.entries(transportRecord.secretEnvRefs).filter(([, value]) => typeof value === "string")) as Record<string, string>
+        : existing?.secretRefs ?? {},
     enabled: typeof body.enabled === "boolean" ? body.enabled : existing?.enabled ?? true,
     status: typeof body.enabled === "boolean" && !body.enabled ? "disabled" : existing?.status ?? "unknown",
     lastCheck: existing?.lastCheck,
@@ -7066,34 +7063,27 @@ function createMockMcpServerFromBody(body: Record<string, unknown>, id: string, 
   });
 }
 
-function collectMockMcpSecrets(state: MockState, serverId: string, serverKey: string, body: Record<string, unknown>): void {
-  const secrets = isRecord(body.secrets)
-    ? Object.fromEntries(Object.entries(body.secrets).filter(([, value]) => typeof value === "string" && value.trim().length > 0)) as Record<string, string>
-    : {};
-  if (Object.keys(secrets).length === 0) {
-    return;
-  }
-  state.mcpServerSecrets[serverId] = { ...(state.mcpServerSecrets[serverId] ?? {}), ...secrets };
-  state.mcpServerSecrets[serverKey] = state.mcpServerSecrets[serverId];
-}
-
 function toPublicMockMcpServer(server: MockMcpServer, state: MockState): Record<string, unknown> {
-  const configuredSecrets = state.mcpServerSecrets[server.id] ?? state.mcpServerSecrets[server.serverKey] ?? {};
+  void state;
   const transport = server.transport === "stdio"
     ? {
       type: "stdio",
       command: server.command ?? "",
       args: server.args,
       env: server.env,
-      secretEnvNames: server.secretNames,
+      secretEnvRefs: server.secretRefs,
     }
     : {
       type: "streamable-http",
       url: server.url ?? "",
       headers: server.headers,
-      envHeaders: {},
-      secretHeaderNames: server.secretNames,
+      secretHeaderRefs: server.secretRefs,
     };
+  const secretStatuses = Object.entries(server.secretRefs).map(([, ref]) => ({
+    ref,
+    kind: ref.startsWith("keychain:") ? "keychain" : "env",
+    configured: true,
+  }));
   return {
     id: server.id,
     workspaceId: server.workspaceId,
@@ -7112,8 +7102,25 @@ function toPublicMockMcpServer(server: MockMcpServer, state: MockState): Record<
     disabledTools: [],
     createdAt: server.createdAt,
     updatedAt: server.updatedAt,
-    secretNames: [...new Set([...server.secretNames, ...Object.keys(configuredSecrets)])],
-    secretConfigured: Object.fromEntries(Object.keys(configuredSecrets).map((key) => [key, true])),
+    secretNames: server.secretNames,
+    secretConfigured: Object.fromEntries(server.secretNames.map((key) => [key, Boolean(server.secretRefs[key])])),
+    secretStatuses,
+    statusSnapshot: server.lastCheck
+      ? {
+        serverId: server.id,
+        checkedAt: server.lastCheck.checkedAt,
+        expiresAt: "2026-06-03T00:14:00.000Z",
+        status: server.status,
+        missingSecretRefs: [],
+        authStatus: {
+          kind: secretStatuses.length > 0 ? "configured" : "not_required",
+          refs: secretStatuses.map((status) => status.ref),
+          missingRefs: [],
+        },
+        message: server.lastCheck.message,
+      }
+      : undefined,
+    legacySecretMigrationRequired: false,
   };
 }
 
@@ -7405,7 +7412,6 @@ async function handleDaemonRoute(
     const serverId = typeof body.id === "string" && body.id.trim() ? body.id.trim() : `mcp_server_${state.mcpServers.length + 1}`;
     const server = createMockMcpServerFromBody(body, serverId);
     state.mcpServers.push(server);
-    collectMockMcpSecrets(state, server.id, server.serverKey, body);
     await route.fulfill({ status: 201, json: { server: toPublicMockMcpServer(server, state) } });
     return;
   }
@@ -7438,14 +7444,6 @@ async function handleDaemonRoute(
       const body = await request.postDataJSON() as Record<string, unknown>;
       const updated = createMockMcpServerFromBody(body, server.id, server);
       state.mcpServers[serverIndex] = updated;
-      const clearSecretNames = Array.isArray(body.clearSecretNames)
-        ? body.clearSecretNames.filter((item): item is string => typeof item === "string")
-        : [];
-      for (const secretName of clearSecretNames) {
-        delete state.mcpServerSecrets[updated.id]?.[secretName];
-        delete state.mcpServerSecrets[updated.serverKey]?.[secretName];
-      }
-      collectMockMcpSecrets(state, updated.id, updated.serverKey, body);
       await route.fulfill({ json: { server: toPublicMockMcpServer(updated, state) } });
       return;
     }
@@ -7453,8 +7451,6 @@ async function handleDaemonRoute(
       state.mcpServers = state.mcpServers.filter((item) => item.id !== server.id);
       state.mcpTools = state.mcpTools.filter((tool) => tool.serverId !== server.id);
       state.teammateMcpBindings = state.teammateMcpBindings.filter((binding) => binding.serverId !== server.id);
-      delete state.mcpServerSecrets[server.id];
-      delete state.mcpServerSecrets[server.serverKey];
       await route.fulfill({ status: 204, body: "" });
       return;
     }
@@ -7466,7 +7462,8 @@ async function handleDaemonRoute(
         checkedAt: "2026-06-03T00:09:00.000Z",
       };
       server.updatedAt = server.lastCheck.checkedAt;
-      await route.fulfill({ json: { server: toPublicMockMcpServer(server, state) } });
+      const publicServer = toPublicMockMcpServer(server, state);
+      await route.fulfill({ json: { server: publicServer, statusSnapshot: publicServer.statusSnapshot } });
       return;
     }
     if (action === "sync-tools" && request.method() === "POST") {
@@ -7475,21 +7472,17 @@ async function handleDaemonRoute(
         createMockMcpTool({ id: `${server.id}_create_issue`, serverId: server.id, name: "create_issue", title: "Create issue" }),
       ];
       state.mcpTools = [...state.mcpTools.filter((tool) => tool.serverId !== server.id), ...discovered];
-      await route.fulfill({ json: { server: toPublicMockMcpServer(server, state), tools: discovered } });
+      const publicServer = toPublicMockMcpServer(server, state);
+      await route.fulfill({ json: { server: publicServer, statusSnapshot: publicServer.statusSnapshot, tools: discovered } });
+      return;
+    }
+    if (action === "status" && request.method() === "GET") {
+      const publicServer = toPublicMockMcpServer(server, state);
+      await route.fulfill({ json: { server: publicServer, statusSnapshot: publicServer.statusSnapshot ?? null } });
       return;
     }
     if (action === "secret" && request.method() === "GET") {
-      const secretName = url.searchParams.get("name") ?? "";
-      const configuredSecrets = state.mcpServerSecrets[server.id] ?? state.mcpServerSecrets[server.serverKey] ?? {};
-      const secretValue = configuredSecrets[secretName] ?? "";
-      await route.fulfill({
-        json: {
-          serverId: server.id,
-          secretName,
-          secretValue,
-          configured: secretValue.length > 0,
-        },
-      });
+      await route.fulfill({ status: 410, json: { error: "mcp_secret_endpoint_removed" } });
       return;
     }
   }

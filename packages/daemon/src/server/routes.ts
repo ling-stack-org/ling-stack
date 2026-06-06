@@ -205,7 +205,7 @@ export function parseTeammateRoute(
 
 export function parseMcpServerRoute(
   pathname: string,
-): { readonly serverId: string; readonly action?: "check" | "sync-tools" | "secret" } | undefined {
+): { readonly serverId: string; readonly action?: "check" | "sync-tools" | "secret" | "status" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 3 && segments[0] === "mcp" && segments[1] === "servers") {
     return { serverId: segments[2] };
@@ -214,7 +214,7 @@ export function parseMcpServerRoute(
     segments.length === 4 &&
     segments[0] === "mcp" &&
     segments[1] === "servers" &&
-    (segments[3] === "check" || segments[3] === "sync-tools" || segments[3] === "secret")
+    (segments[3] === "check" || segments[3] === "sync-tools" || segments[3] === "secret" || segments[3] === "status")
   ) {
     return { serverId: segments[2], action: segments[3] };
   }

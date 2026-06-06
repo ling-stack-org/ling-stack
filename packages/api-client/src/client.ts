@@ -109,9 +109,10 @@ import type {
   MemoryRecallRequest,
   MemoryRecallResponse,
   McpServerListResponse,
+  McpServerCheckResponse,
   McpServerMutationRequest,
   McpServerMutationResponse,
-  McpServerSecretResponse,
+  McpServerStatusResponse,
   McpServerToolSyncResponse,
   McpToolListResponse,
   ProviderCheckResult,
@@ -943,16 +944,16 @@ export class LingDaemonClient {
     return this.patch(`/mcp/servers/${encodeURIComponent(serverId)}`, { cwd }, input);
   }
 
-  async getMcpServerSecret(cwd: string, serverId: string, secretName: string): Promise<McpServerSecretResponse> {
-    return this.get(`/mcp/servers/${encodeURIComponent(serverId)}/secret`, { cwd, name: secretName });
-  }
-
   async deleteMcpServer(cwd: string, serverId: string): Promise<void> {
     await this.request("DELETE", `/mcp/servers/${encodeURIComponent(serverId)}`, { cwd });
   }
 
-  async checkMcpServer(cwd: string, serverId: string): Promise<McpServerMutationResponse> {
+  async checkMcpServer(cwd: string, serverId: string): Promise<McpServerCheckResponse> {
     return this.post(`/mcp/servers/${encodeURIComponent(serverId)}/check`, { cwd });
+  }
+
+  async getMcpServerStatus(cwd: string, serverId: string): Promise<McpServerStatusResponse> {
+    return this.get(`/mcp/servers/${encodeURIComponent(serverId)}/status`, { cwd });
   }
 
   async syncMcpServerTools(cwd: string, serverId: string): Promise<McpServerToolSyncResponse> {

@@ -92,10 +92,11 @@ import type {
   MemoryRecallRequest,
   MemoryRecallResponse,
   McpServerFormState,
+  McpServerCheckResponse,
   McpServerListResponse,
   McpServerMutationRequest,
   McpServerMutationResponse,
-  McpServerSecretResponse,
+  McpServerStatusResponse,
   McpServerToolSyncResponse,
   McpToolListResponse,
   ProviderCheckResult,
@@ -843,16 +844,16 @@ export async function updateMcpServer(cwd: string, serverId: string, form: McpSe
   return daemonClient.updateMcpServer(cwd, serverId, mcpServerFormToPayload(form));
 }
 
-export async function getMcpServerSecret(cwd: string, serverId: string, secretName: string): Promise<McpServerSecretResponse> {
-  return daemonClient.getMcpServerSecret(cwd, serverId, secretName);
-}
-
 export async function deleteMcpServer(cwd: string, serverId: string): Promise<void> {
   await daemonClient.deleteMcpServer(cwd, serverId);
 }
 
-export async function checkMcpServer(cwd: string, serverId: string): Promise<McpServerMutationResponse> {
+export async function checkMcpServer(cwd: string, serverId: string): Promise<McpServerCheckResponse> {
   return daemonClient.checkMcpServer(cwd, serverId);
+}
+
+export async function getMcpServerStatus(cwd: string, serverId: string): Promise<McpServerStatusResponse> {
+  return daemonClient.getMcpServerStatus(cwd, serverId);
 }
 
 export async function syncMcpServerTools(cwd: string, serverId: string): Promise<McpServerToolSyncResponse> {
@@ -1151,19 +1152,6 @@ function providerFormCompat(form: ProviderFormState): Record<string, unknown> | 
 }
 
 function mcpServerFormToPayload(form: McpServerFormState): McpServerMutationRequest {
-  const secretNames = [
-    form.transportType === "streamable-http" ? form.headerName.trim() : "",
-    form.transportType === "stdio" ? form.envName.trim() : "",
-  ].filter(Boolean);
-  const secrets = Object.fromEntries([
-    form.transportType === "streamable-http" && form.headerName.trim() && form.headerValue.trim()
-      ? [form.headerName.trim(), form.headerValue.trim()]
-      : undefined,
-    form.transportType === "stdio" && form.envName.trim() && form.envValue.trim()
-      ? [form.envName.trim(), form.envValue.trim()]
-      : undefined,
-  ].filter((entry): entry is [string, string] => Boolean(entry)));
-
   return {
     id: form.serverId.trim() || undefined,
     displayName: form.displayName.trim(),
@@ -1174,21 +1162,23 @@ function mcpServerFormToPayload(form: McpServerFormState): McpServerMutationRequ
         args: splitShellishArgs(form.argsText),
         cwd: form.cwd.trim() || undefined,
         env: {},
-        secretEnvNames: secretNames,
+        secretEnvRefs: form.envName.trim() && form.envSecretRef.trim()
+          ? { [form.envName.trim()]: form.envSecretRef.trim() }
+          : {},
       }
       : {
         type: "streamable-http",
         url: form.url.trim(),
         headers: {},
-        envHeaders: {},
-        secretHeaderNames: secretNames,
+        secretHeaderRefs: form.headerName.trim() && form.headerSecretRef.trim()
+          ? { [form.headerName.trim()]: form.headerSecretRef.trim() }
+          : {},
+        bearerTokenRef: form.bearerTokenRef.trim() || undefined,
       },
     enabled: form.enabled,
     required: form.required,
     startupTimeoutSec: form.startupTimeoutSec ? Number(form.startupTimeoutSec) : undefined,
     toolTimeoutSec: form.toolTimeoutSec ? Number(form.toolTimeoutSec) : undefined,
-    secrets,
-    clearSecretNames: form.clearSecretNames,
   };
 }
 

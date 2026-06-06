@@ -5,15 +5,19 @@ import {
   type RunMcpServerAccessSnapshot,
   type RunMcpToolAccessSnapshot,
   type RunStore,
+  type SecretResolver,
+  redactSecrets,
 } from "@ling-stack/core";
-import type { PiRunnerMcpToolDefinition, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import type { PiRunnerMcpToolCallResult, PiRunnerMcpToolDefinition, PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import type { McpBroker } from "../../context.js";
-import { collectMcpServerSecrets, mcpServerSecretNames } from "../mcp/secrets.js";
+import { mcpServerSecretRefs, mcpServerSecretStatuses } from "../mcp/secrets.js";
+import { deriveMcpServerStatus } from "../mcp/status.js";
 import { removeUndefined } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
 
 export function resolveMcpToolAccessForRun(
   store: RunStore,
+  secretResolver: SecretResolver,
   runRequest: RunRequest,
   resolveTeammateId: (teammateId: string) => string | undefined,
 ): RunMcpToolAccessSnapshot {
@@ -54,24 +58,29 @@ export function resolveMcpToolAccessForRun(
       continue;
     }
 
-    const configuredSecretNames: string[] = [];
-    const missingSecretNames: string[] = [];
-    for (const secretName of mcpServerSecretNames(server)) {
-      if (store.hasMcpServerSecret(server.id, secretName)) {
-        configuredSecretNames.push(secretName);
-      } else {
-        missingSecretNames.push(secretName);
-      }
-    }
+    const secretRefs = mcpServerSecretRefs(server);
+    const secretStatuses = mcpServerSecretStatuses(server, secretResolver);
+    const configuredSecretNames = secretRefs
+      .filter((_, index) => secretStatuses[index]?.configured === true)
+      .map((item) => item.destination);
+    const missingSecretNames = secretRefs
+      .filter((_, index) => secretStatuses[index]?.configured !== true)
+      .map((item) => item.destination);
+    const missingSecretRefs = secretStatuses.filter((status) => !status.configured).map((status) => status.ref);
+    const legacySecretMigrationRequired = store.countLegacyMcpServerSecrets(server.id) > 0 || hasLegacyMcpSecretConfig(server);
+    const statusSnapshot = store.getMcpStatusSnapshot(server.id, new Date().toISOString());
     totalToolCount += tools.length;
     servers.push({
       serverId: server.id,
       displayName: server.displayName,
       transportType: server.transport.type,
       required: server.required,
-      status: server.status,
+      status: deriveMcpServerStatus(statusSnapshot, server.status),
       configuredSecretNames,
       missingSecretNames,
+      secretStatuses,
+      missingSecretRefs,
+      legacySecretMigrationRequired,
       tools,
     });
   }
@@ -100,6 +109,7 @@ export function createPiRunnerMcpToolDefinitions(access: RunMcpToolAccessSnapsho
 
 export function createMcpToolCallHandler(
   store: RunStore,
+  secretResolver: SecretResolver,
   mcpBroker: McpBroker,
   tools: readonly PiRunnerMcpToolDefinition[],
 ): NonNullable<PiRunnerRunOptions["onMcpToolCall"]> {
@@ -117,18 +127,16 @@ export function createMcpToolCallHandler(
     if (!cachedTool || !isMcpToolEnabledForServer(server, cachedTool)) {
       throw new Error(`MCP tool is disabled or missing: ${tool.rawName}`);
     }
-    return mcpBroker.callTool(server, collectMcpServerSecrets(store, server), tool.rawName, request.input);
+    const result = await mcpBroker.callTool(server, { secretResolver }, tool.rawName, request.input);
+    return redactSecrets(result, collectMcpSecretValuesForServer(server, secretResolver)) as PiRunnerMcpToolCallResult;
   };
 }
 
-export function collectMcpSecretValuesForAccess(store: RunStore, access: RunMcpToolAccessSnapshot): readonly (string | undefined)[] {
-  return access.servers.flatMap((serverAccess) => {
-    const server = store.getMcpServer(serverAccess.serverId);
-    if (!server) {
-      return [];
-    }
-    return Object.values(collectMcpServerSecrets(store, server));
-  });
+function collectMcpSecretValuesForServer(
+  server: McpServer,
+  secretResolver: SecretResolver,
+): readonly (string | undefined)[] {
+  return mcpServerSecretRefs(server).map((item) => secretResolver.resolve(item.ref, item.purpose).value);
 }
 
 function isMcpToolAuthorizedForRun(
@@ -156,6 +164,17 @@ function isMcpToolEnabledForServer(server: McpServer, tool: Pick<McpTool, "rawNa
     return false;
   }
   return !server.disabledTools.includes(tool.rawName);
+}
+
+function hasLegacyMcpSecretConfig(server: McpServer): boolean {
+  if (server.transport.type === "stdio") {
+    return (server.transport.secretEnvNames ?? []).length > 0;
+  }
+  return (
+    (server.transport.secretHeaderNames ?? []).length > 0 ||
+    Object.keys(server.transport.envHeaders ?? {}).length > 0 ||
+    Boolean(server.transport.bearerTokenEnvVar)
+  );
 }
 
 function createMcpRunnerToolName(serverId: string, rawName: string): string {

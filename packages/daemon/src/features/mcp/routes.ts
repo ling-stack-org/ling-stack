@@ -1,18 +1,20 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { McpBroker } from "../../context.js";
+import type { SecretResolver } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalBooleanQuery, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { parseMcpServerCreateRequest, parseMcpServerUpdateRequest } from "./schemas.js";
-import { collectMcpServerSecrets, toPublicMcpServer } from "./secrets.js";
+import { toPublicMcpServer } from "./secrets.js";
 
 export async function handleMcpServersCollection(
   request: IncomingMessage,
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -29,7 +31,7 @@ export async function handleMcpServersCollection(
         servers: store.listMcpServers({
           enabled: readOptionalBooleanQuery(url, "enabled"),
           limit: readOptionalIntegerQuery(url, "limit", 1),
-        }).map((server) => toPublicMcpServer(store, server)),
+        }).map((server) => toPublicMcpServer({ store, server, secretResolver, now: new Date().toISOString() })),
       });
       return;
     }
@@ -39,10 +41,7 @@ export async function handleMcpServersCollection(
       const input = parseMcpServerCreateRequest(body);
       const now = new Date().toISOString();
       const server = store.createMcpServer(input.serverInput, now);
-      for (const [secretName, secretValue] of Object.entries(input.secrets)) {
-        store.setMcpServerSecret(server.id, secretName, secretValue, now);
-      }
-      writeJson(response, 201, { server: toPublicMcpServer(store, server) });
+      writeJson(response, 201, { server: toPublicMcpServer({ store, server, secretResolver, now }) });
       return;
     }
 
@@ -94,7 +93,8 @@ export async function handleMcpServerItem(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   mcpBroker: McpBroker,
-  route: { readonly serverId: string; readonly action?: "check" | "sync-tools" | "secret" },
+  secretResolver: SecretResolver,
+  route: { readonly serverId: string; readonly action?: "check" | "sync-tools" | "secret" | "status" },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -112,37 +112,36 @@ export async function handleMcpServerItem(
     }
 
     if (request.method === "GET" && route.action === "secret") {
-      const secretName = url.searchParams.get("name")?.trim();
-      if (!secretName) {
-        writeJson(response, 400, { error: "bad_request", message: "name query parameter is required" });
-        return;
-      }
-      const secretValue = store.getMcpServerSecret(server.id, secretName) ?? "";
+      writeJson(response, 410, {
+        error: "mcp_secret_endpoint_removed",
+        message: "MCP secret values are not readable. Use secret refs and /secrets/status.",
+      });
+      return;
+    }
+
+    if (request.method === "GET" && route.action === "status") {
+      const now = new Date().toISOString();
+      const statusSnapshot = store.getMcpStatusSnapshot(server.id, now);
       writeJson(response, 200, {
-        serverId: server.id,
-        secretName,
-        secretValue,
-        configured: secretValue.length > 0,
+        server: toPublicMcpServer({ store, server, secretResolver, now }),
+        statusSnapshot: statusSnapshot ?? null,
       });
       return;
     }
 
     if (request.method === "POST" && route.action === "check") {
       const now = new Date().toISOString();
-      try {
-        const result = await mcpBroker.checkServer(server, collectMcpServerSecrets(store, server));
-        const updated = store.updateMcpServerStatus(server.id, result.status, now) ?? server;
-        writeJson(response, 200, { server: toPublicMcpServer(store, updated) });
-      } catch (error) {
-        const updated = store.updateMcpServerStatus(server.id, {
-          kind: "failed",
-          message: error instanceof Error ? error.message : String(error),
-          checkedAt: now,
-        }, now) ?? server;
+      const result = await mcpBroker.checkServer(server, { secretResolver, now: () => now });
+      const statusSnapshot = store.upsertMcpStatusSnapshot(result.statusSnapshot, now);
+      const publicServer = toPublicMcpServer({ store, server, secretResolver, now });
+      if (statusSnapshot.status === "ready" || statusSnapshot.status === "disabled") {
+        writeJson(response, 200, { server: publicServer, statusSnapshot });
+      } else {
         writeJson(response, 400, {
           error: "mcp_check_failed",
-          message: error instanceof Error ? error.message : String(error),
-          server: toPublicMcpServer(store, updated),
+          message: statusSnapshot.message ?? "MCP check failed.",
+          server: publicServer,
+          statusSnapshot,
         });
       }
       return;
@@ -150,20 +149,22 @@ export async function handleMcpServerItem(
 
     if (request.method === "POST" && route.action === "sync-tools") {
       const now = new Date().toISOString();
-      try {
-        const tools = await mcpBroker.listTools(server, collectMcpServerSecrets(store, server));
-        const cached = store.replaceMcpServerTools(server.id, tools, now);
-        writeJson(response, 200, { server: toPublicMcpServer(store, server), tools: cached });
-      } catch (error) {
-        const updated = store.updateMcpServerStatus(server.id, {
-          kind: "failed",
-          message: error instanceof Error ? error.message : String(error),
-          checkedAt: now,
-        }, now) ?? server;
+      const result = await mcpBroker.listTools(server, { secretResolver, now: () => now });
+      const statusSnapshot = store.upsertMcpStatusSnapshot(result.statusSnapshot, now);
+      if (statusSnapshot.status === "ready") {
+        const cached = store.replaceMcpServerTools(server.id, result.tools, now);
+        writeJson(response, 200, {
+          server: toPublicMcpServer({ store, server, secretResolver, now }),
+          statusSnapshot,
+          tools: cached,
+        });
+      } else {
         writeJson(response, 400, {
           error: "mcp_tool_sync_failed",
-          message: error instanceof Error ? error.message : String(error),
-          server: toPublicMcpServer(store, updated),
+          message: statusSnapshot.message ?? "MCP tool sync failed.",
+          server: toPublicMcpServer({ store, server, secretResolver, now }),
+          statusSnapshot,
+          tools: [],
         });
       }
       return;
@@ -175,7 +176,7 @@ export async function handleMcpServerItem(
     }
 
     if (request.method === "GET") {
-      writeJson(response, 200, { server: toPublicMcpServer(store, server) });
+      writeJson(response, 200, { server: toPublicMcpServer({ store, server, secretResolver, now: new Date().toISOString() }) });
       return;
     }
 
@@ -184,14 +185,8 @@ export async function handleMcpServerItem(
       const input = parseMcpServerUpdateRequest(body);
       const now = new Date().toISOString();
       let updated = store.updateMcpServer(server.id, input.serverInput, now) ?? server;
-      for (const secretName of input.clearSecretNames) {
-        store.deleteMcpServerSecret(server.id, secretName);
-      }
-      for (const [secretName, secretValue] of Object.entries(input.secrets)) {
-        store.setMcpServerSecret(server.id, secretName, secretValue, now);
-      }
       updated = store.getMcpServer(server.id) ?? updated;
-      writeJson(response, 200, { server: toPublicMcpServer(store, updated) });
+      writeJson(response, 200, { server: toPublicMcpServer({ store, server: updated, secretResolver, now }) });
       return;
     }
 

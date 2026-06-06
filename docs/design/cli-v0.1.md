@@ -145,6 +145,8 @@ The goal is not to clone Codex CLI. Ling Stack should borrow the parts that hard
 P0 detailed design lives in [Daemon Lifecycle and Doctor P0](daemon-lifecycle-p0.md).
 P1 detailed design lives in [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md).
 P1 implementation breakdown lives in [CLI Run I/O and Completion P1 Implementation Plan](cli-run-io-completion-p1-implementation-plan.md).
+P2 detailed design lives in [MCP Status Boundaries P2](mcp-status-boundaries-p2.md).
+P2 implementation breakdown lives in [MCP Status Boundaries P2 Implementation Plan](mcp-status-boundaries-p2-implementation-plan.md).
 
 ### P0 Enabler: CLI Module Split
 
@@ -249,6 +251,9 @@ Detailed design: [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md).
 - If command/help maintenance keeps growing, revisit a structured parser such as commander, yargs, clipanion, or cac so completion and help output come from one command model.
 
 ### P2: MCP Status Boundaries
+
+Detailed design: [MCP Status Boundaries P2](mcp-status-boundaries-p2.md).
+Implementation breakdown: [MCP Status Boundaries P2 Implementation Plan](mcp-status-boundaries-p2-implementation-plan.md).
 
 - Keep persisted MCP server config separate from runtime/auth state.
 - MCP status checks should create a short-lived connection/snapshot, collect server info/tools/resources/auth status, then tear it down.

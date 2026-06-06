@@ -2651,6 +2651,287 @@ Response:
 
 The check validates base URL format, required secret refs, enabled state, and supported capabilities. For `media-job` presets, the check remains static: default disabled transport reports no live vendor HTTP, while `compat.mediaVendorTransport.mode = "live"` validates the Seedream `image_generate` live gate configuration without creating media. For `openai-completions`, `openai-responses`, and `anthropic-messages`, it also performs a small live model request with a 10 second timeout. Common failure codes include `secret_missing`, `network_failed`, `auth_failed`, `model_unsupported`, `rate_limited`, `provider_disabled`, and `provider_error`.
 
+## MCP Servers And Tools
+
+MCP server config stores transport metadata and secret refs. Runtime status is reported
+through short-lived status snapshots, not by returning or mutating raw secret values.
+
+### List MCP Servers
+
+```http
+GET /mcp/servers?cwd=/path/to/project
+```
+
+Response:
+
+```json
+{
+  "servers": [
+    {
+      "id": "mcp_...",
+      "workspaceId": "default",
+      "displayName": "GitHub MCP",
+      "enabled": true,
+      "required": false,
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://127.0.0.1:3000/mcp",
+        "headers": {
+          "X-Client": "ling-stack"
+        },
+        "secretHeaderRefs": {
+          "X-Api-Key": "keychain:MCP_REMOTE_API_KEY"
+        }
+      },
+      "status": {
+        "kind": "ready",
+        "message": "MCP server is reachable.",
+        "checkedAt": "2026-06-06T00:00:00.000Z"
+      },
+      "statusSnapshot": {
+        "serverId": "mcp_...",
+        "checkedAt": "2026-06-06T00:00:00.000Z",
+        "expiresAt": "2026-06-06T00:05:00.000Z",
+        "status": "ready",
+        "toolCount": 3,
+        "missingSecretRefs": [],
+        "authStatus": {
+          "kind": "configured",
+          "refs": ["keychain:MCP_REMOTE_API_KEY"],
+          "missingRefs": []
+        }
+      },
+      "secretConfigured": {
+        "X-Api-Key": true
+      },
+      "secretStatuses": [
+        {
+          "ref": "keychain:MCP_REMOTE_API_KEY",
+          "kind": "keychain",
+          "configured": true
+        }
+      ],
+      "legacySecretMigrationRequired": false,
+      "createdAt": "2026-06-06T00:00:00.000Z",
+      "updatedAt": "2026-06-06T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+`secretStatuses` and `secretConfigured` are status-only metadata. They never include
+resolved env, keychain, bearer-token, or header values.
+
+### Create MCP Server
+
+```http
+POST /mcp/servers?cwd=/path/to/project
+Content-Type: application/json
+```
+
+Stdio transport:
+
+```json
+{
+  "displayName": "Local Filesystem MCP",
+  "enabled": true,
+  "required": false,
+  "transport": {
+    "type": "stdio",
+    "command": "node",
+    "args": ["server.js"],
+    "env": {
+      "NODE_ENV": "production"
+    },
+    "secretEnvRefs": {
+      "GITHUB_TOKEN": "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN"
+    }
+  }
+}
+```
+
+Streamable HTTP transport:
+
+```json
+{
+  "displayName": "Remote MCP",
+  "enabled": true,
+  "transport": {
+    "type": "streamable-http",
+    "url": "http://127.0.0.1:3000/mcp",
+    "headers": {
+      "X-Client": "ling-stack"
+    },
+    "secretHeaderRefs": {
+      "X-Api-Key": "keychain:MCP_REMOTE_API_KEY"
+    },
+    "bearerTokenRef": "env:MCP_BEARER_TOKEN"
+  }
+}
+```
+
+Raw `secrets`, `clearSecretNames`, persisted `status`, and legacy transport secret
+fields are rejected for new writes. Use `secretEnvRefs`, `secretHeaderRefs`, and
+`bearerTokenRef`. Use either `secretHeaderRefs.Authorization` or `bearerTokenRef`
+for bearer auth; `bearerTokenRef` is the shorthand that produces
+`Authorization: Bearer <value>`.
+
+### Get, Update, Delete MCP Server
+
+```http
+GET /mcp/servers/:id?cwd=/path/to/project
+PATCH /mcp/servers/:id?cwd=/path/to/project
+DELETE /mcp/servers/:id?cwd=/path/to/project
+```
+
+`PATCH` accepts the same redacted config fields as create. It does not accept raw
+secret values and does not write runtime status.
+
+### Check MCP Server
+
+```http
+POST /mcp/servers/:id/check?cwd=/path/to/project
+```
+
+Response:
+
+```json
+{
+  "server": {
+    "id": "mcp_...",
+    "displayName": "Remote MCP",
+    "status": {
+      "kind": "ready",
+      "message": "MCP server is reachable.",
+      "checkedAt": "2026-06-06T00:00:00.000Z"
+    },
+    "secretStatuses": [],
+    "legacySecretMigrationRequired": false
+  },
+  "statusSnapshot": {
+    "serverId": "mcp_...",
+    "checkedAt": "2026-06-06T00:00:00.000Z",
+    "expiresAt": "2026-06-06T00:05:00.000Z",
+    "status": "ready",
+    "protocolVersion": "2025-03-26",
+    "toolCount": 3,
+    "missingSecretRefs": [],
+    "authStatus": {
+      "kind": "configured",
+      "refs": [],
+      "missingRefs": []
+    },
+    "latencyMs": 32
+  }
+}
+```
+
+If required refs are missing, the daemon fails closed and returns a structured failed
+snapshot with `errorCode` such as `mcp_secret_missing`; it still does not expose values.
+
+### Get MCP Status Snapshot
+
+```http
+GET /mcp/servers/:id/status?cwd=/path/to/project
+```
+
+This endpoint reads the cached snapshot only. It does not open a live MCP connection,
+sync tools, or repair config.
+
+Response:
+
+```json
+{
+  "server": {
+    "id": "mcp_...",
+    "displayName": "Remote MCP",
+    "legacySecretMigrationRequired": false
+  },
+  "statusSnapshot": null
+}
+```
+
+`statusSnapshot` is `null` when no snapshot exists. Expired snapshots may be returned
+with `status: "expired"` and a remediation message.
+
+### Sync MCP Tools
+
+```http
+POST /mcp/servers/:id/sync-tools?cwd=/path/to/project
+```
+
+Response:
+
+```json
+{
+  "server": {
+    "id": "mcp_...",
+    "displayName": "Remote MCP"
+  },
+  "statusSnapshot": {
+    "serverId": "mcp_...",
+    "checkedAt": "2026-06-06T00:00:00.000Z",
+    "expiresAt": "2026-06-06T00:05:00.000Z",
+    "status": "ready",
+    "toolCount": 3,
+    "missingSecretRefs": [],
+    "authStatus": {
+      "kind": "configured",
+      "refs": [],
+      "missingRefs": []
+    }
+  },
+  "tools": [
+    {
+      "id": "mcp_tool_...",
+      "serverId": "mcp_...",
+      "rawName": "search",
+      "displayName": "search",
+      "callableNamespace": "mcp",
+      "callableName": "search",
+      "sideEffectLevel": "read",
+      "defaultApproval": "allow",
+      "enabled": true
+    }
+  ]
+}
+```
+
+Tool sync persists the tool catalog after successful listing and persists a redacted
+status snapshot for the attempted check/list operation.
+
+### List MCP Tools
+
+```http
+GET /mcp/tools?cwd=/path/to/project&serverId=mcp_...
+```
+
+Response:
+
+```json
+{
+  "tools": []
+}
+```
+
+### Removed MCP Secret Read
+
+```http
+GET /mcp/servers/:id/secret?cwd=/path/to/project&name=Authorization
+```
+
+Response:
+
+```json
+{
+  "error": "mcp_secret_endpoint_removed",
+  "message": "MCP secret values are not readable. Use secret refs and /secrets/status."
+}
+```
+
+The route returns HTTP `410 Gone`. Clients that need secret readiness should use
+`GET /secrets/status`.
+
 ## Secrets
 
 ### Get Secret Status

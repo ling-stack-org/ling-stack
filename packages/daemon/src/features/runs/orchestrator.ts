@@ -57,7 +57,6 @@ import {
   type PreparedRunConcurrency,
 } from "./concurrency.js";
 import {
-  collectMcpSecretValuesForAccess,
   createMcpToolCallHandler,
   createPiRunnerMcpToolDefinitions,
   resolveMcpToolAccessForRun,
@@ -218,7 +217,7 @@ export async function executeRunRequest(
       }
     }
     const runStore = store;
-    const mcpToolAccess = resolveMcpToolAccessForRun(runStore, runRequest, (teammateId) =>
+    const mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
       resolveAiTeammateReference(runStore, teammateId)?.id);
     const mcpTools = createPiRunnerMcpToolDefinitions(mcpToolAccess);
     memoryRecall = store.recallMemory({
@@ -274,9 +273,9 @@ export async function executeRunRequest(
       systemPrompt: runRequest.systemPrompt,
       appendSystemPrompt: appendSystemPrompt.length > 0 ? appendSystemPrompt : undefined,
       agentDir: runRequest.agentDir,
-      onMcpToolCall: mcpTools.length > 0 ? createMcpToolCallHandler(store, mcpBroker, mcpTools) : undefined,
+      onMcpToolCall: mcpTools.length > 0 ? createMcpToolCallHandler(store, secretResolver, mcpBroker, mcpTools) : undefined,
     };
-    resolvedSecretValues = [resolvedProvider.apiKey, ...collectMcpSecretValuesForAccess(store, mcpToolAccess)];
+    resolvedSecretValues = [resolvedProvider.apiKey];
     runId = createRunId();
     createdAt = new Date().toISOString();
     const idempotencyKey = runRequest.idempotencyKey ?? `run:${runId}`;

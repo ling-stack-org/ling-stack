@@ -414,13 +414,20 @@ Current slice:
   precedence, 404/405 fallthroughs, and explicit cross-feature hook wiring through
   `DaemonContext`.
 - `server/routes.ts` owns pure path parser helpers and single-segment route matching.
-- `features/mcp/broker.ts` owns the default MCP broker, MCP SDK transport creation,
+- `features/mcp/broker.ts` owns the default MCP broker, MCP protocol operations,
   HTTP fallback tool listing, SDK tool conversion, and runner-facing tool result
   conversion.
-- `features/mcp/routes.ts` owns MCP server, tool listing, check, sync, secret, update,
-  and delete HTTP handlers.
-- `features/mcp/secrets.ts` owns MCP server public projection and secret collection
-  helpers.
+- `features/mcp/transport-factory.ts` owns MCP SDK transport construction from
+  server config plus trusted secret resolution.
+- `features/mcp/stdio-launcher.ts` owns stdio child process placement and
+  `StdioClientTransport` construction.
+- `features/mcp/status.ts` owns runtime status snapshot construction and projection
+  into legacy status badges.
+- `features/mcp/routes.ts` owns MCP server, tool listing, check, sync, status,
+  update, and delete HTTP handlers. The removed raw-secret endpoint is represented
+  only as a `410 Gone` compatibility response.
+- `features/mcp/secrets.ts` owns MCP server public projection and secret ref/status
+  helpers. It must not read or return raw MCP secret values.
 - `features/mcp/schemas.ts` owns MCP server create/update request parsing and MCP
   transport/status validation.
 - `features/providers/routes.ts` owns provider preset, draft check, model listing,
@@ -529,8 +536,9 @@ Current slice:
   for coding runs, provider capability checks, provider preflight enforcement, and
   secret resolution into runner provider config.
 - `features/runs/mcp.ts` owns teammate MCP access snapshot assembly, runner MCP tool
-  definition conversion, MCP tool-call authorization, and MCP secret value collection for
-  run redaction.
+  definition conversion, MCP tool-call authorization, and per-call MCP result redaction.
+  Run snapshots include secret refs/status only; raw MCP values are resolved only inside
+  trusted daemon tool-call paths.
 - `features/runs/queue.ts` owns durable queued-run creation for queueable resource and
   semaphore conflicts.
 - `features/runs/terminal.ts` owns terminal run summary writes and run failure event

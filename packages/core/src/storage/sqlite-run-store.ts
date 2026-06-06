@@ -282,6 +282,7 @@ import {
   type CreateMcpServerInput,
   type ListMcpServersOptions,
   type ListMcpToolsOptions,
+  type McpRuntimeStatusSnapshot,
   type McpServer,
   type McpServerStatus,
   type McpServerTransport,
@@ -309,6 +310,7 @@ import {
   type UsedMemoryEvent,
 } from "../memory-types.js";
 import { redactSecrets } from "../redaction.js";
+import { parseSecretRef } from "../secrets.js";
 import { appendEventLogLine } from "./event-log.js";
 
 const INITIAL_MIGRATION_VERSION = 1;
@@ -377,6 +379,8 @@ const APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_VERSION = 32;
 const APPROVAL_WORKFLOW_STEP_OWNER_MIGRATION_NAME = "allow_workflow_step_approval_owners";
 const RUN_WORKFLOW_STEP_OWNER_MIGRATION_VERSION = 33;
 const RUN_WORKFLOW_STEP_OWNER_MIGRATION_NAME = "add_run_workflow_step_owner";
+const MCP_STATUS_SNAPSHOTS_MIGRATION_VERSION = 34;
+const MCP_STATUS_SNAPSHOTS_MIGRATION_NAME = "create_mcp_status_snapshots";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -6163,29 +6167,83 @@ export class SqliteRunStore implements RunStore {
     return this.updateMcpServer(id, { status }, now);
   }
 
+  upsertMcpStatusSnapshot(snapshot: McpRuntimeStatusSnapshot, now: string): McpRuntimeStatusSnapshot {
+    if (!this.getMcpServer(snapshot.serverId)) {
+      throw new Error(`MCP server not found: ${snapshot.serverId}`);
+    }
+    this.database
+      .prepare(`
+        INSERT INTO mcp_status_snapshots (
+          server_id,
+          status_json,
+          checked_at,
+          expires_at,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(server_id) DO UPDATE SET
+          status_json = excluded.status_json,
+          checked_at = excluded.checked_at,
+          expires_at = excluded.expires_at,
+          updated_at = excluded.updated_at
+      `)
+      .run(snapshot.serverId, stringifyJson(snapshot), snapshot.checkedAt, snapshot.expiresAt, now, now);
+    const stored = this.getMcpStatusSnapshot(snapshot.serverId);
+    if (!stored) {
+      throw new Error(`Failed to persist MCP status snapshot: ${snapshot.serverId}`);
+    }
+    return stored;
+  }
+
+  getMcpStatusSnapshot(serverId: string, now?: string): McpRuntimeStatusSnapshot | undefined {
+    const row = this.database
+      .prepare("SELECT status_json, expires_at FROM mcp_status_snapshots WHERE server_id = ?")
+      .get(serverId);
+    if (!row) {
+      return undefined;
+    }
+    const expiresAt = readString(row, "expires_at");
+    const snapshot = parseMcpRuntimeStatusSnapshot(readString(row, "status_json"));
+    if (now && expiresAt <= now) {
+      return {
+        ...snapshot,
+        status: "expired",
+        message: snapshot.message ?? "MCP status snapshot expired.",
+      };
+    }
+    return snapshot;
+  }
+
+  deleteMcpStatusSnapshot(serverId: string): boolean {
+    const result = this.database.prepare("DELETE FROM mcp_status_snapshots WHERE server_id = ?").run(serverId);
+    return Number(result.changes) > 0;
+  }
+
+  countLegacyMcpServerSecrets(serverId?: string): number {
+    const row = serverId
+      ? this.database.prepare("SELECT COUNT(*) AS count FROM mcp_server_secrets WHERE server_id = ?").get(serverId)
+      : this.database.prepare("SELECT COUNT(*) AS count FROM mcp_server_secrets").get();
+    return row ? readNumber(row, "count") : 0;
+  }
+
+  listLegacyMcpServerSecretNames(serverId: string): readonly string[] {
+    return this.database
+      .prepare("SELECT secret_name FROM mcp_server_secrets WHERE server_id = ? ORDER BY secret_name ASC")
+      .all(serverId)
+      .map((row) => readString(row, "secret_name"));
+  }
+
   deleteMcpServer(id: string): boolean {
     const result = this.database.prepare("DELETE FROM mcp_servers WHERE id = ?").run(id);
     return Number(result.changes) > 0;
   }
 
   setMcpServerSecret(serverId: string, secretName: string, secretValue: string, now: string): void {
-    if (!this.getMcpServer(serverId)) {
-      throw new Error(`MCP server not found: ${serverId}`);
-    }
-    this.database
-      .prepare(`
-        INSERT INTO mcp_server_secrets (
-          server_id,
-          secret_name,
-          secret_value,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(server_id, secret_name) DO UPDATE SET
-          secret_value = excluded.secret_value,
-          updated_at = excluded.updated_at
-      `)
-      .run(serverId, secretName, secretValue, now, now);
+    void serverId;
+    void secretName;
+    void secretValue;
+    void now;
+    throw new Error("MCP raw secret writes are disabled; store secret refs in MCP transport config.");
   }
 
   getMcpServerSecret(serverId: string, secretName: string): string | undefined {
@@ -8656,6 +8714,27 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(RUN_WORKFLOW_STEP_OWNER_MIGRATION_VERSION, RUN_WORKFLOW_STEP_OWNER_MIGRATION_NAME);
       }
     }
+
+    const hasMcpStatusSnapshotsMigration = this.hasMigration(MCP_STATUS_SNAPSHOTS_MIGRATION_VERSION);
+    if (!hasMcpStatusSnapshotsMigration || !this.hasTable("mcp_status_snapshots")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS mcp_status_snapshots (
+          server_id TEXT PRIMARY KEY,
+          status_json TEXT NOT NULL,
+          checked_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_status_snapshots_expires
+        ON mcp_status_snapshots(expires_at);
+      `);
+      if (!hasMcpStatusSnapshotsMigration) {
+        this.recordMigration(MCP_STATUS_SNAPSHOTS_MIGRATION_VERSION, MCP_STATUS_SNAPSHOTS_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -11109,13 +11188,21 @@ function normalizeMcpServerTransport(transport: McpServerTransport): McpServerTr
     if (typeof transport.command !== "string" || transport.command.length === 0) {
       throw new Error("Expected MCP stdio command");
     }
+    const secretEnvRefs = { ...(transport.secretEnvRefs ?? {}) };
+    validateMcpSecretRefRecord(secretEnvRefs, "MCP stdio secretEnvRefs");
+    for (const envName of Object.keys(secretEnvRefs)) {
+      if (transport.env?.[envName] !== undefined) {
+        throw new Error(`MCP stdio env ${envName} cannot be both static and secret-backed`);
+      }
+    }
     const normalized = omitUndefined({
       type: "stdio",
       command: transport.command,
       args: [...(transport.args ?? [])],
       env: { ...(transport.env ?? {}) },
       cwd: transport.cwd,
-      secretEnvNames: [...(transport.secretEnvNames ?? [])],
+      secretEnvRefs,
+      secretEnvNames: transport.secretEnvNames ? [...transport.secretEnvNames] : undefined,
     });
     return normalized as McpServerTransport;
   }
@@ -11123,19 +11210,40 @@ function normalizeMcpServerTransport(transport: McpServerTransport): McpServerTr
     if (typeof transport.url !== "string" || transport.url.length === 0) {
       throw new Error("Expected MCP streamable HTTP URL");
     }
+    const secretHeaderRefs = { ...(transport.secretHeaderRefs ?? {}) };
+    validateMcpSecretRefRecord(secretHeaderRefs, "MCP HTTP secretHeaderRefs");
+    for (const headerName of Object.keys(secretHeaderRefs)) {
+      if (transport.headers?.[headerName] !== undefined) {
+        throw new Error(`MCP HTTP header ${headerName} cannot be both static and secret-backed`);
+      }
+    }
+    if (transport.bearerTokenRef !== undefined) {
+      parseSecretRef(transport.bearerTokenRef);
+    }
     const normalized = omitUndefined({
       type: "streamable-http",
       url: transport.url,
-      bearerTokenEnvVar: transport.bearerTokenEnvVar,
       headers: { ...(transport.headers ?? {}) },
-      envHeaders: { ...(transport.envHeaders ?? {}) },
-      secretHeaderNames: [...(transport.secretHeaderNames ?? [])],
+      secretHeaderRefs,
+      bearerTokenRef: transport.bearerTokenRef,
+      bearerTokenEnvVar: transport.bearerTokenEnvVar,
+      envHeaders: transport.envHeaders ? { ...transport.envHeaders } : undefined,
+      secretHeaderNames: transport.secretHeaderNames ? [...transport.secretHeaderNames] : undefined,
       oauthClientId: transport.oauthClientId,
       oauthResource: transport.oauthResource,
     });
     return normalized as McpServerTransport;
   }
   throw new Error("Expected MCP server transport from SQLite");
+}
+
+function validateMcpSecretRefRecord(refs: Readonly<Record<string, string>>, label: string): void {
+  for (const [name, ref] of Object.entries(refs)) {
+    if (!name.trim()) {
+      throw new Error(`${label} keys must be non-empty`);
+    }
+    parseSecretRef(ref);
+  }
 }
 
 function parseMcpServerStatus(value: string): McpServerStatus {
@@ -11160,6 +11268,87 @@ function parseMcpServerStatus(value: string): McpServerStatus {
     message: parsed.message,
     checkedAt: parsed.checkedAt,
   }) as McpServerStatus;
+}
+
+function parseMcpRuntimeStatusSnapshot(value: string): McpRuntimeStatusSnapshot {
+  const parsed = parseJsonObject(value);
+  const status = parsed.status;
+  if (
+    status !== "unknown" &&
+    status !== "ready" &&
+    status !== "failed" &&
+    status !== "disabled" &&
+    status !== "expired" &&
+    status !== "migration_required"
+  ) {
+    throw new Error("Expected MCP runtime status snapshot kind from SQLite");
+  }
+  if (typeof parsed.serverId !== "string") {
+    throw new Error("Expected MCP runtime status snapshot serverId from SQLite");
+  }
+  if (typeof parsed.checkedAt !== "string") {
+    throw new Error("Expected MCP runtime status snapshot checkedAt from SQLite");
+  }
+  if (typeof parsed.expiresAt !== "string") {
+    throw new Error("Expected MCP runtime status snapshot expiresAt from SQLite");
+  }
+  const authStatus = isRecord(parsed.authStatus) ? parsed.authStatus : undefined;
+  if (!authStatus) {
+    throw new Error("Expected MCP runtime status snapshot authStatus from SQLite");
+  }
+  const authKind = authStatus.kind;
+  if (
+    authKind !== "not_required" &&
+    authKind !== "configured" &&
+    authKind !== "missing" &&
+    authKind !== "access_denied" &&
+    authKind !== "store_unavailable" &&
+    authKind !== "invalid_ref" &&
+    authKind !== "migration_required"
+  ) {
+    throw new Error("Expected MCP runtime status auth kind from SQLite");
+  }
+  const serverInfo = parsed.serverInfo === undefined ? undefined : parseMcpServerInfo(parsed.serverInfo);
+  return omitUndefined({
+    serverId: parsed.serverId,
+    checkedAt: parsed.checkedAt,
+    expiresAt: parsed.expiresAt,
+    status,
+    serverInfo,
+    protocolVersion: typeof parsed.protocolVersion === "string" ? parsed.protocolVersion : undefined,
+    toolCount: typeof parsed.toolCount === "number" ? parsed.toolCount : undefined,
+    missingSecretRefs: parseUnknownStringArray(parsed.missingSecretRefs, "MCP runtime missingSecretRefs"),
+    authStatus: omitUndefined({
+      kind: authKind,
+      refs: parseUnknownStringArray(authStatus.refs, "MCP runtime auth refs"),
+      missingRefs: parseUnknownStringArray(authStatus.missingRefs, "MCP runtime auth missingRefs"),
+      message: typeof authStatus.message === "string" ? authStatus.message : undefined,
+    }),
+    latencyMs: typeof parsed.latencyMs === "number" ? parsed.latencyMs : undefined,
+    errorCode: typeof parsed.errorCode === "string" ? parsed.errorCode : undefined,
+    message: typeof parsed.message === "string" ? parsed.message : undefined,
+  }) as McpRuntimeStatusSnapshot;
+}
+
+function parseMcpServerInfo(value: unknown): McpRuntimeStatusSnapshot["serverInfo"] {
+  if (!isRecord(value)) {
+    throw new Error("Expected MCP runtime serverInfo object from SQLite");
+  }
+  return omitUndefined({
+    name: typeof value.name === "string" ? value.name : undefined,
+    version: typeof value.version === "string" ? value.version : undefined,
+  });
+}
+
+function parseUnknownStringArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`Expected ${label} to be a string array`);
+  }
+  return value as string[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseMcpApprovalOverrides(value: string): TeammateMcpBinding["approvalOverrides"] {

@@ -1,6 +1,6 @@
 import type {
   McpServer,
-  McpServerStatus,
+  McpRuntimeStatusSnapshot,
   ReplaceMcpServerToolInput,
   SecretPurpose,
   SecretResolver,
@@ -27,18 +27,26 @@ export interface RunnerAdapter {
 export interface McpBroker {
   checkServer(
     server: McpServer,
-    secrets: Readonly<Record<string, string>>,
-  ): Promise<{ readonly status: McpServerStatus }>;
+    options: McpBrokerOptions,
+  ): Promise<{ readonly statusSnapshot: McpRuntimeStatusSnapshot }>;
   listTools(
     server: McpServer,
-    secrets: Readonly<Record<string, string>>,
-  ): Promise<readonly ReplaceMcpServerToolInput[]>;
+    options: McpBrokerOptions,
+  ): Promise<{
+    readonly statusSnapshot: McpRuntimeStatusSnapshot;
+    readonly tools: readonly ReplaceMcpServerToolInput[];
+  }>;
   callTool(
     server: McpServer,
-    secrets: Readonly<Record<string, string>>,
+    options: McpBrokerOptions,
     toolName: string,
     input: unknown,
   ): Promise<PiRunnerMcpToolCallResult>;
+}
+
+export interface McpBrokerOptions {
+  readonly secretResolver: SecretResolver;
+  readonly now?: () => string;
 }
 
 export interface ExternalSecretStore extends SecretResolver {

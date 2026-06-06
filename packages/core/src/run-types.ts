@@ -155,6 +155,7 @@ import type {
   ListMcpServersOptions,
   ListMcpToolsOptions,
   McpServer,
+  McpRuntimeStatusSnapshot,
   McpServerStatus,
   McpTool,
   ReplaceMcpServerToolInput,
@@ -821,6 +822,11 @@ export interface RunStore {
   listMcpServers(options?: ListMcpServersOptions): McpServer[];
   updateMcpServer(id: string, input: UpdateMcpServerInput, now: string): McpServer | undefined;
   updateMcpServerStatus(id: string, status: McpServerStatus, now: string): McpServer | undefined;
+  upsertMcpStatusSnapshot(snapshot: McpRuntimeStatusSnapshot, now: string): McpRuntimeStatusSnapshot;
+  getMcpStatusSnapshot(serverId: string, now?: string): McpRuntimeStatusSnapshot | undefined;
+  deleteMcpStatusSnapshot(serverId: string): boolean;
+  countLegacyMcpServerSecrets(serverId?: string): number;
+  listLegacyMcpServerSecretNames(serverId: string): readonly string[];
   deleteMcpServer(id: string): boolean;
   setMcpServerSecret(serverId: string, secretName: string, secretValue: string, now: string): void;
   getMcpServerSecret(serverId: string, secretName: string): string | undefined;
