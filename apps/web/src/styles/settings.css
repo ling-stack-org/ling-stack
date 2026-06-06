@@ -41,11 +41,11 @@
 
 .settings-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 920px);
+  grid-template-columns: 260px minmax(0, 1fr);
   align-items: start;
   gap: 18px;
   width: 100%;
-  max-width: 1220px;
+  max-width: none;
   min-height: 0;
 }
 

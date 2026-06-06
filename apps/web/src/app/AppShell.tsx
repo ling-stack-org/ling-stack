@@ -2329,7 +2329,7 @@ export function AppShell(): JSX.Element {
                     </div>
                     {activeView === "teammates" ? (
                       <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
-                    ) : activeView === "mcp" ? null : (
+                    ) : activeView === "mcp" || activeView === "settings" ? null : (
                       <StatusBadge status={latestStatus} />
                     )}
                   </div>
