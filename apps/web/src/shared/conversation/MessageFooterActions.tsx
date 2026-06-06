@@ -53,6 +53,7 @@ export function MessageFooterActions({
               rel={action.rel}
               aria-label={action.label}
               title={action.label}
+              data-tooltip={action.label}
             >
               {content}
             </a>
@@ -67,6 +68,7 @@ export function MessageFooterActions({
             onClick={action.onClick}
             aria-label={action.label}
             title={action.label}
+            data-tooltip={action.label}
           >
             {content}
           </button>

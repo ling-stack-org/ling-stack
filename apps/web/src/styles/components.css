@@ -1571,6 +1571,15 @@ button.message-local-file-link {
   border-radius: 999px;
 }
 
+.channel-message-row-actions .message-footer-action.message-meta-action {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  right: 8px;
+  padding: 0;
+}
+
 .channel-message-row-actions .message-footer-action span {
   position: absolute;
   width: 1px;
