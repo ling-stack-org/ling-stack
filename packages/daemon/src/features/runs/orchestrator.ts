@@ -12,6 +12,7 @@ import {
   type LingThread,
   type RunEventEnvelope,
   type RunEventType,
+  type RunArtifact,
   type RunSession,
   type RunStatus,
   type RunStore,
@@ -37,6 +38,8 @@ import {
   transitionWorkUnitCancelled,
   transitionWorkUnitTerminal,
 } from "../../runtime/work-units.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { appendControlPlaneEvent } from "../control-plane/events.js";
 import { renderUsedMemoryPrompt } from "../memory/prompt.js";
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
@@ -81,6 +84,7 @@ import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 export interface ExecuteRunRequestOptions {
   readonly onRunReady?: (runId: string) => void;
   readonly afterRunTerminal?: (run: RunSession) => void;
+  readonly controlPlaneEvents?: ControlPlaneEventHub;
 }
 
 export interface RunExecutionSink {
@@ -340,6 +344,7 @@ export async function executeRunRequest(
         fallbackReason: runnerResolution.fallbackReason,
       },
     });
+    appendWorkUnitCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit, createdAt);
     attempt = store.createWorkUnitAttempt({
       workUnitId: workUnit.id,
       attemptNumber: workUnit.attemptCount + 1,
@@ -406,6 +411,7 @@ export async function executeRunRequest(
       descriptors: listBundledPackageDescriptors(),
       now: createdAt,
     });
+    appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit.id, "queued", "claimed", runId, createdAt);
     run = store.createRun({
       id: runId,
       cwd: runRequest.cwd,
@@ -489,6 +495,7 @@ export async function executeRunRequest(
         attemptId: lease.attemptId,
       })),
     });
+    appendRunCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, createdAt);
   } catch (error) {
     if (error instanceof QueueableRunConflictError && store && workUnit && attempt && resolvedProvider) {
       const queuedAt = new Date().toISOString();
@@ -521,6 +528,7 @@ export async function executeRunRequest(
         queued: true,
         queueReason: error.code,
       });
+      appendRunCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd || run.cwd, run, queuedAt);
       sink.end();
       return run.id;
     }
@@ -749,6 +757,7 @@ export async function executeRunRequest(
       ts: runStartedAt,
       data: { runId: run.id },
     });
+    appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit.id, "claimed", "running", run.id, runStartedAt);
     recordRuntimeHeartbeat("runner", { event: "runner_started" });
     if (preparedConcurrency.taskExists) {
       const taskStartTransition = store.transitionTaskStatus({
@@ -776,6 +785,8 @@ export async function executeRunRequest(
         streamEnvelope,
         signal: abortController.signal,
         extraSecrets: resolvedSecretValues,
+        controlPlaneEvents: options.controlPlaneEvents,
+        workspaceCwd,
       }),
       onEvent: (event: PiRunnerEvent) => {
         if (event.type === "tool_start") {
@@ -802,6 +813,7 @@ export async function executeRunRequest(
                 toolCallId: event.toolCallId,
                 toolName: event.toolName,
               });
+              appendArtifactControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, artifact);
             }
           } catch {
             // Artifact extraction is best-effort evidence capture; runner output remains authoritative.
@@ -887,6 +899,8 @@ export async function executeRunRequest(
       actor: "runner",
       now: endedAt,
     });
+    appendRunCompletedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, "running", "succeeded", endedAt);
+    appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit.id, "running", "succeeded", run.id, endedAt);
     syncLingThreadForTerminalRun(store, run.id, endedAt);
     if (preparedConcurrency.taskExists) {
       store.transitionTaskStatus({
@@ -904,6 +918,9 @@ export async function executeRunRequest(
     }
   } catch (error) {
     if (isAbortError(error) || store.getRun(run.id)?.status === "cancelled") {
+      const cancelledAt = new Date().toISOString();
+      const observedStatus = store.getRun(run.id)?.status;
+      const previousStatus = observedStatus && observedStatus !== "cancelled" ? observedStatus : "running";
       ensureRunCancelled({
         store,
         runId: run.id,
@@ -914,7 +931,9 @@ export async function executeRunRequest(
         streamEnvelope,
       });
       transitionWorkUnitCancelled(store, workUnit.id, attempt.id, "cancelled");
-      syncLingThreadForTerminalRun(store, run.id, new Date().toISOString());
+      appendRunCancelledControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, previousStatus, cancelledAt);
+      appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit.id, "cancelling", "cancelled", run.id, cancelledAt);
+      syncLingThreadForTerminalRun(store, run.id, cancelledAt);
       if (!sinkClosed) {
         sink.end();
       }
@@ -973,6 +992,8 @@ export async function executeRunRequest(
       errorCode: "runner_failed",
       errorMessage: message,
     });
+    appendRunCompletedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, "running", "failed", endedAt, "runner_failed");
+    appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit.id, "running", "failed", run.id, endedAt, "runner_failed");
     syncLingThreadForTerminalRun(store, run.id, endedAt);
     if (preparedConcurrency.taskExists) {
       store.transitionTaskStatus({
@@ -1001,6 +1022,179 @@ export async function executeRunRequest(
     }
   }
   return run.id;
+}
+
+function appendRunCreatedControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub | undefined,
+  cwd: string,
+  run: RunSession,
+  now: string,
+): void {
+  if (!hub) {
+    return;
+  }
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "runs",
+    entityType: "run",
+    entityId: run.id,
+    action: "run.created",
+    data: {
+      status: run.status,
+      taskId: run.taskId,
+      channelId: run.channelId ?? null,
+      teammateId: run.teammateId ?? null,
+      providerPresetId: run.providerPresetId ?? null,
+      requestedSkillId: run.selectedSkillId ?? null,
+      workUnitId: run.workUnitId ?? null,
+    },
+  }, now);
+}
+
+function appendRunCompletedControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub | undefined,
+  cwd: string,
+  run: RunSession,
+  previousStatus: RunStatus,
+  status: Extract<RunStatus, "succeeded" | "failed">,
+  terminalAt: string,
+  errorCode?: string,
+): void {
+  if (!hub) {
+    return;
+  }
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "runs",
+    entityType: "run",
+    entityId: run.id,
+    action: "run.completed",
+    data: {
+      previousStatus,
+      status,
+      terminalAt,
+      ...(errorCode ? { errorCode } : {}),
+    },
+  }, terminalAt);
+}
+
+function appendRunCancelledControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub | undefined,
+  cwd: string,
+  run: RunSession,
+  previousStatus: RunStatus,
+  now: string,
+): void {
+  if (!hub) {
+    return;
+  }
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "runs",
+    entityType: "run",
+    entityId: run.id,
+    action: "run.cancelled",
+    data: {
+      previousStatus,
+      status: "cancelled",
+      reasonCode: "cancelled",
+    },
+  }, now);
+}
+
+function appendWorkUnitCreatedControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub | undefined,
+  cwd: string,
+  workUnit: WorkUnit,
+  now: string,
+): void {
+  if (!hub) {
+    return;
+  }
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: workUnit.workspaceId,
+    cwd,
+    domain: "work_units",
+    entityType: "work_unit",
+    entityId: workUnit.id,
+    action: "work_unit.created",
+    data: {
+      status: workUnit.status,
+      kind: workUnit.kind,
+      ownerType: workUnit.ownerType,
+      ownerId: workUnit.ownerId,
+      taskId: workUnit.taskId ?? null,
+      channelId: workUnit.channelId ?? null,
+      providerPresetId: workUnit.providerPresetId ?? null,
+      requestedRunnerId: workUnit.requestedRunnerId ?? null,
+      effectiveRunnerId: workUnit.effectiveRunnerId ?? null,
+      createdByActor: workUnit.createdByActor,
+    },
+  }, now);
+}
+
+function appendWorkUnitTransitionControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub | undefined,
+  cwd: string,
+  workUnitId: string,
+  previousStatus: WorkUnit["status"],
+  status: WorkUnit["status"],
+  runId: string | undefined,
+  now: string,
+  blockedReason?: string,
+): void {
+  if (!hub) {
+    return;
+  }
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "work_units",
+    entityType: "work_unit",
+    entityId: workUnitId,
+    action: "work_unit.transitioned",
+    data: {
+      previousStatus,
+      status,
+      runId: runId ?? null,
+      ...(blockedReason ? { blockedReason } : {}),
+    },
+  }, now);
+}
+
+function appendArtifactControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub | undefined,
+  cwd: string,
+  artifact: RunArtifact,
+): void {
+  if (!hub) {
+    return;
+  }
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "artifacts",
+    entityType: "artifact",
+    entityId: artifact.id,
+    action: "artifact.created",
+    data: {
+      runId: artifact.runId ?? null,
+      mediaJobId: artifact.mediaJobId ?? null,
+      externalWorkId: artifact.externalWorkId ?? null,
+      type: artifact.type,
+      contentType: artifact.contentType ?? null,
+      sizeBytes: artifact.sizeBytes ?? null,
+    },
+  }, artifact.createdAt);
 }
 
 function isAbortError(error: unknown): boolean {

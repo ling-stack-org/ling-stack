@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { buildMemoryHealthReport } from "@ling-stack/core";
+import { buildMemoryHealthReport, DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { appendControlPlaneEvent } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalBooleanQuery, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
@@ -67,6 +69,7 @@ export async function handleMemoryCollection(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  controlPlaneEvents: ControlPlaneEventHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -99,7 +102,23 @@ export async function handleMemoryCollection(
 
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const memory = store.createMemoryObject(parseCreateMemoryObjectInput(body), new Date().toISOString());
+      const input = parseCreateMemoryObjectInput(body);
+      const now = new Date().toISOString();
+      const memory = store.createMemoryObject(input, now);
+      appendControlPlaneEvent(store, controlPlaneEvents, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        cwd,
+        domain: "memory",
+        entityType: "memory",
+        entityId: memory.id,
+        action: "memory.candidate_created",
+        data: {
+          scopeType: memory.scopeType,
+          ownerId: memory.ownerId,
+          confidence: readOptionalStringField(body, "confidence") ?? "unknown",
+          reasonCode: readOptionalStringField(body, "reasonCode") ?? "manual_create",
+        },
+      }, now);
       writeJson(response, 201, { memory });
       return;
     }
@@ -118,6 +137,7 @@ export async function handleMemoryConsolidationJobs(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  controlPlaneEvents: ControlPlaneEventHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -204,6 +224,7 @@ export async function handleMemoryReviewPolicy(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  controlPlaneEvents: ControlPlaneEventHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -221,7 +242,21 @@ export async function handleMemoryReviewPolicy(
 
     if (request.method === "PATCH") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const policy = store.updateMemoryReviewPolicy(parseMemoryReviewPolicyUpdateInput(body), new Date().toISOString());
+      const input = parseMemoryReviewPolicyUpdateInput(body);
+      const now = new Date().toISOString();
+      const policy = store.updateMemoryReviewPolicy(input, now);
+      appendControlPlaneEvent(store, controlPlaneEvents, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        cwd,
+        domain: "memory",
+        entityType: "memory_review_policy",
+        entityId: policy.workspaceId,
+        action: "memory.policy_updated",
+        data: {
+          mode: policy.mode,
+          changedFields: Object.keys(input),
+        },
+      }, now);
       writeJson(response, 200, { cwd, policy });
       return;
     }
@@ -265,6 +300,7 @@ export async function handleMemoryReviewAction(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  controlPlaneEvents: ControlPlaneEventHub,
   memoryId: string,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -280,12 +316,29 @@ export async function handleMemoryReviewAction(
 
   try {
     const store = storeRegistry.getStore(cwd);
-    if (!store.getMemoryObject(memoryId)) {
+    const existing = store.getMemoryObject(memoryId);
+    if (!existing) {
       writeJson(response, 404, { error: "memory_not_found", message: `Memory object not found: ${memoryId}` });
       return;
     }
     const body = await readJsonBody(request, config.maxBodyBytes);
-    const result = store.applyMemoryReviewAction(parseApplyMemoryReviewActionInput(memoryId, body), new Date().toISOString());
+    const input = parseApplyMemoryReviewActionInput(memoryId, body);
+    const now = new Date().toISOString();
+    const result = store.applyMemoryReviewAction(input, now);
+    appendControlPlaneEvent(store, controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "memory",
+      entityType: "memory",
+      entityId: memoryId,
+      action: "memory.reviewed",
+      data: {
+        previousStatus: existing.reviewState,
+        status: result.memory.reviewState,
+        decision: input.action,
+        reviewedBy: input.actor,
+      },
+    }, now);
     writeJson(response, 200, result);
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
@@ -293,6 +346,14 @@ export async function handleMemoryReviewAction(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function readOptionalStringField(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field : undefined;
 }
 
 export async function handleMemoryRecall(

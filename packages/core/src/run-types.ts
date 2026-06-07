@@ -560,6 +560,47 @@ export interface CreateRunArtifactInput {
   readonly createdAt: string;
 }
 
+export type ControlPlaneDomain =
+  | "runs"
+  | "work_units"
+  | "memory"
+  | "skills"
+  | "teammates"
+  | "approvals"
+  | "providers"
+  | "mcp"
+  | "runners"
+  | "artifacts";
+
+export interface ControlPlaneEvent {
+  readonly seq: number;
+  readonly workspaceId: string;
+  readonly cwd: string;
+  readonly ts: string;
+  readonly domain: ControlPlaneDomain;
+  readonly entityType: string;
+  readonly entityId: string;
+  readonly action: string;
+  readonly data: Record<string, unknown>;
+}
+
+export interface AppendControlPlaneEventInput {
+  readonly workspaceId: string;
+  readonly cwd: string;
+  readonly domain: ControlPlaneDomain;
+  readonly entityType: string;
+  readonly entityId: string;
+  readonly action: string;
+  readonly data?: Record<string, unknown>;
+}
+
+export interface ListControlPlaneEventsOptions {
+  readonly workspaceId: string;
+  readonly afterSeq?: number;
+  readonly limit?: number;
+  readonly domains?: readonly ControlPlaneDomain[];
+}
+
 export interface RunStore {
   readonly paths: LingStackRuntimePaths;
   createLingThread(input: CreateLingThreadInput, now: string): LingThread;
@@ -582,6 +623,9 @@ export interface RunStore {
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
   appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope;
+  appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
+  listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[];
+  getLatestControlPlaneEventSeq(workspaceId: string): number;
   getRun(runId: string): RunSession | undefined;
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];

@@ -24,9 +24,11 @@ import { setCorsHeaders, writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray } from "../../shared/validation.js";
 import {
   appendApprovalDecisionEvent,
+  appendApprovalResolvedControlPlaneEvent,
   expireStaleApproval,
   expireStalePendingApprovals,
 } from "./approvals.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { buildArtifactPreview } from "../previews/content-preview.js";
 import { inferArtifactContentType, resolveArtifactContentPath } from "./artifacts.js";
 import { parseRunRequest, type RunRequest } from "./schemas.js";
@@ -385,6 +387,7 @@ export function handleApprovalsCollection(
   response: ServerResponse,
   url: URL,
   storeRegistry: RunStoreRegistry,
+  controlPlaneEvents?: ControlPlaneEventHub,
 ): void {
   if (request.method !== "GET") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /approvals` });
@@ -404,6 +407,8 @@ export function handleApprovalsCollection(
       mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
       externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
       workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
+      cwd,
+      controlPlaneEvents,
     });
     writeJson(response, 200, {
       cwd,
@@ -430,6 +435,7 @@ export async function handleApprovalItem(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   route: { readonly approvalId: string; readonly action?: "approve" | "deny" },
+  controlPlaneEvents?: ControlPlaneEventHub,
   onApprovalResolved?: (input: { readonly cwd: string; readonly store: RunStore; readonly approval: ApprovalRequest; readonly now: string }) => MediaJob | undefined,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -440,7 +446,7 @@ export async function handleApprovalItem(
   }
 
   const store = storeRegistry.getStore(cwd);
-  expireStaleApproval(store, route.approvalId);
+  expireStaleApproval(store, route.approvalId, controlPlaneEvents, cwd);
   const approval = store.getApprovalRequest(route.approvalId);
   if (!approval) {
     writeJson(response, 404, { error: "approval_not_found", message: `Approval request not found: ${route.approvalId}` });
@@ -475,6 +481,15 @@ export async function handleApprovalItem(
       return;
     }
     appendApprovalDecisionEvent(store, updated);
+    appendApprovalResolvedControlPlaneEvent(
+      store,
+      controlPlaneEvents,
+      cwd,
+      updated,
+      approval.status,
+      updated.status === "approved" ? "approved" : "denied",
+      now,
+    );
     syncExternalWorkActionForApproval(store, updated, now);
     const mediaJob = onApprovalResolved?.({ cwd, store, approval: updated, now });
     writeJson(response, 200, { approval: updated, ...(mediaJob ? { mediaJob } : {}) });

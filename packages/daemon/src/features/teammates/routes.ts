@@ -1,11 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { buildEffectiveTeammateSkills } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, buildEffectiveTeammateSkills, type RunStore } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { listExecutableSkillDefinitions, validateTeammateSkillBindings } from "../skills/registry.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { appendControlPlaneEvent } from "../control-plane/events.js";
 import { readOptionalTaskStatusQuery } from "../tasks/schemas.js";
 import { buildTeammateActivityItems } from "./activity.js";
 import {
@@ -160,6 +162,7 @@ export async function handleTeammateMemoryScopes(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   teammateId: string,
+  controlPlaneEvents?: ControlPlaneEventHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -184,10 +187,27 @@ export async function handleTeammateMemoryScopes(
     }
     if (request.method === "PUT") {
       const body = await readJsonBody(request, config.maxBodyBytes);
+      const before = store.listTeammateMemoryScopes(teammateId).map((scope) => ({
+        key: `${scope.kind}:${scope.channelId ?? ""}`,
+        enabled: scope.enabled,
+      }));
+      const now = new Date().toISOString();
       const scopes = store.replaceTeammateMemoryScopes(
         teammateId,
         parseReplaceTeammateMemoryScopesRequest(body),
-        new Date().toISOString(),
+        now,
+      );
+      appendTeammateBindingChangeControlPlaneEvent(
+        store,
+        controlPlaneEvents,
+        cwd,
+        teammateId,
+        "teammate.memory_scopes_changed",
+        summarizeBindingChange(before, scopes.map((scope) => ({
+          key: `${scope.kind}:${scope.channelId ?? ""}`,
+          enabled: scope.enabled,
+        }))),
+        now,
       );
       writeJson(response, 200, { cwd, teammateId, scopes });
       return;
@@ -207,6 +227,7 @@ export async function handleTeammateSkillBindings(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   teammateId: string,
+  controlPlaneEvents?: ControlPlaneEventHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -248,10 +269,27 @@ export async function handleTeammateSkillBindings(
       const body = await readJsonBody(request, config.maxBodyBytes);
       const nextBindings = parseReplaceTeammateSkillBindingsRequest(body);
       validateTeammateSkillBindings(store, teammateId, nextBindings);
+      const before = store.listTeammateSkillBindings(teammateId).map((binding) => ({
+        key: binding.skillId,
+        enabled: binding.enabled,
+      }));
+      const now = new Date().toISOString();
       const bindings = store.replaceTeammateSkillBindings(
         teammateId,
         nextBindings,
-        new Date().toISOString(),
+        now,
+      );
+      appendTeammateBindingChangeControlPlaneEvent(
+        store,
+        controlPlaneEvents,
+        cwd,
+        teammateId,
+        "teammate.skills_changed",
+        summarizeBindingChange(before, bindings.map((binding) => ({
+          key: binding.skillId,
+          enabled: binding.enabled,
+        }))),
+        now,
       );
       const channelId = url.searchParams.get("channelId") ?? undefined;
       const channel = channelId ? store.getChannel(channelId) : undefined;
@@ -287,6 +325,7 @@ export async function handleTeammateMcpBindings(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   teammateId: string,
+  controlPlaneEvents?: ControlPlaneEventHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -313,10 +352,27 @@ export async function handleTeammateMcpBindings(
 
     if (request.method === "PUT") {
       const body = await readJsonBody(request, config.maxBodyBytes);
+      const before = store.listTeammateMcpBindings(teammateId).map((binding) => ({
+        key: binding.serverId,
+        enabled: binding.enabled,
+      }));
+      const now = new Date().toISOString();
       const bindings = store.replaceTeammateMcpBindings(
         teammateId,
         parseReplaceTeammateMcpBindingsRequest(body),
-        new Date().toISOString(),
+        now,
+      );
+      appendTeammateBindingChangeControlPlaneEvent(
+        store,
+        controlPlaneEvents,
+        cwd,
+        teammateId,
+        "teammate.mcp_bindings_changed",
+        summarizeBindingChange(before, bindings.map((binding) => ({
+          key: binding.serverId,
+          enabled: binding.enabled,
+        }))),
+        now,
       );
       writeJson(response, 200, { cwd, teammateId, bindings });
       return;
@@ -329,6 +385,46 @@ export async function handleTeammateMcpBindings(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function summarizeBindingChange(
+  before: readonly { readonly key: string; readonly enabled: boolean }[],
+  after: readonly { readonly key: string; readonly enabled: boolean }[],
+): { readonly added: number; readonly removed: number; readonly disabled: number; readonly enabled: number } {
+  const beforeKeys = new Set(before.map((item) => item.key));
+  const afterKeys = new Set(after.map((item) => item.key));
+  return {
+    added: after.filter((item) => !beforeKeys.has(item.key)).length,
+    removed: before.filter((item) => !afterKeys.has(item.key)).length,
+    disabled: after.filter((item) => !item.enabled).length,
+    enabled: after.filter((item) => item.enabled).length,
+  };
+}
+
+function appendTeammateBindingChangeControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub | undefined,
+  cwd: string,
+  teammateId: string,
+  action: "teammate.skills_changed" | "teammate.memory_scopes_changed" | "teammate.mcp_bindings_changed",
+  counts: { readonly added: number; readonly removed: number; readonly disabled: number; readonly enabled: number },
+  now: string,
+): void {
+  if (!hub) {
+    return;
+  }
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "teammates",
+    entityType: "teammate",
+    entityId: teammateId,
+    action,
+    data: {
+      teammateId,
+      ...counts,
+    },
+  }, now);
 }
 
 export async function handleTeammatePersonaDraft(

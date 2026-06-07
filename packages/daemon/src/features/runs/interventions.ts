@@ -25,6 +25,7 @@ import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalString, readString } from "../../shared/validation.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import {
   createDetachedRunExecutionSink,
   executeRunRequest,
@@ -44,6 +45,7 @@ export async function handleRunInterventions(
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   mcpBroker: McpBroker,
+  controlPlaneEvents: ControlPlaneEventHub,
   sourceRunId: string,
 ): Promise<void> {
   const store = storeRegistry.findStoreForRun(sourceRunId, url.searchParams.get("cwd") ?? undefined);
@@ -117,6 +119,7 @@ export async function handleRunInterventions(
         runtimeSupervisor,
         secretResolver,
         mcpBroker,
+        controlPlaneEvents,
       });
     }
     writeJson(response, 201, { cwd: store.paths.cwd, intervention: store.getRunIntervention(intervention.id) ?? intervention });
@@ -188,6 +191,7 @@ export function maybeStartNextRunInterventionContinuation(input: {
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly mcpBroker: McpBroker;
+  readonly controlPlaneEvents: ControlPlaneEventHub;
 }): void {
   const sourceRun = input.store.getRun(input.sourceRunId);
   if (!sourceRun || !isTerminalRunStatus(sourceRun.status)) {
@@ -225,6 +229,7 @@ export function maybeStartNextRunInterventionContinuation(input: {
       input.secretResolver,
       input.mcpBroker,
       {
+        controlPlaneEvents: input.controlPlaneEvents,
         onRunReady: (runId) => {
           const run = input.store.getRun(runId);
           input.store.updateRunInterventionStatus({

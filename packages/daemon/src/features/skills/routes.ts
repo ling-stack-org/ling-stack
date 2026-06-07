@@ -1,6 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { appendControlPlaneEvent } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { SkillRoute } from "../../server/routes.js";
 import { readJsonBody } from "../../shared/request.js";
@@ -13,6 +16,7 @@ export async function handleSkillRoute(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  controlPlaneEvents: ControlPlaneEventHub,
   route: SkillRoute | undefined,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -39,6 +43,7 @@ export async function handleSkillRoute(
         return;
       }
       const refreshed = refreshEffectiveSkillRegistryEntries(store);
+      appendSkillRegistryChangedEvent(store, controlPlaneEvents, cwd, "refresh", "default", refreshed.registryGeneration);
       writeJson(response, 200, { cwd, ...refreshed });
       return;
     }
@@ -71,18 +76,22 @@ export async function handleSkillRoute(
         return;
       }
       if (request.method === "POST" && route.action === "publish") {
-        const skills = store.publishSkillImportDraft(route.draftId, new Date().toISOString());
+        const now = new Date().toISOString();
+        const skills = store.publishSkillImportDraft(route.draftId, now);
+        appendSkillRegistryChangedEvent(store, controlPlaneEvents, cwd, "publish", skills[0]?.id ?? route.draftId);
         writeJson(response, 200, { cwd, draftId: route.draftId, skills });
         return;
       }
     }
 
     if (route.kind === "skill" && request.method === "DELETE") {
-      const archived = store.archiveSkillRegistryEntry(route.skillId, new Date().toISOString());
+      const now = new Date().toISOString();
+      const archived = store.archiveSkillRegistryEntry(route.skillId, now);
       if (!archived) {
         writeJson(response, 404, { error: "skill_not_found", message: `Skill not found: ${route.skillId}` });
         return;
       }
+      appendSkillRegistryChangedEvent(store, controlPlaneEvents, cwd, "archive", route.skillId);
       writeJson(response, 200, { cwd, skill: archived });
       return;
     }
@@ -94,4 +103,27 @@ export async function handleSkillRoute(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function appendSkillRegistryChangedEvent(
+  store: ReturnType<RunStoreRegistry["getStore"]>,
+  controlPlaneEvents: ControlPlaneEventHub,
+  cwd: string,
+  changeType: string,
+  entityId: string,
+  registryGeneration?: number,
+): void {
+  appendControlPlaneEvent(store, controlPlaneEvents, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "skills",
+    entityType: "registry",
+    entityId,
+    action: "skill.registry_changed",
+    data: {
+      changeType,
+      registryGeneration,
+      skillId: entityId === "default" ? undefined : entityId,
+    },
+  });
 }

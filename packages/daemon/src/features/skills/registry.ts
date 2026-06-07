@@ -11,6 +11,10 @@ import { HttpError } from "../../errors.js";
 
 let skillRegistryGeneration = 0;
 
+export function getSkillRegistryGeneration(): number {
+  return skillRegistryGeneration;
+}
+
 export function listEffectiveSkillRegistryEntries(store: RunStore): SkillRegistryEntry[] {
   const builtInTimestamp = new Date(0).toISOString();
   const builtInEntries = listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID).map((definition): SkillRegistryEntry => ({

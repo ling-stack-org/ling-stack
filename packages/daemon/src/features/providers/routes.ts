@@ -1,11 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  DEFAULT_WORKSPACE_ID,
   secretPurposes,
   type SecretPurpose,
   type SecretResolver,
+  type ProviderPreset,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { appendControlPlaneEvent } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
@@ -47,6 +51,7 @@ export async function handleProvidersCollection(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   secretResolver: SecretResolver,
+  controlPlaneEvents: ControlPlaneEventHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -71,6 +76,7 @@ export async function handleProvidersCollection(
       const now = new Date().toISOString();
       const preset = store.createProviderPreset(input.presetInput, now);
       const provider = input.apiKey ? saveLocalProviderSecret(store, preset, input.apiKey, now) : preset;
+      appendProviderUpdatedEvent(store, controlPlaneEvents, cwd, provider, now);
       writeJson(response, 201, { provider: toPublicProviderPreset(store, provider, secretResolver) });
     } catch (error) {
       writeJson(response, 400, {
@@ -136,6 +142,7 @@ export async function handleProviderItem(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   secretResolver: SecretResolver,
+  controlPlaneEvents: ControlPlaneEventHub,
   route: { readonly providerId: string; readonly action?: "check" | "secret" },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -155,6 +162,20 @@ export async function handleProviderItem(
   if (request.method === "POST" && route.action === "check") {
     const checkResult = await checkProviderPreset(store, preset, secretResolver);
     store.recordProviderCheckResult(route.providerId, checkResult);
+    appendControlPlaneEvent(store, controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "providers",
+      entityType: "provider",
+      entityId: route.providerId,
+      action: "provider.preflight_checked",
+      data: {
+        providerId: route.providerId,
+        ok: checkResult.ok,
+        code: checkResult.code ?? (checkResult.ok ? "ok" : "failed"),
+        checkedAt: checkResult.checkedAt,
+      },
+    });
     writeJson(response, 200, checkResult);
     return;
   }
@@ -192,6 +213,7 @@ export async function handleProviderItem(
       if (input.clearApiKey) {
         store.deleteProviderSecret(route.providerId);
       }
+      appendProviderUpdatedEvent(store, controlPlaneEvents, cwd, updated, now);
       writeJson(response, 200, { provider: toPublicProviderPreset(store, updated, secretResolver) });
     } catch (error) {
       writeJson(response, 400, {
@@ -203,13 +225,38 @@ export async function handleProviderItem(
   }
 
   if (request.method === "DELETE") {
+    const now = new Date().toISOString();
     store.deleteProviderSecret(route.providerId);
     store.deleteProviderPreset(route.providerId);
+    appendProviderUpdatedEvent(store, controlPlaneEvents, cwd, { ...preset, enabled: false }, now);
     writeJson(response, 200, { ok: true });
     return;
   }
 
   writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for provider presets` });
+}
+
+function appendProviderUpdatedEvent(
+  store: ReturnType<RunStoreRegistry["getStore"]>,
+  controlPlaneEvents: ControlPlaneEventHub,
+  cwd: string,
+  provider: Pick<ProviderPreset, "id" | "enabled" | "kind" | "api">,
+  now: string,
+): void {
+  appendControlPlaneEvent(store, controlPlaneEvents, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "providers",
+    entityType: "provider",
+    entityId: provider.id,
+    action: "provider.updated",
+    data: {
+      providerId: provider.id,
+      enabled: provider.enabled,
+      kind: provider.kind,
+      api: provider.api,
+    },
+  }, now);
 }
 
 export async function handleProviderModelsProbe(

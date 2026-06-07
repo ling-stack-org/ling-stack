@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
+  DEFAULT_WORKSPACE_ID,
   defaultApprovalToolDecisions,
   riskyRunTools,
   syncExternalWorkActionForApproval,
@@ -18,6 +19,8 @@ import {
 } from "@ling-stack/core";
 import type { PiRunnerApprovalRequest, PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { isRecord } from "../../shared/validation.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { appendControlPlaneEvent } from "../control-plane/events.js";
 import {
   appendExecutionActionArtifactEvents,
   createExecutionActionPreviewArtifacts,
@@ -54,6 +57,8 @@ export function expireStalePendingApprovals(
     readonly mediaJobId?: string;
     readonly externalWorkActionId?: string;
     readonly workflowStepId?: string;
+    readonly cwd?: string;
+    readonly controlPlaneEvents?: ControlPlaneEventHub;
   } = {},
 ): void {
   const now = new Date().toISOString();
@@ -72,7 +77,7 @@ export function expireStalePendingApprovals(
       return;
     }
     for (const approval of expired) {
-      expireApproval(store, approval, now);
+      expireApproval(store, approval, now, options.controlPlaneEvents, options.cwd ?? store.paths.cwd);
     }
     safety += 1;
     if (pending.length < 500 || safety > 20) {
@@ -81,13 +86,18 @@ export function expireStalePendingApprovals(
   }
 }
 
-export function expireStaleApproval(store: RunStore, approvalId: string): void {
+export function expireStaleApproval(
+  store: RunStore,
+  approvalId: string,
+  controlPlaneEvents?: ControlPlaneEventHub,
+  cwd = store.paths.cwd,
+): void {
   const approval = store.getApprovalRequest(approvalId);
   const now = new Date().toISOString();
   if (!approval || approval.status !== "pending" || !approval.expiresAt || approval.expiresAt > now) {
     return;
   }
-  expireApproval(store, approval, now);
+  expireApproval(store, approval, now, controlPlaneEvents, cwd);
 }
 
 export function createRunApprovalHandler(options: {
@@ -98,6 +108,8 @@ export function createRunApprovalHandler(options: {
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
+  readonly controlPlaneEvents?: ControlPlaneEventHub;
+  readonly workspaceCwd?: string;
 }): PiRunnerRunOptions["onApprovalRequired"] {
   return async (request: PiRunnerApprovalRequest) => {
     const approvalInput = toCreateApprovalRequestInput(options.run, request);
@@ -112,6 +124,13 @@ export function createRunApprovalHandler(options: {
     if (policyDecision.decision === "deny") {
       const createdAt = new Date().toISOString();
       const denied = options.store.createApprovalRequest(approvalInput, createdAt);
+      appendApprovalCreatedControlPlaneEvent(
+        options.store,
+        options.controlPlaneEvents,
+        options.workspaceCwd ?? options.run.cwd,
+        denied,
+        createdAt,
+      );
       const previewArtifacts = createExecutionActionPreviewArtifacts({
         store: options.store,
         run: options.run,
@@ -129,6 +148,15 @@ export function createRunApprovalHandler(options: {
       if (!resolved) {
         throw new Error(`Approval request not found after policy denial: ${denied.id}`);
       }
+      appendApprovalResolvedControlPlaneEvent(
+        options.store,
+        options.controlPlaneEvents,
+        options.workspaceCwd ?? options.run.cwd,
+        resolved,
+        "pending",
+        "denied",
+        resolved.resolvedAt ?? new Date().toISOString(),
+      );
       const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(resolved, previewArtifacts));
       appendExecutionActionArtifactEvents({
         artifacts: previewArtifacts,
@@ -152,6 +180,13 @@ export function createRunApprovalHandler(options: {
 
     const createdAt = new Date().toISOString();
     const approval = options.store.createApprovalRequest(approvalInput, createdAt);
+    appendApprovalCreatedControlPlaneEvent(
+      options.store,
+      options.controlPlaneEvents,
+      options.workspaceCwd ?? options.run.cwd,
+      approval,
+      createdAt,
+    );
     const previewArtifacts = createExecutionActionPreviewArtifacts({
       store: options.store,
       run: options.run,
@@ -179,6 +214,26 @@ export function createRunApprovalHandler(options: {
 
     const resolvedApproval = await waitForApprovalDecision(options.store, approval.id, options.signal);
     const resolvedAt = new Date().toISOString();
+    if (resolvedApproval.status === "expired") {
+      appendApprovalExpiredControlPlaneEvent(
+        options.store,
+        options.controlPlaneEvents,
+        options.workspaceCwd ?? options.run.cwd,
+        resolvedApproval,
+        "pending",
+        resolvedAt,
+      );
+    } else {
+      appendApprovalResolvedControlPlaneEvent(
+        options.store,
+        options.controlPlaneEvents,
+        options.workspaceCwd ?? options.run.cwd,
+        resolvedApproval,
+        "pending",
+        resolvedApproval.status === "approved" ? "approved" : "denied",
+        resolvedAt,
+      );
+    }
     if (resolvedApproval.status === "approved") {
       options.store.transitionRunStatus({
         runId: options.run.id,
@@ -303,7 +358,96 @@ export function isRunTool(value: unknown): value is RunTool {
   return value === "read" || value === "grep" || value === "find" || value === "ls" || value === "bash" || value === "edit" || value === "write";
 }
 
-function expireApproval(store: RunStore, approval: ApprovalRequest, now: string): ApprovalRequest | undefined {
+export function appendApprovalCreatedControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub | undefined,
+  cwd: string,
+  approval: ApprovalRequest,
+  now: string,
+): void {
+  if (!hub) {
+    return;
+  }
+  const owner = resolveApprovalOwner(approval);
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "approvals",
+    entityType: "approval",
+    entityId: approval.id,
+    action: "approval.created",
+    data: {
+      ownerType: owner.type,
+      ownerId: owner.id,
+      actionType: approval.actionType,
+      risk: approval.risk,
+      expiresAt: approval.expiresAt ?? null,
+    },
+  }, now);
+}
+
+export function appendApprovalResolvedControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub | undefined,
+  cwd: string,
+  approval: ApprovalRequest,
+  previousStatus: ApprovalRequest["status"],
+  decision: "approved" | "denied",
+  now: string,
+): void {
+  if (!hub) {
+    return;
+  }
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "approvals",
+    entityType: "approval",
+    entityId: approval.id,
+    action: "approval.resolved",
+    data: {
+      previousStatus,
+      status: approval.status,
+      decision,
+      resolvedBy: approval.resolvedBy ?? "local-user",
+    },
+  }, now);
+}
+
+export function appendApprovalExpiredControlPlaneEvent(
+  store: RunStore,
+  hub: ControlPlaneEventHub | undefined,
+  cwd: string,
+  approval: ApprovalRequest,
+  previousStatus: ApprovalRequest["status"],
+  now: string,
+): void {
+  if (!hub) {
+    return;
+  }
+  appendControlPlaneEvent(store, hub, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "approvals",
+    entityType: "approval",
+    entityId: approval.id,
+    action: "approval.expired",
+    data: {
+      previousStatus,
+      status: approval.status,
+      decision: "expired",
+      resolvedBy: "system",
+    },
+  }, now);
+}
+
+function expireApproval(
+  store: RunStore,
+  approval: ApprovalRequest,
+  now: string,
+  controlPlaneEvents?: ControlPlaneEventHub,
+  cwd = store.paths.cwd,
+): ApprovalRequest | undefined {
   const expired = store.expireApprovalRequest(
     approval.id,
     { reason: "Approval request expired before a decision was received." },
@@ -312,8 +456,31 @@ function expireApproval(store: RunStore, approval: ApprovalRequest, now: string)
   if (expired) {
     appendApprovalDecisionEvent(store, expired);
     syncExternalWorkActionForApproval(store, expired, now);
+    appendApprovalExpiredControlPlaneEvent(store, controlPlaneEvents, cwd, expired, "pending", now);
   }
   return expired;
+}
+
+function resolveApprovalOwner(approval: ApprovalRequest): { readonly type: string; readonly id: string | null } {
+  if (approval.runId) {
+    return { type: "run", id: approval.runId };
+  }
+  if (approval.mediaJobId) {
+    return { type: "media_job", id: approval.mediaJobId };
+  }
+  if (approval.externalWorkActionId) {
+    return { type: "external_work_action", id: approval.externalWorkActionId };
+  }
+  if (approval.workflowStepId) {
+    return { type: "workflow_step", id: approval.workflowStepId };
+  }
+  if (approval.taskId) {
+    return { type: "task", id: approval.taskId };
+  }
+  if (approval.channelId) {
+    return { type: "channel", id: approval.channelId };
+  }
+  return { type: "unknown", id: null };
 }
 
 function approvalDecisionEventType(approval: ApprovalRequest): Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired"> {

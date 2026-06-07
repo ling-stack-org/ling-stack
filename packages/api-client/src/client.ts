@@ -64,6 +64,10 @@ import type {
   CreateChannelRequest,
   CreateAiTeammateRequest,
   ConfirmAutomationDraftResponse,
+  ControlPlaneDomain,
+  ControlPlaneEventsRequest,
+  ControlPlaneEventsResponse,
+  ControlPlaneSnapshotResponse,
   CreateAutomationDraftRequest,
   CreateAutomationRequest,
   CreateTeammateDirectMessageRequest,
@@ -280,6 +284,48 @@ export class LingDaemonClient {
       service: typeof body.service === "string" ? body.service : undefined,
       defaultWorkspaceCwd: typeof body.defaultWorkspaceCwd === "string" ? body.defaultWorkspaceCwd : undefined,
     };
+  }
+
+  async getControlPlaneSnapshot(
+    cwd: string,
+    domains?: readonly ControlPlaneDomain[],
+  ): Promise<ControlPlaneSnapshotResponse> {
+    return this.get("/control-plane/snapshot", {
+      cwd,
+      domains: domains?.join(","),
+    });
+  }
+
+  async listControlPlaneEvents(
+    cwd: string,
+    options: ControlPlaneEventsRequest = {},
+  ): Promise<ControlPlaneEventsResponse> {
+    return this.get("/control-plane/events", {
+      cwd,
+      afterSeq: options.afterSeq,
+      limit: options.limit,
+      domains: options.domains?.join(","),
+    });
+  }
+
+  async streamControlPlaneEvents(
+    cwd: string,
+    options: ControlPlaneEventsRequest = {},
+  ): Promise<Response> {
+    const response = await this.fetchImpl(this.url("/control-plane/stream", {
+      cwd,
+      afterSeq: options.afterSeq,
+      domains: options.domains?.join(","),
+    }), {
+      method: "GET",
+      headers: {
+        Accept: "text/event-stream",
+      },
+    });
+    if (!response.ok) {
+      throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
+    }
+    return response;
   }
 
   async listAutomations(cwd: string, options: AutomationListRequest = {}): Promise<AutomationListResponse> {

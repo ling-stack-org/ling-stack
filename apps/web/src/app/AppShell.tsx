@@ -25,6 +25,7 @@ import type {
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
+  ControlPlaneDomain,
   ExternalWorkActionView,
   MediaJob,
   ProviderCheckResult,
@@ -89,6 +90,12 @@ import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "..
 import { readDataString } from "../lib/data.js";
 import { titleFromPrompt } from "../lib/formatting.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd, writeSavedWorkspaceCwd } from "../lib/local-storage.js";
+import { getControlPlaneSnapshot } from "../api.js";
+import {
+  controlPlaneStreamUrl,
+  controlPlaneSummaryDomains,
+  parseControlPlaneEventMessage,
+} from "../lib/control-plane.js";
 import {
   readRunProviderPresetId,
   readRunWorkspaceCwd,
@@ -188,9 +195,11 @@ export function AppShell(): JSX.Element {
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [skillLibraryRefreshToken, setSkillLibraryRefreshToken] = useState(0);
   const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
+  const controlPlaneInvalidationRef = useRef<(domains: readonly ControlPlaneDomain[]) => void>(() => undefined);
   const {
     buildRerunRequest,
     buildRunRequest,
@@ -847,6 +856,119 @@ export function AppShell(): JSX.Element {
   const taskRepairRun = taskRepairRunId ? runById.get(taskRepairRunId) : undefined;
   const approvalRepairRun = approvalRepairRunId ? runById.get(approvalRepairRunId) : undefined;
   const memoryById = useMemo(() => new Map(memoryObjects.map((item) => [item.id, item])), [memoryObjects]);
+  controlPlaneInvalidationRef.current = (domains) => {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      return;
+    }
+    const changed = new Set(domains);
+    const refreshes: Promise<unknown>[] = [];
+    if (changed.has("runs")) {
+      refreshes.push(refreshRuns(workspaceCwd));
+    }
+    if (changed.has("work_units")) {
+      refreshes.push(refreshRuntimeState(workspaceCwd));
+    }
+    if (changed.has("approvals")) {
+      refreshes.push(refreshApprovals(workspaceCwd));
+      refreshes.push(refreshApprovalPolicy());
+    }
+    if (changed.has("providers")) {
+      refreshes.push(refreshProviders(workspaceCwd));
+    }
+    if (changed.has("mcp")) {
+      refreshes.push(refreshMcp(workspaceCwd));
+    }
+    if (changed.has("runners")) {
+      refreshes.push(refreshRuntimeSettings());
+    }
+    if (changed.has("teammates")) {
+      refreshes.push(refreshAiTeammates(workspaceCwd));
+    }
+    if (changed.has("memory")) {
+      refreshes.push(refreshUsedMemoryAudit(workspaceCwd));
+    }
+    if (changed.has("skills")) {
+      setSkillLibraryRefreshToken((current) => current + 1);
+    }
+    if (changed.has("artifacts") && selectedChannelId) {
+      refreshes.push(refreshChannelRunArtifacts(workspaceCwd, selectedChannelId, channelRunsForArtifacts));
+    }
+    if (refreshes.length > 0) {
+      void Promise.all(refreshes).catch((error: unknown) => {
+        setErrorMessage(error instanceof Error ? error.message : String(error));
+      });
+    }
+  };
+
+  useEffect(() => {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd || daemonHealthy !== true) {
+      return undefined;
+    }
+    let closed = false;
+    let source: EventSource | undefined;
+    let retryTimer: number | undefined;
+    let flushTimer: number | undefined;
+    let latestSeq = 0;
+    const pendingDomains = new Set<ControlPlaneDomain>();
+    const flushDomains = (): void => {
+      flushTimer = undefined;
+      if (pendingDomains.size === 0) {
+        return;
+      }
+      const domains = [...pendingDomains];
+      pendingDomains.clear();
+      controlPlaneInvalidationRef.current(domains);
+    };
+    const enqueueDomain = (domain: ControlPlaneDomain): void => {
+      pendingDomains.add(domain);
+      if (flushTimer !== undefined) {
+        return;
+      }
+      flushTimer = window.setTimeout(flushDomains, 150);
+    };
+    const openStream = async (): Promise<void> => {
+      const snapshot = await getControlPlaneSnapshot(workspaceCwd, ["runs"]).catch(() => undefined);
+      if (closed) {
+        return;
+      }
+      latestSeq = snapshot?.latestEventSeq ?? 0;
+      source = new EventSource(controlPlaneStreamUrl(daemonBaseUrl, workspaceCwd, {
+        afterSeq: latestSeq,
+        domains: controlPlaneSummaryDomains,
+      }));
+      source.addEventListener("control_plane_event", (message) => {
+        const event = parseControlPlaneEventMessage((message as MessageEvent<string>).data);
+        if (!event || event.seq <= latestSeq) {
+          return;
+        }
+        latestSeq = event.seq;
+        enqueueDomain(event.domain);
+      });
+      source.addEventListener("error", () => {
+        source?.close();
+        if (closed || retryTimer !== undefined) {
+          return;
+        }
+        retryTimer = window.setTimeout(() => {
+          retryTimer = undefined;
+          void openStream();
+        }, 2_000);
+      });
+    };
+    void openStream();
+    return () => {
+      closed = true;
+      source?.close();
+      if (retryTimer !== undefined) {
+        window.clearTimeout(retryTimer);
+      }
+      if (flushTimer !== undefined) {
+        window.clearTimeout(flushTimer);
+      }
+    };
+  }, [daemonBaseUrl, daemonHealthy, form.cwd]);
 
   useEffect(() => {
     void refreshHealth();
@@ -2606,6 +2728,7 @@ export function AppShell(): JSX.Element {
                 runners={runners}
                 runtimeSettings={runtimeSettings}
                 runtimeSettingsForm={runtimeSettingsForm}
+                skillLibraryRefreshToken={skillLibraryRefreshToken}
                 selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
                 externalWorkStatus={externalWorkStatus}
                 plugins={plugins}

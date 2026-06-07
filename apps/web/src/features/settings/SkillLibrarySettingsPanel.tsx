@@ -50,7 +50,7 @@ const initialSkillImportForm: SkillImportForm = {
   content: "",
 };
 
-export function SkillLibrarySettingsPanel({ cwd }: { readonly cwd: string }): JSX.Element {
+export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly cwd: string; readonly refreshToken?: number }): JSX.Element {
   const { t } = useI18n();
   const [skills, setSkills] = useState<readonly SkillRegistryEntry[]>([]);
   const [bindingSummaries, setBindingSummaries] = useState<readonly TeammateSkillBindingSummary[]>([]);
@@ -68,7 +68,7 @@ export function SkillLibrarySettingsPanel({ cwd }: { readonly cwd: string }): JS
 
   useEffect(() => {
     void refresh();
-  }, [cwd]);
+  }, [cwd, refreshToken]);
 
   const stats = useMemo(() => {
     const bindable = skills.filter((entry) => entry.reviewStatus === "builtin" || entry.reviewStatus === "published").length;

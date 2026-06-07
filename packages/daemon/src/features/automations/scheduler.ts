@@ -10,6 +10,7 @@ import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
 import { maybeStartNextRunInterventionContinuation } from "../runs/interventions.js";
 import { runAutomation } from "./run.js";
@@ -55,6 +56,7 @@ export class AutomationSchedulerRegistry {
     private readonly runtimeSupervisor: RuntimeSupervisor,
     private readonly secretResolver: SecretResolver,
     private readonly mcpBroker: McpBroker,
+    private readonly controlPlaneEvents: ControlPlaneEventHub,
   ) {}
 
   start(cwd: string): { readonly scheduler: AutomationSchedulerState; readonly duplicate: boolean } {
@@ -180,6 +182,7 @@ export class AutomationSchedulerRegistry {
                 hooks.afterRunTerminal?.(terminalRun);
                 this.maybeContinueRunInterventions(terminalRun);
               },
+              controlPlaneEvents: this.controlPlaneEvents,
             },
           ),
       });
@@ -235,6 +238,7 @@ export class AutomationSchedulerRegistry {
       runtimeSupervisor: this.runtimeSupervisor,
       secretResolver: this.secretResolver,
       mcpBroker: this.mcpBroker,
+      controlPlaneEvents: this.controlPlaneEvents,
     });
   }
 

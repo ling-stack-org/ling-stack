@@ -88,6 +88,58 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[16].url, "http://daemon.test/secrets/status?ref=keychain%3Aprovider+1&purpose=provider_api_key");
 });
 
+test("builds control-plane snapshot, events, and stream endpoints", async () => {
+  const responses = [
+    { cwd: "/repo", workspaceId: "workspace_default", generatedAt: "2026-06-06T00:00:00.000Z", latestEventSeq: 2, domains: {} },
+    { cwd: "/repo", workspaceId: "workspace_default", afterSeq: 1, limit: 25, events: [] },
+    new Response("", { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+  ];
+  const calls = [];
+  const fetch = async (url, init = {}) => {
+    calls.push({
+      url: String(url),
+      method: init.method ?? "GET",
+      headers: init.headers,
+      body: init.body,
+    });
+    const response = responses.shift();
+    return response instanceof Response ? response : jsonResponse(response);
+  };
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test/", fetch });
+
+  assert.deepEqual(await client.getControlPlaneSnapshot("/repo path", ["runs", "skills"]), {
+    cwd: "/repo",
+    workspaceId: "workspace_default",
+    generatedAt: "2026-06-06T00:00:00.000Z",
+    latestEventSeq: 2,
+    domains: {},
+  });
+  assert.deepEqual(await client.listControlPlaneEvents("/repo path", {
+    afterSeq: 1,
+    limit: 25,
+    domains: ["runs", "skills"],
+  }), {
+    cwd: "/repo",
+    workspaceId: "workspace_default",
+    afterSeq: 1,
+    limit: 25,
+    events: [],
+  });
+  const stream = await client.streamControlPlaneEvents("/repo path", {
+    afterSeq: 2,
+    domains: ["approvals"],
+  });
+  assert.equal(stream.headers.get("Content-Type"), "text/event-stream");
+
+  assert.equal(calls[0].method, "GET");
+  assert.equal(calls[0].url, "http://daemon.test/control-plane/snapshot?cwd=%2Frepo+path&domains=runs%2Cskills");
+  assert.equal(calls[1].method, "GET");
+  assert.equal(calls[1].url, "http://daemon.test/control-plane/events?cwd=%2Frepo+path&afterSeq=1&limit=25&domains=runs%2Cskills");
+  assert.equal(calls[2].method, "GET");
+  assert.equal(calls[2].url, "http://daemon.test/control-plane/stream?cwd=%2Frepo+path&afterSeq=2&domains=approvals");
+  assert.deepEqual(calls[2].headers, { Accept: "text/event-stream" });
+});
+
 test("builds automation draft endpoints without transforming daemon responses", async () => {
   const responses = [
     { cwd: "/repo", drafts: [] },

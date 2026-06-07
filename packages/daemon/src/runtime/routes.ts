@@ -12,7 +12,10 @@ import type {
   WorkUnitKind,
   WorkUnitStatus,
 } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
 import { HttpError } from "../errors.js";
+import { appendControlPlaneEvent } from "../features/control-plane/events.js";
+import type { ControlPlaneEventHub } from "../features/control-plane/events.js";
 import type { WorkUnitRoute } from "../server/routes.js";
 import { readOptionalIntegerQuery, readOptionalJsonBody } from "../shared/request.js";
 import { writeJson } from "../shared/response.js";
@@ -235,6 +238,7 @@ export async function handleRuntimeSettings(
   storeRegistry: RunStoreRegistry,
   runnerRegistry: RunnerRegistry,
   maxBodyBytes: number,
+  controlPlaneEvents: ControlPlaneEventHub,
 ): Promise<void> {
   const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
   if (!resolved) {
@@ -250,11 +254,25 @@ export async function handleRuntimeSettings(
     }
     if (request.method === "PATCH") {
       const body = await readOptionalJsonBody(request, maxBodyBytes);
+      const now = new Date().toISOString();
       const settings = patchWorkspaceRuntimeSettings(
         resolved.store,
         runnerRegistry,
         parseWorkspaceRuntimeSettingsPatch(body),
+        now,
       );
+      appendControlPlaneEvent(resolved.store, controlPlaneEvents, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        cwd: resolved.cwd,
+        domain: "runners",
+        entityType: "runtime_settings",
+        entityId: settings.workspaceId,
+        action: "runner.settings_updated",
+        data: {
+          defaultRunnerId: settings.defaultRunnerId,
+          allowedRunnerCount: settings.allowedRunnerIds.length,
+        },
+      }, now);
       writeJson(response, 200, {
         cwd: resolved.cwd,
         settings,
