@@ -115,6 +115,304 @@ test("bash=allow lets the runner continue without creating an approval request",
   }
 });
 
+test("runtimeTools.unifiedExec config is authoritative over run request feature flags", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-gate-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_bash_request_gate",
+    toolName: "bash",
+    input: { command: "echo request-only" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_unified_exec_request_gate"),
+      runtimeToolFeatures: { unifiedExec: true },
+    });
+
+    assert.equal(runner.runs[0].runtimeToolFeatures?.unifiedExec, false);
+    assert.deepEqual(runner.decisions[0], {
+      approved: true,
+      reason: "Ling Stack policy allowed bash.",
+    });
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unified exec bash=allow runs through daemon and records redacted artifacts", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-allow-"));
+  const secretValue = "unified-exec-secret-value";
+  const runner = new UnifiedExecProbeRunner({
+    toolCallId: "tool_unified_exec_allow",
+    toolName: "bash",
+    input: { command: `printf 'hello ${secretValue}\\n'` },
+  });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const { events, runId } = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_unified_exec_allow"),
+      provider: {
+        provider: "test-provider",
+        model: "test-model",
+        apiKey: secretValue,
+      },
+    });
+
+    assert.equal(runner.runs[0].runtimeToolFeatures?.unifiedExec, true);
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, true);
+    assert.equal(runner.decisions[0].handledResult.isError, false);
+    const result = runner.decisions[0].handledResult.details.unifiedExec;
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout.preview, /hello \[REDACTED\]/);
+    assert.doesNotMatch(JSON.stringify({ events, result }), new RegExp(secretValue));
+    assert.deepEqual(await listApprovals(daemon.url, cwd, runId), []);
+
+    const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    const execArtifacts = artifacts.artifacts.filter((artifact) => artifact.path.includes(`/unified-exec/${runner.request.toolCallId}/`));
+    assert.deepEqual(execArtifacts.map((artifact) => artifact.path.split("/").at(-1)).sort(), ["result.json", "stdout.txt"]);
+    for (const artifact of execArtifacts) {
+      const response = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(artifact.id)}/content?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(response.status, 200);
+      const content = await response.text();
+      assert.doesNotMatch(content, new RegExp(secretValue));
+      assert.match(content, /\[REDACTED\]/);
+    }
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unified exec bash=deny returns handled denial and never spawns", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-deny-"));
+  const markerPath = resolve(cwd, "should-not-exist.txt");
+  const runner = new UnifiedExecProbeRunner({
+    toolCallId: "tool_unified_exec_deny",
+    toolName: "bash",
+    input: { command: "touch should-not-exist.txt" },
+  });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "deny" } });
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_unified_exec_deny"));
+
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, false);
+    assert.equal(runner.decisions[0].handledResult.isError, true);
+    assert.match(runner.decisions[0].handledResult.content[0].text, /policy denied bash/);
+    await assert.rejects(() => readFile(markerPath, "utf8"), /ENOENT/);
+
+    const approvals = await listApprovals(daemon.url, cwd, runId);
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].status, "denied");
+    const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(artifacts.artifacts.some((artifact) => artifact.path.includes("/unified-exec/")), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unified exec bash=ask waits for approval before running", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-ask-"));
+  const runner = new UnifiedExecProbeRunner({
+    toolCallId: "tool_unified_exec_ask",
+    toolName: "bash",
+    input: { command: "printf 'approved\\n'" },
+  });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_unified_exec_ask"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    assert.equal(runner.decisions.length, 0);
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "run unified exec",
+    });
+    const remaining = await sse.collectRemaining();
+
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, true);
+    assert.equal(runner.decisions[0].approvalId, approvalId);
+    const result = runner.decisions[0].handledResult.details.unifiedExec;
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.approvalId, approvalId);
+    assert.match(result.stdout.preview, /approved/);
+    assert.equal(remaining.some((event) => event.event === "approval_approved"), true);
+    assert.equal(remaining.some((event) => event.event === "artifact_created"), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unified exec nonzero exit returns a handled failed result", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-nonzero-"));
+  const runner = new UnifiedExecProbeRunner({
+    toolCallId: "tool_unified_exec_nonzero",
+    toolName: "bash",
+    input: { command: "printf 'bad stderr\\n' >&2; exit 7" },
+  });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_unified_exec_nonzero"));
+
+    const handled = runner.decisions[0].handledResult;
+    assert.equal(handled.isError, true);
+    const result = handled.details.unifiedExec;
+    assert.equal(result.status, "failed");
+    assert.equal(result.exitCode, 7);
+    assert.match(result.stderr.preview, /bad stderr/);
+    assert.match(handled.content[0].text, /Command exited 7/);
+
+    const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(artifacts.artifacts.some((artifact) => artifact.path.endsWith("/stderr.txt")), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unified exec command timeout returns timed_out and does not create approvals", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-timeout-"));
+  const runner = new UnifiedExecProbeRunner({
+    toolCallId: "tool_unified_exec_timeout",
+    toolName: "bash",
+    input: { command: "sleep 2", timeoutMs: 50 },
+  });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_unified_exec_timeout"));
+
+    const handled = runner.decisions[0].handledResult;
+    assert.equal(handled.isError, true);
+    const result = handled.details.unifiedExec;
+    assert.equal(result.status, "timed_out");
+    assert.equal(result.timedOut, true);
+    assert.match(handled.content[0].text, /timed out/);
+    assert.deepEqual(await listApprovals(daemon.url, cwd, runId), []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unified exec rejects PTY requests as handled failures without spawning", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-pty-"));
+  const markerPath = resolve(cwd, "pty-should-not-run.txt");
+  const runner = new UnifiedExecProbeRunner({
+    toolCallId: "tool_unified_exec_pty",
+    toolName: "bash",
+    input: { command: "touch pty-should-not-run.txt", pty: true },
+  });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_unified_exec_pty"));
+
+    const handled = runner.decisions[0].handledResult;
+    assert.equal(handled.isError, true);
+    const result = handled.details.unifiedExec;
+    assert.equal(result.status, "failed");
+    assert.equal(result.exitCode, undefined);
+    assert.match(result.stderr.preview, /does not support PTY/);
+    await assert.rejects(() => readFile(markerPath, "utf8"), /ENOENT/);
+
+    const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(artifacts.artifacts.filter((artifact) => artifact.path.includes("/unified-exec/")).map((artifact) => artifact.path.split("/").at(-1)).sort(), ["result.json", "stderr.txt"]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unified exec bounds long output chunks and stream previews", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-long-output-"));
+  const runner = new UnifiedExecProbeRunner({
+    toolCallId: "tool_unified_exec_long_output",
+    toolName: "bash",
+    input: { command: "node -e \"process.stdout.write('x'.repeat(9000)); process.stderr.write('y'.repeat(5000));\"" },
+  });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const { events, runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_unified_exec_long_output"));
+
+    const result = runner.decisions[0].handledResult.details.unifiedExec;
+    assert.equal(result.status, "succeeded");
+    assert.equal(Buffer.byteLength(result.stdout.preview, "utf8") <= 8 * 1024, true);
+    assert.equal(Buffer.byteLength(result.stderr.preview, "utf8") <= 8 * 1024, true);
+    assert.equal(result.stdout.truncated, true);
+    assert.equal(result.stderr.truncated, false);
+
+    const chunks = events
+      .filter((event) => event.event === "tool_update")
+      .map((event) => event.data.data.partialResult);
+    assert.equal(chunks.length > 2, true);
+    for (const chunk of chunks) {
+      assert.equal(chunk.toolCallId, "tool_unified_exec_long_output");
+      assert.equal(Buffer.byteLength(chunk.text, "utf8") <= 4 * 1024, true);
+    }
+
+    const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    const execArtifacts = artifacts.artifacts.filter((artifact) => artifact.path.includes(`/unified-exec/${runner.request.toolCallId}/`));
+    assert.deepEqual(execArtifacts.map((artifact) => artifact.path.split("/").at(-1)).sort(), ["result.json", "stderr.txt", "stdout.txt"]);
+    assert.equal(result.artifacts.find((artifact) => artifact.role === "stdout")?.truncated, false);
+    assert.equal(result.artifacts.find((artifact) => artifact.role === "stderr")?.truncated, false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("unified exec run cancellation kills command and leaves the run cancelled", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-cancel-"));
+  const markerPath = resolve(cwd, "after-cancel.txt");
+  const runner = new UnifiedExecProbeRunner({
+    toolCallId: "tool_unified_exec_cancel",
+    toolName: "bash",
+    input: { command: "sleep 5; printf done > after-cancel.txt" },
+  });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_unified_exec_cancel"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    await waitForSseEvent(sse, "tool_start");
+
+    const cancelled = await postJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/cancel?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "test cancellation",
+    });
+    assert.equal(cancelled.cancelled, true);
+    assert.equal(cancelled.run.status, "cancelled");
+    await sse.collectRemaining();
+
+    const finalRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(finalRun.status, "cancelled");
+    await assert.rejects(() => readFile(markerPath, "utf8"), /ENOENT/);
+    const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(artifacts.artifacts.some((artifact) => artifact.path.endsWith("/unified-exec/tool_unified_exec_cancel/result.json")), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("assignee approval profile tightens workspace approval policy", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-profile-"));
   const runner = new ApprovalProbeRunner({
@@ -2930,6 +3228,7 @@ class ApprovalProbeRunner {
       model: options.provider.model,
       apiKey: options.provider.apiKey,
       taskId: options.task.id,
+      runtimeToolFeatures: options.runtimeToolFeatures,
     });
     options.onEvent?.({
       type: "run_start",
@@ -2952,6 +3251,65 @@ class ApprovalProbeRunner {
         toolName: this.request.toolName,
         result: { approved: decision.approved, reason: decision.reason },
         isError: !decision.approved,
+      });
+    }
+
+    options.onEvent?.({
+      type: "run_end",
+      taskId: options.task.id,
+      messageCount: 1,
+    });
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+}
+
+class UnifiedExecProbeRunner {
+  constructor(request) {
+    this.request = request;
+    this.decisions = [];
+    this.runs = [];
+  }
+
+  async runTask(options) {
+    this.runs.push({
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+      apiKey: options.provider.apiKey,
+      taskId: options.task.id,
+      runtimeToolFeatures: options.runtimeToolFeatures,
+    });
+    options.onEvent?.({
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    });
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: this.request.toolCallId,
+      toolName: this.request.toolName,
+      args: this.request.input,
+    });
+
+    const decision = await options.onApprovalRequired?.({
+      ...this.request,
+      task: options.task,
+      cwd: options.cwd,
+    });
+    if (decision) {
+      this.decisions.push(decision);
+      options.onEvent?.({
+        type: "tool_end",
+        toolCallId: this.request.toolCallId,
+        toolName: this.request.toolName,
+        result: decision.handledResult ?? { approved: decision.approved, reason: decision.reason },
+        isError: decision.handledResult?.isError ?? !decision.approved,
       });
     }
 
@@ -3136,8 +3494,8 @@ class BlockingRunner {
   }
 }
 
-async function startDaemonForTest(runner, dependencies = {}) {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner, ...dependencies });
+async function startDaemonForTest(runner, dependencies = {}, config = {}) {
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, ...config }, { runner, ...dependencies });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");

@@ -4856,7 +4856,7 @@ function summarizeEvent(event: RunEventEnvelope): string {
     case "tool_start":
       return `${summarizeToolName(event.data)} ${summarizeUnknown(readField(event.data, "args"), 80)}`;
     case "tool_end":
-      return `${summarizeToolName(event.data)} ${readBoolean(event.data, "isError") ? "error" : "ok"} ${summarizeUnknown(readField(event.data, "result"), 80)}`;
+      return `${summarizeToolName(event.data)} ${readBoolean(event.data, "isError") ? "error" : "ok"} ${summarizeUnifiedExecResult(readField(event.data, "result")) || summarizeUnknown(readField(event.data, "result"), 80)}`;
     case "approval_requested":
       return `${readString(event.data, "approvalId") ?? ""} ${readString(event.data, "actionType") ?? ""} ${readString(event.data, "risk") ?? ""}`;
     case "approval_approved":
@@ -4920,6 +4920,55 @@ function summarizeResult(data: unknown): string {
     parts.push(`${runnerEventCount} runner events`);
   }
   return parts.length > 0 ? parts.join(", ") : summarizeUnknown(data, 160);
+}
+
+function summarizeUnifiedExecResult(data: unknown): string {
+  const unifiedExec = readUnifiedExecResultData(data);
+  if (!isRecord(unifiedExec)) {
+    return "";
+  }
+  const denied = readBoolean(unifiedExec, "denied");
+  const reason = readString(unifiedExec, "reason");
+  if (denied) {
+    return reason ?? "Command denied by policy.";
+  }
+  const status = readString(unifiedExec, "status");
+  const exitCode = readNumber(unifiedExec, "exitCode");
+  const durationMs = readNumber(unifiedExec, "durationMs");
+  const duration = durationMs === undefined ? "" : `${durationMs}ms`;
+  if (status === "timed_out") {
+    return duration ? `Command timed out after ${duration}.` : "Command timed out.";
+  }
+  if (status === "cancelled") {
+    return duration ? `Command cancelled after ${duration}.` : "Command cancelled.";
+  }
+  if (exitCode !== undefined) {
+    return duration ? `Command exited ${exitCode} in ${duration}.` : `Command exited ${exitCode}.`;
+  }
+  if (status) {
+    return duration ? `Command ${status} in ${duration}.` : `Command ${status}.`;
+  }
+  return reason ?? "";
+}
+
+function readUnifiedExecResultData(data: unknown): unknown {
+  const candidates = [
+    data,
+    readField(data, "result"),
+    readField(data, "partialResult"),
+  ];
+  for (const candidate of candidates) {
+    const direct = readField(candidate, "unifiedExec");
+    if (direct !== undefined) {
+      return direct;
+    }
+    const details = readField(candidate, "details");
+    const nested = readField(details, "unifiedExec");
+    if (nested !== undefined) {
+      return nested;
+    }
+  }
+  return undefined;
 }
 
 function summarizeToolName(data: unknown): string {

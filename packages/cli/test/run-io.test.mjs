@@ -158,6 +158,50 @@ test("run default output writes assistant text to stdout and progress to stderr"
   }
 });
 
+test("run default output summarizes unified exec results without dumping shell output", async () => {
+  const daemon = await startRunDaemon({
+    events: [
+      event(1, "tool_start", {
+        toolCallId: "tool_bash_1",
+        toolName: "bash",
+        args: { command: "printf lots" },
+      }),
+      event(2, "tool_end", {
+        toolCallId: "tool_bash_1",
+        toolName: "bash",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Command exited 0 in 123ms." }],
+          details: {
+            unifiedExec: {
+              status: "succeeded",
+              toolCallId: "tool_bash_1",
+              durationMs: 123,
+              exitCode: 0,
+              stdout: { preview: "very long shell output that should stay out of human progress", truncated: true },
+              stderr: { preview: "", truncated: false },
+            },
+          },
+        },
+      }),
+      event(3, "assistant_text_delta", { text: "ok" }),
+      event(4, "message_end", {}),
+      event(5, "run_end", { taskId: "task_1" }),
+    ],
+  });
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-run-io-"));
+  try {
+    const result = await runCli(daemon.url, cwd, ["run", "--provider", "provider_test", "--skip-preflight", "--prompt", "hello"], "");
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, "ok\n");
+    assert.match(result.stderr, /Tool end: bash ok Command exited 0 in 123ms\./);
+    assert.doesNotMatch(result.stderr, /very long shell output/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 test("run --output-last-message writes the last completed assistant message atomically", async () => {
   const daemon = await startRunDaemon({
     events: [

@@ -37,11 +37,30 @@ export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | unde
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         result: event.result,
-        isError: event.isError,
+        isError: event.isError || isHandledUnifiedExecError(event.result),
       };
     default:
       return undefined;
   }
+}
+
+function isHandledUnifiedExecError(result: unknown): boolean {
+  if (!isRecord(result)) {
+    return false;
+  }
+  if (result.isError === true) {
+    return true;
+  }
+  const details = result.details;
+  if (!isRecord(details)) {
+    return false;
+  }
+  const unifiedExec = details.unifiedExec;
+  if (!isRecord(unifiedExec)) {
+    return false;
+  }
+  const status = unifiedExec.status;
+  return status === "failed" || status === "timed_out" || status === "cancelled";
 }
 
 function getMessageRole(message: unknown): string {
@@ -52,4 +71,8 @@ function getMessageRole(message: unknown): string {
     }
   }
   return "unknown";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -160,6 +160,7 @@ export function createDefaultRunnerRegistry(
   const piCapabilities = [
     ...extension.manifest.capabilities,
     ...(config.runtimeTools?.requestPermissions ? ["runtime:request-permissions"] : []),
+    ...(config.runtimeTools?.unifiedExec ? ["runtime:unified-exec"] : []),
   ];
   return createRunnerRegistry([
     {

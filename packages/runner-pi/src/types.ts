@@ -119,6 +119,7 @@ export interface PiRunnerPermissionDecision {
 
 export interface PiRunnerRuntimeToolFeatures {
   readonly requestPermissions?: boolean;
+  readonly unifiedExec?: boolean;
 }
 
 export interface PiRunnerRunOptions {

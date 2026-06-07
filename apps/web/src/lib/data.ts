@@ -64,12 +64,69 @@ export function readDataContainers(data: unknown): readonly unknown[] {
   ].filter((value) => value !== undefined && value !== null);
 }
 
+export function summarizeUnifiedExecResultFromData(data: unknown): string {
+  const unifiedExec = readUnifiedExecResultData(data);
+  if (!unifiedExec) {
+    return "";
+  }
+  const denied = readDataBoolean(unifiedExec, "denied");
+  const reason = readDataString(unifiedExec, "reason");
+  if (denied) {
+    return reason || "Command denied by policy.";
+  }
+  const status = readDataString(unifiedExec, "status");
+  const exitCode = readDataNumber(unifiedExec, "exitCode");
+  const durationMs = readDataNumber(unifiedExec, "durationMs");
+  const duration = durationMs === undefined ? "" : `${durationMs}ms`;
+  if (status === "timed_out") {
+    return duration ? `Command timed out after ${duration}.` : "Command timed out.";
+  }
+  if (status === "cancelled") {
+    return duration ? `Command cancelled after ${duration}.` : "Command cancelled.";
+  }
+  if (exitCode !== undefined) {
+    return duration ? `Command exited ${exitCode} in ${duration}.` : `Command exited ${exitCode}.`;
+  }
+  if (status) {
+    return duration ? `Command ${status} in ${duration}.` : `Command ${status}.`;
+  }
+  return reason;
+}
+
+function readUnifiedExecResultData(data: unknown): unknown {
+  const candidates = [
+    data,
+    readDataField(data, "result"),
+    readDataField(data, "partialResult"),
+  ];
+  for (const candidate of candidates) {
+    const direct = readDataField(candidate, "unifiedExec");
+    if (direct !== undefined) {
+      return direct;
+    }
+    const details = readDataField(candidate, "details");
+    const nested = readDataField(details, "unifiedExec");
+    if (nested !== undefined) {
+      return nested;
+    }
+  }
+  return undefined;
+}
+
 export function readDataString(data: unknown, key: string): string {
   if (typeof data === "object" && data !== null && key in data) {
     const value = (data as Record<string, unknown>)[key];
     return typeof value === "string" ? value : "";
   }
   return "";
+}
+
+export function readDataNumber(data: unknown, key: string): number | undefined {
+  if (typeof data === "object" && data !== null && key in data) {
+    const value = (data as Record<string, unknown>)[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  }
+  return undefined;
 }
 
 export function readDataBoolean(data: unknown, key: string): boolean {
@@ -87,6 +144,10 @@ export function readDataField(data: unknown, key: string): unknown {
 }
 
 export function formatEventPreview(data: unknown): string {
+  const unifiedExecSummary = summarizeUnifiedExecResultFromData(data);
+  if (unifiedExecSummary) {
+    return unifiedExecSummary;
+  }
   const preview = readDeepDataPreview(data, ["message", "error", "detail", "reason", "command", "text", "result", "partialResult"]);
   if (preview) {
     return preview;

@@ -23,6 +23,10 @@ export class RuntimeSupervisor {
 
   constructor(private readonly config: ResolvedDaemonConfig) {}
 
+  getRuntimeToolFeatures(): ResolvedDaemonConfig["runtimeTools"] {
+    return this.config.runtimeTools;
+  }
+
   getRuntime(cwd: string, store: RunStore): RuntimeInstance {
     const existing = this.runtimesByCwd.get(cwd);
     if (existing) {
