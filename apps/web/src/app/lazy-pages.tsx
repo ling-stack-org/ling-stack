@@ -54,6 +54,12 @@ export const LazyApprovalsPage = lazy(() =>
   })),
 );
 
+export const LazyGlobalWorkBoardPage = lazy(() =>
+  import("../features/work-board/GlobalWorkBoardPage.js").then((module) => ({
+    default: module.GlobalWorkBoardPage,
+  })),
+);
+
 export const LazyMediaJobsPage = lazy(() =>
   import("../features/media/MediaJobsPage.js").then((module) => ({
     default: module.MediaJobsPage,

@@ -1,0 +1,158 @@
+.work-board-page,
+.work-board-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.work-board-panel {
+  padding: 12px;
+  border: 1px solid #dce5df;
+  background: #fbfcfa;
+}
+
+.work-board-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.work-board-filters label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: #40504a;
+  font-size: 12px;
+}
+
+.work-board-filters select {
+  min-width: 0;
+}
+
+.work-board-count-line {
+  display: flex;
+  align-items: center;
+  color: #4f5e59;
+  font-size: 12px;
+}
+
+.work-board-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.work-board-group {
+  display: grid;
+  gap: 8px;
+}
+
+.work-board-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e4ebe6;
+}
+
+.work-board-group-head strong {
+  color: #17211f;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.work-board-group-head span {
+  color: #63736d;
+  font-size: 12px;
+}
+
+.work-board-list {
+  display: grid;
+  gap: 8px;
+}
+
+.work-item-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #e1e6e2;
+  background: #ffffff;
+}
+
+.work-item-row.waiting {
+  border-color: #d9bd71;
+  background: #fffaf0;
+}
+
+.work-item-row.blocked {
+  border-color: #e7b4a8;
+  background: #fff7f4;
+}
+
+.work-item-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.work-item-title-row,
+.work-item-labels,
+.work-item-actions {
+  display: flex;
+  align-items: center;
+}
+
+.work-item-title-row {
+  gap: 7px;
+  min-width: 0;
+}
+
+.work-item-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #17211f;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-item-main p {
+  margin: 0;
+  overflow: hidden;
+  color: #4f5e59;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-item-labels {
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.work-item-labels span {
+  padding: 3px 6px;
+  border: 1px solid #dce5df;
+  color: #4f5e59;
+  font-size: 11px;
+}
+
+.work-item-actions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 980px) {
+  .work-board-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .work-item-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .work-item-actions {
+    justify-content: flex-start;
+  }
+}

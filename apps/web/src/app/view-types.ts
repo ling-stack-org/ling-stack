@@ -1,4 +1,4 @@
-export type ViewId = "workspace" | "teammates" | "runs" | "threads" | "automations" | "providers" | "media" | "approvals" | "settings";
+export type ViewId = "workspace" | "teammates" | "runs" | "threads" | "automations" | "providers" | "media" | "approvals" | "work_board" | "settings";
 export type SidebarViewTarget = ViewId | "tasks";
 export type SidebarConversationKind = "teammate" | "direct";
 export type SidebarTarget = SidebarViewTarget | `channel:${string}` | `${SidebarConversationKind}:${string}`;
@@ -51,7 +51,10 @@ export function viewTitle(view: ViewId): string {
     return "Automations";
   }
   if (view === "approvals") {
-    return "Approvals";
+    return "Review Queue";
+  }
+  if (view === "work_board") {
+    return "Global Work Board";
   }
   if (view === "media") {
     return "Media jobs";
@@ -79,7 +82,10 @@ export function viewDescription(view: ViewId): string {
     return "创建、预览并运行可重复的 AI teammate 工作。";
   }
   if (view === "approvals") {
-    return "查看和处理需要人工决策的高风险动作；bash、edit、write 会在执行前等待审批。";
+    return "处理跨频道注意事项、外部动作审批、已批准动作执行和离线本地审批。";
+  }
+  if (view === "work_board") {
+    return "跨频道查看当前工作、等待原因、来源、负责人和可操作入口。";
   }
   if (view === "media") {
     return "创建和查看媒体 job 元数据；当前切片只验证模型与适配器边界，不调用真实媒体生成 API。";

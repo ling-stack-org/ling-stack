@@ -139,6 +139,7 @@ import type {
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
+  ExternalWorkActionView,
   ExternalWorkCiTriageView,
   MemoryObject,
   ProviderPreset,
@@ -159,6 +160,7 @@ import type {
 } from "../../types.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
+import { ChannelWorkBoard } from "../work-board/ChannelWorkBoard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
@@ -315,6 +317,7 @@ export function WorkspaceClientView({
   channelProtocolLoading,
   providersLoading,
   approvals,
+  externalActionDetails,
   approvalsLoading,
   resolvingApprovals,
   resourceLeases,
@@ -439,6 +442,7 @@ export function WorkspaceClientView({
   readonly channelProtocolLoading: boolean;
   readonly providersLoading: boolean;
   readonly approvals: readonly ApprovalRequest[];
+  readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
   readonly approvalsLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly resourceLeases: readonly ResourceLease[];
@@ -3133,6 +3137,20 @@ export function WorkspaceClientView({
                           setActivityAttentionFilter("all");
                           setActiveActivityViewId(allChannelActivitySavedViewId);
                         }}
+                      />
+                      <ChannelWorkBoard
+                        channel={selectedChannel}
+                        tasks={tasks}
+                        runs={runs}
+                        approvals={approvals}
+                        workflowSteps={channelWorkflowSteps}
+                        externalActionDetails={externalActionDetails}
+                        externalWorkCiTriage={externalWorkCiTriage}
+                        artifactsByRun={channelArtifactsByRun}
+                        loading={tasksLoading || approvalsLoading || channelActivityTransitionsLoading}
+                        onOpenTask={openTaskFromActivity}
+                        onOpenRun={openRunInPanel}
+                        onOpenApproval={(approvalId) => openApprovalInPanel(approvals.find((approval) => approval.id === approvalId))}
                       />
                       <CiTriageAuditPanel
                         records={externalWorkCiTriage}

@@ -66,6 +66,7 @@ import {
   LazyAutomationsPage as AutomationsPage,
   LazyAiTeammatesPage as AiTeammatesPage,
   LazyApprovalsPage as ApprovalsPage,
+  LazyGlobalWorkBoardPage as GlobalWorkBoardPage,
   LazyMediaJobsPage as MediaJobsPage,
   LazyPageErrorBoundary,
   LazyProviderSettings as ProviderSettings,
@@ -2315,6 +2316,16 @@ export function AppShell(): JSX.Element {
     openPlainView("runs");
   }
 
+  function openTaskFromWorkBoard(taskId: string): void {
+    const task = tasks.find((item) => item.id === taskId);
+    if (task?.channelId) {
+      setSelectedChannelId(task.channelId);
+      setActiveSidebarTarget(channelSidebarTarget(task.channelId));
+    }
+    setSelectedTaskId(taskId);
+    setActiveView("workspace");
+  }
+
   function openApprovalsFromWorkspace(runId?: string): void {
     const targetRunId = runId || activeRunId || "";
     setApprovalRepairRunId(targetRunId);
@@ -2351,7 +2362,7 @@ export function AppShell(): JSX.Element {
     setSelectedTaskId(runToRepair.taskId);
   }
 
-  const showInspector = !["workspace", "providers", "teammates", "runs", "threads", "automations", "approvals", "media", "settings"].includes(activeView);
+  const showInspector = !["workspace", "providers", "teammates", "runs", "threads", "automations", "approvals", "work_board", "media", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
@@ -2452,6 +2463,7 @@ export function AppShell(): JSX.Element {
             channelProtocolLoading={channelProtocolLoading}
             providersLoading={providersLoading}
             approvals={approvals}
+            externalActionDetails={externalActionDetails}
             approvalsLoading={approvalsLoading}
             resolvingApprovals={resolvingApprovals}
             resourceLeases={resourceLeases}
@@ -2703,6 +2715,32 @@ export function AppShell(): JSX.Element {
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onClearCheckFeedback={clearProviderCheckFeedback}
                 onClearRepair={() => setProviderRepairRunId("")}
+                  />
+                ) : activeView === "work_board" ? (
+                  <GlobalWorkBoardPage
+                    channels={channels}
+                    tasks={tasks}
+                    runs={runs}
+                    approvals={approvals}
+                    workflowSteps={channelWorkflowSteps}
+                    externalActionDetails={externalActionDetails}
+                    externalWorkCiTriage={externalWorkCiTriage}
+                    artifactsByRun={channelArtifactsByRun}
+                    onRefresh={() => {
+                      void Promise.all([
+                        refreshTasks(),
+                        refreshRuns(),
+                        refreshApprovals(),
+                        refreshExternalWorkCiTriage(),
+                      ]);
+                    }}
+                    onOpenTask={openTaskFromWorkBoard}
+                    onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                    onOpenApproval={(approvalId) => {
+                      setSelectedApprovalId(approvalId);
+                      openPlainView("approvals");
+                    }}
+                    onOpenChannel={selectWorkspaceChannel}
                   />
                 ) : activeView === "media" ? (
                   <MediaJobsPage
