@@ -418,6 +418,17 @@ export function parseExternalWorkActionRoute(pathname: string): { readonly actio
   return undefined;
 }
 
+export function parseExternalWorkRoute(pathname: string): { readonly externalWorkId: string; readonly action?: "route" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "external-work") {
+    return { externalWorkId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "external-work" && segments[2] === "route") {
+    return { externalWorkId: segments[1], action: "route" };
+  }
+  return undefined;
+}
+
 export function parseExternalWorkCiTriageItemRoute(pathname: string): { readonly triageId: string } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (

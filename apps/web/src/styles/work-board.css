@@ -140,7 +140,26 @@
 }
 
 .work-item-actions {
+  gap: 8px;
+  flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.work-item-route-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.work-item-route-control select {
+  min-width: 138px;
+  max-width: 180px;
+  height: 30px;
+  border: 1px solid #d9e1dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17211f;
+  font-size: 12px;
 }
 
 @media (max-width: 980px) {

@@ -384,6 +384,60 @@ test("GitHub external work poll imports candidates, deduplicates, and reconciles
   }
 });
 
+test("external work route updates local channel ownership without external mutation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-route-"));
+  const runner = new FailingRunner();
+  const githubCalls = [];
+  const daemon = await startDaemonForTest(runner, createGitHubBackgroundFetchMock(githubCalls));
+  try {
+    await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
+    const sourceChannel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "GitHub intake",
+      boundPath: cwd,
+      defaultTeammateId: "engineer",
+      allowedTools: ["read"],
+    });
+    const targetChannel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Runtime board",
+      boundPath: cwd,
+      defaultTeammateId: "engineer",
+      allowedTools: ["read"],
+    });
+    const polled = await postJson(`${daemon.url}/external-work/github/poll?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: sourceChannel.channel.id,
+      workflowPath: "WORKFLOW.md",
+    });
+    const externalWorkId = polled.results[0].externalWorkId;
+    const proposed = await postJson(`${daemon.url}/external-work/actions/propose?cwd=${encodeURIComponent(cwd)}`, {
+      externalWorkId,
+      actionKind: "github_comment",
+      payload: { type: "github_comment", body: "Route after review." },
+    });
+    assert.equal(proposed.action.channelId, sourceChannel.channel.id);
+    const callsBeforeRoute = githubCalls.length;
+
+    const routed = await postJson(`${daemon.url}/external-work/${encodeURIComponent(externalWorkId)}/route?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: targetChannel.channel.id,
+      priority: 9,
+    });
+    assert.equal(githubCalls.length, callsBeforeRoute);
+    assert.equal(routed.externalWork.externalWork.channelId, targetChannel.channel.id);
+    assert.equal(routed.externalWork.externalWork.item.priority, 9);
+    assert.equal(routed.externalWork.schedulerState.channelId, targetChannel.channel.id);
+    assert.equal(routed.actions[0].action.id, proposed.action.id);
+    assert.equal(routed.actions[0].action.channelId, targetChannel.channel.id);
+    assert.equal(routed.decision.channelId, targetChannel.channel.id);
+
+    const sourceList = await getJson(`${daemon.url}/external-work?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(sourceChannel.channel.id)}`);
+    assert.equal(sourceList.externalWork.length, 0);
+    const targetList = await getJson(`${daemon.url}/external-work?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(targetChannel.channel.id)}`);
+    assert.equal(targetList.externalWork.length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("Linear external work import and poll use the shared local workflow pipeline without runner or mutation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-linear-external-work-"));
   const runner = new FailingRunner();

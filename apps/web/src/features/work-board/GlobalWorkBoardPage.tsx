@@ -28,6 +28,8 @@ export function GlobalWorkBoardPage({
   onOpenRun,
   onOpenApproval,
   onOpenChannel,
+  onRouteExternalWork,
+  routingExternalWorkId,
 }: {
   readonly channels: readonly Channel[];
   readonly tasks: readonly Task[];
@@ -42,6 +44,8 @@ export function GlobalWorkBoardPage({
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApproval: (approvalId: string) => void;
   readonly onOpenChannel: (channelId: string) => void;
+  readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
+  readonly routingExternalWorkId?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const [channelFilter, setChannelFilter] = useState("");
@@ -140,6 +144,9 @@ export function GlobalWorkBoardPage({
                       onOpenRun={onOpenRun}
                       onOpenApproval={onOpenApproval}
                       onOpenExternalWork={item.channelId ? () => onOpenChannel(item.channelId as string) : undefined}
+                      routeChannels={channels}
+                      routing={item.externalWorkId === routingExternalWorkId}
+                      onRouteExternalWork={onRouteExternalWork}
                     />
                   ))}
                 </div>

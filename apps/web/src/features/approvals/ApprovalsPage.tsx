@@ -1,8 +1,10 @@
+import { useState } from "react";
 import {
   CircleAlert,
   History,
   Loader2,
   RefreshCw,
+  Route,
   ShieldCheck,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
@@ -15,7 +17,7 @@ import {
   reviewQueueCategoryLabel,
 } from "../../lib/review-queue.js";
 import { readTaskTitle } from "../../lib/run-evidence.js";
-import type { ApprovalRequest, ExternalWorkActionView, RunSession } from "../../types.js";
+import type { ApprovalRequest, Channel, ExternalWorkActionView, RunSession } from "../../types.js";
 import { ApprovalCard, type ExternalActionBusyState } from "./ApprovalCard.js";
 import type { ApprovalResolution } from "./types.js";
 
@@ -38,6 +40,9 @@ export function ApprovalsPage({
   onCancelExternalAction,
   onOpenRun,
   onClearRepair,
+  channels,
+  onRouteExternalWork,
+  routingExternalWorkId,
   inlineApprovalIds,
 }: {
   readonly cwd: string;
@@ -58,6 +63,9 @@ export function ApprovalsPage({
   readonly onCancelExternalAction: (actionId: string) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onClearRepair: () => void;
+  readonly channels?: readonly Channel[];
+  readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
+  readonly routingExternalWorkId?: string;
   readonly inlineApprovalIds?: ReadonlySet<string>;
 }): JSX.Element {
   const { t } = useI18n();
@@ -146,6 +154,15 @@ export function ApprovalsPage({
                   <span>{t(reviewQueueCategoryLabel(item.category))}</span>
                   <span className={`approval-risk ${item.approval.risk}`}>{item.priority}</span>
                 </div>
+                {item.externalAction?.action.externalWorkId && onRouteExternalWork && channels && channels.length > 1 ? (
+                  <ReviewQueueRouteControl
+                    channels={channels}
+                    currentChannelId={item.externalAction.action.channelId}
+                    externalWorkId={item.externalAction.action.externalWorkId}
+                    routing={routingExternalWorkId === item.externalAction.action.externalWorkId}
+                    onRouteExternalWork={onRouteExternalWork}
+                  />
+                ) : null}
                 <ApprovalCard
                   approval={item.approval}
                   selected={item.approval.id === selectedApprovalId}
@@ -164,6 +181,45 @@ export function ApprovalsPage({
         )}
       </div>
     </section>
+  );
+}
+
+function ReviewQueueRouteControl({
+  channels,
+  currentChannelId,
+  externalWorkId,
+  routing,
+  onRouteExternalWork,
+}: {
+  readonly channels: readonly Channel[];
+  readonly currentChannelId?: string;
+  readonly externalWorkId: string;
+  readonly routing?: boolean;
+  readonly onRouteExternalWork: (externalWorkId: string, channelId: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [targetChannelId, setTargetChannelId] = useState(currentChannelId ?? "");
+  return (
+    <div className="review-queue-route-control">
+      <span>{t("Route")}</span>
+      <select
+        aria-label={t("Route to channel")}
+        value={targetChannelId}
+        disabled={routing}
+        onChange={(event) => setTargetChannelId(event.target.value)}
+      >
+        {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+      </select>
+      <button
+        className="secondary-button compact-button"
+        type="button"
+        disabled={routing || !targetChannelId || targetChannelId === currentChannelId}
+        onClick={() => onRouteExternalWork(externalWorkId, targetChannelId)}
+      >
+        {routing ? <Loader2 className="spin" size={14} /> : <Route size={14} />}
+        {routing ? t("Routing") : t("Route")}
+      </button>
+    </div>
   );
 }
 

@@ -1,26 +1,37 @@
-import { CircleAlert, Clock3, ExternalLink, GitPullRequest, ShieldCheck, SquareTerminal } from "lucide-react";
+import { useState } from "react";
+import { CircleAlert, Clock3, ExternalLink, GitPullRequest, Route, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import type { WorkItemView } from "../../lib/work-items.js";
+import type { Channel } from "../../types.js";
 import { StatusBadge } from "../../shared/components/index.js";
 
 export function WorkItemRow({
   item,
   channelName,
+  routeChannels = [],
+  routing,
   onOpenTask,
   onOpenRun,
   onOpenApproval,
   onOpenExternalWork,
+  onRouteExternalWork,
 }: {
   readonly item: WorkItemView;
   readonly channelName?: string;
+  readonly routeChannels?: readonly Channel[];
+  readonly routing?: boolean;
   readonly onOpenTask?: (taskId: string) => void;
   readonly onOpenRun?: (runId: string) => void;
   readonly onOpenApproval?: (approvalId: string) => void;
   readonly onOpenExternalWork?: (externalWorkId: string) => void;
+  readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [routeChannelId, setRouteChannelId] = useState("");
   const primaryAction = primaryOpenAction(item, { onOpenTask, onOpenRun, onOpenApproval, onOpenExternalWork });
+  const canRoute = Boolean(item.externalWorkId && onRouteExternalWork && routeChannels.length > 1);
+  const targetChannelId = routeChannelId || item.channelId || "";
   return (
     <article className={`work-item-row ${item.status}`} aria-label={item.title}>
       <div className="work-item-main">
@@ -44,6 +55,27 @@ export function WorkItemRow({
         ) : null}
       </div>
       <div className="work-item-actions">
+        {canRoute ? (
+          <div className="work-item-route-control">
+            <select
+              aria-label={t("Route to channel")}
+              value={targetChannelId}
+              disabled={routing}
+              onChange={(event) => setRouteChannelId(event.target.value)}
+            >
+              {routeChannels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+            </select>
+            <button
+              className="secondary-button compact-button"
+              type="button"
+              disabled={routing || !targetChannelId || targetChannelId === item.channelId}
+              onClick={() => item.externalWorkId && onRouteExternalWork?.(item.externalWorkId, targetChannelId)}
+            >
+              <Route size={14} />
+              {routing ? t("Routing") : t("Route")}
+            </button>
+          </div>
+        ) : null}
         {primaryAction ? (
           <button className="secondary-button compact-button" type="button" onClick={primaryAction.onClick}>
             {primaryAction.icon}

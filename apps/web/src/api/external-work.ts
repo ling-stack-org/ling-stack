@@ -14,6 +14,8 @@ import type {
   ExternalWorkPollResponse,
   ExternalWorkReconcileRequest,
   ExternalWorkReconcileResponse,
+  ExternalWorkRouteRequest,
+  ExternalWorkRouteResponse,
   ExternalWorkSecretConfigureRequest,
   ExternalWorkSecretDeleteRequest,
   ExternalWorkSecretMutationResponse,
@@ -32,6 +34,14 @@ export async function listExternalWorkActions(
 
 export async function getExternalWorkAction(cwd: string, actionId: string): Promise<ExternalWorkActionDetailResponse> {
   return daemonClient.getExternalWorkAction(cwd, actionId);
+}
+
+export async function routeExternalWork(
+  cwd: string,
+  externalWorkId: string,
+  input: ExternalWorkRouteRequest,
+): Promise<ExternalWorkRouteResponse> {
+  return daemonClient.routeExternalWork(cwd, externalWorkId, input);
 }
 
 export async function cancelExternalWorkAction(

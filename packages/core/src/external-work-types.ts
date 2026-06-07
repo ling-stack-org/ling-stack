@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
 import type { ApprovalRequest } from "./approval-types.js";
 import type { RunArtifact, RunSession } from "./run-types.js";
-import type { ChannelWorkflow, ChannelWorkflowStep, Task } from "./workspace-types.js";
+import type { ChannelDecision, ChannelWorkflow, ChannelWorkflowStep, Task } from "./workspace-types.js";
 
 export type ExternalSourceKind = "github" | "linear";
 
@@ -224,6 +224,19 @@ export interface ExternalWorkListResponse {
 export interface ExternalWorkDetailResponse {
   readonly cwd: string;
   readonly externalWork: ExternalWorkView;
+}
+
+export interface ExternalWorkRouteRequest {
+  readonly channelId: string;
+  readonly priority?: number;
+  readonly assigneeTeammateId?: string;
+}
+
+export interface ExternalWorkRouteResponse {
+  readonly cwd: string;
+  readonly externalWork: ExternalWorkView;
+  readonly actions: readonly ExternalWorkActionView[];
+  readonly decision?: ChannelDecision;
 }
 
 export type ExternalWorkActionKind = "github_comment" | "github_label" | "github_pr_review";

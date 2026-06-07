@@ -44,6 +44,31 @@
   gap: 8px;
 }
 
+.review-queue-route-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e1e7e3;
+  background: #f8faf8;
+}
+
+.review-queue-route-control span {
+  color: #5d6b65;
+  font-size: 12px;
+}
+
+.review-queue-route-control select {
+  min-width: 160px;
+  height: 30px;
+  border: 1px solid #d9e1dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17211f;
+  font-size: 12px;
+}
+
 .runtime-permission-delta {
   gap: 6px;
 }

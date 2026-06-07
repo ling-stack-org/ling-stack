@@ -1,6 +1,7 @@
 import type { RunThinkingLevel, RunTool } from "./shared.js";
 import type { ApprovalRequest } from "./approvals.js";
 import type { RunArtifact } from "./artifacts.js";
+import type { ChannelDecision } from "./channels.js";
 import type { RunSession } from "./runtime.js";
 import type { Task } from "./tasks.js";
 import type { ChannelWorkflow, ChannelWorkflowStep } from "./workflows.js";
@@ -191,6 +192,19 @@ export interface ExternalWorkListResponse {
 export interface ExternalWorkDetailResponse {
   readonly cwd: string;
   readonly externalWork: ExternalWorkView;
+}
+
+export interface ExternalWorkRouteRequest {
+  readonly channelId: string;
+  readonly priority?: number;
+  readonly assigneeTeammateId?: string;
+}
+
+export interface ExternalWorkRouteResponse {
+  readonly cwd: string;
+  readonly externalWork: ExternalWorkView;
+  readonly actions: readonly ExternalWorkActionView[];
+  readonly decision?: ChannelDecision;
 }
 
 export type ExternalWorkActionKind = "github_comment" | "github_label" | "github_pr_review";

@@ -92,6 +92,7 @@ import { readDataString } from "../lib/data.js";
 import { titleFromPrompt } from "../lib/formatting.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd, writeSavedWorkspaceCwd } from "../lib/local-storage.js";
 import { getControlPlaneSnapshot } from "../api/control-plane.js";
+import { routeExternalWork } from "../api/external-work.js";
 import {
   controlPlaneStreamUrl,
   controlPlaneSummaryDomains,
@@ -193,6 +194,7 @@ export function AppShell(): JSX.Element {
   const [orchestratingWorkflowId, setOrchestratingWorkflowId] = useState("");
   const [taskRepairRunId, setTaskRepairRunId] = useState("");
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
+  const [routingExternalWorkId, setRoutingExternalWorkId] = useState("");
   const [threadPageTargetId, setThreadPageTargetId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
@@ -1235,6 +1237,30 @@ export function AppShell(): JSX.Element {
       refreshUsedMemoryAudit(),
     ]);
     void refreshChannelActivityTransitions(form.cwd.trim(), channelId, channelRunsForArtifacts);
+  }
+
+  async function routeExternalWorkToChannel(externalWorkId: string, channelId: string): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd || !externalWorkId || !channelId || routingExternalWorkId) {
+      return;
+    }
+    setRoutingExternalWorkId(externalWorkId);
+    try {
+      setErrorMessage("");
+      const response = await routeExternalWork(workspaceCwd, externalWorkId, { channelId });
+      const actionIds = response.actions.map((item) => item.action.id);
+      await Promise.all([
+        refreshExternalActionDetailsByIds(workspaceCwd, actionIds),
+        refreshExternalWorkCiTriage(workspaceCwd, channelId),
+        refreshExternalWorkStatus(workspaceCwd, channelId),
+        refreshChannelProtocol(channelId),
+        refreshApprovals(workspaceCwd),
+      ]);
+    } catch (caught) {
+      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setRoutingExternalWorkId("");
+    }
   }
 
   async function saveChannel(): Promise<void> {
@@ -2741,6 +2767,8 @@ export function AppShell(): JSX.Element {
                       openPlainView("approvals");
                     }}
                     onOpenChannel={selectWorkspaceChannel}
+                    onRouteExternalWork={(externalWorkId, channelId) => void routeExternalWorkToChannel(externalWorkId, channelId)}
+                    routingExternalWorkId={routingExternalWorkId}
                   />
                 ) : activeView === "media" ? (
                   <MediaJobsPage
@@ -2859,6 +2887,9 @@ export function AppShell(): JSX.Element {
                 onCancelExternalAction={(actionId) => void cancelExternalAction(actionId, "Cancelled from Web Inbox")}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onClearRepair={() => setApprovalRepairRunId("")}
+                channels={channels}
+                onRouteExternalWork={(externalWorkId, channelId) => void routeExternalWorkToChannel(externalWorkId, channelId)}
+                routingExternalWorkId={routingExternalWorkId}
                 inlineApprovalIds={inlineApprovalIds}
                   />
                 )}

@@ -236,6 +236,7 @@ import {
   type ExternalWorkCiTriageRecord,
   type ExternalWorkItem,
   type ExternalWorkRecord,
+  type ExternalWorkRouteRequest,
   type ExternalWorkSchedulerState,
   type ExternalWorkWorkflowResult,
   type ListExternalWorkActionsOptions,
@@ -5830,6 +5831,38 @@ export class SqliteRunStore implements RunStore {
     this.database
       .prepare("UPDATE external_work_items SET artifact_ids_json = ?, updated_at = ? WHERE id = ?")
       .run(stringifyJson([...artifactIds]), now, id);
+    return this.getExternalWorkRecord(id);
+  }
+
+  routeExternalWorkRecord(id: string, input: ExternalWorkRouteRequest, now: string): ExternalWorkRecord | undefined {
+    const existing = this.getExternalWorkRecord(id);
+    if (!existing) {
+      return undefined;
+    }
+    this.assertChannelExists(input.channelId);
+    const nextItem: ExternalWorkItem = input.priority === undefined
+      ? existing.item
+      : { ...existing.item, priority: input.priority };
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database
+        .prepare(`
+          UPDATE external_work_items
+          SET channel_id = ?, item_json = ?, updated_at = ?
+          WHERE id = ?
+        `)
+        .run(input.channelId, stringifyJson(nextItem), now, id);
+      this.database
+        .prepare("UPDATE external_work_scheduler_state SET channel_id = ?, updated_at = ? WHERE external_work_id = ?")
+        .run(input.channelId, now, id);
+      this.database
+        .prepare("UPDATE external_work_actions SET channel_id = ?, updated_at = ? WHERE external_work_id = ?")
+        .run(input.channelId, now, id);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
     return this.getExternalWorkRecord(id);
   }
 

@@ -65,7 +65,7 @@ import {
   handleExternalWorkBackgroundCollection,
   handleExternalWorkBackgroundStop,
 } from "../features/external-work/background.js";
-import { handleExternalWorkCollection, handleExternalWorkItem } from "../features/external-work/routes.js";
+import { handleExternalWorkCollection, handleExternalWorkItem, handleExternalWorkRoute } from "../features/external-work/routes.js";
 import {
   handleExternalGitHubCiTriage,
   handleExternalWorkCiTriageItem,
@@ -187,6 +187,7 @@ import {
   parseExternalWorkBackgroundStopRoute,
   parseExternalWorkCiTriageItemRoute,
   parseExternalWorkCiTriageRunRoute,
+  parseExternalWorkRoute,
   parseLingThreadRoute,
   parseManagedPluginRoute,
   parsePluginPackageRoute,
@@ -581,9 +582,13 @@ export async function routeRequest(
     return;
   }
 
-  const externalWorkItemRoute = matchSingleSegmentRoute(url.pathname, "/external-work");
+  const externalWorkItemRoute = parseExternalWorkRoute(url.pathname);
   if (externalWorkItemRoute) {
-    await handleExternalWorkItem(request, response, config, storeRegistry, externalWorkItemRoute);
+    if (externalWorkItemRoute.action === "route") {
+      await handleExternalWorkRoute(request, response, config, storeRegistry, externalWorkItemRoute.externalWorkId);
+      return;
+    }
+    await handleExternalWorkItem(request, response, config, storeRegistry, externalWorkItemRoute.externalWorkId);
     return;
   }
 

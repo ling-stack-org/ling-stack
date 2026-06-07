@@ -383,6 +383,59 @@ test("sqlite external work actions propose, reuse, approve, and cancel with appr
   }
 });
 
+test("sqlite external work route updates local queue ownership without external mutation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-external-work-route-"));
+  const now = "2026-05-30T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const sourceChannel = store.createChannel({ name: "GitHub intake", boundPath: cwd, defaultTeammateId: "engineer" }, now);
+    const targetChannel = store.createChannel({ name: "Runtime board", boundPath: cwd, defaultTeammateId: "engineer" }, now);
+    const workflow = parseExternalWorkflowMarkdown(workflowMarkdown);
+    const item = normalizeGitHubExternalWorkItem({
+      eventType: "pull_request.opened",
+      payload: githubPullRequestPayload(),
+      repositoryFullName: workflow.config.source.repository,
+    });
+    const imported = store.createOrReuseExternalWorkWorkflow({
+      channelId: sourceChannel.id,
+      externalWorkItem: item,
+      workflowDefinition: workflow,
+      renderedPrompt: renderExternalWorkflowPrompt(workflow.promptTemplate, { item }),
+    }, now);
+    store.upsertExternalWorkSchedulerState({
+      externalWorkId: imported.externalWork.id,
+      channelId: sourceChannel.id,
+      subjectKey: "github:openclaw/openclaw#86279",
+      sourceKey: "github:openclaw/openclaw",
+      workflowId: imported.workflow.id,
+      workflowStepId: imported.workflowStep.id,
+      schedulerStatus: "ready",
+      maxRetryBackoffMs: 300000,
+    }, now);
+    const proposed = proposeExternalWorkAction({
+      store,
+      request: {
+        externalWorkId: imported.externalWork.id,
+        actionKind: "github_comment",
+        payload: { type: "github_comment", body: "Route test." },
+      },
+      now,
+    });
+
+    const routed = store.routeExternalWorkRecord(imported.externalWork.id, { channelId: targetChannel.id, priority: 7 }, "2026-05-30T00:01:00.000Z");
+    assert.equal(routed.channelId, targetChannel.id);
+    assert.equal(routed.item.priority, 7);
+    assert.equal(store.getExternalWorkSchedulerState(imported.externalWork.id).channelId, targetChannel.id);
+    assert.equal(store.getExternalWorkAction(proposed.action.id).channelId, targetChannel.id);
+    assert.equal(store.listExternalWorkRecords({ channelId: sourceChannel.id }).length, 0);
+    assert.equal(store.listExternalWorkRecords({ channelId: targetChannel.id }).length, 1);
+    assert.equal(store.listExternalWorkActions({ channelId: targetChannel.id }).length, 1);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("GitHub external action execution requires approval, revalidates, mutates only allowed endpoints, and redacts token evidence", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-external-work-action-execute-"));
   const now = "2026-05-30T00:00:00.000Z";

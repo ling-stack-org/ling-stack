@@ -133,6 +133,7 @@ import type {
   ExternalWorkAction,
   ExternalWorkCiTriageRecord,
   ExternalWorkRecord,
+  ExternalWorkRouteRequest,
   ExternalWorkSchedulerState,
   ExternalWorkWorkflowResult,
   ListExternalWorkActionsOptions,
@@ -900,6 +901,7 @@ export interface RunStore {
   countExternalWorkRecords(options?: Omit<ListExternalWorkRecordsOptions, "limit">): number;
   getExternalWorkRecordByIdempotency(sourceKind: ExternalWorkRecord["sourceKind"], idempotencyKey: string): ExternalWorkRecord | undefined;
   updateExternalWorkArtifacts(id: string, artifactIds: readonly string[], now: string): ExternalWorkRecord | undefined;
+  routeExternalWorkRecord(id: string, input: ExternalWorkRouteRequest, now: string): ExternalWorkRecord | undefined;
   createExternalWorkAction(input: CreateExternalWorkActionInput, now: string): ExternalWorkAction;
   getExternalWorkAction(id: string): ExternalWorkAction | undefined;
   getExternalWorkActionByIdempotency(sourceKind: ExternalWorkAction["sourceKind"], idempotencyKey: string): ExternalWorkAction | undefined;

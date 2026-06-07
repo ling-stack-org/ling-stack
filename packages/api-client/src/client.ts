@@ -108,6 +108,8 @@ import type {
   ExternalWorkImportResponse,
   ExternalWorkReconcileRequest,
   ExternalWorkReconcileResponse,
+  ExternalWorkRouteRequest,
+  ExternalWorkRouteResponse,
   ExternalWorkSecretConfigureRequest,
   ExternalWorkSecretDeleteRequest,
   ExternalWorkSecretMutationResponse,
@@ -1374,6 +1376,14 @@ export class LingDaemonClient {
 
   async getExternalWork(cwd: string, externalWorkId: string): Promise<ExternalWorkDetailResponse> {
     return this.get(`/external-work/${encodeURIComponent(externalWorkId)}`, { cwd });
+  }
+
+  async routeExternalWork(
+    cwd: string,
+    externalWorkId: string,
+    input: ExternalWorkRouteRequest,
+  ): Promise<ExternalWorkRouteResponse> {
+    return this.post(`/external-work/${encodeURIComponent(externalWorkId)}/route`, { cwd }, input);
   }
 
   async getExternalWorkStatus(

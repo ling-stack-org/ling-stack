@@ -15,6 +15,7 @@ import {
   type ExternalWorkItemKind,
   type ExternalWorkPollRequest,
   type ExternalWorkReconcileRequest,
+  type ExternalWorkRouteRequest,
   type ExternalWorkSchedulerStatus,
   type ExternalWorkWorkflowConfigureRequest,
   type RunTool,
@@ -244,6 +245,26 @@ export function readExternalWorkActionProposeRequest(value: unknown): ExternalWo
     payload: parsedPayload,
     approvalRequirement,
     expiresAt: readOptionalString(value, "expiresAt"),
+  };
+}
+
+export function readExternalWorkRouteRequest(value: unknown): ExternalWorkRouteRequest {
+  if (!isRecord(value)) {
+    throw new Error("external work route request must be a JSON object");
+  }
+  const channelId = readStringAllowEmpty(value, "channelId").trim();
+  if (!channelId) {
+    throw new Error("channelId is required.");
+  }
+  const priority = readOptionalNumber(value, "priority");
+  if (priority !== undefined && (!Number.isSafeInteger(priority) || priority < 0)) {
+    throw new Error("priority must be a non-negative integer.");
+  }
+  const assigneeTeammateId = readOptionalString(value, "assigneeTeammateId")?.trim();
+  return {
+    channelId,
+    ...(priority !== undefined ? { priority } : {}),
+    ...(assigneeTeammateId ? { assigneeTeammateId } : {}),
   };
 }
 
