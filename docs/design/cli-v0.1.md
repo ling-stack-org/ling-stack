@@ -10,6 +10,7 @@ This design depends on:
 - [Provider presets](provider-presets.md)
 - [Approval policy](approval-policy.md)
 - [Web UI v0.1](web-ui-v0.1.md)
+- [Codex-Inspired Runtime Tools](codex-inspired-runtime-tools.md)
 
 The current `packages/cli` package can initialize a workspace, diagnose readiness, manage providers, channels, channel runtime policy, tasks, runs, approvals, approval policy, daemon foreground startup, and Web UI launch through daemon APIs.
 

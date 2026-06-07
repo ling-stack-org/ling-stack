@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  permissionPresets,
   sessionPermissionModes,
   type ApprovalRequest,
   type LingThread,
   type LingThreadKind,
   type LingThreadStatus,
   type PermissionConfirmation,
+  type PermissionPreset,
   type RunEventEnvelope,
   type RunSession,
   type RunStore,
@@ -341,6 +343,7 @@ function buildLingThreadResumeContext(input: {
       },
       tools: readSnapshotRunTools(requestSnapshot, "tools"),
       approvalProfile: isRecord(requestSnapshot.approvalProfile) ? requestSnapshot.approvalProfile as unknown as SkillApprovalProfile : undefined,
+      permissionPreset: readSnapshotPermissionPreset(requestSnapshot, "permissionPreset"),
       permissionMode: readSnapshotSessionPermissionMode(requestSnapshot, "permissionMode"),
       permissionConfirmation: readSnapshotPermissionConfirmation(requestSnapshot, "permissionConfirmation"),
       thinkingLevel: readSnapshotThinkingLevel(requestSnapshot, "thinkingLevel"),
@@ -571,6 +574,13 @@ function readSnapshotSessionPermissionMode(record: Record<string, unknown>, key:
   const value = record[key];
   return typeof value === "string" && sessionPermissionModes.includes(value as SessionPermissionMode)
     ? value as SessionPermissionMode
+    : undefined;
+}
+
+function readSnapshotPermissionPreset(record: Record<string, unknown>, key: string): PermissionPreset | undefined {
+  const value = record[key];
+  return typeof value === "string" && permissionPresets.includes(value as PermissionPreset)
+    ? value as PermissionPreset
     : undefined;
 }
 

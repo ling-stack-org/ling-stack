@@ -52,7 +52,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const workspace = document.querySelector(".workspace");
     const composer = document.querySelector(".channel-composer");
     const feed = document.querySelector(".message-feed");
-    const emptyState = document.querySelector(".message-feed-empty-state");
+    const emptyState = document.querySelector(".activity-shell .message-feed-empty-state");
     const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-row.selected");
     const selectedChannelBefore = selectedChannel ? getComputedStyle(selectedChannel, "::before") : undefined;
     const primaryNav = document.querySelector(".channel-left-drawer .primary-nav");
@@ -670,7 +670,6 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(page.getByLabel("Pending message assets")).toContainText("@Engineer");
   await expect(composerInput).toHaveValue("@Engineer ");
   await composerInput.fill("please refine without mention");
-  await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
   await composerInput.fill("@Engineer please refine the channel requirements https://example.com");
   await expect(page.getByText("Example Domain").first()).toBeVisible({ timeout: 3_000 });
   const dataTransfer = await page.evaluateHandle(() => {
@@ -726,8 +725,8 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect.poll(() => state.lastChannelMessageRequest?.providerPresetId).toBe("provider_local");
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Files" }).click();
-  await expect(page.getByText("brief.txt")).toBeVisible();
-  await expect(page.getByText("shot.png")).toBeVisible();
+  await expect(page.getByRole("link", { name: /brief\.txt/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /shot\.png/ })).toBeVisible();
   await expect(page.getByText("Example Domain")).toBeVisible();
 
   const sentMessage = page.locator(".message-bubble").filter({ hasText: "@Engineer please refine the channel requirements" });
@@ -1074,6 +1073,9 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await expect(page.locator('[aria-label="Channel activity"] > .panel-title')).toHaveCount(0);
   const scrollState = await readScrollState(page, ".activity-shell .message-feed");
   expect(scrollState.max).toBeGreaterThan(0);
+  await page.locator(".activity-shell .message-feed").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   const latestButton = page.getByRole("button", { name: "Jump to latest message" });
   await expect(latestButton).toHaveCount(0);

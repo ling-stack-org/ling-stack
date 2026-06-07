@@ -6,6 +6,7 @@ import type {
   ChannelStatus,
   McpServerTransportType,
   MediaOperation,
+  PermissionPreset,
   ProviderApi,
   ProviderKind,
   SessionPermissionMode,
@@ -31,6 +32,7 @@ export interface RunFormState {
   readonly api: string;
   readonly tools: readonly ToolName[];
   readonly permissionMode: SessionPermissionMode;
+  readonly permissionPreset?: PermissionPreset;
 }
 
 export interface ProviderFormState {

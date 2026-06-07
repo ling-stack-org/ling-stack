@@ -2133,11 +2133,36 @@ These endpoints are read-only and intended for Web timelines, CLI doctor, and de
 ```http
 GET /state-transitions?cwd=/path/to/project&entityType=task&entityId=task_...
 GET /runtime/leases?cwd=/path/to/project&status=active
+GET /runtime/extensions?cwd=/path/to/project
 ```
 
 `/state-transitions` returns persisted transition facts for `task`, `run`, `approval`, `media_job`, `workflow`, or `workflow_step`.
 
 `/runtime/leases` returns active, released, or expired leases. Resource types are `channel`, `bound_path`, `workspace`, `provider`, `task`, and `workflow_step`.
+
+`/runtime/extensions` returns safe internal extension metadata for diagnostics. It does
+not report plugin lifecycle state, health checks, install actions, secrets, or dynamic
+code paths. Product-managed plugin state remains under `/plugins`.
+
+Response:
+
+```json
+{
+  "cwd": "/path/to/project",
+  "extensions": [
+    {
+      "id": "tool:write",
+      "name": "Write",
+      "version": "0.1.0",
+      "kind": "tool",
+      "trustLevel": "internal",
+      "capabilities": ["filesystem:write"],
+      "defaultApproval": "ask",
+      "sideEffectLevel": "write"
+    }
+  ]
+}
+```
 
 Inline provider config is useful for development, but normal product flows should use provider presets so raw API keys are not persisted in workspace records.
 

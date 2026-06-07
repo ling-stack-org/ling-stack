@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -584,6 +584,338 @@ test("write outside allowed paths is denied even when write is allowed", async (
     assert.equal(approvals[0].status, "denied");
     assert.equal(approvals[0].payload.path, "src/out.txt");
     assert.deepEqual(pending.approvals, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("patch-shaped write creates approval preview and applies only after approval", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-approval-"));
+  await writeFile(resolve(cwd, "src.txt"), "old\nkeep\n", "utf8");
+  const patchText = `*** Begin Patch
+*** Update File: src.txt
+@@
+-old
++new
+ keep
+*** End Patch`;
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_patch_approve",
+    toolName: "write",
+    input: { patchText },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_patch_approve"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    assert.equal(await readFile(resolve(cwd, "src.txt"), "utf8"), "old\nkeep\n");
+    assert.equal(requested.data.data.payload.patchFormat, "ling-apply-patch-v1");
+    assert.deepEqual(requested.data.data.payload.touchedPaths, ["src.txt"]);
+    assert.equal(requested.data.data.payload.summary.updateCount, 1);
+    assert.equal(requested.data.data.previewArtifactIds.length, 2);
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "patch approved",
+    });
+    await sse.collectRemaining();
+
+    assert.equal(await readFile(resolve(cwd, "src.txt"), "utf8"), "new\nkeep\n");
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, true);
+    assert.equal(runner.decisions[0].handledResult.details.status, "applied");
+
+    const actions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(actions.actions.length, 1);
+    assert.equal(actions.actions[0].previewArtifactIds.length, 2);
+    assert.equal(actions.actions[0].resultArtifactIds.length, 1);
+    const previewContents = await Promise.all(actions.actions[0].previewArtifactIds.map(async (artifactId) => {
+      const response = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(artifactId)}/content?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(response.status, 200);
+      return response.text();
+    }));
+    const previewJson = JSON.parse(previewContents.find((content) => content.includes("\"patchFormat\"")) ?? "{}");
+    assert.equal(previewJson.patchFormat, "ling-apply-patch-v1");
+    assert.equal(previewJson.plan.format, "ling-apply-patch-v1");
+    assert.deepEqual(previewJson.pathPolicy.allowedPaths, ["src.txt"]);
+    const resultContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(actions.actions[0].resultArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(resultContent.status, 200);
+    const result = JSON.parse(await resultContent.text());
+    assert.equal(result.status, "applied");
+    assert.deepEqual(result.touchedPaths, ["src.txt"]);
+    assert.deepEqual([...result.previewArtifactIds].sort(), [...actions.actions[0].previewArtifactIds].sort());
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("patch approval redacts resolved provider secrets from approvals and artifacts", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-secret-redaction-"));
+  await writeFile(resolve(cwd, "src.txt"), "old\n", "utf8");
+  const secretValue = "resolved-patch-provider-secret";
+  const patchText = `*** Begin Patch
+*** Update File: src.txt
+@@
+-old
++${secretValue}
+*** End Patch`;
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_patch_secret_redaction",
+    toolName: "write",
+    input: { patchText },
+  });
+  const daemon = await startDaemonForTest(runner, {
+    secretResolver: createTestSecretResolver("keychain:patch_provider", secretValue),
+  });
+  try {
+    const created = await createStaticChatProvider(daemon.url, cwd, {
+      displayName: "Patch Secret Provider",
+      providerId: "patch-secret-provider",
+      authHeader: true,
+      apiKeyRef: "keychain:patch_provider",
+    });
+    const response = await postRunStream(
+      daemon.url,
+      providerRunBody(cwd, "task_patch_secret_redaction", created.provider.id, {
+        skipProviderPreflight: true,
+        tools: ["write"],
+      }),
+    );
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    const requestedText = JSON.stringify(requested.data);
+    assert.doesNotMatch(requestedText, new RegExp(secretValue));
+    assert.match(requestedText, /\[REDACTED\]/);
+
+    const approvals = await listApprovals(daemon.url, cwd, runId);
+    assert.equal(approvals.length, 1);
+    const storedApprovalText = JSON.stringify(approvals[0]);
+    assert.doesNotMatch(storedApprovalText, new RegExp(secretValue));
+    assert.match(storedApprovalText, /\[REDACTED\]/);
+
+    const waitingActions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(waitingActions.actions.length, 1);
+    assert.equal(waitingActions.actions[0].previewArtifactIds.length, 2);
+    const previewContents = await Promise.all(waitingActions.actions[0].previewArtifactIds.map(async (artifactId) => {
+      const artifact = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(artifactId)}/content?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(artifact.status, 200);
+      return artifact.text();
+    }));
+    for (const content of previewContents) {
+      assert.doesNotMatch(content, new RegExp(secretValue));
+    }
+    assert.equal(previewContents.some((content) => /\[REDACTED\]/.test(content)), true);
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "patch secret redaction approved",
+    });
+    await sse.collectRemaining();
+
+    assert.equal(await readFile(resolve(cwd, "src.txt"), "utf8"), `${secretValue}\n`);
+    const completedActions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(completedActions.actions[0].resultArtifactIds.length, 1);
+    const resultArtifact = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(completedActions.actions[0].resultArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(resultArtifact.status, 200);
+    assert.doesNotMatch(await resultArtifact.text(), new RegExp(secretValue));
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("patch-shaped edit creates approval preview and applies through the daemon", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-edit-"));
+  await writeFile(resolve(cwd, "src.txt"), "old\n", "utf8");
+  const patchText = `*** Begin Patch
+*** Update File: src.txt
+@@
+-old
++edited
+*** End Patch`;
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_patch_edit",
+    toolName: "edit",
+    input: { patchText },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_patch_edit"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    assert.equal(await readFile(resolve(cwd, "src.txt"), "utf8"), "old\n");
+    assert.equal(requested.data.data.payload.type, "file_edit");
+    assert.equal(requested.data.data.payload.patchFormat, "ling-apply-patch-v1");
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "patch edit approved",
+    });
+    await sse.collectRemaining();
+
+    assert.equal(await readFile(resolve(cwd, "src.txt"), "utf8"), "edited\n");
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].handledResult.details.status, "applied");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("denied patch approval leaves files unchanged", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-deny-"));
+  await writeFile(resolve(cwd, "src.txt"), "old\n", "utf8");
+  const patchText = `*** Begin Patch
+*** Update File: src.txt
+@@
+-old
++new
+*** End Patch`;
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_patch_deny",
+    toolName: "write",
+    input: { patchText },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_patch_deny"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/deny?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "patch denied",
+    });
+    await sse.collectRemaining();
+
+    assert.equal(await readFile(resolve(cwd, "src.txt"), "utf8"), "old\n");
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approved patch fails closed when target changes after preview", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-conflict-"));
+  await writeFile(resolve(cwd, "src.txt"), "old\nkeep\n", "utf8");
+  const patchText = `*** Begin Patch
+*** Update File: src.txt
+@@
+-old
++new
+ keep
+*** End Patch`;
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_patch_conflict",
+    toolName: "write",
+    input: { patchText },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_patch_conflict"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    await writeFile(resolve(cwd, "src.txt"), "changed\nkeep\n", "utf8");
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "patch approved after conflict",
+    });
+    await sse.collectRemaining();
+
+    assert.equal(await readFile(resolve(cwd, "src.txt"), "utf8"), "changed\nkeep\n");
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].handledResult.isError, true);
+    assert.equal(runner.decisions[0].handledResult.details.status, "conflict");
+
+    const actions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(actions.actions[0].resultArtifactIds.length, 1);
+    const resultContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(actions.actions[0].resultArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(resultContent.status, 200);
+    const result = JSON.parse(await resultContent.text());
+    assert.equal(result.status, "conflict");
+    assert.match(result.error, /changed after preview/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("patch touched paths outside allowed write paths are denied without mutation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-policy-"));
+  const patchText = `*** Begin Patch
+*** Add File: src/out.txt
++outside
+*** End Patch`;
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_patch_outside",
+    toolName: "write",
+    input: { patchText },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await patchPolicy(daemon.url, cwd, {
+      toolDecisions: { write: "allow" },
+      allowedWritePaths: ["docs"],
+    });
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_patch_outside"));
+    const approvals = await listApprovals(daemon.url, cwd, runId);
+
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, false);
+    assert.match(runner.decisions[0].reason, /outside allowed write paths/);
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].status, "denied");
+    assert.deepEqual(approvals[0].payload.touchedPaths, ["src/out.txt"]);
+    await assert.rejects(() => readFile(resolve(cwd, "src/out.txt"), "utf8"), /ENOENT/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("patches cannot modify .ling-stack internal state", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-internal-"));
+  const patchText = `*** Begin Patch
+*** Add File: .ling-stack/owned.txt
++blocked
+*** End Patch`;
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_patch_internal",
+    toolName: "write",
+    input: { patchText },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_patch_internal"));
+    const approvals = await listApprovals(daemon.url, cwd, runId);
+
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, false);
+    assert.match(runner.decisions[0].reason, /may not modify \.ling-stack internal state/);
+    assert.deepEqual(approvals, []);
+    await assert.rejects(() => readFile(resolve(cwd, ".ling-stack/owned.txt"), "utf8"), /ENOENT/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

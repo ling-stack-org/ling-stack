@@ -590,9 +590,9 @@ test("thread detail keeps resume disabled while the thread has an active run", a
   await page.locator(".thread-list").getByRole("button", { name: /Active thread audit/ }).click();
 
   const detail = page.getByLabel("Thread detail");
+  await expect(detail.getByRole("heading", { name: "Thread detail" })).toBeVisible();
   await expect(detail).toContainText("Thread has an active run; resume is disabled until it reaches a terminal state.");
   await expect(detail.getByRole("button", { name: "Resume thread" })).toBeDisabled();
-
   await detail.getByRole("button", { name: "Preview resume" }).click();
   await expect(detail.locator(".compact-json").filter({ hasText: "Resume context preview" })).toContainText("Thread already has an active run: run_thread_active");
 });
@@ -607,6 +607,7 @@ test("run detail can stop an active run and keeps the permission snapshot visibl
     errorMessage: undefined,
     requestSnapshot: {
       ...(isRecord(run.requestSnapshot) ? run.requestSnapshot : {}),
+      permissionPreset: "workspace_collaboration",
       permissionMode: "workspace_write",
       effectivePolicySnapshot: {
         mode: "workspace_write",
@@ -650,10 +651,52 @@ test("run detail can stop an active run and keeps the permission snapshot visibl
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
   const detail = page.getByLabel("Run detail");
+  await expect(detail).toContainText("Workspace collaboration");
   await expect(detail).toContainText("Workspace write");
   await detail.getByRole("button", { name: "Stop" }).click();
   await expect(detail.getByRole("button", { name: "Stopping" })).toBeVisible();
   await expect.poll(() => state.workUnits.find((unit) => unit.id === "wu_running")?.status).toBe("cancelled");
   await expect.poll(() => state.runs.find((run) => run.id === "run_failed")?.status).toBe("cancelled");
   await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_1")?.status).toBe("cancelled");
+});
+
+test("run detail shows stored permission preset and full access confirmation evidence", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.runs = state.runs.map((run) => ({
+    ...run,
+    requestSnapshot: {
+      ...(isRecord(run.requestSnapshot) ? run.requestSnapshot : {}),
+      permissionPreset: "full_access",
+      permissionMode: "full_access",
+      permissionConfirmation: {
+        mode: "full_access",
+        confirmed: true,
+        confirmedAt: "2026-06-07T00:00:00.000Z",
+        reason: "user_confirmed_full_access",
+      },
+      effectivePolicySnapshot: {
+        mode: "full_access",
+        allowedWritePaths: ["/"],
+        toolDecisions: { read: "allow", grep: "allow", find: "allow", ls: "allow", bash: "allow", edit: "allow", write: "allow" },
+        riskNotes: [],
+      },
+    },
+  }));
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await page.getByRole("button", { name: /Inspect workspace/ }).click();
+
+  const detail = page.getByLabel("Run detail");
+  const summary = detail.locator(".run-detail-summary");
+  await expect(summary.getByText("Permission preset", { exact: true })).toBeVisible();
+  await expect(detail).toContainText("Full access");
+  await expect(summary.getByText("Full access confirmation", { exact: true })).toBeVisible();
+  await expect(detail).toContainText("user_confirmed_full_access");
+  await expect(detail).toContainText("Write scope: /");
 });

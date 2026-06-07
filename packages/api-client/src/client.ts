@@ -178,6 +178,7 @@ import type {
   PreviewContentResponse,
   ResourceLeaseListResponse,
   RunnerListResponse,
+  RuntimeExtensionListResponse,
   RuntimeDiagnosticsResponse,
   RuntimeResponse,
   RuntimeSemaphoreListResponse,
@@ -629,6 +630,10 @@ export class LingDaemonClient {
 
   async listRunners(cwd: string): Promise<RunnerListResponse> {
     return this.get("/runners", { cwd });
+  }
+
+  async listRuntimeExtensions(cwd: string): Promise<RuntimeExtensionListResponse> {
+    return this.get("/runtime/extensions", { cwd });
   }
 
   async getRuntimeSettings(cwd: string): Promise<RuntimeSettingsResponse> {

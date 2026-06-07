@@ -6,6 +6,12 @@ export interface DaemonConfig {
   readonly maxBodyBytes?: number;
   readonly defaultWorkspaceCwd?: string;
   readonly runners?: RunnerFeatureConfig;
+  readonly runtimeTools?: RuntimeToolFeatureConfig;
+}
+
+export interface RuntimeToolFeatureConfig {
+  readonly requestPermissions?: boolean;
+  readonly shellSnapshot?: boolean;
 }
 
 export interface RunnerFeatureConfig {
@@ -33,6 +39,7 @@ export interface ResolvedDaemonConfig {
   readonly maxBodyBytes: number;
   readonly defaultWorkspaceCwd: string;
   readonly runners: RunnerFeatureConfig;
+  readonly runtimeTools: RuntimeToolFeatureConfig;
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -48,5 +55,6 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     maxBodyBytes: config.maxBodyBytes ?? 1024 * 1024,
     defaultWorkspaceCwd: resolvePath(config.defaultWorkspaceCwd ?? process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? process.cwd()),
     runners: config.runners ?? {},
+    runtimeTools: config.runtimeTools ?? {},
   };
 }

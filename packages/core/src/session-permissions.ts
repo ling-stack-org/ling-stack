@@ -21,6 +21,32 @@ export const sessionPermissionModes = [
 
 export type SessionPermissionMode = (typeof sessionPermissionModes)[number];
 
+export const permissionPresets = [
+  "read_only",
+  "workspace_collaboration",
+  "full_access",
+  "custom",
+] as const;
+
+export type PermissionPreset = (typeof permissionPresets)[number];
+
+export const workModes = ["coding", "daily"] as const;
+
+export type WorkMode = (typeof workModes)[number];
+
+export interface PermissionPresetDefinition {
+  readonly preset: PermissionPreset;
+  readonly permissionMode: SessionPermissionMode;
+  readonly requiresConfirmation: boolean;
+}
+
+export const permissionPresetDefinitions: readonly PermissionPresetDefinition[] = [
+  { preset: "read_only", permissionMode: "ask_everything", requiresConfirmation: false },
+  { preset: "workspace_collaboration", permissionMode: "workspace_write", requiresConfirmation: false },
+  { preset: "full_access", permissionMode: "full_access", requiresConfirmation: true },
+  { preset: "custom", permissionMode: "custom", requiresConfirmation: false },
+];
+
 export interface PermissionConfirmation {
   readonly mode: "full_access";
   readonly confirmed: true;
@@ -56,6 +82,31 @@ export interface ResolveSessionRunPolicyResult {
 
 export function isSessionPermissionMode(value: string): value is SessionPermissionMode {
   return (sessionPermissionModes as readonly string[]).includes(value);
+}
+
+export function isPermissionPreset(value: string): value is PermissionPreset {
+  return (permissionPresets as readonly string[]).includes(value);
+}
+
+export function permissionModeForPreset(preset: PermissionPreset): SessionPermissionMode {
+  return permissionPresetDefinitions.find((definition) => definition.preset === preset)?.permissionMode ?? "custom";
+}
+
+export function inferPermissionPreset(mode: SessionPermissionMode | undefined): PermissionPreset {
+  if (mode === "ask_everything") {
+    return "read_only";
+  }
+  if (mode === "workspace_write") {
+    return "workspace_collaboration";
+  }
+  if (mode === "full_access") {
+    return "full_access";
+  }
+  return "custom";
+}
+
+export function permissionPresetRequiresConfirmation(preset: PermissionPreset): boolean {
+  return permissionPresetDefinitions.find((definition) => definition.preset === preset)?.requiresConfirmation ?? false;
 }
 
 export function resolveSessionRunPolicy(input: ResolveSessionRunPolicyInput): ResolveSessionRunPolicyResult {

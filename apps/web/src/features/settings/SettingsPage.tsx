@@ -21,6 +21,16 @@ import {
 } from "lucide-react";
 import { LanguageSwitcher, useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
+import {
+  buildLocalEffectivePolicyPreview,
+  formatToolDecisionGroups,
+  inferPermissionPreset,
+  permissionModeForPreset,
+  permissionPresetDescription,
+  permissionPresetLabel,
+  permissionPresetOptions,
+  summarizeEffectivePolicySnapshot,
+} from "../../lib/session-permissions.js";
 import { allTools, riskyTools } from "../../lib/tools.js";
 import { MetaRow, StatusBadge } from "../../shared/components/index.js";
 import { ThemeSwitcher } from "../../theme.js";
@@ -31,7 +41,9 @@ import type {
   ApprovalToolDecision,
   Channel,
   ExternalWorkStatusResponse,
+  PermissionPreset,
   RunnerListItem,
+  SessionPermissionMode,
   WorkspaceRuntimeSettings,
   ManagedPluginApplyPresetResponse,
   ManagedPluginRuntimePreviewResponse,
@@ -60,6 +72,8 @@ export function SettingsPage({
   latestPluginApplyResult,
   latestPluginRuntimePreview,
   latestPluginNotice,
+  permissionMode,
+  permissionPreset,
   isLoading,
   runtimeSettingsLoading,
   runtimeSettingsAction,
@@ -70,6 +84,7 @@ export function SettingsPage({
   externalWorkWorkflowAction,
   errorMessage,
   onFormChange,
+  onPermissionModeChange,
   onRefresh,
   onSave,
   onRuntimeSettingsFormChange,
@@ -111,6 +126,8 @@ export function SettingsPage({
   readonly latestPluginApplyResult?: ManagedPluginApplyPresetResponse;
   readonly latestPluginRuntimePreview?: ManagedPluginRuntimePreviewResponse;
   readonly latestPluginNotice?: PluginActionNotice;
+  readonly permissionMode: SessionPermissionMode;
+  readonly permissionPreset?: PermissionPreset;
   readonly isLoading: boolean;
   readonly runtimeSettingsLoading: boolean;
   readonly runtimeSettingsAction: "save" | undefined;
@@ -121,6 +138,7 @@ export function SettingsPage({
   readonly externalWorkWorkflowAction: "configure" | undefined;
   readonly errorMessage: string;
   readonly onFormChange: (form: ApprovalPolicyFormState) => void;
+  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
   readonly onRefresh: () => void;
   readonly onSave: () => void;
   readonly onRuntimeSettingsFormChange: (form: RuntimeSettingsFormState) => void;
@@ -168,6 +186,17 @@ export function SettingsPage({
     ? normalizedWorkflowRepository !== undefined
     : workflowProjectSlug.trim().length > 0;
   const enabledRunners = runners.filter((runner) => runner.status === "enabled");
+  const resolvedPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
+  const policyPreview = buildLocalEffectivePolicyPreview({
+    policy,
+    form,
+    mode: permissionMode,
+    channelBoundPath: selectedChannel?.boundPath,
+  });
+  const policyPreviewRows = [
+    ...summarizeEffectivePolicySnapshot(policyPreview, t),
+    ...formatToolDecisionGroups(policyPreview, t),
+  ];
 
   useEffect(() => {
     const sourceKind = externalWorkStatus?.workflow.sourceKind;
@@ -635,41 +664,72 @@ export function SettingsPage({
         </div>
       ) : null}
 
-      <div className="policy-meta">
-        <MetaRow label={t("Updated")} value={policy ? formatDateTime(policy.updatedAt) : "-"} compact />
-      </div>
-
-      <div className="policy-tool-grid" aria-label={t("Tool approval decisions")}>
-        {allTools.map((tool) => (
-          <label key={tool} className={`policy-tool-row${riskyTools.includes(tool) ? " risky" : ""}`}>
-            <span>{tool}</span>
-            <select
-              value={form.toolDecisions[tool]}
-              onChange={(event) =>
-                onFormChange({
-                  ...form,
-                  toolDecisions: {
-                    ...form.toolDecisions,
-                    [tool]: event.target.value as ApprovalToolDecision,
-                  },
-                })
-              }
-            >
-              <option value="allow">{t("Allow")}</option>
-              <option value="ask">{t("Ask")}</option>
-              <option value="deny">{t("Deny")}</option>
-            </select>
-          </label>
+      <div className="permission-preset-card-grid" aria-label={t("Permission preset")}>
+        {permissionPresetOptions.map((preset) => (
+          <button
+            key={preset}
+            className={resolvedPermissionPreset === preset ? "permission-preset-card active" : "permission-preset-card"}
+            type="button"
+            onClick={() => onPermissionModeChange(permissionModeForPreset(preset))}
+            aria-pressed={resolvedPermissionPreset === preset}
+          >
+            <strong>{permissionPresetLabel(preset, t)}</strong>
+            <small>{permissionPresetDescription(preset, t)}</small>
+          </button>
         ))}
       </div>
 
-      <details className="advanced-settings">
-        <summary>{t("Advanced settings")}</summary>
+      <div className="permission-preview-card" aria-label={t("Effective permissions")}>
+        <div>
+          <strong>{t("Effective permissions")}</strong>
+          <small>{t("This preview follows the selected preset and approval policy form. Save policy to apply advanced policy edits.")}</small>
+        </div>
+        <div className="permission-preview-list">
+          {policyPreviewRows.map((row) => (
+            <span key={row}>{row}</span>
+          ))}
+        </div>
+      </div>
+
+      <div className="policy-meta">
+        <MetaRow label={t("Updated")} value={policy ? formatDateTime(policy.updatedAt) : "-"} compact />
+        <MetaRow label={t("Selected preset")} value={permissionPresetLabel(resolvedPermissionPreset, t)} compact />
+      </div>
+
+      <details className="advanced-settings" open={resolvedPermissionPreset === "custom"}>
+        <summary>{t("Advanced workspace policy")}</summary>
+        <div className="policy-tool-grid" aria-label={t("Tool approval decisions")}>
+          {allTools.map((tool) => (
+            <label key={tool} className={`policy-tool-row${riskyTools.includes(tool) ? " risky" : ""}`}>
+              <span>{tool}</span>
+              <select
+                value={form.toolDecisions[tool]}
+                onChange={(event) => {
+                  onPermissionModeChange(permissionModeForPreset("custom"));
+                  onFormChange({
+                    ...form,
+                    toolDecisions: {
+                      ...form.toolDecisions,
+                      [tool]: event.target.value as ApprovalToolDecision,
+                    },
+                  });
+                }}
+              >
+                <option value="allow">{t("Allow")}</option>
+                <option value="ask">{t("Ask")}</option>
+                <option value="deny">{t("Deny")}</option>
+              </select>
+            </label>
+          ))}
+        </div>
         <label className="field wide">
           <span>{t("Allowed write paths")}</span>
           <textarea
             value={form.allowedWritePathsText}
-            onChange={(event) => onFormChange({ ...form, allowedWritePathsText: event.target.value })}
+            onChange={(event) => {
+              onPermissionModeChange(permissionModeForPreset("custom"));
+              onFormChange({ ...form, allowedWritePathsText: event.target.value });
+            }}
           />
         </label>
       </details>

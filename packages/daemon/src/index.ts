@@ -152,11 +152,15 @@ export const LOCAL_CHANNEL_SOURCE_EXTENSION_ID = "channel-source:local";
 
 export function createDefaultRunnerRegistry(
   runner: RunnerAdapter = createPiRunner(),
-  config: Pick<ResolvedDaemonConfig, "runners"> | Pick<DaemonConfig, "runners"> = {},
+  config: (Pick<ResolvedDaemonConfig, "runners" | "runtimeTools"> | Pick<DaemonConfig, "runners" | "runtimeTools">) = {},
 ): RunnerRegistry {
   const extension = getPiRunnerExtension();
   const codexConfig = config.runners?.codexAppServer;
   const openclawConfig = config.runners?.openclawAcp;
+  const piCapabilities = [
+    ...extension.manifest.capabilities,
+    ...(config.runtimeTools?.requestPermissions ? ["runtime:request-permissions"] : []),
+  ];
   return createRunnerRegistry([
     {
       id: extension.runnerId,
@@ -166,6 +170,7 @@ export function createDefaultRunnerRegistry(
       aliases: [LEGACY_PI_RUNNER_ID],
       supportedProviderApis: extension.supportedProviderApis,
       supportedTools: extension.supportedTools,
+      capabilities: piCapabilities,
     },
     createDisabledRunnerRegistration("codex-app-server", "Codex App Server", {
       supportedProviderApis: ["openai-responses", "openai-completions"],

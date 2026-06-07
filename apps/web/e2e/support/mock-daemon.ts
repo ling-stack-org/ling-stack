@@ -623,7 +623,7 @@ export async function openChannelChatTools(page: Page): Promise<void> {
       return;
     }
     await page.locator(".channel-more-button").click();
-    await page.locator(".channel-more-item").filter({ hasText: channelEventFilterToggleLabel }).click();
+    await page.getByRole("menuitem", { name: channelEventFilterToggleLabel }).click();
     await page.waitForTimeout(50);
   }
   await expect(searchInput).toBeVisible();

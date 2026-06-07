@@ -218,7 +218,56 @@ function summarizeApprovalPayload(payload: unknown): string | undefined {
   if (typeof payload === "string") {
     return truncate(payload, 240);
   }
+  if (isRecord(payload) && readString(payload, "patchFormat")) {
+    return truncate(summarizePatchApprovalPayload(payload), 240);
+  }
+  if (isRecord(payload) && readString(payload, "type") === "runtime_permission_request") {
+    return truncate(summarizeRuntimePermissionPayload(payload), 240);
+  }
   return truncate(summarizeUnknown(payload, 240), 240);
+}
+
+function summarizeRuntimePermissionPayload(payload: Record<string, unknown>): string {
+  const requestKind = readString(payload, "requestKind") ?? "permission";
+  const requestedScope = readField(payload, "requestedScope");
+  const continuation = readField(payload, "proposedContinuation");
+  const mode = isRecord(continuation) ? readString(continuation, "mode") : undefined;
+  return `${requestKind}: ${summarizeRuntimePermissionScope(requestedScope)}${mode ? ` -> ${mode}` : ""}`;
+}
+
+function summarizeRuntimePermissionScope(scope: unknown): string {
+  if (!isRecord(scope)) {
+    return "<unknown scope>";
+  }
+  const kind = readString(scope, "kind");
+  if (kind === "core_tool") {
+    return `tools ${readStringArray(scope, "tools").join(", ") || "<none>"}`;
+  }
+  if (kind === "write_scope") {
+    return `${readString(scope, "operation") ?? "write"} ${readStringArray(scope, "paths").join(", ") || "<none>"}`;
+  }
+  if (kind === "mcp_tool") {
+    return `mcp ${readString(scope, "serverId") ?? "<server>"}/${readString(scope, "toolName") ?? "<tool>"}`;
+  }
+  if (kind === "runner_capability") {
+    return `runner ${readString(scope, "runnerId") ?? "<runner>"}/${readString(scope, "capability") ?? "<capability>"}`;
+  }
+  return kind ?? "<unknown scope>";
+}
+
+function summarizePatchApprovalPayload(payload: Record<string, unknown>): string {
+  const paths = readStringArray(payload, "touchedPaths");
+  const summary = readField(payload, "summary");
+  const fileCount = isRecord(summary) ? readNumber(summary, "fileCount") : undefined;
+  const addedLines = isRecord(summary) ? readNumber(summary, "addedLines") : undefined;
+  const removedLines = isRecord(summary) ? readNumber(summary, "removedLines") : undefined;
+  const pathSummary = paths.length > 0 ? paths.join(", ") : readString(payload, "path") ?? "<unknown>";
+  const statSummary = [
+    fileCount !== undefined ? `${fileCount} files` : undefined,
+    addedLines !== undefined ? `+${addedLines}` : undefined,
+    removedLines !== undefined ? `-${removedLines}` : undefined,
+  ].filter(Boolean).join(", ");
+  return `${pathSummary}${statSummary ? ` (${statSummary})` : ""}`;
 }
 
 function summarizeResult(data: unknown): string {
@@ -268,6 +317,16 @@ function readField(value: unknown, key: string): unknown {
 function readString(value: unknown, key: string): string | undefined {
   const field = readField(value, key);
   return typeof field === "string" ? field : undefined;
+}
+
+function readNumber(value: unknown, key: string): number | undefined {
+  const field = readField(value, key);
+  return typeof field === "number" ? field : undefined;
+}
+
+function readStringArray(value: unknown, key: string): string[] {
+  const field = readField(value, key);
+  return Array.isArray(field) ? field.filter((item): item is string => typeof item === "string") : [];
 }
 
 function readBoolean(value: unknown, key: string): boolean | undefined {

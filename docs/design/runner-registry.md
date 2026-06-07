@@ -67,6 +67,9 @@ Adapter follow-up design:
 - [Runner Adapters](runner-adapters.md) defines the feature-flagged Codex app-server
   and OpenClaw/ACP adapter slices, shared conformance requirements, session-handle
   rules, and approval/security boundaries.
+- [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
+  defines why runner-supported tools are metadata and approval-policy inputs, not
+  Plugin Manager entries.
 
 Implemented follow-up hardening:
 
@@ -335,6 +338,10 @@ Runners can request tool execution or emit tool events, but Ling owns:
 Future runners must prove that side-effecting operations are interceptable before they
 run. A runner that cannot stop before `bash`, `edit`, `write`, or external mutation must
 not be enabled for normal Ling task runs.
+
+Runner settings may display supported core tools, but the runner does not own their
+authorization. Approval policy remains the source of truth for `allow`, `ask`, and
+`deny` decisions.
 
 ## Package Shape
 

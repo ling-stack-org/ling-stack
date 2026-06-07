@@ -23,12 +23,19 @@ import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import {
   appendExecutionActionArtifactEvents,
+  createExecutionActionResultArtifact,
   createExecutionActionPreviewArtifacts,
 } from "./action-artifacts.js";
 import {
   classifyApprovalActionType,
   classifyBashRiskFlags,
 } from "./action-classifier.js";
+import {
+  applyPatchActionDraft,
+  createPatchActionDraft,
+  createPatchApprovalMetadata,
+  type PatchActionDraft,
+} from "./patch-actions.js";
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
@@ -112,9 +119,48 @@ export function createRunApprovalHandler(options: {
   readonly workspaceCwd?: string;
 }): PiRunnerRunOptions["onApprovalRequired"] {
   return async (request: PiRunnerApprovalRequest) => {
-    const approvalInput = toCreateApprovalRequestInput(options.run, request);
+    let patchMetadata: ReturnType<typeof createPatchApprovalMetadata> | undefined;
+    try {
+      patchMetadata = createPatchApprovalMetadata(request);
+    } catch (error) {
+      return {
+        approved: false,
+        reason: formatPatchActionError(error),
+      };
+    }
+
+    let approvalInput = toCreateApprovalRequestInput(options.run, request, patchMetadata?.payload);
     const policyDecision = evaluateApprovalPolicy(options.approvalPolicy, request, approvalInput.payload);
+    let patchDraft: PatchActionDraft | undefined;
+    if (patchMetadata && policyDecision.decision !== "deny") {
+      try {
+        patchDraft = createPatchActionDraft({
+          request,
+          patchText: patchMetadata.patchText,
+          allowedWritePaths: options.approvalPolicy.allowedWritePaths,
+        });
+        approvalInput = toCreateApprovalRequestInput(options.run, request, patchDraft.payload);
+      } catch (error) {
+        return {
+          approved: false,
+          reason: formatPatchActionError(error),
+        };
+      }
+    }
+
     if (policyDecision.decision === "allow") {
+      if (patchDraft) {
+        const applied = await applyPatchActionDraft({
+          draft: patchDraft,
+          cwd: request.cwd,
+          allowedWritePaths: options.approvalPolicy.allowedWritePaths,
+        });
+        return {
+          approved: true,
+          reason: policyDecision.reason,
+          handledResult: applied.handledResult,
+        };
+      }
       return {
         approved: true,
         reason: policyDecision.reason,
@@ -123,7 +169,10 @@ export function createRunApprovalHandler(options: {
 
     if (policyDecision.decision === "deny") {
       const createdAt = new Date().toISOString();
-      const denied = options.store.createApprovalRequest(approvalInput, createdAt);
+      const denied = options.store.createApprovalRequest({
+        ...approvalInput,
+        extraSecrets: options.extraSecrets,
+      }, createdAt);
       appendApprovalCreatedControlPlaneEvent(
         options.store,
         options.controlPlaneEvents,
@@ -179,7 +228,10 @@ export function createRunApprovalHandler(options: {
     }
 
     const createdAt = new Date().toISOString();
-    const approval = options.store.createApprovalRequest(approvalInput, createdAt);
+    const approval = options.store.createApprovalRequest({
+      ...approvalInput,
+      extraSecrets: options.extraSecrets,
+    }, createdAt);
     appendApprovalCreatedControlPlaneEvent(
       options.store,
       options.controlPlaneEvents,
@@ -275,10 +327,38 @@ export function createRunApprovalHandler(options: {
     });
 
     if (resolvedApproval.status === "approved") {
+      let handledResult;
+      if (patchDraft) {
+        const applied = await applyPatchActionDraft({
+          draft: patchDraft,
+          cwd: request.cwd,
+          allowedWritePaths: options.approvalPolicy.allowedWritePaths,
+          previewArtifactIds: previewArtifacts.map((artifact) => artifact.id),
+        });
+        handledResult = applied.handledResult;
+        const resultArtifact = createExecutionActionResultArtifact({
+          store: options.store,
+          run: options.run,
+          approval: resolvedApproval,
+          filename: "patch-result.json",
+          type: "json",
+          title: `Patch result: ${patchDraft.plan.touchedPaths.join(", ")}`,
+          contentType: "application/json",
+          content: applied.resultArtifactContent,
+          now: new Date().toISOString(),
+        });
+        appendExecutionActionArtifactEvents({
+          artifacts: [resultArtifact],
+          approval: resolvedApproval,
+          role: "result",
+          appendAndMaybeStream: options.appendAndMaybeStream,
+        });
+      }
       return {
         approved: true,
         approvalId: resolvedApproval.id,
         reason: resolvedApproval.decisionReason,
+        ...(handledResult ? { handledResult } : {}),
       };
     }
 
@@ -522,11 +602,14 @@ function evaluateApprovalPolicy(
     };
   }
 
-  if ((payload.type === "file_write" || payload.type === "file_edit") && !isPathWithinAllowedWritePaths(payload.path, request.cwd, policy.allowedWritePaths)) {
-    return {
-      decision: "deny",
-      reason: `Ling Stack policy denied ${request.toolName}: ${payload.path} is outside allowed write paths.`,
-    };
+  if (payload.type === "file_write" || payload.type === "file_edit") {
+    const deniedPath = getPayloadWritePaths(payload).find((path) => !isPathWithinAllowedWritePaths(path, request.cwd, policy.allowedWritePaths));
+    if (deniedPath) {
+      return {
+        decision: "deny",
+        reason: `Ling Stack policy denied ${request.toolName}: ${deniedPath} is outside allowed write paths.`,
+      };
+    }
   }
 
   if (toolDecision === "allow") {
@@ -556,8 +639,12 @@ function approvalModeRank(mode: SkillApprovalProfile["mode"]): number {
   return 0;
 }
 
-function toCreateApprovalRequestInput(run: RunSession, request: PiRunnerApprovalRequest): CreateApprovalRequestInput {
-  const payload = toApprovalPayload(request);
+function toCreateApprovalRequestInput(
+  run: RunSession,
+  request: PiRunnerApprovalRequest,
+  payloadOverride?: ApprovalPayload,
+): CreateApprovalRequestInput {
+  const payload = payloadOverride ?? toApprovalPayload(request);
   const risk = classifyApprovalRisk(request, payload);
   return {
     runId: run.id,
@@ -634,12 +721,8 @@ function classifyApprovalRisk(request: PiRunnerApprovalRequest, payload: Approva
     return payload.riskFlags.length > 0 ? "high" : "medium";
   }
 
-  if (payload.type === "file_write" && isOutsideWorkspace(payload.path, request.cwd)) {
-    return "high";
-  }
-
-  if (payload.type === "file_edit" && isOutsideWorkspace(payload.path, request.cwd)) {
-    return "high";
+  if (payload.type === "file_write" || payload.type === "file_edit") {
+    return getPayloadWritePaths(payload).some((path) => isOutsideWorkspace(path, request.cwd)) ? "high" : "medium";
   }
 
   if (payload.type === "tool_call") {
@@ -674,9 +757,15 @@ function approvalDescription(toolName: PiRunnerApprovalRequest["toolName"], payl
     return payload.command || "The agent requested a shell command.";
   }
   if (payload.type === "file_write") {
+    if (payload.patchFormat) {
+      return `The agent requested applying a patch to ${(payload.touchedPaths ?? [payload.path]).join(", ")}.`;
+    }
     return `The agent requested writing ${payload.bytes} bytes to ${payload.path}.`;
   }
   if (payload.type === "file_edit") {
+    if (payload.patchFormat) {
+      return `The agent requested applying a patch to ${(payload.touchedPaths ?? [payload.path]).join(", ")}.`;
+    }
     return `The agent requested editing ${payload.path}.`;
   }
   if (payload.type === "tool_call") {
@@ -688,7 +777,7 @@ function approvalDescription(toolName: PiRunnerApprovalRequest["toolName"], payl
   return `The agent requested ${toolName}.`;
 }
 
-async function waitForApprovalDecision(store: RunStore, approvalId: string, signal?: AbortSignal): Promise<ApprovalRequest> {
+export async function waitForApprovalDecision(store: RunStore, approvalId: string, signal?: AbortSignal): Promise<ApprovalRequest> {
   const deadline = Date.now() + APPROVAL_TIMEOUT_MS;
   while (Date.now() <= deadline) {
     throwIfAborted(signal);
@@ -714,7 +803,7 @@ async function waitForApprovalDecision(store: RunStore, approvalId: string, sign
   return expired;
 }
 
-function streamOrAppendApprovalDecisionEvent(options: {
+export function streamOrAppendApprovalDecisionEvent(options: {
   readonly store: RunStore;
   readonly approval: ApprovalRequest;
   readonly afterSeq: number;
@@ -774,6 +863,10 @@ function isPathWithinAllowedWritePaths(inputPath: string, cwd: string, allowedWr
   });
 }
 
+function getPayloadWritePaths(payload: Extract<ApprovalPayload, { readonly type: "file_write" | "file_edit" }>): readonly string[] {
+  return payload.touchedPaths && payload.touchedPaths.length > 0 ? payload.touchedPaths : [payload.path];
+}
+
 function formatEditPreview(edits: readonly unknown[]): string {
   if (edits.length === 0) {
     return "No edit preview was provided.";
@@ -827,4 +920,8 @@ function createAbortError(): Error {
   const error = new Error("Run cancelled.");
   error.name = "AbortError";
   return error;
+}
+
+function formatPatchActionError(error: unknown): string {
+  return `Ling Stack patch rejected: ${error instanceof Error ? error.message : String(error)}`;
 }

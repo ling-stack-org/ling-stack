@@ -8,6 +8,9 @@ import {
   createSqliteRunStore,
   defaultAllowedWritePaths,
   defaultApprovalToolDecisions,
+  inferPermissionPreset,
+  permissionModeForPreset,
+  permissionPresetRequiresConfirmation,
   resolveSessionRunPolicy,
 } from "../dist/index.js";
 
@@ -92,6 +95,19 @@ test("session permission policy snapshots structured risk notes without relaxing
     result.snapshot.riskNotes.filter((note) => note.code === "session_mode_denied_by_workspace_policy").map((note) => note.tool),
     ["bash", "write"],
   );
+});
+
+test("permission presets map to existing session permission modes", () => {
+  assert.equal(permissionModeForPreset("read_only"), "ask_everything");
+  assert.equal(permissionModeForPreset("workspace_collaboration"), "workspace_write");
+  assert.equal(permissionModeForPreset("full_access"), "full_access");
+  assert.equal(permissionModeForPreset("custom"), "custom");
+  assert.equal(inferPermissionPreset("ask_everything"), "read_only");
+  assert.equal(inferPermissionPreset("workspace_write"), "workspace_collaboration");
+  assert.equal(inferPermissionPreset("full_access"), "full_access");
+  assert.equal(inferPermissionPreset("balanced"), "custom");
+  assert.equal(permissionPresetRequiresConfirmation("full_access"), true);
+  assert.equal(permissionPresetRequiresConfirmation("workspace_collaboration"), false);
 });
 
 test("sqlite store persists run artifacts", async () => {

@@ -251,14 +251,18 @@ test("workspace task run sends the selected session permission mode", async ({ p
 
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskDetail = page.locator("article.task-detail");
-  await expect(taskDetail.getByLabel("Permission mode")).toBeVisible();
-  await taskDetail.getByLabel("Permission mode").selectOption("workspace_write");
+  await expect(taskDetail.getByRole("group", { name: "Permission preset" })).toBeVisible();
+  await taskDetail.getByRole("button", { name: "Workspace collaboration" }).click();
   await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
 
   await expect.poll(() => {
     const snapshot = state.runs[0]?.requestSnapshot;
     return isRecord(snapshot) ? snapshot.permissionMode : undefined;
   }).toBe("workspace_write");
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.permissionPreset : undefined;
+  }).toBe("workspace_collaboration");
 });
 
 test("workspace full access task run requires confirmation and sends confirmation evidence", async ({ page }) => {
@@ -284,7 +288,7 @@ test("workspace full access task run requires confirmation and sends confirmatio
 
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskDetail = page.locator("article.task-detail");
-  await taskDetail.getByLabel("Permission mode").selectOption("full_access");
+  await taskDetail.getByRole("button", { name: "Full access" }).click();
   await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
 
   const confirmSheet = page.getByRole("dialog", { name: "Confirm full access" });

@@ -10,16 +10,27 @@ import { loadPluginPackageFromRoot } from "../dist/features/plugins/manifest.js"
 
 const cuaPluginId = "trusted-local:cua-driver";
 const bundledCuaPluginId = "bundled:cua-driver";
+const coreToolIds = [
+  "tool:read",
+  "tool:grep",
+  "tool:find",
+  "tool:ls",
+  "tool:bash",
+  "tool:edit",
+  "tool:write",
+];
 
-test("daemon exposes managed plugin catalog with built-ins and trusted local presets", async () => {
+test("daemon exposes managed plugin catalog and runtime extension diagnostics", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-catalog-"));
   const daemon = await startDaemonForTest();
   try {
     const catalog = await getJson(`${daemon.url}/plugins?cwd=${encodeURIComponent(cwd)}`);
     const ids = new Set(catalog.plugins.map((plugin) => plugin.id));
 
-    assert.equal(ids.has("runner:pi"), true);
-    assert.equal(ids.has("tool:read"), true);
+    assert.equal(ids.has("runner:pi"), false);
+    for (const toolId of coreToolIds) {
+      assert.equal(ids.has(toolId), false);
+    }
     assert.equal(ids.has(cuaPluginId), true);
     assert.equal(ids.has(bundledCuaPluginId), true);
 
@@ -31,6 +42,16 @@ test("daemon exposes managed plugin catalog with built-ins and trusted local pre
     assert.equal(bundledCua.actions.canApplyPreset, false);
     assert.deepEqual(bundledCua.contributions.map((contribution) => contribution.kind), ["mcp-server"]);
     assert.equal(JSON.stringify(catalog).includes("secret-token"), false);
+
+    const diagnostics = await getJson(`${daemon.url}/runtime/extensions?cwd=${encodeURIComponent(cwd)}`);
+    const extensionIds = new Set(diagnostics.extensions.map((extension) => extension.id));
+    assert.equal(extensionIds.has("runner:pi"), true);
+    for (const toolId of coreToolIds) {
+      assert.equal(extensionIds.has(toolId), true);
+    }
+    const writeTool = diagnostics.extensions.find((extension) => extension.id === "tool:write");
+    assert.equal(writeTool.defaultApproval, "ask");
+    assert.equal(writeTool.sideEffectLevel, "write");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

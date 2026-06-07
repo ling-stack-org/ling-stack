@@ -5,6 +5,7 @@ import type {
   RunEventEnvelope,
   RunSession,
   RunStore,
+  RuntimeExtensionView,
   RuntimeEvent,
   RuntimeSemaphoreSlot,
   WorkUnit,
@@ -13,6 +14,7 @@ import type {
   WorkUnitStatus,
 } from "@ling-stack/core";
 import { DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
+import type { LingExtensionMetadata, LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import { HttpError } from "../errors.js";
 import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import type { ControlPlaneEventHub } from "../features/control-plane/events.js";
@@ -231,6 +233,22 @@ export function handleListRunners(response: ServerResponse, url: URL, storeRegis
   });
 }
 
+export function handleListRuntimeExtensions(
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  extensionRegistry: LingExtensionRegistry,
+): void {
+  const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
+  if (!resolved) {
+    return;
+  }
+  writeJson(response, 200, {
+    cwd: resolved.cwd,
+    extensions: extensionRegistry.list().map(toRuntimeExtensionView).sort(compareRuntimeExtensionViews),
+  });
+}
+
 export async function handleRuntimeSettings(
   request: IncomingMessage,
   response: ServerResponse,
@@ -431,6 +449,27 @@ function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: Wor
     semaphoreSlots: store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, limit: 500 }),
     run: workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined,
   });
+}
+
+function toRuntimeExtensionView(extension: LingExtensionMetadata): RuntimeExtensionView {
+  const view: RuntimeExtensionView = {
+    id: extension.manifest.id,
+    name: extension.manifest.name,
+    version: extension.manifest.version,
+    kind: extension.manifest.kind,
+    trustLevel: extension.manifest.trustLevel,
+    capabilities: extension.manifest.capabilities,
+  };
+  return removeUndefined({
+    ...view,
+    defaultApproval: "defaultApproval" in extension ? extension.defaultApproval : undefined,
+    sideEffectLevel: "sideEffectLevel" in extension ? extension.sideEffectLevel : undefined,
+  });
+}
+
+function compareRuntimeExtensionViews(left: RuntimeExtensionView, right: RuntimeExtensionView): number {
+  const byKind = left.kind.localeCompare(right.kind);
+  return byKind === 0 ? left.id.localeCompare(right.id) : byKind;
 }
 
 function parseWorkspaceRuntimeSettingsPatch(value: unknown): WorkspaceRuntimeSettingsPatch {

@@ -1,8 +1,11 @@
 import {
   readOnlyRunTools,
+  permissionModeForPreset,
+  permissionPresets,
   runContinuationReasons,
   sessionPermissionModes,
   type PermissionConfirmation,
+  type PermissionPreset,
   type RunContinuationReason,
   type RunTool,
   type SessionPermissionMode,
@@ -32,6 +35,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly requestedSkillId?: string;
   readonly tools?: readonly RunTool[];
   readonly approvalProfile?: SkillApprovalProfile;
+  readonly permissionPreset?: PermissionPreset;
   readonly permissionMode?: SessionPermissionMode;
   readonly permissionConfirmation?: PermissionConfirmation;
   readonly skipProviderPreflight?: boolean;
@@ -58,6 +62,11 @@ export function parseRunRequest(value: unknown): RunRequest {
   const requestedSkillId = readOptionalString(value, "requestedSkillId");
   const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
   const idempotencyKey = readOptionalString(value, "idempotencyKey");
+  const permissionPreset = readOptionalPermissionPreset(value, "permissionPreset");
+  const permissionMode = resolvePermissionMode(
+    permissionPreset,
+    readOptionalSessionPermissionMode(value, "permissionMode"),
+  );
 
   if (!isRecord(task)) {
     throw new Error("task must be an object");
@@ -92,18 +101,33 @@ export function parseRunRequest(value: unknown): RunRequest {
     provider: provider ? parseInlineProvider(provider) : undefined,
     tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]) ?? [...readOnlyRunTools],
     approvalProfile: readOptionalApprovalProfile(value, "approvalProfile"),
-    permissionMode: readOptionalSessionPermissionMode(value, "permissionMode"),
+    permissionPreset,
+    permissionMode,
     permissionConfirmation: readOptionalPermissionConfirmation(value, "permissionConfirmation"),
     thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
     systemPrompt: readOptionalString(value, "systemPrompt"),
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     agentDir: readOptionalString(value, "agentDir"),
+    runtimeToolFeatures: readOptionalRuntimeToolFeatures(value, "runtimeToolFeatures"),
     parentRunId: readOptionalString(value, "parentRunId"),
     interventionId: readOptionalString(value, "interventionId"),
     continuationReason: readOptionalRunContinuationReason(value, "continuationReason"),
   };
   assertFullAccessPermissionConfirmed(runRequest);
   return runRequest;
+}
+
+function readOptionalRuntimeToolFeatures(record: Record<string, unknown>, key: string): RunRequest["runtimeToolFeatures"] {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  return {
+    requestPermissions: readOptionalBoolean(value, "requestPermissions"),
+  };
 }
 
 function assertFullAccessPermissionConfirmed(runRequest: RunRequest): void {
@@ -175,6 +199,31 @@ function readOptionalSessionPermissionMode(record: Record<string, unknown>, key:
     throw new Error(`${key} must be one of: ${sessionPermissionModes.join(", ")}`);
   }
   return value as SessionPermissionMode;
+}
+
+function readOptionalPermissionPreset(record: Record<string, unknown>, key: string): PermissionPreset | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!permissionPresets.includes(value as PermissionPreset)) {
+    throw new Error(`${key} must be one of: ${permissionPresets.join(", ")}`);
+  }
+  return value as PermissionPreset;
+}
+
+function resolvePermissionMode(
+  permissionPreset: PermissionPreset | undefined,
+  permissionMode: SessionPermissionMode | undefined,
+): SessionPermissionMode | undefined {
+  if (permissionPreset === undefined) {
+    return permissionMode;
+  }
+  const presetMode = permissionModeForPreset(permissionPreset);
+  if (permissionMode !== undefined && permissionPreset !== "custom" && permissionMode !== presetMode) {
+    throw new Error("permissionPreset and permissionMode must describe the same permission scope");
+  }
+  return permissionMode ?? presetMode;
 }
 
 function readOptionalPermissionConfirmation(record: Record<string, unknown>, key: string): PermissionConfirmation | undefined {

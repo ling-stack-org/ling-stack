@@ -159,13 +159,13 @@ explicit approval requirements.
 
 The daemon should create the default registry at startup.
 
-Initial integration can be read-only:
+Initial integration is read-only:
 
 - use registry for diagnostics,
 - verify built-in capabilities,
 - later use it to select runner/provider/channel/automation implementations.
 
-A future diagnostic endpoint may expose safe metadata:
+The diagnostic endpoint exposes safe metadata:
 
 ```http
 GET /runtime/extensions
@@ -186,7 +186,9 @@ It must not expose secrets or dynamic code paths.
 - Daemon creates a default registry at server construction through
   `createDefaultLingExtensionRegistry()`. This is read-only metadata in v0.1 and does
   not change runner/provider selection or execution authority.
-- No `/runtime/extensions` HTTP API exists yet; that remains a future diagnostic slice.
+- Daemon exposes `GET /runtime/extensions` as a read-only diagnostic view of safe
+  internal extension metadata. This endpoint is separate from `/plugins`, which reports
+  product-managed plugin lifecycle state.
 
 ## Non-Goals
 

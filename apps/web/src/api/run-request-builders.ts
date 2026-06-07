@@ -28,6 +28,7 @@ export function buildRunRequest(form: RunFormState): unknown {
       },
       providerPresetId: form.providerPresetId,
       tools: form.tools.filter(isRunnerTool),
+      permissionPreset: form.permissionPreset,
       permissionMode: form.permissionMode,
       thinkingLevel: "medium",
     };
@@ -51,6 +52,7 @@ export function buildRunRequest(form: RunFormState): unknown {
       input: ["text"],
     },
     tools: form.tools.filter(isRunnerTool),
+    permissionPreset: form.permissionPreset,
     permissionMode: form.permissionMode,
     thinkingLevel: "medium",
   };
@@ -64,6 +66,7 @@ export function buildTaskRunRequest(
   options: {
     readonly tools?: readonly ToolName[];
     readonly approvalProfile?: SkillApprovalProfile;
+    readonly permissionPreset?: RunFormState["permissionPreset"];
     readonly permissionMode?: RunFormState["permissionMode"];
   } = {},
 ): unknown {
@@ -80,6 +83,7 @@ export function buildTaskRunRequest(
     providerPresetId,
     tools: (options.tools && options.tools.length > 0 ? options.tools : channel.allowedTools.length > 0 ? channel.allowedTools : fallbackTools).filter(isRunnerTool),
     approvalProfile: options.approvalProfile,
+    permissionPreset: options.permissionPreset,
     permissionMode: options.permissionMode,
     thinkingLevel: "medium",
   };
@@ -98,6 +102,7 @@ export function buildRerunRequest(run: RunSession): unknown {
     task: readRunTask(run),
     providerPresetId,
     tools: readToolArray(snapshot, "tools"),
+    permissionPreset: readOptionalString(snapshot, "permissionPreset"),
     permissionMode: readOptionalString(snapshot, "permissionMode"),
     thinkingLevel: readOptionalString(snapshot, "thinkingLevel") ?? "medium",
     systemPrompt: readOptionalString(snapshot, "systemPrompt"),

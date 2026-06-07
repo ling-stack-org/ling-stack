@@ -4,11 +4,14 @@ import type { RunnerExtensionMetadata, ToolDefaultApproval, ToolSideEffectLevel 
 import {
   AuthStorage,
   createAgentSession,
+  createEditToolDefinition,
+  createWriteToolDefinition,
   DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
   SettingsManager,
   type AgentSessionEvent,
+  type AgentToolResult,
   type ExtensionFactory,
   type ResourceLoader,
   type ToolDefinition,
@@ -62,6 +65,72 @@ export interface PiRunnerApprovalDecision {
   readonly approved: boolean;
   readonly approvalId?: string;
   readonly reason?: string;
+  readonly handledResult?: PiRunnerToolHandledResult;
+}
+
+export interface PiRunnerToolHandledResult {
+  readonly content: readonly (TextContent | ImageContent | { readonly type: "text"; readonly text: string } | { readonly type: "image"; readonly data: string; readonly mimeType: string })[];
+  readonly details?: unknown;
+  readonly isError?: boolean;
+}
+
+export type PiRunnerPermissionRequestKind =
+  | "core_tool"
+  | "write_scope"
+  | "mcp_tool"
+  | "runner_capability";
+
+export type PiRunnerPermissionScope =
+  | {
+      readonly kind: "core_tool";
+      readonly tools: readonly PiRunnerBuiltinToolName[];
+    }
+  | {
+      readonly kind: "write_scope";
+      readonly paths: readonly string[];
+      readonly operation: "read_write" | "create" | "update" | "delete";
+    }
+  | {
+      readonly kind: "mcp_tool";
+      readonly serverId: string;
+      readonly toolName: string;
+      readonly sideEffectLevel: string;
+      readonly defaultApproval: string;
+    }
+  | {
+      readonly kind: "runner_capability";
+      readonly runnerId: string;
+      readonly capability: string;
+    };
+
+export interface PiRunnerPermissionRequest {
+  readonly toolCallId: string;
+  readonly requestKind: PiRunnerPermissionRequestKind;
+  readonly reason: string;
+  readonly requestedScope: PiRunnerPermissionScope;
+  readonly task: PiRunnerTask;
+  readonly cwd: string;
+}
+
+export interface PiRunnerPermissionGrant {
+  readonly id: string;
+  readonly approvalId: string;
+  readonly runId: string;
+  readonly scope: PiRunnerPermissionScope;
+  readonly mode: "same_run" | "continuation";
+  readonly createdAt: string;
+  readonly expiresAt?: string;
+}
+
+export interface PiRunnerPermissionDecision {
+  readonly approved: boolean;
+  readonly approvalId?: string;
+  readonly reason?: string;
+  readonly grant?: PiRunnerPermissionGrant;
+}
+
+export interface PiRunnerRuntimeToolFeatures {
+  readonly requestPermissions?: boolean;
 }
 
 export interface PiRunnerRunOptions {
@@ -74,11 +143,15 @@ export interface PiRunnerRunOptions {
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
   readonly agentDir?: string;
+  readonly runtimeToolFeatures?: PiRunnerRuntimeToolFeatures;
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: PiRunnerEvent) => void;
   readonly onApprovalRequired?: (
     request: PiRunnerApprovalRequest,
   ) => PiRunnerApprovalDecision | Promise<PiRunnerApprovalDecision>;
+  readonly onPermissionRequired?: (
+    request: PiRunnerPermissionRequest,
+  ) => PiRunnerPermissionDecision | Promise<PiRunnerPermissionDecision>;
   readonly onMcpToolCall?: (request: PiRunnerMcpToolCallRequest) => PiRunnerMcpToolCallResult | Promise<PiRunnerMcpToolCallResult>;
 }
 
@@ -347,7 +420,9 @@ async function createLingStackResourceLoader(
     systemPrompt: getLingStackSystemPrompt(options),
     appendSystemPrompt: [...(options.appendSystemPrompt ?? [])],
     extensionFactories: [
+      createLingStackFileMutationToolExtension(options),
       createLingStackApprovalExtension(options),
+      ...(options.runtimeToolFeatures?.requestPermissions ? [createLingStackPermissionRequestExtension(options)] : []),
       ...(options.mcpTools?.length ? [createLingStackMcpProxyExtension(options)] : []),
     ],
   });
@@ -359,6 +434,9 @@ function createLingStackApprovalExtension(options: PiRunnerRunOptions): Extensio
   return (pi) => {
     pi.on("tool_call", async (event): Promise<ToolCallEventResult | undefined> => {
       if (!isApprovalToolName(event.toolName)) {
+        return undefined;
+      }
+      if (event.toolName === "edit" || event.toolName === "write") {
         return undefined;
       }
 
@@ -397,6 +475,284 @@ function createLingStackApprovalExtension(options: PiRunnerRunOptions): Extensio
       }
     });
   };
+}
+
+function createLingStackPermissionRequestExtension(options: PiRunnerRunOptions): ExtensionFactory {
+  return (pi) => {
+    pi.registerTool({
+      name: "request_permission",
+      label: "request_permission",
+      description: "Ask Ling Stack for a narrowly scoped runtime permission grant when the current run is blocked by missing tools or scope.",
+      promptSnippet: "Request a runtime permission grant from Ling Stack",
+      parameters: {
+        type: "object",
+        properties: {
+          requestKind: {
+            type: "string",
+            enum: ["core_tool", "write_scope", "mcp_tool", "runner_capability"],
+          },
+          reason: {
+            type: "string",
+            description: "Why this permission is needed for the current task.",
+          },
+          requestedScope: {
+            type: "object",
+            description: "Structured scope matching requestKind.",
+          },
+        },
+        required: ["requestKind", "reason", "requestedScope"],
+      } as ToolDefinition["parameters"],
+      async execute(toolCallId, params) {
+        if (!options.onPermissionRequired) {
+          throw new Error("Ling Stack blocked request_permission: no permission request handler is configured.");
+        }
+        const request = parsePermissionRequestToolParams(toolCallId, params, options);
+        const decision = await options.onPermissionRequired(request);
+        return {
+          content: [
+            {
+              type: "text",
+              text: formatPermissionDecision(decision),
+            },
+          ],
+          details: decision,
+        };
+      },
+    });
+  };
+}
+
+function parsePermissionRequestToolParams(
+  toolCallId: string,
+  params: unknown,
+  options: PiRunnerRunOptions,
+): PiRunnerPermissionRequest {
+  if (!isRecord(params)) {
+    throw new Error("request_permission parameters must be an object.");
+  }
+  const requestKind = readPermissionRequestKind(params.requestKind);
+  const reason = readRequiredString(params, "reason");
+  const requestedScope = readPermissionScope(params.requestedScope, requestKind);
+  return {
+    toolCallId,
+    requestKind,
+    reason,
+    requestedScope,
+    task: options.task,
+    cwd: options.cwd,
+  };
+}
+
+function readPermissionRequestKind(value: unknown): PiRunnerPermissionRequestKind {
+  if (value === "core_tool" || value === "write_scope" || value === "mcp_tool" || value === "runner_capability") {
+    return value;
+  }
+  throw new Error(`Unsupported permission request kind: ${String(value)}.`);
+}
+
+function readPermissionScope(value: unknown, requestKind: PiRunnerPermissionRequestKind): PiRunnerPermissionScope {
+  if (!isRecord(value)) {
+    throw new Error("requestedScope must be an object.");
+  }
+  const kind = readPermissionRequestKind(value.kind);
+  if (kind !== requestKind) {
+    throw new Error(`requestedScope.kind ${kind} does not match requestKind ${requestKind}.`);
+  }
+  if (kind === "core_tool") {
+    const tools = readStringArray(value.tools).map(readBuiltinToolName);
+    if (tools.length === 0) {
+      throw new Error("core_tool requestedScope requires at least one tool.");
+    }
+    return { kind, tools };
+  }
+  if (kind === "write_scope") {
+    const paths = readStringArray(value.paths);
+    if (paths.length === 0) {
+      throw new Error("write_scope requestedScope requires at least one path.");
+    }
+    return {
+      kind,
+      paths,
+      operation: readWriteScopeOperation(value.operation),
+    };
+  }
+  if (kind === "mcp_tool") {
+    return {
+      kind,
+      serverId: readRequiredString(value, "serverId"),
+      toolName: readRequiredString(value, "toolName"),
+      sideEffectLevel: readRequiredString(value, "sideEffectLevel"),
+      defaultApproval: readRequiredString(value, "defaultApproval"),
+    };
+  }
+  return {
+    kind,
+    runnerId: readRequiredString(value, "runnerId"),
+    capability: readRequiredString(value, "capability"),
+  };
+}
+
+function readBuiltinToolName(value: string): PiRunnerBuiltinToolName {
+  if ((DEFAULT_TOOLS as readonly string[]).includes(value)) {
+    return value as PiRunnerBuiltinToolName;
+  }
+  throw new Error(`Unsupported core tool: ${value}.`);
+}
+
+function readWriteScopeOperation(value: unknown): "read_write" | "create" | "update" | "delete" {
+  if (value === "read_write" || value === "create" || value === "update" || value === "delete") {
+    return value;
+  }
+  throw new Error(`Unsupported write-scope operation: ${String(value)}.`);
+}
+
+function readRequiredString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${key} is required.`);
+  }
+  return value;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+function formatPermissionDecision(decision: PiRunnerPermissionDecision): string {
+  if (!decision.approved) {
+    return decision.reason ?? "Ling Stack denied the runtime permission request.";
+  }
+  const mode = decision.grant?.mode ?? "continuation";
+  const suffix = mode === "same_run"
+    ? "The grant is available to the current run."
+    : "The grant is recorded for a continuation; the active tool registry was not changed.";
+  return [decision.reason ?? "Ling Stack approved the runtime permission request.", suffix].join(" ");
+}
+
+function createLingStackFileMutationToolExtension(options: PiRunnerRunOptions): ExtensionFactory {
+  return (pi) => {
+    const originalEdit = createEditToolDefinition(options.cwd) as ToolDefinition;
+    const originalWrite = createWriteToolDefinition(options.cwd) as ToolDefinition;
+
+    pi.registerTool({
+      name: "edit",
+      label: "edit",
+      description: `${originalEdit.description} You may also provide patchText with a Codex-compatible apply-patch envelope for multi-file edits.`,
+      parameters: createPatchableEditParameters(originalEdit.parameters),
+      async execute(toolCallId, params, signal, onUpdate, ctx) {
+        const decision = await requireFileMutationApproval(options, "edit", toolCallId, params);
+        if (decision.handledResult) {
+          return normalizeHandledToolResult(decision.handledResult);
+        }
+        return originalEdit.execute(toolCallId, params, signal, onUpdate, ctx);
+      },
+      renderCall: originalEdit.renderCall,
+      renderResult: originalEdit.renderResult,
+      renderShell: originalEdit.renderShell,
+    });
+
+    pi.registerTool({
+      name: "write",
+      label: "write",
+      description: `${originalWrite.description} For structured multi-file changes, provide patchText with a Codex-compatible apply-patch envelope.`,
+      parameters: createPatchableWriteParameters(originalWrite.parameters),
+      async execute(toolCallId, params, signal, onUpdate, ctx) {
+        const decision = await requireFileMutationApproval(options, "write", toolCallId, params);
+        if (decision.handledResult) {
+          return normalizeHandledToolResult(decision.handledResult);
+        }
+        return originalWrite.execute(toolCallId, params, signal, onUpdate, ctx);
+      },
+      renderCall: originalWrite.renderCall,
+      renderResult: originalWrite.renderResult,
+      renderShell: originalWrite.renderShell,
+    });
+  };
+}
+
+async function requireFileMutationApproval(
+  options: PiRunnerRunOptions,
+  toolName: "edit" | "write",
+  toolCallId: string,
+  input: unknown,
+): Promise<PiRunnerApprovalDecision> {
+  if (!options.onApprovalRequired) {
+    throw new Error(`Ling Stack blocked ${toolName}: no approval handler is configured.`);
+  }
+  const decision = await options.onApprovalRequired({
+    toolCallId,
+    toolName,
+    input,
+    task: options.task,
+    cwd: options.cwd,
+  });
+  if (!decision.approved) {
+    throw new Error(decision.reason ?? `Ling Stack approval denied ${toolName}.`);
+  }
+  return decision;
+}
+
+function normalizeHandledToolResult(result: PiRunnerToolHandledResult): AgentToolResult<any> {
+  if (result.isError) {
+    throw new Error(formatHandledToolError(result));
+  }
+  return {
+    content: normalizeMcpToolResultContent(result.content),
+    details: result.details,
+  };
+}
+
+function formatHandledToolError(result: PiRunnerToolHandledResult): string {
+  const text = result.content
+    .filter((item): item is TextContent => item.type === "text")
+    .map((item) => item.text)
+    .join("\n")
+    .trim();
+  return text || "Ling Stack handled tool call failed.";
+}
+
+function createPatchableEditParameters(original: ToolDefinition["parameters"]): ToolDefinition["parameters"] {
+  return mergePatchParameters(original, [
+    { required: ["path", "edits"] },
+    { required: ["patchText"] },
+    { required: ["patch"] },
+  ]);
+}
+
+function createPatchableWriteParameters(original: ToolDefinition["parameters"]): ToolDefinition["parameters"] {
+  return mergePatchParameters(original, [
+    { required: ["path", "content"] },
+    { required: ["patchText"] },
+    { required: ["patch"] },
+  ]);
+}
+
+function mergePatchParameters(
+  original: ToolDefinition["parameters"],
+  anyOf: readonly { readonly required: readonly string[] }[],
+): ToolDefinition["parameters"] {
+  const base = isRecord(original) ? original : {};
+  const { required: _required, ...rest } = base;
+  const properties = isRecord(base.properties) ? base.properties : {};
+  return {
+    ...rest,
+    type: "object",
+    properties: {
+      ...properties,
+      patchText: {
+        type: "string",
+        description: "Codex-compatible apply-patch text beginning with *** Begin Patch.",
+      },
+      patch: {
+        type: "string",
+        description: "Alias for patchText.",
+      },
+    },
+    anyOf,
+  } as ToolDefinition["parameters"];
 }
 
 function createLingStackMcpProxyExtension(options: PiRunnerRunOptions): ExtensionFactory {

@@ -1,6 +1,5 @@
-import type { LingExtensionMetadata, LingExtensionRegistry } from "@ling-stack/plugin-sdk";
+import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type {
-  ManagedPluginContributionDescriptor,
   ManagedPluginContributionKind,
   ManagedPluginContributionRecord,
   ManagedPluginDescriptor,
@@ -105,8 +104,7 @@ function buildDescriptorMap(
   store: RunStore,
 ): Map<string, ManagedPluginDescriptor> {
   const descriptors = new Map<string, ManagedPluginDescriptor>();
-  for (const extension of extensionRegistry.list()) {
-    const descriptor = extensionToManagedPluginDescriptor(extension);
+  for (const descriptor of listProductManagedBuiltInPluginDescriptors(extensionRegistry)) {
     descriptors.set(descriptor.id, descriptor);
   }
   for (const descriptor of listBundledPackageDescriptors()) {
@@ -116,66 +114,40 @@ function buildDescriptorMap(
     descriptors.set(descriptor.id, descriptor);
   }
   for (const record of store.listManagedPlugins({ limit: 500 })) {
-    if (!descriptors.has(record.id)) {
+    if (!descriptors.has(record.id) && shouldIncludePersistedManagedPluginRecord(record)) {
       descriptors.set(record.id, record.descriptor);
     }
   }
   return descriptors;
 }
 
-function extensionToManagedPluginDescriptor(extension: LingExtensionMetadata): ManagedPluginDescriptor {
-  const contribution = extensionToContribution(extension);
-  return {
-    id: extension.manifest.id,
-    displayName: extension.manifest.name,
-    version: extension.manifest.version,
-    sourceKind: "built-in",
-    trustSummary: extension.manifest.trustLevel === "internal-isolated"
-      ? "Built into Ling and isolated by its owning subsystem."
-      : "Built into Ling and executed through existing daemon policy boundaries.",
-    contributions: [contribution],
-    requiredSecrets: extension.manifest.requiredSecrets?.map((ref) => ({
-      ref,
-      label: ref,
-      required: true,
-    })),
-    defaultApprovals: extension.manifest.requiredApprovals?.flatMap((approval) =>
-      (approval.tools ?? approval.actions ?? [extension.manifest.id]).map((contributionId) => ({
-        contributionId,
-        decision: approval.decision,
-        reason: approval.reason,
-      }))),
-    defaultEnabled: true,
-  };
+function listProductManagedBuiltInPluginDescriptors(
+  extensionRegistry: LingExtensionRegistry,
+): readonly ManagedPluginDescriptor[] {
+  void extensionRegistry;
+  return [];
 }
 
-function extensionToContribution(extension: LingExtensionMetadata): ManagedPluginContributionDescriptor {
-  const base = {
-    id: extension.manifest.id,
-    label: extension.manifest.name,
-    capabilities: extension.manifest.capabilities,
-  };
-  switch (extension.manifest.kind) {
-    case "tool":
-      return {
-        ...base,
-        kind: "tool",
-        sideEffectLevel: "sideEffectLevel" in extension ? extension.sideEffectLevel : undefined,
-        defaultApproval: "defaultApproval" in extension ? extension.defaultApproval : undefined,
-      };
-    case "skill-pack":
-      return { ...base, kind: "skill-pack" };
-    case "runner":
-      return { ...base, kind: "runner" };
-    case "provider":
-      return { ...base, kind: "provider" };
-    case "channel-source":
-      return { ...base, kind: "channel-source" };
-    case "memory":
-      return { ...base, kind: "memory" };
-    case "automation":
-      return { ...base, kind: "automation" };
-  }
+function shouldIncludePersistedManagedPluginRecord(record: ManagedPluginRecord): boolean {
+  return !isPlainBuiltInRuntimeExtensionRecord(record);
+}
+
+function isPlainBuiltInRuntimeExtensionRecord(record: ManagedPluginRecord): boolean {
+  const contribution = record.descriptor.contributions[0];
+  const runtimeExtensionKinds: readonly ManagedPluginContributionKind[] = [
+    "tool",
+    "runner",
+    "provider",
+    "channel-source",
+    "skill-pack",
+    "memory",
+    "automation",
+  ];
+  return record.sourceKind === "built-in"
+    && record.descriptor.contributions.length === 1
+    && contribution !== undefined
+    && runtimeExtensionKinds.includes(contribution.kind)
+    && record.id.startsWith(`${contribution.kind}:`);
 }
 
 function createManagedPluginView(input: {
