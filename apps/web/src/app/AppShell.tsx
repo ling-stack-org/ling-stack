@@ -130,6 +130,7 @@ import {
   providerEffectiveBaseUrl,
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
+import { inferPermissionPreset } from "../lib/session-permissions.js";
 import { StatusBadge } from "../shared/components/index.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
@@ -148,6 +149,7 @@ const defaultForm: RunFormState = {
   api: "openai-completions",
   tools: defaultTools,
   permissionMode: "balanced",
+  permissionPreset: "custom",
 };
 
 function buildContextTaskPrompt(summary: ChannelContextSummary, decisions: readonly ChannelDecision[]): string {
@@ -2160,6 +2162,7 @@ export function AppShell(): JSX.Element {
       await runWithRequest(buildTaskRunRequest(runCwd, task, channel, providerPresetId, {
         tools: options.toolsOverride,
         approvalProfile: options.approvalProfileOverride,
+        permissionPreset: form.permissionPreset,
         permissionMode: form.permissionMode,
       }), runCwd, async (runId) => {
         await refreshTasks(task.channelId);
@@ -2449,7 +2452,9 @@ export function AppShell(): JSX.Element {
             latestStatus={latestStatus}
             isRunning={isRunning}
             isCancellingRun={Boolean(cancellingRunId)}
+            approvalPolicy={approvalPolicy}
             permissionMode={form.permissionMode}
+            permissionPreset={form.permissionPreset}
             activeTaskRunAction={activeTaskRunAction}
             runningWorkflowStepId={runningWorkflowStepId}
             orchestratingWorkflowId={orchestratingWorkflowId}
@@ -2508,7 +2513,7 @@ export function AppShell(): JSX.Element {
             onSelectTask={setSelectedTaskId}
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
             onRunTask={(task) => void runPersistedTask(task)}
-            onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode }))}
+            onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode, permissionPreset: inferPermissionPreset(permissionMode) }))}
             onCancelActiveRun={(targetRun) => void cancelRunOrWorkUnit(targetRun)}
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
@@ -2735,20 +2740,23 @@ export function AppShell(): JSX.Element {
                 pluginsLoading={pluginsLoading}
                 pluginBusyId={pluginBusyId}
                 pluginBusyAction={pluginBusyAction}
-                latestPluginApplyResult={latestPluginApplyResult}
-                latestPluginRuntimePreview={latestPluginRuntimePreview}
-                latestPluginNotice={latestPluginNotice}
-                isLoading={approvalPolicyLoading}
+	                latestPluginApplyResult={latestPluginApplyResult}
+	                latestPluginRuntimePreview={latestPluginRuntimePreview}
+	                latestPluginNotice={latestPluginNotice}
+	                permissionMode={form.permissionMode}
+	                permissionPreset={form.permissionPreset}
+	                isLoading={approvalPolicyLoading}
                 runtimeSettingsLoading={runtimeSettingsLoading}
                 runtimeSettingsAction={runtimeSettingsAction}
                 runtimeSettingsError={runtimeSettingsError}
                 externalWorkStatusLoading={externalWorkStatusLoading}
                 externalWorkStatusAction={externalWorkStatusAction}
                 externalWorkSecretAction={externalWorkSecretAction}
-                externalWorkWorkflowAction={externalWorkWorkflowAction}
-                errorMessage={errorMessage}
-                onFormChange={setApprovalPolicyForm}
-                onRefresh={() => void refreshApprovalPolicy()}
+	                externalWorkWorkflowAction={externalWorkWorkflowAction}
+	                errorMessage={errorMessage}
+	                onFormChange={setApprovalPolicyForm}
+	                onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode, permissionPreset: inferPermissionPreset(permissionMode) }))}
+	                onRefresh={() => void refreshApprovalPolicy()}
                 onSave={() => void saveApprovalPolicy()}
                 onRuntimeSettingsFormChange={setRuntimeSettingsForm}
                 onToggleAllowedRunner={toggleAllowedRunner}

@@ -188,7 +188,7 @@ test("settings approval policy loads, edits, and saves tool decisions and write 
   const bashDecision = settingsPanel.locator(".policy-tool-row").filter({ hasText: "bash" }).locator("select");
   await expect(bashDecision).toHaveValue("ask");
   await bashDecision.selectOption("deny");
-  await settingsPanel.getByText("Advanced settings").click();
+  await expect(settingsPanel.getByText("Advanced workspace policy", { exact: true })).toBeVisible();
   await settingsPanel.getByLabel("Allowed write paths").fill(".\n/tmp/ling-stack-workspace\n  ");
   await settingsPanel.getByRole("button", { name: "Save policy" }).click();
 
@@ -200,6 +200,29 @@ test("settings approval policy loads, edits, and saves tool decisions and write 
   await expect.poll(() => state.approvalPolicy.toolDecisions.bash).toBe("deny");
   await expect(bashDecision).toHaveValue("deny");
   await expect(settingsPanel.getByLabel("Allowed write paths")).toHaveValue(".\n/tmp/ling-stack-workspace");
+});
+
+test("settings permission preset cards update the effective preview", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Approval policy/ }).click();
+  const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Approval policy" });
+
+  await settingsPanel.getByRole("button", { name: /Workspace collaboration/ }).click();
+  await expect(settingsPanel.getByLabel("Effective permissions")).toContainText("Allows: read, grep, find, ls, edit, write");
+  await expect(settingsPanel.getByLabel("Effective permissions")).toContainText("Asks: bash");
+  await expect(settingsPanel.getByText("Selected preset", { exact: true })).toBeVisible();
+  await expect(settingsPanel).toContainText("Workspace collaboration");
+
+  await settingsPanel.getByRole("button", { name: /Full access/ }).click();
+  await expect(settingsPanel.getByLabel("Effective permissions")).toContainText("Write scope: /");
+  await expect(settingsPanel.getByLabel("Effective permissions")).toContainText("Allows: read, grep, find, ls, bash, edit, write");
 });
 
 test("settings plugins page applies and controls the CUA trusted-local preset without teammate authorization", async ({ page }) => {

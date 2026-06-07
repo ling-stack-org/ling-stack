@@ -344,6 +344,33 @@ export interface ManagedPluginRuntimePreviewResponse {
   readonly preview: ManagedPluginRuntimePreview;
 }
 
+export type RuntimeExtensionKind =
+  | "provider"
+  | "runner"
+  | "channel-source"
+  | "skill-pack"
+  | "tool"
+  | "memory"
+  | "automation";
+
+export type RuntimeExtensionTrustLevel = "internal" | "internal-isolated";
+
+export interface RuntimeExtensionView {
+  readonly id: string;
+  readonly name: string;
+  readonly version: string;
+  readonly kind: RuntimeExtensionKind;
+  readonly trustLevel: RuntimeExtensionTrustLevel;
+  readonly capabilities: readonly string[];
+  readonly defaultApproval?: ManagedPluginDefaultApproval;
+  readonly sideEffectLevel?: ManagedPluginSideEffectLevel;
+}
+
+export interface RuntimeExtensionListResponse {
+  readonly cwd: string;
+  readonly extensions: readonly RuntimeExtensionView[];
+}
+
 export function createManagedPluginEventId(): string {
   return `plugin_event_${randomUUID()}`;
 }

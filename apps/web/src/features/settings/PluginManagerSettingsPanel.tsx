@@ -71,7 +71,7 @@ export function PluginManagerSettingsPanel({
       <header className="settings-plugin-manager-head">
         <div>
           <h2 id="settings-plugin-manager-title">{t("Plugin Manager")}</h2>
-          <p>{t("Internal, bundled, and trusted local capabilities")}</p>
+          <p>{t("Managed capability bundles and trusted local presets")}</p>
         </div>
         <div className="settings-plugin-manager-actions">
           <button className="secondary-button compact-button" type="button" onClick={onOpenMcpSettings}>
@@ -123,7 +123,7 @@ export function PluginManagerSettingsPanel({
       {plugins.length === 0 ? (
         <div className="empty-state compact-empty">
           {isLoading ? <Loader2 className="spin" /> : <Plug />}
-          <span>{isLoading ? t("Loading plugins...") : t("No plugins registered")}</span>
+          <span>{isLoading ? t("Loading plugins...") : t("No managed plugins registered")}</span>
         </div>
       ) : (
         <div className="settings-plugin-list" aria-label={t("Plugins")}>

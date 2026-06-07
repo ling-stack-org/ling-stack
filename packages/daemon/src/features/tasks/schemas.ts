@@ -1,9 +1,12 @@
 import {
   readOnlyRunTools,
+  permissionModeForPreset,
+  permissionPresets,
   sessionPermissionModes,
   taskStatuses,
   type CreateTaskInput,
   type PermissionConfirmation,
+  type PermissionPreset,
   type RunTool,
   type SessionPermissionMode,
   type SkillApprovalProfile,
@@ -21,6 +24,7 @@ export interface TaskRunRequest {
   readonly idempotencyKey?: string;
   readonly tools?: readonly RunTool[];
   readonly approvalProfile?: SkillApprovalProfile;
+  readonly permissionPreset?: PermissionPreset;
   readonly permissionMode?: SessionPermissionMode;
   readonly permissionConfirmation?: PermissionConfirmation;
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -66,6 +70,11 @@ export function parseTaskRunRequest(value: unknown): TaskRunRequest {
   if (!isRecord(value)) {
     throw new Error("Task run request must be a JSON object");
   }
+  const permissionPreset = readOptionalPermissionPreset(value, "permissionPreset");
+  const permissionMode = resolvePermissionMode(
+    permissionPreset,
+    readOptionalSessionPermissionMode(value, "permissionMode"),
+  );
   return {
     providerPresetId: readString(value, "providerPresetId"),
     runnerId: readOptionalString(value, "runnerId"),
@@ -74,7 +83,8 @@ export function parseTaskRunRequest(value: unknown): TaskRunRequest {
     idempotencyKey: readOptionalString(value, "idempotencyKey"),
     tools: readOptionalRunTools(value, "tools"),
     approvalProfile: readOptionalApprovalProfile(value, "approvalProfile"),
-    permissionMode: readOptionalSessionPermissionMode(value, "permissionMode"),
+    permissionPreset,
+    permissionMode,
     permissionConfirmation: readOptionalPermissionConfirmation(value, "permissionConfirmation"),
     thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
     systemPrompt: readOptionalString(value, "systemPrompt"),
@@ -92,6 +102,31 @@ function readOptionalSessionPermissionMode(record: Record<string, unknown>, key:
     throw new Error(`${key} must be one of: ${sessionPermissionModes.join(", ")}`);
   }
   return value as SessionPermissionMode;
+}
+
+function readOptionalPermissionPreset(record: Record<string, unknown>, key: string): PermissionPreset | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!permissionPresets.includes(value as PermissionPreset)) {
+    throw new Error(`${key} must be one of: ${permissionPresets.join(", ")}`);
+  }
+  return value as PermissionPreset;
+}
+
+function resolvePermissionMode(
+  permissionPreset: PermissionPreset | undefined,
+  permissionMode: SessionPermissionMode | undefined,
+): SessionPermissionMode | undefined {
+  if (permissionPreset === undefined) {
+    return permissionMode;
+  }
+  const presetMode = permissionModeForPreset(permissionPreset);
+  if (permissionMode !== undefined && permissionPreset !== "custom" && permissionMode !== presetMode) {
+    throw new Error("permissionPreset and permissionMode must describe the same permission scope");
+  }
+  return permissionMode ?? presetMode;
 }
 
 function readOptionalPermissionConfirmation(record: Record<string, unknown>, key: string): PermissionConfirmation | undefined {

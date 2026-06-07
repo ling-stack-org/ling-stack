@@ -319,12 +319,21 @@ function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalReque
   if (payloadType === "file_write" || payloadType === "file_edit") {
     const path = readDataString(approval.payload, "path") || "-";
     const bytes = readDataField(approval.payload, "bytes");
+    const patchFormat = readDataString(approval.payload, "patchFormat");
+    const touchedPaths = readStringList(readDataField(approval.payload, "touchedPaths"));
+    const summary = readDataField(approval.payload, "summary");
+    const fileCount = isRecord(summary) && typeof summary.fileCount === "number" ? summary.fileCount : undefined;
+    const addedLines = isRecord(summary) && typeof summary.addedLines === "number" ? summary.addedLines : undefined;
+    const removedLines = isRecord(summary) && typeof summary.removedLines === "number" ? summary.removedLines : undefined;
     const preview = payloadType === "file_edit"
       ? readDataString(approval.payload, "diffPreview")
       : readDataString(approval.payload, "preview");
     return (
       <div className="approval-payload-summary" aria-label="File mutation approval summary">
-        <span>{t("path {path}", { path })}</span>
+        {patchFormat ? <span>{t("patch {format}", { format: patchFormat })}</span> : null}
+        <span>{t("path {path}", { path: touchedPaths.length > 0 ? touchedPaths.join(", ") : path })}</span>
+        {fileCount !== undefined ? <span>{t("{count} files", { count: fileCount })}</span> : null}
+        {addedLines !== undefined || removedLines !== undefined ? <span>{`+${addedLines ?? 0} / -${removedLines ?? 0}`}</span> : null}
         {typeof bytes === "number" ? <span>{t("{count} bytes", { count: bytes })}</span> : null}
         {preview ? <pre>{preview}</pre> : null}
       </div>
@@ -347,6 +356,25 @@ function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalReque
         <span>{t("mode {mode}", { mode: approvalMode })}</span>
         {requiredForTools.length > 0 ? <span>{t("tools {tools}", { tools: requiredForTools.join(", ") })}</span> : null}
         {requiredForActions.length > 0 ? <span>{t("actions {actions}", { actions: requiredForActions.join(", ") })}</span> : null}
+      </div>
+    );
+  }
+
+  if (payloadType === "runtime_permission_request") {
+    const requestKind = readDataString(approval.payload, "requestKind") || "-";
+    const reason = readDataString(approval.payload, "reason");
+    const requestedScope = readDataField(approval.payload, "requestedScope");
+    const currentScope = readDataField(approval.payload, "currentScope");
+    const continuation = readDataField(approval.payload, "proposedContinuation");
+    const continuationMode = isRecord(continuation) ? readRecordScalar(continuation, "mode") : undefined;
+    const currentTools = isRecord(currentScope) ? readStringList(currentScope.tools) : [];
+    return (
+      <div className="approval-payload-summary" aria-label="Runtime permission approval summary">
+        <span>{t("permission {kind}", { kind: requestKind })}</span>
+        <span>{t("request {scope}", { scope: runtimePermissionScopeSummary(requestedScope) })}</span>
+        {currentTools.length > 0 ? <span>{t("current tools {tools}", { tools: currentTools.join(", ") })}</span> : null}
+        {continuationMode ? <span>{t("continuation {mode}", { mode: continuationMode })}</span> : null}
+        {reason ? <p>{reason}</p> : null}
       </div>
     );
   }
@@ -418,6 +446,26 @@ function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalReque
       {promptPreview ? <p>{promptPreview}</p> : null}
     </div>
   );
+}
+
+function runtimePermissionScopeSummary(scope: unknown): string {
+  if (!isRecord(scope)) {
+    return "-";
+  }
+  const kind = readRecordScalar(scope, "kind");
+  if (kind === "core_tool") {
+    return `tools ${readStringList(scope.tools).join(", ") || "-"}`;
+  }
+  if (kind === "write_scope") {
+    return `${readRecordScalar(scope, "operation") ?? "write"} ${readStringList(scope.paths).join(", ") || "-"}`;
+  }
+  if (kind === "mcp_tool") {
+    return `mcp ${readRecordScalar(scope, "serverId") ?? "-"}/${readRecordScalar(scope, "toolName") ?? "-"}`;
+  }
+  if (kind === "runner_capability") {
+    return `runner ${readRecordScalar(scope, "runnerId") ?? "-"}/${readRecordScalar(scope, "capability") ?? "-"}`;
+  }
+  return kind ?? "-";
 }
 
 function readStringList(value: unknown): readonly string[] {

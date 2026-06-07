@@ -34,7 +34,10 @@ import {
 } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import {
+  inferPermissionPreset,
+  permissionPresetLabel,
   readEffectivePolicySnapshot,
+  readPermissionPresetFromSnapshot,
   readSessionPermissionModeFromSnapshot,
   sessionPermissionModeLabel,
   summarizeEffectivePolicySnapshot,
@@ -819,6 +822,18 @@ function RunDetailPanel({
   const workspaceCwd = run ? readDataString(run.requestSnapshot, "workspaceCwd") || run.cwd : "-";
   const providerPresetId = run ? readRunProviderPresetId(run) : "";
   const permissionMode = run ? readSessionPermissionModeFromSnapshot(run.requestSnapshot) : undefined;
+  const permissionPreset = run
+    ? readPermissionPresetFromSnapshot(run.requestSnapshot) ?? inferPermissionPreset(permissionMode)
+    : undefined;
+  const permissionConfirmation = run ? readDataField(run.requestSnapshot, "permissionConfirmation") : undefined;
+  const permissionConfirmationAt = readDataString(permissionConfirmation, "confirmedAt");
+  const permissionConfirmationReason = readDataString(permissionConfirmation, "reason");
+  const permissionConfirmationSummary = permissionConfirmationAt || permissionConfirmationReason
+    ? t("Confirmed at {time}: {reason}", {
+        time: permissionConfirmationAt ? formatDateTime(permissionConfirmationAt) : "-",
+        reason: permissionConfirmationReason || "-",
+      })
+    : "";
   const effectivePolicySnapshot = run ? readEffectivePolicySnapshot(run.requestSnapshot) : undefined;
   const effectivePolicySummary = summarizeEffectivePolicySnapshot(effectivePolicySnapshot, t);
   const runCancellable = Boolean(run && runCanBeStopped(run));
@@ -871,7 +886,11 @@ function RunDetailPanel({
           <div className="run-detail-summary">
             <MetaRow label={t("Status")} value={run.status} compact />
             <MetaRow label={t("Provider")} value={`${run.providerName}/${run.providerModel}`} compact />
+            <MetaRow label={t("Permission preset")} value={permissionPresetLabel(permissionPreset, t)} compact />
             <MetaRow label={t("Permission mode")} value={sessionPermissionModeLabel(permissionMode, t)} compact />
+            {permissionConfirmationSummary ? (
+              <MetaRow label={t("Full access confirmation")} value={permissionConfirmationSummary} compact />
+            ) : null}
             <MetaRow label={t("Work unit")} value={run.workUnitId ?? "-"} compact />
             <MetaRow label={t("Selected skill")} value={run.selectedSkillId ?? "-"} compact />
             <MetaRow label={t("Created")} value={formatDateTime(run.createdAt)} compact />
@@ -1011,7 +1030,11 @@ function RunDetailPanel({
                 <h3>{t("Effective permissions")}</h3>
               </div>
               <div className="run-evidence-grid">
+                <MetaRow label={t("Permission preset")} value={permissionPresetLabel(permissionPreset, t)} compact />
                 <MetaRow label={t("Permission mode")} value={sessionPermissionModeLabel(effectivePolicySnapshot?.mode ?? permissionMode, t)} compact />
+                {permissionConfirmationSummary ? (
+                  <MetaRow label={t("Full access confirmation")} value={permissionConfirmationSummary} compact />
+                ) : null}
                 {effectivePolicySummary.map((summary, index) => (
                   <MetaRow key={`${index}:${summary}`} label={index === 0 ? t("Summary") : t("Rule")} value={summary} compact />
                 ))}

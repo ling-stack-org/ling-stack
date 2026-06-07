@@ -17,6 +17,8 @@ broker, teammate bindings, and approval policy as the execution authority.
 Related docs:
 
 - [Plugin Manager Implementation Plan](plugin-manager-implementation-plan.md)
+- [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
+- [Core Tools Runtime Boundary Implementation Plan](core-tools-runtime-boundary-implementation-plan.md)
 - [Internal Registry and Plugin SDK](internal-registry-plugin-sdk.md)
 - [Platform Architecture](platform-architecture.md)
 - [MCP Status Boundaries P2](mcp-status-boundaries-p2.md)
@@ -89,11 +91,16 @@ Stage 1 uses three product-facing tiers:
 
 | Tier | Source | Code loading | Example | Default posture |
 | --- | --- | --- | --- | --- |
-| Built-in | Compiled into Ling packages | None | Pi runner, local channel source, built-in tools | Enabled by product defaults |
+| Built-in | Compiled into Ling packages | None | Product-managed built-in capability bundles | Enabled by product defaults |
 | Bundled | Shipped with Ling distribution | Static manifest and optional local assets | Browser MCP preset, GitHub MCP preset | Installable/enabled by user |
 | Trusted local preset | User confirms an installed local binary or endpoint | No plugin code loaded by Ling | `cua-driver mcp` | Disabled until explicitly added |
 
 External trusted and external untrusted tiers are intentionally excluded from stage 1.
+
+Core runner tools such as `read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write`
+are not Plugin Manager entries. They are governed by approval policy, allowed-tool
+resolution, and runner metadata. See
+[Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md).
 
 ## Architecture
 
@@ -273,6 +280,10 @@ GET /runtime/extensions
 
 `/runtime/extensions` reports safe internal registry metadata. `/plugins` reports
 product-managed plugin state and contributions.
+
+`/plugins` must not be a direct dump of the internal extension registry. Plain built-in
+`tool:*` extensions belong to approval policy and runtime-extension diagnostics, not to
+the product Plugin Manager catalog.
 
 ## Cua Driver Preset
 

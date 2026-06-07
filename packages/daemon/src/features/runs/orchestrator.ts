@@ -16,6 +16,7 @@ import {
   type RunSession,
   type RunStatus,
   type RunStore,
+  type RunTool,
   type RunnerRequestSource,
   type RuntimeInstance,
   type SecretResolver,
@@ -24,7 +25,7 @@ import {
   type WorkUnit,
   type WorkUnitAttempt,
 } from "@ling-stack/core";
-import type { PiRunnerEvent, PiRunnerProviderConfig, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import type { PiRunnerEvent, PiRunnerMcpToolDefinition, PiRunnerProviderConfig, PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
 import { ActiveRunRegistry } from "../../runtime/active-runs.js";
@@ -50,6 +51,7 @@ import {
   mergeApprovalProfiles,
   mergeRunTools,
 } from "./approvals.js";
+import { createRunPermissionRequestHandler } from "./permission-requests.js";
 import { persistExtractedArtifacts } from "./artifacts.js";
 import { ensureRunCancelled } from "./cancellation.js";
 import {
@@ -181,6 +183,8 @@ export async function executeRunRequest(
   let resolvedProvider: PiRunnerProviderConfig | undefined;
   let runnerResolution: RunnerResolution | undefined;
   let runtimeSettings: WorkspaceRuntimeSettings | undefined;
+  let runtimeTools: readonly RunTool[] | undefined;
+  let mcpTools: readonly PiRunnerMcpToolDefinition[] = [];
   let memoryRecall: ReturnType<RunStore["recallMemory"]> | undefined;
   let selectedSkill: ReturnType<typeof getEffectiveTeammateSkill> | undefined;
   let runtimeApprovalProfile: SkillApprovalProfile | undefined;
@@ -225,7 +229,7 @@ export async function executeRunRequest(
     const runStore = store;
     const mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
       resolveAiTeammateReference(runStore, teammateId)?.id);
-    const mcpTools = createPiRunnerMcpToolDefinitions(mcpToolAccess);
+    mcpTools = createPiRunnerMcpToolDefinitions(mcpToolAccess);
     memoryRecall = store.recallMemory({
       teammateId: runRequest.teammateId,
       channelId: runRequest.task.channelId,
@@ -240,7 +244,7 @@ export async function executeRunRequest(
       ...(selectedSkill?.promptFragments ?? []),
       ...(memoryPrompt ? [memoryPrompt] : []),
     ];
-    const runtimeTools = selectedSkill
+    runtimeTools = selectedSkill
       ? mergeRunTools(runRequest.tools ?? [], selectedSkill.requiredTools)
       : runRequest.tools;
     runtimeApprovalProfile = selectedSkill
@@ -279,6 +283,7 @@ export async function executeRunRequest(
       systemPrompt: runRequest.systemPrompt,
       appendSystemPrompt: appendSystemPrompt.length > 0 ? appendSystemPrompt : undefined,
       agentDir: runRequest.agentDir,
+      runtimeToolFeatures: runRequest.runtimeToolFeatures,
       onMcpToolCall: mcpTools.length > 0 ? createMcpToolCallHandler(store, secretResolver, mcpBroker, mcpTools) : undefined,
     };
     resolvedSecretValues = [resolvedProvider.apiKey];
@@ -434,6 +439,7 @@ export async function executeRunRequest(
         provider: resolvedProvider,
         runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
         runtimeSettings,
+        runtimeToolFeatures: runRequest.runtimeToolFeatures,
         selectedSkillId: selectedSkill?.skillId,
         mcpToolAccess,
         managedPluginRuntime,
@@ -787,6 +793,22 @@ export async function executeRunRequest(
         extraSecrets: resolvedSecretValues,
         controlPlaneEvents: options.controlPlaneEvents,
         workspaceCwd,
+      }),
+      onPermissionRequired: createRunPermissionRequestHandler({
+        store,
+        run,
+        approvalPolicy,
+        appendAndMaybeStream,
+        streamEnvelope,
+        signal: abortController.signal,
+        extraSecrets: resolvedSecretValues,
+        controlPlaneEvents: options.controlPlaneEvents,
+        workspaceCwd,
+        currentTools: runtimeTools ?? [],
+        runnerId: runnerResolution.effectiveRunnerId,
+        supportedTools: runnerResolution.runner.supportedTools,
+        runnerCapabilities: runnerResolution.runner.capabilities,
+        mcpToolRefs: mcpTools.map((tool) => `${tool.serverId}:${tool.rawName}`),
       }),
       onEvent: (event: PiRunnerEvent) => {
         if (event.type === "tool_start") {

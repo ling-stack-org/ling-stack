@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  permissionPresets,
   runInterventionModes,
   sessionPermissionModes,
   type PermissionConfirmation,
+  type PermissionPreset,
   type RunEventType,
   type RunIntervention,
   type RunInterventionMode,
@@ -294,6 +296,7 @@ function buildRunInterventionContinuationRequest(sourceRun: RunSession, interven
     readSnapshotString(isRecord(snapshot.task) ? snapshot.task : {}, "channelId") ??
     sourceRun.channelId;
   const permissionMode = readSnapshotSessionPermissionMode(snapshot, "permissionMode");
+  const permissionPreset = readSnapshotPermissionPreset(snapshot, "permissionPreset");
   const permissionConfirmation = readSnapshotPermissionConfirmation(snapshot, "permissionConfirmation");
   const requestedSkillId = readSnapshotString(snapshot, "requestedSkillId") ?? sourceRun.selectedSkillId;
   const providerPresetId = readSnapshotString(snapshot, "providerPresetId") ?? sourceRun.providerPresetId;
@@ -324,6 +327,7 @@ function buildRunInterventionContinuationRequest(sourceRun: RunSession, interven
     },
     tools,
     approvalProfile: isRecord(snapshot.approvalProfile) ? snapshot.approvalProfile as unknown as SkillApprovalProfile : undefined,
+    permissionPreset,
     permissionMode,
     permissionConfirmation,
     thinkingLevel: readSnapshotThinkingLevel(snapshot, "thinkingLevel"),
@@ -416,6 +420,13 @@ function readSnapshotSessionPermissionMode(record: Record<string, unknown>, key:
   const value = record[key];
   return typeof value === "string" && sessionPermissionModes.includes(value as SessionPermissionMode)
     ? value as SessionPermissionMode
+    : undefined;
+}
+
+function readSnapshotPermissionPreset(record: Record<string, unknown>, key: string): PermissionPreset | undefined {
+  const value = record[key];
+  return typeof value === "string" && permissionPresets.includes(value as PermissionPreset)
+    ? value as PermissionPreset
     : undefined;
 }
 

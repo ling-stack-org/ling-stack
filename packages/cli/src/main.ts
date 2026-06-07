@@ -4938,12 +4938,33 @@ function summarizeApprovalPayload(payload: unknown): string | undefined {
     return `${cwd ? `${cwd}: ` : ""}${command}${riskFlags.length > 0 ? ` [${riskFlags.join(", ")}]` : ""}`;
   }
   if (type === "file_write") {
+    if (readString(payload, "patchFormat")) {
+      return summarizePatchApprovalPayload(payload);
+    }
     return `${readString(payload, "path") ?? "<unknown>"} (${readNumber(payload, "bytes") ?? 0} bytes)`;
   }
   if (type === "file_edit") {
+    if (readString(payload, "patchFormat")) {
+      return summarizePatchApprovalPayload(payload);
+    }
     return `${readString(payload, "path") ?? "<unknown>"} ${truncate(readString(payload, "diffPreview") ?? "", 120)}`;
   }
   return summarizeUnknown(payload, 180);
+}
+
+function summarizePatchApprovalPayload(payload: Record<string, unknown>): string {
+  const paths = readArray(payload, "touchedPaths").filter((value): value is string => typeof value === "string");
+  const summary = readField(payload, "summary");
+  const fileCount = isRecord(summary) ? readNumber(summary, "fileCount") : undefined;
+  const addedLines = isRecord(summary) ? readNumber(summary, "addedLines") : undefined;
+  const removedLines = isRecord(summary) ? readNumber(summary, "removedLines") : undefined;
+  const pathSummary = paths.length > 0 ? paths.join(", ") : readString(payload, "path") ?? "<unknown>";
+  const statSummary = [
+    fileCount !== undefined ? `${fileCount} files` : undefined,
+    addedLines !== undefined ? `+${addedLines}` : undefined,
+    removedLines !== undefined ? `-${removedLines}` : undefined,
+  ].filter(Boolean).join(", ");
+  return `${pathSummary}${statSummary ? ` (${statSummary})` : ""}`;
 }
 
 function summarizeUnknown(value: unknown, limit: number): string {

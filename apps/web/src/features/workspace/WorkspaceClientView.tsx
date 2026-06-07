@@ -87,9 +87,16 @@ import { attachmentCanPreview } from "../../lib/previews.js";
 import { buildRunRepairHint, displayLinkedRunStatus, readRunWorkspaceCwd } from "../../lib/run-evidence.js";
 import { defaultTools, riskyTools } from "../../lib/tools.js";
 import {
+  buildLocalEffectivePolicyPreview,
+  formatToolDecisionGroups,
+  inferPermissionPreset,
+  permissionModeForPreset,
+  permissionPresetDescription,
+  permissionPresetLabel,
+  permissionPresetOptions,
   sessionPermissionModeDescription,
   sessionPermissionModeLabel,
-  sessionPermissionModeOptions,
+  summarizeEffectivePolicySnapshot,
 } from "../../lib/session-permissions.js";
 import {
   canUseProviderForRun,
@@ -115,6 +122,7 @@ import {
 import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, MessageBodyRenderer, MessageFooterActions, MessageRow, RightDrawer } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
+  ApprovalPolicy,
   Channel,
   ChannelAttachment,
   ChannelBrief,
@@ -137,6 +145,7 @@ import type {
   RuntimeDiagnosticsResponse,
   RunArtifact,
   RunSession,
+  PermissionPreset,
   SessionPermissionMode,
   StateTransitionEvent,
   Task,
@@ -317,7 +326,9 @@ export function WorkspaceClientView({
   latestStatus,
   isRunning,
   isCancellingRun,
+  approvalPolicy,
   permissionMode,
+  permissionPreset,
   activeTaskRunAction,
   runningWorkflowStepId,
   orchestratingWorkflowId,
@@ -439,7 +450,9 @@ export function WorkspaceClientView({
   readonly latestStatus: string;
   readonly isRunning: boolean;
   readonly isCancellingRun: boolean;
+  readonly approvalPolicy: ApprovalPolicy | undefined;
   readonly permissionMode: SessionPermissionMode;
+  readonly permissionPreset?: PermissionPreset;
   readonly activeTaskRunAction: TaskRunActionState | undefined;
   readonly runningWorkflowStepId: string;
   readonly orchestratingWorkflowId: string;
@@ -1397,7 +1410,9 @@ export function WorkspaceClientView({
       taskActionPending={taskActionPending}
       activeLeaseCount={activeLeaseCount}
       isCancellingRun={isCancellingRun}
+      approvalPolicy={approvalPolicy}
       permissionMode={permissionMode}
+      permissionPreset={permissionPreset}
       decisions={channelDecisions}
       contextSummaries={channelContextSummaries}
       workflows={channelWorkflows}
@@ -4520,7 +4535,9 @@ function TaskDetailPanel({
   taskActionPending,
   activeLeaseCount,
   isCancellingRun,
+  approvalPolicy,
   permissionMode,
+  permissionPreset,
   decisions,
   contextSummaries,
   workflows,
@@ -4553,7 +4570,9 @@ function TaskDetailPanel({
   readonly taskActionPending: boolean;
   readonly activeLeaseCount: number;
   readonly isCancellingRun: boolean;
+  readonly approvalPolicy: ApprovalPolicy | undefined;
   readonly permissionMode: SessionPermissionMode;
+  readonly permissionPreset?: PermissionPreset;
   readonly decisions: readonly ChannelDecision[];
   readonly contextSummaries: readonly ChannelContextSummary[];
   readonly workflows: readonly ChannelWorkflow[];
@@ -4576,6 +4595,16 @@ function TaskDetailPanel({
   const linkedRunSucceeded = linkedRunStatus === "succeeded";
   const repairHint = buildRunRepairHint(linkedRun, pendingApprovalCount, linkedRunStatus, "", t);
   const taskChannel = channels.find((channel) => channel.id === task.channelId);
+  const resolvedPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
+  const effectivePolicyPreview = buildLocalEffectivePolicyPreview({
+    policy: approvalPolicy,
+    mode: permissionMode,
+    channelBoundPath: taskChannel?.boundPath,
+  });
+  const policyPreviewRows = [
+    ...summarizeEffectivePolicySnapshot(effectivePolicyPreview, t),
+    ...formatToolDecisionGroups(effectivePolicyPreview, t),
+  ];
   const taskChannelPaused = taskChannel?.status !== undefined && taskChannel.status !== "active";
   const blockedByLease = activeLeaseCount > 0 && (!linkedRun || linkedRun.status !== "running");
   const checkRunLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
@@ -4693,23 +4722,39 @@ function TaskDetailPanel({
           </span>
         </div>
       ) : null}
-      <label className="session-permission-control">
-        <span>
-          <ShieldCheck size={14} />
-          {t("Permission mode")}
-        </span>
-        <select
-          aria-label={t("Permission mode")}
-          value={permissionMode}
-          onChange={(event) => onPermissionModeChange(event.target.value as SessionPermissionMode)}
-          disabled={isRunning || taskActionPending}
-        >
-          {sessionPermissionModeOptions.map((mode) => (
-            <option key={mode} value={mode}>{sessionPermissionModeLabel(mode, t)}</option>
+      <div className="session-permission-control" aria-label={t("Permission mode")}>
+        <div className="session-permission-head">
+          <span>
+            <ShieldCheck size={14} />
+            {t("Permission preset")}
+          </span>
+          <strong>{sessionPermissionModeLabel(permissionMode, t)}</strong>
+        </div>
+        <div className="permission-preset-segment" role="group" aria-label={t("Permission preset")}>
+          {permissionPresetOptions.map((preset) => (
+            <button
+              key={preset}
+              className={resolvedPermissionPreset === preset ? "permission-preset-option active" : "permission-preset-option"}
+              type="button"
+              onClick={() => onPermissionModeChange(permissionModeForPreset(preset))}
+              disabled={isRunning || taskActionPending}
+              aria-pressed={resolvedPermissionPreset === preset}
+            >
+              <span>{permissionPresetLabel(preset, t)}</span>
+            </button>
           ))}
-        </select>
-        <small>{sessionPermissionModeDescription(permissionMode, t)}</small>
-      </label>
+        </div>
+        <small>{permissionPresetDescription(resolvedPermissionPreset, t)}</small>
+        <details className="permission-preview-disclosure">
+          <summary>{t("Preview permissions")}</summary>
+          <div className="permission-preview-list">
+            {policyPreviewRows.map((row) => (
+              <span key={row}>{row}</span>
+            ))}
+            <span>{sessionPermissionModeDescription(permissionMode, t)}</span>
+          </div>
+        </details>
+      </div>
       <div className="task-actions">
         <button className="secondary-button compact-button" type="button" onClick={() => onCreateHandoffFromTask(task)}>
           <Workflow size={14} />

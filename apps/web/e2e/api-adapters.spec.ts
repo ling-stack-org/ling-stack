@@ -36,6 +36,7 @@ test("run request builders preserve provider preset and legacy provider payloads
     apiKey: "",
     api: "openai-responses",
     tools: ["read", "grep", "write"],
+    permissionPreset: "workspace_collaboration",
     permissionMode: "workspace_write",
   } satisfies RunFormState;
 
@@ -43,6 +44,7 @@ test("run request builders preserve provider preset and legacy provider payloads
   expect(presetRequest).toMatchObject({
     cwd: "/repo",
     providerPresetId: "provider_chat",
+    permissionPreset: "workspace_collaboration",
     permissionMode: "workspace_write",
     thinkingLevel: "medium",
   });
@@ -90,7 +92,8 @@ test("task run requests preserve workspace cwd fallback and approval profile", (
 
   const request = buildTaskRunRequest("/workspace", task, channel, "provider_chat", {
     approvalProfile: { mode: "standard", risk: "medium", requiredForTools: ["bash"] },
-    permissionMode: "balanced",
+    permissionPreset: "read_only",
+    permissionMode: "ask_everything",
   }) as Record<string, unknown>;
 
   expect(request).toMatchObject({
@@ -99,7 +102,8 @@ test("task run requests preserve workspace cwd fallback and approval profile", (
     providerPresetId: "provider_chat",
     tools: ["read", "grep", "find", "ls"],
     approvalProfile: { mode: "standard", risk: "medium", requiredForTools: ["bash"] },
-    permissionMode: "balanced",
+    permissionPreset: "read_only",
+    permissionMode: "ask_everything",
   });
 });
 
@@ -123,6 +127,7 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
       workspaceCwd: "/workspace",
       providerPresetId: "provider_snapshot",
       tools: ["read", "invalid", "bash"],
+      permissionPreset: "custom",
       permissionMode: "balanced",
       appendSystemPrompt: ["one", "", "two"],
     },
@@ -142,6 +147,7 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
     },
     providerPresetId: "provider_snapshot",
     tools: ["read", "bash"],
+    permissionPreset: "custom",
     permissionMode: "balanced",
     thinkingLevel: "medium",
     appendSystemPrompt: ["one", "two"],

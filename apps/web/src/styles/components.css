@@ -1758,15 +1758,22 @@ code,
 
 .session-permission-control {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 220px);
-  gap: 6px 12px;
+  gap: 8px;
   align-items: center;
   padding: 10px 12px;
   border: 1px solid var(--border);
   background: var(--surface-panel);
 }
 
-.session-permission-control > span {
+.session-permission-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.session-permission-head > span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1776,13 +1783,65 @@ code,
   font-weight: 700;
 }
 
-.session-permission-control select {
-  width: 100%;
+.session-permission-head strong {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.permission-preset-segment {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
   min-width: 0;
 }
 
+.permission-preset-option {
+  min-width: 0;
+  min-height: 34px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.permission-preset-option span {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.2;
+}
+
+.permission-preset-option.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-strong);
+}
+
 .session-permission-control small {
-  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.permission-preview-disclosure {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.permission-preview-disclosure summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.permission-preview-list {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.4;

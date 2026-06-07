@@ -11,6 +11,10 @@ This design follows session persistence and provider presets. It defines how Lin
 The broader action-ledger, evidence, and long-lived execution experience is defined in
 [Codex-Like Execution Experience](codex-like-execution.md).
 
+The Codex-style preset UI and the decision to defer a full permission profile DSL are
+defined in
+[Codex-Inspired Settings And Permission Presets](codex-inspired-settings-permission-presets.md).
+
 ## Goal
 
 Risky actions must stop before they happen.
@@ -189,6 +193,58 @@ Recommended default:
 ```
 
 `blockedCommands` is a last-resort guard. It should not replace approval. It exists so obviously destructive patterns fail even if a future policy is accidentally too permissive.
+
+## Codex-Style Presets Before Profile DSL
+
+Ling Stack should borrow Codex-style permission presets before implementing a full
+Codex-style permission profile DSL.
+
+The immediate product need is not more policy expressiveness. The immediate need is a
+permission surface that users can understand, trust, and preview before a run starts.
+The Web settings and task surfaces should therefore lead with a small set of presets and
+an effective-policy preview:
+
+| Preset | Underlying Ling model | Product behavior |
+| --- | --- | --- |
+| Read-only / planning | Workspace policy plus read-only tools allowed; risky tools ask or deny | Useful for research, planning, review, and diagnostics without workspace mutation |
+| Workspace collaboration | `permissionMode = "workspace_write"` with channel-bound write scope | Allows `edit` and `write` inside the bound workspace path; keeps `bash`, external actions, and higher-risk actions approval-gated |
+| Full access | `permissionMode = "full_access"` plus explicit full-access confirmation | Allows broad local access for one run/session only after an explicit warning and audit entry |
+| Custom | Current workspace `ApprovalPolicy` | Advanced users can still tune tool decisions and allowed write paths directly |
+
+Do not ship a general profile DSL until these entry criteria are met:
+
+- Ling can enforce every DSL dimension it exposes. A DSL value such as
+  `network = "deny"` or `filesystem = "workspace"` must map to real daemon/runner
+  enforcement, not just a descriptive config string.
+- Precedence rules are written and tested across workspace approval policy, session
+  permission mode, teammate approval profile, skill approval profile, channel bound path,
+  workflow gates, external-work approvals, and run-level overrides.
+- The UI can show a deterministic effective-policy preview before execution, including
+  allowed write paths, tool decisions, approval-required operations, denied operations,
+  and downgrade notes when a stricter workspace policy overrides a looser run request.
+- The policy schema has migration, import/export, validation, dry-run, audit logging, and
+  conformance tests.
+- There is real user pressure for reusable team/workspace policy templates that cannot be
+  handled by the preset layer plus the existing `ApprovalPolicy`.
+
+Rationale:
+
+- Enforceability matters more than expression. A rich DSL that promises stronger sandbox
+  boundaries than the runner can enforce creates false safety.
+- Ling already has several authority layers. Adding a second configuration language too
+  early would make conflict resolution harder than the user problem it solves.
+- Presets cover the common cases and can compile down to the existing
+  `SessionPermissionMode` and `ApprovalPolicy` model without destabilizing runner
+  adapters.
+- A complete DSL is not mainly a parser. Its real cost is verification: previews,
+  migrations, auditability, and runner conformance.
+- Ling's product model includes channels, teammates, workflow gates, external work,
+  resource leases, and durable approvals. Its future policy language should be shaped
+  around those Ling objects, not copied wholesale from Codex.
+
+Until the DSL entry criteria are met, Codex-style permissions should be borrowed as
+product presets, effective-policy previews, and explicit approval prompts, not as a full
+configuration language.
 
 ## Approval Request Model
 

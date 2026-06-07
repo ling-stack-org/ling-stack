@@ -156,6 +156,7 @@ import {
   handleGetRuntime,
   handleGetRuntimeSupervisor,
   handleListResourceLeases,
+  handleListRuntimeExtensions,
   handleListRuntimeActive,
   handleListRuntimeSemaphores,
   handleListRuntimeStuck,
@@ -712,6 +713,11 @@ export async function routeRequest(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/runtime/extensions") {
+    handleListRuntimeExtensions(response, url, storeRegistry, extensionRegistry);
+    return;
+  }
+
   if (url.pathname === "/runtime/settings") {
     await handleRuntimeSettings(request, response, url, storeRegistry, runnerRegistry, config.maxBodyBytes, controlPlaneEvents);
     return;
@@ -1262,6 +1268,7 @@ export async function routeRequest(
               },
               tools: runRequest.tools ?? channel.allowedTools,
               approvalProfile: runRequest.approvalProfile,
+              permissionPreset: runRequest.permissionPreset,
               permissionMode: runRequest.permissionMode,
               permissionConfirmation: runRequest.permissionConfirmation,
               thinkingLevel: runRequest.thinkingLevel,

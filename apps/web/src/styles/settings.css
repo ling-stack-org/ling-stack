@@ -452,6 +452,71 @@
   margin-bottom: 14px;
 }
 
+.permission-preset-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.permission-preset-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  min-height: 92px;
+  padding: 12px;
+  border: 1px solid #d8ded7;
+  background: #fbfcfa;
+  color: #37433f;
+  text-align: left;
+}
+
+.permission-preset-card.active {
+  border-color: #1b74e4;
+  background: #eef6ff;
+}
+
+.permission-preset-card strong {
+  font-size: 13px;
+}
+
+.permission-preset-card small {
+  color: #62706b;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.permission-preview-card {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #d8ded7;
+  background: #f6f8f5;
+}
+
+.permission-preview-card > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.permission-preview-card strong {
+  color: #24302c;
+  font-size: 13px;
+}
+
+.permission-preview-card small,
+.permission-preview-list {
+  color: #62706b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.permission-preview-list {
+  display: grid;
+  gap: 4px;
+}
+
 .policy-tool-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { ApplyPatchFormat, PatchPlan, PatchSummary } from "./patch/index.js";
+import type { RunTool } from "./approval-policy.js";
 
 export type ApprovalActionType =
   | "read"
@@ -16,11 +18,79 @@ export type ApprovalActionType =
   | "credential_change"
   | "provider_change"
   | "workflow_step"
-  | "mcp_tool_call";
+  | "mcp_tool_call"
+  | "runtime_permission_request";
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
+
+export type RuntimePermissionRequestKind =
+  | "core_tool"
+  | "write_scope"
+  | "mcp_tool"
+  | "runner_capability";
+
+export type RuntimePermissionScope =
+  | {
+      readonly kind: "core_tool";
+      readonly tools: readonly RunTool[];
+    }
+  | {
+      readonly kind: "write_scope";
+      readonly paths: readonly string[];
+      readonly operation: "read_write" | "create" | "update" | "delete";
+    }
+  | {
+      readonly kind: "mcp_tool";
+      readonly serverId: string;
+      readonly toolName: string;
+      readonly sideEffectLevel: string;
+      readonly defaultApproval: string;
+    }
+  | {
+      readonly kind: "runner_capability";
+      readonly runnerId: string;
+      readonly capability: string;
+    };
+
+export interface RuntimePermissionScopeSnapshot {
+  readonly tools: readonly RunTool[];
+  readonly allowedWritePaths: readonly string[];
+  readonly mcpToolRefs: readonly string[];
+  readonly runnerId: string;
+  readonly runnerCapabilities?: readonly string[];
+}
+
+export interface RuntimePermissionContinuationPlan {
+  readonly mode: "same_run_if_supported" | "queue_followup" | "interrupt_redirect";
+  readonly toolDelta?: readonly RunTool[];
+  readonly writePathDelta?: readonly string[];
+  readonly mcpToolDelta?: readonly string[];
+  readonly runnerCapabilityDelta?: readonly string[];
+  readonly reason: string;
+}
+
+export interface RuntimePermissionRequestPayload {
+  readonly type: "runtime_permission_request";
+  readonly requestKind: RuntimePermissionRequestKind;
+  readonly requestedByRunId: string;
+  readonly requestedByToolCallId?: string;
+  readonly reason: string;
+  readonly requestedScope: RuntimePermissionScope;
+  readonly currentScope: RuntimePermissionScopeSnapshot;
+  readonly proposedContinuation: RuntimePermissionContinuationPlan;
+}
+
+export interface RuntimePermissionGrant {
+  readonly id: string;
+  readonly approvalId: string;
+  readonly runId: string;
+  readonly scope: RuntimePermissionScope;
+  readonly mode: "same_run" | "continuation";
+  readonly createdAt: string;
+  readonly expiresAt?: string;
+}
 
 export type ApprovalPayload =
   | {
@@ -28,11 +98,21 @@ export type ApprovalPayload =
       readonly path: string;
       readonly bytes: number;
       readonly preview?: string;
+      readonly patchFormat?: ApplyPatchFormat;
+      readonly touchedPaths?: readonly string[];
+      readonly summary?: PatchSummary;
+      readonly rawPatchSha256?: string;
+      readonly patchPlan?: PatchPlan;
     }
   | {
       readonly type: "file_edit";
       readonly path: string;
       readonly diffPreview: string;
+      readonly patchFormat?: ApplyPatchFormat;
+      readonly touchedPaths?: readonly string[];
+      readonly summary?: PatchSummary;
+      readonly rawPatchSha256?: string;
+      readonly patchPlan?: PatchPlan;
     }
   | {
       readonly type: "bash";
@@ -97,7 +177,8 @@ export type ApprovalPayload =
       readonly actionKind: string;
       readonly target: unknown;
       readonly preview: string;
-    };
+    }
+  | RuntimePermissionRequestPayload;
 
 export interface ApprovalRequest {
   readonly id: string;
@@ -135,6 +216,7 @@ export interface CreateApprovalRequestInput {
   readonly description: string;
   readonly payload: ApprovalPayload;
   readonly expiresAt?: string;
+  readonly extraSecrets?: readonly (string | undefined)[];
 }
 
 export interface ResolveApprovalRequestInput {
@@ -170,6 +252,7 @@ export const approvalActionTypes: readonly ApprovalActionType[] = [
   "provider_change",
   "workflow_step",
   "mcp_tool_call",
+  "runtime_permission_request",
 ];
 
 export function createApprovalRequestId(): string {
