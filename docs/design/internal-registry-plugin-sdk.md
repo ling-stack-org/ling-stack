@@ -54,6 +54,38 @@ packages/plugin-sdk/
 The SDK package should contain interfaces and lightweight registry helpers only. It must
 not import daemon internals, SQLite stores, React, or concrete provider SDKs.
 
+## Modular Contribution Contract
+
+The registry is the typed metadata layer for modular development. It should make each
+capability discoverable without turning plugins into a monolithic runtime framework.
+
+Rules:
+
+- Keep one registry module per contribution kind. Do not add a single generic plugin
+  executor that handles providers, runners, tools, memory, automations, and UI features
+  through ad hoc strings.
+- Registry records describe capabilities, side effects, required secrets, and required
+  approvals. They do not execute code or mutate workspace state.
+- Concrete behavior stays in the owning package or daemon feature module:
+  `packages/providers`, `packages/runner-pi`, `packages/core`, `packages/daemon/src/features/*`,
+  or `apps/web/src/features/*`.
+- New extension kinds must define their contract, trust level, side-effect model, and
+  tests before they are added to `LingExtensionKind`.
+- A future package manifest should compile into these per-kind records. Runtime code
+  should consume compiled records, not parse package files during execution.
+- UI-facing plugin surfaces should depend on safe registry projections and linked
+  resource ids, never raw code paths or secret values.
+
+The expected shape for a new feature is:
+
+```text
+typed registry metadata
+  -> feature-owned daemon/store/runtime module
+  -> optional Web feature module
+  -> plugin manager projection
+  -> tests for the registry record and the feature behavior
+```
+
 ## Extension Kinds
 
 ```ts

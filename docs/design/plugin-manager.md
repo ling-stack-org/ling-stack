@@ -125,6 +125,44 @@ flowchart TD
 The plugin manager is a control plane. It describes, enables, disables, configures, and
 audits capabilities. It does not execute plugin code directly.
 
+## Modular Plugin Development
+
+Plugin work should follow the framework's modular-first rule. The Plugin Manager should
+not become a second application shell or a catch-all runtime host.
+
+Each plugin contribution must map to an existing or planned feature boundary:
+
+| Contribution | Owning boundary |
+| --- | --- |
+| MCP server | `features/mcp`, MCP broker, tool access snapshots |
+| Tool | approval policy, runner/tool metadata, runtime permission checks |
+| Skill pack | skill registry and Effective Skill read model |
+| Runner | runner registry and runtime supervisor |
+| Provider | provider presets, preflight, and secret resolution |
+| Channel source | channel/external-work feature modules |
+| Memory | memory scope, recall, review, and audit modules |
+| Automation | automation definitions, drafts, scheduler, and approval gates |
+| UI feature | Web feature module under `apps/web/src/features/*` |
+
+Rules:
+
+- A plugin descriptor can list multiple contributions, but each contribution should be
+  compiled into its feature-owned record or runtime snapshot before execution.
+- Plugin Manager routes own plugin lifecycle state only: catalog, enable/disable, health,
+  linked contribution status, and audit events.
+- Feature modules own behavior. For example, MCP calls still go through MCP broker and
+  run approval hooks; runners still go through runner registry; UI contributions still
+  render through feature modules.
+- A plugin must not introduce a private persistence model when an existing feature store
+  boundary exists. Add a feature-owned table or DTO instead.
+- Package manifests should compile to descriptors and linked resources. Runtime execution
+  should not parse arbitrary plugin files on every run.
+- Tests should be contribution-scoped: plugin lifecycle tests plus feature-module tests
+  for the contributed behavior.
+
+This keeps plugin expansion incremental: Ling can add one plugin contribution kind
+without rewriting unrelated plugin, daemon, or Web surfaces.
+
 ## Codex-Inspired Layer Model
 
 OpenAI Codex's implementation treats plugins as local bundles that can contribute skills,

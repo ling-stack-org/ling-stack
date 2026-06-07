@@ -46,6 +46,11 @@ docs:
 - [Runtime Supervisor](runtime-supervisor.md)
 - [Provider Presets](provider-presets.md)
 - [Approval Policy](approval-policy.md)
+- [Plugin Manager](plugin-manager.md)
+- [Internal Registry and Plugin SDK](internal-registry-plugin-sdk.md)
+- [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
+- [Daemon Modularization](daemon-modularization.md)
+- [Web Modularization](web-modularization.md)
 - [State Machines and Recovery](state-machine-recovery.md)
 
 ## Product Positioning
@@ -87,6 +92,45 @@ The kernel owns correctness:
 - state-machine legality.
 
 Extensions add capability. They do not mutate durable state directly.
+
+## Modular-First Development
+
+Ling should treat modularity as a framework rule, not as a cleanup phase after features
+grow too large. Every new feature, plugin contribution, runtime tool, provider, runner,
+memory surface, automation, and UI area should start from a small module boundary with
+explicit inputs, outputs, authority, and tests.
+
+The default development shape is:
+
+```text
+feature or plugin capability
+  -> contract/types
+  -> daemon feature module or registry contribution
+  -> store/runtime integration through explicit APIs
+  -> web feature module or settings panel
+  -> focused tests and design doc update
+```
+
+Rules:
+
+- Product capabilities live in feature modules, not in a monolithic application shell,
+  daemon entrypoint, or plugin manager switchboard.
+- Plugin contributions are modular packages of metadata and linked capabilities. A
+  plugin can contribute MCP servers, tools, skill packs, runners, providers, memory,
+  automations, or UI features, but each contribution must keep its own boundary.
+- Shared helpers stay feature-agnostic. A helper that knows one product feature too well
+  belongs in that feature module.
+- Cross-feature coordination belongs in a small composition root: Web `AppShell`, daemon
+  `server/router.ts`, runtime supervisor, or registry wiring. It should pass explicit
+  callbacks and context objects instead of importing feature internals.
+- New features must document their ownership boundary, side effects, approval posture,
+  persistence model, and rollback/audit behavior before broad implementation.
+- Modularity does not weaken enforcement. Permission, approval, resource leases, state
+  machines, and secret resolution remain kernel/runtime responsibilities even when the
+  capability is exposed through a plugin.
+
+This keeps Ling from repeating the early "one giant AppShell" or "one giant daemon
+router" shape as plugin and runtime-tool surface area grows.
 
 ## Core Objects
 
