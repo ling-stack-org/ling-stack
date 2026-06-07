@@ -75,6 +75,7 @@ export interface MockState {
   externalWorkWorkflowConfigureCalls: number;
   lastExternalWorkWorkflowConfigure?: Record<string, unknown>;
   mediaJobs: MockMediaJob[];
+  workItems: MockWorkItem[];
   workUnits: MockWorkUnit[];
   workUnitActionDelayMs?: number;
   runtimeSemaphoreSlots: MockRuntimeSemaphoreSlot[];
@@ -315,6 +316,45 @@ export interface MockMediaJob {
   errorMessage?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MockWorkItem {
+  id: string;
+  workspaceId: string;
+  channelId?: string;
+  sourceType: string;
+  sourceId: string;
+  title: string;
+  description?: string;
+  status: string;
+  waitingReason?: string;
+  priority: string;
+  labels: string[];
+  assigneeTeammateId?: string;
+  taskId?: string;
+  runId?: string;
+  workflowId?: string;
+  workflowStepId?: string;
+  externalWorkId?: string;
+  externalWorkActionId?: string;
+  approvalId?: string;
+  artifactIds: string[];
+  proofArtifactIds: string[];
+  dependencyIds: string[];
+  claim?: {
+    ownerId: string;
+    token: string;
+    claimedAt: string;
+    heartbeatAt: string;
+    expiresAt: string;
+  };
+  attemptCount: number;
+  retryBudget: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  failedAt?: string;
+  failureReason?: string;
 }
 
 export interface MockManagedPlugin {
@@ -779,6 +819,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     externalWorkSecretDeleteCalls: 0,
     externalWorkWorkflowConfigureCalls: 0,
     mediaJobs: [],
+    workItems: [],
     workUnits: [],
     runtimeSemaphoreSlots: [],
     runtimeEventsByWorkUnit: {},
@@ -4414,6 +4455,145 @@ export async function handleDaemonRoute(
     );
     await route.fulfill({ json: { cwd, approvals } });
     return;
+  }
+  if (request.method() === "GET" && path === "/work-items") {
+    const channelId = url.searchParams.get("channelId");
+    const status = url.searchParams.get("status");
+    const sourceType = url.searchParams.get("sourceType");
+    const assigneeTeammateId = url.searchParams.get("assigneeTeammateId");
+    const limit = Number(url.searchParams.get("limit") ?? "0");
+    const workItems = state.workItems
+      .filter((item) =>
+        (!channelId || item.channelId === channelId) &&
+        (!status || item.status === status) &&
+        (!sourceType || item.sourceType === sourceType) &&
+        (!assigneeTeammateId || item.assigneeTeammateId === assigneeTeammateId)
+      )
+      .slice(0, Number.isFinite(limit) && limit > 0 ? limit : undefined);
+    await route.fulfill({ json: { cwd, workItems } });
+    return;
+  }
+  const workItemMatch = /^\/work-items\/([^/]+)(?:\/(route|claim|heartbeat|release|complete|fail))?$/.exec(path);
+  if (workItemMatch) {
+    const workItemId = decodeURIComponent(workItemMatch[1]);
+    const action = workItemMatch[2];
+    const workItem = state.workItems.find((item) => item.id === workItemId);
+    if (!workItem) {
+      await route.fulfill({ status: 404, json: { error: "work_item_not_found", message: "Work item not found." } });
+      return;
+    }
+    if (!action && request.method() === "GET") {
+      await route.fulfill({ json: { cwd, workItem } });
+      return;
+    }
+    if (request.method() !== "POST") {
+      await route.fulfill({ status: 405, json: { error: "method_not_allowed" } });
+      return;
+    }
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = request.postDataJSON();
+      body = isRecord(parsed) ? parsed : {};
+    } catch {
+      body = {};
+    }
+    const now = "2026-06-07T00:00:00.000Z";
+    if (action === "route") {
+      if (typeof body.channelId === "string") {
+        workItem.channelId = body.channelId;
+      }
+      if (body.priority === "low" || body.priority === "normal" || body.priority === "high" || body.priority === "urgent") {
+        workItem.priority = body.priority;
+      }
+      if (typeof body.assigneeTeammateId === "string" || body.assigneeTeammateId === null) {
+        workItem.assigneeTeammateId = body.assigneeTeammateId ?? undefined;
+      }
+      workItem.updatedAt = now;
+      await route.fulfill({ json: { cwd, workItem } });
+      return;
+    }
+    if (action === "claim") {
+      const activeClaim = workItem.claim && workItem.claim.expiresAt > now;
+      if (activeClaim) {
+        await route.fulfill({
+          json: {
+            cwd,
+            workItem,
+            blocker: {
+              code: "already_claimed",
+              message: "Work item is already claimed.",
+              claimedBy: workItem.claim?.ownerId,
+              claimExpiresAt: workItem.claim?.expiresAt,
+            },
+          },
+        });
+        return;
+      }
+      const token = `claim_${workItem.id}`;
+      workItem.claim = {
+        ownerId: typeof body.ownerId === "string" && body.ownerId.trim() ? body.ownerId : "web-user",
+        token,
+        claimedAt: now,
+        heartbeatAt: now,
+        expiresAt: "2026-06-07T00:05:00.000Z",
+      };
+      workItem.status = "running";
+      workItem.attemptCount += 1;
+      workItem.updatedAt = now;
+      await route.fulfill({ json: { cwd, workItem, claimToken: token } });
+      return;
+    }
+    if (action === "heartbeat") {
+      if (!workItem.claim || body.claimToken !== workItem.claim.token) {
+        await route.fulfill({ status: 409, json: { error: "work_item_claim_mismatch", message: "Work item claim token is invalid or expired." } });
+        return;
+      }
+      workItem.claim = {
+        ...workItem.claim,
+        heartbeatAt: "2026-06-07T00:01:00.000Z",
+        expiresAt: "2026-06-07T00:06:00.000Z",
+      };
+      workItem.updatedAt = workItem.claim.heartbeatAt;
+      await route.fulfill({ json: { cwd, workItem } });
+      return;
+    }
+    if (action === "release") {
+      if (!workItem.claim || body.claimToken !== workItem.claim.token) {
+        await route.fulfill({ status: 409, json: { error: "work_item_claim_mismatch", message: "Work item claim token is invalid or expired." } });
+        return;
+      }
+      delete workItem.claim;
+      workItem.status = "ready";
+      workItem.updatedAt = now;
+      await route.fulfill({ json: { cwd, workItem } });
+      return;
+    }
+    if (action === "complete") {
+      if (!workItem.claim || body.claimToken !== workItem.claim.token) {
+        await route.fulfill({ status: 409, json: { error: "work_item_claim_mismatch", message: "Work item claim token is invalid or expired." } });
+        return;
+      }
+      workItem.status = "done";
+      workItem.proofArtifactIds = Array.isArray(body.proofArtifactIds) ? body.proofArtifactIds.filter((item): item is string => typeof item === "string") : workItem.proofArtifactIds;
+      workItem.completedAt = now;
+      workItem.updatedAt = now;
+      delete workItem.claim;
+      await route.fulfill({ json: { cwd, workItem } });
+      return;
+    }
+    if (action === "fail") {
+      if (!workItem.claim || body.claimToken !== workItem.claim.token) {
+        await route.fulfill({ status: 409, json: { error: "work_item_claim_mismatch", message: "Work item claim token is invalid or expired." } });
+        return;
+      }
+      workItem.status = body.retry === true ? "ready" : "blocked";
+      workItem.failureReason = typeof body.reason === "string" ? body.reason : "failed";
+      workItem.failedAt = now;
+      workItem.updatedAt = now;
+      delete workItem.claim;
+      await route.fulfill({ json: { cwd, workItem } });
+      return;
+    }
   }
   if (request.method() === "GET" && path === "/external-work/status") {
     await route.fulfill({ json: state.externalWorkStatus });

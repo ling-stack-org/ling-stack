@@ -146,6 +146,18 @@ import type {
   UpsertExternalWorkSchedulerStateInput,
 } from "./external-work-types.js";
 import type {
+  ListWorkItemsOptions,
+  UpsertWorkItemInput,
+  WorkItem,
+  WorkItemClaimBlocker,
+  WorkItemClaimRequest,
+  WorkItemCompleteRequest,
+  WorkItemFailRequest,
+  WorkItemHeartbeatRequest,
+  WorkItemReleaseRequest,
+  WorkItemRouteRequest,
+} from "./work-item-types.js";
+import type {
   CreateSkillImportDraftInput,
   ListSkillRegistryOptions,
   SkillImportDraft,
@@ -923,6 +935,15 @@ export interface RunStore {
     input: UpdateExternalWorkSchedulerStateInput,
     now: string,
   ): ExternalWorkSchedulerState | undefined;
+  upsertWorkItem(input: UpsertWorkItemInput, now: string): WorkItem;
+  getWorkItem(id: string): WorkItem | undefined;
+  listWorkItems(options?: ListWorkItemsOptions, now?: string): WorkItem[];
+  routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;
+  claimWorkItem(id: string, input: WorkItemClaimRequest, now: string): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined;
+  heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined;
+  releaseWorkItem(id: string, input: WorkItemReleaseRequest, now: string): WorkItem | undefined;
+  completeWorkItem(id: string, input: WorkItemCompleteRequest, now: string): WorkItem | undefined;
+  failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined;
   createMcpServer(input: CreateMcpServerInput, now: string): McpServer;
   getMcpServer(id: string): McpServer | undefined;
   listMcpServers(options?: ListMcpServersOptions): McpServer[];

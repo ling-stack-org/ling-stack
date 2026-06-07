@@ -195,8 +195,8 @@ test("media jobs page surfaces live media cost approvals", async ({ page }) => {
   await expect(jobRow).toContainText("waiting_for_approval");
   await expect(jobRow).toContainText("Approval required before live execution");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inbox" }).click();
-  const mediaApproval = page.getByLabel("Approval requests").locator(".approval-row").filter({ hasText: "Approve media job cost" });
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Review Queue" }).click();
+  const mediaApproval = page.locator(".approval-list .approval-row").filter({ hasText: "Approve media job cost" });
   await expect(mediaApproval).toContainText("media_cost");
   await expect(mediaApproval).toContainText("media job");
   await expect(mediaApproval.getByLabel("Media cost approval summary")).not.toContainText("provider_seedream");
@@ -205,7 +205,8 @@ test("media jobs page surfaces live media cost approvals", async ({ page }) => {
   await mediaApproval.getByLabel("Decision reason").fill("Approved for local smoke.");
   await mediaApproval.getByRole("button", { name: "Approve" }).click();
   await mediaApproval.getByRole("button", { name: "Confirm approve" }).click();
-  await expect(mediaApproval).toContainText("approved");
+  await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_media_job_live_pending")?.status).toBe("approved");
+  await expect(mediaApproval).toHaveCount(0);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Jobs" }).click();
   await jobRow.getByRole("button", { name: "Run" }).click();

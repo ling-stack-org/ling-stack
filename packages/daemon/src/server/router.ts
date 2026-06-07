@@ -104,6 +104,7 @@ import {
   handlePluginSourcesCollection,
   handlePluginsCollection,
 } from "../features/plugins/routes.js";
+import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
 import {
   handleProviderDraftCheck,
   handleProviderItem,
@@ -199,6 +200,7 @@ import {
   parseSkillRoute,
   parseTaskRoute,
   parseTeammateRoute,
+  parseWorkItemRoute,
   parseWorkUnitRoute,
 } from "./routes.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
@@ -609,6 +611,24 @@ export async function routeRequest(
 
   if (url.pathname === "/execution-actions") {
     handleExecutionActionsCollection(request, response, url, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/work-items") {
+    await handleWorkItemsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  const workItemRoute = parseWorkItemRoute(url.pathname);
+  if (workItemRoute) {
+    await handleWorkItemRoute(
+      request,
+      response,
+      config,
+      storeRegistry,
+      workItemRoute.workItemId,
+      "action" in workItemRoute ? workItemRoute.action : undefined,
+    );
     return;
   }
 

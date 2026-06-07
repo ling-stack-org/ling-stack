@@ -29,6 +29,7 @@ export * from "./external-work.js";
 export * from "./external-work-actions.js";
 export * from "./external-work-ci-triage.js";
 export * from "./external-work-scheduler.js";
+export * from "./work-item-types.js";
 export * from "./effective-skills.js";
 export * from "./mcp-types.js";
 export * from "./workspace-types.js";

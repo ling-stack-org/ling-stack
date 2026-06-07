@@ -11,6 +11,7 @@ import type {
   RunArtifact,
   RunSession,
   Task,
+  WorkItemView as DurableWorkItemView,
 } from "../../types.js";
 import { WorkItemRow } from "./WorkItemRow.js";
 
@@ -23,10 +24,14 @@ export function ChannelWorkBoard({
   externalActionDetails,
   externalWorkCiTriage,
   artifactsByRun,
+  durableWorkItems,
   loading,
   onOpenTask,
   onOpenRun,
   onOpenApproval,
+  onClaimWorkItem,
+  onHeartbeatWorkItem,
+  busyWorkItemId,
 }: {
   readonly channel: Channel | undefined;
   readonly tasks: readonly Task[];
@@ -36,10 +41,14 @@ export function ChannelWorkBoard({
   readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
   readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
   readonly artifactsByRun?: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly durableWorkItems?: readonly DurableWorkItemView[];
   readonly loading?: boolean;
   readonly onOpenTask: (taskId: string) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApproval: (approvalId: string) => void;
+  readonly onClaimWorkItem?: (workItemId: string) => void;
+  readonly onHeartbeatWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly busyWorkItemId?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const items = useMemo(() => {
@@ -51,9 +60,10 @@ export function ChannelWorkBoard({
       externalActions: externalActionDetails,
       externalWorkCiTriage,
       artifactsByRun,
+      durableWorkItems,
     });
     return channel ? filterWorkItemsByChannel(all, channel.id) : [];
-  }, [approvals, artifactsByRun, channel, externalActionDetails, externalWorkCiTriage, runs, tasks, workflowSteps]);
+  }, [approvals, artifactsByRun, channel, durableWorkItems, externalActionDetails, externalWorkCiTriage, runs, tasks, workflowSteps]);
 
   return (
     <section className="work-board-panel channel-work-board" aria-label={t("Channel Work Board")}>
@@ -90,6 +100,9 @@ export function ChannelWorkBoard({
                       onOpenTask={onOpenTask}
                       onOpenRun={onOpenRun}
                       onOpenApproval={onOpenApproval}
+                      onClaimWorkItem={onClaimWorkItem}
+                      onHeartbeatWorkItem={onHeartbeatWorkItem}
+                      busyWorkItemId={busyWorkItemId}
                     />
                   ))}
                 </div>

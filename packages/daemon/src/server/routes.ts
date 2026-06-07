@@ -108,6 +108,10 @@ export type WorkUnitRoute =
   | { readonly kind: "retry"; readonly workUnitId: string }
   | { readonly kind: "reconcile"; readonly workUnitId: string };
 
+export type WorkItemRoute =
+  | { readonly workItemId: string }
+  | { readonly workItemId: string; readonly action: "route" | "claim" | "heartbeat" | "release" | "complete" | "fail" };
+
 export function parseWorkUnitRoute(pathname: string): WorkUnitRoute | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "work-units") {
@@ -117,6 +121,28 @@ export function parseWorkUnitRoute(pathname: string): WorkUnitRoute | undefined 
     if (segments[2] === "events" || segments[2] === "cancel" || segments[2] === "retry" || segments[2] === "reconcile") {
       return { kind: segments[2], workUnitId: segments[1] };
     }
+  }
+  return undefined;
+}
+
+export function parseWorkItemRoute(pathname: string): WorkItemRoute | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "work-items") {
+    return { workItemId: segments[1] };
+  }
+  if (
+    segments.length === 3 &&
+    segments[0] === "work-items" &&
+    (
+      segments[2] === "route" ||
+      segments[2] === "claim" ||
+      segments[2] === "heartbeat" ||
+      segments[2] === "release" ||
+      segments[2] === "complete" ||
+      segments[2] === "fail"
+    )
+  ) {
+    return { workItemId: segments[1], action: segments[2] };
   }
   return undefined;
 }

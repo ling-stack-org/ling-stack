@@ -11,6 +11,7 @@ import type {
   RunArtifact,
   RunSession,
   Task,
+  WorkItemView as DurableWorkItemView,
 } from "../../types.js";
 import { WorkItemRow } from "./WorkItemRow.js";
 
@@ -23,13 +24,17 @@ export function GlobalWorkBoardPage({
   externalActionDetails,
   externalWorkCiTriage,
   artifactsByRun,
+  durableWorkItems,
   onRefresh,
   onOpenTask,
   onOpenRun,
   onOpenApproval,
   onOpenChannel,
   onRouteExternalWork,
+  onClaimWorkItem,
+  onHeartbeatWorkItem,
   routingExternalWorkId,
+  busyWorkItemId,
 }: {
   readonly channels: readonly Channel[];
   readonly tasks: readonly Task[];
@@ -39,13 +44,17 @@ export function GlobalWorkBoardPage({
   readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
   readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
   readonly artifactsByRun?: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly durableWorkItems?: readonly DurableWorkItemView[];
   readonly onRefresh: () => void;
   readonly onOpenTask: (taskId: string) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApproval: (approvalId: string) => void;
   readonly onOpenChannel: (channelId: string) => void;
   readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
+  readonly onClaimWorkItem?: (workItemId: string) => void;
+  readonly onHeartbeatWorkItem?: (workItemId: string, claimToken: string) => void;
   readonly routingExternalWorkId?: string;
+  readonly busyWorkItemId?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const [channelFilter, setChannelFilter] = useState("");
@@ -62,8 +71,9 @@ export function GlobalWorkBoardPage({
       externalActions: externalActionDetails,
       externalWorkCiTriage,
       artifactsByRun,
+      durableWorkItems,
     }),
-    [approvals, artifactsByRun, externalActionDetails, externalWorkCiTriage, runs, tasks, workflowSteps],
+    [approvals, artifactsByRun, durableWorkItems, externalActionDetails, externalWorkCiTriage, runs, tasks, workflowSteps],
   );
   const filteredItems = items.filter((item) =>
     (!channelFilter || item.channelId === channelFilter) &&
@@ -147,6 +157,9 @@ export function GlobalWorkBoardPage({
                       routeChannels={channels}
                       routing={item.externalWorkId === routingExternalWorkId}
                       onRouteExternalWork={onRouteExternalWork}
+                      onClaimWorkItem={onClaimWorkItem}
+                      onHeartbeatWorkItem={onHeartbeatWorkItem}
+                      busyWorkItemId={busyWorkItemId}
                     />
                   ))}
                 </div>

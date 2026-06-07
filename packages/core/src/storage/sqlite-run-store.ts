@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import {
   ensureRuntimePaths,
@@ -356,6 +357,23 @@ import {
 } from "../automation-types.js";
 import { validateAutomationDraft } from "../automation-drafts.js";
 import {
+  createWorkItemId,
+  type ListWorkItemsOptions,
+  type UpsertWorkItemInput,
+  type WorkItem,
+  type WorkItemClaim,
+  type WorkItemClaimBlocker,
+  type WorkItemClaimRequest,
+  type WorkItemCompleteRequest,
+  type WorkItemFailRequest,
+  type WorkItemHeartbeatRequest,
+  type WorkItemReleaseRequest,
+  type WorkItemRouteRequest,
+  type WorkItemSourceType,
+  type WorkItemStatus,
+  type WorkItemWaitingReason,
+} from "../work-item-types.js";
+import {
   createMemoryReviewActionId,
   createMemoryReviewDecisionId,
   createMemoryObjectId,
@@ -478,6 +496,8 @@ const MANAGED_PLUGIN_PACKAGES_MIGRATION_VERSION = 41;
 const MANAGED_PLUGIN_PACKAGES_MIGRATION_NAME = "create_managed_plugin_packages";
 const CONTROL_PLANE_EVENTS_MIGRATION_VERSION = 42;
 const CONTROL_PLANE_EVENTS_MIGRATION_NAME = "create_control_plane_events";
+const WORK_ITEMS_MIGRATION_VERSION = 43;
+const WORK_ITEMS_MIGRATION_NAME = "create_work_items";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -6451,6 +6471,325 @@ export class SqliteRunStore implements RunStore {
     return this.getExternalWorkSchedulerState(externalWorkId);
   }
 
+  upsertWorkItem(input: UpsertWorkItemInput, now: string): WorkItem {
+    if (input.channelId) {
+      this.assertChannelExists(input.channelId);
+    }
+    if (input.assigneeTeammateId && !this.getAiTeammate(input.assigneeTeammateId)) {
+      throw new Error(`AI teammate not found: ${input.assigneeTeammateId}`);
+    }
+    const existing = this.getWorkItemBySource(input.sourceType, input.sourceId);
+    const id = existing?.id ?? input.id ?? createWorkItemId();
+    const createdAt = existing?.createdAt ?? now;
+    const labels = input.labels ?? existing?.labels ?? [];
+    const artifactIds = input.artifactIds ?? existing?.artifactIds ?? [];
+    const proofArtifactIds = input.proofArtifactIds ?? existing?.proofArtifactIds ?? [];
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database
+        .prepare(`
+          INSERT INTO work_items (
+            id,
+            workspace_id,
+            channel_id,
+            source_type,
+            source_id,
+            title,
+            description,
+            status,
+            waiting_reason,
+            priority,
+            labels_json,
+            assignee_teammate_id,
+            task_id,
+            run_id,
+            workflow_id,
+            workflow_step_id,
+            external_work_id,
+            external_work_action_id,
+            approval_id,
+            artifact_ids_json,
+            proof_artifact_ids_json,
+            claim_owner_id,
+            claim_token,
+            claimed_at,
+            heartbeat_at,
+            claim_expires_at,
+            attempt_count,
+            retry_budget,
+            completed_at,
+            failed_at,
+            failure_reason,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(workspace_id, source_type, source_id) DO UPDATE SET
+            channel_id = excluded.channel_id,
+            title = excluded.title,
+            description = excluded.description,
+            status = excluded.status,
+            waiting_reason = excluded.waiting_reason,
+            priority = excluded.priority,
+            labels_json = excluded.labels_json,
+            assignee_teammate_id = excluded.assignee_teammate_id,
+            task_id = excluded.task_id,
+            run_id = excluded.run_id,
+            workflow_id = excluded.workflow_id,
+            workflow_step_id = excluded.workflow_step_id,
+            external_work_id = excluded.external_work_id,
+            external_work_action_id = excluded.external_work_action_id,
+            approval_id = excluded.approval_id,
+            artifact_ids_json = excluded.artifact_ids_json,
+            proof_artifact_ids_json = excluded.proof_artifact_ids_json,
+            retry_budget = excluded.retry_budget,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          id,
+          DEFAULT_WORKSPACE_ID,
+          input.channelId ?? existing?.channelId ?? null,
+          input.sourceType,
+          input.sourceId,
+          input.title,
+          input.description ?? existing?.description ?? null,
+          input.status ?? existing?.status ?? "ready",
+          input.waitingReason ?? existing?.waitingReason ?? null,
+          input.priority ?? existing?.priority ?? "normal",
+          stringifyJson(labels),
+          input.assigneeTeammateId ?? existing?.assigneeTeammateId ?? null,
+          input.taskId ?? existing?.taskId ?? null,
+          input.runId ?? existing?.runId ?? null,
+          input.workflowId ?? existing?.workflowId ?? null,
+          input.workflowStepId ?? existing?.workflowStepId ?? null,
+          input.externalWorkId ?? existing?.externalWorkId ?? null,
+          input.externalWorkActionId ?? existing?.externalWorkActionId ?? null,
+          input.approvalId ?? existing?.approvalId ?? null,
+          stringifyJson(artifactIds),
+          stringifyJson(proofArtifactIds),
+          existing?.claim?.ownerId ?? null,
+          existing?.claim?.token ?? null,
+          existing?.claim?.claimedAt ?? null,
+          existing?.claim?.heartbeatAt ?? null,
+          existing?.claim?.expiresAt ?? null,
+          existing?.attemptCount ?? 0,
+          input.retryBudget ?? existing?.retryBudget ?? 3,
+          existing?.completedAt ?? null,
+          existing?.failedAt ?? null,
+          existing?.failureReason ?? null,
+          createdAt,
+          now,
+        );
+      this.replaceWorkItemDependencies(id, input.dependencyIds ?? existing?.dependencyIds ?? [], now);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    const item = this.getWorkItem(id);
+    if (!item) {
+      throw new Error(`Failed to upsert work item: ${id}`);
+    }
+    return item;
+  }
+
+  getWorkItem(id: string): WorkItem | undefined {
+    const row = this.database.prepare(workItemSelectSql("WHERE id = ?")).get(id);
+    return row ? mapWorkItem(row, this.getWorkItemDependencyIds(id)) : undefined;
+  }
+
+  listWorkItems(options: ListWorkItemsOptions = {}, now?: string): WorkItem[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    if (options.sourceType) {
+      clauses.push("source_type = ?");
+      params.push(options.sourceType);
+    }
+    if (options.assigneeTeammateId) {
+      clauses.push("assignee_teammate_id = ?");
+      params.push(options.assigneeTeammateId);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${workItemSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map((row) => mapWorkItem(row, this.getWorkItemDependencyIds(readString(row, "id")), now));
+  }
+
+  routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined {
+    const existing = this.getWorkItem(id);
+    if (!existing) {
+      return undefined;
+    }
+    if (input.channelId) {
+      this.assertChannelExists(input.channelId);
+    }
+    if (input.assigneeTeammateId && !this.getAiTeammate(input.assigneeTeammateId)) {
+      throw new Error(`AI teammate not found: ${input.assigneeTeammateId}`);
+    }
+    this.database
+      .prepare(`
+        UPDATE work_items
+        SET channel_id = ?, priority = ?, assignee_teammate_id = ?, updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        input.channelId === undefined ? existing.channelId ?? null : input.channelId,
+        input.priority ?? existing.priority,
+        input.assigneeTeammateId === undefined ? existing.assigneeTeammateId ?? null : input.assigneeTeammateId,
+        now,
+        id,
+      );
+    return this.getWorkItem(id);
+  }
+
+  claimWorkItem(
+    id: string,
+    input: WorkItemClaimRequest,
+    now: string,
+  ): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined {
+    const existing = this.getWorkItem(id);
+    if (!existing) {
+      return undefined;
+    }
+    const blocker = this.workItemClaimBlocker(existing, now);
+    if (blocker) {
+      return { workItem: existing, blocker };
+    }
+    const claimToken = createWorkItemClaimToken();
+    const expiresAt = new Date(Date.parse(now) + clampWorkItemLeaseMs(input.leaseMs)).toISOString();
+    this.database
+      .prepare(`
+        UPDATE work_items
+        SET status = ?, claim_owner_id = ?, claim_token = ?, claimed_at = ?, heartbeat_at = ?, claim_expires_at = ?, attempt_count = ?, updated_at = ?
+        WHERE id = ?
+      `)
+      .run("running", input.ownerId, claimToken, now, now, expiresAt, existing.attemptCount + 1, now, id);
+    const workItem = this.getWorkItem(id);
+    if (!workItem) {
+      throw new Error(`Failed to claim work item: ${id}`);
+    }
+    return { workItem, claimToken };
+  }
+
+  heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined {
+    const existing = this.getWorkItem(id);
+    if (!existing || existing.claim?.token !== input.claimToken) {
+      return undefined;
+    }
+    const expiresAt = new Date(Date.parse(now) + clampWorkItemLeaseMs(input.leaseMs)).toISOString();
+    this.database
+      .prepare("UPDATE work_items SET heartbeat_at = ?, claim_expires_at = ?, updated_at = ? WHERE id = ?")
+      .run(now, expiresAt, now, id);
+    return this.getWorkItem(id);
+  }
+
+  releaseWorkItem(id: string, input: WorkItemReleaseRequest, now: string): WorkItem | undefined {
+    const existing = this.getWorkItem(id);
+    if (!existing || existing.claim?.token !== input.claimToken) {
+      return undefined;
+    }
+    this.database
+      .prepare(`
+        UPDATE work_items
+        SET status = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, updated_at = ?
+        WHERE id = ?
+      `)
+      .run("ready", now, id);
+    return this.getWorkItem(id);
+  }
+
+  completeWorkItem(id: string, input: WorkItemCompleteRequest, now: string): WorkItem | undefined {
+    const existing = this.getWorkItem(id);
+    if (!existing || existing.claim?.token !== input.claimToken) {
+      return undefined;
+    }
+    const proofArtifactIds = input.proofArtifactIds ?? existing.proofArtifactIds;
+    this.database
+      .prepare(`
+        UPDATE work_items
+        SET status = ?, proof_artifact_ids_json = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, completed_at = ?, failed_at = NULL, failure_reason = NULL, updated_at = ?
+        WHERE id = ?
+      `)
+      .run("done", stringifyJson(proofArtifactIds), now, now, id);
+    return this.getWorkItem(id);
+  }
+
+  failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined {
+    const existing = this.getWorkItem(id);
+    if (!existing || existing.claim?.token !== input.claimToken) {
+      return undefined;
+    }
+    const canRetry = input.retry === true && existing.attemptCount < existing.retryBudget;
+    this.database
+      .prepare(`
+        UPDATE work_items
+        SET status = ?, waiting_reason = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, failed_at = ?, failure_reason = ?, updated_at = ?
+        WHERE id = ?
+      `)
+      .run(canRetry ? "ready" : "blocked", canRetry ? null : "user", now, input.reason, now, id);
+    return this.getWorkItem(id);
+  }
+
+  private getWorkItemBySource(sourceType: WorkItemSourceType, sourceId: string): WorkItem | undefined {
+    const row = this.database
+      .prepare(workItemSelectSql("WHERE workspace_id = ? AND source_type = ? AND source_id = ?"))
+      .get(DEFAULT_WORKSPACE_ID, sourceType, sourceId);
+    return row ? mapWorkItem(row, this.getWorkItemDependencyIds(readString(row, "id"))) : undefined;
+  }
+
+  private getWorkItemDependencyIds(id: string): string[] {
+    return this.database
+      .prepare("SELECT depends_on_work_item_id FROM work_item_dependencies WHERE work_item_id = ? ORDER BY depends_on_work_item_id ASC")
+      .all(id)
+      .map((row) => readString(row, "depends_on_work_item_id"));
+  }
+
+  private replaceWorkItemDependencies(id: string, dependencyIds: readonly string[], now: string): void {
+    this.database.prepare("DELETE FROM work_item_dependencies WHERE work_item_id = ?").run(id);
+    const insert = this.database.prepare("INSERT OR IGNORE INTO work_item_dependencies (work_item_id, depends_on_work_item_id, created_at) VALUES (?, ?, ?)");
+    for (const dependencyId of [...new Set(dependencyIds)].filter((dependencyId) => dependencyId !== id)) {
+      insert.run(id, dependencyId, now);
+    }
+  }
+
+  private workItemClaimBlocker(item: WorkItem, now: string): WorkItemClaimBlocker | undefined {
+    if (item.status === "done" || item.status === "archived") {
+      return { code: "terminal", message: `Work item is terminal: ${item.status}` };
+    }
+    if (item.attemptCount >= item.retryBudget) {
+      return { code: "retry_budget_exhausted", message: "Work item retry budget is exhausted." };
+    }
+    if (item.claim && item.claim.expiresAt > now) {
+      return {
+        code: "already_claimed",
+        message: "Work item already has an active claim.",
+        claimedBy: item.claim.ownerId,
+        claimExpiresAt: item.claim.expiresAt,
+      };
+    }
+    const incompleteDependencies = item.dependencyIds.filter((dependencyId) => {
+      const dependency = this.getWorkItem(dependencyId);
+      return !dependency || dependency.status !== "done";
+    });
+    if (incompleteDependencies.length > 0) {
+      return {
+        code: "dependency_blocked",
+        message: "Work item dependencies are not complete.",
+        dependencyIds: incompleteDependencies,
+      };
+    }
+    return undefined;
+  }
+
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {
     const preset: ProviderPreset = {
       id: createProviderPresetId(),
@@ -10633,6 +10972,72 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(CONTROL_PLANE_EVENTS_MIGRATION_VERSION, CONTROL_PLANE_EVENTS_MIGRATION_NAME);
       }
     }
+
+    const hasWorkItemsMigration = this.hasMigration(WORK_ITEMS_MIGRATION_VERSION);
+    if (!hasWorkItemsMigration || !this.hasTable("work_items") || !this.hasTable("work_item_dependencies")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS work_items (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT,
+          source_type TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          status TEXT NOT NULL,
+          waiting_reason TEXT,
+          priority TEXT NOT NULL,
+          labels_json TEXT NOT NULL,
+          assignee_teammate_id TEXT,
+          task_id TEXT,
+          run_id TEXT,
+          workflow_id TEXT,
+          workflow_step_id TEXT,
+          external_work_id TEXT,
+          external_work_action_id TEXT,
+          approval_id TEXT,
+          artifact_ids_json TEXT NOT NULL,
+          proof_artifact_ids_json TEXT NOT NULL,
+          claim_owner_id TEXT,
+          claim_token TEXT,
+          claimed_at TEXT,
+          heartbeat_at TEXT,
+          claim_expires_at TEXT,
+          attempt_count INTEGER NOT NULL,
+          retry_budget INTEGER NOT NULL,
+          completed_at TEXT,
+          failed_at TEXT,
+          failure_reason TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(workspace_id, source_type, source_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS work_item_dependencies (
+          work_item_id TEXT NOT NULL,
+          depends_on_work_item_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(work_item_id, depends_on_work_item_id),
+          FOREIGN KEY(work_item_id) REFERENCES work_items(id) ON DELETE CASCADE,
+          FOREIGN KEY(depends_on_work_item_id) REFERENCES work_items(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_work_items_channel_status
+        ON work_items(workspace_id, channel_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_work_items_source
+        ON work_items(workspace_id, source_type, source_id);
+
+        CREATE INDEX IF NOT EXISTS idx_work_items_assignee
+        ON work_items(workspace_id, assignee_teammate_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_work_items_claim
+        ON work_items(workspace_id, claim_expires_at);
+      `);
+      if (!hasWorkItemsMigration) {
+        this.recordMigration(WORK_ITEMS_MIGRATION_VERSION, WORK_ITEMS_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -12031,6 +12436,57 @@ function mapExternalWorkRecord(row: Record<string, SQLOutputValue>): ExternalWor
   };
 }
 
+function mapWorkItem(row: Record<string, SQLOutputValue>, dependencyIds: readonly string[], now?: string): WorkItem {
+  const claim = mapWorkItemClaim(row, now);
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readNullableString(row, "channel_id"),
+    sourceType: readString(row, "source_type") as WorkItemSourceType,
+    sourceId: readString(row, "source_id"),
+    title: readString(row, "title"),
+    description: readNullableString(row, "description"),
+    status: readString(row, "status") as WorkItemStatus,
+    waitingReason: readNullableString(row, "waiting_reason") as WorkItemWaitingReason | undefined,
+    priority: readString(row, "priority") as WorkItem["priority"],
+    labels: parseJsonStringArray(readString(row, "labels_json")),
+    assigneeTeammateId: readNullableString(row, "assignee_teammate_id"),
+    taskId: readNullableString(row, "task_id"),
+    runId: readNullableString(row, "run_id"),
+    workflowId: readNullableString(row, "workflow_id"),
+    workflowStepId: readNullableString(row, "workflow_step_id"),
+    externalWorkId: readNullableString(row, "external_work_id"),
+    externalWorkActionId: readNullableString(row, "external_work_action_id"),
+    approvalId: readNullableString(row, "approval_id"),
+    artifactIds: parseJsonStringArray(readString(row, "artifact_ids_json")),
+    proofArtifactIds: parseJsonStringArray(readString(row, "proof_artifact_ids_json")),
+    dependencyIds: [...dependencyIds],
+    claim,
+    attemptCount: readNumber(row, "attempt_count"),
+    retryBudget: readNumber(row, "retry_budget"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    completedAt: readNullableString(row, "completed_at"),
+    failedAt: readNullableString(row, "failed_at"),
+    failureReason: readNullableString(row, "failure_reason"),
+  });
+}
+
+function mapWorkItemClaim(row: Record<string, SQLOutputValue>, now?: string): WorkItemClaim | undefined {
+  const ownerId = readNullableString(row, "claim_owner_id");
+  const token = readNullableString(row, "claim_token");
+  const claimedAt = readNullableString(row, "claimed_at");
+  const heartbeatAt = readNullableString(row, "heartbeat_at");
+  const expiresAt = readNullableString(row, "claim_expires_at");
+  if (!ownerId || !token || !claimedAt || !heartbeatAt || !expiresAt) {
+    return undefined;
+  }
+  if (now && expiresAt <= now) {
+    return undefined;
+  }
+  return { ownerId, token, claimedAt, heartbeatAt, expiresAt };
+}
+
 function mapExternalWorkSchedulerState(row: Record<string, SQLOutputValue>): ExternalWorkSchedulerState {
   return omitUndefined({
     externalWorkId: readString(row, "external_work_id"),
@@ -13274,6 +13730,47 @@ function externalWorkSelectColumnsFromAlias(alias: string): string {
   `;
 }
 
+function workItemSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      source_type,
+      source_id,
+      title,
+      description,
+      status,
+      waiting_reason,
+      priority,
+      labels_json,
+      assignee_teammate_id,
+      task_id,
+      run_id,
+      workflow_id,
+      workflow_step_id,
+      external_work_id,
+      external_work_action_id,
+      approval_id,
+      artifact_ids_json,
+      proof_artifact_ids_json,
+      claim_owner_id,
+      claim_token,
+      claimed_at,
+      heartbeat_at,
+      claim_expires_at,
+      attempt_count,
+      retry_budget,
+      completed_at,
+      failed_at,
+      failure_reason,
+      created_at,
+      updated_at
+    FROM work_items
+    ${whereClause}
+  `;
+}
+
 function externalWorkSchedulerStateSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -13387,6 +13884,17 @@ function mediaJobSelectSql(whereClause: string): string {
 
 function stringifyJson(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function createWorkItemClaimToken(): string {
+  return `work_item_claim_${randomUUID().replaceAll("-", "")}`;
+}
+
+function clampWorkItemLeaseMs(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return 60_000;
+  }
+  return Math.min(Math.max(Math.trunc(value), 5_000), 15 * 60_000);
 }
 
 function automationDraftPayload(draft: AutomationDraft): Record<string, unknown> {

@@ -8,6 +8,8 @@ import type {
   RunArtifact,
   RunSession,
   Task,
+  WorkItemClaim,
+  WorkItemView as DurableWorkItemView,
 } from "../types.js";
 
 const defaultWorkspaceId = "workspace_default";
@@ -57,6 +59,10 @@ export interface WorkItemView {
   readonly approvalId?: string;
   readonly artifactIds: readonly string[];
   readonly proofArtifactIds: readonly string[];
+  readonly claim?: WorkItemClaim;
+  readonly attemptCount?: number;
+  readonly retryBudget?: number;
+  readonly durable?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -69,6 +75,7 @@ export interface BuildWorkItemViewsInput {
   readonly externalActions?: Readonly<Record<string, ExternalWorkActionView>>;
   readonly externalWorkCiTriage?: readonly ExternalWorkCiTriageView[];
   readonly artifactsByRun?: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly durableWorkItems?: readonly DurableWorkItemView[];
 }
 
 export const workItemStatusOrder: readonly WorkItemStatus[] = [
@@ -258,7 +265,8 @@ export function buildWorkItemViews(input: BuildWorkItemViewsInput): WorkItemView
     });
   }
 
-  return dedupeWorkItems(items).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return mergeDurableWorkItems(input.durableWorkItems ?? [], dedupeWorkItems(items))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 export function filterWorkItemsByChannel(items: readonly WorkItemView[], channelId: string): WorkItemView[] {
@@ -392,4 +400,62 @@ function dedupeWorkItems(items: readonly WorkItemView[]): WorkItemView[] {
     byId.set(item.id, item);
   }
   return [...byId.values()];
+}
+
+function mergeDurableWorkItems(
+  durableItems: readonly DurableWorkItemView[],
+  derivedItems: readonly WorkItemView[],
+): WorkItemView[] {
+  if (durableItems.length === 0) {
+    return [...derivedItems];
+  }
+  const durableBySource = new Map<string, WorkItemView>();
+  const merged: WorkItemView[] = [];
+  for (const item of durableItems) {
+    const view = durableToWorkItemView(item);
+    durableBySource.set(sourceKey(view), view);
+    merged.push(view);
+  }
+  for (const item of derivedItems) {
+    if (!durableBySource.has(sourceKey(item))) {
+      merged.push(item);
+    }
+  }
+  return dedupeWorkItems(merged);
+}
+
+function durableToWorkItemView(item: DurableWorkItemView): WorkItemView {
+  return {
+    id: item.id,
+    workspaceId: item.workspaceId,
+    channelId: item.channelId,
+    sourceType: item.sourceType,
+    sourceId: item.sourceId,
+    title: item.title,
+    subtitle: item.description,
+    status: item.status,
+    waitingReason: item.waitingReason,
+    priority: item.priority,
+    labels: item.labels,
+    assigneeTeammateId: item.assigneeTeammateId,
+    taskId: item.taskId,
+    runId: item.runId,
+    workflowId: item.workflowId,
+    workflowStepId: item.workflowStepId,
+    externalWorkId: item.externalWorkId,
+    externalWorkActionId: item.externalWorkActionId,
+    approvalId: item.approvalId,
+    artifactIds: item.artifactIds,
+    proofArtifactIds: item.proofArtifactIds,
+    claim: item.claim,
+    attemptCount: item.attemptCount,
+    retryBudget: item.retryBudget,
+    durable: true,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+}
+
+function sourceKey(item: Pick<WorkItemView, "sourceType" | "sourceId">): string {
+  return `${item.sourceType}:${item.sourceId}`;
 }

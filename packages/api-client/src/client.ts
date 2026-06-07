@@ -242,6 +242,17 @@ import type {
   WorkUnitListResponse,
   WorkUnitMutationResponse,
   WorkUnitStatus,
+  ListWorkItemsRequest,
+  WorkItemClaimRequest,
+  WorkItemClaimResponse,
+  WorkItemCompleteRequest,
+  WorkItemDetailResponse,
+  WorkItemFailRequest,
+  WorkItemHeartbeatRequest,
+  WorkItemListResponse,
+  WorkItemMutationResponse,
+  WorkItemReleaseRequest,
+  WorkItemRouteRequest,
   WorkspaceRuntimeSettingsPatch,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "./errors.js";
@@ -1518,6 +1529,45 @@ export class LingDaemonClient {
 
   async reconcileExternalWork(cwd: string, input: ExternalWorkReconcileRequest = {}): Promise<ExternalWorkReconcileResponse> {
     return this.post("/external-work/reconcile", { cwd }, input);
+  }
+
+  async listWorkItems(cwd: string, options: ListWorkItemsRequest = {}): Promise<WorkItemListResponse> {
+    return this.get("/work-items", {
+      cwd,
+      channelId: options.channelId,
+      status: options.status,
+      sourceType: options.sourceType,
+      assigneeTeammateId: options.assigneeTeammateId,
+      limit: options.limit,
+    });
+  }
+
+  async getWorkItem(cwd: string, workItemId: string): Promise<WorkItemDetailResponse> {
+    return this.get(`/work-items/${encodeURIComponent(workItemId)}`, { cwd });
+  }
+
+  async routeWorkItem(cwd: string, workItemId: string, input: WorkItemRouteRequest): Promise<WorkItemMutationResponse> {
+    return this.post(`/work-items/${encodeURIComponent(workItemId)}/route`, { cwd }, input);
+  }
+
+  async claimWorkItem(cwd: string, workItemId: string, input: WorkItemClaimRequest): Promise<WorkItemClaimResponse> {
+    return this.post(`/work-items/${encodeURIComponent(workItemId)}/claim`, { cwd }, input);
+  }
+
+  async heartbeatWorkItem(cwd: string, workItemId: string, input: WorkItemHeartbeatRequest): Promise<WorkItemMutationResponse> {
+    return this.post(`/work-items/${encodeURIComponent(workItemId)}/heartbeat`, { cwd }, input);
+  }
+
+  async releaseWorkItem(cwd: string, workItemId: string, input: WorkItemReleaseRequest): Promise<WorkItemMutationResponse> {
+    return this.post(`/work-items/${encodeURIComponent(workItemId)}/release`, { cwd }, input);
+  }
+
+  async completeWorkItem(cwd: string, workItemId: string, input: WorkItemCompleteRequest): Promise<WorkItemMutationResponse> {
+    return this.post(`/work-items/${encodeURIComponent(workItemId)}/complete`, { cwd }, input);
+  }
+
+  async failWorkItem(cwd: string, workItemId: string, input: WorkItemFailRequest): Promise<WorkItemMutationResponse> {
+    return this.post(`/work-items/${encodeURIComponent(workItemId)}/fail`, { cwd }, input);
   }
 
   async listStateTransitions(cwd: string, options: ListStateTransitionsRequest = {}): Promise<StateTransitionListResponse> {

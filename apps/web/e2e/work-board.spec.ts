@@ -1,0 +1,56 @@
+import { expect, test } from "@playwright/test";
+import { mockDaemon } from "./support/mock-daemon";
+import {
+  createBaseState,
+} from "./support/mock-state";
+import {
+  openChannelChatTools,
+} from "./support/test-helpers";
+
+test("work board merges durable items and supports claim heartbeat", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.workItems = [
+    {
+      id: "work_item_inspect",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceType: "channel_task",
+      sourceId: "task_inspect",
+      title: "Durable inspect handoff",
+      description: "Durable row overrides the derived task row.",
+      status: "ready",
+      priority: "high",
+      labels: ["durable-ledger"],
+      taskId: "task_inspect",
+      artifactIds: [],
+      proofArtifactIds: [],
+      dependencyIds: [],
+      attemptCount: 0,
+      retryBudget: 2,
+      createdAt: "2026-06-07T00:00:00.000Z",
+      updatedAt: "2026-06-07T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await openChannelChatTools(page);
+  const channelBoard = page.getByLabel("Channel Work Board");
+  await expect(channelBoard).toContainText("Durable inspect handoff");
+  await expect(channelBoard).toContainText("durable");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" }).click();
+  await expect(page.locator(".work-board-page").getByRole("heading", { name: "Global Work Board" })).toBeVisible();
+  const durableRow = page.locator(".work-item-row").filter({ hasText: "Durable inspect handoff" });
+  await expect(durableRow).toContainText("durable");
+  await expect(durableRow).toContainText("attempt 0/2");
+
+  await durableRow.getByRole("button", { name: "Claim" }).click();
+  await expect.poll(() => state.workItems[0]?.claim?.ownerId).toBe("web-user");
+  await expect(durableRow).toContainText("claimed by web-user");
+  await expect(durableRow).toContainText("attempt 1/2");
+
+  await durableRow.getByRole("button", { name: "Heartbeat" }).click();
+  await expect.poll(() => state.workItems[0]?.claim?.heartbeatAt).toBe("2026-06-07T00:01:00.000Z");
+  await expect(durableRow).toContainText("claimed by web-user");
+});

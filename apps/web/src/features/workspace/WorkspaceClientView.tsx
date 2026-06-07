@@ -156,6 +156,7 @@ import type {
   TeammateChannelMembership,
   UpdateChannelBriefRequest,
   UsedMemoryEvent,
+  WorkItemView,
   WorkUnit,
 } from "../../types.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
@@ -298,6 +299,8 @@ export function WorkspaceClientView({
   channelActivityTransitionError,
   externalWorkCiTriage,
   externalWorkCiTriageLoading,
+  durableWorkItems,
+  durableWorkItemsLoading,
   selectedTaskId,
   providers,
   teammateTemplates,
@@ -375,6 +378,7 @@ export function WorkspaceClientView({
   onRefreshChannelMessages,
   onRefreshChannelActivity,
   onRefreshExternalWorkCiTriage,
+  onRefreshWorkItems,
   onRefreshChannelProtocol,
   onRefreshChannelFiles,
   attachmentContentUrl,
@@ -392,6 +396,9 @@ export function WorkspaceClientView({
   onRetryWorkUnit,
   onReconcileWorkUnit,
   onResolveApproval,
+  onClaimWorkItem,
+  onHeartbeatWorkItem,
+  busyWorkItemId,
   onOpenProviders,
 }: {
   readonly cwd: string;
@@ -423,6 +430,8 @@ export function WorkspaceClientView({
   readonly channelActivityTransitionError: string;
   readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
   readonly externalWorkCiTriageLoading: boolean;
+  readonly durableWorkItems: readonly WorkItemView[];
+  readonly durableWorkItemsLoading: boolean;
   readonly selectedTaskId: string;
   readonly providers: readonly ProviderPreset[];
   readonly teammateTemplates: readonly AiTeammateTemplate[];
@@ -507,6 +516,7 @@ export function WorkspaceClientView({
   readonly onRefreshChannelMessages: () => void;
   readonly onRefreshChannelActivity: () => void;
   readonly onRefreshExternalWorkCiTriage: () => void;
+  readonly onRefreshWorkItems: () => void;
   readonly onRefreshChannelProtocol: () => void;
   readonly onRefreshChannelFiles: () => void;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
@@ -524,6 +534,9 @@ export function WorkspaceClientView({
   readonly onRetryWorkUnit: (workUnitId: string) => void;
   readonly onReconcileWorkUnit: (workUnitId: string) => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onClaimWorkItem: (workItemId: string) => void;
+  readonly onHeartbeatWorkItem: (workItemId: string, claimToken: string) => void;
+  readonly busyWorkItemId: string;
   readonly onOpenProviders: (run?: RunSession) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -1148,9 +1161,10 @@ export function WorkspaceClientView({
     const intervalId = globalThis.setInterval(() => {
       onRefreshChannelMessages();
       onRefreshChannelActivity();
+      onRefreshWorkItems();
     }, 1_000);
     return () => globalThis.clearInterval(intervalId);
-  }, [channelMessages, onRefreshChannelActivity, onRefreshChannelMessages, selectedChannelId]);
+  }, [channelMessages, onRefreshChannelActivity, onRefreshChannelMessages, onRefreshWorkItems, selectedChannelId]);
 
   useEffect(() => {
     if (sidePanelOpen && sidePanelView === "files") {
@@ -1487,12 +1501,13 @@ export function WorkspaceClientView({
           ? channelsLoading || channelTeammateMembershipsLoading
           : sidePanelView === "approval"
             ? approvalsLoading
-            : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || externalWorkCiTriageLoading || tasksLoading;
+            : channelMessagesLoading || channelProtocolLoading || channelActivityTransitionsLoading || externalWorkCiTriageLoading || durableWorkItemsLoading || tasksLoading;
 
   function refreshSidePanel(): void {
     if (sidePanelView === "task" || sidePanelView === "progress") {
       onRefreshTasks();
       onRefreshChannelActivity();
+      onRefreshWorkItems();
       return;
     }
     if (sidePanelView === "context") {
@@ -2751,6 +2766,7 @@ export function WorkspaceClientView({
     } else {
       onRefreshTasks();
       onRefreshChannelActivity();
+      onRefreshWorkItems();
     }
   }
 
@@ -3147,10 +3163,14 @@ export function WorkspaceClientView({
                         externalActionDetails={externalActionDetails}
                         externalWorkCiTriage={externalWorkCiTriage}
                         artifactsByRun={channelArtifactsByRun}
-                        loading={tasksLoading || approvalsLoading || channelActivityTransitionsLoading}
+                        durableWorkItems={durableWorkItems}
+                        loading={tasksLoading || approvalsLoading || channelActivityTransitionsLoading || durableWorkItemsLoading}
                         onOpenTask={openTaskFromActivity}
                         onOpenRun={openRunInPanel}
                         onOpenApproval={(approvalId) => openApprovalInPanel(approvals.find((approval) => approval.id === approvalId))}
+                        onClaimWorkItem={onClaimWorkItem}
+                        onHeartbeatWorkItem={onHeartbeatWorkItem}
+                        busyWorkItemId={busyWorkItemId}
                       />
                       <CiTriageAuditPanel
                         records={externalWorkCiTriage}

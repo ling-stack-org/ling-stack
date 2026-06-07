@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CircleAlert, Clock3, ExternalLink, GitPullRequest, Route, ShieldCheck, SquareTerminal } from "lucide-react";
+import { CircleAlert, Clock3, ExternalLink, GitPullRequest, Loader2, Route, ShieldCheck, SquareTerminal, UserCheck } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import type { WorkItemView } from "../../lib/work-items.js";
@@ -16,6 +16,9 @@ export function WorkItemRow({
   onOpenApproval,
   onOpenExternalWork,
   onRouteExternalWork,
+  onClaimWorkItem,
+  onHeartbeatWorkItem,
+  busyWorkItemId,
 }: {
   readonly item: WorkItemView;
   readonly channelName?: string;
@@ -26,12 +29,18 @@ export function WorkItemRow({
   readonly onOpenApproval?: (approvalId: string) => void;
   readonly onOpenExternalWork?: (externalWorkId: string) => void;
   readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
+  readonly onClaimWorkItem?: (workItemId: string) => void;
+  readonly onHeartbeatWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly busyWorkItemId?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const [routeChannelId, setRouteChannelId] = useState("");
   const primaryAction = primaryOpenAction(item, { onOpenTask, onOpenRun, onOpenApproval, onOpenExternalWork });
   const canRoute = Boolean(item.externalWorkId && onRouteExternalWork && routeChannels.length > 1);
   const targetChannelId = routeChannelId || item.channelId || "";
+  const busy = busyWorkItemId === item.id;
+  const canClaim = Boolean(item.durable && !item.claim && !isTerminalWorkItem(item) && onClaimWorkItem);
+  const canHeartbeat = Boolean(item.durable && item.claim?.token && onHeartbeatWorkItem);
   return (
     <article className={`work-item-row ${item.status}`} aria-label={item.title}>
       <div className="work-item-main">
@@ -43,9 +52,14 @@ export function WorkItemRow({
         {item.subtitle ? <p>{item.subtitle}</p> : null}
         <div className="provider-meta-line">
           <span>{item.sourceType}</span>
+          {item.durable ? <span>{t("durable")}</span> : null}
           {channelName ? <span>#{channelName}</span> : null}
           {item.waitingReason ? <span>{t("waiting: {reason}", { reason: item.waitingReason })}</span> : null}
           <span>{item.priority}</span>
+          {item.claim ? <span>{t("claimed by {owner}", { owner: item.claim.ownerId })}</span> : null}
+          {item.attemptCount !== undefined && item.retryBudget !== undefined ? (
+            <span>{t("attempt {count}/{budget}", { count: item.attemptCount, budget: item.retryBudget })}</span>
+          ) : null}
           <time>{formatDateTime(item.updatedAt)}</time>
         </div>
         {item.labels.length > 0 ? (
@@ -55,6 +69,28 @@ export function WorkItemRow({
         ) : null}
       </div>
       <div className="work-item-actions">
+        {canClaim ? (
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            disabled={busy}
+            onClick={() => onClaimWorkItem?.(item.id)}
+          >
+            {busy ? <Loader2 className="spin" size={14} /> : <UserCheck size={14} />}
+            {busy ? t("Claiming") : t("Claim")}
+          </button>
+        ) : null}
+        {canHeartbeat && item.claim ? (
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            disabled={busy}
+            onClick={() => onHeartbeatWorkItem?.(item.id, item.claim?.token as string)}
+          >
+            {busy ? <Loader2 className="spin" size={14} /> : <Clock3 size={14} />}
+            {busy ? t("Refreshing") : t("Heartbeat")}
+          </button>
+        ) : null}
         {canRoute ? (
           <div className="work-item-route-control">
             <select
@@ -85,6 +121,10 @@ export function WorkItemRow({
       </div>
     </article>
   );
+}
+
+function isTerminalWorkItem(item: WorkItemView): boolean {
+  return item.status === "done" || item.status === "archived";
 }
 
 function primaryOpenAction(

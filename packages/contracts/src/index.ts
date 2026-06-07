@@ -9,6 +9,7 @@ export type * from "./tasks.js";
 export type * from "./channels.js";
 export type * from "./workflows.js";
 export type * from "./external-work.js";
+export type * from "./work-items.js";
 export type * from "./media.js";
 export type * from "./memory.js";
 export type * from "./control-plane.js";

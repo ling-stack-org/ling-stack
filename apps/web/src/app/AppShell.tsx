@@ -43,6 +43,7 @@ import type {
   TaskFormState,
   TaskRunActionState,
   UpdateChannelBriefRequest,
+  WorkItemView,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -93,6 +94,7 @@ import { titleFromPrompt } from "../lib/formatting.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd, writeSavedWorkspaceCwd } from "../lib/local-storage.js";
 import { getControlPlaneSnapshot } from "../api/control-plane.js";
 import { routeExternalWork } from "../api/external-work.js";
+import { claimWorkItem, heartbeatWorkItem, listWorkItems } from "../api/work-items.js";
 import {
   controlPlaneStreamUrl,
   controlPlaneSummaryDomains,
@@ -195,6 +197,9 @@ export function AppShell(): JSX.Element {
   const [taskRepairRunId, setTaskRepairRunId] = useState("");
   const [approvalRepairRunId, setApprovalRepairRunId] = useState("");
   const [routingExternalWorkId, setRoutingExternalWorkId] = useState("");
+  const [durableWorkItems, setDurableWorkItems] = useState<readonly WorkItemView[]>([]);
+  const [durableWorkItemsLoading, setDurableWorkItemsLoading] = useState(false);
+  const [busyWorkItemId, setBusyWorkItemId] = useState("");
   const [threadPageTargetId, setThreadPageTargetId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
@@ -1004,6 +1009,15 @@ export function AppShell(): JSX.Element {
       void refreshApprovals();
       void refreshExternalWorkCiTriage();
       void refreshUsedMemoryAudit();
+      void refreshWorkItems();
+    }
+    if (activeView === "work_board") {
+      void refreshChannels();
+      void refreshTasks();
+      void refreshRuns();
+      void refreshApprovals();
+      void refreshExternalWorkCiTriage();
+      void refreshWorkItems();
     }
     if (activeView === "runs") {
       void refreshRuns();
@@ -1046,6 +1060,7 @@ export function AppShell(): JSX.Element {
       void refreshChannelFiles(selectedChannelId);
       void refreshChannelProtocol(selectedChannelId);
       void refreshExternalWorkCiTriage(form.cwd.trim(), selectedChannelId);
+      void refreshWorkItems(form.cwd.trim());
       if (activeView === "settings") {
         void refreshExternalWorkStatus(form.cwd.trim(), selectedChannelId);
       }
@@ -1140,6 +1155,8 @@ export function AppShell(): JSX.Element {
     resetExternalWorkForCwd();
     resetRuntimeForCwd();
     resetSettingsForCwd();
+    setDurableWorkItems([]);
+    setBusyWorkItemId("");
     setChannelForm((current) => ({
       ...current,
       boundPath: current.boundPath === previousCwd || !current.boundPath ? cwd : current.boundPath,
@@ -1175,6 +1192,7 @@ export function AppShell(): JSX.Element {
           refreshApprovals(defaultWorkspaceCwd),
           refreshRuntimeState(defaultWorkspaceCwd),
           refreshUsedMemoryAudit(defaultWorkspaceCwd),
+          refreshWorkItems(defaultWorkspaceCwd),
         ]).catch((error: unknown) => {
           setErrorMessage(error instanceof Error ? error.message : String(error));
         });
@@ -1239,6 +1257,66 @@ export function AppShell(): JSX.Element {
     void refreshChannelActivityTransitions(form.cwd.trim(), channelId, channelRunsForArtifacts);
   }
 
+  async function refreshWorkItems(cwd = form.cwd.trim()): Promise<void> {
+    if (!cwd) {
+      setDurableWorkItems([]);
+      return;
+    }
+    setDurableWorkItemsLoading(true);
+    try {
+      const response = await listWorkItems(cwd);
+      setDurableWorkItems(response.workItems);
+    } catch (caught) {
+      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setDurableWorkItemsLoading(false);
+    }
+  }
+
+  async function claimDurableWorkItem(workItemId: string): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd || !workItemId || busyWorkItemId) {
+      return;
+    }
+    setBusyWorkItemId(workItemId);
+    try {
+      const response = await claimWorkItem(workspaceCwd, workItemId, {
+        ownerId: "web-user",
+        leaseMs: 5 * 60_000,
+      });
+      setDurableWorkItems((current) => [response.workItem, ...current.filter((item) => item.id !== response.workItem.id)]);
+      if (response.blocker) {
+        setErrorMessage(response.blocker.message);
+      } else {
+        setErrorMessage("");
+      }
+    } catch (caught) {
+      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusyWorkItemId("");
+    }
+  }
+
+  async function heartbeatDurableWorkItem(workItemId: string, claimToken: string): Promise<void> {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd || !workItemId || !claimToken || busyWorkItemId) {
+      return;
+    }
+    setBusyWorkItemId(workItemId);
+    try {
+      const response = await heartbeatWorkItem(workspaceCwd, workItemId, {
+        claimToken,
+        leaseMs: 5 * 60_000,
+      });
+      setDurableWorkItems((current) => [response.workItem, ...current.filter((item) => item.id !== response.workItem.id)]);
+      setErrorMessage("");
+    } catch (caught) {
+      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusyWorkItemId("");
+    }
+  }
+
   async function routeExternalWorkToChannel(externalWorkId: string, channelId: string): Promise<void> {
     const workspaceCwd = form.cwd.trim();
     if (!workspaceCwd || !externalWorkId || !channelId || routingExternalWorkId) {
@@ -1255,6 +1333,7 @@ export function AppShell(): JSX.Element {
         refreshExternalWorkStatus(workspaceCwd, channelId),
         refreshChannelProtocol(channelId),
         refreshApprovals(workspaceCwd),
+        refreshWorkItems(workspaceCwd),
       ]);
     } catch (caught) {
       setErrorMessage(caught instanceof Error ? caught.message : String(caught));
@@ -2470,6 +2549,8 @@ export function AppShell(): JSX.Element {
             channelActivityTransitionError={channelActivityTransitionError}
             externalWorkCiTriage={externalWorkCiTriage}
             externalWorkCiTriageLoading={externalWorkCiTriageLoading}
+            durableWorkItems={durableWorkItems}
+            durableWorkItemsLoading={durableWorkItemsLoading}
             selectedTaskId={selectedTaskId}
             providers={providers}
             teammateTemplates={aiTeammates.length > 0 ? [] : builtinTeammateTemplates}
@@ -2557,6 +2638,7 @@ export function AppShell(): JSX.Element {
             ])}
             onRefreshChannelActivity={() => void refreshChannelActivity()}
             onRefreshExternalWorkCiTriage={() => void refreshExternalWorkCiTriage()}
+            onRefreshWorkItems={() => void refreshWorkItems()}
             onRefreshChannelProtocol={() => void refreshChannelProtocol()}
             onRefreshChannelFiles={() => void Promise.all([refreshChannelFiles(), refreshChannelRunArtifacts()])}
             attachmentContentUrl={(attachment) => channelAttachmentContentUrl(attachment, form.cwd.trim())}
@@ -2574,6 +2656,9 @@ export function AppShell(): JSX.Element {
             onRetryWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "retry")}
             onReconcileWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "reconcile")}
             onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+            onClaimWorkItem={(workItemId) => void claimDurableWorkItem(workItemId)}
+            onHeartbeatWorkItem={(workItemId, claimToken) => void heartbeatDurableWorkItem(workItemId, claimToken)}
+            busyWorkItemId={busyWorkItemId}
             onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers")}
               />
             ) : (
@@ -2752,12 +2837,14 @@ export function AppShell(): JSX.Element {
                     externalActionDetails={externalActionDetails}
                     externalWorkCiTriage={externalWorkCiTriage}
                     artifactsByRun={channelArtifactsByRun}
+                    durableWorkItems={durableWorkItems}
                     onRefresh={() => {
                       void Promise.all([
                         refreshTasks(),
                         refreshRuns(),
                         refreshApprovals(),
                         refreshExternalWorkCiTriage(),
+                        refreshWorkItems(),
                       ]);
                     }}
                     onOpenTask={openTaskFromWorkBoard}
@@ -2768,7 +2855,10 @@ export function AppShell(): JSX.Element {
                     }}
                     onOpenChannel={selectWorkspaceChannel}
                     onRouteExternalWork={(externalWorkId, channelId) => void routeExternalWorkToChannel(externalWorkId, channelId)}
+                    onClaimWorkItem={(workItemId) => void claimDurableWorkItem(workItemId)}
+                    onHeartbeatWorkItem={(workItemId, claimToken) => void heartbeatDurableWorkItem(workItemId, claimToken)}
                     routingExternalWorkId={routingExternalWorkId}
+                    busyWorkItemId={busyWorkItemId}
                   />
                 ) : activeView === "media" ? (
                   <MediaJobsPage
