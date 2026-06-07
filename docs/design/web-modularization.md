@@ -169,6 +169,10 @@ Follow-up design:
   and migration exit criteria. That follow-up keeps this document's original
   no-new-global-store constraint while addressing the remaining `AppShell` growth and
   large initial Web chunk warning.
+- [Web API Facade Modularization](web-api-facade-modularization.md) defines the next
+  source-ownership slice for `apps/web/src/api.ts`: keep the compatibility barrel,
+  extract request builders and form payload adapters, then move endpoint wrappers into
+  domain-specific API modules.
 
 ## Non-Goals
 

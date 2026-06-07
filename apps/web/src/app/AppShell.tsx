@@ -90,7 +90,7 @@ import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "..
 import { readDataString } from "../lib/data.js";
 import { titleFromPrompt } from "../lib/formatting.js";
 import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd, writeSavedWorkspaceCwd } from "../lib/local-storage.js";
-import { getControlPlaneSnapshot } from "../api.js";
+import { getControlPlaneSnapshot } from "../api/control-plane.js";
 import {
   controlPlaneStreamUrl,
   controlPlaneSummaryDomains,
