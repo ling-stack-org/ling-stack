@@ -34,6 +34,7 @@ mutation.
 
 - [Codex-Inspired Runtime Tools](codex-inspired-runtime-tools.md)
 - [Codex-Inspired Runtime Tools P2: Permission Requests And Shell Snapshots](codex-inspired-runtime-tools-p2-permissions-shell-snapshots.md)
+- [Inline Runtime Approval Detailed Design](inline-runtime-approval-detailed-design.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
 - [Approval Policy](approval-policy.md)
 - [Runner Registry](runner-registry.md)

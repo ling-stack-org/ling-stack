@@ -101,6 +101,20 @@ Approval should be required for:
 - Paid or high-cost media generation.
 - Deployment, production changes, credential changes, or destructive actions.
 
+Local runtime permission approvals should appear near the active run or channel context
+first. Cross-context review and external action approvals belong in the Review Queue and
+Work Board model defined in
+[Work Board, Review Queue, and Inline Approval Boundaries](design/work-board-review-queue.md).
+
+### Review Queue And Work Board
+
+Review Queue is the routing surface for external work, high-risk external actions,
+offline pending approvals, and cross-channel handoffs. It is not the primary surface for
+normal local runtime permission prompts.
+
+Global Work Board is the all-work ledger across channels. Channel Work Board is the
+channel-filtered execution view backed by the same underlying work records.
+
 ## MVP
 
 v0.1 should prove local usefulness:
