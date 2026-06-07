@@ -11,6 +11,7 @@ export interface DaemonConfig {
 
 export interface RuntimeToolFeatureConfig {
   readonly requestPermissions?: boolean;
+  readonly unifiedExec?: boolean;
   readonly shellSnapshot?: boolean;
 }
 

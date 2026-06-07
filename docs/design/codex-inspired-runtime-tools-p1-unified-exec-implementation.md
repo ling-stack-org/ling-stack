@@ -2,7 +2,9 @@
 
 ## Status
 
-Implementation plan. No P1 code is shipped yet.
+Implemented in the P1 branch. The implementation keeps P2B shell snapshots,
+Pi CLI migration, JSON-RPC/app-server transport, and read/grep/find/ls shell
+conversion out of scope.
 
 This document narrows P1 from
 [Codex-Inspired Runtime Tools](codex-inspired-runtime-tools.md): introduce a

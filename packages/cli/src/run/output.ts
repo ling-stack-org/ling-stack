@@ -160,7 +160,8 @@ class RunPrinter implements RunOutput {
     const toolName = summarizeToolName(data);
     const isError = readBoolean(data, "isError") ?? false;
     const result = readField(data, "result");
-    this.stderrLine(`Tool end: ${toolName} ${isError ? "error" : "ok"}${result === undefined ? "" : ` ${summarizeUnknown(result, 180)}`}`);
+    const resultSummary = summarizeUnifiedExecResult(result) || summarizeUnknown(result, 180);
+    this.stderrLine(`Tool end: ${toolName} ${isError ? "error" : "ok"}${resultSummary ? ` ${resultSummary}` : ""}`);
   }
 
   private printApprovalRequested(data: unknown): void {
@@ -273,6 +274,55 @@ function summarizePatchApprovalPayload(payload: Record<string, unknown>): string
 function summarizeResult(data: unknown): string {
   const summary = readString(data, "summary") ?? readString(data, "text") ?? readString(data, "message");
   return summary ? truncate(summary, 240) : summarizeUnknown(data, 240);
+}
+
+function summarizeUnifiedExecResult(data: unknown): string {
+  const unifiedExec = readUnifiedExecResultData(data);
+  if (!isRecord(unifiedExec)) {
+    return "";
+  }
+  const denied = readBoolean(unifiedExec, "denied");
+  const reason = readString(unifiedExec, "reason");
+  if (denied) {
+    return reason ?? "Command denied by policy.";
+  }
+  const status = readString(unifiedExec, "status");
+  const exitCode = readNumber(unifiedExec, "exitCode");
+  const durationMs = readNumber(unifiedExec, "durationMs");
+  const duration = durationMs === undefined ? "" : `${durationMs}ms`;
+  if (status === "timed_out") {
+    return duration ? `Command timed out after ${duration}.` : "Command timed out.";
+  }
+  if (status === "cancelled") {
+    return duration ? `Command cancelled after ${duration}.` : "Command cancelled.";
+  }
+  if (exitCode !== undefined) {
+    return duration ? `Command exited ${exitCode} in ${duration}.` : `Command exited ${exitCode}.`;
+  }
+  if (status) {
+    return duration ? `Command ${status} in ${duration}.` : `Command ${status}.`;
+  }
+  return reason ?? "";
+}
+
+function readUnifiedExecResultData(data: unknown): unknown {
+  const candidates = [
+    data,
+    readField(data, "result"),
+    readField(data, "partialResult"),
+  ];
+  for (const candidate of candidates) {
+    const direct = readField(candidate, "unifiedExec");
+    if (direct !== undefined) {
+      return direct;
+    }
+    const details = readField(candidate, "details");
+    const nested = readField(details, "unifiedExec");
+    if (nested !== undefined) {
+      return nested;
+    }
+  }
+  return undefined;
 }
 
 function summarizeUnknown(value: unknown, limit: number): string {

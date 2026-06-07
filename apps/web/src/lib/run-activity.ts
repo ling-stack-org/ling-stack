@@ -4,6 +4,7 @@ import {
   readDataBoolean,
   readDataField,
   readDataString,
+  summarizeUnifiedExecResultFromData,
 } from "./data.js";
 
 export type RunActivityStatus = "running" | "succeeded" | "failed" | "waiting" | "neutral";
@@ -218,6 +219,10 @@ function readToolTarget(data: unknown): string {
 function readToolDetail(startData: unknown, endData: unknown): string {
   const target = readToolTarget(startData);
   const result = readDataField(endData, "result");
+  const unifiedExecSummary = summarizeUnifiedExecResultFromData(endData);
+  if (unifiedExecSummary) {
+    return [target, unifiedExecSummary].filter(Boolean).join(" -> ");
+  }
   const error = readDataString(result, "error") || readDataString(endData, "error") || readDataString(endData, "message");
   if (error) {
     return target ? `${target}: ${error}` : error;

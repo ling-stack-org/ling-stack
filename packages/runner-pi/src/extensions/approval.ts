@@ -11,6 +11,9 @@ export function createLingStackApprovalExtension(options: PiRunnerRunOptions): E
       if (event.toolName === "edit" || event.toolName === "write") {
         return undefined;
       }
+      if (event.toolName === "bash" && options.runtimeToolFeatures?.unifiedExec) {
+        return undefined;
+      }
 
       if (!options.onApprovalRequired) {
         if (!SIDE_EFFECT_TOOLS.has(event.toolName)) {

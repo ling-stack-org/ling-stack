@@ -144,6 +144,16 @@ test("default runner registry exposes disabled future adapters and fails closed"
   assert.equal(fallback.runner.adapter, piRunner);
 });
 
+test("default runner registry exposes unified exec capability when configured", () => {
+  const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
+    runtimeTools: {
+      unifiedExec: true,
+    },
+  });
+  const pi = registry.list().find((runner) => runner.id === "pi");
+  assert.equal(pi.capabilities.includes("runtime:unified-exec"), true);
+});
+
 test("future runner feature flags do not enable adapters without conformance", () => {
   const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
     runners: {

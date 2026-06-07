@@ -30,6 +30,7 @@ import {
   readDataString,
   readDeepDataPreview,
   readDeepDataScalarString,
+  summarizeUnifiedExecResultFromData,
   truncatePreview,
 } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -2005,7 +2006,8 @@ function ToolEventDetails({
   const targetPath = readDeepDataScalarString(event.data, ["path", "filePath", "targetPath", "target"])
     || readDeepDataScalarString(relatedToolStart?.data, ["path", "filePath", "targetPath", "target"]);
   const outputPreview = readDeepDataPreview(event.data, ["message", "error", "detail", "reason", "result", "partialResult", "output", "stdout", "stderr"]);
-  const summaryPreview = outputPreview || command || formatEventPreview(event.data);
+  const unifiedExecPreview = summarizeUnifiedExecResultFromData(event.data);
+  const summaryPreview = unifiedExecPreview || outputPreview || command || formatEventPreview(event.data);
 
   return (
     <details className={`tool-event-row${isError ? " error" : ""}`} open={isError}>

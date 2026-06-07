@@ -1,7 +1,6 @@
-import type { TextContent } from "@earendil-works/pi-ai";
-import { createEditToolDefinition, createWriteToolDefinition, type AgentToolResult, type ExtensionFactory, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { normalizeMcpToolResultContent } from "../content.js";
-import type { PiRunnerApprovalDecision, PiRunnerRunOptions, PiRunnerToolHandledResult } from "../types.js";
+import { createEditToolDefinition, createWriteToolDefinition, type ExtensionFactory, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { normalizeHandledToolResult } from "../content.js";
+import type { PiRunnerApprovalDecision, PiRunnerRunOptions } from "../types.js";
 import { isRecord } from "../utils.js";
 
 export function createLingStackFileMutationToolExtension(options: PiRunnerRunOptions): ExtensionFactory {
@@ -65,25 +64,6 @@ async function requireFileMutationApproval(
     throw new Error(decision.reason ?? `Ling Stack approval denied ${toolName}.`);
   }
   return decision;
-}
-
-function normalizeHandledToolResult(result: PiRunnerToolHandledResult): AgentToolResult<any> {
-  if (result.isError) {
-    throw new Error(formatHandledToolError(result));
-  }
-  return {
-    content: normalizeMcpToolResultContent(result.content),
-    details: result.details,
-  };
-}
-
-function formatHandledToolError(result: PiRunnerToolHandledResult): string {
-  const text = result.content
-    .filter((item): item is TextContent => item.type === "text")
-    .map((item) => item.text)
-    .join("\n")
-    .trim();
-  return text || "Ling Stack handled tool call failed.";
 }
 
 function createPatchableEditParameters(original: ToolDefinition["parameters"]): ToolDefinition["parameters"] {

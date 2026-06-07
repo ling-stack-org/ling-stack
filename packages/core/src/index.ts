@@ -34,5 +34,6 @@ export * from "./mcp-types.js";
 export * from "./workspace-types.js";
 export * from "./patch/index.js";
 export * from "./runtime-permissions.js";
+export * from "./exec/unified-exec-types.js";
 export * from "./storage/event-log.js";
 export * from "./storage/sqlite-run-store.js";

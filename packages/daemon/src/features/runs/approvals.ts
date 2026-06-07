@@ -36,6 +36,10 @@ import {
   createPatchApprovalMetadata,
   type PatchActionDraft,
 } from "./patch-actions.js";
+import {
+  createUnifiedExecDeniedResult,
+  executeUnifiedBashTool,
+} from "./unified-exec.js";
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
@@ -117,8 +121,10 @@ export function createRunApprovalHandler(options: {
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly controlPlaneEvents?: ControlPlaneEventHub;
   readonly workspaceCwd?: string;
+  readonly unifiedExecEnabled?: boolean;
 }): PiRunnerRunOptions["onApprovalRequired"] {
   return async (request: PiRunnerApprovalRequest) => {
+    const unifiedExecBash = options.unifiedExecEnabled === true && request.toolName === "bash";
     let patchMetadata: ReturnType<typeof createPatchApprovalMetadata> | undefined;
     try {
       patchMetadata = createPatchApprovalMetadata(request);
@@ -149,6 +155,20 @@ export function createRunApprovalHandler(options: {
     }
 
     if (policyDecision.decision === "allow") {
+      if (unifiedExecBash) {
+        return {
+          approved: true,
+          reason: policyDecision.reason,
+          handledResult: await executeUnifiedBashTool({
+            store: options.store,
+            run: options.run,
+            request,
+            appendAndMaybeStream: options.appendAndMaybeStream,
+            signal: options.signal,
+            extraSecrets: options.extraSecrets,
+          }),
+        };
+      }
       if (patchDraft) {
         const applied = await applyPatchActionDraft({
           draft: patchDraft,
@@ -224,6 +244,15 @@ export function createRunApprovalHandler(options: {
         approved: false,
         approvalId: resolved.id,
         reason: resolved.decisionReason,
+        ...(unifiedExecBash
+          ? {
+              handledResult: createUnifiedExecDeniedResult({
+                toolCallId: request.toolCallId,
+                approvalId: resolved.id,
+                reason: resolved.decisionReason,
+              }),
+            }
+          : {}),
       };
     }
 
@@ -328,7 +357,17 @@ export function createRunApprovalHandler(options: {
 
     if (resolvedApproval.status === "approved") {
       let handledResult;
-      if (patchDraft) {
+      if (unifiedExecBash) {
+        handledResult = await executeUnifiedBashTool({
+          store: options.store,
+          run: options.run,
+          request,
+          approvalId: resolvedApproval.id,
+          appendAndMaybeStream: options.appendAndMaybeStream,
+          signal: options.signal,
+          extraSecrets: options.extraSecrets,
+        });
+      } else if (patchDraft) {
         const applied = await applyPatchActionDraft({
           draft: patchDraft,
           cwd: request.cwd,
@@ -368,6 +407,17 @@ export function createRunApprovalHandler(options: {
       reason:
         resolvedApproval.decisionReason ??
         `Ling Stack approval ${resolvedApproval.status} for ${resolvedApproval.actionType}.`,
+      ...(unifiedExecBash
+        ? {
+            handledResult: createUnifiedExecDeniedResult({
+              toolCallId: request.toolCallId,
+              approvalId: resolvedApproval.id,
+              reason:
+                resolvedApproval.decisionReason ??
+                `Ling Stack approval ${resolvedApproval.status} for ${resolvedApproval.actionType}.`,
+            }),
+          }
+        : {}),
     };
   };
 }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ApplyPatchFormat, PatchPlan, PatchSummary } from "./patch/index.js";
 import type { RunTool } from "./approval-policy.js";
+import type { UnifiedExecEnvironmentSummary } from "./exec/unified-exec-types.js";
 
 export type ApprovalActionType =
   | "read"
@@ -119,6 +120,13 @@ export type ApprovalPayload =
       readonly cwd: string;
       readonly command: string;
       readonly riskFlags: readonly string[];
+      readonly exec?: {
+        readonly commandKind: "shell" | "argv";
+        readonly timeoutMs?: number;
+        readonly idleTimeoutMs?: number;
+        readonly pty?: boolean;
+        readonly environmentSummary?: UnifiedExecEnvironmentSummary;
+      };
     }
   | {
       readonly type: "tool_call";

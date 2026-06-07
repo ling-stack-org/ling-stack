@@ -273,6 +273,10 @@ export async function executeRunRequest(
     });
     approvalPolicy = sessionPolicy.approvalPolicy;
     effectivePolicySnapshot = sessionPolicy.snapshot;
+    const runtimeToolFeatures = {
+      ...runRequest.runtimeToolFeatures,
+      unifiedExec: runtimeSupervisor.getRuntimeToolFeatures().unifiedExec === true,
+    };
     runnerRequest = {
       cwd: runRequest.cwd,
       task: runRequest.task,
@@ -283,7 +287,7 @@ export async function executeRunRequest(
       systemPrompt: runRequest.systemPrompt,
       appendSystemPrompt: appendSystemPrompt.length > 0 ? appendSystemPrompt : undefined,
       agentDir: runRequest.agentDir,
-      runtimeToolFeatures: runRequest.runtimeToolFeatures,
+      runtimeToolFeatures,
       onMcpToolCall: mcpTools.length > 0 ? createMcpToolCallHandler(store, secretResolver, mcpBroker, mcpTools) : undefined,
     };
     resolvedSecretValues = [resolvedProvider.apiKey];
@@ -328,6 +332,7 @@ export async function executeRunRequest(
         provider: resolvedProvider,
         runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
         runtimeSettings,
+        runtimeToolFeatures,
         selectedSkillId: selectedSkill?.skillId,
         mcpToolAccess,
       },
@@ -439,7 +444,7 @@ export async function executeRunRequest(
         provider: resolvedProvider,
         runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
         runtimeSettings,
-        runtimeToolFeatures: runRequest.runtimeToolFeatures,
+        runtimeToolFeatures,
         selectedSkillId: selectedSkill?.skillId,
         mcpToolAccess,
         managedPluginRuntime,
@@ -793,6 +798,7 @@ export async function executeRunRequest(
         extraSecrets: resolvedSecretValues,
         controlPlaneEvents: options.controlPlaneEvents,
         workspaceCwd,
+        unifiedExecEnabled: runnerRequest.runtimeToolFeatures?.unifiedExec === true,
       }),
       onPermissionRequired: createRunPermissionRequestHandler({
         store,

@@ -1,5 +1,6 @@
 import { DefaultResourceLoader, type ResourceLoader, type SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createLingStackApprovalExtension } from "./extensions/approval.js";
+import { createLingStackBashToolExtension } from "./extensions/bash.js";
 import { createLingStackFileMutationToolExtension } from "./extensions/file-mutation.js";
 import { createLingStackMcpProxyExtension } from "./extensions/mcp-proxy.js";
 import { createLingStackPermissionRequestExtension } from "./extensions/permissions.js";
@@ -24,6 +25,7 @@ export async function createLingStackResourceLoader(
     appendSystemPrompt: [...(options.appendSystemPrompt ?? [])],
     extensionFactories: [
       createLingStackFileMutationToolExtension(options),
+      ...(options.runtimeToolFeatures?.unifiedExec ? [createLingStackBashToolExtension(options)] : []),
       createLingStackApprovalExtension(options),
       ...(options.runtimeToolFeatures?.requestPermissions ? [createLingStackPermissionRequestExtension(options)] : []),
       ...(options.mcpTools?.length ? [createLingStackMcpProxyExtension(options)] : []),
