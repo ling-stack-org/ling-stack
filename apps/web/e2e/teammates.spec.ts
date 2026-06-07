@@ -81,7 +81,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
 
   await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row.selected")).toContainText("Ling Engineer");
-  await expect(page.getByRole("button", { name: /Private chat/ })).toBeVisible();
+  await expect(page.getByLabel("Private chat", { exact: true })).toBeVisible();
   await expect.poll(() => state.aiTeammates.some((item) => isRecord(item) && item.displayName === "Ling Engineer")).toBe(true);
   await expect.poll(() => state.teammateChannelMemberships.some((item) => isRecord(item) && item.teammateId === "teammate_created_1" && item.channelId === "channel_engineering")).toBe(true);
 
@@ -225,7 +225,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Ling Engineer" }).click();
-  await expect(page.getByRole("heading", { name: "Ling Engineer", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
   await expect(page.locator(".brand-mark")).toHaveCount(0);
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ling Engineer"] });
   await expect(page.getByText("Model needs setup")).toBeVisible();
@@ -401,7 +401,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
 
   await page.reload();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Renamed Engineer" }).click();
-  await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
 
   await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Settings" }).click();
@@ -420,7 +420,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate) ? [teammate.displayName, teammate.allowedTools, teammate.approvalProfile] : undefined;
   }).toEqual(["Imported QA Persona", ["read", "grep", "find", "ls"], { mode: "standard", risk: "medium" }]);
-  await expect(page.getByRole("heading", { name: "Imported QA Persona", level: 2 })).toBeVisible();
+  await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Imported QA Persona settings", level: 2 })).toBeVisible();
 
   await page.getByLabel("Avatar").locator("input[type=file]").setInputFiles({
     name: "avatar.png",

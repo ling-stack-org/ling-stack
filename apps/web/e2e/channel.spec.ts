@@ -1348,7 +1348,7 @@ test("channel files tab aggregates run artifacts and keeps other channel artifac
   await expect(runGroup).toContainText("Inspect workspace");
   await expect(runGroup.locator(".session-file-list")).not.toBeVisible();
   await expect(runGroup.locator(".artifact-row").first()).toContainText("Channel report");
-  await expect(runGroup.locator(".artifact-row").first()).toHaveAttribute(
+  await expect(runGroup.locator(".artifact-row").first().locator(".artifact-main-link")).toHaveAttribute(
     "href",
     /\/artifacts\/artifact_channel_report\/content\?cwd=%2Ftmp%2Fling-stack-workspace/,
   );

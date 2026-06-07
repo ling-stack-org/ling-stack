@@ -2306,6 +2306,32 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, items: [] } });
     return;
   }
+  if (request.method() === "GET" && path === "/memory/health") {
+    await route.fulfill({
+      json: {
+        cwd,
+        report: {
+          generatedAt: "2026-06-04T00:00:00.000Z",
+          staleCandidateDays: 30,
+          summary: {
+            total: state.memoryObjects.length,
+            active: state.memoryObjects.filter((item) => isRecord(item) && item.reviewState === "active").length,
+            candidate: state.memoryObjects.filter((item) => isRecord(item) && item.reviewState === "candidate").length,
+            disabled: state.memoryObjects.filter((item) => isRecord(item) && item.enabled === false).length,
+            archived: state.memoryObjects.filter((item) => isRecord(item) && item.reviewState === "archived").length,
+            rejected: state.memoryObjects.filter((item) => isRecord(item) && item.reviewState === "rejected").length,
+            enabled: state.memoryObjects.filter((item) => isRecord(item) && item.enabled !== false).length,
+            reviewBacklog: 0,
+            staleCandidates: 0,
+            verifyBeforeUse: state.memoryObjects.filter((item) => isRecord(item) && item.verifyBeforeUse === true).length,
+            findings: { critical: 0, warning: 0, info: 0 },
+          },
+          findings: [],
+        },
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/memory/used") {
     const teammateId = url.searchParams.get("teammateId");
     const responseId = url.searchParams.get("responseId");

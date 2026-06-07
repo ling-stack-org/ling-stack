@@ -211,8 +211,6 @@ export function useProvidersDomain(input: {
         setProviderSaveMessage(input.translate("Model preset saved successfully."));
         return { ok: true };
       }
-      await input.applyProviderToRun(savedProvider);
-
       setProviderCheckTargetId(savedProvider.id);
       const savedCheck = await checkProvider(workspaceCwd, savedProvider.id);
       setProviderCheck(savedCheck);

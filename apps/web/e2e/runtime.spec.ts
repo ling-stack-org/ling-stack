@@ -227,6 +227,7 @@ test("run detail renders state transitions from daemon timeline API", async ({ p
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
+  await page.getByLabel("Evidence").getByRole("button", { name: "Used memory" }).click();
   await expect(page.getByLabel("Used memory").filter({ hasText: "Run acceptance memory" })).toBeVisible();
   await page.locator(".run-detail-panel").getByText("Debug details").click();
   await expect(page.getByRole("heading", { name: "State machine" })).toBeVisible();
@@ -332,8 +333,10 @@ test("failed provider runs route repair back to Model Workbench", async ({ page 
   await providerRepair.getByRole("button", { name: "Model Workbench" }).click();
 
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Provider name")).toHaveValue("Auth Failed Gateway");
-  await expect(page.getByLabel("Provider run repair")).toContainText("run_failed");
+  await expect(page.getByText("Next: repair Auth Failed Gateway check failure")).toBeVisible();
+  const failedProviderRow = page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" });
+  await expect(failedProviderRow).toContainText("auth failed");
+  await expect(failedProviderRow.getByRole("button", { name: "Edit" })).toBeVisible();
 });
 
 test("run detail renders artifact rows from the daemon API", async ({ page }) => {
@@ -379,7 +382,7 @@ test("run detail renders artifact rows from the daemon API", async ({ page }) =>
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
   await expect(page.locator(".artifact-row")).toHaveCount(3);
   await expect(page.locator(".artifact-row").first()).toContainText("Generated report");
-  await expect(page.locator(".artifact-row").first()).toHaveAttribute("href", /\/artifacts\/artifact_report\/content/);
+  await expect(page.locator(".artifact-row").first().locator(".artifact-main-link")).toHaveAttribute("href", /\/artifacts\/artifact_report\/content/);
   const imageRow = page.locator(".artifact-row").filter({ hasText: "Seedream image 1" });
   await expect(imageRow).toContainText("image");
   await expect(imageRow).toContainText("2.0 KB");
