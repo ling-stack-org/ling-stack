@@ -2,8 +2,8 @@
 
 ## Status
 
-P0 and the first P2A slice are implemented. P1 unified exec and P2B shell snapshots
-remain design plans.
+P0 and the first P2A slice are implemented. P1 unified exec has an implementation
+plan but is not implemented. P2B shell snapshots remain a design plan.
 
 Ling Stack should borrow selected runtime-tool engineering patterns from
 `openai/codex` without replacing Ling's product contract for core tools, approvals,
@@ -12,6 +12,7 @@ daemon APIs, Web settings, channels, teammates, skills, and runner metadata.
 Related docs:
 
 - [Codex-Inspired Runtime Tools P0: Apply-Patch Implementation](codex-inspired-runtime-tools-p0-apply-patch-implementation.md)
+- [Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md)
 - [Codex-Inspired Runtime Tools P2: Permission Requests And Shell Snapshots](codex-inspired-runtime-tools-p2-permissions-shell-snapshots.md)
 - [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
@@ -223,6 +224,9 @@ Acceptance:
 ### P1: Unified Exec For Bash
 
 Introduce a normalized exec backend for `bash`.
+
+Detailed implementation plan:
+[Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md).
 
 Acceptance:
 

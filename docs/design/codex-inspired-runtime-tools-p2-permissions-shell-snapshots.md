@@ -21,6 +21,7 @@ silent access, or make shell state authoritative.
 
 - [Codex-Inspired Runtime Tools](codex-inspired-runtime-tools.md)
 - [Codex-Inspired Runtime Tools P0: Apply-Patch Implementation](codex-inspired-runtime-tools-p0-apply-patch-implementation.md)
+- [Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md)
 - [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md)
 - [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
@@ -356,7 +357,8 @@ Shell snapshots provide bounded evidence for Web, CLI doctor, and debugging.
 ### Dependency On P1 Unified Exec
 
 P2B should not implement shell snapshots against ad hoc bash events. It should wait for
-the normalized `bash` exec backend from P1 of the runtime-tools plan.
+the normalized `bash` exec backend from
+[Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md).
 
 Before unified exec exists, this document is the target contract only. The only safe
 pre-P1 implementation is a no-op diagnostics shape that reports `unavailable`.
