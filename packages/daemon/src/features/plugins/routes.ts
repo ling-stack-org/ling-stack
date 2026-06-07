@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   ManagedPluginDescriptor,
   ManagedPluginHealthSnapshot,
+  ManagedPluginPackageRecord,
   McpRuntimeStatusSnapshot,
   PublicMcpServer,
   SecretResolver,
@@ -30,11 +31,28 @@ import {
 import {
   parseManagedPluginApplyPresetRequest,
   parseManagedPluginDisableRequest,
+  parseManagedPluginInstallRequest,
+  parseManagedPluginUninstallRequest,
+  parseManagedPluginValidatePackageRequest,
 } from "./schemas.js";
 import { toPublicMcpServer } from "../mcp/secrets.js";
+import {
+  getBundledPluginPackage,
+  listPluginSourceViews,
+  toPluginPackageView,
+} from "./source-index.js";
+import {
+  installBundledPluginPackage,
+  refreshManagedPluginPackage,
+  uninstallManagedPluginPackage,
+} from "./install.js";
+import { buildManagedPluginRuntimePreview } from "./runtime-injection.js";
 
 export type ManagedPluginRoute =
-  | { readonly pluginId: string; readonly action?: "enable" | "disable" | "check" | "apply-preset" };
+  | {
+      readonly pluginId: string;
+      readonly action?: "enable" | "disable" | "check" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
+    };
 
 export async function handlePluginsCollection(
   request: IncomingMessage,
@@ -58,6 +76,7 @@ export async function handlePluginsCollection(
     writeJson(response, 200, {
       cwd,
       plugins: listManagedPluginViews({
+        cwd,
         extensionRegistry,
         store,
         now: new Date().toISOString(),
@@ -66,6 +85,52 @@ export async function handlePluginsCollection(
   } catch (error) {
     writeRouteError(response, error);
   }
+}
+
+export async function handlePluginSourcesCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /plugins/sources` });
+    return;
+  }
+  writeJson(response, 200, { cwd, sources: listPluginSourceViews() });
+}
+
+export async function handlePluginPackageItem(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  pluginId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /plugins/packages/:id` });
+    return;
+  }
+  const pluginPackage = getBundledPluginPackage(pluginId);
+  if (!pluginPackage) {
+    writeJson(response, 404, { error: "plugin_package_not_found", message: `Plugin package not found: ${pluginId}` });
+    return;
+  }
+  writeJson(response, 200, {
+    cwd,
+    package: toPluginPackageView(pluginPackage),
+    validation: pluginPackage.validation,
+  });
 }
 
 export async function handlePluginItem(
@@ -87,6 +152,33 @@ export async function handlePluginItem(
 
   try {
     const store = storeRegistry.getStore(cwd);
+    if (request.method === "POST" && route.action === "validate-package") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      parseManagedPluginValidatePackageRequest(body);
+      const validationPackage = getBundledPluginPackage(route.pluginId);
+      if (!validationPackage) {
+        writeJson(response, 404, { error: "plugin_package_not_found", message: `Plugin package not found: ${route.pluginId}` });
+        return;
+      }
+      const plugin = validationPackage.validation.compiledDescriptor
+        ? getManagedPluginView({
+            cwd,
+            extensionRegistry,
+            store,
+            pluginId: validationPackage.validation.compiledDescriptor.id,
+            now: new Date().toISOString(),
+            includeEvents: true,
+          })
+        : undefined;
+      writeJson(response, 200, {
+        cwd,
+        ...(plugin ? { plugin } : {}),
+        package: toPluginPackageView(validationPackage),
+        validation: validationPackage.validation,
+      });
+      return;
+    }
+
     const descriptor = getManagedPluginDescriptor(extensionRegistry, store, route.pluginId);
     if (!descriptor) {
       throw new HttpError(404, "plugin_not_found", `Plugin not found: ${route.pluginId}`);
@@ -94,7 +186,31 @@ export async function handlePluginItem(
 
     if (request.method === "GET" && !route.action) {
       writeJson(response, 200, {
-        plugin: getRequiredPluginView({ extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+      });
+      return;
+    }
+
+    if (request.method === "GET" && route.action === "runtime-preview") {
+      const now = new Date().toISOString();
+      const preview = buildManagedPluginRuntimePreview({ cwd, store, descriptor, now });
+      ensureManagedPluginRecord({
+        store,
+        descriptor,
+        enabled: store.getManagedPlugin(route.pluginId)?.enabled ?? descriptor.defaultEnabled === true,
+        now,
+      });
+      store.appendManagedPluginEvent({
+        pluginId: route.pluginId,
+        type: "runtime_previewed",
+        actor: "local-user",
+        message: `Runtime preview ${preview.status}.`,
+        data: { status: preview.status, blockers: preview.blockers, policyOverlayCount: preview.policyOverlays.length },
+      }, now);
+      writeJson(response, 200, {
+        cwd,
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        preview,
       });
       return;
     }
@@ -110,7 +226,7 @@ export async function handlePluginItem(
         message: "Plugin enabled.",
       }, now);
       writeJson(response, 200, {
-        plugin: getRequiredPluginView({ extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
       });
       return;
     }
@@ -134,7 +250,7 @@ export async function handlePluginItem(
         message: input.reason ? `Plugin disabled: ${input.reason}` : "Plugin disabled.",
       }, now);
       writeJson(response, 200, {
-        plugin: getRequiredPluginView({ extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
       });
       return;
     }
@@ -142,6 +258,7 @@ export async function handlePluginItem(
     if (request.method === "POST" && route.action === "check") {
       await handlePluginCheck({
         response,
+        cwd,
         descriptor,
         extensionRegistry,
         store,
@@ -152,11 +269,65 @@ export async function handlePluginItem(
       return;
     }
 
+    if (request.method === "POST" && route.action === "install") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseManagedPluginInstallRequest(body);
+      const now = new Date().toISOString();
+      const result = await installBundledPluginPackage({
+        cwd,
+        store,
+        pluginId: route.pluginId,
+        options: input.options,
+        now,
+      });
+      writeJson(response, 200, {
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: result.descriptor.id, includeEvents: true }),
+        package: publicPluginPackage(result.packageRecord),
+      });
+      return;
+    }
+
+    if (request.method === "POST" && route.action === "uninstall") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseManagedPluginUninstallRequest(body);
+      const now = new Date().toISOString();
+      const packageRecord = uninstallManagedPluginPackage({
+        store,
+        descriptor,
+        reason: input.reason,
+        now,
+      });
+      writeJson(response, 200, {
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        ...(packageRecord ? { package: publicPluginPackage(packageRecord) } : {}),
+      });
+      return;
+    }
+
+    if (request.method === "POST" && route.action === "refresh-package") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseManagedPluginInstallRequest(body);
+      const now = new Date().toISOString();
+      const result = await refreshManagedPluginPackage({
+        cwd,
+        store,
+        pluginId: route.pluginId,
+        options: input.options,
+        now,
+      });
+      writeJson(response, 200, {
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: result.descriptor.id, includeEvents: true }),
+        package: publicPluginPackage(result.packageRecord),
+      });
+      return;
+    }
+
     if (request.method === "POST" && route.action === "apply-preset") {
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseManagedPluginApplyPresetRequest(body);
       await handlePluginApplyPreset({
         response,
+        cwd,
         descriptor,
         extensionRegistry,
         store,
@@ -179,6 +350,7 @@ export async function handlePluginItem(
 
 async function handlePluginCheck(input: {
   readonly response: ServerResponse;
+  readonly cwd: string;
   readonly descriptor: ManagedPluginDescriptor;
   readonly extensionRegistry: LingExtensionRegistry;
   readonly store: ReturnType<RunStoreRegistry["getStore"]>;
@@ -209,6 +381,7 @@ async function handlePluginCheck(input: {
     data: { status: storedHealth.status },
   }, now);
   const plugin = getRequiredPluginView({
+    cwd: input.cwd,
     extensionRegistry: input.extensionRegistry,
     store: input.store,
     pluginId: record.id,
@@ -229,6 +402,7 @@ async function handlePluginCheck(input: {
 
 async function handlePluginApplyPreset(input: {
   readonly response: ServerResponse;
+  readonly cwd: string;
   readonly descriptor: ManagedPluginDescriptor;
   readonly extensionRegistry: LingExtensionRegistry;
   readonly store: ReturnType<RunStoreRegistry["getStore"]>;
@@ -261,6 +435,7 @@ async function handlePluginApplyPreset(input: {
       error: "plugin_platform_blocked",
       message: health.message,
       plugin: getRequiredPluginView({
+        cwd: input.cwd,
         extensionRegistry: input.extensionRegistry,
         store: input.store,
         pluginId: input.pluginId,
@@ -292,6 +467,7 @@ async function handlePluginApplyPreset(input: {
       error: "plugin_binary_not_found",
       message: health.message,
       plugin: getRequiredPluginView({
+        cwd: input.cwd,
         extensionRegistry: input.extensionRegistry,
         store: input.store,
         pluginId: input.pluginId,
@@ -350,6 +526,7 @@ async function handlePluginApplyPreset(input: {
       error: "plugin_apply_failed",
       message: health.message ?? "Plugin preset apply failed.",
       plugin: getRequiredPluginView({
+        cwd: input.cwd,
         extensionRegistry: input.extensionRegistry,
         store: input.store,
         pluginId: input.pluginId,
@@ -381,6 +558,7 @@ async function handlePluginApplyPreset(input: {
   writeJson(input.response, listedSnapshot.status === "ready" ? 200 : 400, {
     ...(listedSnapshot.status === "ready" ? {} : { error: "plugin_apply_failed", message: health.message ?? "Plugin preset apply failed." }),
     plugin: getRequiredPluginView({
+      cwd: input.cwd,
       extensionRegistry: input.extensionRegistry,
       store: input.store,
       pluginId: input.pluginId,
@@ -492,12 +670,14 @@ function setLinkedContributionsEnabled(
 }
 
 function getRequiredPluginView(input: {
+  readonly cwd: string;
   readonly extensionRegistry: LingExtensionRegistry;
   readonly store: ReturnType<RunStoreRegistry["getStore"]>;
   readonly pluginId: string;
   readonly includeEvents: boolean;
 }) {
   const plugin = getManagedPluginView({
+    cwd: input.cwd,
     extensionRegistry: input.extensionRegistry,
     store: input.store,
     pluginId: input.pluginId,
@@ -518,6 +698,20 @@ function publicMcpServer(
 ): PublicMcpServer | undefined {
   const server = store.getMcpServer(serverId);
   return server ? toPublicMcpServer({ store, server, secretResolver, now }) : undefined;
+}
+
+function publicPluginPackage(record: ManagedPluginPackageRecord) {
+  return {
+    pluginId: record.pluginId,
+    sourceKind: record.sourceKind,
+    version: record.version,
+    status: record.status,
+    cacheRef: record.cacheRef,
+    packageHash: record.packageHash,
+    installedAt: record.installedAt,
+    updatedAt: record.updatedAt,
+    uninstalledAt: record.uninstalledAt,
+  };
 }
 
 function writeRouteError(response: ServerResponse, error: unknown): void {

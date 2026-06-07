@@ -3,6 +3,10 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
+  // The mock daemon suite was originally one large spec, which made execution
+  // effectively serial. Keep that contract after splitting files so browser
+  // storage, route mocks, and Vite app state do not race across domains.
+  workers: 1,
   expect: {
     timeout: 5_000,
   },

@@ -4,6 +4,8 @@ import type { McpRuntimeStatusSnapshot, McpServer, McpTool } from "./mcp-types.j
 export type ManagedPluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
 export type ManagedPluginStatus = "available" | "enabled" | "disabled" | "blocked";
 export type ManagedPluginHealthStatus = "unknown" | "ready" | "failed" | "disabled" | "expired";
+export type ManagedPluginPackageStatus = "installed" | "uninstalled";
+export type ManagedPluginRuntimePreviewStatus = "injectable" | "blocked" | "disabled";
 
 export type ManagedPluginContributionKind =
   | "mcp-server"
@@ -98,7 +100,90 @@ export type ManagedPluginEventType =
   | "preset_applied"
   | "checked"
   | "contribution_linked"
-  | "contribution_disabled";
+  | "contribution_disabled"
+  | "installed"
+  | "uninstalled"
+  | "package_refreshed"
+  | "runtime_previewed";
+
+export interface ManagedPluginPackageRecord {
+  readonly pluginId: string;
+  readonly sourceKind: ManagedPluginSourceKind;
+  readonly version: string;
+  readonly status: ManagedPluginPackageStatus;
+  readonly cacheRef: string;
+  readonly packageHash?: string;
+  readonly manifestJson: string;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+  readonly uninstalledAt?: string;
+}
+
+export interface UpsertManagedPluginPackageInput {
+  readonly pluginId: string;
+  readonly sourceKind: ManagedPluginSourceKind;
+  readonly version: string;
+  readonly status?: ManagedPluginPackageStatus;
+  readonly cacheRef: string;
+  readonly packageHash?: string;
+  readonly manifestJson: string;
+  readonly installedAt?: string;
+  readonly uninstalledAt?: string;
+}
+
+export interface ManagedPluginPolicyOverlayView {
+  readonly id: string;
+  readonly pluginId: string;
+  readonly contributionId: string;
+  readonly targetKind: "mcp-server" | "mcp-tool" | "app" | "hook";
+  readonly targetId: string;
+  readonly defaultApproval: ManagedPluginDefaultApproval;
+  readonly sideEffectLevel: ManagedPluginSideEffectLevel;
+  readonly reason: string;
+}
+
+export interface ManagedPluginRuntimePreview {
+  readonly pluginId: string;
+  readonly status: ManagedPluginRuntimePreviewStatus;
+  readonly package?: ManagedPluginPackageView;
+  readonly mcpServers: readonly ManagedPluginLinkedResource[];
+  readonly skillPacks: readonly ManagedPluginLinkedResource[];
+  readonly apps: readonly ManagedPluginLinkedResource[];
+  readonly hooks: readonly ManagedPluginLinkedResource[];
+  readonly policyOverlays: readonly ManagedPluginPolicyOverlayView[];
+  readonly blockers: readonly string[];
+}
+
+export interface ManagedPluginRuntimeSnapshot {
+  readonly id: string;
+  readonly runId?: string;
+  readonly cwd: string;
+  readonly pluginIds: readonly string[];
+  readonly capabilities: readonly ManagedPluginRuntimePreview[];
+  readonly policyOverlays: readonly ManagedPluginPolicyOverlayView[];
+  readonly createdAt: string;
+}
+
+export interface CreateManagedPluginRuntimeSnapshotInput {
+  readonly id?: string;
+  readonly runId?: string;
+  readonly cwd: string;
+  readonly capabilities: readonly ManagedPluginRuntimePreview[];
+  readonly policyOverlays: readonly ManagedPluginPolicyOverlayView[];
+  readonly createdAt?: string;
+}
+
+export interface ManagedPluginPackageView {
+  readonly pluginId: string;
+  readonly sourceKind: ManagedPluginSourceKind;
+  readonly version: string;
+  readonly status: ManagedPluginPackageStatus;
+  readonly cacheRef: string;
+  readonly packageHash?: string;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+  readonly uninstalledAt?: string;
+}
 
 export interface ManagedPluginEvent {
   readonly id: string;
@@ -180,6 +265,8 @@ export interface ManagedPluginView {
   readonly requiredSecrets?: readonly ManagedPluginSecretRequirement[];
   readonly defaultApprovals?: readonly ManagedPluginApprovalDefault[];
   readonly health?: ManagedPluginHealthSnapshot;
+  readonly package?: ManagedPluginPackageView;
+  readonly runtimePreview?: ManagedPluginRuntimePreview;
   readonly linkedResources: readonly ManagedPluginLinkedResource[];
   readonly events?: readonly ManagedPluginEvent[];
   readonly disabledReason?: string;
@@ -188,6 +275,10 @@ export interface ManagedPluginView {
     readonly canDisable: boolean;
     readonly canCheck: boolean;
     readonly canApplyPreset: boolean;
+    readonly canInstall: boolean;
+    readonly canUninstall: boolean;
+    readonly canRefreshPackage: boolean;
+    readonly canRuntimePreview: boolean;
   };
 }
 
@@ -224,6 +315,39 @@ export interface ManagedPluginApplyPresetResponse {
   readonly tools: readonly McpTool[];
 }
 
+export interface ManagedPluginInstallRequest {
+  readonly options?: Readonly<Record<string, unknown>>;
+}
+
+export interface ManagedPluginInstallResponse {
+  readonly plugin: ManagedPluginView;
+  readonly package: ManagedPluginPackageView;
+}
+
+export interface ManagedPluginUninstallRequest {
+  readonly reason?: string;
+}
+
+export interface ManagedPluginUninstallResponse {
+  readonly plugin: ManagedPluginView;
+  readonly package?: ManagedPluginPackageView;
+}
+
+export interface ManagedPluginRefreshPackageResponse {
+  readonly plugin: ManagedPluginView;
+  readonly package: ManagedPluginPackageView;
+}
+
+export interface ManagedPluginRuntimePreviewResponse {
+  readonly cwd: string;
+  readonly plugin: ManagedPluginView;
+  readonly preview: ManagedPluginRuntimePreview;
+}
+
 export function createManagedPluginEventId(): string {
   return `plugin_event_${randomUUID()}`;
+}
+
+export function createManagedPluginRuntimeSnapshotId(): string {
+  return `plugin_runtime_${randomUUID()}`;
 }

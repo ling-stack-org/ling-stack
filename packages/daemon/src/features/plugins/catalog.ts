@@ -11,6 +11,8 @@ import type {
   RunStore,
 } from "@ling-stack/core";
 import { CUA_DRIVER_PLUGIN_ID, CUA_DRIVER_MCP_SERVER_ID, listTrustedLocalPresetDescriptors } from "./presets.js";
+import { listBundledPackageDescriptors } from "./source-index.js";
+import { buildManagedPluginRuntimePreview, toManagedPluginPackageView } from "./runtime-injection.js";
 
 const sourceOrder = new Map([
   ["built-in", 0],
@@ -19,6 +21,7 @@ const sourceOrder = new Map([
 ]);
 
 export function listManagedPluginViews(input: {
+  readonly cwd: string;
   readonly extensionRegistry: LingExtensionRegistry;
   readonly store: RunStore;
   readonly now: string;
@@ -35,12 +38,14 @@ export function listManagedPluginViews(input: {
       health: input.store.getManagedPluginHealthSnapshot(descriptor.id, input.now),
       events: input.includeEvents ? input.store.listManagedPluginEvents({ pluginId: descriptor.id, limit: 20 }) : undefined,
       store: input.store,
+      cwd: input.cwd,
     }));
   return views.sort(compareManagedPluginViews);
 }
 
 export function getManagedPluginView(input: {
   readonly pluginId: string;
+  readonly cwd: string;
   readonly extensionRegistry: LingExtensionRegistry;
   readonly store: RunStore;
   readonly now: string;
@@ -102,6 +107,9 @@ function buildDescriptorMap(
   const descriptors = new Map<string, ManagedPluginDescriptor>();
   for (const extension of extensionRegistry.list()) {
     const descriptor = extensionToManagedPluginDescriptor(extension);
+    descriptors.set(descriptor.id, descriptor);
+  }
+  for (const descriptor of listBundledPackageDescriptors()) {
     descriptors.set(descriptor.id, descriptor);
   }
   for (const descriptor of listTrustedLocalPresetDescriptors()) {
@@ -171,6 +179,7 @@ function extensionToContribution(extension: LingExtensionMetadata): ManagedPlugi
 }
 
 function createManagedPluginView(input: {
+  readonly cwd: string;
   readonly descriptor: ManagedPluginDescriptor;
   readonly record?: ManagedPluginRecord;
   readonly contributionRecords: readonly ManagedPluginContributionRecord[];
@@ -214,6 +223,16 @@ function createManagedPluginView(input: {
         displayName: linked.displayName,
       };
     });
+  const packageRecord = input.store.getManagedPluginPackage(input.descriptor.id);
+  const packageView = packageRecord ? toManagedPluginPackageView(packageRecord) : undefined;
+  const runtimePreview = input.descriptor.sourceKind === "bundled"
+    ? buildManagedPluginRuntimePreview({
+        cwd: input.cwd,
+        store: input.store,
+        descriptor: input.descriptor,
+        now: new Date().toISOString(),
+      })
+    : undefined;
 
   return {
     id: input.descriptor.id,
@@ -236,14 +255,20 @@ function createManagedPluginView(input: {
           ttlMs: 0,
         })
       : input.health,
+    package: packageView,
+    runtimePreview,
     linkedResources,
     events: input.events,
     disabledReason: input.record?.disabledReason,
     actions: {
       canEnable: !blocked && status !== "enabled",
       canDisable: status === "enabled",
-      canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || input.descriptor.sourceKind === "built-in",
+      canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || input.descriptor.sourceKind === "built-in" || input.descriptor.sourceKind === "bundled",
       canApplyPreset: !blocked && input.descriptor.id === CUA_DRIVER_PLUGIN_ID,
+      canInstall: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status !== "installed",
+      canUninstall: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status === "installed",
+      canRefreshPackage: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status === "installed",
+      canRuntimePreview: input.descriptor.sourceKind === "bundled",
     },
   };
 }

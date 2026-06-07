@@ -34,11 +34,12 @@ import type {
   RunnerListItem,
   WorkspaceRuntimeSettings,
   ManagedPluginApplyPresetResponse,
+  ManagedPluginRuntimePreviewResponse,
   ManagedPluginView,
 } from "../../types.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
-import type { PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
+import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 
 type SettingsSection = "external-work" | "interface" | "runtime" | "approval-policy" | "skill-library" | "plugins";
 
@@ -56,6 +57,8 @@ export function SettingsPage({
   pluginBusyId,
   pluginBusyAction,
   latestPluginApplyResult,
+  latestPluginRuntimePreview,
+  latestPluginNotice,
   isLoading,
   runtimeSettingsLoading,
   runtimeSettingsAction,
@@ -76,6 +79,11 @@ export function SettingsPage({
   onRefreshPlugins,
   onApplyPluginPreset,
   onCheckPlugin,
+  onValidatePluginPackage,
+  onInstallPlugin,
+  onUninstallPlugin,
+  onRefreshPluginPackage,
+  onPreviewPluginRuntime,
   onEnablePlugin,
   onDisablePlugin,
   onExternalWorkAction,
@@ -99,6 +107,8 @@ export function SettingsPage({
   readonly pluginBusyId: string;
   readonly pluginBusyAction: PluginBusyAction | undefined;
   readonly latestPluginApplyResult?: ManagedPluginApplyPresetResponse;
+  readonly latestPluginRuntimePreview?: ManagedPluginRuntimePreviewResponse;
+  readonly latestPluginNotice?: PluginActionNotice;
   readonly isLoading: boolean;
   readonly runtimeSettingsLoading: boolean;
   readonly runtimeSettingsAction: "save" | undefined;
@@ -119,6 +129,11 @@ export function SettingsPage({
   readonly onRefreshPlugins: () => void;
   readonly onApplyPluginPreset: (pluginId: string) => void;
   readonly onCheckPlugin: (pluginId: string) => void;
+  readonly onValidatePluginPackage: (pluginId: string) => void;
+  readonly onInstallPlugin: (pluginId: string) => void;
+  readonly onUninstallPlugin: (pluginId: string) => void;
+  readonly onRefreshPluginPackage: (pluginId: string) => void;
+  readonly onPreviewPluginRuntime: (pluginId: string) => void;
   readonly onEnablePlugin: (pluginId: string) => void;
   readonly onDisablePlugin: (pluginId: string) => void;
   readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => void;
@@ -674,9 +689,16 @@ export function SettingsPage({
           busyPluginId={pluginBusyId}
           busyAction={pluginBusyAction}
           latestApplyResult={latestPluginApplyResult}
+          latestRuntimePreview={latestPluginRuntimePreview}
+          latestNotice={latestPluginNotice}
           onRefresh={onRefreshPlugins}
           onApplyPreset={onApplyPluginPreset}
           onCheck={onCheckPlugin}
+          onValidatePackage={onValidatePluginPackage}
+          onInstall={onInstallPlugin}
+          onUninstall={onUninstallPlugin}
+          onRefreshPackage={onRefreshPluginPackage}
+          onRuntimePreview={onPreviewPluginRuntime}
           onEnable={onEnablePlugin}
           onDisable={onDisablePlugin}
           onOpenMcpSettings={onOpenMcpSettings}
