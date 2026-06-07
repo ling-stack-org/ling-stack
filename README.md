@@ -88,7 +88,7 @@ Design intent:
 - Keep the left sidebar focused on workspace, inbox, tasks, runs, channels, AI teammates, direct messages, and a compact configuration rail.
 - Keep the center as the main work surface: channel activity, task cards, run actions, and a task composer.
 - Make AI teammate creation a client-style wizard: choose default role or blank, bind model, fill profile, then choose channel and memory/file scope.
-- Keep provider setup, approval policy, media jobs, and settings out of the homepage flow; expose them through configuration entry points and dedicated pages.
+- Keep provider setup, approval policy, MCP tool servers, media jobs, and settings out of the homepage flow; expose them through configuration entry points and dedicated settings pages.
 - Keep the right panel for context: readiness, first-run state, approvals, artifacts, provider health, and live events.
 - Use a macOS-like, minimal, frosted-glass visual system with restrained gradients, readable operational density, and no decorative hero sections.
 

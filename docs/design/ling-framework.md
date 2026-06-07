@@ -410,7 +410,7 @@ Teammate private workspace should expose:
 - MCP/tools,
 - settings.
 
-Provider setup belongs in Model Workbench. Tool access belongs in MCP Tool Access.
+Provider setup belongs in Model Workbench. MCP tool server setup belongs in workspace Settings.
 Memory configuration should become its own trust surface as Ling Memory v1 lands.
 
 ## Trust Boundaries

@@ -67,7 +67,6 @@ import {
   LazyAiTeammatesPage as AiTeammatesPage,
   LazyApprovalsPage as ApprovalsPage,
   LazyMediaJobsPage as MediaJobsPage,
-  LazyMcpToolsPage as McpToolsPage,
   LazyPageErrorBoundary,
   LazyProviderSettings as ProviderSettings,
   LazyRunHistory as RunHistory,
@@ -995,9 +994,6 @@ export function AppShell(): JSX.Element {
       void refreshProviderTemplates();
       void refreshProviders();
     }
-    if (activeView === "mcp") {
-      void refreshMcp();
-    }
     if (activeView === "teammates") {
       void refreshAiTeammates();
       void refreshChannels();
@@ -1018,6 +1014,7 @@ export function AppShell(): JSX.Element {
       void refreshApprovalPolicy();
       void refreshRuntimeSettings();
       void refreshExternalWorkStatus();
+      void refreshMcp();
       void refreshPlugins();
     }
   }, [activeView]);
@@ -2338,7 +2335,7 @@ export function AppShell(): JSX.Element {
     setSelectedTaskId(runToRepair.taskId);
   }
 
-  const showInspector = !["workspace", "providers", "mcp", "teammates", "runs", "threads", "automations", "approvals", "media", "settings"].includes(activeView);
+  const showInspector = !["workspace", "providers", "teammates", "runs", "threads", "automations", "approvals", "media", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || form.providerPresetId || selectedChannelForRun?.defaultProviderPresetId || "";
@@ -2535,7 +2532,7 @@ export function AppShell(): JSX.Element {
                     </div>
                     {activeView === "teammates" ? (
                       <span className="status-badge succeeded">{selectedAiTeammate ? selectedAiTeammate.status : aiTeammatesLoading ? t("Loading") : GSTACK_DEFAULT_SKILL_PACK_ID}</span>
-                    ) : activeView === "mcp" || activeView === "automations" || activeView === "settings" ? null : (
+                    ) : activeView === "automations" || activeView === "settings" ? null : (
                       <StatusBadge status={latestStatus} />
                     )}
                   </div>
@@ -2566,22 +2563,6 @@ export function AppShell(): JSX.Element {
                 onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
                 onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
                 onOpenProviders={() => openPlainView("providers")}
-                  />
-                ) : activeView === "mcp" ? (
-                  <McpToolsPage
-                servers={mcpServers}
-                tools={mcpTools}
-                isLoading={mcpLoading}
-                busyServerId={mcpBusyServerId}
-                busyAction={mcpBusyAction}
-                errorMessage={errorMessage}
-                cwd={form.cwd}
-                onRefresh={() => void refreshMcp()}
-                onCreate={addMcpServer}
-                onUpdate={saveMcpServer}
-                onDelete={(serverId) => void removeMcpServer(serverId)}
-                onCheck={runMcpServerCheck}
-                onSyncTools={syncMcpTools}
                   />
                 ) : activeView === "runs" ? (
                   <RunHistory
@@ -2727,72 +2708,79 @@ export function AppShell(): JSX.Element {
                   />
                 ) : activeView === "settings" ? (
                   <SettingsPage
-                cwd={form.cwd}
-                policy={approvalPolicy}
-                form={approvalPolicyForm}
-                runners={runners}
-                runtimeSettings={runtimeSettings}
-                runtimeSettingsForm={runtimeSettingsForm}
-                skillLibraryRefreshToken={skillLibraryRefreshToken}
-                selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
-                externalWorkStatus={externalWorkStatus}
-                plugins={plugins}
-                pluginsLoading={pluginsLoading}
-                pluginBusyId={pluginBusyId}
-                pluginBusyAction={pluginBusyAction}
-	                latestPluginApplyResult={latestPluginApplyResult}
-	                latestPluginRuntimePreview={latestPluginRuntimePreview}
-	                latestPluginNotice={latestPluginNotice}
-	                permissionMode={form.permissionMode}
-	                permissionPreset={form.permissionPreset}
-	                isLoading={approvalPolicyLoading}
-                runtimeSettingsLoading={runtimeSettingsLoading}
-                runtimeSettingsAction={runtimeSettingsAction}
-                runtimeSettingsError={runtimeSettingsError}
-                externalWorkStatusLoading={externalWorkStatusLoading}
-                externalWorkStatusAction={externalWorkStatusAction}
-                externalWorkSecretAction={externalWorkSecretAction}
-	                externalWorkWorkflowAction={externalWorkWorkflowAction}
-	                errorMessage={errorMessage}
-	                onFormChange={setApprovalPolicyForm}
-	                onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode, permissionPreset: inferPermissionPreset(permissionMode) }))}
-	                onRefresh={() => void refreshApprovalPolicy()}
-                onSave={() => void saveApprovalPolicy()}
-                onRuntimeSettingsFormChange={setRuntimeSettingsForm}
-                onToggleAllowedRunner={toggleAllowedRunner}
-                onRefreshRuntimeSettings={() => void refreshRuntimeSettings()}
-                onSaveRuntimeSettings={() => void saveRuntimeSettings()}
-                onRefreshExternalWork={() => void refreshExternalWorkStatus()}
-                onRefreshPlugins={() => void refreshPlugins()}
-                onApplyPluginPreset={(pluginId) => void applyPluginPreset(pluginId)}
-                onCheckPlugin={(pluginId) => void checkPlugin(pluginId)}
-                onValidatePluginPackage={(pluginId) => void validatePackage(pluginId)}
-                onInstallPlugin={(pluginId) => void installPlugin(pluginId)}
-                onUninstallPlugin={(pluginId) => void uninstallPlugin(pluginId)}
-                onRefreshPluginPackage={(pluginId) => void refreshPluginPackage(pluginId)}
-                onPreviewPluginRuntime={(pluginId) => void previewPluginRuntime(pluginId)}
-                onEnablePlugin={(pluginId) => void enablePlugin(pluginId)}
-                onDisablePlugin={(pluginId) => void disablePlugin(pluginId)}
-                onExternalWorkAction={(action) => void runExternalWorkStatusAction(action)}
-                onConfigureExternalWorkWorkflow={(input) => configureExternalWorkWorkflowAction(input)}
-                onConfigureExternalWorkSecret={(token) => configureExternalWorkSecretAction(token)}
-                onDeleteExternalWorkSecret={() => deleteExternalWorkSecretAction()}
-                onOpenExternalWorkRecords={() => {
-                  if (selectedChannelId) {
-                    setActiveView("workspace");
-                    setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
-                  }
-                }}
-                onOpenExternalWorkTriage={() => {
-                  if (selectedChannelId) {
-                    setActiveView("workspace");
-                    setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
-                  }
-                }}
-                onOpenMcpSettings={() => {
-                  setActiveView("mcp");
-                  setActiveSidebarTarget("mcp");
-                }}
+                    cwd={form.cwd}
+                    policy={approvalPolicy}
+                    form={approvalPolicyForm}
+                    runners={runners}
+                    runtimeSettings={runtimeSettings}
+                    runtimeSettingsForm={runtimeSettingsForm}
+                    skillLibraryRefreshToken={skillLibraryRefreshToken}
+                    selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
+                    externalWorkStatus={externalWorkStatus}
+                    mcpServers={mcpServers}
+                    mcpTools={mcpTools}
+                    mcpLoading={mcpLoading}
+                    mcpBusyServerId={mcpBusyServerId}
+                    mcpBusyAction={mcpBusyAction}
+                    plugins={plugins}
+                    pluginsLoading={pluginsLoading}
+                    pluginBusyId={pluginBusyId}
+                    pluginBusyAction={pluginBusyAction}
+                    latestPluginApplyResult={latestPluginApplyResult}
+                    latestPluginRuntimePreview={latestPluginRuntimePreview}
+                    latestPluginNotice={latestPluginNotice}
+                    permissionMode={form.permissionMode}
+                    permissionPreset={form.permissionPreset}
+                    isLoading={approvalPolicyLoading}
+                    runtimeSettingsLoading={runtimeSettingsLoading}
+                    runtimeSettingsAction={runtimeSettingsAction}
+                    runtimeSettingsError={runtimeSettingsError}
+                    externalWorkStatusLoading={externalWorkStatusLoading}
+                    externalWorkStatusAction={externalWorkStatusAction}
+                    externalWorkSecretAction={externalWorkSecretAction}
+                    externalWorkWorkflowAction={externalWorkWorkflowAction}
+                    errorMessage={errorMessage}
+                    onFormChange={setApprovalPolicyForm}
+                    onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode, permissionPreset: inferPermissionPreset(permissionMode) }))}
+                    onRefresh={() => void refreshApprovalPolicy()}
+                    onSave={() => void saveApprovalPolicy()}
+                    onRuntimeSettingsFormChange={setRuntimeSettingsForm}
+                    onToggleAllowedRunner={toggleAllowedRunner}
+                    onRefreshRuntimeSettings={() => void refreshRuntimeSettings()}
+                    onSaveRuntimeSettings={() => void saveRuntimeSettings()}
+                    onRefreshExternalWork={() => void refreshExternalWorkStatus()}
+                    onRefreshPlugins={() => void refreshPlugins()}
+                    onApplyPluginPreset={(pluginId) => void applyPluginPreset(pluginId)}
+                    onCheckPlugin={(pluginId) => void checkPlugin(pluginId)}
+                    onValidatePluginPackage={(pluginId) => void validatePackage(pluginId)}
+                    onInstallPlugin={(pluginId) => void installPlugin(pluginId)}
+                    onUninstallPlugin={(pluginId) => void uninstallPlugin(pluginId)}
+                    onRefreshPluginPackage={(pluginId) => void refreshPluginPackage(pluginId)}
+                    onPreviewPluginRuntime={(pluginId) => void previewPluginRuntime(pluginId)}
+                    onEnablePlugin={(pluginId) => void enablePlugin(pluginId)}
+                    onDisablePlugin={(pluginId) => void disablePlugin(pluginId)}
+                    onExternalWorkAction={(action) => void runExternalWorkStatusAction(action)}
+                    onConfigureExternalWorkWorkflow={(input) => configureExternalWorkWorkflowAction(input)}
+                    onConfigureExternalWorkSecret={(token) => configureExternalWorkSecretAction(token)}
+                    onDeleteExternalWorkSecret={() => deleteExternalWorkSecretAction()}
+                    onRefreshMcp={() => void refreshMcp()}
+                    onCreateMcpServer={addMcpServer}
+                    onUpdateMcpServer={saveMcpServer}
+                    onDeleteMcpServer={(serverId) => void removeMcpServer(serverId)}
+                    onCheckMcpServer={runMcpServerCheck}
+                    onSyncMcpTools={syncMcpTools}
+                    onOpenExternalWorkRecords={() => {
+                      if (selectedChannelId) {
+                        setActiveView("workspace");
+                        setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
+                      }
+                    }}
+                    onOpenExternalWorkTriage={() => {
+                      if (selectedChannelId) {
+                        setActiveView("workspace");
+                        setActiveSidebarTarget(channelSidebarTarget(selectedChannelId));
+                      }
+                    }}
                   />
                 ) : (
                   <ApprovalsPage

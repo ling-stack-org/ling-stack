@@ -14,7 +14,6 @@ import {
   Timer,
   Users,
   Workflow,
-  Wrench,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
@@ -83,7 +82,6 @@ export function SidebarNavigation({
       <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label="Ling Stack navigation">
       <nav className="primary-nav">
         <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeSidebarTarget === "providers"} onClick={() => onOpenView("providers")} />
-        <NavItem icon={<Wrench />} label={t("Tool Access")} active={activeSidebarTarget === "mcp"} onClick={() => onOpenView("mcp")} />
         <NavItem icon={<History />} label={t("Runs")} active={activeSidebarTarget === "runs"} onClick={() => onOpenView("runs")} />
         <NavItem icon={<Workflow />} label={t("Threads")} active={activeSidebarTarget === "threads"} onClick={() => onOpenView("threads")} />
         <NavItem icon={<Timer />} label={t("Automations")} active={activeSidebarTarget === "automations"} onClick={() => onOpenView("automations")} />

@@ -18,6 +18,7 @@ import {
   Settings,
   ShieldCheck,
   Trash2,
+  Wrench,
 } from "lucide-react";
 import { LanguageSwitcher, useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -45,6 +46,9 @@ import type {
   RunnerListItem,
   SessionPermissionMode,
   WorkspaceRuntimeSettings,
+  McpServer,
+  McpServerFormState,
+  McpTool,
   ManagedPluginApplyPresetResponse,
   ManagedPluginRuntimePreviewResponse,
   ManagedPluginView,
@@ -52,8 +56,10 @@ import type {
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
 import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
+import { McpToolsPage } from "../mcp/McpToolsPage.js";
+import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
 
-type SettingsSection = "external-work" | "interface" | "runtime" | "approval-policy" | "skill-library" | "plugins";
+type SettingsSection = "external-work" | "interface" | "runtime" | "approval-policy" | "skill-library" | "mcp" | "plugins";
 
 export function SettingsPage({
   cwd,
@@ -65,6 +71,11 @@ export function SettingsPage({
   skillLibraryRefreshToken,
   selectedChannel,
   externalWorkStatus,
+  mcpServers,
+  mcpTools,
+  mcpLoading,
+  mcpBusyServerId,
+  mcpBusyAction,
   plugins,
   pluginsLoading,
   pluginBusyId,
@@ -108,7 +119,12 @@ export function SettingsPage({
   onDeleteExternalWorkSecret,
   onOpenExternalWorkRecords,
   onOpenExternalWorkTriage,
-  onOpenMcpSettings,
+  onRefreshMcp,
+  onCreateMcpServer,
+  onUpdateMcpServer,
+  onDeleteMcpServer,
+  onCheckMcpServer,
+  onSyncMcpTools,
 }: {
   readonly cwd: string;
   readonly policy: ApprovalPolicy | undefined;
@@ -119,6 +135,11 @@ export function SettingsPage({
   readonly skillLibraryRefreshToken: number;
   readonly selectedChannel: Channel | undefined;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
+  readonly mcpServers: readonly McpServer[];
+  readonly mcpTools: readonly McpTool[];
+  readonly mcpLoading: boolean;
+  readonly mcpBusyServerId: string;
+  readonly mcpBusyAction: McpBusyAction | undefined;
   readonly plugins: readonly ManagedPluginView[];
   readonly pluginsLoading: boolean;
   readonly pluginBusyId: string;
@@ -166,7 +187,12 @@ export function SettingsPage({
   readonly onDeleteExternalWorkSecret: () => Promise<void>;
   readonly onOpenExternalWorkRecords: () => void;
   readonly onOpenExternalWorkTriage: () => void;
-  readonly onOpenMcpSettings: () => void;
+  readonly onRefreshMcp: () => void;
+  readonly onCreateMcpServer: (form: McpServerFormState) => Promise<void>;
+  readonly onUpdateMcpServer: (serverId: string, form: McpServerFormState) => Promise<void>;
+  readonly onDeleteMcpServer: (serverId: string) => void;
+  readonly onCheckMcpServer: (serverId: string) => boolean | Promise<boolean> | void | Promise<void>;
+  readonly onSyncMcpTools: (serverId: string) => boolean | Promise<boolean> | void | Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
   const [externalWorkToken, setExternalWorkToken] = useState("");
@@ -271,6 +297,17 @@ export function SettingsPage({
           <span>
             <strong>{t("Skill Library")}</strong>
             <small>{t("Skill definitions and imports")}</small>
+          </span>
+        </button>
+        <button
+          className={activeSection === "mcp" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("mcp")}
+        >
+          <span className="settings-section-icon"><Wrench size={16} /></span>
+          <span>
+            <strong>{t("MCP tool servers")}</strong>
+            <small>{t("{count} servers", { count: mcpServers.length })}</small>
           </span>
         </button>
         <button
@@ -743,6 +780,23 @@ export function SettingsPage({
       </section>
       ) : null}
       {activeSection === "skill-library" ? <SkillLibrarySettingsPanel cwd={cwd} refreshToken={skillLibraryRefreshToken} /> : null}
+      {activeSection === "mcp" ? (
+        <McpToolsPage
+          servers={mcpServers}
+          tools={mcpTools}
+          isLoading={mcpLoading}
+          busyServerId={mcpBusyServerId}
+          busyAction={mcpBusyAction}
+          errorMessage={errorMessage}
+          cwd={cwd}
+          onRefresh={onRefreshMcp}
+          onCreate={onCreateMcpServer}
+          onUpdate={onUpdateMcpServer}
+          onDelete={onDeleteMcpServer}
+          onCheck={onCheckMcpServer}
+          onSyncTools={onSyncMcpTools}
+        />
+      ) : null}
       {activeSection === "plugins" ? (
         <PluginManagerSettingsPanel
           cwd={cwd}
@@ -763,7 +817,10 @@ export function SettingsPage({
           onRuntimePreview={onPreviewPluginRuntime}
           onEnable={onEnablePlugin}
           onDisable={onDisablePlugin}
-          onOpenMcpSettings={onOpenMcpSettings}
+          onOpenMcpSettings={() => {
+            onRefreshMcp();
+            setActiveSection("mcp");
+          }}
         />
       ) : null}
       </div>

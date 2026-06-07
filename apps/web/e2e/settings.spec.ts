@@ -109,11 +109,12 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(roleDetail).toBeVisible();
   await expect(roleDetail.getByText("这个队友能做什么")).toBeVisible();
   await expect(roleDetail.getByText("系统提示词")).toBeHidden();
-  await roleDetail.getByRole("button", { name: "关闭角色详情" }).click();
+  await roleDetail.getByRole("button", { name: "关闭角色详情" }).click({ force: true });
+  await expect(roleDetail).toHaveCount(0);
   await expect(page.getByText("Role", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Pick a default teammate or start blank")).toHaveCount(0);
   await expect(page.getByText("标准 · medium")).toHaveCount(0);
-  await page.getByLabel("队友模板").getByRole("button", { name: "添加队友" }).click();
+  await page.getByLabel("队友模板").getByRole("button", { name: "添加队友", exact: true }).click();
   const createDialog = page.getByRole("dialog", { name: "创建 AI 队友" });
   await expect(createDialog).toBeVisible();
   await expect(createDialog.getByText("选择角色", { exact: true })).toBeVisible();
@@ -295,7 +296,7 @@ test("settings plugins page applies and controls the CUA trusted-local preset wi
   expect(state.mcpServers.find((server) => server.id === "mcp_cua_driver")?.enabled).toBe(true);
 
   await pluginsPanel.getByRole("button", { name: "MCP settings" }).click();
-  await expect(page.getByRole("heading", { name: "Tool Access", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /MCP tool servers/ })).toHaveClass(/active/);
   await expect(page.locator(".mcp-server-row").filter({ hasText: "Cua Driver" })).toBeVisible();
 });
 

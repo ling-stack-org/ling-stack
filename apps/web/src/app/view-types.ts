@@ -1,4 +1,4 @@
-export type ViewId = "workspace" | "teammates" | "runs" | "threads" | "automations" | "providers" | "mcp" | "media" | "approvals" | "settings";
+export type ViewId = "workspace" | "teammates" | "runs" | "threads" | "automations" | "providers" | "media" | "approvals" | "settings";
 export type SidebarViewTarget = ViewId | "tasks";
 export type SidebarConversationKind = "teammate" | "direct";
 export type SidebarTarget = SidebarViewTarget | `channel:${string}` | `${SidebarConversationKind}:${string}`;
@@ -50,9 +50,6 @@ export function viewTitle(view: ViewId): string {
   if (view === "automations") {
     return "Automations";
   }
-  if (view === "mcp") {
-    return "Tool Access";
-  }
   if (view === "approvals") {
     return "Approvals";
   }
@@ -80,9 +77,6 @@ export function viewDescription(view: ViewId): string {
   }
   if (view === "automations") {
     return "创建、预览并运行可重复的 AI teammate 工作。";
-  }
-  if (view === "mcp") {
-    return "统一管理 MCP 工具服务，并按 AI 队友单独授权。";
   }
   if (view === "approvals") {
     return "查看和处理需要人工决策的高风险动作；bash、edit、write 会在执行前等待审批。";

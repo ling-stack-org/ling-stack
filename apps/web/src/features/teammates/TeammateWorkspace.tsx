@@ -2397,7 +2397,7 @@ export function TeammateWorkspace({
                       </span>
                     </header>
                     {serverTools.length === 0 ? (
-                      <small className="teammate-mcp-inline-hint">{t("No tools discovered yet. Sync tools from Tool Access first.")}</small>
+                      <small className="teammate-mcp-inline-hint">{t("No tools discovered yet. Sync tools from MCP settings first.")}</small>
                     ) : null}
                     {expanded && serverTools.length > 0 ? (
                       <div className="teammate-mcp-tool-tree">

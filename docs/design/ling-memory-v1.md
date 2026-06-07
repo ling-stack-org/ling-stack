@@ -97,7 +97,7 @@ Examples:
 
 - "Runner backend defaults to embedded Pi coding-agent mode."
 - "Provider routing order is teammate, explicit run, channel default, workspace selected."
-- "Model Workbench uses the same full-width workspace frame as Tool Access."
+- "MCP tool server setup lives under workspace Settings, not the homepage flow."
 
 ### Channel Memory
 

@@ -578,12 +578,11 @@ export const LazyApprovalsPage = lazy(() =>
 export const LazyMediaJobsPage = lazy(() =>
   import("../features/media/index.js").then((module) => ({ default: module.MediaJobsPage })),
 );
-export const LazyMcpToolsPage = lazy(() =>
-  import("../features/mcp/index.js").then((module) => ({ default: module.McpToolsPage })),
-);
 ```
 
 Keep `SidebarNavigation`, `StatusBadge`, `MetaRow`, small shell UI, and global CSS eager.
+MCP tool server management is loaded through the workspace Settings chunk instead of a
+standalone top-level route.
 
 ### Suspense Fallback
 
@@ -1344,8 +1343,8 @@ Targets:
 - Verified `corepack pnpm --filter @ling-stack/web build`.
 - Verified `git diff --check`.
 - Browser smoke via Playwright opened `http://127.0.0.1:5174/` and clicked
-  Model Workbench, Tool Access, Runs, Inbox, Media Jobs, AI Teammates, and Settings
-  with no `console.error` or `pageerror`.
+  Model Workbench, Runs, Inbox, Media Jobs, AI Teammates, and Settings with no
+  `console.error` or `pageerror`.
 - Final build emitted separate lazy chunks for Providers, MCP, Runs, Approvals, Media,
   AI Teammates, Settings, Teammate Workspace, and Workspace.
 - Final initial JS evidence: `dist/assets/index-BvgvwR52.js` is `453.07 kB`

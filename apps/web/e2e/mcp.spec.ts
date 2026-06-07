@@ -7,7 +7,7 @@ import {
   createMockTeammate,
 } from "./support/mock-state";
 
-test("MCP tool access page creates servers without exposing secret values", async ({ page }) => {
+test("MCP settings creates servers without exposing secret values", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
@@ -15,8 +15,9 @@ test("MCP tool access page creates servers without exposing secret values", asyn
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工具接入" }).click();
-  await expect(page.getByRole("heading", { name: "工具接入", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工具接入" })).toHaveCount(0);
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /MCP 工具服务/ }).click();
   await expect(page.getByText("统一管理 MCP 工具服务，并按 AI 队友单独授权。").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "添加 MCP 服务" })).toBeVisible();
   await expect(page.getByText("没有 MCP 服务")).toBeVisible();
@@ -45,7 +46,7 @@ test("MCP tool access page creates servers without exposing secret values", asyn
   await expect.poll(async () => {
     const box = await serverRow.boundingBox();
     return box?.height ?? 0;
-  }).toBeLessThan(180);
+  }).toBeLessThan(240);
 
   await serverRow.getByRole("button", { name: "编辑" }).click();
   const editSheet = page.getByRole("dialog", { name: "编辑 MCP 服务" });

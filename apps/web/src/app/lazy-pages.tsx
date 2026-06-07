@@ -60,12 +60,6 @@ export const LazyMediaJobsPage = lazy(() =>
   })),
 );
 
-export const LazyMcpToolsPage = lazy(() =>
-  import("../features/mcp/McpToolsPage.js").then((module) => ({
-    default: module.McpToolsPage,
-  })),
-);
-
 interface LazyPageErrorBoundaryProps {
   readonly children: ReactNode;
   readonly resetKey: string;
