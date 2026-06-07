@@ -1,8 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { McpBroker } from "../../context.js";
 import type { SecretResolver } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { appendControlPlaneEvent } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalBooleanQuery, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
@@ -15,6 +18,7 @@ export async function handleMcpServersCollection(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   secretResolver: SecretResolver,
+  controlPlaneEvents: ControlPlaneEventHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -41,6 +45,7 @@ export async function handleMcpServersCollection(
       const input = parseMcpServerCreateRequest(body);
       const now = new Date().toISOString();
       const server = store.createMcpServer(input.serverInput, now);
+      appendMcpServerUpdatedEvent(store, controlPlaneEvents, cwd, server.id, server.enabled, now);
       writeJson(response, 201, { server: toPublicMcpServer({ store, server, secretResolver, now }) });
       return;
     }
@@ -94,6 +99,7 @@ export async function handleMcpServerItem(
   storeRegistry: RunStoreRegistry,
   mcpBroker: McpBroker,
   secretResolver: SecretResolver,
+  controlPlaneEvents: ControlPlaneEventHub,
   route: { readonly serverId: string; readonly action?: "check" | "sync-tools" | "secret" | "status" },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -134,6 +140,20 @@ export async function handleMcpServerItem(
       const result = await mcpBroker.checkServer(server, { secretResolver, now: () => now });
       const statusSnapshot = store.upsertMcpStatusSnapshot(result.statusSnapshot, now);
       const publicServer = toPublicMcpServer({ store, server, secretResolver, now });
+      appendControlPlaneEvent(store, controlPlaneEvents, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        cwd,
+        domain: "mcp",
+        entityType: "mcp_server",
+        entityId: server.id,
+        action: "mcp.status_checked",
+        data: {
+          serverId: server.id,
+          status: statusSnapshot.status,
+          toolCount: statusSnapshot.toolCount ?? 0,
+          missingSecretCount: statusSnapshot.missingSecretRefs.length,
+        },
+      }, now);
       if (statusSnapshot.status === "ready" || statusSnapshot.status === "disabled") {
         writeJson(response, 200, { server: publicServer, statusSnapshot });
       } else {
@@ -153,6 +173,20 @@ export async function handleMcpServerItem(
       const statusSnapshot = store.upsertMcpStatusSnapshot(result.statusSnapshot, now);
       if (statusSnapshot.status === "ready") {
         const cached = store.replaceMcpServerTools(server.id, result.tools, now);
+        appendControlPlaneEvent(store, controlPlaneEvents, {
+          workspaceId: DEFAULT_WORKSPACE_ID,
+          cwd,
+          domain: "mcp",
+          entityType: "mcp_server",
+          entityId: server.id,
+          action: "mcp.tools_synced",
+          data: {
+            serverId: server.id,
+            status: statusSnapshot.status,
+            toolCount: cached.length,
+            missingSecretCount: statusSnapshot.missingSecretRefs.length,
+          },
+        }, now);
         writeJson(response, 200, {
           server: toPublicMcpServer({ store, server, secretResolver, now }),
           statusSnapshot,
@@ -186,12 +220,15 @@ export async function handleMcpServerItem(
       const now = new Date().toISOString();
       let updated = store.updateMcpServer(server.id, input.serverInput, now) ?? server;
       updated = store.getMcpServer(server.id) ?? updated;
+      appendMcpServerUpdatedEvent(store, controlPlaneEvents, cwd, updated.id, updated.enabled, now);
       writeJson(response, 200, { server: toPublicMcpServer({ store, server: updated, secretResolver, now }) });
       return;
     }
 
     if (request.method === "DELETE") {
+      const now = new Date().toISOString();
       store.deleteMcpServer(server.id);
+      appendMcpServerUpdatedEvent(store, controlPlaneEvents, cwd, server.id, false, now);
       writeJson(response, 200, { ok: true });
       return;
     }
@@ -203,4 +240,26 @@ export async function handleMcpServerItem(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function appendMcpServerUpdatedEvent(
+  store: ReturnType<RunStoreRegistry["getStore"]>,
+  controlPlaneEvents: ControlPlaneEventHub,
+  cwd: string,
+  serverId: string,
+  enabled: boolean,
+  now: string,
+): void {
+  appendControlPlaneEvent(store, controlPlaneEvents, {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    cwd,
+    domain: "mcp",
+    entityType: "mcp_server",
+    entityId: serverId,
+    action: "mcp.server_updated",
+    data: {
+      serverId,
+      enabled,
+    },
+  }, now);
 }

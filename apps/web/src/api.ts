@@ -64,6 +64,10 @@ import type {
   CreateChannelRequest,
   CreateAiTeammateRequest,
   ConfirmAutomationDraftResponse,
+  ControlPlaneDomain,
+  ControlPlaneEventsRequest,
+  ControlPlaneEventsResponse,
+  ControlPlaneSnapshotResponse,
   CreateAutomationDraftRequest,
   CreateAutomationRequest,
   CreateTeammateDirectMessageRequest,
@@ -222,6 +226,27 @@ const daemonClient = new LingDaemonClient({ baseUrl: daemonBaseUrl });
 
 export async function getDaemonHealth(): Promise<DaemonHealthResponse> {
   return daemonClient.getHealth();
+}
+
+export async function getControlPlaneSnapshot(
+  cwd: string,
+  domains?: readonly ControlPlaneDomain[],
+): Promise<ControlPlaneSnapshotResponse> {
+  return daemonClient.getControlPlaneSnapshot(cwd, domains);
+}
+
+export async function listControlPlaneEvents(
+  cwd: string,
+  options: ControlPlaneEventsRequest = {},
+): Promise<ControlPlaneEventsResponse> {
+  return daemonClient.listControlPlaneEvents(cwd, options);
+}
+
+export async function streamControlPlaneEvents(
+  cwd: string,
+  options: ControlPlaneEventsRequest = {},
+): Promise<Response> {
+  return daemonClient.streamControlPlaneEvents(cwd, options);
 }
 
 export async function listAutomations(cwd: string, options: AutomationListRequest = {}): Promise<AutomationListResponse> {

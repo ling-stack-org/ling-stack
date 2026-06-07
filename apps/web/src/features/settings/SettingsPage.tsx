@@ -49,6 +49,7 @@ export function SettingsPage({
   runners,
   runtimeSettings,
   runtimeSettingsForm,
+  skillLibraryRefreshToken,
   selectedChannel,
   externalWorkStatus,
   plugins,
@@ -92,6 +93,7 @@ export function SettingsPage({
   readonly runners: readonly RunnerListItem[];
   readonly runtimeSettings: WorkspaceRuntimeSettings | undefined;
   readonly runtimeSettingsForm: RuntimeSettingsFormState;
+  readonly skillLibraryRefreshToken: number;
   readonly selectedChannel: Channel | undefined;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
   readonly plugins: readonly ManagedPluginView[];
@@ -665,7 +667,7 @@ export function SettingsPage({
       </div>
       </section>
       ) : null}
-      {activeSection === "skill-library" ? <SkillLibrarySettingsPanel cwd={cwd} /> : null}
+      {activeSection === "skill-library" ? <SkillLibrarySettingsPanel cwd={cwd} refreshToken={skillLibraryRefreshToken} /> : null}
       {activeSection === "plugins" ? (
         <PluginManagerSettingsPanel
           cwd={cwd}

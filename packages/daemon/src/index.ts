@@ -23,6 +23,7 @@ import {
 import type { DaemonContext, DaemonDependencies, RunnerAdapter } from "./context.js";
 import { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
 import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
+import { ControlPlaneEventHub } from "./features/control-plane/events.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
@@ -76,6 +77,7 @@ export function createDaemonServer(
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
   const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig);
+  const controlPlaneEvents = new ControlPlaneEventHub();
   const automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,
@@ -83,6 +85,7 @@ export function createDaemonServer(
     runtimeSupervisor,
     secretResolver,
     mcpBroker,
+    controlPlaneEvents,
   );
   const context: DaemonContext = {
     config: resolvedConfig,
@@ -97,6 +100,7 @@ export function createDaemonServer(
     externalWorkFetch,
     backgroundSchedulers,
     automationSchedulers,
+    controlPlaneEvents,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -131,6 +135,7 @@ export function createDaemonServer(
         runtimeSupervisor.releaseAll();
         backgroundSchedulers.stopAll();
         automationSchedulers.stopAll();
+        controlPlaneEvents.closeAll();
         server.close((error) => {
           storeRegistry.closeAll();
           if (error) {

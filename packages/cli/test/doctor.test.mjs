@@ -29,15 +29,16 @@ test("doctor reports a ready workspace", async () => {
     assert.match(result.stdout, /memory\.review_policy\s+memory review policy loads/);
     assert.match(result.stdout, /runtime\.leases\s+no active leases/);
     assert.ok(daemon.requests.includes("GET /health"));
-    assert.ok(daemon.requests.includes("GET /providers"));
+    assert.ok(daemon.requests.includes("GET /control-plane/snapshot"));
     assert.ok(daemon.requests.includes("GET /channels"));
     assert.ok(daemon.requests.includes("GET /tasks"));
-    assert.ok(daemon.requests.includes("GET /approval-policy"));
-    assert.ok(daemon.requests.includes("GET /skills"));
-    assert.ok(daemon.requests.includes("GET /memory/review-policy"));
+    assert.ok(!daemon.requests.includes("GET /providers"));
+    assert.ok(!daemon.requests.includes("GET /approval-policy"));
+    assert.ok(!daemon.requests.includes("GET /skills"));
+    assert.ok(!daemon.requests.includes("GET /memory/review-policy"));
     assert.ok(daemon.requests.includes("GET /runtime/leases"));
-    assert.ok(daemon.requests.includes("GET /runtime/stuck"));
-    assert.ok(daemon.requests.includes("GET /mcp/servers"));
+    assert.ok(!daemon.requests.includes("GET /runtime/stuck"));
+    assert.ok(!daemon.requests.includes("GET /mcp/servers"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -119,7 +120,7 @@ test("doctor json continues when daemon is down", async () => {
 
 test("doctor flags missing skills and memory routes without refreshing or repairing", async () => {
   const daemon = await startDoctorDaemon({
-    missingRoutes: ["/skills", "/memory/review-policy"],
+    missingRoutes: ["/control-plane/snapshot", "/skills", "/memory/review-policy"],
   });
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-routes-"));
   try {
@@ -136,6 +137,7 @@ test("doctor flags missing skills and memory routes without refreshing or repair
     assert.equal(checks.get("memory.review_policy").details.error.status, 404);
     assert.ok(daemon.requests.includes("GET /skills"));
     assert.ok(daemon.requests.includes("GET /memory/review-policy"));
+    assert.ok(daemon.requests.includes("GET /control-plane/snapshot"));
     assert.ok(!daemon.requests.includes("POST /skills/refresh"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -246,6 +248,16 @@ async function startDoctorDaemon(overrides = {}) {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/control-plane/snapshot") {
+      writeJson(response, 200, controlPlaneSnapshot({
+        cwd: url.searchParams.get("cwd"),
+        providers,
+        skills,
+        reviewPolicy,
+      }));
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/providers") {
       writeJson(response, 200, { cwd: url.searchParams.get("cwd"), providers });
       return;
@@ -333,6 +345,102 @@ function readyProvider() {
       code: "ok",
       message: "ready",
       checkedAt: "2026-05-21T00:00:00.000Z",
+    },
+  };
+}
+
+function controlPlaneSnapshot({ cwd, providers, skills, reviewPolicy }) {
+  return {
+    cwd,
+    workspaceId: "workspace_default",
+    generatedAt: "2026-05-21T00:00:00.000Z",
+    latestEventSeq: 1,
+    domains: {
+      providers: {
+        ok: true,
+        revision: 1,
+        data: {
+          counts: {
+            total: providers.length,
+            enabled: providers.filter((provider) => provider.enabled).length,
+            runnable: providers.filter((provider) => provider.enabled && provider.capabilities.includes("chat")).length,
+            preflightReady: providers.filter((provider) => provider.lastCheck?.ok === true).length,
+            missingSecrets: providers.filter((provider) => provider.apiKeyRef && provider.apiKeyConfigured !== true).length,
+          },
+          providers: providers.map((provider) => ({
+            id: provider.id,
+            displayName: provider.displayName,
+            kind: provider.kind,
+            api: provider.api,
+            enabled: provider.enabled,
+            capabilities: provider.capabilities,
+            input: provider.input,
+            runnable: provider.enabled && provider.capabilities.includes("chat"),
+            secretStatus: provider.apiKeyRef ? (provider.apiKeyConfigured ? "configured" : "missing") : "not_required",
+            secretRefKind: provider.apiKeyRef ? "env" : undefined,
+            lastCheck: provider.lastCheck ? {
+              ok: provider.lastCheck.ok,
+              code: provider.lastCheck.code,
+              checkedAt: provider.lastCheck.checkedAt,
+            } : undefined,
+          })),
+        },
+      },
+      skills: {
+        ok: true,
+        revision: 1,
+        data: {
+          registryGeneration: 2,
+          counts: {
+            total: skills.length,
+            builtin: skills.filter((skill) => skill.reviewStatus === "builtin").length,
+            published: skills.filter((skill) => skill.reviewStatus === "published").length,
+            draft: 0,
+            archived: 0,
+          },
+          skills,
+        },
+      },
+      approvals: {
+        ok: true,
+        revision: 1,
+        data: {
+          policy: {
+            mode: "workspace_policy",
+            toolDecisionCounts: { allow: 4, ask: 3 },
+            allowedWritePathCount: 1,
+          },
+          pending: [],
+          counts: { pending: 0, highRisk: 0, expired: 0 },
+        },
+      },
+      memory: {
+        ok: true,
+        revision: 1,
+        data: {
+          reviewPolicy,
+          promotionInbox: { pending: 0, quarantined: 0 },
+          recentCandidates: [],
+        },
+      },
+      mcp: {
+        ok: true,
+        revision: 1,
+        data: {
+          counts: { total: 0, enabled: 0, failed: 0, missingSecrets: 0, syncedTools: 0 },
+          servers: [],
+        },
+      },
+      work_units: {
+        ok: true,
+        revision: 1,
+        data: {
+          counts: { total: 0, active: 0, pending: 0, failed: 0, blocked: 0 },
+          active: [],
+          queued: [],
+          stale: [],
+        },
+      },
     },
   };
 }

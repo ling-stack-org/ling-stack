@@ -370,43 +370,118 @@ async function requestDoctorJson(
   }
 }
 
+async function preferredDoctorResult(
+  preferred: DoctorDependencyResult | undefined,
+  fallback: () => Promise<DoctorDependencyResult>,
+): Promise<DoctorDependencyResult> {
+  if (preferred?.ok) {
+    return preferred;
+  }
+  return await fallback();
+}
+
+function controlPlaneDomainResult(
+  snapshotResult: DoctorDependencyResult,
+  domain: string,
+  mapData: (data: Record<string, unknown>) => unknown,
+): DoctorDependencyResult | undefined {
+  if (!snapshotResult.ok) {
+    return undefined;
+  }
+  const domains = readField(snapshotResult.body, "domains");
+  if (!isRecord(domains)) {
+    return undefined;
+  }
+  const domainSnapshot = readField(domains, domain);
+  if (!isRecord(domainSnapshot)) {
+    return {
+      ok: false,
+      error: {
+        code: "control_plane_domain_missing",
+        message: `Control-plane snapshot did not include ${domain}.`,
+      },
+    };
+  }
+  if (readBoolean(domainSnapshot, "ok") !== true) {
+    const error = readField(domainSnapshot, "error");
+    return {
+      ok: false,
+      error: {
+        code: isRecord(error) ? readString(error, "code") ?? "control_plane_domain_failed" : "control_plane_domain_failed",
+        message: isRecord(error) ? readString(error, "message") ?? `${domain} snapshot failed.` : `${domain} snapshot failed.`,
+      },
+    };
+  }
+  const data = readField(domainSnapshot, "data");
+  return {
+    ok: true,
+    body: mapData(isRecord(data) ? data : {}),
+  };
+}
+
 async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> {
   const snapshot = await readDaemonStateSnapshot(options.cwd);
   const daemon = await probeDaemonHealth(options);
   const dependencyUnavailable = !daemon.ok;
-  const [
-    providersResult,
-    channelsResult,
-    tasksResult,
-    approvalPolicyResult,
-    activeLeasesResult,
-    staleWorkResult,
-    mcpServersResult,
-    skillsResult,
-    memoryReviewPolicyResult,
-  ] = dependencyUnavailable
-    ? [
-      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
-      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
-      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
-      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
-      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
-      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
-      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
-      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
-      skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable."),
-    ]
-    : await Promise.all([
-      requestDoctorJson(options, "GET", "/providers", { cwd: options.cwd }),
-      requestDoctorJson(options, "GET", "/channels", { cwd: options.cwd }),
-      requestDoctorJson(options, "GET", "/tasks", { cwd: options.cwd }),
-      requestDoctorJson(options, "GET", "/approval-policy", { cwd: options.cwd }),
-      requestDoctorJson(options, "GET", "/runtime/leases", { cwd: options.cwd, status: "active" }),
-      requestDoctorJson(options, "GET", "/runtime/stuck", { cwd: options.cwd }),
-      requestDoctorJson(options, "GET", "/mcp/servers", { cwd: options.cwd }),
-      requestDoctorJson(options, "GET", "/skills", { cwd: options.cwd }),
-      requestDoctorJson(options, "GET", "/memory/review-policy", { cwd: options.cwd }),
-    ]);
+  const skippedDependency = skippedDoctorDependency("daemon_unreachable", "Daemon is not reachable.");
+  const controlPlaneSnapshotResult = dependencyUnavailable
+    ? skippedDependency
+    : await requestDoctorJson(options, "GET", "/control-plane/snapshot", {
+      cwd: options.cwd,
+      domains: "providers,skills,approvals,memory,mcp,work_units,runners",
+    });
+  const snapshotProvidersResult = controlPlaneDomainResult(controlPlaneSnapshotResult, "providers", (data) => ({
+    cwd: options.cwd,
+    providers: readArray(data, "providers"),
+  }));
+  const snapshotSkillsResult = controlPlaneDomainResult(controlPlaneSnapshotResult, "skills", (data) => ({
+    cwd: options.cwd,
+    skills: readArray(data, "skills"),
+  }));
+  const snapshotApprovalPolicyResult = controlPlaneDomainResult(controlPlaneSnapshotResult, "approvals", (data) => ({
+    cwd: options.cwd,
+    policy: readField(data, "policy"),
+  }));
+  const snapshotMemoryReviewPolicyResult = controlPlaneDomainResult(controlPlaneSnapshotResult, "memory", (data) => ({
+    cwd: options.cwd,
+    policy: readField(data, "reviewPolicy"),
+  }));
+  const snapshotMcpServersResult = controlPlaneDomainResult(controlPlaneSnapshotResult, "mcp", (data) => ({
+    cwd: options.cwd,
+    servers: readArray(data, "servers"),
+  }));
+  const snapshotStaleWorkResult = controlPlaneDomainResult(controlPlaneSnapshotResult, "work_units", (data) => ({
+    cwd: options.cwd,
+    workUnits: readArray(data, "stale"),
+  }));
+
+  const channelsResult = dependencyUnavailable
+    ? skippedDependency
+    : await requestDoctorJson(options, "GET", "/channels", { cwd: options.cwd });
+  const tasksResult = dependencyUnavailable
+    ? skippedDependency
+    : await requestDoctorJson(options, "GET", "/tasks", { cwd: options.cwd });
+  const providersResult = dependencyUnavailable
+    ? skippedDependency
+    : await preferredDoctorResult(snapshotProvidersResult, () => requestDoctorJson(options, "GET", "/providers", { cwd: options.cwd }));
+  const approvalPolicyResult = dependencyUnavailable
+    ? skippedDependency
+    : await preferredDoctorResult(snapshotApprovalPolicyResult, () => requestDoctorJson(options, "GET", "/approval-policy", { cwd: options.cwd }));
+  const activeLeasesResult = dependencyUnavailable
+    ? skippedDependency
+    : await requestDoctorJson(options, "GET", "/runtime/leases", { cwd: options.cwd, status: "active" });
+  const staleWorkResult = dependencyUnavailable
+    ? skippedDependency
+    : await preferredDoctorResult(snapshotStaleWorkResult, () => requestDoctorJson(options, "GET", "/runtime/stuck", { cwd: options.cwd }));
+  const mcpServersResult = dependencyUnavailable
+    ? skippedDependency
+    : await preferredDoctorResult(snapshotMcpServersResult, () => requestDoctorJson(options, "GET", "/mcp/servers", { cwd: options.cwd }));
+  const skillsResult = dependencyUnavailable
+    ? skippedDependency
+    : await preferredDoctorResult(snapshotSkillsResult, () => requestDoctorJson(options, "GET", "/skills", { cwd: options.cwd }));
+  const memoryReviewPolicyResult = dependencyUnavailable
+    ? skippedDependency
+    : await preferredDoctorResult(snapshotMemoryReviewPolicyResult, () => requestDoctorJson(options, "GET", "/memory/review-policy", { cwd: options.cwd }));
 
   const providers = providersResult.ok ? readArray(providersResult.body, "providers") : [];
   const runnableProviders = providers.filter((provider) => providerRunCompatibilityBlocker(provider) === undefined);
@@ -463,7 +538,10 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
       }, "Configure and enable a chat-capable provider.");
     }),
     checkProviderDependency("providers.secrets", "providers", providersResult, () => {
-      const missingSecrets = runnableProviders.filter((provider) => readString(provider, "apiKeyRef") && readBoolean(provider, "apiKeyConfigured") !== true);
+      const missingSecrets = runnableProviders.filter((provider) =>
+        readString(provider, "secretStatus") === "missing" ||
+        readString(provider, "secretStatus") === "unavailable" ||
+        (readString(provider, "apiKeyRef") && readBoolean(provider, "apiKeyConfigured") !== true));
       if (missingSecrets.length === 0) {
         return okCheck("providers.secrets", "providers", "provider secret refs are configured", {
           checked: runnableProviders.length,
@@ -543,7 +621,8 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
     dependencyCheck("mcp.secrets", "mcp", mcpServersResult, () => {
       const missing = mcpServers.filter((server) =>
         readBoolean(server, "enabled") === true &&
-        readArray(server, "secretStatuses").some((status) => isRecord(status) && readBoolean(status, "configured") !== true));
+        ((readNumber(server, "missingSecretCount") ?? 0) > 0 ||
+          readArray(server, "secretStatuses").some((status) => isRecord(status) && readBoolean(status, "configured") !== true)));
       return missing.length === 0
         ? okCheck("mcp.secrets", "mcp", "MCP secret status has no blockers", { missing: 0 })
         : warningCheck("mcp.secrets", "mcp", `${missing.length} MCP server(s) have missing secrets`, { missing: missing.length });
@@ -558,9 +637,9 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
       const enabled = mcpServers.filter((server) => readBoolean(server, "enabled") === true);
       const failed = enabled.filter((server) => {
         const snapshot = readField(server, "statusSnapshot");
-        return isRecord(snapshot) && readString(snapshot, "status") === "failed";
+        return readString(server, "status") === "failed" || (isRecord(snapshot) && readString(snapshot, "status") === "failed");
       });
-      const missing = enabled.filter((server) => !isRecord(readField(server, "statusSnapshot")));
+      const missing = enabled.filter((server) => !readString(server, "status") && !isRecord(readField(server, "statusSnapshot")));
       if (failed.length > 0) {
         return warningCheck("mcp.status_snapshots", "mcp", `${failed.length} MCP server status snapshot(s) failed`, {
           failed: failed.length,

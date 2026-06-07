@@ -167,7 +167,10 @@ import {
   createLingThreadId,
   createRunInterventionId,
   runContinuationReasons,
+  type AppendControlPlaneEventInput,
   type ArtifactType,
+  type ControlPlaneDomain,
+  type ControlPlaneEvent,
   type CreateLingThreadInput,
   type CreateRunArtifactInput,
   type CreateRunInterventionInput,
@@ -175,6 +178,7 @@ import {
   type LingThread,
   type LingThreadKind,
   type LingThreadStatus,
+  type ListControlPlaneEventsOptions,
   type ListLingThreadsOptions,
   type ListRunInterventionsOptions,
   type ListRunEventsOptions,
@@ -458,6 +462,8 @@ const AUTOMATIONS_MIGRATION_VERSION = 38;
 const AUTOMATIONS_MIGRATION_NAME = "create_automations";
 const AUTOMATION_DRAFTS_MIGRATION_VERSION = 39;
 const AUTOMATION_DRAFTS_MIGRATION_NAME = "create_automation_drafts";
+const CONTROL_PLANE_EVENTS_MIGRATION_VERSION = 40;
+const CONTROL_PLANE_EVENTS_MIGRATION_NAME = "create_control_plane_events";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -757,6 +763,61 @@ export class SqliteRunStore implements RunStore {
       .run(envelope.id, envelope.runId, envelope.seq, envelope.ts, envelope.type, stringifyJson(envelope.data));
     appendEventLogLine(run.eventLogPath, envelope);
     return envelope;
+  }
+
+  appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent {
+    const redactedData = redactSecrets(input.data ?? {}) as Record<string, unknown>;
+    this.database
+      .prepare(`
+        INSERT INTO control_plane_events (
+          workspace_id,
+          cwd,
+          ts,
+          domain,
+          entity_type,
+          entity_id,
+          action,
+          data_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        input.workspaceId,
+        input.cwd,
+        now,
+        input.domain,
+        input.entityType,
+        input.entityId,
+        input.action,
+        stringifyJson(redactedData),
+      );
+    const seq = readNumber(this.database.prepare("SELECT last_insert_rowid() AS seq").get(), "seq");
+    const event = this.getControlPlaneEvent(seq);
+    if (!event) {
+      throw new Error(`Failed to append control-plane event: ${seq}`);
+    }
+    return event;
+  }
+
+  listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[] {
+    const clauses = ["workspace_id = ?", "seq > ?"];
+    const params: (string | number)[] = [options.workspaceId, Math.max(options.afterSeq ?? 0, 0)];
+    if (options.domains && options.domains.length > 0) {
+      clauses.push(`domain IN (${options.domains.map(() => "?").join(", ")})`);
+      params.push(...options.domains);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
+    params.push(limit);
+    return this.database
+      .prepare(`${controlPlaneEventSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY seq ASC LIMIT ?`)
+      .all(...params)
+      .map(mapControlPlaneEvent);
+  }
+
+  getLatestControlPlaneEventSeq(workspaceId: string): number {
+    const row = this.database
+      .prepare("SELECT COALESCE(MAX(seq), 0) AS latest_seq FROM control_plane_events WHERE workspace_id = ?")
+      .get(workspaceId);
+    return readNumber(row, "latest_seq");
   }
 
   getRun(runId: string): RunSession | undefined {
@@ -10185,6 +10246,32 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(AUTOMATION_DRAFTS_MIGRATION_VERSION, AUTOMATION_DRAFTS_MIGRATION_NAME);
       }
     }
+
+    const hasControlPlaneEventsMigration = this.hasMigration(CONTROL_PLANE_EVENTS_MIGRATION_VERSION);
+    if (!hasControlPlaneEventsMigration || !this.hasTable("control_plane_events")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS control_plane_events (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id TEXT NOT NULL,
+          cwd TEXT NOT NULL,
+          ts TEXT NOT NULL,
+          domain TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          data_json TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS control_plane_events_workspace_seq
+        ON control_plane_events(workspace_id, seq);
+
+        CREATE INDEX IF NOT EXISTS control_plane_events_workspace_domain_seq
+        ON control_plane_events(workspace_id, domain, seq);
+      `);
+      if (!hasControlPlaneEventsMigration) {
+        this.recordMigration(CONTROL_PLANE_EVENTS_MIGRATION_VERSION, CONTROL_PLANE_EVENTS_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -10349,6 +10436,11 @@ export class SqliteRunStore implements RunStore {
       .prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM runtime_events WHERE work_unit_id = ?")
       .get(workUnitId);
     return readNumber(row, "next_seq");
+  }
+
+  private getControlPlaneEvent(seq: number): ControlPlaneEvent | undefined {
+    const row = this.database.prepare(controlPlaneEventSelectSql("WHERE seq = ?")).get(seq);
+    return row ? mapControlPlaneEvent(row) : undefined;
   }
 
   private hasTerminalEvent(runId: string): boolean {
@@ -11717,6 +11809,20 @@ function mapResourceLease(row: Record<string, SQLOutputValue>): ResourceLease {
   });
 }
 
+function mapControlPlaneEvent(row: Record<string, SQLOutputValue>): ControlPlaneEvent {
+  return {
+    seq: readNumber(row, "seq"),
+    workspaceId: readString(row, "workspace_id"),
+    cwd: readString(row, "cwd"),
+    ts: readString(row, "ts"),
+    domain: readString(row, "domain") as ControlPlaneDomain,
+    entityType: readString(row, "entity_type"),
+    entityId: readString(row, "entity_id"),
+    action: readString(row, "action"),
+    data: parseJsonObject(readString(row, "data_json")),
+  };
+}
+
 function parseApprovalToolDecisions(value: string): ApprovalToolDecisions {
   const parsed = parseJsonObject(value);
   const decisions: Record<RunTool, ApprovalToolDecision> = { ...defaultApprovalToolDecisions };
@@ -11860,6 +11966,23 @@ function workUnitSelectSql(whereClause: string): string {
       error_code,
       error_message
     FROM work_units
+    ${whereClause}
+  `;
+}
+
+function controlPlaneEventSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      seq,
+      workspace_id,
+      cwd,
+      ts,
+      domain,
+      entity_type,
+      entity_id,
+      action,
+      data_json
+    FROM control_plane_events
     ${whereClause}
   `;
 }

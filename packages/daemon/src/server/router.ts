@@ -77,6 +77,7 @@ import {
   handleExternalWorkSecretDelete,
   handleExternalWorkWorkflowConfigure,
 } from "../features/external-work/workflow.js";
+import { handleControlPlaneRoute } from "../features/control-plane/routes.js";
 import { handleExternalGitHubImport, handleExternalLinearImport } from "../features/external-work/imports.js";
 import {
   handleExternalGitHubPoll,
@@ -211,6 +212,7 @@ export async function routeRequest(
     externalWorkFetch,
     backgroundSchedulers,
     automationSchedulers,
+    controlPlaneEvents,
   } = context;
   setCorsHeaders(response);
 
@@ -236,6 +238,7 @@ export async function routeRequest(
       runtimeSupervisor,
       secretResolver,
       mcpBroker,
+      controlPlaneEvents,
     });
   };
 
@@ -245,6 +248,10 @@ export async function routeRequest(
       service: "ling-stack-daemon",
       defaultWorkspaceCwd: config.defaultWorkspaceCwd,
     });
+    return;
+  }
+
+  if (await handleControlPlaneRoute(request, response, context)) {
     return;
   }
 
@@ -264,12 +271,12 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/providers") {
-    await handleProvidersCollection(request, response, config, storeRegistry, secretResolver);
+    await handleProvidersCollection(request, response, config, storeRegistry, secretResolver, controlPlaneEvents);
     return;
   }
 
   if (url.pathname === "/mcp/servers") {
-    await handleMcpServersCollection(request, response, config, storeRegistry, secretResolver);
+    await handleMcpServersCollection(request, response, config, storeRegistry, secretResolver, controlPlaneEvents);
     return;
   }
 
@@ -336,6 +343,7 @@ export async function routeRequest(
                 hooks.afterRunTerminal?.(terminalRun);
                 maybeContinueRunInterventions(terminalRun);
               },
+              controlPlaneEvents,
             },
           )),
     );
@@ -477,6 +485,7 @@ export async function routeRequest(
           {
             ...hooks,
             afterRunTerminal: maybeContinueRunInterventions,
+            controlPlaneEvents,
           },
         );
       },
@@ -570,7 +579,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/approvals") {
-    handleApprovalsCollection(request, response, url, storeRegistry);
+    handleApprovalsCollection(request, response, url, storeRegistry, controlPlaneEvents);
     return;
   }
 
@@ -602,6 +611,7 @@ export async function routeRequest(
             {
               onRunReady,
               afterRunTerminal: maybeContinueRunInterventions,
+              controlPlaneEvents,
             },
           )),
     });
@@ -615,12 +625,12 @@ export async function routeRequest(
 
   const skillRoute = parseSkillRoute(url.pathname);
   if (url.pathname === "/skills" || url.pathname === "/skills/refresh" || url.pathname === "/skills/import-draft" || skillRoute) {
-    await handleSkillRoute(request, response, config, storeRegistry, skillRoute);
+    await handleSkillRoute(request, response, config, storeRegistry, controlPlaneEvents, skillRoute);
     return;
   }
 
   if (url.pathname === "/memory") {
-    await handleMemoryCollection(request, response, config, storeRegistry);
+    await handleMemoryCollection(request, response, config, storeRegistry, controlPlaneEvents);
     return;
   }
 
@@ -630,7 +640,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/memory/consolidation-jobs") {
-    await handleMemoryConsolidationJobs(request, response, config, storeRegistry);
+    await handleMemoryConsolidationJobs(request, response, config, storeRegistry, controlPlaneEvents);
     return;
   }
 
@@ -640,7 +650,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/memory/review-policy") {
-    await handleMemoryReviewPolicy(request, response, config, storeRegistry);
+    await handleMemoryReviewPolicy(request, response, config, storeRegistry, controlPlaneEvents);
     return;
   }
 
@@ -655,7 +665,7 @@ export async function routeRequest(
 
   const nestedMemoryRoute = parseMemoryRoute(url.pathname);
   if (nestedMemoryRoute?.kind === "review") {
-    await handleMemoryReviewAction(request, response, config, storeRegistry, nestedMemoryRoute.memoryId);
+    await handleMemoryReviewAction(request, response, config, storeRegistry, controlPlaneEvents, nestedMemoryRoute.memoryId);
     return;
   }
 
@@ -676,7 +686,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/runtime/settings") {
-    await handleRuntimeSettings(request, response, url, storeRegistry, runnerRegistry, config.maxBodyBytes);
+    await handleRuntimeSettings(request, response, url, storeRegistry, runnerRegistry, config.maxBodyBytes, controlPlaneEvents);
     return;
   }
 
@@ -728,6 +738,7 @@ export async function routeRequest(
         mcpBroker,
         {
           afterRunTerminal: maybeContinueRunInterventions,
+          controlPlaneEvents,
         },
       ));
     return;
@@ -754,6 +765,7 @@ export async function routeRequest(
       runtimeSupervisor,
       secretResolver,
       mcpBroker,
+      controlPlaneEvents,
       runRoute.runId,
     );
     return;
@@ -887,6 +899,7 @@ export async function routeRequest(
                 });
               }
             },
+            controlPlaneEvents,
           },
         ).then(resolveOnce, () => resolveOnce(undefined));
       });
@@ -1026,6 +1039,7 @@ export async function routeRequest(
             mcpBroker,
             {
               afterRunTerminal: maybeContinueRunInterventions,
+              controlPlaneEvents,
             },
           ),
       );
@@ -1106,15 +1120,15 @@ export async function routeRequest(
       return;
     }
     if (teammateRoute.action === "memory-scopes") {
-      await handleTeammateMemoryScopes(request, response, config, storeRegistry, teammateRoute.teammateId);
+      await handleTeammateMemoryScopes(request, response, config, storeRegistry, teammateRoute.teammateId, controlPlaneEvents);
       return;
     }
     if (teammateRoute.action === "skills") {
-      await handleTeammateSkillBindings(request, response, config, storeRegistry, teammateRoute.teammateId);
+      await handleTeammateSkillBindings(request, response, config, storeRegistry, teammateRoute.teammateId, controlPlaneEvents);
       return;
     }
     if (teammateRoute.action === "mcp") {
-      await handleTeammateMcpBindings(request, response, config, storeRegistry, teammateRoute.teammateId);
+      await handleTeammateMcpBindings(request, response, config, storeRegistry, teammateRoute.teammateId, controlPlaneEvents);
       return;
     }
     if (teammateRoute.action === "persona-draft") {
@@ -1237,6 +1251,7 @@ export async function routeRequest(
             mcpBroker,
             {
               afterRunTerminal: maybeContinueRunInterventions,
+              controlPlaneEvents,
             },
           );
         },
@@ -1249,13 +1264,13 @@ export async function routeRequest(
 
   const providerRoute = parseProviderRoute(url.pathname);
   if (providerRoute) {
-    await handleProviderItem(request, response, config, storeRegistry, secretResolver, providerRoute);
+    await handleProviderItem(request, response, config, storeRegistry, secretResolver, controlPlaneEvents, providerRoute);
     return;
   }
 
   const mcpServerRoute = parseMcpServerRoute(url.pathname);
   if (mcpServerRoute) {
-    await handleMcpServerItem(request, response, config, storeRegistry, mcpBroker, secretResolver, mcpServerRoute);
+    await handleMcpServerItem(request, response, config, storeRegistry, mcpBroker, secretResolver, controlPlaneEvents, mcpServerRoute);
     return;
   }
 
@@ -1271,7 +1286,11 @@ export async function routeRequest(
       ({ response, url, mediaJobId }) =>
         handleRunMediaJob(response, url, storeRegistry, secretResolver, mediaJobId, {
           expirePendingMediaApprovals: (store, pendingMediaJobId) => {
-            expireStalePendingApprovals(store, { mediaJobId: pendingMediaJobId });
+            expireStalePendingApprovals(store, {
+              mediaJobId: pendingMediaJobId,
+              cwd: store.paths.cwd,
+              controlPlaneEvents,
+            });
           },
           startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
           transitionRuntimeWorkUnitTerminal: (input) => {
@@ -1294,7 +1313,7 @@ export async function routeRequest(
 
   const approvalRoute = parseApprovalRoute(url.pathname);
   if (approvalRoute) {
-    await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, ({ cwd, store, approval, now }) =>
+    await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, controlPlaneEvents, ({ cwd, store, approval, now }) =>
       syncMediaJobForApprovalDecision({
         cwd,
         store,
@@ -1304,7 +1323,11 @@ export async function routeRequest(
         now,
         hooks: {
           expirePendingMediaApprovals: (approvalStore, pendingMediaJobId) => {
-            expireStalePendingApprovals(approvalStore, { mediaJobId: pendingMediaJobId });
+            expireStalePendingApprovals(approvalStore, {
+              mediaJobId: pendingMediaJobId,
+              cwd,
+              controlPlaneEvents,
+            });
           },
           startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
           transitionRuntimeWorkUnitTerminal: (input) => {

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   cancelWorkUnit,
+  getControlPlaneSnapshot,
   getRuntimeDiagnostics,
   getWorkUnit,
   listResourceLeases,
@@ -17,7 +18,9 @@ import type {
   StateTransitionEvent,
   WorkUnit,
   WorkUnitDetailResponse,
+  WorkUnitsDomainSnapshot,
 } from "../../types.js";
+import { readControlPlaneDomainData, workUnitsFromControlPlaneSnapshot } from "../../lib/control-plane.js";
 
 export interface RuntimeState {
   readonly stateTransitions: readonly StateTransitionEvent[];
@@ -63,6 +66,13 @@ export function useRuntimeDomain(input: {
     }
 
     setRuntimeLoading(true);
+    const snapshotWorkUnits = await getControlPlaneSnapshot(cwd, ["work_units"])
+      .then((snapshot) => readControlPlaneDomainData<WorkUnitsDomainSnapshot>(snapshot, "work_units"))
+      .then((snapshot) => snapshot ? workUnitsFromControlPlaneSnapshot(snapshot) : undefined)
+      .catch(() => undefined);
+    if (snapshotWorkUnits) {
+      setWorkUnits(snapshotWorkUnits);
+    }
     try {
       setError(undefined);
       const transitionRequests = [
@@ -87,7 +97,7 @@ export function useRuntimeDomain(input: {
         listResourceLeases(cwd, { status: "active", limit: 50 }),
         Promise.all(transitionRequests),
         getRuntimeDiagnostics(cwd).catch(() => undefined),
-        listWorkUnits(cwd, { limit: 100 }).catch(() => ({ cwd, workUnits: [] })),
+        listWorkUnits(cwd, { limit: 100 }).catch(() => ({ cwd, workUnits: snapshotWorkUnits ?? [] })),
       ]);
       const uniqueTransitions = new Map<string, StateTransitionEvent>();
       for (const transition of transitionResponses.flat()) {
@@ -101,7 +111,7 @@ export function useRuntimeDomain(input: {
       setResourceLeases([]);
       setStateTransitions([]);
       setRuntimeDiagnostics(undefined);
-      setWorkUnits([]);
+      setWorkUnits(snapshotWorkUnits ?? []);
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "load", message });
     } finally {

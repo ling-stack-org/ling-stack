@@ -1,10 +1,12 @@
 import { useState } from "react";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
-import { getApprovalPolicy, getRuntimeSettings, listRunners, updateApprovalPolicy, updateRuntimeSettings } from "../../api.js";
+import { getApprovalPolicy, getControlPlaneSnapshot, getRuntimeSettings, listRunners, updateApprovalPolicy, updateRuntimeSettings } from "../../api.js";
 import { approvalPolicyToForm, defaultApprovalPolicyForm } from "../../lib/approvals.js";
+import { readControlPlaneDomainData, runnerItemsFromControlPlaneSnapshot } from "../../lib/control-plane.js";
 import type {
   ApprovalPolicy,
   ApprovalPolicyFormState,
+  RunnersDomainSnapshot,
   RunnerFallbackPolicy,
   RunnerListItem,
   WorkspaceRuntimeSettings,
@@ -119,10 +121,21 @@ export function useSettingsDomain(input: {
     }
     setRuntimeSettingsLoading(true);
     setRuntimeSettingsError("");
+    const runnerSnapshot = await getControlPlaneSnapshot(input.cwd, ["runners"])
+      .then((snapshot) => readControlPlaneDomainData<RunnersDomainSnapshot>(snapshot, "runners"))
+      .catch(() => undefined);
+    if (runnerSnapshot) {
+      setRunners(runnerItemsFromControlPlaneSnapshot(runnerSnapshot));
+      setRuntimeSettingsForm((current) => ({
+        ...current,
+        defaultRunnerId: runnerSnapshot.defaultRunnerId,
+        allowedRunnerIds: runnerSnapshot.allowedRunnerIds,
+      }));
+    }
     try {
       setError(undefined);
       const [runnerResponse, settingsResponse] = await Promise.all([
-        listRunners(input.cwd),
+        listRunners(input.cwd).catch(() => ({ cwd: input.cwd, runners: runnerSnapshot ? runnerItemsFromControlPlaneSnapshot(runnerSnapshot) : [] })),
         getRuntimeSettings(input.cwd),
       ]);
       setRunners(runnerResponse.runners);
