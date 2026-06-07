@@ -7,6 +7,47 @@
   gap: 10px;
 }
 
+.review-queue-summary,
+.review-queue-item-head,
+.runtime-permission-delta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.review-queue-summary {
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.review-queue-summary span,
+.review-queue-item-head span:first-child,
+.runtime-permission-delta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #dce5df;
+  background: #f8faf7;
+  color: #40504a;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 7px;
+}
+
+.review-queue-item {
+  display: grid;
+  gap: 7px;
+}
+
+.review-queue-item-head {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.runtime-permission-delta {
+  gap: 6px;
+}
+
 .approval-run-repair {
   display: grid;
   gap: 10px;

@@ -79,6 +79,7 @@ import {
   buildRunApprovalSummaries,
   effectiveApprovalStatus,
 } from "../lib/approvals.js";
+import { buildInlineApprovalViews } from "../lib/inline-approvals.js";
 import {
   channelToForm,
   defaultChannelEditForm,
@@ -812,6 +813,21 @@ export function AppShell(): JSX.Element {
     () => channelRunsForArtifacts.map((item) => `${item.id}:${item.updatedAt}`).join("|"),
     [channelRunsForArtifacts],
   );
+  const inlineApprovalIds = useMemo(() => {
+    const channelTaskIds = tasks.filter((task) => task.channelId === selectedChannelId).map((task) => task.id);
+    const blockedWorkflowStepIds = channelWorkflowSteps
+      .filter((step) => step.channelId === selectedChannelId && (step.status === "waiting_for_approval" || step.status === "blocked"))
+      .map((step) => step.id);
+    return new Set(
+      buildInlineApprovalViews(approvals, {
+        activeChannelId: selectedChannelId,
+        activeRunId,
+        visibleRunIds: channelRunsForArtifacts.map((item) => item.id),
+        visibleTaskIds: channelTaskIds,
+        blockedWorkflowStepIds,
+      }).map((item) => item.approval.id),
+    );
+  }, [activeRunId, approvals, channelRunsForArtifacts, channelWorkflowSteps, selectedChannelId, tasks]);
   const channelTransitionEntityKey = useMemo(
     () => buildChannelTransitionEntities(selectedChannelId, tasks, channelRunsForArtifacts, channelWorkflows, channelWorkflowSteps)
       .map((item) => `${item.entityType}:${item.entityId}:${item.updatedAt}`)
@@ -2805,6 +2821,7 @@ export function AppShell(): JSX.Element {
                 onCancelExternalAction={(actionId) => void cancelExternalAction(actionId, "Cancelled from Web Inbox")}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onClearRepair={() => setApprovalRepairRunId("")}
+                inlineApprovalIds={inlineApprovalIds}
                   />
                 )}
               </>

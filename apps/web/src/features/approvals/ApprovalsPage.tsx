@@ -10,6 +10,10 @@ import {
   effectiveApprovalStatus,
   highestApprovalRisk,
 } from "../../lib/approvals.js";
+import {
+  buildReviewQueueItems,
+  reviewQueueCategoryLabel,
+} from "../../lib/review-queue.js";
 import { readTaskTitle } from "../../lib/run-evidence.js";
 import type { ApprovalRequest, ExternalWorkActionView, RunSession } from "../../types.js";
 import { ApprovalCard, type ExternalActionBusyState } from "./ApprovalCard.js";
@@ -34,6 +38,7 @@ export function ApprovalsPage({
   onCancelExternalAction,
   onOpenRun,
   onClearRepair,
+  inlineApprovalIds,
 }: {
   readonly cwd: string;
   readonly approvals: readonly ApprovalRequest[];
@@ -53,17 +58,24 @@ export function ApprovalsPage({
   readonly onCancelExternalAction: (actionId: string) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onClearRepair: () => void;
+  readonly inlineApprovalIds?: ReadonlySet<string>;
 }): JSX.Element {
   const { t } = useI18n();
-  const focusedApprovals = repairRunId ? approvals.filter((approval) => approval.runId === repairRunId) : approvals;
-  const listEmptyCopy = repairRunId ? t("No approval records for this run") : t("No approval requests for this workspace");
+  const reviewQueueItems = buildReviewQueueItems({
+    approvals,
+    externalActionDetails,
+    inlineApprovalIds,
+    runsById: repairRun ? new Map([[repairRun.id, repairRun]]) : undefined,
+  });
+  const focusedApprovals = repairRunId ? approvals.filter((approval) => approval.runId === repairRunId) : reviewQueueItems.map((item) => item.approval);
+  const listEmptyCopy = repairRunId ? t("No approval records for this run") : t("Review Queue is clear");
 
   return (
     <section className="panel approvals-panel" aria-labelledby="approvals-title">
       <div className="panel-title split">
         <span>
           <ShieldCheck size={18} />
-          <h2 id="approvals-title">{t("Approval requests")}</h2>
+          <h2 id="approvals-title">{repairRunId ? t("Approval requests") : t("Review Queue")}</h2>
         </span>
         <button
           className="secondary-button compact-button"
@@ -95,6 +107,15 @@ export function ApprovalsPage({
         />
       ) : null}
 
+      {!repairRunId ? (
+        <div className="review-queue-summary" aria-label={t("Review Queue summary")}>
+          <span>{t("{count} review items", { count: reviewQueueItems.length })}</span>
+          {[...new Set(reviewQueueItems.map((item) => item.category))].map((category) => (
+            <span key={category}>{t(reviewQueueCategoryLabel(category))}</span>
+          ))}
+        </div>
+      ) : null}
+
       <div className="approval-list">
         {focusedApprovals.length === 0 ? (
           <div className="empty-state compact-empty">
@@ -102,21 +123,44 @@ export function ApprovalsPage({
             <span>{isLoading ? t("Loading approvals...") : listEmptyCopy}</span>
           </div>
         ) : (
-          focusedApprovals.map((approval) => (
-            <ApprovalCard
-              key={approval.id}
-              approval={approval}
-              selected={approval.id === selectedApprovalId}
-              externalAction={approval.externalWorkActionId ? externalActionDetails[approval.externalWorkActionId] : undefined}
-              externalActionBusy={approval.externalWorkActionId ? externalActionBusy[approval.externalWorkActionId] : undefined}
-              cwd={cwd}
-              resolvingDecision={resolvingApprovals[approval.id]}
-              onSelect={onSelectApproval}
-              onResolve={onResolve}
-              onExecuteExternalAction={onExecuteExternalAction}
-              onCancelExternalAction={onCancelExternalAction}
-            />
-          ))
+          repairRunId ? (
+            focusedApprovals.map((approval) => (
+              <ApprovalCard
+                key={approval.id}
+                approval={approval}
+                selected={approval.id === selectedApprovalId}
+                externalAction={approval.externalWorkActionId ? externalActionDetails[approval.externalWorkActionId] : undefined}
+                externalActionBusy={approval.externalWorkActionId ? externalActionBusy[approval.externalWorkActionId] : undefined}
+                cwd={cwd}
+                resolvingDecision={resolvingApprovals[approval.id]}
+                onSelect={onSelectApproval}
+                onResolve={onResolve}
+                onExecuteExternalAction={onExecuteExternalAction}
+                onCancelExternalAction={onCancelExternalAction}
+              />
+            ))
+          ) : (
+            reviewQueueItems.map((item) => (
+              <div key={item.id} className={`review-queue-item ${item.category}`}>
+                <div className="review-queue-item-head">
+                  <span>{t(reviewQueueCategoryLabel(item.category))}</span>
+                  <span className={`approval-risk ${item.approval.risk}`}>{item.priority}</span>
+                </div>
+                <ApprovalCard
+                  approval={item.approval}
+                  selected={item.approval.id === selectedApprovalId}
+                  externalAction={item.externalAction}
+                  externalActionBusy={item.approval.externalWorkActionId ? externalActionBusy[item.approval.externalWorkActionId] : undefined}
+                  cwd={cwd}
+                  resolvingDecision={resolvingApprovals[item.approval.id]}
+                  onSelect={onSelectApproval}
+                  onResolve={onResolve}
+                  onExecuteExternalAction={onExecuteExternalAction}
+                  onCancelExternalAction={onCancelExternalAction}
+                />
+              </div>
+            ))
+          )
         )}
       </div>
     </section>

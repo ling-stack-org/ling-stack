@@ -47,6 +47,7 @@ import type { AiTeammateTemplate } from "@ling-stack/core";
 import { artifactContentUrl } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
+import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
 import { buildChannelActivityItems, type ChannelActivityAttention, type ChannelActivityItem } from "../../lib/channel-activity.js";
 import {
   buildChannelActivityDrilldownItem,
@@ -157,6 +158,7 @@ import type {
   WorkUnit,
 } from "../../types.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
+import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
@@ -588,6 +590,16 @@ export function WorkspaceClientView({
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
   );
+  const selectedChannelTaskIds = useMemo(
+    () => tasks.filter((task) => task.channelId === selectedChannelId).map((task) => task.id),
+    [selectedChannelId, tasks],
+  );
+  const blockedWorkflowStepIds = useMemo(
+    () => channelWorkflowSteps
+      .filter((step) => step.channelId === selectedChannelId && (step.status === "waiting_for_approval" || step.status === "blocked"))
+      .map((step) => step.id),
+    [channelWorkflowSteps, selectedChannelId],
+  );
   const latestRun = channelRuns[0];
   const pendingChannelApprovals = useMemo(() => {
     return approvals.filter((approval) => {
@@ -600,6 +612,17 @@ export function WorkspaceClientView({
       return approvalChannelId === selectedChannelId;
     });
   }, [approvals, runById, selectedChannelId, taskChannelById]);
+  const inlineApprovalViews = useMemo(
+    () =>
+      buildInlineApprovalViews(approvals, {
+        activeChannelId: selectedChannelId,
+        activeRunId,
+        visibleRunIds: channelRuns.map((item) => item.id),
+        visibleTaskIds: selectedChannelTaskIds,
+        blockedWorkflowStepIds,
+      }),
+    [activeRunId, approvals, blockedWorkflowStepIds, channelRuns, selectedChannelId, selectedChannelTaskIds],
+  );
   const pendingApprovalCount = pendingChannelApprovals.length;
   const selectedApproval = selectedApprovalId
     ? approvals.find((approval) => approval.id === selectedApprovalId)
@@ -2376,6 +2399,12 @@ export function WorkspaceClientView({
   const channelComposer = (
     <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
       {channelActiveStatusStrip}
+      <InlineApprovalStrip
+        approvals={inlineApprovalViews}
+        resolvingApprovals={resolvingApprovals}
+        onResolve={onResolveApproval}
+        onOpenApproval={(approvalId) => openApprovalInPanel(approvals.find((approval) => approval.id === approvalId))}
+      />
       <div
         className={composerDragActive ? "composer-drop-zone active" : "composer-drop-zone"}
         onDragOver={handleComposerDragOver}
