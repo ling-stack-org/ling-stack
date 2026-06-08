@@ -2,7 +2,11 @@
 
 ## Status
 
-P2A first slice implemented; P2B remains a design plan.
+P2A first slice is implemented. P2B.1 automatic shell snapshots are implemented for
+unified exec start/end artifacts, read-only daemon/API-client inspection, and CLI
+commands. P2B-F1/F2 read-only Web rendering and doctor diagnostics are implemented.
+Active/periodic snapshots, PTY capture, manual capture, and durable snapshot indexing
+remain deferred.
 
 This document details P2 from
 [Codex-Inspired Runtime Tools](codex-inspired-runtime-tools.md): add a durable
@@ -23,6 +27,8 @@ silent access, or make shell state authoritative.
 - [Codex-Inspired Runtime Tools P0: Apply-Patch Implementation](codex-inspired-runtime-tools-p0-apply-patch-implementation.md)
 - [Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md)
 - [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md)
+- [Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md)
+- [Codex-Inspired Runtime Tools P2B: Shell Snapshots Follow-Ups](codex-inspired-runtime-tools-p2b-shell-snapshots-follow-ups.md)
 - [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
 - [Approval Policy](approval-policy.md)
@@ -38,7 +44,7 @@ P2 has two related but independently shippable tracks:
 | Track | Name | Can Land Before P1 Unified Exec? | Purpose |
 | --- | --- | --- | --- |
 | P2A | Permission requests | Yes | Turn blocked runner requests into durable approval records and safe continuation paths |
-| P2B | Shell snapshots | Contract only before P1; implementation after P1 | Capture redacted execution diagnostics for active or recently completed shell commands |
+| P2B | Shell snapshots | No; builds on implemented P1 unified exec | Capture redacted execution diagnostics for active or recently completed shell commands |
 
 The split matters. Permission requests can build on existing approvals and run
 interventions. Shell snapshots need a real normalized exec model so they do not become
@@ -53,7 +59,7 @@ ad hoc bash log scraping.
 - No persistent change to workspace approval policy from a run-scoped request unless a
   later explicit settings flow adds it.
 - No shell-only replacement for `read`, `grep`, `find`, or `ls`.
-- No shell snapshot as durable state authority or resume source of truth.
+- No shell snapshot as durable state authority, resume source, or run recovery source.
 - No raw secret values in permission requests, snapshots, events, logs, or artifacts.
 - No terminal session replay feature in P2.
 
@@ -356,14 +362,18 @@ Shell snapshots provide bounded evidence for Web, CLI doctor, and debugging.
 
 ### Dependency On P1 Unified Exec
 
-P2B should not implement shell snapshots against ad hoc bash events. It should wait for
+P2B should not implement shell snapshots against ad hoc bash events. It should build on
 the normalized `bash` exec backend from
 [Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md).
 
-Before unified exec exists, this document is the target contract only. The only safe
-pre-P1 implementation is a no-op diagnostics shape that reports `unavailable`.
+The pre-P1 fallback was a no-op diagnostics shape that reports `unavailable`. Now that
+P1 unified exec exists, P2B can capture snapshots from unified exec request, output, and
+result state.
 
 ### Snapshot Shape
+
+P2B implementation details refine this shape in
+[Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md).
 
 ```ts
 interface ShellSnapshot {
@@ -416,8 +426,11 @@ interface ShellOutputSnapshot {
 
 interface ShellSnapshotRedactionSummary {
   readonly redacted: boolean;
-  readonly ruleCount: number;
   readonly extraSecretCount: number;
+  readonly commandRedacted?: boolean;
+  readonly stdoutRedacted?: boolean;
+  readonly stderrRedacted?: boolean;
+  readonly environmentValuesStored: false;
 }
 ```
 
@@ -431,7 +444,9 @@ Snapshots should be artifacts, not a new durable state table in P2:
 ```
 
 The JSON artifact is the structured contract. The text artifact is a bounded human
-summary for Web and CLI display.
+summary for Web and CLI display. A future durable table may be added only as an
+index/cache if artifact lookup becomes too slow or needs retention/query semantics; it
+must not replace artifact evidence.
 
 ### Capture Points
 
@@ -494,7 +509,8 @@ GET /runs/:runId/shell-snapshots/:snapshotId?cwd=...
 These endpoints read artifact metadata/content and return status-only data. They should
 not open live shells, attach to processes, or mutate runtime state.
 
-Manual capture, if added, should be a diagnostic event routed through the daemon:
+Manual capture is deferred. If added later, it should be a diagnostic event routed
+through the daemon:
 
 ```http
 POST /runs/:runId/shell-snapshots/capture?cwd=...
@@ -511,9 +527,9 @@ Web can show snapshots in run/action detail:
 - cwd;
 - duration;
 - exit code or signal;
-- bounded output tail;
-- PTY visible text when available;
-- linked stdout/stderr artifacts.
+- linked JSON/text snapshot artifacts;
+- bounded output tail only after active snapshots land;
+- PTY visible text only after unified exec supports PTY.
 
 The UI should label snapshots as diagnostics, not as replay or recovery.
 
@@ -526,11 +542,13 @@ ling-stack runs shell-snapshots <run-id>
 ling-stack runs shell-snapshot <run-id> <snapshot-id>
 ```
 
-Optional doctor integration:
+Doctor behavior:
 
-- show count of active commands with stale snapshots;
-- show last snapshot age;
-- warn when snapshot artifacts failed to write.
+- shipped read-only check: report runner shell snapshot capability, recent run snapshot
+  list health, and JSON/text artifact pair health;
+- future active-snapshot check: show count of active commands with stale snapshots and
+  last snapshot age only after P2B-F3 exists;
+- warn when snapshot APIs or artifact metadata look unhealthy.
 
 Doctor must not open a shell or capture a new snapshot by default.
 
@@ -598,10 +616,19 @@ Detailed implementation plan:
 
 ### P2.5 Shell Snapshot Artifacts
 
-- Implement only after unified exec has a normalized execution result and output model.
+Detailed implementation plan:
+[Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md).
+
+Follow-up split:
+[Codex-Inspired Runtime Tools P2B: Shell Snapshots Follow-Ups](codex-inspired-runtime-tools-p2b-shell-snapshots-follow-ups.md).
+
+- Build on P1 unified exec request/output/result state.
 - Create bounded JSON/text artifacts.
 - Add read-only run snapshot endpoints.
-- Add Web/CLI rendering.
+- Add CLI rendering.
+- Add Web read-only rendering and doctor read-only diagnostics as P2B-F1/F2.
+- Keep periodic snapshots, PTY capture, manual capture, durable snapshot indexing, and
+  recovery integration out of the first shipped slices.
 
 ### P2.6 Tests And Docs Alignment
 
@@ -629,7 +656,7 @@ P2B is complete when:
 - snapshots are bounded, redacted, and linked to run/tool-call evidence;
 - Web and CLI can inspect snapshots without opening live shells;
 - doctor can report snapshot status read-only;
-- snapshots are not used as durable state authority or recovery source;
+- snapshots are not used as durable state authority, resume source, or recovery source;
 - daemon restart does not treat snapshots as process state.
 
 ## Open Questions
@@ -644,3 +671,5 @@ P2B is complete when:
   demand?
 - Should manual snapshot capture be exposed in Web first, CLI first, or deferred until
   users hit real debugging pressure?
+- PTY snapshots, manual capture, and a durable snapshot index are deferred follow-ups.
+  Shell snapshots as run recovery source is a permanent non-goal.

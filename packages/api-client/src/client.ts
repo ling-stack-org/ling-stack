@@ -195,6 +195,8 @@ import type {
   RunSession,
   SecretPurpose,
   SecretStatusResponse,
+  ShellSnapshotListResponse,
+  ShellSnapshotResponse,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
   SkillImportPublishResponse,
@@ -524,6 +526,14 @@ export class LingDaemonClient {
 
   async listRunArtifacts(runId: string, cwd?: string): Promise<RunArtifactListResponse> {
     return this.get(`/runs/${encodeURIComponent(runId)}/artifacts`, { cwd });
+  }
+
+  async listRunShellSnapshots(runId: string, cwd?: string, toolCallId?: string): Promise<ShellSnapshotListResponse> {
+    return this.get(`/runs/${encodeURIComponent(runId)}/shell-snapshots`, { cwd, toolCallId });
+  }
+
+  async getRunShellSnapshot(runId: string, snapshotId: string, cwd?: string): Promise<ShellSnapshotResponse> {
+    return this.get(`/runs/${encodeURIComponent(runId)}/shell-snapshots/${encodeURIComponent(snapshotId)}`, { cwd });
   }
 
   async cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {

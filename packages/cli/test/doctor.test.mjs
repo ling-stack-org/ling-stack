@@ -28,10 +28,14 @@ test("doctor reports a ready workspace", async () => {
     assert.match(result.stdout, /skills\.registry\s+effective skill registry loads/);
     assert.match(result.stdout, /memory\.review_policy\s+memory review policy loads/);
     assert.match(result.stdout, /runtime\.leases\s+no active leases/);
+    assert.match(result.stdout, /runtime\.shell_snapshots\s+shell snapshot diagnostics are healthy/);
     assert.ok(daemon.requests.includes("GET /health"));
     assert.ok(daemon.requests.includes("GET /control-plane/snapshot"));
     assert.ok(daemon.requests.includes("GET /channels"));
     assert.ok(daemon.requests.includes("GET /tasks"));
+    assert.ok(daemon.requests.includes("GET /runs"));
+    assert.ok(daemon.requests.includes("GET /runs/run_shell/shell-snapshots"));
+    assert.ok(daemon.requests.includes("GET /runs/run_shell/artifacts"));
     assert.ok(!daemon.requests.includes("GET /providers"));
     assert.ok(!daemon.requests.includes("GET /approval-policy"));
     assert.ok(!daemon.requests.includes("GET /skills"));
@@ -39,6 +43,7 @@ test("doctor reports a ready workspace", async () => {
     assert.ok(daemon.requests.includes("GET /runtime/leases"));
     assert.ok(!daemon.requests.includes("GET /runtime/stuck"));
     assert.ok(!daemon.requests.includes("GET /mcp/servers"));
+    assert.ok(!daemon.requests.includes("GET /runners"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -92,6 +97,9 @@ test("doctor json exposes readiness counters", async () => {
     assert.equal(checks.get("skills.registry").details.published, 1);
     assert.equal(checks.get("memory.review_policy").details.mode, "manual-review");
     assert.equal(checks.get("runtime.leases").details.activeLeases, 0);
+    assert.equal(checks.get("runtime.shell_snapshots").details.capabilityAdvertised, true);
+    assert.equal(checks.get("runtime.shell_snapshots").details.snapshots, 2);
+    assert.equal(checks.get("runtime.shell_snapshots").details.unreadableJsonArtifacts, 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -162,6 +170,27 @@ test("doctor json redacts secret-like daemon URL fields", async () => {
   }
 });
 
+test("doctor warns when shell snapshot diagnostics cannot read a route and does not mutate", async () => {
+  const daemon = await startDoctorDaemon({ shellSnapshotStatus: 500 });
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-shell-snapshots-"));
+  try {
+    await prepareDoctorWorkspace(cwd);
+    const result = await runCli(daemon.url, cwd, ["doctor", "--json"]);
+    const body = JSON.parse(result.stdout);
+
+    assert.equal(result.code, 0, result.stderr);
+    const checks = new Map(body.checks.map((check) => [check.id, check]));
+    const check = checks.get("runtime.shell_snapshots");
+    assert.equal(check.status, "warning");
+    assert.equal(check.details.routeFailures.length, 1);
+    assert.ok(daemon.requests.includes("GET /runs/run_shell/shell-snapshots"));
+    assert.ok(daemon.requests.every((request) => request.startsWith("GET ")));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 test("daemon status remains a thin health check", async () => {
   const daemon = await startDoctorDaemon();
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-"));
@@ -201,6 +230,10 @@ async function startDoctorDaemon(overrides = {}) {
   const channels = overrides.channels ?? [readyChannel()];
   const tasks = overrides.tasks ?? [readyTask()];
   const skills = overrides.skills ?? [readyBuiltinSkill(), readyPublishedSkill()];
+  const runners = overrides.runners ?? [readyRunner()];
+  const runs = overrides.runs ?? [readyRun()];
+  const artifactsByRun = overrides.artifactsByRun ?? { run_shell: readyShellSnapshotArtifacts("run_shell") };
+  const snapshotsByRun = overrides.snapshotsByRun ?? { run_shell: readyShellSnapshots("run_shell") };
   const missingRoutes = new Set(overrides.missingRoutes ?? []);
   const policy = overrides.policy ?? {
     workspaceId: "workspace_default",
@@ -254,6 +287,7 @@ async function startDoctorDaemon(overrides = {}) {
         providers,
         skills,
         reviewPolicy,
+        runners,
       }));
       return;
     }
@@ -270,6 +304,34 @@ async function startDoctorDaemon(overrides = {}) {
 
     if (request.method === "GET" && url.pathname === "/tasks") {
       writeJson(response, 200, { cwd: url.searchParams.get("cwd"), tasks });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/runs") {
+      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), runs });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/runners") {
+      writeJson(response, 200, { cwd: url.searchParams.get("cwd"), runners });
+      return;
+    }
+
+    const shellSnapshotMatch = url.pathname.match(/^\/runs\/([^/]+)\/shell-snapshots$/);
+    if (request.method === "GET" && shellSnapshotMatch) {
+      if (overrides.shellSnapshotStatus) {
+        writeJson(response, overrides.shellSnapshotStatus, { error: "shell_snapshot_error", message: "shell snapshots failed" });
+        return;
+      }
+      const runId = decodeURIComponent(shellSnapshotMatch[1]);
+      writeJson(response, 200, { runId, snapshots: snapshotsByRun[runId] ?? [] });
+      return;
+    }
+
+    const artifactsMatch = url.pathname.match(/^\/runs\/([^/]+)\/artifacts$/);
+    if (request.method === "GET" && artifactsMatch) {
+      const runId = decodeURIComponent(artifactsMatch[1]);
+      writeJson(response, 200, { runId, artifacts: artifactsByRun[runId] ?? [] });
       return;
     }
 
@@ -349,7 +411,90 @@ function readyProvider() {
   };
 }
 
-function controlPlaneSnapshot({ cwd, providers, skills, reviewPolicy }) {
+function readyRunner() {
+  return {
+    id: "pi-local",
+    displayName: "Pi local",
+    enabled: true,
+    available: true,
+    experimental: false,
+    capabilities: ["stream_text", "tool_events", "approval_interception", "artifacts", "runtime:shell-snapshot"],
+  };
+}
+
+function readyRun() {
+  return {
+    id: "run_shell",
+    status: "succeeded",
+    cwd: "/tmp/ling-stack-cli-doctor",
+    taskId: "task_ready",
+    providerName: "Ready Provider",
+    providerModel: "gpt-5.5",
+    taskSnapshot: {},
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: "/tmp/ling-stack-cli-doctor/.ling-stack/runs/run_shell/events.jsonl",
+    createdAt: "2026-05-21T00:00:00.000Z",
+    updatedAt: "2026-05-21T00:00:01.000Z",
+    endedAt: "2026-05-21T00:00:01.000Z",
+  };
+}
+
+function readyShellSnapshots(runId) {
+  return [
+    {
+      id: `shell_snapshot:${runId}:tool_call_shell:000001`,
+      runId,
+      toolCallId: "tool_call_shell",
+      sequence: 1,
+      createdAt: "2026-05-21T00:00:00.100Z",
+      source: "exec_start",
+      status: "starting",
+      commandPreview: "echo ok",
+      durationMs: 2,
+      artifactId: "artifact_shell_snapshot_1_json",
+      textArtifactId: "artifact_shell_snapshot_1_text",
+    },
+    {
+      id: `shell_snapshot:${runId}:tool_call_shell:000002`,
+      runId,
+      toolCallId: "tool_call_shell",
+      sequence: 2,
+      createdAt: "2026-05-21T00:00:00.200Z",
+      source: "exec_end",
+      status: "exited",
+      commandPreview: "echo ok",
+      durationMs: 25,
+      exitCode: 0,
+      artifactId: "artifact_shell_snapshot_2_json",
+      textArtifactId: "artifact_shell_snapshot_2_text",
+    },
+  ];
+}
+
+function readyShellSnapshotArtifacts(runId) {
+  return [
+    readyArtifact("artifact_shell_snapshot_1_json", runId, `${runId}/shell-snapshots/tool_call_shell/000001.json`, "json"),
+    readyArtifact("artifact_shell_snapshot_1_text", runId, `${runId}/shell-snapshots/tool_call_shell/000001.txt`, "log"),
+    readyArtifact("artifact_shell_snapshot_2_json", runId, `${runId}/shell-snapshots/tool_call_shell/000002.json`, "json"),
+    readyArtifact("artifact_shell_snapshot_2_text", runId, `${runId}/shell-snapshots/tool_call_shell/000002.txt`, "log"),
+  ];
+}
+
+function readyArtifact(id, runId, path, type) {
+  return {
+    id,
+    runId,
+    type,
+    path,
+    title: id,
+    contentType: type === "json" ? "application/json" : "text/plain; charset=utf-8",
+    sizeBytes: 128,
+    createdAt: "2026-05-21T00:00:00.000Z",
+  };
+}
+
+function controlPlaneSnapshot({ cwd, providers, skills, reviewPolicy, runners }) {
   return {
     cwd,
     workspaceId: "workspace_default",
@@ -439,6 +584,15 @@ function controlPlaneSnapshot({ cwd, providers, skills, reviewPolicy }) {
           active: [],
           queued: [],
           stale: [],
+        },
+      },
+      runners: {
+        ok: true,
+        revision: 1,
+        data: {
+          defaultRunnerId: runners[0]?.id ?? "pi-local",
+          allowedRunnerIds: runners.map((runner) => runner.id),
+          runners,
         },
       },
     },

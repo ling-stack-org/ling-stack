@@ -348,6 +348,75 @@
   gap: 7px;
 }
 
+.shell-snapshot-panel {
+  gap: 10px;
+}
+
+.shell-snapshot-list {
+  display: grid;
+  gap: 7px;
+}
+
+.shell-snapshot-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.9fr) minmax(0, 1.5fr) minmax(180px, 0.8fr);
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e1e6e2;
+  background: #ffffff;
+}
+
+.shell-snapshot-head,
+.shell-snapshot-artifacts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.shell-snapshot-head code,
+.shell-snapshot-head span,
+.shell-snapshot-head small,
+.shell-snapshot-command small,
+.shell-snapshot-artifacts code {
+  color: #64736e;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.shell-snapshot-command {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.shell-snapshot-command strong {
+  color: #17211f;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.shell-snapshot-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid #e1e6e2;
+  background: #e1e6e2;
+}
+
+.shell-snapshot-artifacts {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 760px) {
+  .shell-snapshot-row,
+  .shell-snapshot-meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .tool-event-row {
   border: 1px solid #e1e6e2;
   background: #fbfcfa;

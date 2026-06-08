@@ -128,6 +128,7 @@ function readOptionalRuntimeToolFeatures(record: Record<string, unknown>, key: s
   return {
     requestPermissions: readOptionalBoolean(value, "requestPermissions"),
     unifiedExec: readOptionalBoolean(value, "unifiedExec"),
+    shellSnapshot: readOptionalBoolean(value, "shellSnapshot"),
   };
 }
 

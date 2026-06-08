@@ -276,6 +276,7 @@ export async function executeRunRequest(
     const runtimeToolFeatures = {
       ...runRequest.runtimeToolFeatures,
       unifiedExec: runtimeSupervisor.getRuntimeToolFeatures().unifiedExec === true,
+      shellSnapshot: runtimeSupervisor.getRuntimeToolFeatures().shellSnapshot === true,
     };
     runnerRequest = {
       cwd: runRequest.cwd,
@@ -799,6 +800,7 @@ export async function executeRunRequest(
         controlPlaneEvents: options.controlPlaneEvents,
         workspaceCwd,
         unifiedExecEnabled: runnerRequest.runtimeToolFeatures?.unifiedExec === true,
+        shellSnapshotEnabled: runnerRequest.runtimeToolFeatures?.shellSnapshot === true,
       }),
       onPermissionRequired: createRunPermissionRequestHandler({
         store,

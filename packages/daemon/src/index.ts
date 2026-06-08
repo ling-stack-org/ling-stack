@@ -161,6 +161,7 @@ export function createDefaultRunnerRegistry(
     ...extension.manifest.capabilities,
     ...(config.runtimeTools?.requestPermissions ? ["runtime:request-permissions"] : []),
     ...(config.runtimeTools?.unifiedExec ? ["runtime:unified-exec"] : []),
+    ...(config.runtimeTools?.shellSnapshot ? ["runtime:shell-snapshot"] : []),
   ];
   return createRunnerRegistry([
     {

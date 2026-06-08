@@ -122,6 +122,7 @@ export function createRunApprovalHandler(options: {
   readonly controlPlaneEvents?: ControlPlaneEventHub;
   readonly workspaceCwd?: string;
   readonly unifiedExecEnabled?: boolean;
+  readonly shellSnapshotEnabled?: boolean;
 }): PiRunnerRunOptions["onApprovalRequired"] {
   return async (request: PiRunnerApprovalRequest) => {
     const unifiedExecBash = options.unifiedExecEnabled === true && request.toolName === "bash";
@@ -166,6 +167,7 @@ export function createRunApprovalHandler(options: {
             appendAndMaybeStream: options.appendAndMaybeStream,
             signal: options.signal,
             extraSecrets: options.extraSecrets,
+            shellSnapshotEnabled: options.shellSnapshotEnabled,
           }),
         };
       }
@@ -366,6 +368,7 @@ export function createRunApprovalHandler(options: {
           appendAndMaybeStream: options.appendAndMaybeStream,
           signal: options.signal,
           extraSecrets: options.extraSecrets,
+          shellSnapshotEnabled: options.shellSnapshotEnabled,
         });
       } else if (patchDraft) {
         const applied = await applyPatchActionDraft({

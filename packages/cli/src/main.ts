@@ -454,6 +454,10 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
     cwd: options.cwd,
     workUnits: readArray(data, "stale"),
   }));
+  const snapshotRunnersResult = controlPlaneDomainResult(controlPlaneSnapshotResult, "runners", (data) => ({
+    cwd: options.cwd,
+    runners: readArray(data, "runners"),
+  }));
 
   const channelsResult = dependencyUnavailable
     ? skippedDependency
@@ -482,6 +486,12 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
   const memoryReviewPolicyResult = dependencyUnavailable
     ? skippedDependency
     : await preferredDoctorResult(snapshotMemoryReviewPolicyResult, () => requestDoctorJson(options, "GET", "/memory/review-policy", { cwd: options.cwd }));
+  const runnersResult = dependencyUnavailable
+    ? skippedDependency
+    : await preferredDoctorResult(snapshotRunnersResult, () => requestDoctorJson(options, "GET", "/runners", { cwd: options.cwd }));
+  const recentRunsResult = dependencyUnavailable
+    ? skippedDependency
+    : await requestDoctorJson(options, "GET", "/runs", { cwd: options.cwd, limit: 10 });
 
   const providers = providersResult.ok ? readArray(providersResult.body, "providers") : [];
   const runnableProviders = providers.filter((provider) => providerRunCompatibilityBlocker(provider) === undefined);
@@ -616,6 +626,7 @@ async function buildDoctorReport(options: GlobalOptions): Promise<DoctorReport> 
       staleWorkUnits.length === 0
         ? okCheck("runtime.stale_work", "runtime", "no stale work units reported", { staleWorkUnits: 0 })
         : warningCheck("runtime.stale_work", "runtime", `${staleWorkUnits.length} stale work unit(s) reported`, { staleWorkUnits: staleWorkUnits.length })),
+    await checkShellSnapshotDiagnostics(options, runnersResult, recentRunsResult),
     dependencyCheck("mcp.servers", "mcp", mcpServersResult, () =>
       okCheck("mcp.servers", "mcp", `${mcpServers.length} MCP server(s) configured`, { total: mcpServers.length })),
     dependencyCheck("mcp.secrets", "mcp", mcpServersResult, () => {
@@ -872,6 +883,117 @@ async function checkExternalWorkflow(cwd: string): Promise<DoctorCheck> {
   } catch {
     return okCheck("external_work.workflow", "external-work", "no bound WORKFLOW.md found", { workflowPath }, Date.now() - startedAt);
   }
+}
+
+async function checkShellSnapshotDiagnostics(
+  options: GlobalOptions,
+  runnersResult: DoctorDependencyResult,
+  recentRunsResult: DoctorDependencyResult,
+): Promise<DoctorCheck> {
+  const startedAt = Date.now();
+  const runners = runnersResult.ok ? readArray(runnersResult.body, "runners") : [];
+  const runnersWithCapability = runners
+    .filter((runner) => readArray(runner, "capabilities").includes("runtime:shell-snapshot"))
+    .map((runner) => readString(runner, "id") ?? "unknown");
+  const capabilityAdvertised = runnersWithCapability.length > 0;
+
+  if (!runnersResult.ok) {
+    return warningCheck("runtime.shell_snapshots", "runtime", "shell snapshot capability could not be checked", {
+      error: runnersResult.error,
+    }, "Inspect runner runtime settings.", Date.now() - startedAt);
+  }
+
+  if (!recentRunsResult.ok) {
+    return warningCheck("runtime.shell_snapshots", "runtime", "recent runs could not be checked for shell snapshots", {
+      capabilityAdvertised,
+      runnersWithCapability,
+      error: recentRunsResult.error,
+    }, "Run ling-stack runs list.", Date.now() - startedAt);
+  }
+
+  const recentRuns = readArray(recentRunsResult.body, "runs").slice(0, 10);
+  let checkedRuns = 0;
+  let snapshots = 0;
+  let shellSnapshotJsonArtifacts = 0;
+  let shellSnapshotTextArtifacts = 0;
+  let unreadableJsonArtifacts = 0;
+  let missingTextArtifacts = 0;
+  const routeFailures: string[] = [];
+  const artifactFailures: string[] = [];
+
+  for (const run of recentRuns) {
+    const runId = readString(run, "id");
+    if (!runId) {
+      continue;
+    }
+    checkedRuns += 1;
+    const [snapshotResult, artifactResult] = await Promise.all([
+      requestDoctorJson(options, "GET", `/runs/${encodeURIComponent(runId)}/shell-snapshots`, { cwd: options.cwd }),
+      requestDoctorJson(options, "GET", `/runs/${encodeURIComponent(runId)}/artifacts`, { cwd: options.cwd }),
+    ]);
+
+    let listedSnapshots = 0;
+    let listedMissingText = 0;
+    if (snapshotResult.ok) {
+      const items = readArray(snapshotResult.body, "snapshots");
+      listedSnapshots = items.length;
+      listedMissingText = items.filter((snapshot) => !readString(snapshot, "textArtifactId")).length;
+      snapshots += listedSnapshots;
+    } else {
+      routeFailures.push(`${runId}: ${snapshotResult.error?.code ?? "unknown_error"}`);
+    }
+
+    if (artifactResult.ok) {
+      const artifacts = readArray(artifactResult.body, "artifacts");
+      const jsonArtifacts = artifacts.filter(isShellSnapshotJsonArtifact);
+      const textArtifacts = artifacts.filter(isShellSnapshotTextArtifact);
+      shellSnapshotJsonArtifacts += jsonArtifacts.length;
+      shellSnapshotTextArtifacts += textArtifacts.length;
+      if (snapshotResult.ok) {
+        unreadableJsonArtifacts += Math.max(0, jsonArtifacts.length - listedSnapshots);
+        missingTextArtifacts += Math.max(listedMissingText, Math.max(0, jsonArtifacts.length - textArtifacts.length));
+      }
+    } else {
+      artifactFailures.push(`${runId}: ${artifactResult.error?.code ?? "unknown_error"}`);
+    }
+  }
+
+  const details = {
+    capabilityAdvertised,
+    runnersWithCapability,
+    checkedRuns,
+    snapshots,
+    shellSnapshotJsonArtifacts,
+    shellSnapshotTextArtifacts,
+    unreadableJsonArtifacts,
+    missingTextArtifacts,
+    routeFailures,
+    artifactFailures,
+  };
+
+  if (routeFailures.length > 0) {
+    return warningCheck("runtime.shell_snapshots", "runtime", `${routeFailures.length} shell snapshot route check(s) failed`, details, "Inspect the shell snapshot daemon routes.", Date.now() - startedAt);
+  }
+  if (artifactFailures.length > 0 || unreadableJsonArtifacts > 0 || missingTextArtifacts > 0) {
+    return warningCheck("runtime.shell_snapshots", "runtime", "shell snapshot artifacts need inspection", details, "Inspect run artifacts or rerun the command after fixing artifact storage.", Date.now() - startedAt);
+  }
+  if (!capabilityAdvertised) {
+    return warningCheck("runtime.shell_snapshots", "runtime", "shell snapshot runtime capability is not advertised", details, "Enable runtimeTools.shellSnapshot in daemon config when shell diagnostics are needed.", Date.now() - startedAt);
+  }
+  if (checkedRuns === 0) {
+    return okCheck("runtime.shell_snapshots", "runtime", "shell snapshot capability is advertised; no recent runs to inspect", details, Date.now() - startedAt);
+  }
+  return okCheck("runtime.shell_snapshots", "runtime", "shell snapshot diagnostics are healthy", details, Date.now() - startedAt);
+}
+
+function isShellSnapshotJsonArtifact(artifact: unknown): boolean {
+  const path = readString(artifact, "path") ?? "";
+  return path.includes("/shell-snapshots/") && path.endsWith(".json");
+}
+
+function isShellSnapshotTextArtifact(artifact: unknown): boolean {
+  const path = readString(artifact, "path") ?? "";
+  return path.includes("/shell-snapshots/") && path.endsWith(".txt");
 }
 
 function checkProviderDependency(
@@ -2147,6 +2269,10 @@ async function handleRuns(args: readonly string[], options: GlobalOptions): Prom
       return await handleRunsShow(rest, options);
     case "events":
       return await handleRunsEvents(rest, options);
+    case "shell-snapshots":
+      return await handleRunsShellSnapshots(rest, options);
+    case "shell-snapshot":
+      return await handleRunsShellSnapshot(rest, options);
     case "cancel":
       return await handleRunsCancel(rest, options);
     default:
@@ -2200,6 +2326,43 @@ async function handleRunsEvents(args: readonly string[], options: GlobalOptions)
     return 0;
   }
   printRunEvents(response);
+  return 0;
+}
+
+async function handleRunsShellSnapshots(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["tool-call"]),
+  });
+  const runId = singlePositional(parsed.positionals, "runs shell-snapshots <run-id>");
+  const response = await requestJson(options, "GET", `/runs/${encodeURIComponent(runId)}/shell-snapshots`, {
+    cwd: options.cwd,
+    toolCallId: getFlag(parsed, "tool-call"),
+  });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printRunShellSnapshots(response);
+  return 0;
+}
+
+async function handleRunsShellSnapshot(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args);
+  if (parsed.positionals.length !== 2) {
+    throw new CliError(2, "usage", "Usage: runs shell-snapshot <run-id> <snapshot-id>");
+  }
+  const [runId, snapshotId] = parsed.positionals;
+  const response = await requestJson(
+    options,
+    "GET",
+    `/runs/${encodeURIComponent(runId)}/shell-snapshots/${encodeURIComponent(snapshotId)}`,
+    { cwd: options.cwd },
+  );
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printRunShellSnapshot(response);
   return 0;
 }
 
@@ -4343,6 +4506,92 @@ function printRunsList(response: unknown): void {
   );
 }
 
+function printRunShellSnapshots(response: unknown): void {
+  const snapshots = readArray(response, "snapshots");
+  console.log(`Run: ${readString(response, "runId") ?? ""}`);
+  if (snapshots.length === 0) {
+    console.log("No shell snapshots found.");
+    return;
+  }
+  printTable(
+    ["Seq", "Status", "Source", "Tool Call", "Exit", "Duration", "Snapshot", "Command"],
+    snapshots.map((snapshot) => [
+      String(readNumber(snapshot, "sequence") ?? ""),
+      readString(snapshot, "status") ?? "",
+      readString(snapshot, "source") ?? "",
+      truncate(readString(snapshot, "toolCallId") ?? "", 24),
+      readNumber(snapshot, "exitCode") === undefined ? "" : String(readNumber(snapshot, "exitCode")),
+      readNumber(snapshot, "durationMs") === undefined ? "" : `${readNumber(snapshot, "durationMs")}ms`,
+      truncate(readString(snapshot, "id") ?? "", 42),
+      truncate(readString(snapshot, "commandPreview") ?? "", 64),
+    ]),
+  );
+}
+
+function printRunShellSnapshot(response: unknown): void {
+  const snapshot = readRequiredRecord(response, "snapshot");
+  const command = readOptionalRecord(snapshot, "command");
+  const process = readOptionalRecord(snapshot, "process");
+  const output = readOptionalRecord(snapshot, "output");
+  const redaction = readOptionalRecord(snapshot, "redaction");
+  console.log(`ID: ${readString(snapshot, "id") ?? ""}`);
+  console.log(`Run: ${readString(snapshot, "runId") ?? ""}`);
+  console.log(`Tool call: ${readString(snapshot, "toolCallId") ?? ""}`);
+  console.log(`Sequence: ${readNumber(snapshot, "sequence") ?? ""}`);
+  console.log(`Status: ${readString(snapshot, "status") ?? ""}`);
+  console.log(`Source: ${readString(snapshot, "source") ?? ""}`);
+  console.log(`Created: ${readString(snapshot, "createdAt") ?? ""}`);
+  const approvalId = readString(snapshot, "approvalId");
+  if (approvalId) {
+    console.log(`Approval: ${approvalId}`);
+  }
+  console.log(`CWD: ${readString(command, "cwd") ?? ""}`);
+  console.log(`Command: ${readString(command, "commandPreview") ?? ""}`);
+  const startedAt = readString(process, "startedAt");
+  const endedAt = readString(process, "endedAt");
+  if (startedAt) {
+    console.log(`Started: ${startedAt}`);
+  }
+  if (endedAt) {
+    console.log(`Ended: ${endedAt}`);
+  }
+  const exitCode = readNumber(process, "exitCode");
+  if (exitCode !== undefined) {
+    console.log(`Exit code: ${exitCode}`);
+  }
+  const signal = readString(process, "signal");
+  if (signal) {
+    console.log(`Signal: ${signal}`);
+  }
+  const durationMs = readNumber(process, "durationMs");
+  if (durationMs !== undefined) {
+    console.log(`Duration: ${durationMs}ms`);
+  }
+  console.log(`Stdout bytes: ${readNumber(output, "stdoutByteCount") ?? 0}`);
+  console.log(`Stderr bytes: ${readNumber(output, "stderrByteCount") ?? 0}`);
+  console.log(`Redacted: ${readBoolean(redaction, "redacted") ?? false}`);
+  const artifactId = readString(response, "artifactId");
+  if (artifactId) {
+    console.log(`Artifact: ${artifactId}`);
+  }
+  const textArtifactId = readString(response, "textArtifactId");
+  if (textArtifactId) {
+    console.log(`Text artifact: ${textArtifactId}`);
+  }
+  const stdoutHead = readString(output, "stdoutHead");
+  if (stdoutHead) {
+    console.log("");
+    console.log("stdout:");
+    console.log(stdoutHead);
+  }
+  const stderrHead = readString(output, "stderrHead");
+  if (stderrHead) {
+    console.log("");
+    console.log("stderr:");
+    console.log(stderrHead);
+  }
+}
+
 function approvalOwnerLabel(approval: unknown): string {
   const externalWorkActionId = readString(approval, "externalWorkActionId");
   if (externalWorkActionId) {
@@ -5494,6 +5743,8 @@ function printRunsHelp(): void {
   ling-stack runs list [--status succeeded] [--limit <n>]
   ling-stack runs show <id>
   ling-stack runs events <id> [--after-seq <n>] [--limit <n>]
+  ling-stack runs shell-snapshots <run-id> [--tool-call <id>]
+  ling-stack runs shell-snapshot <run-id> <snapshot-id>
   ling-stack runs cancel <id>
 `);
 }

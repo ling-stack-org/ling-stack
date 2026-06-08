@@ -22,6 +22,7 @@ import type { PiRunnerApprovalRequest, PiRunnerToolHandledResult } from "@ling-s
 import { normalizeArtifactPath } from "../../shared/path.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { isRecord } from "../../shared/validation.js";
+import { createShellSnapshotWriter } from "./shell-snapshots.js";
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const STREAM_PREVIEW_BYTES = 8 * 1024;
@@ -37,6 +38,7 @@ export async function executeUnifiedBashTool(input: {
   readonly appendAndMaybeStream: (type: "tool_update" | "artifact_created", data: unknown) => RunEventEnvelope | undefined;
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
+  readonly shellSnapshotEnabled?: boolean;
 }): Promise<PiRunnerToolHandledResult> {
   const normalized = normalizeBashRequest(input.run, input.request, input.approvalId);
   if ("error" in normalized) {
@@ -117,6 +119,7 @@ async function executeUnifiedExec(input: {
   readonly appendAndMaybeStream: (type: "tool_update" | "artifact_created", data: unknown) => RunEventEnvelope | undefined;
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
+  readonly shellSnapshotEnabled?: boolean;
 }): Promise<PiRunnerToolHandledResult> {
   throwIfAborted(input.signal);
   const secrets = input.extraSecrets ?? [];
@@ -125,12 +128,22 @@ async function executeUnifiedExec(input: {
   const environment = buildEnvironment(input.request.cwd, input.request.environment);
   const stdout = createStreamCapture("stdout", input.request.toolCallId, input.appendAndMaybeStream, secrets);
   const stderr = createStreamCapture("stderr", input.request.toolCallId, input.appendAndMaybeStream, secrets);
+  const shellSnapshots = createShellSnapshotWriter({
+    enabled: input.shellSnapshotEnabled === true,
+    store: input.store,
+    run: input.run,
+    request: input.request,
+    environmentSummary: environment.summary,
+    appendAndMaybeStream: (type, data) => input.appendAndMaybeStream(type, data),
+    extraSecrets: input.extraSecrets,
+  });
   let timedOut = false;
   let cancelled = false;
   let processSignal: string | undefined;
   let exitCode: number | undefined;
   let killTimer: NodeJS.Timeout | undefined;
 
+  shellSnapshots.captureStart({ startedAt, startedMs });
   let child: ChildProcessWithoutNullStreams;
   try {
     child = spawnCommand(input.request.command, {
@@ -138,7 +151,7 @@ async function executeUnifiedExec(input: {
       env: environment.env,
     });
   } catch (error) {
-    return writeSyntheticFailureResult({
+    const handled = writeSyntheticFailureResult({
       ...input,
       message: `Ling Stack unified exec failed to spawn bash: ${formatError(error)}`,
       status: "failed",
@@ -146,6 +159,8 @@ async function executeUnifiedExec(input: {
       startedAt,
       startedMs,
     });
+    shellSnapshots.captureEnd(readUnifiedExecResult(handled));
+    return handled;
   }
 
   const killChild = (reason: "timeout" | "cancelled"): void => {
@@ -224,7 +239,7 @@ async function executeUnifiedExec(input: {
   const stderrSnapshot = stderr.snapshot();
 
   if (cancelled || input.signal?.aborted) {
-    writeUnifiedExecResult({
+    const handled = writeUnifiedExecResult({
       ...input,
       environmentSummary: environment.summary,
       startedAt,
@@ -237,6 +252,7 @@ async function executeUnifiedExec(input: {
       stdout: stdoutSnapshot,
       stderr: stderrSnapshot,
     });
+    shellSnapshots.captureEnd(readUnifiedExecResult(handled));
     throw createAbortError();
   }
 
@@ -245,7 +261,7 @@ async function executeUnifiedExec(input: {
     : exitCode === 0
       ? "succeeded"
       : "failed";
-  return writeUnifiedExecResult({
+  const handled = writeUnifiedExecResult({
     ...input,
     environmentSummary: environment.summary,
     startedAt,
@@ -258,6 +274,8 @@ async function executeUnifiedExec(input: {
     stdout: stdoutSnapshot,
     stderr: stderrSnapshot,
   });
+  shellSnapshots.captureEnd(readUnifiedExecResult(handled));
+  return handled;
 }
 
 function writeSyntheticFailureResult(input: {
@@ -822,6 +840,14 @@ function sanitizeId(value: string): string {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function readUnifiedExecResult(result: PiRunnerToolHandledResult): UnifiedExecResult {
+  const details = result.details;
+  if (!isRecord(details) || !isRecord(details.unifiedExec)) {
+    throw new Error("Unified exec handled result did not include result details.");
+  }
+  return details.unifiedExec as unknown as UnifiedExecResult;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

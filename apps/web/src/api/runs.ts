@@ -15,6 +15,8 @@ import type {
   RunListRequest,
   RunListResponse,
   RunSession,
+  ShellSnapshotListResponse,
+  ShellSnapshotResponse,
 } from "../types.js";
 import { daemonClient } from "./client.js";
 
@@ -80,6 +82,14 @@ export async function getRunEvents(runId: string, cwd?: string): Promise<RunEven
 
 export async function listRunArtifacts(runId: string, cwd?: string): Promise<RunArtifactListResponse> {
   return daemonClient.listRunArtifacts(runId, cwd);
+}
+
+export async function listRunShellSnapshots(runId: string, cwd?: string, toolCallId?: string): Promise<ShellSnapshotListResponse> {
+  return daemonClient.listRunShellSnapshots(runId, cwd, toolCallId);
+}
+
+export async function getRunShellSnapshot(runId: string, snapshotId: string, cwd?: string): Promise<ShellSnapshotResponse> {
+  return daemonClient.getRunShellSnapshot(runId, snapshotId, cwd);
 }
 
 export async function cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {

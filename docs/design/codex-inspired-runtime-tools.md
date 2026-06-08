@@ -2,8 +2,9 @@
 
 ## Status
 
-P0 and the first P2A slice are implemented. P1 unified exec has an implementation
-plan but is not implemented. P2B shell snapshots remain a design plan.
+P0, P1 unified exec, the first P2A slice, P2B.1 automatic shell snapshots, and the
+P2B-F1/F2 read-only Web/doctor surfaces are implemented. P2B active/periodic snapshots,
+PTY capture, manual capture, and durable snapshot indexing remain deferred.
 
 Ling Stack should borrow selected runtime-tool engineering patterns from
 `openai/codex` without replacing Ling's product contract for core tools, approvals,
@@ -15,6 +16,8 @@ Related docs:
 - [Codex-Inspired Runtime Tools P1: Unified Exec For Bash Implementation](codex-inspired-runtime-tools-p1-unified-exec-implementation.md)
 - [Codex-Inspired Runtime Tools P2: Permission Requests And Shell Snapshots](codex-inspired-runtime-tools-p2-permissions-shell-snapshots.md)
 - [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md)
+- [Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md)
+- [Codex-Inspired Runtime Tools P2B: Shell Snapshots Follow-Ups](codex-inspired-runtime-tools-p2b-shell-snapshots-follow-ups.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
 - [Approval Policy](approval-policy.md)
 - [CLI v0.1](cli-v0.1.md)
@@ -250,10 +253,23 @@ Add optional runtime features in two independently shippable tracks:
 | Track | Name | Dependency | Purpose |
 | --- | --- | --- | --- |
 | P2A | Permission requests | Can build on existing approvals | Let blocked runners ask for scoped, run-local capability grants without mutating workspace policy |
-| P2B | Shell snapshots | Waits for P1 unified exec for implementation | Capture bounded, redacted diagnostics for approved shell commands |
+| P2B | Shell snapshots | Builds on implemented P1 unified exec | Capture bounded, redacted diagnostics for approved shell commands |
 
 P2A first slice is implemented through durable approval records and continuation-scoped
-grant evidence. P2B remains deferred until P1 unified exec exists.
+grant evidence.
+
+P2B.1 implementation:
+[Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md).
+
+The first P2B slice stores automatic `exec_start` and `exec_end` shell snapshots as
+redacted JSON/text run artifacts, exposes read-only daemon/API-client endpoints, and
+adds CLI inspection commands. The first follow-up surfaces add Web run-history rendering
+and doctor read-only diagnostics. Periodic/live snapshots, PTY capture, manual capture,
+durable snapshot indexing, and recovery integration remain deferred or out of scope as
+documented in the P2B design.
+
+P2B follow-up split:
+[Codex-Inspired Runtime Tools P2B: Shell Snapshots Follow-Ups](codex-inspired-runtime-tools-p2b-shell-snapshots-follow-ups.md).
 
 Feature gates should remain runtime configuration and diagnostics, not Plugin Manager
 entries. P2 must not introduce live prompt injection into active runner sessions.

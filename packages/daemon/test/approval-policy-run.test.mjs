@@ -188,6 +188,93 @@ test("unified exec bash=allow runs through daemon and records redacted artifacts
   }
 });
 
+test("shell snapshots stay disabled when only the run request asks for them", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-shell-snapshot-gate-"));
+  const runner = new UnifiedExecProbeRunner({
+    toolCallId: "tool_shell_snapshot_request_gate",
+    toolName: "bash",
+    input: { command: "printf 'request-gated\\n'" },
+  });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const { runId } = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_shell_snapshot_request_gate"),
+      runtimeToolFeatures: { unifiedExec: true, shellSnapshot: true },
+    });
+
+    assert.equal(runner.runs[0].runtimeToolFeatures?.unifiedExec, true);
+    assert.equal(runner.runs[0].runtimeToolFeatures?.shellSnapshot, false);
+    assert.equal(runner.decisions[0].handledResult.details.unifiedExec.status, "succeeded");
+
+    const snapshots = await listShellSnapshots(daemon.url, cwd, runId);
+    assert.deepEqual(snapshots.snapshots, []);
+    const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(artifacts.artifacts.some((artifact) => artifact.path.includes("/shell-snapshots/")), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("shell snapshots record unified exec start and end artifacts with redaction", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-shell-snapshot-allow-"));
+  const secretValue = "shell-snapshot-secret-value";
+  const runner = new UnifiedExecProbeRunner({
+    toolCallId: "tool_shell_snapshot_allow",
+    toolName: "bash",
+    input: { command: `printf 'snapshot ${secretValue}\\n'` },
+  });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true, shellSnapshot: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const { runId } = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_shell_snapshot_allow"),
+      provider: {
+        provider: "test-provider",
+        model: "test-model",
+        apiKey: secretValue,
+      },
+    });
+
+    assert.equal(runner.runs[0].runtimeToolFeatures?.shellSnapshot, true);
+    assert.equal(runner.decisions[0].handledResult.details.unifiedExec.status, "succeeded");
+
+    const listed = await listShellSnapshots(daemon.url, cwd, runId);
+    assert.equal(listed.runId, runId);
+    assert.deepEqual(listed.snapshots.map((snapshot) => snapshot.source), ["exec_start", "exec_end"]);
+    assert.deepEqual(listed.snapshots.map((snapshot) => snapshot.status), ["starting", "exited"]);
+    assert.equal(listed.snapshots.every((snapshot) => snapshot.artifactId && snapshot.textArtifactId), true);
+    assert.doesNotMatch(JSON.stringify(listed), new RegExp(secretValue));
+
+    const filtered = await listShellSnapshots(daemon.url, cwd, runId, "tool_shell_snapshot_allow");
+    assert.equal(filtered.snapshots.length, 2);
+    const emptyFiltered = await listShellSnapshots(daemon.url, cwd, runId, "tool_other");
+    assert.equal(emptyFiltered.snapshots.length, 0);
+
+    const detail = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/shell-snapshots/${encodeURIComponent(listed.snapshots[1].id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.snapshot.id, listed.snapshots[1].id);
+    assert.equal(detail.snapshot.source, "exec_end");
+    assert.equal(detail.snapshot.status, "exited");
+    assert.equal(detail.snapshot.redaction.redacted, true);
+    assert.equal(detail.snapshot.redaction.commandRedacted, true);
+    assert.equal(detail.snapshot.redaction.stdoutRedacted, true);
+    assert.match(detail.snapshot.command.commandPreview, /\[REDACTED\]/);
+    assert.match(detail.snapshot.output.stdoutHead, /snapshot \[REDACTED\]/);
+    assert.doesNotMatch(JSON.stringify(detail), new RegExp(secretValue));
+
+    for (const artifactId of [listed.snapshots[0].artifactId, listed.snapshots[0].textArtifactId, listed.snapshots[1].artifactId, listed.snapshots[1].textArtifactId]) {
+      const response = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(artifactId)}/content?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(response.status, 200);
+      const content = await response.text();
+      assert.doesNotMatch(content, new RegExp(secretValue));
+    }
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("unified exec bash=deny returns handled denial and never spawns", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-deny-"));
   const markerPath = resolve(cwd, "should-not-exist.txt");
@@ -196,7 +283,7 @@ test("unified exec bash=deny returns handled denial and never spawns", async () 
     toolName: "bash",
     input: { command: "touch should-not-exist.txt" },
   });
-  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true, shellSnapshot: true } });
   try {
     await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "deny" } });
     const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_unified_exec_deny"));
@@ -212,6 +299,8 @@ test("unified exec bash=deny returns handled denial and never spawns", async () 
     assert.equal(approvals[0].status, "denied");
     const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(artifacts.artifacts.some((artifact) => artifact.path.includes("/unified-exec/")), false);
+    assert.equal(artifacts.artifacts.some((artifact) => artifact.path.includes("/shell-snapshots/")), false);
+    assert.deepEqual((await listShellSnapshots(daemon.url, cwd, runId)).snapshots, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -225,13 +314,14 @@ test("unified exec bash=ask waits for approval before running", async () => {
     toolName: "bash",
     input: { command: "printf 'approved\\n'" },
   });
-  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true, shellSnapshot: true } });
   try {
     await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
     const response = await postRunStream(daemon.url, runBody(cwd, "task_unified_exec_ask"));
     const sse = createSseReader(response);
     const ready = await sse.nextEvent();
     assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
     const requested = await waitForSseEvent(sse, "approval_requested");
     const approvalId = requested.data.data.approvalId;
 
@@ -250,6 +340,11 @@ test("unified exec bash=ask waits for approval before running", async () => {
     assert.match(result.stdout.preview, /approved/);
     assert.equal(remaining.some((event) => event.event === "approval_approved"), true);
     assert.equal(remaining.some((event) => event.event === "artifact_created"), true);
+
+    const snapshots = await listShellSnapshots(daemon.url, cwd, runId);
+    assert.deepEqual(snapshots.snapshots.map((snapshot) => snapshot.status), ["starting", "exited"]);
+    const detail = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/shell-snapshots/${encodeURIComponent(snapshots.snapshots[1].id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.snapshot.approvalId, approvalId);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -263,7 +358,7 @@ test("unified exec nonzero exit returns a handled failed result", async () => {
     toolName: "bash",
     input: { command: "printf 'bad stderr\\n' >&2; exit 7" },
   });
-  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true, shellSnapshot: true } });
   try {
     await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
     const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_unified_exec_nonzero"));
@@ -278,6 +373,8 @@ test("unified exec nonzero exit returns a handled failed result", async () => {
 
     const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(artifacts.artifacts.some((artifact) => artifact.path.endsWith("/stderr.txt")), true);
+    const snapshots = await listShellSnapshots(daemon.url, cwd, runId);
+    assert.deepEqual(snapshots.snapshots.map((snapshot) => snapshot.status), ["starting", "failed"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -291,7 +388,7 @@ test("unified exec command timeout returns timed_out and does not create approva
     toolName: "bash",
     input: { command: "sleep 2", timeoutMs: 50 },
   });
-  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true, shellSnapshot: true } });
   try {
     await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
     const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_unified_exec_timeout"));
@@ -303,6 +400,8 @@ test("unified exec command timeout returns timed_out and does not create approva
     assert.equal(result.timedOut, true);
     assert.match(handled.content[0].text, /timed out/);
     assert.deepEqual(await listApprovals(daemon.url, cwd, runId), []);
+    const snapshots = await listShellSnapshots(daemon.url, cwd, runId);
+    assert.deepEqual(snapshots.snapshots.map((snapshot) => snapshot.status), ["starting", "timed_out"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -317,7 +416,7 @@ test("unified exec rejects PTY requests as handled failures without spawning", a
     toolName: "bash",
     input: { command: "touch pty-should-not-run.txt", pty: true },
   });
-  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true, shellSnapshot: true } });
   try {
     await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
     const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_unified_exec_pty"));
@@ -385,7 +484,7 @@ test("unified exec run cancellation kills command and leaves the run cancelled",
     toolName: "bash",
     input: { command: "sleep 5; printf done > after-cancel.txt" },
   });
-  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true, shellSnapshot: true } });
   try {
     await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
     const response = await postRunStream(daemon.url, runBody(cwd, "task_unified_exec_cancel"));
@@ -407,6 +506,8 @@ test("unified exec run cancellation kills command and leaves the run cancelled",
     await assert.rejects(() => readFile(markerPath, "utf8"), /ENOENT/);
     const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(artifacts.artifacts.some((artifact) => artifact.path.endsWith("/unified-exec/tool_unified_exec_cancel/result.json")), true);
+    const snapshots = await listShellSnapshots(daemon.url, cwd, runId);
+    assert.deepEqual(snapshots.snapshots.map((snapshot) => snapshot.status), ["starting", "cancelled"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -3720,6 +3821,15 @@ async function listApprovals(baseUrl, cwd, filters) {
   }
   const response = await getJson(url.toString());
   return response.approvals;
+}
+
+async function listShellSnapshots(baseUrl, cwd, runId, toolCallId) {
+  const url = new URL(`${baseUrl}/runs/${encodeURIComponent(runId)}/shell-snapshots`);
+  url.searchParams.set("cwd", cwd);
+  if (toolCallId) {
+    url.searchParams.set("toolCallId", toolCallId);
+  }
+  return await getJson(url.toString());
 }
 
 async function postRunAndCollectEvents(baseUrl, body) {

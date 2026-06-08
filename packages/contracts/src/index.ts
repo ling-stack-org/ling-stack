@@ -14,6 +14,7 @@ export type * from "./media.js";
 export type * from "./memory.js";
 export type * from "./control-plane.js";
 export type * from "./unified-exec.js";
+export type * from "./shell-snapshots.js";
 export type * from "./providers.js";
 export type * from "./mcp.js";
 export type * from "./plugins.js";
