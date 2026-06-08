@@ -30,6 +30,41 @@ test("runs show includes approval state in human-readable output", async () => {
   }
 });
 
+test("runs shell snapshot commands read list and detail endpoints", async () => {
+  const daemon = await startRunsDaemon();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-runs-"));
+  try {
+    const list = await runCli(daemon.url, cwd, ["runs", "shell-snapshots", "run_shell", "--tool-call", "tool_bash"]);
+
+    assert.equal(list.code, 0, list.stderr);
+    assert.match(list.stdout, /Run: run_shell/);
+    assert.match(list.stdout, /tool_bash/);
+    assert.match(list.stdout, /exited/);
+    assert.match(list.stdout, /printf ok/);
+
+    const detail = await runCli(daemon.url, cwd, [
+      "--json",
+      "runs",
+      "shell-snapshot",
+      "run_shell",
+      "shell_snapshot:run_shell:tool_bash:000002",
+    ]);
+    assert.equal(detail.code, 0, detail.stderr);
+    const parsed = JSON.parse(detail.stdout);
+    assert.equal(parsed.snapshot.id, "shell_snapshot:run_shell:tool_bash:000002");
+    assert.equal(parsed.snapshot.status, "exited");
+    assert.equal(parsed.snapshot.output.stdoutHead, "ok\n");
+
+    assert.deepEqual(daemon.requests.slice(-2), [
+      "GET /runs/run_shell/shell-snapshots",
+      "GET /runs/run_shell/shell-snapshots/shell_snapshot%3Arun_shell%3Atool_bash%3A000002",
+    ]);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await daemon.close();
+  }
+});
+
 function runCli(daemonUrl, cwd, args) {
   return new Promise((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
@@ -122,6 +157,88 @@ async function startRunsDaemon() {
             },
           },
         ],
+      });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/runs/run_shell/shell-snapshots") {
+      writeJson(response, 200, {
+        runId: "run_shell",
+        snapshots: [
+          {
+            id: "shell_snapshot:run_shell:tool_bash:000001",
+            runId: "run_shell",
+            toolCallId: "tool_bash",
+            sequence: 1,
+            createdAt: "2026-06-08T00:00:00.000Z",
+            source: "exec_start",
+            status: "starting",
+            commandPreview: "printf ok",
+            artifactId: "artifact_snapshot_start_json",
+            textArtifactId: "artifact_snapshot_start_text",
+          },
+          {
+            id: "shell_snapshot:run_shell:tool_bash:000002",
+            runId: "run_shell",
+            toolCallId: "tool_bash",
+            sequence: 2,
+            createdAt: "2026-06-08T00:00:01.000Z",
+            source: "exec_end",
+            status: "exited",
+            commandPreview: "printf ok",
+            durationMs: 10,
+            exitCode: 0,
+            artifactId: "artifact_snapshot_end_json",
+            textArtifactId: "artifact_snapshot_end_text",
+          },
+        ],
+      });
+      return;
+    }
+
+    if (request.method === "GET" && decodeURIComponent(url.pathname) === "/runs/run_shell/shell-snapshots/shell_snapshot:run_shell:tool_bash:000002") {
+      writeJson(response, 200, {
+        artifactId: "artifact_snapshot_end_json",
+        textArtifactId: "artifact_snapshot_end_text",
+        snapshot: {
+          id: "shell_snapshot:run_shell:tool_bash:000002",
+          runId: "run_shell",
+          taskId: "task_shell",
+          toolCallId: "tool_bash",
+          sequence: 2,
+          createdAt: "2026-06-08T00:00:01.000Z",
+          source: "exec_end",
+          status: "exited",
+          command: {
+            cwd: "/tmp/workspace",
+            commandKind: "shell",
+            commandPreview: "printf ok",
+            shell: "bash",
+            pty: false,
+            environmentSummary: { mode: "inherit_minimal", inheritedNames: [], explicitNames: [], omittedNames: [] },
+          },
+          process: {
+            startedAt: "2026-06-08T00:00:00.000Z",
+            endedAt: "2026-06-08T00:00:01.000Z",
+            durationMs: 10,
+            exitCode: 0,
+          },
+          output: {
+            stdoutHead: "ok\n",
+            stdoutByteCount: 3,
+            stderrByteCount: 0,
+            truncated: false,
+          },
+          artifacts: [],
+          redaction: {
+            redacted: false,
+            extraSecretCount: 0,
+            commandRedacted: false,
+            stdoutRedacted: false,
+            stderrRedacted: false,
+            environmentValuesStored: false,
+          },
+        },
       });
       return;
     }

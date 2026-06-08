@@ -24,6 +24,8 @@ export function parseRunRoute(
   | { kind: "run"; runId: string }
   | { kind: "events"; runId: string }
   | { kind: "artifacts"; runId: string }
+  | { kind: "shell-snapshots"; runId: string }
+  | { kind: "shell-snapshot"; runId: string; snapshotId: string }
   | { kind: "cancel"; runId: string }
   | { kind: "interventions"; runId: string }
   | undefined {
@@ -36,6 +38,12 @@ export function parseRunRoute(
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "artifacts") {
     return { kind: "artifacts", runId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "shell-snapshots") {
+    return { kind: "shell-snapshots", runId: segments[1] };
+  }
+  if (segments.length === 4 && segments[0] === "runs" && segments[2] === "shell-snapshots") {
+    return { kind: "shell-snapshot", runId: segments[1], snapshotId: segments[3] };
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "cancel") {
     return { kind: "cancel", runId: segments[1] };

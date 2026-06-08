@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented in the P1 branch. The implementation keeps P2B shell snapshots,
+Implemented. The implementation keeps P2B shell snapshots,
 Pi CLI migration, JSON-RPC/app-server transport, and read/grep/find/ls shell
 conversion out of scope.
 
@@ -38,6 +38,7 @@ Ling's approval, artifact, timeout, cancellation, and redaction path.
 - [Codex-Inspired Runtime Tools P0: Apply-Patch Implementation](codex-inspired-runtime-tools-p0-apply-patch-implementation.md)
 - [Codex-Inspired Runtime Tools P2: Permission Requests And Shell Snapshots](codex-inspired-runtime-tools-p2-permissions-shell-snapshots.md)
 - [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](codex-inspired-runtime-tools-p2a-permission-requests-implementation.md)
+- [Codex-Inspired Runtime Tools P2B: Shell Snapshots Implementation](codex-inspired-runtime-tools-p2b-shell-snapshots-implementation.md)
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
 - [Approval Policy](approval-policy.md)
 - [CLI Run I/O and Completion P1](cli-run-io-completion-p1.md)
@@ -671,7 +672,8 @@ P1 is complete when:
 - secrets are redacted in events, logs, summaries, and artifacts;
 - CLI JSON stdout remains JSONL-only;
 - Web and CLI can inspect compact results and artifact links;
-- P2B shell snapshots remain deferred until this backend is shipped.
+- P2B shell snapshots can build on this backend but remain a separate implementation
+  slice.
 
 ## Open Questions
 

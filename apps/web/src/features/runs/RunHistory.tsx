@@ -20,7 +20,7 @@ import { LingDaemonError } from "@ling-stack/api-client";
 import { useEffect, useState } from "react";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
-import { cancelRunIntervention, createRunIntervention, getLingThreadEvidence, listLingThreads, listRunInterventions, previewLingThreadResume, resumeLingThread } from "../../api.js";
+import { artifactContentUrl, cancelRunIntervention, createRunIntervention, getLingThreadEvidence, listLingThreads, listRunInterventions, listRunShellSnapshots, previewLingThreadResume, resumeLingThread } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import {
   formatEventData,
@@ -78,6 +78,7 @@ import type {
   RunEventEnvelope,
   RunIntervention,
   RunSession,
+  ShellSnapshotListItem,
   StateTransitionEvent,
   UsedMemoryEvent,
   WorkUnitDetailResponse,
@@ -1723,6 +1724,8 @@ function RunEvidencePanel({
         />
       </div>
 
+      <ShellSnapshotPanel cwd={cwd} run={run} artifacts={artifacts} />
+
       {run.threadId ? (
         <div className="run-evidence-block">
           <div className="panel-title tight split">
@@ -1881,6 +1884,136 @@ function RunEvidencePanel({
         )}
       </div>
     </div>
+  );
+}
+
+function ShellSnapshotPanel({
+  cwd,
+  run,
+  artifacts,
+}: {
+  readonly cwd: string;
+  readonly run: RunSession;
+  readonly artifacts: readonly RunArtifact[];
+}): JSX.Element {
+  const { t } = useI18n();
+  const [snapshots, setSnapshots] = useState<readonly ShellSnapshotListItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const artifactsById = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
+
+  async function loadSnapshots(): Promise<void> {
+    setIsLoading(true);
+    setErrorMessage("");
+    try {
+      const response = await listRunShellSnapshots(run.id, cwd);
+      setSnapshots(response.snapshots);
+    } catch (error) {
+      setSnapshots([]);
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setSnapshots([]);
+    setErrorMessage("");
+    void loadSnapshots();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cwd, run.id]);
+
+  return (
+    <div className="run-evidence-block shell-snapshot-panel">
+      <div className="panel-title tight split">
+        <span>
+          <SquareTerminal size={16} />
+          <h3>{t("Shell snapshots")}</h3>
+        </span>
+        <span className="button-row compact">
+          <span className="event-count">{t("{count} snapshots", { count: snapshots.length })}</span>
+          <button className="secondary-button compact-button" type="button" onClick={() => void loadSnapshots()} disabled={isLoading}>
+            {isLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+            {t("Refresh")}
+          </button>
+        </span>
+      </div>
+      {errorMessage ? (
+        <p className="run-evidence-copy error">
+          <strong>{t("Shell snapshot diagnostics unavailable")}</strong>
+          {errorMessage}
+        </p>
+      ) : null}
+      {isLoading && snapshots.length === 0 ? (
+        <div className="empty-state compact-empty">
+          <Loader2 className="spin" />
+          <span>{t("Loading shell snapshots...")}</span>
+        </div>
+      ) : snapshots.length === 0 && !errorMessage ? (
+        <div className="artifact-empty-state">
+          <span>{t("No shell snapshots recorded for this run")}</span>
+          <small>{t("Approved bash commands will record redacted start and terminal snapshots when the daemon feature is enabled.")}</small>
+        </div>
+      ) : snapshots.length > 0 ? (
+        <div className="shell-snapshot-list">
+          {snapshots.map((snapshot) => (
+            <div key={snapshot.id} className="shell-snapshot-row">
+              <div className="shell-snapshot-head">
+                <StatusBadge status={snapshot.status} />
+                <code>#{snapshot.sequence}</code>
+                <span>{snapshot.source}</span>
+                <small>{formatDateTime(snapshot.createdAt)}</small>
+              </div>
+              <div className="shell-snapshot-command">
+                <strong>{truncatePreview(snapshot.commandPreview, 180)}</strong>
+                <small>{t("Tool call")}: {snapshot.toolCallId}</small>
+              </div>
+              <div className="shell-snapshot-meta">
+                <MetaRow label={t("Exit code")} value={snapshot.exitCode === undefined ? "-" : String(snapshot.exitCode)} compact />
+                <MetaRow label={t("Duration")} value={snapshot.durationMs === undefined ? "-" : `${snapshot.durationMs}ms`} compact />
+              </div>
+              <div className="shell-snapshot-artifacts">
+                <ShellSnapshotArtifactLink
+                  cwd={cwd}
+                  label={t("JSON")}
+                  artifactId={snapshot.artifactId}
+                  artifact={artifactsById.get(snapshot.artifactId)}
+                />
+                {snapshot.textArtifactId ? (
+                  <ShellSnapshotArtifactLink
+                    cwd={cwd}
+                    label={t("Text")}
+                    artifactId={snapshot.textArtifactId}
+                    artifact={artifactsById.get(snapshot.textArtifactId)}
+                  />
+                ) : (
+                  <code title={t("No text summary artifact")}>{t("No text summary")}</code>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ShellSnapshotArtifactLink({
+  cwd,
+  label,
+  artifactId,
+  artifact,
+}: {
+  readonly cwd: string;
+  readonly label: string;
+  readonly artifactId: string;
+  readonly artifact: RunArtifact | undefined;
+}): JSX.Element {
+  const title = artifact?.title ?? artifactId;
+  return (
+    <a className="artifact-action-link" href={artifactContentUrl(artifactId, cwd)} target="_blank" rel="noreferrer" title={title}>
+      {label}: {truncatePreview(title, 42)}
+    </a>
   );
 }
 

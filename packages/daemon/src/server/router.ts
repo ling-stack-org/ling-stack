@@ -122,6 +122,10 @@ import {
   maybeStartNextRunInterventionContinuation,
 } from "../features/runs/interventions.js";
 import {
+  handleGetShellSnapshot,
+  handleListShellSnapshots,
+} from "../features/runs/shell-snapshots.js";
+import {
   handleApprovalItem,
   handleApprovalPolicy,
   handleApprovalsCollection,
@@ -838,6 +842,14 @@ export async function routeRequest(
   }
   if (request.method === "GET" && runRoute?.kind === "artifacts") {
     handleListRunArtifacts(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+  if (request.method === "GET" && runRoute?.kind === "shell-snapshots") {
+    handleListShellSnapshots(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+  if (request.method === "GET" && runRoute?.kind === "shell-snapshot") {
+    handleGetShellSnapshot(response, url, storeRegistry, runRoute.runId, runRoute.snapshotId);
     return;
   }
 
