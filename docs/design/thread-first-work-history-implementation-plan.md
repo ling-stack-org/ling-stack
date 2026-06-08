@@ -1141,6 +1141,374 @@ Manual smoke:
 - open the channel conversation and verify the work cell title/status comes from the turn;
 - run an older legacy fixture and verify it still renders.
 
+#### V2A-P1 Implementation Record
+
+Implemented P1 as a Web read-only display slice:
+
+- exported `listLingThreadTurns` through `apps/web/src/api/runs.ts`;
+- added optional `LingTurn` / `LingTurnRun` inputs to the existing
+  `ConversationWorkCellViewModel` builder;
+- when loaded, durable turn data now drives work-cell id, title, status, mode, linked
+  attempts, and detail filtering;
+- when turn loading is empty or fails, the existing V2C-lite `RunSession.threadId`
+  grouping remains the visible fallback;
+- `WorkspaceClientView` lazily loads turns for visible conversation thread ids and keeps
+  the cache local to the selected workspace/channel view;
+- mock daemon now serves `GET /threads/:threadId/turns?cwd=...`;
+- channel e2e covers turn-backed multi-attempt rendering, legacy fallback, and endpoint
+  failure fallback.
+
+Validation coverage:
+
+- `corepack pnpm --filter @ling-stack/web typecheck`
+- `corepack pnpm --filter @ling-stack/web build`
+- `corepack pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g "durable Ling turns|turn loading fails|thread-backed runs render"`
+
+### V2A-P1b Work History Read-Only Detailed Design
+
+#### P1b Goal
+
+Let the dedicated Run History / Work History surface display durable turns as the
+primary read grouping for thread-backed work, while keeping all existing run-level
+detail, rerun, cancel, resume, provider repair, artifact, and evidence behaviors intact.
+
+P1b should make Work History able to answer:
+
+- which user intent a thread-backed run belongs to;
+- how many attempts belong to that intent;
+- which attempt is the active/latest run;
+- whether the current entry is durable-turn backed or legacy run/thread derived;
+- how to inspect all attempts without losing the existing run detail workflow.
+
+#### P1b Non-Goals
+
+- no new daemon API;
+- no turn mutation API;
+- no fork/archive/pin controls;
+- no turn-linked resume/rerun semantics;
+- no historical backfill;
+- no durable metadata/cache table;
+- no new evidence source beyond existing thread evidence and run artifacts;
+- no hiding legacy runs;
+- no raw logs, stdout/stderr dumps, provider payloads, transcripts, hidden reasoning, or
+  secrets in list rows or detail panels.
+
+#### Existing Work History Baseline
+
+The current `RunHistory` surface already derives thread groups from `RunSession.threadId`
+when daemon thread records are absent. It keeps run detail as the main inspection unit:
+
+- left navigation/list is run-oriented with thread-derived grouping available;
+- selected detail is still a `RunSession`;
+- thread evidence loads from `GET /threads/:threadId/evidence`;
+- resume/preview/rerun/cancel/provider repair actions are run-based;
+- legacy runs without `threadId` or turn links remain valid entries.
+
+P1b should add durable turn grouping as a read hint inside this model. It should not
+replace the selected-run detail contract.
+
+#### Data Loading
+
+Load turn data only for the selected or visible thread ids in Work History.
+
+Recommended first slice:
+
+1. derive visible thread ids from the current run list and selected thread/run;
+2. call `listLingThreadTurns(cwd, threadId, { limit: 100 })`;
+3. store local load state keyed by `${cwd.trim()}::${threadId}`;
+4. pass loaded `turns` and `runLinks` into the Work History grouping builder;
+5. keep rendering the existing run-derived list while turn data loads or fails.
+
+Do not add a batch endpoint in P1b. If list performance becomes a problem after real
+usage, add a daemon-side batch read API later.
+
+Invalidation:
+
+- clear on `cwd` change;
+- refresh when the selected run status changes;
+- refresh when a run in the visible thread starts, ends, cancels, or waits for approval;
+- refresh after thread resume completes if the returned run has `threadId`;
+- do not refresh on unrelated provider/settings changes.
+
+#### Grouping Model
+
+Introduce a small display model for Work History only:
+
+```ts
+interface WorkHistoryTurnGroup {
+  readonly id: string;
+  readonly threadId: string;
+  readonly turnId?: string;
+  readonly title: string;
+  readonly status: LingTurn["status"] | RunSession["status"];
+  readonly runIds: readonly string[];
+  readonly latestRunId: string;
+  readonly attemptCount: number;
+  readonly updatedAt: string;
+  readonly source: "durable_turn" | "legacy_thread";
+}
+```
+
+Rules:
+
+- when `LingTurnRun` links are loaded, group linked runs under `turnId`;
+- use `turn.title`, `turn.status`, and `turn.updatedAt` for the group label/status;
+- sort linked attempts by `attemptNumber`, then run activity;
+- select `latestRunId` from the latest visible linked run;
+- if a link references a run not loaded in the current Work History list, keep the link
+  out of the visible group until evidence/detail data loads it;
+- when no links match a thread, create a `legacy_thread` group from existing
+  `RunSession.threadId` grouping;
+- when a run has no `threadId`, keep the existing standalone run row.
+
+One Work History thread may contain multiple durable turn groups. P1b should show them as
+siblings under the same thread identity, not as nested cards inside cards.
+
+#### List UI Behavior
+
+Use turn grouping to improve scanability, not to change the page's interaction model.
+
+List row display:
+
+- primary label: `turn.title` for durable groups, existing run/thread title for legacy;
+- secondary metadata: attempt count, latest status, latest activity time;
+- compact badge: `durable` or no badge; avoid noisy technical ids by default;
+- selected state: selecting a group opens the latest linked run detail;
+- expanded state: optional inline attempt list showing each linked run id/title/status;
+- empty turn with no visible linked run: omit from list until a run is visible.
+
+Attempt rows:
+
+- clicking an attempt selects that exact run detail;
+- active attempt rows can still expose existing cancel controls when available;
+- terminal attempt rows can still expose existing rerun/provider repair controls.
+
+Do not introduce a new route or URL shape in P1b unless the existing Work History page
+already has a stable route parameter for thread/run selection.
+
+#### Detail Panel Behavior
+
+Keep `RunSession` as the selected detail.
+
+When selected run belongs to a durable turn:
+
+- show a small "Turn" context section with title, status, attempt count, and created/updated
+  timestamps;
+- show linked attempts as navigation chips or compact rows;
+- keep existing run metadata, artifacts, approvals, events, repair hints, and evidence
+  panels unchanged;
+- keep resume preview/resume based on the selected run and `threadId`, not `turnId`;
+- keep rerun based on `buildRerunRequest(run)`, not turn data.
+
+If turn data is missing or failed:
+
+- omit the turn context section;
+- keep the existing run detail fully usable.
+
+#### Evidence Semantics
+
+Continue using existing evidence endpoints:
+
+```text
+GET /threads/:threadId/evidence?cwd=...
+GET /runs/:runId/artifacts?cwd=...
+GET /runs/:runId/events?cwd=...
+```
+
+P1b may filter already-loaded thread evidence to linked `runIds` for display summaries,
+but it must not require a `turnId` evidence endpoint. The raw diagnostic drill-down
+continues to live behind explicit existing detail views.
+
+#### Resume, Rerun, And Action Semantics
+
+P1b is read-only. Turn grouping must not become execution authority.
+
+- `Resume thread` continues to call `resumeLingThread(cwd, threadId, { sourceRunId })`;
+- `Preview resume` continues to use the selected/source run;
+- `Rerun` continues to use the selected `RunSession`;
+- `Cancel` continues to target the selected active run or work unit;
+- approval controls remain owned by Review Queue / approval surfaces;
+- no action should send `turnId` unless a later V2D design explicitly adds turn-linked
+  resume semantics.
+
+#### Error And Fallback Semantics
+
+- empty `turns`: valid legacy state;
+- `404 thread_not_found`: fallback to derived run/thread grouping;
+- `400 bad_request`: fallback and expose only a quiet developer/debug note;
+- network failure: fallback and retry on explicit refresh or next thread selection;
+- partial link mismatch: ignore links whose run is not currently loaded;
+- duplicate or inconsistent links from API: prefer existing run order and avoid crashing
+  the list.
+
+The Work History surface must never blank because turn data failed.
+
+#### Implementation Files
+
+Expected first-slice touch points:
+
+- `apps/web/src/features/runs/RunHistory.tsx`: load turn state for selected/visible
+  thread ids, build turn groups, and show optional turn context in detail;
+- `apps/web/src/api/runs.ts`: already exports `listLingThreadTurns` from P1;
+- `apps/web/src/lib/conversation-work-cell.ts`: may reuse helper concepts, but do not
+  couple Work History list rendering to `ConversationWorkCell`;
+- `apps/web/e2e/support/mock-daemon.ts`: already has turn endpoint support from P1;
+- `apps/web/e2e/*run-history*.spec.ts` or nearby e2e coverage: add turn-backed and
+  legacy fallback cases.
+
+Avoid touching daemon/core storage, Review Queue mutation flows, global navigation, or
+conversation work-cell rendering unless a narrow type/shared-helper issue requires it.
+
+#### P1b Implementation Breakdown
+
+P1b should be implemented as a narrow Web read-model change, split into small local
+steps that can be tested independently.
+
+P1b-A: load and cache turns in `RunHistory`
+
+- import `listLingThreadTurns` and the `LingTurn` / `LingTurnRun` types from the existing
+  P1 API/types surface;
+- derive a bounded set of thread ids from `visibleThreads`, `selectedRun?.threadId`, and
+  visible runs with `threadId`;
+- keep local state in `RunHistory`, not a global store:
+
+```ts
+type WorkHistoryTurnLoadState =
+  | { readonly status: "idle" | "loading" }
+  | {
+      readonly status: "loaded";
+      readonly turns: readonly LingTurn[];
+      readonly runLinks: readonly LingTurnRun[];
+      readonly signature: string;
+    }
+  | { readonly status: "failed"; readonly error: string; readonly signature: string };
+```
+
+- key cache entries by `${cwd.trim()}::${threadId}`;
+- compute `signature` from the visible run ids/statuses in that thread so active or newly
+  resumed attempts refresh without polling every render;
+- fetch only missing/stale thread ids and use `Promise.allSettled` so one broken thread
+  cannot poison the whole Work History list;
+- clear the map on `cwd` change.
+
+P1b-B: add pure Work History grouping helpers
+
+- add local pure helpers near the existing `deriveThreadsFromRuns` helpers:
+  `buildWorkHistoryTurnGroups`, `buildTurnContextByRunId`, and
+  `buildLegacyThreadGroups`;
+- the helpers should accept `runs`, `visibleThreads`, and loaded turn state, then return
+  stable display objects;
+- never mutate `RunSession`, `LingThread`, `LingTurn`, or `LingTurnRun` objects;
+- keep helper output independent from `ConversationWorkCellViewModel` so conversation
+  rendering and Work History can evolve separately;
+- sort groups by durable `turn.updatedAt` when available, otherwise by latest linked run
+  activity, then by existing thread/run order for deterministic fallback;
+- de-duplicate linked run ids before rendering attempts.
+
+P1b-C: render durable turn groups in the left Work History list
+
+- keep the current `Threads` section structure for the first slice, but make durable
+  turns the preferred rows when a thread has loaded turn links;
+- durable turn row click should clear `selectedThreadId` and call `onSelect(latestRunId)`;
+- legacy thread row click can keep the existing `handleSelectThread` behavior and
+  `ThreadDetailPanel`;
+- standalone run rows remain in the existing `Runs` section and are not folded into turn
+  groups;
+- show attempt count as compact metadata, for example `2 attempts`;
+- if a durable group has more than one visible attempt, render a compact attempt list
+  under the row or directly below it; each attempt click calls `onSelect(runId)` for that
+  exact run;
+- do not expose `turnId` by default in the list. It may appear only in debug/details
+  affordances later.
+
+P1b-D: add optional turn context to `RunDetailPanel`
+
+- compute `selectedTurnContext` in `RunHistory` from `selectedRunId`;
+- pass it to `RunDetailPanel` as an optional prop;
+- render the context near the top of run detail, after the run summary and before repair
+  or evidence panels;
+- display only safe metadata: turn title, status, attempt count, created/updated time,
+  and linked attempts;
+- attempt chips/buttons only switch selected run; they must not resume, rerun, cancel, or
+  repair by `turnId`;
+- when turn state is loading, missing, or failed, omit the section rather than showing a
+  blocking spinner.
+
+P1b-E: preserve existing action authority
+
+- `RunDetailPanel` action props stay run-based;
+- `ThreadDetailPanel` resume source selection stays thread/run-based;
+- `onRerun`, `onCancelRun`, `onOpenProviders`, `onOpenApprovals`, and approval resolution
+  continue to receive the selected `RunSession` or run id only;
+- no P1b code path should construct a request body containing `turnId`.
+
+P1b-F: local copy and i18n strings
+
+Expected new copy:
+
+- `Work`;
+- `Attempts`;
+- `{count} attempts`;
+- `Turn`;
+- `Durable turn`;
+- `Turn grouping unavailable`;
+- `Open attempt`;
+
+The copy should stay quiet and operational. Avoid explaining implementation details in
+the UI.
+
+P1b-G: first-slice implementation order
+
+1. add the local load state and fetch/invalidation logic;
+2. add pure grouping helpers and TypeScript coverage through existing typecheck;
+3. render durable turn rows while preserving legacy thread/run rows;
+4. add selected-run turn context;
+5. add mock/e2e cases for durable multi-attempt and turn-load failure;
+6. update the implementation record only after validation passes.
+
+#### Acceptance
+
+- Work History displays durable-turn-backed groups when `LingTurnRun` links are loaded;
+- a turn with multiple attempts appears as one user-intent group with multiple run
+  attempts;
+- selecting the group opens the latest linked run detail;
+- selecting a specific attempt opens that exact run detail;
+- selected run detail shows optional turn context without replacing existing run detail;
+- resume/rerun/cancel/provider repair behavior remains run-based;
+- legacy thread-backed runs still render through existing derived grouping;
+- standalone runs without `threadId` still render as before;
+- turn API loading/error states do not blank Work History;
+- no raw logs, provider payloads, transcripts, hidden reasoning, or unredacted secrets are
+  rendered by the P1b path.
+
+#### Test Plan
+
+Unit/component-level:
+
+- durable turn group builder uses `turn.title`, `turn.status`, and `LingTurnRun`
+  attempt count;
+- group builder falls back to legacy thread grouping when turns are empty, loading, or
+  failed;
+- partial links to missing runs are ignored without crashing;
+- selected detail still receives the selected `RunSession`.
+
+E2E/mock:
+
+- mock Work History with one durable turn and two linked runs;
+- verify the list shows one user-intent group and two attempts;
+- click latest group and verify the latest run detail opens;
+- click prior attempt and verify prior run detail opens;
+- simulate turn endpoint failure and verify legacy list remains visible;
+- verify resume/rerun controls still target run/thread routes without `turnId`.
+
+Manual smoke:
+
+- open Work History after creating a new durable-turn-backed run;
+- verify the turn title/status/attempt count appears;
+- open latest and prior attempts;
+- verify resume/rerun still work from the selected run;
+- open an older legacy run and verify no turn context is required.
+
 ### Tests
 
 - Create/list turns under one thread.

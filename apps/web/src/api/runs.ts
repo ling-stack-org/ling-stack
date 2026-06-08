@@ -7,6 +7,7 @@ import type {
   LingThreadResumePreviewResponse,
   LingThreadResumeRequest,
   LingThreadResumeResponse,
+  LingThreadTurnsResponse,
   RunArtifactListResponse,
   RunCancelResponse,
   RunEventsResponse,
@@ -38,6 +39,14 @@ export async function getLingThread(cwd: string, threadId: string): Promise<Ling
 
 export async function getLingThreadEvidence(cwd: string, threadId: string): Promise<LingThreadEvidenceResponse> {
   return daemonClient.getLingThreadEvidence(cwd, threadId);
+}
+
+export async function listLingThreadTurns(
+  cwd: string,
+  threadId: string,
+  options: { readonly limit?: number; readonly beforeUpdatedAt?: string } = {},
+): Promise<LingThreadTurnsResponse> {
+  return daemonClient.listLingThreadTurns(cwd, threadId, options);
 }
 
 export async function resumeLingThread(

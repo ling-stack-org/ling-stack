@@ -44,7 +44,7 @@ import {
   X,
 } from "lucide-react";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { artifactContentUrl, cancelRunIntervention, createRunIntervention, getLingThreadEvidence, listRunInterventions } from "../../api.js";
+import { artifactContentUrl, cancelRunIntervention, createRunIntervention, getLingThreadEvidence, listLingThreadTurns, listRunInterventions } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -150,6 +150,8 @@ import type {
   RunArtifact,
   RunIntervention,
   RunSession,
+  LingTurn,
+  LingTurnRun,
   PermissionPreset,
   SessionPermissionMode,
   StateTransitionEvent,
@@ -179,6 +181,11 @@ type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
 type MessageBubbleTone = "chat" | "chat-blocked" | "system" | "work" | "approval" | "protocol" | "runtime";
 type ChannelNotificationLevel = "all" | "mentions" | "muted";
 type AttentionProgressTone = "success" | "running" | "waiting" | "blocked" | "failed" | "neutral";
+type ThreadTurnsLoadState =
+  | { readonly status: "not_loaded" }
+  | { readonly status: "loading" }
+  | { readonly status: "loaded"; readonly turns: readonly LingTurn[]; readonly runLinks: readonly LingTurnRun[] }
+  | { readonly status: "error"; readonly errorMessage: string };
 
 interface AttentionContextRow {
   readonly id: string;
@@ -562,6 +569,7 @@ export function WorkspaceClientView({
   const [sidePanelOpen, setSidePanelOpen] = useState(() => Boolean(selectedTaskId));
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
+  const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
   const [attentionQueueOpen, setAttentionQueueOpen] = useState(true);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
@@ -610,6 +618,8 @@ export function WorkspaceClientView({
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
   const teammateManagerPanelRef = useRef<HTMLElement | null>(null);
   const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
+  const conversationThreadTurnLoadsRef = useRef(new Set<string>());
+  const conversationThreadTurnRunSignaturesRef = useRef(new Map<string, string>());
   const autoPreviewUrlsRef = useRef(new Set<string>());
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
   const previousChannelIdRef = useRef(selectedChannelId);
@@ -625,13 +635,29 @@ export function WorkspaceClientView({
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
   );
+  const channelRunsByThreadId = useMemo(() => groupRunsByThreadId(channelRuns), [channelRuns]);
+  const visibleConversationThreadIds = useMemo(() => [...channelRunsByThreadId.keys()], [channelRunsByThreadId]);
+  const visibleConversationThreadRunSignatures = useMemo(() => {
+    const signatures = new Map<string, string>();
+    for (const [threadId, threadRuns] of channelRunsByThreadId) {
+      signatures.set(
+        threadId,
+        threadRuns
+          .map((run) => [run.id, run.status, run.updatedAt, run.startedAt ?? "", run.endedAt ?? ""].join(":"))
+          .join("|"),
+      );
+    }
+    return signatures;
+  }, [channelRunsByThreadId]);
   const conversationWorkCellByThreadId = useMemo(() => {
-    const groupedRuns = groupRunsByThreadId(channelRuns);
     const cells = new Map<string, NonNullable<ReturnType<typeof buildConversationWorkCellViewModel>>>();
-    for (const [threadId] of groupedRuns) {
+    for (const [threadId] of channelRunsByThreadId) {
+      const turnState = conversationThreadTurnsByKey[threadTurnsCacheKey(threadId)];
       const cell = buildConversationWorkCellViewModel({
         threadId,
         runs: channelRuns,
+        turns: turnState?.status === "loaded" ? turnState.turns : undefined,
+        turnRunLinks: turnState?.status === "loaded" ? turnState.runLinks : undefined,
         approvals,
         artifactsByRun: channelArtifactsByRun,
         t,
@@ -642,7 +668,7 @@ export function WorkspaceClientView({
       }
     }
     return cells;
-  }, [approvals, channelArtifactsByRun, channelRuns, cwd, t]);
+  }, [approvals, channelArtifactsByRun, channelRuns, channelRunsByThreadId, conversationThreadTurnsByKey, cwd, t]);
   const selectedChannelTaskIds = useMemo(
     () => tasks.filter((task) => task.channelId === selectedChannelId).map((task) => task.id),
     [selectedChannelId, tasks],
@@ -655,9 +681,60 @@ export function WorkspaceClientView({
   );
   const latestRun = channelRuns[0];
   useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    const visibleKeys = new Set(visibleConversationThreadIds.map((threadId) => threadTurnsCacheKey(threadId)));
+    setConversationThreadTurnsByKey((current) => {
+      const entries = Object.entries(current).filter(([key]) => visibleKeys.has(key));
+      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+    });
+    if (!workspaceCwd) {
+      return;
+    }
+    for (const threadId of visibleConversationThreadIds) {
+      const cacheKey = threadTurnsCacheKey(threadId);
+      const runSignature = visibleConversationThreadRunSignatures.get(threadId) ?? "";
+      const lastRunSignature = conversationThreadTurnRunSignaturesRef.current.get(cacheKey);
+      const currentState = conversationThreadTurnsByKey[cacheKey];
+      const shouldRefresh = lastRunSignature !== runSignature || currentState === undefined || currentState.status === "not_loaded";
+      if (!shouldRefresh || conversationThreadTurnLoadsRef.current.has(cacheKey)) {
+        continue;
+      }
+      conversationThreadTurnRunSignaturesRef.current.set(cacheKey, runSignature);
+      conversationThreadTurnLoadsRef.current.add(cacheKey);
+      setConversationThreadTurnsByKey((current) => ({
+        ...current,
+        [cacheKey]: { status: "loading" },
+      }));
+      void listLingThreadTurns(workspaceCwd, threadId, { limit: 50 })
+        .then((response) => {
+          setConversationThreadTurnsByKey((current) => ({
+            ...current,
+            [cacheKey]: {
+              status: "loaded",
+              turns: response.turns,
+              runLinks: response.runLinks,
+            },
+          }));
+        })
+        .catch((caught: unknown) => {
+          const message = caught instanceof Error ? caught.message : String(caught);
+          setConversationThreadTurnsByKey((current) => ({
+            ...current,
+            [cacheKey]: {
+              status: "error",
+              errorMessage: message || t("Evidence failed to load."),
+            },
+          }));
+        })
+        .finally(() => {
+          conversationThreadTurnLoadsRef.current.delete(cacheKey);
+        });
+    }
+  }, [conversationThreadTurnsByKey, cwd, t, visibleConversationThreadIds, visibleConversationThreadRunSignatures]);
+  useEffect(() => {
     conversationWorkCellEvidenceLoadsRef.current.clear();
     setConversationWorkCellDetailsByKey((current) => Object.keys(current).length === 0 ? current : {});
-  }, [approvals, channelArtifactsByRun, cwd, runs]);
+  }, [approvals, channelArtifactsByRun, conversationWorkCellByThreadId, cwd, runs]);
   const pendingChannelApprovals = useMemo(() => {
     return approvals.filter((approval) => {
       if (effectiveApprovalStatus(approval) !== "pending") {
@@ -1371,11 +1448,17 @@ export function WorkspaceClientView({
   }
 
   function conversationWorkCellDetailsCacheKey(threadId: string): string {
+    const workCell = conversationWorkCellByThreadId.get(threadId);
+    return `${cwd.trim()}::${workCell?.id ?? threadId}`;
+  }
+
+  function threadTurnsCacheKey(threadId: string): string {
     return `${cwd.trim()}::${threadId}`;
   }
 
   function loadConversationWorkCellDetails(threadId: string): void {
     const cacheKey = conversationWorkCellDetailsCacheKey(threadId);
+    const workCell = conversationWorkCellByThreadId.get(threadId);
     const existing = conversationWorkCellDetailsByKey[cacheKey];
     if (existing?.status === "loading" || existing?.status === "loaded" || existing?.status === "empty" || conversationWorkCellEvidenceLoadsRef.current.has(cacheKey)) {
       return;
@@ -1392,6 +1475,7 @@ export function WorkspaceClientView({
         const details = buildConversationWorkCellDetailsFromThreadEvidence({
           threadId,
           evidence,
+          runIds: workCell?.turnId ? workCell.runIds : undefined,
           t,
           artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
         });

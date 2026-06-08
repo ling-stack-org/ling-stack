@@ -239,7 +239,7 @@ function WorkCellStatusIcon({ status, active }: { readonly status: ConversationW
   if (status === "succeeded") {
     return <CheckCircle2 size={17} />;
   }
-  if (status === "failed" || status === "cancelled") {
+  if (status === "failed" || status === "cancelled" || status === "superseded") {
     return <CircleAlert size={17} />;
   }
   if (status === "waiting_for_approval") {

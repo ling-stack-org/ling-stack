@@ -1673,6 +1673,121 @@ test("thread-backed runs render as collapsed conversation work cells", async ({ 
   await expect(page.locator("article.task-detail")).toContainText("Latest run");
 });
 
+test("durable Ling turns drive conversation work cell title, status, and attempts", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const firstAttempt = {
+    ...state.runs[0],
+    threadId: "thread_durable_turn",
+    status: "failed",
+    startedAt: "2026-05-25T00:10:00.000Z",
+    endedAt: "2026-05-25T00:11:00.000Z",
+    updatedAt: "2026-05-25T00:11:00.000Z",
+    errorMessage: "First attempt failed before retry.",
+  };
+  const secondAttempt = {
+    ...firstAttempt,
+    id: "run_durable_retry",
+    status: "succeeded",
+    errorMessage: undefined,
+    eventLogPath: ".ling-stack/sessions/run_durable_retry.jsonl",
+    createdAt: "2026-05-25T00:12:00.000Z",
+    startedAt: "2026-05-25T00:12:30.000Z",
+    endedAt: "2026-05-25T00:14:00.000Z",
+    updatedAt: "2026-05-25T00:14:00.000Z",
+  };
+  state.runs = [secondAttempt, firstAttempt];
+  state.tasks = state.tasks.map((task) => isRecord(task) && task.id === "task_inspect"
+    ? { ...task, status: "done", currentRunId: secondAttempt.id, updatedAt: secondAttempt.updatedAt }
+    : task);
+  state.turns = [
+    {
+      id: "turn_durable_inspect",
+      workspaceId: "workspace_default",
+      threadId: "thread_durable_turn",
+      kind: "initial_request",
+      status: "succeeded",
+      title: "Durable inspect turn",
+      userInstruction: "Inspect the repo and report next steps.",
+      channelId: "channel_engineering",
+      taskId: "task_inspect",
+      activeRunId: undefined,
+      lastRunId: secondAttempt.id,
+      createdByActor: "local-user",
+      createdAt: "2026-05-25T00:10:00.000Z",
+      updatedAt: "2026-05-25T00:14:00.000Z",
+      completedAt: "2026-05-25T00:14:00.000Z",
+    },
+  ];
+  state.turnRunLinks = [
+    {
+      turnId: "turn_durable_inspect",
+      runId: firstAttempt.id,
+      attemptNumber: 1,
+      role: "primary",
+      createdAt: "2026-05-25T00:10:00.000Z",
+    },
+    {
+      turnId: "turn_durable_inspect",
+      runId: secondAttempt.id,
+      attemptNumber: 2,
+      role: "retry",
+      createdAt: "2026-05-25T00:12:00.000Z",
+    },
+  ];
+  state.artifactsByRun[secondAttempt.id] = [
+    {
+      id: "artifact_durable_retry_diff",
+      runId: secondAttempt.id,
+      type: "diff",
+      path: "packages/core/src/storage/sqlite-run-store.ts",
+      title: "sqlite-run-store.ts",
+      contentType: "text/x-diff; charset=utf-8",
+      sizeBytes: 1024,
+      createdAt: "2026-05-25T00:13:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Durable inspect turn" });
+  await expect(workCell).toBeVisible();
+  await expect(workCell).toContainText("Work result");
+  await expect(workCell).toContainText("Completed 2 attempts with 1 evidence items.");
+  await expect(workCell.getByLabel("Work summary")).toContainText("Attempts");
+  await expect(workCell.getByLabel("Work summary")).toContainText("2");
+  await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
+
+  await workCell.getByRole("button", { name: "Show details" }).click();
+  await expect(workCell.getByLabel("Checked work")).toContainText("failed");
+  await expect(workCell.getByLabel("Checked work")).toContainText("succeeded");
+  await expect(workCell.getByRole("region", { name: "Evidence" })).toContainText("diff");
+});
+
+test("conversation work cell falls back when Ling turn loading fails", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const run = state.runs[0];
+  run.threadId = "thread_turn_failure";
+  run.status = "succeeded";
+  run.errorMessage = undefined;
+  run.startedAt = "2026-05-25T00:20:00.000Z";
+  run.endedAt = "2026-05-25T00:22:00.000Z";
+  run.updatedAt = "2026-05-25T00:22:00.000Z";
+  state.failThreadTurnsForThreadIds = ["thread_turn_failure"];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const workCell = page.getByLabel("Channel message feed").locator(".conversation-work-cell").filter({ hasText: "Inspect workspace" });
+  await expect(workCell).toBeVisible();
+  await expect(workCell).toContainText("Completed 1 attempts with 0 evidence items.");
+});
+
 test("active runtime approvals render as a composer overlay and resolve from the composer", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

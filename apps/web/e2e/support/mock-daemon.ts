@@ -86,6 +86,9 @@ export interface MockState {
   artifactsByRun: Record<string, MockArtifact[]>;
   artifactsByMediaJob: Record<string, MockArtifact[]>;
   threads: MockLingThread[];
+  turns: MockLingTurn[];
+  turnRunLinks: MockLingTurnRun[];
+  failThreadTurnsForThreadIds: string[];
   executionActions: MockExecutionAction[];
 }
 
@@ -107,6 +110,39 @@ export interface MockLingThread {
   createdAt: string;
   updatedAt: string;
   archivedAt?: string;
+}
+
+export interface MockLingTurn {
+  id: string;
+  workspaceId: string;
+  threadId: string;
+  kind: string;
+  status: string;
+  title: string;
+  userInstruction: string;
+  channelId?: string;
+  taskId?: string;
+  teammateId?: string;
+  workflowStepId?: string;
+  externalWorkId?: string;
+  automationId?: string;
+  sourceMessageId?: string;
+  sourceTurnId?: string;
+  interventionId?: string;
+  activeRunId?: string;
+  lastRunId?: string;
+  createdByActor: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface MockLingTurnRun {
+  turnId: string;
+  runId: string;
+  attemptNumber: number;
+  role: string;
+  createdAt: string;
 }
 
 export interface MockRun {
@@ -829,6 +865,9 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     artifactsByRun: {},
     artifactsByMediaJob: {},
     threads: [],
+    turns: [],
+    turnRunLinks: [],
+    failThreadTurnsForThreadIds: [],
     executionActions: [],
   };
 }
@@ -4306,6 +4345,17 @@ export async function handleDaemonRoute(
     }
     if (request.method() === "GET" && action === "evidence") {
       await route.fulfill({ json: buildMockThreadEvidence(state, thread) });
+      return;
+    }
+    if (request.method() === "GET" && action === "turns") {
+      if (state.failThreadTurnsForThreadIds.includes(threadId)) {
+        await route.fulfill({ status: 500, json: { error: "thread_turns_failed" } });
+        return;
+      }
+      const turns = state.turns.filter((turn) => turn.threadId === threadId);
+      const turnIds = new Set(turns.map((turn) => turn.id));
+      const runLinks = state.turnRunLinks.filter((link) => turnIds.has(link.turnId));
+      await route.fulfill({ json: { cwd, threadId, turns, runLinks } });
       return;
     }
     if (request.method() === "POST" && (action === "resume-preview" || action === "resume")) {
