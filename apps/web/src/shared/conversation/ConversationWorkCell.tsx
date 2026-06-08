@@ -157,8 +157,9 @@ function WorkCellDetails({
   }
 
   const groups = state.groups ?? [];
+  const visibleGroups = groups.filter((group) => group.rows.length > 0);
   const evidenceLinks = state.evidenceLinks ?? [];
-  const empty = state.status === "empty" || (groups.every((group) => group.rows.length === 0) && evidenceLinks.length === 0);
+  const empty = state.status === "empty" || (visibleGroups.length === 0 && evidenceLinks.length === 0);
   return (
     <div className="conversation-work-cell-details">
       {empty ? (
@@ -167,19 +168,15 @@ function WorkCellDetails({
           <span>{t("No evidence captured yet.")}</span>
         </div>
       ) : null}
-      {groups.map((group) => (
+      {visibleGroups.map((group) => (
         <section key={group.id} className={`conversation-work-cell-group ${group.id}`} aria-label={group.label}>
           <header>
             <strong>{group.label}</strong>
             <small>{group.summary}</small>
           </header>
-          {group.rows.length > 0 ? (
-            <div className="conversation-work-cell-row-list">
-              {group.rows.map((row) => <WorkCellRow key={row.id} row={row} />)}
-            </div>
-          ) : (
-            <p className="conversation-work-cell-empty">{t("No items recorded")}</p>
-          )}
+          <div className="conversation-work-cell-row-list">
+            {group.rows.map((row) => <WorkCellRow key={row.id} row={row} />)}
+          </div>
         </section>
       ))}
       {evidenceLinks.length > 0 ? (

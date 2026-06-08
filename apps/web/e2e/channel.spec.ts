@@ -1659,7 +1659,8 @@ test("thread-backed runs render as collapsed conversation work cells", async ({ 
   await expect(workCell.getByLabel("Changed")).toContainText("WorkspaceClientView.tsx");
   await expect(workCell.getByLabel("Checked work")).toContainText("succeeded");
   await expect(workCell.getByRole("region", { name: "Evidence" })).toContainText("diff");
-  await expect(workCell.getByLabel("Attention")).toContainText("No items recorded");
+  await expect(workCell.locator(".conversation-work-cell-group.attention")).toHaveCount(0);
+  await expect(workCell).not.toContainText("No items recorded");
   await expect(workCell.getByRole("link", { name: /WorkspaceClientView\.tsx/ })).toHaveAttribute("href", /\/artifacts\/artifact_thread_diff\/content/);
   expect(threadEvidenceRequests).toHaveLength(1);
 
@@ -1788,13 +1789,32 @@ test("conversation work cell falls back when Ling turn loading fails", async ({ 
   await expect(workCell).toContainText("Completed 1 attempts with 0 evidence items.");
 });
 
-test("active runtime approvals render as a composer overlay and resolve from the composer", async ({ page }) => {
+test("active conversation work cell renders sparse rows while runtime approvals stay in composer overlay", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "pending" });
+  const run = state.runs[0];
+  run.threadId = "thread_active_approval";
+  run.status = "waiting_for_approval";
+  run.errorMessage = undefined;
+  run.startedAt = "2026-05-22T00:00:30.000Z";
+  run.updatedAt = "2026-05-22T00:01:00.000Z";
+  state.tasks = state.tasks.map((task) => isRecord(task) && task.id === "task_inspect"
+    ? { ...task, status: "running", currentRunId: run.id, updatedAt: run.updatedAt }
+    : task);
   await mockDaemon(page, state);
   await page.goto("/");
+
+  const feed = page.getByLabel("Channel message feed");
+  const workCell = feed.locator(".conversation-work-cell").filter({ hasText: "Inspect workspace" });
+  await expect(workCell).toBeVisible();
+  await expect(workCell).toContainText("Work in progress");
+  await expect(workCell).toContainText("Waiting for 1 approvals before continuing.");
+  await expect(workCell.getByLabel("Active work stream")).toContainText("Waiting for approval");
+  await expect(workCell.getByLabel("Active work stream")).toContainText("Approve shell command");
+  await expect(feed.getByRole("button", { name: "Approve" })).toHaveCount(0);
+  await expect(feed.getByRole("button", { name: "Deny" })).toHaveCount(0);
 
   const composer = page.getByLabel("Channel composer");
   const overlay = composer.getByLabel("Composer approval overlay");
@@ -1802,7 +1822,7 @@ test("active runtime approvals render as a composer overlay and resolve from the
   await expect(overlay).toContainText("Runtime approval needed");
   await expect(overlay).toContainText("Highest risk: medium");
   await expect(overlay).toContainText("Approve shell command");
-  await expect(page.getByLabel("Channel message feed").getByRole("button", { name: "Approve" })).toHaveCount(0);
+  await expect(feed.getByRole("button", { name: "Approve" })).toHaveCount(0);
 
   await overlay.getByRole("button", { name: "Approve" }).click();
   await expect(composer.getByLabel("Composer approval overlay")).toHaveCount(0);

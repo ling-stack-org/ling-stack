@@ -1951,6 +1951,38 @@ Suggested verification:
 - targeted Web test or component smoke for completed and active cells;
 - manual/browser screenshot if component styling changes visible conversation layout.
 
+### V2C-lite Implementation Record
+
+Implemented the Codex-like收口 as a narrow Web slice on top of the existing V2C-lite
+architecture:
+
+- kept `ConversationWorkCellViewModel`, `ConversationWorkCell`, Workspace conversation
+  feed wiring, durable-turn loading, and lazy evidence hydration;
+- did not add daemon routes, durable tables, evidence caches, or new action authority;
+- kept `Open run` as the first drill-down action and did not add Work History navigation
+  in this slice;
+- completed cells remain collapsed by default and only load grouped details after
+  `Show details`;
+- active cells render sparse rows from run status, pending approvals, auditable actions,
+  and evidence milestones;
+- grouped details now hide empty Changed / Checked / Evidence / Attention groups instead
+  of rendering empty placeholders;
+- if every group and evidence link is empty, details show one bounded empty state:
+  `No evidence captured yet.`;
+- transcript rows still do not render approval decision controls; approve/deny remains in
+  the composer overlay or dedicated approval surfaces.
+
+Validation:
+
+- `git diff --check`
+- `corepack pnpm --filter @ling-stack/web typecheck`
+- `corepack pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g "thread-backed runs render as collapsed conversation work cells|durable Ling turns drive conversation work cell title|conversation work cell falls back|active runtime approvals|active conversation work cell"`
+
+Follow-up decision:
+
+- if screenshot review still feels too card-like compared with Codex, evaluate a separate
+  V2C visual rewrite. Do not fold that rewrite into this收口 slice.
+
 ### V2C-P0a: Composer Approval Overlay
 
 #### Goal
