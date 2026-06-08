@@ -8,6 +8,21 @@ export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" |
 
 export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
 
+export interface LingThreadMetadata {
+  readonly schemaVersion: 1;
+  readonly summary?: string;
+  readonly pinnedAt?: string;
+  readonly lastTurnId?: string;
+  readonly lastActivityAt?: string;
+  readonly pendingApprovalCount: number;
+  readonly blockedCount: number;
+  readonly failedAttemptCount: number;
+  readonly artifactCount: number;
+  readonly latestFailureRunId?: string;
+  readonly latestEvidenceArtifactId?: string;
+  readonly rebuiltAt: string;
+}
+
 export interface LingThread {
   readonly id: string;
   readonly workspaceId: string;
@@ -23,6 +38,7 @@ export interface LingThread {
   readonly status: LingThreadStatus;
   readonly activeRunId?: string;
   readonly lastRunId?: string;
+  readonly metadata?: LingThreadMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly archivedAt?: string;

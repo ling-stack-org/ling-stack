@@ -1551,18 +1551,113 @@ render.
 
 Add rebuildable metadata, not safety authority.
 
-Candidate fields:
+First version scope:
 
-- summary;
-- pinnedAt;
-- lastTurnId;
-- lastActivityAt;
-- pendingApprovalCount;
-- blockedCount;
-- failedAttemptCount;
-- artifactCount;
-- latestFailureRunId;
-- latestEvidenceArtifactId.
+- add nullable `ling_threads.metadata_json`;
+- expose optional `LingThread.metadata` in core/contracts/API responses;
+- rebuild metadata from source records on thread create/update/run lifecycle changes;
+- use metadata as a read hint for Web list/detail surfaces only;
+- keep all approval, resume, rerun, cancel, repair, artifact, and evidence authority tied
+  to existing source records;
+- do not add fork/archive/pin/search behavior in V2B.
+
+Do not add a separate durable metadata table in V2B. The metadata is rebuildable cache
+attached to the thread row while the field shape is still changing.
+
+### Metadata Shape
+
+Use a versioned JSON object:
+
+```ts
+interface LingThreadMetadata {
+  readonly schemaVersion: 1;
+  readonly summary?: string;
+  readonly pinnedAt?: string;
+  readonly lastTurnId?: string;
+  readonly lastActivityAt?: string;
+  readonly pendingApprovalCount: number;
+  readonly blockedCount: number;
+  readonly failedAttemptCount: number;
+  readonly artifactCount: number;
+  readonly latestFailureRunId?: string;
+  readonly latestEvidenceArtifactId?: string;
+  readonly rebuiltAt: string;
+}
+```
+
+Field rules:
+
+- `summary`: short safe display text from thread title/objective or latest turn title;
+- `pinnedAt`: reserved for V2D pin UI, not written by V2B unless already present;
+- `lastTurnId`: latest durable turn for the thread by `updatedAt`;
+- `lastActivityAt`: max timestamp across thread, turns, runs, approvals, artifacts, and
+  execution actions that are linked to the thread;
+- `pendingApprovalCount`: pending approvals linked through run ids or thread-owned
+  workflow step approvals;
+- `blockedCount`: count of blocked turns plus blocked thread status;
+- `failedAttemptCount`: failed runs linked to this thread;
+- `artifactCount`: artifacts linked to visible thread runs;
+- `latestFailureRunId`: most recent failed run in the thread;
+- `latestEvidenceArtifactId`: most recent artifact attached to a thread run;
+- `rebuiltAt`: wall-clock timestamp of the rebuild, for diagnostics only.
+
+Do not store raw logs, event payloads, provider payloads, stdout/stderr, transcripts,
+hidden reasoning, or unredacted secrets in metadata.
+
+### Rebuild Sources
+
+Rebuild from canonical records only:
+
+- `ling_threads` for owner, title, objective, status, active/last run;
+- `ling_turns` and `ling_turn_runs` for durable turn linkage and last turn;
+- `run_sessions` for attempts, status, failures, and run activity;
+- `approval_requests` for pending approval counts;
+- `artifacts` for evidence artifact counts/latest artifact id;
+- `execution_actions` for action activity timestamps where the action is linked to the
+  thread or one of its runs;
+- `state_transition_events` may remain out of first-version metadata unless needed for
+  activity ordering.
+
+The rebuild must be deterministic except for `rebuiltAt`. If a source table is missing
+in an older local DB, migration must make the column available and fallback should still
+return the base thread row.
+
+### Fallback Semantics
+
+Metadata is disposable. Every consumer must tolerate:
+
+- missing `metadata_json`;
+- invalid JSON;
+- unknown `schemaVersion`;
+- stale metadata after an interrupted write;
+- partial counts after source records were deleted or migrated.
+
+Fallback behavior:
+
+- `listLingThreads` and `getLingThread` return the thread even when metadata cannot be
+  parsed;
+- Web can derive title/status/attempts from runs/turns as it does today;
+- stale metadata never changes approval enforcement, resume source selection, rerun
+  request construction, cancel targets, or provider repair behavior;
+- rebuild failures should be swallowed at mutation call sites unless the primary source
+  mutation itself failed.
+
+### Invalidation And Refresh
+
+V2B should refresh thread metadata after source changes that affect list/detail summaries:
+
+- thread create/update/archive;
+- durable turn create/status reconciliation/run link;
+- run create/queued/running/waiting/terminal/cancel;
+- approval create/resolve/cancel/expire where linked to a thread run or workflow step;
+- artifact create for a thread run;
+- execution action create/update when linked to a thread or thread run.
+
+The first implementation can use targeted synchronous rebuilds in the store after the
+existing source mutation completes. Later versions may add a background rebuild command
+if rebuild cost becomes visible.
+
+### API And Web Use
 
 ### Storage Options
 
@@ -1572,12 +1667,73 @@ Prefer this order:
 2. Explicit columns for query-critical fields after usage stabilizes.
 3. Rebuild command or startup reconcile if drift is detected.
 
+In V2B first version:
+
+- `GET /threads` includes `thread.metadata` when parseable;
+- `GET /threads/:threadId` includes the same metadata;
+- `GET /threads/:threadId/evidence` remains the raw drill-down source;
+- Work History may prefer `thread.metadata.lastActivityAt` for sorting and show safe
+  counts in compact metadata;
+- no new daemon route is required.
+
 ### Tests
 
+- Migration adds `ling_threads.metadata_json` idempotently.
 - Metadata can be rebuilt from source records.
-- Stale metadata does not affect approval enforcement.
-- Thread rail can render from metadata when present.
+- Rebuild computes last turn, last activity, pending approvals, failed attempts,
+  artifacts, and latest failure/evidence ids.
+- Invalid or missing metadata falls back to a usable `LingThread`.
+- Stale metadata does not affect approval enforcement, resume, rerun, cancel, or repair.
+- Thread rail / Work History can render from metadata when present.
 - Missing metadata falls back to derived counts.
+
+### V2B First Implementation Order
+
+1. Add `LingThreadMetadata` type to core/contracts and optional `metadata` on
+   `LingThread`.
+2. Add `metadata_json` migration on `ling_threads`.
+3. Parse/stringify metadata in SQLite mapping while swallowing invalid JSON.
+4. Add store methods:
+   - `rebuildLingThreadMetadata(threadId, now)`;
+   - `rebuildLingThreadMetadataForRun(runId, now)`;
+   - `refreshLingThreadMetadataAfterRunMutation(run, now)` if helper naming is clearer.
+5. Call rebuild after thread/turn/run/approval/artifact/action mutations that already
+   know the affected thread/run.
+6. Let Web consume `thread.metadata` opportunistically while preserving current fallbacks.
+7. Add core tests and targeted Web type/e2e coverage if UI display changes.
+
+### V2B Implementation Record
+
+Implemented V2B first version as a rebuildable SQLite read cache:
+
+- added optional `LingThread.metadata` and `LingThreadMetadata` to core/contracts;
+- added migration 45, `add_ling_thread_metadata`, with nullable
+  `ling_threads.metadata_json`;
+- included `metadata_json` in fresh `ling_threads` schema creation and idempotent
+  migration repair;
+- parse invalid, missing, or unknown-version metadata as `undefined` while still
+  returning the base thread row;
+- added `rebuildLingThreadMetadata(threadId, now)` and
+  `rebuildLingThreadMetadataForRun(runId, now)`;
+- rebuild computes summary, last turn, last activity, pending approvals, blocked turns,
+  failed attempts, artifact count, latest failed run, latest evidence artifact, and
+  `rebuiltAt`;
+- rebuild sources are existing source records only: thread row, durable turns, linked
+  runs, approvals, artifacts, and tool-action timestamps derived from run events;
+- mutation call sites use best-effort refresh after thread, turn, run status, approval,
+  artifact, and tool-action event writes;
+- approval resolve still reads/writes `approval_requests`; stale or corrupt metadata is
+  not an approval authority;
+- Work History uses metadata only as a read hint for legacy thread title/activity/count
+  display, preserving existing fallback grouping and action behavior.
+
+Validation:
+
+- `git diff --check`
+- `corepack pnpm --filter @ling-stack/contracts build`
+- `corepack pnpm --filter @ling-stack/core build`
+- `corepack pnpm --filter @ling-stack/core test`
+- `corepack pnpm --filter @ling-stack/web typecheck`
 
 ## V2C: Conversation Work Cell
 
@@ -1732,6 +1888,68 @@ Approval requests:
 - decision controls belong in a composer-adjacent temporary overlay;
 - approval controls remain allowed inline in Review Queue because Review Queue is an
   action surface, not transcript history.
+
+### V2C-lite Implementation Checklist
+
+Use this checklist for the first implementation pass. It is a build checklist, not a new
+architecture slice.
+
+P0 implementation boundaries:
+
+- render only conversation work cells that can be derived from already-loaded channel
+  conversation/run state;
+- require `RunSession.threadId` for the first rendered cell;
+- keep run-only or missing-thread records on the existing run/event surfaces;
+- do not add a new durable table, action cache, evidence table, or metadata authority;
+- do not add new daemon routes unless the existing channel surface cannot access the
+  already-loaded records it needs;
+- do not change approval, resume, rerun, cancel, or provider-repair request bodies.
+
+Implementation steps:
+
+1. Add a pure `ConversationWorkCellViewModel` builder, preferably under
+   `apps/web/src/lib/` or `apps/web/src/shared/conversation/`.
+2. Unit-test the builder with completed, active, waiting-for-approval, failed, and
+   missing-thread inputs.
+3. Add transcript-native presentation components under `shared/conversation` unless the
+   current workspace surface requires local placement.
+4. Render the completed-cell summary first, collapsed by default.
+5. Add expanded grouped details using fixed groups: Changed, Checked, Evidence,
+   Attention.
+6. Add sparse active rows for status, approval wait, and auditable action/evidence
+   milestones.
+7. Wire only safe drill-down actions in the first slice: `Open run` and existing detail
+   navigation.
+8. Leave composer approval overlay as a separate sub-slice unless current approval state
+   is already available at the composer boundary.
+9. Add implementation record after validation, including any fallback deviations.
+
+Fallback rules:
+
+- if no thread can be resolved, render the existing conversation/run UI;
+- if evidence is missing or still loading, render a bounded summary plus `Open run`;
+- if grouped details are empty, hide the empty group instead of showing placeholder
+  diagnostics;
+- if approval records are stale or absent, show status only and leave decisions to the
+  existing approval surfaces.
+
+Acceptance checks:
+
+- active work appears as sparse rows while running;
+- terminal work collapses to one summary row by default;
+- expansion shows grouped details without raw stdout, JSONL, provider payloads, or hidden
+  reasoning;
+- approval decision controls are not rendered as durable transcript content;
+- Work History and run detail behavior remains unchanged;
+- legacy run-only records still render through the existing path;
+- text fits in compact conversation rows on desktop and narrow layouts.
+
+Suggested verification:
+
+- builder unit tests for view-model derivation;
+- `corepack pnpm --filter @ling-stack/web typecheck`;
+- targeted Web test or component smoke for completed and active cells;
+- manual/browser screenshot if component styling changes visible conversation layout.
 
 ### V2C-P0a: Composer Approval Overlay
 

@@ -181,6 +181,7 @@ import {
   type LinkRunToLingTurnInput,
   type LingThread,
   type LingThreadKind,
+  type LingThreadMetadata,
   type LingThreadStatus,
   type LingTurn,
   type LingTurnKind,
@@ -509,6 +510,8 @@ const WORK_ITEMS_MIGRATION_VERSION = 43;
 const WORK_ITEMS_MIGRATION_NAME = "create_work_items";
 const LING_TURNS_MIGRATION_VERSION = 44;
 const LING_TURNS_MIGRATION_NAME = "create_ling_turns";
+const LING_THREAD_METADATA_MIGRATION_VERSION = 45;
+const LING_THREAD_METADATA_MIGRATION_NAME = "add_ling_thread_metadata";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -555,10 +558,11 @@ export class SqliteRunStore implements RunStore {
           status,
           active_run_id,
           last_run_id,
+          metadata_json,
           created_at,
           updated_at,
           archived_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -575,10 +579,12 @@ export class SqliteRunStore implements RunStore {
         input.status ?? "open",
         input.activeRunId ?? null,
         input.lastRunId ?? null,
+        null,
         now,
         now,
         null,
       );
+    this.tryRebuildLingThreadMetadata(id, now);
     const thread = this.getLingThread(id);
     if (!thread) {
       throw new Error(`Failed to create Ling thread: ${id}`);
@@ -688,7 +694,69 @@ export class SqliteRunStore implements RunStore {
         next.archivedAt ?? null,
         threadId,
       );
+    this.tryRebuildLingThreadMetadata(threadId, now);
     return this.getLingThread(threadId);
+  }
+
+  rebuildLingThreadMetadata(threadId: string, now: string): LingThread | undefined {
+    const thread = this.getLingThread(threadId);
+    if (!thread) {
+      return undefined;
+    }
+    const runs = this.listRuns({ threadId, limit: 200 });
+    const turns = this.listLingTurns({ threadId, limit: 500 });
+    const approvalsById = new Map<string, ApprovalRequest>();
+    for (const run of runs) {
+      for (const approval of this.listApprovalRequests({ runId: run.id, limit: 500 })) {
+        approvalsById.set(approval.id, approval);
+      }
+    }
+    if (thread.workflowStepId) {
+      for (const approval of this.listApprovalRequests({ workflowStepId: thread.workflowStepId, limit: 500 })) {
+        approvalsById.set(approval.id, approval);
+      }
+    }
+    const approvals = [...approvalsById.values()];
+    const artifacts = runs.flatMap((run) => this.listArtifacts(run.id));
+    const latestTurn = [...turns].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))[0];
+    const latestFailedRun = runs
+      .filter((run) => run.status === "failed")
+      .sort((left, right) => compareIsoDesc(runActivityAt(left), runActivityAt(right)) || right.id.localeCompare(left.id))[0];
+    const latestArtifact = [...artifacts]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))[0];
+    const activityTimestamps = [
+      thread.createdAt,
+      thread.updatedAt,
+      thread.archivedAt,
+      ...turns.flatMap((turn) => [turn.createdAt, turn.updatedAt, turn.completedAt]),
+      ...runs.flatMap((run) => [run.createdAt, run.startedAt, run.endedAt, run.updatedAt]),
+      ...approvals.flatMap((approval) => [approval.createdAt, approval.resolvedAt]),
+      ...artifacts.map((artifact) => artifact.createdAt),
+      this.readLatestRunActionActivityAt(runs.map((run) => run.id)),
+    ];
+    const metadata: LingThreadMetadata = omitUndefined({
+      schemaVersion: 1 as const,
+      summary: summarizeLingThreadForMetadata(thread, latestTurn),
+      pinnedAt: thread.metadata?.pinnedAt,
+      lastTurnId: latestTurn?.id,
+      lastActivityAt: maxIsoTimestamp(activityTimestamps),
+      pendingApprovalCount: approvals.filter((approval) => approval.status === "pending").length,
+      blockedCount: (thread.status === "blocked" ? 1 : 0) + turns.filter((turn) => turn.status === "blocked").length,
+      failedAttemptCount: runs.filter((run) => run.status === "failed").length,
+      artifactCount: artifacts.length,
+      latestFailureRunId: latestFailedRun?.id,
+      latestEvidenceArtifactId: latestArtifact?.id,
+      rebuiltAt: now,
+    });
+    this.database
+      .prepare("UPDATE ling_threads SET metadata_json = ? WHERE id = ?")
+      .run(stringifyJson(metadata), threadId);
+    return this.getLingThread(threadId);
+  }
+
+  rebuildLingThreadMetadataForRun(runId: string, now: string): LingThread | undefined {
+    const run = this.getRun(runId);
+    return run?.threadId ? this.rebuildLingThreadMetadata(run.threadId, now) : undefined;
   }
 
   createLingTurn(input: CreateLingTurnInput, now: string): LingTurn {
@@ -771,6 +839,7 @@ export class SqliteRunStore implements RunStore {
     if (!turn) {
       throw new Error(`Failed to create Ling turn: ${id}`);
     }
+    this.tryRebuildLingThreadMetadata(input.threadId, now);
     return turn;
   }
 
@@ -800,6 +869,7 @@ export class SqliteRunStore implements RunStore {
       const link = this.insertLingTurnRun(input.turnId, input.runId, input.role ?? "primary", input.now);
       this.reconcileLingTurnStatus(input.turnId, input.now);
       this.database.exec("COMMIT");
+      this.tryRebuildLingThreadMetadataForTurn(input.turnId, input.now);
       return link;
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -885,6 +955,7 @@ export class SqliteRunStore implements RunStore {
         terminal ? (turn.completedAt ?? now) : null,
         turnId,
       );
+    this.tryRebuildLingThreadMetadata(turn.threadId, now);
     return this.getLingTurn(turnId);
   }
 
@@ -969,6 +1040,7 @@ export class SqliteRunStore implements RunStore {
     if (!session) {
       throw new Error(`Failed to create run session: ${input.id}`);
     }
+    this.tryRebuildLingThreadMetadata(session.threadId, session.createdAt);
     return session;
   }
 
@@ -1015,6 +1087,9 @@ export class SqliteRunStore implements RunStore {
       .prepare("INSERT INTO run_events (id, run_id, seq, ts, type, data_json) VALUES (?, ?, ?, ?, ?, ?)")
       .run(envelope.id, envelope.runId, envelope.seq, envelope.ts, envelope.type, stringifyJson(envelope.data));
     appendEventLogLine(run.eventLogPath, envelope);
+    if (type === "tool_start" || type === "tool_update" || type === "tool_end") {
+      this.tryRebuildLingThreadMetadata(run.threadId, envelope.ts);
+    }
     return envelope;
   }
 
@@ -1939,6 +2014,7 @@ export class SqliteRunStore implements RunStore {
     if (!created) {
       throw new Error(`Failed to create artifact: ${artifact.id}`);
     }
+    this.tryRebuildLingThreadMetadataForRun(created.runId, created.createdAt);
     return created;
   }
 
@@ -2425,6 +2501,7 @@ export class SqliteRunStore implements RunStore {
       createdAt: input.now,
     });
     this.reconcileLingTurnStatusForRun(input.runId, input.now);
+    this.tryRebuildLingThreadMetadata(run.threadId, input.now);
     return result;
   }
 
@@ -8647,6 +8724,7 @@ export class SqliteRunStore implements RunStore {
     if (!created) {
       throw new Error(`Failed to create approval request: ${approval.id}`);
     }
+    this.tryRebuildLingThreadMetadataForApproval(created, now);
     return created;
   }
 
@@ -8793,7 +8871,9 @@ export class SqliteRunStore implements RunStore {
         id,
       );
 
-    return this.getApprovalRequest(id);
+    const resolved = this.getApprovalRequest(id);
+    this.tryRebuildLingThreadMetadataForApproval(resolved, now);
+    return resolved;
   }
 
   private applyMigrations(): void {
@@ -10908,6 +10988,7 @@ export class SqliteRunStore implements RunStore {
           status TEXT NOT NULL,
           active_run_id TEXT,
           last_run_id TEXT,
+          metadata_json TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           archived_at TEXT,
@@ -11321,6 +11402,16 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(LING_TURNS_MIGRATION_VERSION, LING_TURNS_MIGRATION_NAME);
       }
     }
+
+    const hasLingThreadMetadataMigration = this.hasMigration(LING_THREAD_METADATA_MIGRATION_VERSION);
+    if (!hasLingThreadMetadataMigration || !this.hasColumn("ling_threads", "metadata_json")) {
+      if (!this.hasColumn("ling_threads", "metadata_json")) {
+        this.database.exec("ALTER TABLE ling_threads ADD COLUMN metadata_json TEXT;");
+      }
+      if (!hasLingThreadMetadataMigration) {
+        this.recordMigration(LING_THREAD_METADATA_MIGRATION_VERSION, LING_THREAD_METADATA_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -11669,6 +11760,73 @@ export class SqliteRunStore implements RunStore {
         runId,
       );
     this.reconcileLingTurnStatusForRun(runId, updatedAt);
+    this.tryRebuildLingThreadMetadata(existing.threadId, updatedAt);
+  }
+
+  private tryRebuildLingThreadMetadata(threadId: string | undefined, now: string): void {
+    if (!threadId) {
+      return;
+    }
+    try {
+      this.rebuildLingThreadMetadata(threadId, now);
+    } catch {
+      // Metadata is a rebuildable read cache; source mutations must remain authoritative.
+    }
+  }
+
+  private tryRebuildLingThreadMetadataForRun(runId: string | undefined, now: string): void {
+    if (!runId) {
+      return;
+    }
+    try {
+      this.rebuildLingThreadMetadataForRun(runId, now);
+    } catch {
+      // Metadata is a rebuildable read cache; source mutations must remain authoritative.
+    }
+  }
+
+  private tryRebuildLingThreadMetadataForTurn(turnId: string | undefined, now: string): void {
+    if (!turnId) {
+      return;
+    }
+    try {
+      const turn = this.getLingTurn(turnId);
+      this.tryRebuildLingThreadMetadata(turn?.threadId, now);
+    } catch {
+      // Metadata is a rebuildable read cache; source mutations must remain authoritative.
+    }
+  }
+
+  private tryRebuildLingThreadMetadataForApproval(approval: ApprovalRequest | undefined, now: string): void {
+    if (!approval) {
+      return;
+    }
+    this.tryRebuildLingThreadMetadataForRun(approval.runId, now);
+    if (approval.workflowStepId) {
+      try {
+        for (const thread of this.listLingThreads({ workflowStepId: approval.workflowStepId, includeArchived: true, limit: 500 })) {
+          this.tryRebuildLingThreadMetadata(thread.id, now);
+        }
+      } catch {
+        // Metadata is a rebuildable read cache; source mutations must remain authoritative.
+      }
+    }
+  }
+
+  private readLatestRunActionActivityAt(runIds: readonly string[]): string | undefined {
+    if (runIds.length === 0) {
+      return undefined;
+    }
+    const placeholders = runIds.map(() => "?").join(", ");
+    const row = this.database
+      .prepare(`
+        SELECT MAX(ts) AS latest_ts
+        FROM run_events
+        WHERE run_id IN (${placeholders})
+          AND type IN ('tool_start', 'tool_update', 'tool_end')
+      `)
+      .get(...runIds);
+    return row ? readNullableString(row, "latest_ts") : undefined;
   }
 
   private insertLingTurnRun(turnId: string, runId: string, role: LingTurnRunRole, createdAt: string): LingTurnRun {
@@ -11747,6 +11905,7 @@ function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
     status: readString(row, "status") as LingThreadStatus,
     activeRunId: readNullableString(row, "active_run_id"),
     lastRunId: readNullableString(row, "last_run_id"),
+    metadata: parseOptionalLingThreadMetadata(readNullableString(row, "metadata_json")),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
     archivedAt: readNullableString(row, "archived_at"),
@@ -11968,6 +12127,7 @@ function lingThreadSelectSql(whereClause: string): string {
       status,
       active_run_id,
       last_run_id,
+      metadata_json,
       created_at,
       updated_at,
       archived_at
@@ -14381,6 +14541,51 @@ function parseOptionalRunnerFallbackReason(value: string | undefined): RunnerFal
   return undefined;
 }
 
+function parseOptionalLingThreadMetadata(value: string | undefined): LingThreadMetadata | undefined {
+  if (!value) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  if (record.schemaVersion !== 1 || typeof record.rebuiltAt !== "string") {
+    return undefined;
+  }
+  const pendingApprovalCount = readRequiredNonNegativeIntegerValue(record.pendingApprovalCount);
+  const blockedCount = readRequiredNonNegativeIntegerValue(record.blockedCount);
+  const failedAttemptCount = readRequiredNonNegativeIntegerValue(record.failedAttemptCount);
+  const artifactCount = readRequiredNonNegativeIntegerValue(record.artifactCount);
+  if (
+    pendingApprovalCount === undefined ||
+    blockedCount === undefined ||
+    failedAttemptCount === undefined ||
+    artifactCount === undefined
+  ) {
+    return undefined;
+  }
+  return omitUndefined({
+    schemaVersion: 1 as const,
+    summary: readOptionalStringValue(record.summary),
+    pinnedAt: readOptionalStringValue(record.pinnedAt),
+    lastTurnId: readOptionalStringValue(record.lastTurnId),
+    lastActivityAt: readOptionalStringValue(record.lastActivityAt),
+    pendingApprovalCount,
+    blockedCount,
+    failedAttemptCount,
+    artifactCount,
+    latestFailureRunId: readOptionalStringValue(record.latestFailureRunId),
+    latestEvidenceArtifactId: readOptionalStringValue(record.latestEvidenceArtifactId),
+    rebuiltAt: record.rebuiltAt,
+  });
+}
+
 function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): ChannelWorkflowStepMetadata | undefined {
   if (!value) {
     return undefined;
@@ -14432,6 +14637,10 @@ function readOptionalStringListValue(value: unknown): readonly string[] | undefi
 
 function readOptionalPositiveIntegerValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function readRequiredNonNegativeIntegerValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function readOptionalWorkflowStepDependencyModeValue(value: unknown): ChannelWorkflowStepMetadata["dependencyMode"] | undefined {
@@ -15363,6 +15572,30 @@ function readNullableRunContinuationReason(row: Record<string, SQLOutputValue>, 
   return value && runContinuationReasons.includes(value as RunContinuationReason)
     ? value as RunContinuationReason
     : undefined;
+}
+
+function summarizeLingThreadForMetadata(thread: LingThread, latestTurn: LingTurn | undefined): string | undefined {
+  const source = latestTurn?.title || thread.title || thread.objective;
+  if (!source.trim()) {
+    return undefined;
+  }
+  const redacted = String(redactSecrets(source));
+  const compact = redacted.replace(/\s+/g, " ").trim();
+  return compact ? compact.slice(0, 160) : undefined;
+}
+
+function maxIsoTimestamp(values: readonly (string | undefined)[]): string | undefined {
+  return values
+    .filter((value): value is string => Boolean(value))
+    .sort((left, right) => right.localeCompare(left))[0];
+}
+
+function runActivityAt(run: RunSession): string {
+  return run.updatedAt || run.endedAt || run.startedAt || run.createdAt;
+}
+
+function compareIsoDesc(left: string | undefined, right: string | undefined): number {
+  return (right ?? "").localeCompare(left ?? "");
 }
 
 function runStatusToLingTurnStatus(status: RunStatus): LingTurnStatus {

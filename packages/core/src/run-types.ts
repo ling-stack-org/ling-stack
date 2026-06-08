@@ -383,6 +383,21 @@ export type RunInterventionStatus = (typeof runInterventionStatuses)[number];
 export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work" | "automation";
 export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
 
+export interface LingThreadMetadata {
+  readonly schemaVersion: 1;
+  readonly summary?: string;
+  readonly pinnedAt?: string;
+  readonly lastTurnId?: string;
+  readonly lastActivityAt?: string;
+  readonly pendingApprovalCount: number;
+  readonly blockedCount: number;
+  readonly failedAttemptCount: number;
+  readonly artifactCount: number;
+  readonly latestFailureRunId?: string;
+  readonly latestEvidenceArtifactId?: string;
+  readonly rebuiltAt: string;
+}
+
 export interface LingThread {
   readonly id: string;
   readonly workspaceId: string;
@@ -398,6 +413,7 @@ export interface LingThread {
   readonly status: LingThreadStatus;
   readonly activeRunId?: string;
   readonly lastRunId?: string;
+  readonly metadata?: LingThreadMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly archivedAt?: string;
@@ -725,6 +741,8 @@ export interface RunStore {
   }): LingThread | undefined;
   listLingThreads(options?: ListLingThreadsOptions): LingThread[];
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined;
+  rebuildLingThreadMetadata(threadId: string, now: string): LingThread | undefined;
+  rebuildLingThreadMetadataForRun(runId: string, now: string): LingThread | undefined;
   createLingTurn(input: CreateLingTurnInput, now: string): LingTurn;
   getLingTurn(turnId: string): LingTurn | undefined;
   listLingTurns(options: ListLingTurnsOptions): LingTurn[];

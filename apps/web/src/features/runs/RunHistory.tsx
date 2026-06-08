@@ -369,6 +369,7 @@ export function RunHistory({
                 const selected = group.source === "durable_turn"
                   ? !selectedThreadId && group.runIds.includes(selectedRunId)
                   : group.threadId === selectedThreadId || (!selectedThreadId && group.latestRunId === selectedRunId);
+                const metadataHint = formatWorkHistoryMetadataHint(group.thread, t);
                 return (
                   <div key={group.id} className="work-history-turn-group">
                     <button
@@ -383,6 +384,7 @@ export function RunHistory({
                           {group.source === "durable_turn" ? t("Durable turn") : group.thread?.kind ?? t("Work thread")}
                           {" · "}
                           {t("{count} attempts", { count: group.attemptCount })}
+                          {metadataHint ? ` · ${metadataHint}` : ""}
                         </small>
                       </span>
                       <span className="run-list-meta">
@@ -1406,7 +1408,19 @@ function buildWorkHistoryThreadSignature(thread: LingThread | undefined, runs: r
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((run) => `${run.id}:${run.status}:${run.updatedAt || ""}:${run.endedAt || ""}`)
     .join(",");
-  return `${thread?.updatedAt ?? ""}|${thread?.activeRunId ?? ""}|${thread?.lastRunId ?? ""}|${runSignature}`;
+  const metadata = thread?.metadata;
+  return [
+    thread?.updatedAt ?? "",
+    thread?.activeRunId ?? "",
+    thread?.lastRunId ?? "",
+    metadata?.lastActivityAt ?? "",
+    metadata?.pendingApprovalCount ?? "",
+    metadata?.blockedCount ?? "",
+    metadata?.failedAttemptCount ?? "",
+    metadata?.artifactCount ?? "",
+    metadata?.rebuiltAt ?? "",
+    runSignature,
+  ].join("|");
 }
 
 function buildWorkHistoryTurnGroups(input: {
@@ -1527,15 +1541,16 @@ function buildLegacyThreadGroup(thread: LingThread, runs: readonly RunSession[])
   const orderedRuns = [...runs].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const latestRun = [...runs].sort((left, right) => compareRunRecency(right, left))[0];
   const latestRunId = thread.activeRunId ?? thread.lastRunId ?? latestRun?.id ?? "";
+  const metadata = thread.metadata;
   return {
     id: `thread:${thread.id}`,
     threadId: thread.id,
-    title: thread.title,
+    title: metadata?.summary || thread.title,
     status: thread.status,
     runIds: orderedRuns.map((run) => run.id),
     latestRunId,
     attemptCount: Math.max(orderedRuns.length, latestRunId ? 1 : 0),
-    updatedAt: thread.updatedAt || latestRun?.updatedAt || latestRun?.createdAt || "",
+    updatedAt: metadata?.lastActivityAt || thread.updatedAt || latestRun?.updatedAt || latestRun?.createdAt || "",
     source: "legacy_thread",
     attempts: orderedRuns.map((run, index) => ({
       run,
@@ -1609,6 +1624,24 @@ function compareRunRecency(left: RunSession, right: RunSession): number {
   const leftTime = left.updatedAt || left.endedAt || left.startedAt || left.createdAt;
   const rightTime = right.updatedAt || right.endedAt || right.startedAt || right.createdAt;
   return leftTime.localeCompare(rightTime);
+}
+
+function formatWorkHistoryMetadataHint(thread: LingThread | undefined, t: Translate): string {
+  const metadata = thread?.metadata;
+  if (!metadata) {
+    return "";
+  }
+  const items: string[] = [];
+  if (metadata.pendingApprovalCount > 0) {
+    items.push(t("{count} pending approvals", { count: metadata.pendingApprovalCount }));
+  }
+  if (metadata.failedAttemptCount > 0) {
+    items.push(t("{count} failed attempts", { count: metadata.failedAttemptCount }));
+  }
+  if (metadata.artifactCount > 0) {
+    items.push(t("{count} artifacts", { count: metadata.artifactCount }));
+  }
+  return items.slice(0, 2).join(" · ");
 }
 
 function threadStatusFromRun(run: RunSession): LingThread["status"] {
