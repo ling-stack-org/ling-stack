@@ -5,6 +5,7 @@ import {
   CircleAlert,
   Clock3,
   Database,
+  GitBranch,
   History,
   Loader2,
   Pencil,
@@ -20,7 +21,7 @@ import { LingDaemonError } from "@ling-stack/api-client";
 import { useEffect, useState } from "react";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
-import { artifactContentUrl, cancelRunIntervention, createRunIntervention, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, listRunShellSnapshots, previewLingThreadResume, resumeLingThread } from "../../api.js";
+import { artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, listRunShellSnapshots, previewLingThreadResume, resumeLingThread } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import {
   formatEventData,
@@ -224,6 +225,7 @@ export function RunHistory({
     visibleThreads,
     turnStateByThreadKey,
   });
+  const workHistoryTreeRows = buildWorkHistoryGroupTree(workHistoryGroups);
   const standaloneRuns = runs.filter((run) => !run.threadId);
   const selectedTurnContext = buildTurnContextByRunId(selectedRunId, workHistoryGroups, turnStateByThreadKey, cwd);
 
@@ -365,7 +367,7 @@ export function RunHistory({
                 <span>{threadsLoading ? t("Loading work history...") : t("No work threads yet")}</span>
               </div>
             ) : (
-              workHistoryGroups.map((group) => {
+              workHistoryTreeRows.map(({ group, depth, parentHidden }) => {
                 const selected = group.source === "durable_turn"
                   ? !selectedThreadId && group.runIds.includes(selectedRunId)
                   : group.threadId === selectedThreadId || (!selectedThreadId && group.latestRunId === selectedRunId);
@@ -373,7 +375,8 @@ export function RunHistory({
                 return (
                   <div key={group.id} className="work-history-turn-group">
                     <button
-                      className={selected ? "run-list-row selected" : "run-list-row"}
+                      className={selected ? "run-list-row work-history-branch-row selected" : "run-list-row work-history-branch-row"}
+                      style={{ paddingLeft: `${12 + depth * 18}px` }}
                       type="button"
                       onClick={() => handleSelectWorkHistoryGroup(group)}
                     >
@@ -381,6 +384,8 @@ export function RunHistory({
                       <span className="run-list-main">
                         <strong>{group.title}</strong>
                         <small>
+                          {group.thread?.parentThreadId ? `${t("Fork branch")} · ` : ""}
+                          {parentHidden ? `${t("Parent hidden")} · ` : ""}
                           {group.source === "durable_turn" ? t("Durable turn") : group.thread?.kind ?? t("Work thread")}
                           {" · "}
                           {t("{count} attempts", { count: group.attemptCount })}
@@ -470,9 +475,11 @@ export function RunHistory({
           thread={selectedThread}
           threadId={selectedThreadId}
           turnState={turnStateByThreadKey[turnStateKey(cwd, selectedThreadId)]}
+          visibleThreads={visibleThreads}
           isRunning={isRunning}
           onRefresh={refreshThreadAndRuns}
           onSelectRun={handleSelectRun}
+          onSelectThreadId={setSelectedThreadId}
         />
       ) : (
         <RunDetailPanel
@@ -512,17 +519,21 @@ export function ThreadDetailPanel({
   thread,
   threadId,
   turnState,
+  visibleThreads,
   isRunning,
   onRefresh,
   onSelectRun,
+  onSelectThreadId,
 }: {
   readonly cwd: string;
   readonly thread: LingThread | undefined;
   readonly threadId: string;
   readonly turnState?: WorkHistoryTurnLoadState;
+  readonly visibleThreads: readonly LingThread[];
   readonly isRunning: boolean;
   readonly onRefresh: () => void;
   readonly onSelectRun: (runId: string) => void;
+  readonly onSelectThreadId: (threadId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [threadEvidence, setThreadEvidence] = useState<LingThreadEvidenceResponse | undefined>(undefined);
@@ -533,12 +544,22 @@ export function ThreadDetailPanel({
   const [threadInterventions, setThreadInterventions] = useState<readonly RunIntervention[]>([]);
   const [threadInterventionsLoading, setThreadInterventionsLoading] = useState(false);
   const [threadInterventionError, setThreadInterventionError] = useState("");
+  const [threadForkLoading, setThreadForkLoading] = useState(false);
+  const [forkedThreadId, setForkedThreadId] = useState("");
   const [selectedSourceTurnId, setSelectedSourceTurnId] = useState("");
   const [selectedSourceRunId, setSelectedSourceRunId] = useState("");
   const [resumedRunId, setResumedRunId] = useState("");
   const [resumePreview, setResumePreview] = useState<LingThreadResumePreviewResponse | undefined>(undefined);
   const [resumeInstruction, setResumeInstruction] = useState("");
   const displayThread = threadEvidence?.thread ?? thread;
+  const parentThread = displayThread?.parentThreadId
+    ? visibleThreads.find((candidate) => candidate.id === displayThread.parentThreadId)
+    : undefined;
+  const childThreads = displayThread
+    ? visibleThreads
+        .filter((candidate) => candidate.parentThreadId === displayThread.id)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))
+    : [];
   const evidenceRuns = threadEvidence?.runs ?? [];
   const threadArtifactById = buildThreadArtifactMap(threadEvidence);
   const loadedTurns = turnState?.status === "loaded" ? turnState.turns : [];
@@ -560,6 +581,7 @@ export function ThreadDetailPanel({
   const hasActiveSelectedTurn = Boolean(selectedSourceTurn && !isResumeSourceTurnTerminal(selectedSourceTurn));
   const canPreviewThreadResume = Boolean(displayThread && sourceRunId);
   const canResumeThread = Boolean(canPreviewThreadResume && !hasActiveNonTerminalRun && !hasActiveSelectedTurn && !isRunning);
+  const canForkThread = Boolean(displayThread && displayThread.status !== "archived" && !displayThread.archivedAt && !threadForkLoading);
   const resumeDisabledReason = buildThreadResumeDisabledReason({
     hasThread: Boolean(displayThread),
     hasSourceRun: Boolean(sourceRunId),
@@ -592,6 +614,7 @@ export function ThreadDetailPanel({
     setThreadError("");
     setThreadInterventions([]);
     setThreadInterventionError("");
+    setForkedThreadId("");
     setSelectedSourceTurnId("");
     setSelectedSourceRunId(thread?.lastRunId ?? "");
     setResumedRunId("");
@@ -696,6 +719,28 @@ export function ThreadDetailPanel({
     }
   }
 
+  async function handleForkThread(): Promise<void> {
+    if (!canForkThread) {
+      return;
+    }
+    setThreadForkLoading(true);
+    setThreadError("");
+    try {
+      const response = await forkLingThread(cwd, threadId, {
+        ...(selectedSourceTurn?.id ? { turnId: selectedSourceTurn.id } : {}),
+        ...(sourceRunId ? { sourceRunId } : {}),
+        idempotencyKey: `work-history-fork:${threadId}:${selectedSourceTurn?.id ?? ""}:${sourceRunId}`,
+      });
+      setForkedThreadId(response.childThread.id);
+      onRefresh();
+      onSelectThreadId(response.childThread.id);
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setThreadForkLoading(false);
+    }
+  }
+
   return (
     <section className="panel run-detail-panel thread-detail-panel" aria-labelledby="thread-detail-title" aria-label={t("Thread detail")}>
       <div className="panel-title split">
@@ -712,6 +757,10 @@ export function ThreadDetailPanel({
             <Activity size={15} />
             {t("Open source run")}
           </button>
+          <button className="secondary-button compact-button" type="button" onClick={() => void handleForkThread()} disabled={!canForkThread}>
+            {threadForkLoading ? <Loader2 className="spin" size={15} /> : <GitBranch size={15} />}
+            {t("Fork")}
+          </button>
         </span>
       </div>
 
@@ -723,6 +772,9 @@ export function ThreadDetailPanel({
           <MetaRow label={t("Kind")} value={displayThread?.kind ?? "-"} compact />
           <MetaRow label={t("Active run")} value={displayThread?.activeRunId ?? "-"} compact />
           <MetaRow label={t("Last run")} value={displayThread?.lastRunId ?? "-"} compact />
+          <MetaRow label={t("Parent thread")} value={displayThread?.parentThreadId ?? "-"} compact />
+          <MetaRow label={t("Parent turn")} value={displayThread?.parentTurnId ?? "-"} compact />
+          <MetaRow label={t("Fork source run")} value={displayThread?.forkedFromRunId ?? "-"} compact />
           <MetaRow label={t("Workflow step")} value={displayThread?.workflowStepId ?? "-"} compact />
           <MetaRow label={t("Updated")} value={displayThread ? formatDateTime(displayThread.updatedAt) : "-"} compact />
         </div>
@@ -747,6 +799,58 @@ export function ThreadDetailPanel({
             {threadError}
           </div>
         ) : null}
+
+        <div className="run-detail-section thread-branch-lineage">
+          <div className="panel-title tight split">
+            <span>
+              <GitBranch size={16} />
+              <h3>{t("Fork lineage")}</h3>
+            </span>
+            <span className="event-count">{t("{count} child branches", { count: childThreads.length })}</span>
+          </div>
+          {displayThread?.parentThreadId ? (
+            <div className="runtime-list-row lineage-row">
+              <StatusBadge status={parentThread?.status ?? "unavailable"} />
+              <span>
+                {t("Forked from")} {parentThread?.title ?? displayThread.parentThreadId}
+                <small>
+                  {displayThread.parentTurnId ? `${t("Source turn")}: ${displayThread.parentTurnId}` : t("Thread-level fork")}
+                  {displayThread.forkedFromRunId ? ` · ${t("Source run")}: ${displayThread.forkedFromRunId}` : ""}
+                </small>
+              </span>
+              <button className="secondary-button compact-button" type="button" onClick={() => onSelectThreadId(displayThread.parentThreadId ?? "")}>
+                {t("Open source")}
+              </button>
+            </div>
+          ) : (
+            <p className="muted">{t("This thread is a source branch.")}</p>
+          )}
+          {childThreads.length > 0 ? (
+            <div className="runtime-list thread-child-branch-list">
+              {childThreads.map((child) => (
+                <button
+                  key={child.id}
+                  className="runtime-list-row thread-child-branch-row"
+                  type="button"
+                  onClick={() => onSelectThreadId(child.id)}
+                >
+                  <StatusBadge status={child.status} />
+                  <span>
+                    {child.title}
+                    <small>{child.id}</small>
+                  </span>
+                  <small>{formatDateTime(child.updatedAt)}</small>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {forkedThreadId ? (
+            <p className="run-evidence-copy">
+              <strong>{t("Fork created")}</strong>
+              {forkedThreadId}
+            </p>
+          ) : null}
+        </div>
 
         <div className="run-detail-section">
           <div className="panel-title tight split">
@@ -1577,6 +1681,73 @@ function buildWorkHistoryTurnGroups(input: {
   }
 
   return groups.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
+}
+
+function buildWorkHistoryGroupTree(groups: readonly WorkHistoryTurnGroup[]): ReadonlyArray<{
+  readonly group: WorkHistoryTurnGroup;
+  readonly depth: number;
+  readonly parentHidden: boolean;
+}> {
+  const groupsByThreadId = new Map<string, WorkHistoryTurnGroup[]>();
+  const threadById = new Map<string, LingThread>();
+  for (const group of groups) {
+    groupsByThreadId.set(group.threadId, [...(groupsByThreadId.get(group.threadId) ?? []), group]);
+    if (group.thread) {
+      threadById.set(group.thread.id, group.thread);
+    }
+  }
+  const childThreadIdsByParentId = new Map<string, string[]>();
+  for (const thread of threadById.values()) {
+    if (!thread.parentThreadId) {
+      continue;
+    }
+    childThreadIdsByParentId.set(thread.parentThreadId, [...(childThreadIdsByParentId.get(thread.parentThreadId) ?? []), thread.id]);
+  }
+  const rootThreadIds = [...threadById.values()]
+    .filter((thread) => !thread.parentThreadId || !threadById.has(thread.parentThreadId))
+    .map((thread) => thread.id);
+  const visited = new Set<string>();
+  const rows: Array<{ readonly group: WorkHistoryTurnGroup; readonly depth: number; readonly parentHidden: boolean }> = [];
+
+  const sortThreadIds = (threadIds: readonly string[]): string[] =>
+    [...new Set(threadIds)].sort((leftId, rightId) =>
+      latestThreadGroupUpdatedAt(groupsByThreadId.get(rightId) ?? []).localeCompare(latestThreadGroupUpdatedAt(groupsByThreadId.get(leftId) ?? [])) ||
+      leftId.localeCompare(rightId));
+
+  const visitThread = (threadId: string, depth: number, parentHidden: boolean): void => {
+    if (visited.has(threadId)) {
+      return;
+    }
+    visited.add(threadId);
+    for (const group of sortGroupsForThread(groupsByThreadId.get(threadId) ?? [])) {
+      rows.push({ group, depth, parentHidden });
+    }
+    for (const childThreadId of sortThreadIds(childThreadIdsByParentId.get(threadId) ?? [])) {
+      visitThread(childThreadId, Math.min(depth + 1, 6), false);
+    }
+  };
+
+  for (const threadId of sortThreadIds(rootThreadIds)) {
+    const thread = threadById.get(threadId);
+    visitThread(threadId, 0, Boolean(thread?.parentThreadId && !threadById.has(thread.parentThreadId)));
+  }
+  for (const group of groups) {
+    if (!visited.has(group.threadId)) {
+      rows.push({ group, depth: 0, parentHidden: Boolean(group.thread?.parentThreadId) });
+    }
+  }
+  return rows;
+}
+
+function sortGroupsForThread(groups: readonly WorkHistoryTurnGroup[]): readonly WorkHistoryTurnGroup[] {
+  return [...groups].sort((left, right) =>
+    Number(left.source === "legacy_thread") - Number(right.source === "legacy_thread") ||
+    right.updatedAt.localeCompare(left.updatedAt) ||
+    left.id.localeCompare(right.id));
+}
+
+function latestThreadGroupUpdatedAt(groups: readonly WorkHistoryTurnGroup[]): string {
+  return groups.reduce((latest, group) => group.updatedAt > latest ? group.updatedAt : latest, "");
 }
 
 function groupVisibleTurnRunLinks(

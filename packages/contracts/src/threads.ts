@@ -3,6 +3,7 @@ import type { RunArtifact } from "./artifacts.js";
 import type { RunEventEnvelope, RunSession, RuntimeEvent } from "./runtime.js";
 import type { ExecutionAction } from "./execution-actions.js";
 import type { StateTransitionEvent } from "./workflows.js";
+import type { LingTurn } from "./turns.js";
 
 export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work" | "automation";
 
@@ -38,6 +39,9 @@ export interface LingThread {
   readonly status: LingThreadStatus;
   readonly activeRunId?: string;
   readonly lastRunId?: string;
+  readonly parentThreadId?: string;
+  readonly parentTurnId?: string;
+  readonly forkedFromRunId?: string;
   readonly metadata?: LingThreadMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -121,4 +125,25 @@ export interface LingThreadResumePreviewResponse {
   readonly thread: LingThread;
   readonly sourceRun: RunSession;
   readonly context: ResumeContextPreview;
+}
+
+export interface LingThreadForkRequest {
+  readonly turnId?: string;
+  readonly sourceRunId?: string;
+  readonly title?: string;
+  readonly objective?: string;
+  readonly idempotencyKey?: string;
+}
+
+export interface LingThreadForkResponse {
+  readonly cwd: string;
+  readonly sourceThread: LingThread;
+  readonly sourceTurn?: LingTurn;
+  readonly sourceRun?: RunSession;
+  readonly childThread: LingThread;
+  readonly lineage: {
+    readonly parentThreadId: string;
+    readonly parentTurnId?: string;
+    readonly forkedFromRunId?: string;
+  };
 }

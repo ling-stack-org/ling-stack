@@ -512,6 +512,8 @@ const LING_TURNS_MIGRATION_VERSION = 44;
 const LING_TURNS_MIGRATION_NAME = "create_ling_turns";
 const LING_THREAD_METADATA_MIGRATION_VERSION = 45;
 const LING_THREAD_METADATA_MIGRATION_NAME = "add_ling_thread_metadata";
+const LING_THREAD_FORK_LINEAGE_MIGRATION_VERSION = 46;
+const LING_THREAD_FORK_LINEAGE_MIGRATION_NAME = "add_ling_thread_fork_lineage";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -558,11 +560,14 @@ export class SqliteRunStore implements RunStore {
           status,
           active_run_id,
           last_run_id,
+          parent_thread_id,
+          parent_turn_id,
+          forked_from_run_id,
           metadata_json,
           created_at,
           updated_at,
           archived_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -579,6 +584,9 @@ export class SqliteRunStore implements RunStore {
         input.status ?? "open",
         input.activeRunId ?? null,
         input.lastRunId ?? null,
+        input.parentThreadId ?? null,
+        input.parentTurnId ?? null,
+        input.forkedFromRunId ?? null,
         null,
         now,
         now,
@@ -10988,13 +10996,19 @@ export class SqliteRunStore implements RunStore {
           status TEXT NOT NULL,
           active_run_id TEXT,
           last_run_id TEXT,
+          parent_thread_id TEXT,
+          parent_turn_id TEXT,
+          forked_from_run_id TEXT,
           metadata_json TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           archived_at TEXT,
           FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
           FOREIGN KEY(active_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL,
-          FOREIGN KEY(last_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+          FOREIGN KEY(last_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL,
+          FOREIGN KEY(parent_thread_id) REFERENCES ling_threads(id) ON DELETE SET NULL,
+          FOREIGN KEY(parent_turn_id) REFERENCES ling_turns(id) ON DELETE SET NULL,
+          FOREIGN KEY(forked_from_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
         );
 
         CREATE INDEX IF NOT EXISTS idx_ling_threads_owner
@@ -11410,6 +11424,34 @@ export class SqliteRunStore implements RunStore {
       }
       if (!hasLingThreadMetadataMigration) {
         this.recordMigration(LING_THREAD_METADATA_MIGRATION_VERSION, LING_THREAD_METADATA_MIGRATION_NAME);
+      }
+    }
+
+    const hasLingThreadForkLineageMigration = this.hasMigration(LING_THREAD_FORK_LINEAGE_MIGRATION_VERSION);
+    if (
+      !hasLingThreadForkLineageMigration ||
+      !this.hasColumn("ling_threads", "parent_thread_id") ||
+      !this.hasColumn("ling_threads", "parent_turn_id") ||
+      !this.hasColumn("ling_threads", "forked_from_run_id")
+    ) {
+      if (!this.hasColumn("ling_threads", "parent_thread_id")) {
+        this.database.exec("ALTER TABLE ling_threads ADD COLUMN parent_thread_id TEXT;");
+      }
+      if (!this.hasColumn("ling_threads", "parent_turn_id")) {
+        this.database.exec("ALTER TABLE ling_threads ADD COLUMN parent_turn_id TEXT;");
+      }
+      if (!this.hasColumn("ling_threads", "forked_from_run_id")) {
+        this.database.exec("ALTER TABLE ling_threads ADD COLUMN forked_from_run_id TEXT;");
+      }
+      this.database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_ling_threads_parent
+        ON ling_threads(parent_thread_id, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_ling_threads_parent_turn
+        ON ling_threads(parent_turn_id);
+      `);
+      if (!hasLingThreadForkLineageMigration) {
+        this.recordMigration(LING_THREAD_FORK_LINEAGE_MIGRATION_VERSION, LING_THREAD_FORK_LINEAGE_MIGRATION_NAME);
       }
     }
   }
@@ -11905,6 +11947,9 @@ function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
     status: readString(row, "status") as LingThreadStatus,
     activeRunId: readNullableString(row, "active_run_id"),
     lastRunId: readNullableString(row, "last_run_id"),
+    parentThreadId: readNullableString(row, "parent_thread_id"),
+    parentTurnId: readNullableString(row, "parent_turn_id"),
+    forkedFromRunId: readNullableString(row, "forked_from_run_id"),
     metadata: parseOptionalLingThreadMetadata(readNullableString(row, "metadata_json")),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
@@ -12127,6 +12172,9 @@ function lingThreadSelectSql(whereClause: string): string {
       status,
       active_run_id,
       last_run_id,
+      parent_thread_id,
+      parent_turn_id,
+      forked_from_run_id,
       metadata_json,
       created_at,
       updated_at,

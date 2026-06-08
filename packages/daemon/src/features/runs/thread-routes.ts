@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   permissionPresets,
@@ -34,7 +34,8 @@ export type LingThreadRoute =
   | { readonly kind: "turns"; readonly threadId: string }
   | { readonly kind: "evidence"; readonly threadId: string }
   | { readonly kind: "resume"; readonly threadId: string }
-  | { readonly kind: "resume-preview"; readonly threadId: string };
+  | { readonly kind: "resume-preview"; readonly threadId: string }
+  | { readonly kind: "fork"; readonly threadId: string };
 
 export type StartLingThreadResumeRun = (runRequest: RunRequest) => Promise<string | undefined>;
 
@@ -64,6 +65,11 @@ interface ThreadResumeAnchor {
   readonly sourceTurn?: LingTurn;
   readonly sourceRun: RunSession;
   readonly warnings: readonly string[];
+}
+
+interface ThreadForkAnchor {
+  readonly sourceTurn?: LingTurn;
+  readonly sourceRun?: RunSession;
 }
 
 export function handleLingThreadsCollection(
@@ -120,6 +126,9 @@ export function handleLingThreadItem(
   }
   if (route.kind === "resume-preview") {
     return handleLingThreadResumePreview(request, response, url, storeRegistry, route.threadId, options);
+  }
+  if (route.kind === "fork") {
+    return handleLingThreadFork(request, response, url, storeRegistry, route.threadId, options);
   }
   if (route.kind === "turns") {
     return handleLingThreadTurns(request, response, url, storeRegistry, route.threadId, options);
@@ -246,6 +255,49 @@ function writeLingThreadRouteError(response: ServerResponse, error: unknown): vo
   });
 }
 
+async function handleLingThreadFork(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  threadId: string,
+  options?: HandleLingThreadRouteOptions,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for thread fork` });
+    return;
+  }
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const sourceThread = store.getLingThread(threadId);
+    if (!sourceThread) {
+      writeJson(response, 404, { error: "thread_not_found", message: `Ling thread not found: ${threadId}` });
+      return;
+    }
+    const body = await readOptionalJsonBody(request, options?.maxBodyBytes ?? 1024 * 1024);
+    const fork = createLingThreadFork({ store, sourceThread, body, now: new Date().toISOString() });
+    writeJson(response, fork.created ? 201 : 200, {
+      cwd,
+      sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
+      sourceTurn: fork.sourceTurn,
+      sourceRun: fork.sourceRun,
+      childThread: fork.childThread,
+      lineage: {
+        parentThreadId: sourceThread.id,
+        parentTurnId: fork.sourceTurn?.id,
+        forkedFromRunId: fork.sourceRun?.id,
+      },
+    });
+  } catch (error) {
+    writeLingThreadRouteError(response, error);
+  }
+}
+
 async function handleLingThreadResume(
   request: IncomingMessage,
   response: ServerResponse,
@@ -291,6 +343,171 @@ async function handleLingThreadResume(
   } catch (error) {
     writeLingThreadRouteError(response, error);
   }
+}
+
+function createLingThreadFork(input: {
+  readonly store: RunStore;
+  readonly sourceThread: LingThread;
+  readonly body: unknown;
+  readonly now: string;
+}): {
+  readonly sourceTurn?: LingTurn;
+  readonly sourceRun?: RunSession;
+  readonly childThread: LingThread;
+  readonly created: boolean;
+} {
+  const { store, sourceThread, body, now } = input;
+  if (sourceThread.status === "archived" || sourceThread.archivedAt) {
+    throw new HttpError(409, "source_thread_archived", `Cannot fork archived thread: ${sourceThread.id}`);
+  }
+  const anchor = resolveThreadForkAnchor(store, sourceThread, body);
+  const idempotencyKey = isRecord(body) ? readOptionalString(body, "idempotencyKey")?.trim() : undefined;
+  const childThreadId = idempotencyKey
+    ? deterministicForkThreadId({
+        parentThreadId: sourceThread.id,
+        parentTurnId: anchor.sourceTurn?.id,
+        forkedFromRunId: anchor.sourceRun?.id,
+        idempotencyKey,
+      })
+    : undefined;
+  if (childThreadId) {
+    const existing = store.getLingThread(childThreadId);
+    if (existing) {
+      if (
+        existing.parentThreadId !== sourceThread.id ||
+        existing.parentTurnId !== anchor.sourceTurn?.id ||
+        existing.forkedFromRunId !== anchor.sourceRun?.id
+      ) {
+        throw new HttpError(409, "fork_idempotency_conflict", `Fork idempotency key conflicts with an existing child thread: ${childThreadId}`);
+      }
+      return {
+        sourceTurn: anchor.sourceTurn,
+        sourceRun: anchor.sourceRun,
+        childThread: existing,
+        created: false,
+      };
+    }
+  }
+
+  const requestedTitle = isRecord(body) ? readOptionalString(body, "title")?.trim() : undefined;
+  const requestedObjective = isRecord(body) ? readOptionalString(body, "objective")?.trim() : undefined;
+  const sourceLabel = anchor.sourceTurn?.title || sourceThread.title;
+  const childThread = store.createLingThread(
+    {
+      id: childThreadId,
+      kind: sourceThread.kind,
+      channelId: sourceThread.channelId,
+      taskId: sourceThread.taskId,
+      teammateId: sourceThread.teammateId,
+      workflowId: sourceThread.workflowId,
+      workflowStepId: sourceThread.workflowStepId,
+      externalWorkId: sourceThread.externalWorkId,
+      title: requestedTitle || `Fork: ${sourceThread.title}`,
+      objective: requestedObjective || `Forked from ${sourceLabel} (${sourceThread.id}) to explore a separate work branch.`,
+      status: "open",
+      parentThreadId: sourceThread.id,
+      parentTurnId: anchor.sourceTurn?.id,
+      forkedFromRunId: anchor.sourceRun?.id,
+    },
+    now,
+  );
+  return {
+    sourceTurn: anchor.sourceTurn,
+    sourceRun: anchor.sourceRun,
+    childThread,
+    created: true,
+  };
+}
+
+function resolveThreadForkAnchor(store: RunStore, sourceThread: LingThread, body: unknown): ThreadForkAnchor {
+  const requestedTurnId = isRecord(body) ? readOptionalString(body, "turnId") : undefined;
+  const requestedRunId = isRecord(body) ? readOptionalString(body, "sourceRunId") : undefined;
+
+  if (requestedTurnId) {
+    const sourceTurn = store.getLingTurn(requestedTurnId);
+    if (!sourceTurn) {
+      throw new HttpError(404, "turn_not_found", `Ling turn not found: ${requestedTurnId}`);
+    }
+    if (sourceTurn.threadId !== sourceThread.id) {
+      throw new HttpError(400, "turn_not_in_thread", `Ling turn does not belong to thread: ${requestedTurnId}`);
+    }
+    if (!isLingTurnTerminalForFork(sourceTurn, sourceTurn.activeRunId ? store.getRun(sourceTurn.activeRunId) : undefined)) {
+      throw new HttpError(409, "turn_active", `Selected turn is not terminal: ${sourceTurn.id}`);
+    }
+    const sourceRun = requestedRunId
+      ? resolveThreadForkSourceRun(store, sourceThread, requestedRunId)
+      : resolveOptionalForkSourceRunFromTurn(store, sourceThread, sourceTurn);
+    if (sourceRun && !isRunLinkedToTurn(store, sourceTurn, sourceRun)) {
+      throw new HttpError(400, "source_run_not_in_turn", `Source run does not belong to turn: ${sourceRun.id}`);
+    }
+    return { sourceTurn, sourceRun };
+  }
+
+  if (requestedRunId) {
+    const sourceRun = resolveThreadForkSourceRun(store, sourceThread, requestedRunId);
+    const sourceTurn = store.getLingTurnForRun(sourceRun.id);
+    if (sourceTurn) {
+      if (sourceTurn.threadId !== sourceThread.id) {
+        throw new HttpError(400, "turn_not_in_thread", `Ling turn does not belong to thread: ${sourceTurn.id}`);
+      }
+      if (isLingTurnTerminalForFork(sourceTurn, sourceTurn.activeRunId ? store.getRun(sourceTurn.activeRunId) : undefined)) {
+        return { sourceTurn, sourceRun };
+      }
+    }
+    return { sourceRun };
+  }
+
+  const sourceTurn = resolveLatestTerminalForkTurn(store, sourceThread);
+  return {
+    sourceTurn,
+    sourceRun: sourceTurn ? resolveOptionalForkSourceRunFromTurn(store, sourceThread, sourceTurn) : undefined,
+  };
+}
+
+function resolveThreadForkSourceRun(store: RunStore, sourceThread: LingThread, sourceRunId: string): RunSession {
+  const sourceRun = store.getRun(sourceRunId);
+  if (!sourceRun) {
+    throw new HttpError(404, "source_run_not_found", `Source run was not found: ${sourceRunId}`);
+  }
+  if (sourceRun.threadId !== sourceThread.id) {
+    throw new HttpError(400, "source_run_not_in_thread", `Source run does not belong to thread: ${sourceRunId}`);
+  }
+  return sourceRun;
+}
+
+function resolveLatestTerminalForkTurn(store: RunStore, sourceThread: LingThread): LingTurn | undefined {
+  return [...store.listLingTurns({ threadId: sourceThread.id, limit: 500 })]
+    .filter((turn) => isLingTurnTerminalForFork(turn, turn.activeRunId ? store.getRun(turn.activeRunId) : undefined))
+    .sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt) ||
+      right.completedAt?.localeCompare(left.completedAt ?? "") ||
+      right.createdAt.localeCompare(left.createdAt) ||
+      right.id.localeCompare(left.id))
+    [0];
+}
+
+function resolveOptionalForkSourceRunFromTurn(store: RunStore, sourceThread: LingThread, sourceTurn: LingTurn): RunSession | undefined {
+  try {
+    return resolveThreadResumeSourceRunFromTurn(store, sourceThread, sourceTurn);
+  } catch (error) {
+    if (error instanceof HttpError && error.code === "source_run_not_found") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function deterministicForkThreadId(input: {
+  readonly parentThreadId: string;
+  readonly parentTurnId?: string;
+  readonly forkedFromRunId?: string;
+  readonly idempotencyKey: string;
+}): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify(input))
+    .digest("hex")
+    .slice(0, 32);
+  return `thread_fork_${digest}`;
 }
 
 function buildLingThreadEvidence(store: RunStore, cwd: string, thread: LingThread): {
@@ -823,6 +1040,13 @@ function isLingTurnActiveForResume(turn: LingTurn, activeRun: RunSession | undef
   return turn.status === "open" || turn.status === "running" || turn.status === "waiting_for_approval" || turn.status === "blocked";
 }
 
+function isLingTurnTerminalForFork(turn: LingTurn, activeRun: RunSession | undefined): boolean {
+  if (activeRun && !isTerminalRunStatus(activeRun.status)) {
+    return false;
+  }
+  return turn.status === "succeeded" || turn.status === "failed" || turn.status === "cancelled" || turn.status === "superseded";
+}
+
 function readSnapshotString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.trim() ? value : undefined;
@@ -889,8 +1113,8 @@ function readOptionalLingThreadKindQuery(url: URL): LingThreadKind | undefined {
   if (value === null) {
     return undefined;
   }
-  if (!["task", "channel_discussion", "teammate_direct", "workflow_step", "external_work"].includes(value)) {
-    throw new Error("kind must be one of: task, channel_discussion, teammate_direct, workflow_step, external_work");
+  if (!["task", "channel_discussion", "teammate_direct", "workflow_step", "external_work", "automation"].includes(value)) {
+    throw new Error("kind must be one of: task, channel_discussion, teammate_direct, workflow_step, external_work, automation");
   }
   return value as LingThreadKind;
 }

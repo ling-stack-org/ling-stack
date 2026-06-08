@@ -17,6 +17,7 @@ import {
   Database,
   FileCheck2,
   FileText,
+  GitBranch,
   Hash,
   History,
   Image as ImageIcon,
@@ -44,7 +45,7 @@ import {
   X,
 } from "lucide-react";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { artifactContentUrl, cancelRunIntervention, createRunIntervention, getLingThreadEvidence, listLingThreadTurns, listRunInterventions } from "../../api.js";
+import { artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -86,7 +87,13 @@ import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { attachmentCanPreview } from "../../lib/previews.js";
-import { buildRunRepairHint, displayLinkedRunStatus, readRunWorkspaceCwd } from "../../lib/run-evidence.js";
+import {
+  buildRunRepairHint,
+  displayLinkedRunStatus,
+  readRunWorkspaceCwd,
+  readTaskPrompt,
+  readTaskTitle,
+} from "../../lib/run-evidence.js";
 import { defaultTools, riskyTools } from "../../lib/tools.js";
 import {
   buildLocalEffectivePolicyPreview,
@@ -150,6 +157,7 @@ import type {
   RunArtifact,
   RunIntervention,
   RunSession,
+  LingThread,
   LingTurn,
   LingTurnRun,
   PermissionPreset,
@@ -603,6 +611,11 @@ export function WorkspaceClientView({
   const [sendState, setSendState] = useState<ComposerSendState>("idle");
   const [sendError, setSendError] = useState("");
   const [activeThreadId, setActiveThreadId] = useState("");
+  const [activeWorkThreadId, setActiveWorkThreadId] = useState("");
+  const [channelWorkThreads, setChannelWorkThreads] = useState<readonly LingThread[]>([]);
+  const [channelWorkThreadsLoading, setChannelWorkThreadsLoading] = useState(false);
+  const [channelWorkThreadError, setChannelWorkThreadError] = useState("");
+  const [forkingWorkThreadId, setForkingWorkThreadId] = useState("");
   const [threadReplyDraft, setThreadReplyDraft] = useState("");
   const [threadReplyPending, setThreadReplyPending] = useState(false);
   const [threadReplyError, setThreadReplyError] = useState("");
@@ -635,6 +648,23 @@ export function WorkspaceClientView({
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
   );
+  const derivedChannelWorkThreads = useMemo(
+    () => deriveWorkspaceThreadsFromRuns(channelRuns),
+    [channelRuns],
+  );
+  const visibleChannelWorkThreads = useMemo(
+    () => mergeLingThreads(channelWorkThreads, derivedChannelWorkThreads)
+      .filter((thread) => !thread.channelId || thread.channelId === selectedChannelId)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id)),
+    [channelWorkThreads, derivedChannelWorkThreads, selectedChannelId],
+  );
+  const channelWorkThreadTreeRows = useMemo(
+    () => buildChannelWorkThreadTree(visibleChannelWorkThreads),
+    [visibleChannelWorkThreads],
+  );
+  const activeWorkThread = activeWorkThreadId
+    ? visibleChannelWorkThreads.find((thread) => thread.id === activeWorkThreadId)
+    : undefined;
   const channelRunsByThreadId = useMemo(() => groupRunsByThreadId(channelRuns), [channelRuns]);
   const visibleConversationThreadIds = useMemo(() => [...channelRunsByThreadId.keys()], [channelRunsByThreadId]);
   const visibleConversationThreadRunSignatures = useMemo(() => {
@@ -680,6 +710,44 @@ export function WorkspaceClientView({
     [channelWorkflowSteps, selectedChannelId],
   );
   const latestRun = channelRuns[0];
+  useEffect(() => {
+    setActiveWorkThreadId("");
+  }, [selectedChannelId]);
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId) {
+      setChannelWorkThreads([]);
+      setChannelWorkThreadError("");
+      return;
+    }
+    let cancelled = false;
+    setChannelWorkThreadsLoading(true);
+    setChannelWorkThreadError("");
+    void listLingThreads(workspaceCwd, { channelId: selectedChannelId, limit: 100 })
+      .then((response) => {
+        if (!cancelled) {
+          setChannelWorkThreads(response.threads);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) {
+          setChannelWorkThreadError(caught instanceof Error ? caught.message : String(caught));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setChannelWorkThreadsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, selectedChannelId, runs]);
+  useEffect(() => {
+    if (activeWorkThreadId && !visibleChannelWorkThreads.some((thread) => thread.id === activeWorkThreadId)) {
+      setActiveWorkThreadId("");
+    }
+  }, [activeWorkThreadId, visibleChannelWorkThreads]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     const visibleKeys = new Set(visibleConversationThreadIds.map((threadId) => threadTurnsCacheKey(threadId)));
@@ -1010,8 +1078,13 @@ export function WorkspaceClientView({
   const activityFiltersActive = activitySearch.trim().length > 0 || activityCategoryFilter !== "all" || activityAttentionFilter !== "all";
   const auditActivityVisible = activityToolsOpen || activityFiltersActive;
   const visibleActivityItems = useMemo(
-    () => auditActivityVisible ? filteredActivityItems : filteredActivityItems.filter(channelActivityVisibleInDefaultChat),
-    [auditActivityVisible, filteredActivityItems],
+    () => {
+      const baseItems = auditActivityVisible ? filteredActivityItems : filteredActivityItems.filter(channelActivityVisibleInDefaultChat);
+      return activeWorkThreadId
+        ? baseItems.filter((item) => item.kind === "run" && item.record.threadId === activeWorkThreadId)
+        : baseItems;
+    },
+    [activeWorkThreadId, auditActivityVisible, filteredActivityItems],
   );
   const renderableActivityItems = useMemo(
     () => visibleActivityItems.filter((item) => {
@@ -1502,6 +1575,26 @@ export function WorkspaceClientView({
       .finally(() => {
         conversationWorkCellEvidenceLoadsRef.current.delete(cacheKey);
       });
+  }
+
+  async function forkChannelWorkThread(thread: LingThread): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || forkingWorkThreadId) {
+      return;
+    }
+    setForkingWorkThreadId(thread.id);
+    setChannelWorkThreadError("");
+    try {
+      const response = await forkLingThread(workspaceCwd, thread.id, {
+        idempotencyKey: `channel-fork:${thread.id}:${thread.lastRunId ?? ""}:${thread.updatedAt}`,
+      });
+      setChannelWorkThreads((current) => mergeLingThreads([response.childThread, response.sourceThread], current));
+      setActiveWorkThreadId(response.childThread.id);
+    } catch (error) {
+      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setForkingWorkThreadId("");
+    }
   }
 
   function openAttentionQueueItem(item: ChannelAttentionQueueItem): void {
@@ -3528,15 +3621,82 @@ export function WorkspaceClientView({
                       />
                     </div>
                   ) : null}
+                  {(channelWorkThreadsLoading || channelWorkThreadError || channelWorkThreadTreeRows.length > 0 || activeWorkThread) ? (
+                    <div className="channel-work-thread-tree" aria-label={t("Channel work threads")}>
+                      <div className="channel-work-thread-tree-head">
+                        <span>
+                          <GitBranch size={14} />
+                          {t("Work branches")}
+                        </span>
+                        {channelWorkThreadsLoading ? (
+                          <small><Loader2 className="spin" size={12} /> {t("Loading")}</small>
+                        ) : null}
+                      </div>
+                      {channelWorkThreadError ? (
+                        <div className="inline-error compact">
+                          <CircleAlert size={14} />
+                          {channelWorkThreadError}
+                        </div>
+                      ) : null}
+                      <div className="channel-work-thread-row-list">
+                        <button
+                          className={!activeWorkThreadId ? "channel-work-thread-row selected" : "channel-work-thread-row"}
+                          type="button"
+                          onClick={() => setActiveWorkThreadId("")}
+                        >
+                          <span className="sidebar-hash" aria-hidden="true">#</span>
+                          <span className="channel-work-thread-row-main">
+                            <strong>{t("All channel work")}</strong>
+                            <small>{t("{count} branches", { count: visibleChannelWorkThreads.length })}</small>
+                          </span>
+                        </button>
+                        {channelWorkThreadTreeRows.map(({ thread, depth, parentHidden }) => (
+                          <div
+                            key={thread.id}
+                            className={activeWorkThreadId === thread.id ? "channel-work-thread-row-shell selected" : "channel-work-thread-row-shell"}
+                            style={{ paddingLeft: `${8 + depth * 18}px` }}
+                          >
+                            <button
+                              className="channel-work-thread-row"
+                              type="button"
+                              onClick={() => setActiveWorkThreadId(thread.id)}
+                            >
+                              <span className={`status-dot ${thread.status}`} />
+                              <span className="channel-work-thread-row-main">
+                                <strong>{thread.title}</strong>
+                                <small>
+                                  {thread.parentThreadId ? `${t("Fork branch")} · ` : ""}
+                                  {parentHidden ? `${t("Parent hidden")} · ` : ""}
+                                  {thread.lastRunId ?? thread.id}
+                                </small>
+                              </span>
+                            </button>
+                            <button
+                              className="icon-button"
+                              type="button"
+                              aria-label={t("Fork")}
+                              title={t("Fork")}
+                              disabled={forkingWorkThreadId === thread.id || thread.status === "archived"}
+                              onClick={() => void forkChannelWorkThread(thread)}
+                            >
+                              {forkingWorkThreadId === thread.id ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <ConversationVirtualFeed
                     scrollRef={messageFeedRef}
                     ariaLabel={t("Channel message feed")}
                     loading={channelMessagesLoading || channelProtocolLoading}
                     empty={messageFeedEmpty}
                     loadingLabel={t("Loading messages...")}
-                    emptyIcon={activityFiltersActive ? <Search /> : <MessageSquare />}
+                    emptyIcon={activeWorkThreadId ? <GitBranch /> : activityFiltersActive ? <Search /> : <MessageSquare />}
                     emptyLabel={
-                      activityFiltersActive
+                      activeWorkThreadId
+                        ? t("No work recorded in this branch yet")
+                        : activityFiltersActive
                         ? t("No activity matches these filters")
                         : selectedChannel
                           ? t("No channel messages yet")
@@ -6765,6 +6925,109 @@ function runProgressIcon(status: RunSession["status"]): JSX.Element {
     return <X size={18} />;
   }
   return <Clock3 size={18} />;
+}
+
+function deriveWorkspaceThreadsFromRuns(runs: readonly RunSession[]): readonly LingThread[] {
+  const runsByThreadId = new Map<string, RunSession[]>();
+  for (const run of runs) {
+    if (!run.threadId) {
+      continue;
+    }
+    runsByThreadId.set(run.threadId, [...(runsByThreadId.get(run.threadId) ?? []), run]);
+  }
+  return [...runsByThreadId.entries()].map(([threadId, threadRuns]) => {
+    const latestRun = [...threadRuns].sort((left, right) => compareRunActivity(right, left))[0];
+    const oldestRun = [...threadRuns].sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
+    return {
+      id: threadId,
+      workspaceId: "workspace_default",
+      kind: "task",
+      channelId: latestRun.channelId,
+      taskId: latestRun.taskId,
+      teammateId: latestRun.teammateId,
+      title: readTaskTitle(latestRun.taskSnapshot) || latestRun.taskId,
+      objective: readTaskPrompt(latestRun.taskSnapshot) || readTaskTitle(latestRun.taskSnapshot) || latestRun.taskId,
+      status: lingThreadStatusFromWorkspaceRun(latestRun),
+      activeRunId: runCanBeStopped(latestRun) ? latestRun.id : undefined,
+      lastRunId: latestRun.id,
+      createdAt: oldestRun.createdAt,
+      updatedAt: latestRun.updatedAt || latestRun.createdAt,
+    } satisfies LingThread;
+  });
+}
+
+function mergeLingThreads(...groups: readonly (readonly LingThread[])[]): readonly LingThread[] {
+  const byId = new Map<string, LingThread>();
+  for (const group of groups) {
+    for (const thread of group) {
+      const existing = byId.get(thread.id);
+      if (!existing || thread.updatedAt >= existing.updatedAt) {
+        byId.set(thread.id, { ...existing, ...thread });
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
+function buildChannelWorkThreadTree(threads: readonly LingThread[]): ReadonlyArray<{
+  readonly thread: LingThread;
+  readonly depth: number;
+  readonly parentHidden: boolean;
+}> {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread]));
+  const childIdsByParent = new Map<string, string[]>();
+  for (const thread of threads) {
+    if (!thread.parentThreadId) {
+      continue;
+    }
+    childIdsByParent.set(thread.parentThreadId, [...(childIdsByParent.get(thread.parentThreadId) ?? []), thread.id]);
+  }
+  const roots = threads
+    .filter((thread) => !thread.parentThreadId || !threadById.has(thread.parentThreadId))
+    .map((thread) => thread.id);
+  const rows: Array<{ readonly thread: LingThread; readonly depth: number; readonly parentHidden: boolean }> = [];
+  const visited = new Set<string>();
+  const sortIds = (ids: readonly string[]): string[] =>
+    [...new Set(ids)].sort((leftId, rightId) =>
+      (threadById.get(rightId)?.updatedAt ?? "").localeCompare(threadById.get(leftId)?.updatedAt ?? "") ||
+      leftId.localeCompare(rightId));
+  const visit = (threadId: string, depth: number, parentHidden: boolean): void => {
+    if (visited.has(threadId)) {
+      return;
+    }
+    const thread = threadById.get(threadId);
+    if (!thread) {
+      return;
+    }
+    visited.add(threadId);
+    rows.push({ thread, depth, parentHidden });
+    for (const childId of sortIds(childIdsByParent.get(threadId) ?? [])) {
+      visit(childId, Math.min(depth + 1, 6), false);
+    }
+  };
+  for (const rootId of sortIds(roots)) {
+    const root = threadById.get(rootId);
+    visit(rootId, 0, Boolean(root?.parentThreadId && !threadById.has(root.parentThreadId)));
+  }
+  for (const thread of threads) {
+    if (!visited.has(thread.id)) {
+      rows.push({ thread, depth: 0, parentHidden: Boolean(thread.parentThreadId) });
+    }
+  }
+  return rows;
+}
+
+function compareRunActivity(left: RunSession, right: RunSession): number {
+  const leftTime = left.updatedAt || left.endedAt || left.startedAt || left.createdAt;
+  const rightTime = right.updatedAt || right.endedAt || right.startedAt || right.createdAt;
+  return leftTime.localeCompare(rightTime);
+}
+
+function lingThreadStatusFromWorkspaceRun(run: RunSession): LingThread["status"] {
+  if (run.status === "queued") {
+    return "open";
+  }
+  return run.status;
 }
 
 function splitLines(value: string): string[] {

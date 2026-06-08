@@ -841,6 +841,257 @@ Use stable machine-readable errors so Web and tests do not depend on prose:
 User-facing copy should describe the action boundary: for example, `This turn is still
 running. Use the active run controls or wait for it to finish before resuming from it.`
 
+### V2D-B Fork Lineage Details
+
+V2D-B adds fork as durable thread lineage. It does not clone a transcript and does not
+replace message-level topic replies.
+
+#### Contract Shape
+
+Add lineage fields to `LingThread`:
+
+```ts
+interface LingThread {
+  readonly parentThreadId?: string;
+  readonly parentTurnId?: string;
+  readonly forkedFromRunId?: string;
+}
+```
+
+`parentThreadId` is the branch authority. `parentTurnId` and `forkedFromRunId` are
+anchors for user explanation and evidence drill-down. `LingThreadMetadata` may cache
+derived child counts later, but lineage must be read from `ling_threads`.
+
+Add a fork route:
+
+```text
+POST /threads/:threadId/fork?cwd=...
+```
+
+Request:
+
+```ts
+interface LingThreadForkRequest {
+  readonly turnId?: string;
+  readonly sourceRunId?: string;
+  readonly title?: string;
+  readonly objective?: string;
+  readonly idempotencyKey?: string;
+}
+```
+
+Response:
+
+```ts
+interface LingThreadForkResponse {
+  readonly cwd: string;
+  readonly sourceThread: LingThread;
+  readonly sourceTurn?: LingTurn;
+  readonly sourceRun?: RunSession;
+  readonly childThread: LingThread;
+  readonly lineage: {
+    readonly parentThreadId: string;
+    readonly parentTurnId?: string;
+    readonly forkedFromRunId?: string;
+  };
+}
+```
+
+#### Storage
+
+Add nullable columns to `ling_threads`:
+
+```text
+parent_thread_id TEXT NULL
+parent_turn_id TEXT NULL
+forked_from_run_id TEXT NULL
+```
+
+Do not add a separate fork table in V2D-B. The channel tree can be built from the flat
+thread list by grouping on `parentThreadId`. If deep lineage queries become expensive,
+add a later read model or cache.
+
+#### Source Resolution
+
+Fork source resolution should mirror the V2D-A resume discipline: validate against
+authoritative rows, not metadata.
+
+Rules:
+
+1. `threadId` is the source thread.
+2. If `turnId` is present, read `ling_turns` and require `turn.threadId === threadId`.
+3. If `sourceRunId` is present, read `runs` and require `run.threadId === threadId`.
+4. If both `turnId` and `sourceRunId` are present, require the run to be linked to the
+   turn through `ling_turn_runs` or `turn.lastRunId`.
+5. If `turnId` is absent, choose the latest terminal turn in the source thread when one
+   exists.
+6. If no terminal turn exists, create a thread-level fork with only `parentThreadId`.
+7. A selected active/open/waiting turn returns `turn_active`.
+8. An archived source thread returns `source_thread_archived` in V2D-B.
+
+Stable error codes:
+
+- `thread_not_found`
+- `source_thread_archived`
+- `turn_not_found`
+- `turn_not_in_thread`
+- `turn_active`
+- `source_run_not_found`
+- `source_run_not_in_thread`
+- `source_run_not_in_turn`
+- `fork_idempotency_conflict`
+
+#### Mutation Semantics
+
+A fork creates one child `LingThread` and no immediate run.
+
+Child values:
+
+- `workspaceId`: copied from the source thread;
+- `kind`: copied from the source thread;
+- `channelId`: copied from the source thread when present;
+- owner fields: copied only when they preserve the same surface, such as task,
+  workflow-step, external-work, teammate, or channel context;
+- `title`: request title or `Fork: <source title>`;
+- `objective`: request objective or a generated objective referencing the source
+  thread/turn;
+- `status`: `open`;
+- `activeRunId`: empty;
+- `lastRunId`: empty;
+- `parentThreadId`: source thread id;
+- `parentTurnId`: resolved terminal source turn id when available;
+- `forkedFromRunId`: resolved source run id when available.
+
+Source values must not be changed:
+
+- no automatic archive;
+- no pin mutation;
+- no status mutation;
+- no source turn mutation;
+- no source run mutation;
+- no copying of raw logs, events, artifacts, process snapshots, or transcript rows.
+
+The first instruction in the child branch should create a normal child turn/run through
+the existing conversation flow. Fork lineage stays on the thread, not on every child turn.
+
+#### Web Interaction
+
+Fork is a branch action:
+
+1. User forks from a thread header, Work History thread detail, or a selected completed
+   turn action.
+2. Web calls `POST /threads/:threadId/fork`.
+3. Web refreshes the source channel's thread list and Work History detail cache.
+4. Web selects the returned child thread.
+5. Center conversation switches to the child branch and focuses the composer.
+
+The source transcript should not embed the child transcript. A compact non-transcript
+branch notice near the source turn is acceptable as confirmation, but the primary
+navigation surface is the channel work-thread tree.
+
+Child header:
+
+```text
+Forked from <source thread title> / <source turn title>
+```
+
+The link should navigate back to the source thread or source turn where the current
+surface supports it.
+
+#### Channel Tree
+
+Build the channel work-thread tree from visible `LingThread[]`:
+
+```text
+Channel
+  Source thread
+    Child fork
+      Grandchild fork
+```
+
+Rules:
+
+- group by `parentThreadId`;
+- root rows are threads without `parentThreadId` or whose parent is not visible;
+- orphaned rows should render as top-level rows with `Parent hidden`;
+- selecting any row switches the center conversation to that thread;
+- use indentation and a branch marker, not a separate modal or detached Work History
+  card;
+- archive and pin actions remain out of V2D-B.
+
+#### Work History Lineage
+
+Source detail:
+
+- show child branch count;
+- show a compact child list with status, last activity, and channel context;
+- link each child to its Work History detail and, when possible, the channel branch.
+
+Child detail:
+
+- show `Forked from`;
+- show source thread, source turn, and source run when known;
+- provide a back link to the source thread;
+- show `Source unavailable` if the parent has been deleted or filtered from the current
+  query.
+
+Work History lineage is explanatory and navigational. It must not become execution
+authority for resume, approve, cancel, rerun, or provider repair.
+
+#### Test Cases
+
+- daemon creates a child thread with `parentThreadId`, `parentTurnId`, and
+  `forkedFromRunId` when forking a completed turn;
+- daemon creates a thread-level child when no terminal turn exists;
+- daemon rejects active selected turns with `turn_active`;
+- daemon rejects archived source threads with `source_thread_archived`;
+- idempotent fork request returns the same child thread for the same source/key;
+- mock daemon mirrors fork lineage for Web e2e;
+- Web channel tree renders source and child under the same channel;
+- selecting source and child switches center conversation;
+- Work History source detail shows child branches;
+- Work History child detail shows `Forked from`;
+- topic reply UI remains unchanged.
+
+#### Implementation Record
+
+Implemented on 2026-06-09:
+
+- `LingThread` lineage fields are part of contracts, core run types, API client, Web API
+  wrappers, and Web mock daemon state;
+- SQLite persists lineage directly on `ling_threads`; no `thread_forks` table was added;
+- daemon fork route creates a child thread only and returns source/child lineage in one
+  response;
+- source resolution rejects invalid turn/run combinations with stable machine-readable
+  errors;
+- child branch keeps source `channelId` and starts with no `activeRunId` or `lastRunId`;
+- source thread is not archived, hidden, status-mutated, or copied;
+- Work History thread detail exposes Fork, parent source information, child branch list,
+  and child navigation;
+- channel workspace adds a compact work-thread branch strip and branch-scoped empty state
+  for forks with no runs yet;
+- mock daemon and e2e cover the same no-copy child-thread behavior.
+
+Known first-slice limits:
+
+- Fork does not start a run or create a first child turn.
+- Fork does not copy source transcript rows into the child branch.
+- Fork does not add archive/pin/search surfaces.
+- Fork lineage is navigational and explanatory; it is not execution authority for
+  approval, rerun, cancel, provider repair, or resume recovery.
+- Automatic source-turn selection can be polished later; the current surface supports
+  explicit source-turn selection before Fork.
+
+Validation commands:
+
+- `git diff --check`
+- `corepack pnpm --filter @ling-stack/contracts build`
+- `corepack pnpm --filter @ling-stack/core build`
+- `corepack pnpm --filter @ling-stack/daemon build`
+- `corepack pnpm --filter @ling-stack/web typecheck`
+- `cd packages/daemon && node --test --test-name-pattern "daemon fork creates child thread lineage" test/ling-turns-api.test.mjs`
+- `corepack pnpm --filter @ling-stack/web exec playwright test e2e/runtime.spec.ts -g "fork lineage creates child thread"`
+
 ### Fork Display Rules
 
 Fork has to be visible in both the originating channel and Work History. Otherwise users

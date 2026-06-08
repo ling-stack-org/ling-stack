@@ -107,6 +107,9 @@ export interface MockLingThread {
   status: string;
   activeRunId?: string;
   lastRunId?: string;
+  parentThreadId?: string;
+  parentTurnId?: string;
+  forkedFromRunId?: string;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string;
@@ -1077,6 +1080,86 @@ function isMockTurnActiveForResume(state: MockState, turn: MockLingTurn): boolea
     return true;
   }
   return turn.status === "open" || turn.status === "running" || turn.status === "waiting_for_approval" || turn.status === "blocked";
+}
+
+function resolveMockForkAnchor(
+  state: MockState,
+  thread: MockLingThread,
+  body: Record<string, unknown>,
+): { sourceTurn?: MockLingTurn; sourceRun?: MockRun } | { status: number; error: string; message: string } {
+  if (thread.status === "archived" || thread.archivedAt) {
+    return { status: 409, error: "source_thread_archived", message: `Cannot fork archived thread: ${thread.id}` };
+  }
+  const turnId = typeof body.turnId === "string" ? body.turnId : undefined;
+  const requestedRunId = typeof body.sourceRunId === "string" ? body.sourceRunId : undefined;
+  if (turnId) {
+    const sourceTurn = state.turns.find((turn) => turn.id === turnId);
+    if (!sourceTurn) {
+      return { status: 404, error: "turn_not_found", message: `Ling turn not found: ${turnId}` };
+    }
+    if (sourceTurn.threadId !== thread.id) {
+      return { status: 400, error: "turn_not_in_thread", message: `Ling turn does not belong to thread: ${turnId}` };
+    }
+    if (!isMockTurnTerminalForFork(state, sourceTurn)) {
+      return { status: 409, error: "turn_active", message: `Selected turn is not terminal: ${sourceTurn.id}` };
+    }
+    const sourceRun = requestedRunId
+      ? state.runs.find((run) => run.id === requestedRunId)
+      : resolveMockSourceRunFromTurn(state, sourceTurn);
+    if (requestedRunId && !sourceRun) {
+      return { status: 404, error: "source_run_not_found", message: `Source run was not found: ${requestedRunId}` };
+    }
+    if (sourceRun && sourceRun.threadId !== thread.id) {
+      return { status: 400, error: "source_run_not_in_thread", message: `Source run does not belong to thread: ${sourceRun.id}` };
+    }
+    if (sourceRun && !isMockRunInTurn(state, sourceTurn, sourceRun)) {
+      return { status: 400, error: "source_run_not_in_turn", message: `Source run does not belong to turn: ${sourceRun.id}` };
+    }
+    return { sourceTurn, sourceRun };
+  }
+  if (requestedRunId) {
+    const sourceRun = state.runs.find((run) => run.id === requestedRunId);
+    if (!sourceRun) {
+      return { status: 404, error: "source_run_not_found", message: `Source run was not found: ${requestedRunId}` };
+    }
+    if (sourceRun.threadId !== thread.id) {
+      return { status: 400, error: "source_run_not_in_thread", message: `Source run does not belong to thread: ${sourceRun.id}` };
+    }
+    const sourceTurn = findMockTurnForRun(state, sourceRun.id);
+    return sourceTurn && isMockTurnTerminalForFork(state, sourceTurn) ? { sourceTurn, sourceRun } : { sourceRun };
+  }
+  const sourceTurn = resolveLatestMockTerminalTurn(state, thread.id);
+  return {
+    sourceTurn,
+    sourceRun: sourceTurn ? resolveMockSourceRunFromTurn(state, sourceTurn) : undefined,
+  };
+}
+
+function isMockTurnTerminalForFork(state: MockState, turn: MockLingTurn): boolean {
+  const activeRun = turn.activeRunId ? state.runs.find((run) => run.id === turn.activeRunId) : undefined;
+  if (activeRun && isMockRunActive(activeRun)) {
+    return false;
+  }
+  return turn.status === "succeeded" || turn.status === "failed" || turn.status === "cancelled" || turn.status === "superseded";
+}
+
+function resolveLatestMockTerminalTurn(state: MockState, threadId: string): MockLingTurn | undefined {
+  return [...state.turns]
+    .filter((turn) => turn.threadId === threadId && isMockTurnTerminalForFork(state, turn))
+    .sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt) ||
+      (right.completedAt ?? "").localeCompare(left.completedAt ?? "") ||
+      right.createdAt.localeCompare(left.createdAt) ||
+      right.id.localeCompare(left.id))
+    [0];
+}
+
+function deterministicMockForkThreadId(threadId: string, sourceTurnId: string | undefined, sourceRunId: string | undefined, idempotencyKey: string): string {
+  return `thread_fork_${sanitizeMockId([threadId, sourceTurnId, sourceRunId, idempotencyKey].filter(Boolean).join("_")).slice(0, 64)}`;
+}
+
+function sanitizeMockId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_]+/g, "_");
 }
 
 export function isMockRunActive(run: MockRun): boolean {
@@ -4456,6 +4539,83 @@ export async function handleDaemonRoute(
       const turnIds = new Set(turns.map((turn) => turn.id));
       const runLinks = state.turnRunLinks.filter((link) => turnIds.has(link.turnId));
       await route.fulfill({ json: { cwd, threadId, turns, runLinks } });
+      return;
+    }
+    if (request.method() === "POST" && action === "fork") {
+      let body: Record<string, unknown> = {};
+      try {
+        body = request.postDataJSON() as Record<string, unknown>;
+      } catch {
+        body = {};
+      }
+      const anchor = resolveMockForkAnchor(state, thread, body);
+      if ("error" in anchor) {
+        await route.fulfill({ status: anchor.status, json: { error: anchor.error, message: anchor.message } });
+        return;
+      }
+      const idempotencyKey = typeof body.idempotencyKey === "string" && body.idempotencyKey.trim() ? body.idempotencyKey.trim() : undefined;
+      const childId = idempotencyKey
+        ? deterministicMockForkThreadId(thread.id, anchor.sourceTurn?.id, anchor.sourceRun?.id, idempotencyKey)
+        : `thread_fork_${state.threads.length + 1}`;
+      const existing = state.threads.find((item) => item.id === childId);
+      if (existing) {
+        await route.fulfill({
+          status: 200,
+          json: {
+            cwd,
+            sourceThread: thread,
+            sourceTurn: anchor.sourceTurn,
+            sourceRun: anchor.sourceRun,
+            childThread: existing,
+            lineage: {
+              parentThreadId: thread.id,
+              parentTurnId: anchor.sourceTurn?.id,
+              forkedFromRunId: anchor.sourceRun?.id,
+            },
+          },
+        });
+        return;
+      }
+      const now = "2026-05-25T00:41:00.000Z";
+      const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : `Fork: ${thread.title}`;
+      const objective = typeof body.objective === "string" && body.objective.trim()
+        ? body.objective.trim()
+        : `Forked from ${anchor.sourceTurn?.title || thread.title} (${thread.id}) to explore a separate work branch.`;
+      const childThread: MockLingThread = {
+        id: childId,
+        workspaceId: thread.workspaceId,
+        kind: thread.kind,
+        channelId: thread.channelId,
+        taskId: thread.taskId,
+        teammateId: thread.teammateId,
+        workflowId: thread.workflowId,
+        workflowStepId: thread.workflowStepId,
+        externalWorkId: thread.externalWorkId,
+        title,
+        objective,
+        status: "open",
+        parentThreadId: thread.id,
+        parentTurnId: anchor.sourceTurn?.id,
+        forkedFromRunId: anchor.sourceRun?.id,
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.threads.unshift(childThread);
+      await route.fulfill({
+        status: 201,
+        json: {
+          cwd,
+          sourceThread: thread,
+          sourceTurn: anchor.sourceTurn,
+          sourceRun: anchor.sourceRun,
+          childThread,
+          lineage: {
+            parentThreadId: thread.id,
+            parentTurnId: anchor.sourceTurn?.id,
+            forkedFromRunId: anchor.sourceRun?.id,
+          },
+        },
+      });
       return;
     }
     if (request.method() === "POST" && (action === "resume-preview" || action === "resume")) {

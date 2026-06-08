@@ -4366,6 +4366,99 @@ code,
   height: 100%;
 }
 
+.channel-work-thread-tree {
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-panel);
+}
+
+.channel-work-thread-tree-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.channel-work-thread-tree-head span,
+.channel-work-thread-tree-head small {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.channel-work-thread-row-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.channel-work-thread-row-shell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: min(100%, 360px);
+  border: 1px solid transparent;
+  border-radius: 7px;
+}
+
+.channel-work-thread-row-shell.selected {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.channel-work-thread-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 34px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-panel-strong);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.channel-work-thread-row.selected {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel-strong));
+}
+
+.channel-work-thread-row-main {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  text-align: left;
+}
+
+.channel-work-thread-row-main strong,
+.channel-work-thread-row-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-work-thread-row-main strong {
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.channel-work-thread-row-main small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
 .activity-filter-toolbar {
   display: grid;
   grid-template-columns: minmax(160px, 0.72fr) minmax(240px, 1.4fr) minmax(140px, auto) auto;
@@ -6075,6 +6168,14 @@ code,
 .thread-list .run-list-row:disabled {
   cursor: default;
   opacity: 0.65;
+}
+
+.work-history-branch-row {
+  border-left: 2px solid transparent;
+}
+
+.work-history-branch-row.selected {
+  border-left-color: var(--accent);
 }
 
 .work-history-turn-group,

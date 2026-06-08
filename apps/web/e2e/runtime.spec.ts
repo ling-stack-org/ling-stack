@@ -695,6 +695,107 @@ test("run history groups durable Ling turn attempts and keeps run detail selecte
   await expect(detail.getByRole("button", { name: "Current run", exact: true })).toBeVisible();
 });
 
+test("fork lineage creates child thread and surfaces it in work history and channel branches", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const sourceRun: MockRun = {
+    ...state.runs[0],
+    id: "run_fork_source",
+    status: "succeeded",
+    threadId: "thread_fork_source",
+    taskId: "task_fork_source",
+    taskSnapshot: {
+      id: "task_fork_source",
+      title: "Fork lineage source",
+      prompt: "Create a completed work thread that can branch.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      task: {
+        id: "task_fork_source",
+        title: "Fork lineage source",
+        prompt: "Create a completed work thread that can branch.",
+        channelId: "channel_engineering",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_fork_source.jsonl",
+    errorMessage: undefined,
+    createdAt: "2026-05-25T01:20:00.000Z",
+    updatedAt: "2026-05-25T01:21:00.000Z",
+    endedAt: "2026-05-25T01:21:00.000Z",
+  };
+  state.runs = [sourceRun];
+  state.threads = [
+    {
+      id: "thread_fork_source",
+      workspaceId: "workspace_default",
+      kind: "task",
+      channelId: "channel_engineering",
+      taskId: "task_fork_source",
+      title: "Fork lineage source",
+      objective: "Create a completed work thread that can branch.",
+      status: "succeeded",
+      lastRunId: sourceRun.id,
+      createdAt: "2026-05-25T01:20:00.000Z",
+      updatedAt: "2026-05-25T01:21:00.000Z",
+    },
+  ];
+  state.turns = [
+    {
+      id: "turn_fork_source",
+      workspaceId: "workspace_default",
+      threadId: "thread_fork_source",
+      kind: "manual_followup",
+      status: "succeeded",
+      title: "Complete fork source turn",
+      userInstruction: "Finish source work before branching.",
+      channelId: "channel_engineering",
+      taskId: "task_fork_source",
+      lastRunId: sourceRun.id,
+      createdByActor: "local-user",
+      createdAt: "2026-05-25T01:20:00.000Z",
+      updatedAt: "2026-05-25T01:21:00.000Z",
+      completedAt: "2026-05-25T01:21:00.000Z",
+    },
+  ];
+  state.turnRunLinks = [];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+
+  const workList = page.locator(".thread-list");
+  await workList.getByRole("button", { name: /Fork lineage source/ }).click();
+  const detail = page.getByLabel("Thread detail");
+  await expect(detail).toContainText("Fork lineage");
+  await detail.getByLabel("Resume source turn").selectOption("turn_fork_source");
+  await expect(detail.getByLabel("Resume source turn")).toHaveValue("turn_fork_source");
+  await detail.getByRole("button", { name: "Fork" }).click();
+
+  await expect.poll(() => state.threads.find((thread) => thread.parentThreadId === "thread_fork_source")?.id).toMatch(/^thread_fork_/);
+  const childThread = state.threads.find((thread) => thread.parentThreadId === "thread_fork_source");
+  expect(childThread).toBeTruthy();
+  expect(childThread?.parentTurnId).toBe("turn_fork_source");
+  expect(childThread?.forkedFromRunId).toBe(sourceRun.id);
+  expect(childThread?.channelId).toBe("channel_engineering");
+  expect(state.runs.filter((run) => run.threadId === childThread?.id)).toHaveLength(0);
+
+  await expect(detail).toContainText("Forked from");
+  await expect(detail).toContainText("thread_fork_source");
+  await expect(detail).toContainText("turn_fork_source");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  const branchTree = page.getByLabel("Channel work threads");
+  await expect(branchTree).toContainText("Work branches");
+  await expect(branchTree).toContainText("Fork lineage source");
+  await expect(branchTree).toContainText(childThread?.title ?? "Fork");
+  await branchTree.getByRole("button", { name: new RegExp(childThread?.title ?? "Fork") }).click();
+  await expect(page.getByText("No work recorded in this branch yet")).toBeVisible();
+});
+
 test("run history falls back to legacy thread rows when Ling turn loading fails", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   const sourceRun: MockRun = {

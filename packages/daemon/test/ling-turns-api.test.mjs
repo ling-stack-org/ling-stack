@@ -175,6 +175,118 @@ test("daemon resume preview and execute can anchor to a durable Ling turn", asyn
   }
 });
 
+test("daemon fork creates child thread lineage without copying runs", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-thread-fork-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const channelId = channel.id;
+    const initial = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_turn_fork_source"),
+      task: {
+        id: "task_turn_fork_source",
+        title: "Forkable source thread",
+        prompt: "Create a terminal turn that can be forked.",
+        channelId,
+      },
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const initialRun = store.getRun(initial.runId);
+    assert.ok(initialRun);
+    assert.ok(initialRun.threadId);
+    assert.equal(initialRun.channelId, channelId);
+    const sourceTurn = store.getLingTurnForRun(initialRun.id);
+    assert.ok(sourceTurn);
+
+    const forked = await postJson(`${daemon.url}/threads/${encodeURIComponent(initialRun.threadId)}/fork?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: sourceTurn.id,
+      sourceRunId: initialRun.id,
+      title: "Forked source thread",
+      objective: "Explore a child branch without mutating the source.",
+      idempotencyKey: "fork-source-turn",
+    });
+    assert.equal(forked.lineage.parentThreadId, initialRun.threadId);
+    assert.equal(forked.lineage.parentTurnId, sourceTurn.id);
+    assert.equal(forked.lineage.forkedFromRunId, initialRun.id);
+    assert.equal(forked.childThread.parentThreadId, initialRun.threadId);
+    assert.equal(forked.childThread.parentTurnId, sourceTurn.id);
+    assert.equal(forked.childThread.forkedFromRunId, initialRun.id);
+    assert.equal(forked.childThread.channelId, channelId);
+    assert.equal(forked.childThread.status, "open");
+    assert.equal(forked.childThread.activeRunId, undefined);
+    assert.equal(forked.childThread.lastRunId, undefined);
+    assert.equal(store.listRuns({ threadId: forked.childThread.id, limit: 10 }).length, 0);
+    assert.equal(store.getLingThread(initialRun.threadId).status, "succeeded");
+
+    const repeated = await postJson(`${daemon.url}/threads/${encodeURIComponent(initialRun.threadId)}/fork?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: sourceTurn.id,
+      sourceRunId: initialRun.id,
+      idempotencyKey: "fork-source-turn",
+    });
+    assert.equal(repeated.childThread.id, forked.childThread.id);
+
+    const channelThreads = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channelId)}&limit=20`);
+    assert.equal(channelThreads.threads.some((thread) => thread.id === initialRun.threadId), true);
+    assert.equal(channelThreads.threads.some((thread) => thread.id === forked.childThread.id), true);
+
+    const shellThread = store.createLingThread(
+      {
+        kind: "task",
+        channelId,
+        title: "Thread-level fork source",
+        objective: "No terminal turns yet.",
+      },
+      "2026-06-08T00:20:00.000Z",
+    );
+    const shellFork = await postJson(`${daemon.url}/threads/${encodeURIComponent(shellThread.id)}/fork?cwd=${encodeURIComponent(cwd)}`, {
+      idempotencyKey: "fork-no-turn-thread",
+    });
+    assert.equal(shellFork.childThread.parentThreadId, shellThread.id);
+    assert.equal(shellFork.childThread.parentTurnId, undefined);
+    assert.equal(shellFork.childThread.forkedFromRunId, undefined);
+    assert.equal(shellFork.childThread.channelId, channelId);
+
+    const activeTurn = store.createLingTurn(
+      {
+        threadId: initialRun.threadId,
+        kind: "manual_followup",
+        status: "running",
+        title: "Active fork source",
+        userInstruction: "Fork should be blocked until this turn is terminal.",
+        activeRunId: initialRun.id,
+        lastRunId: initialRun.id,
+      },
+      "2026-06-08T00:21:00.000Z",
+    );
+    const activeFork = await postJsonAllowError(`${daemon.url}/threads/${encodeURIComponent(initialRun.threadId)}/fork?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: activeTurn.id,
+    });
+    assert.equal(activeFork.status, 409);
+    assert.equal(activeFork.body.error, "turn_active");
+
+    const archivedThread = store.createLingThread(
+      {
+        kind: "task",
+        channelId,
+        title: "Archived fork source",
+        objective: "Archived sources are blocked in V2D-B.",
+      },
+      "2026-06-08T00:22:00.000Z",
+    );
+    store.updateLingThread(archivedThread.id, { status: "archived", archivedAt: "2026-06-08T00:22:30.000Z" }, "2026-06-08T00:22:30.000Z");
+    const archivedFork = await postJsonAllowError(`${daemon.url}/threads/${encodeURIComponent(archivedThread.id)}/fork?cwd=${encodeURIComponent(cwd)}`, {
+      idempotencyKey: "fork-archived-source",
+    });
+    assert.equal(archivedFork.status, 409);
+    assert.equal(archivedFork.body.error, "source_thread_archived");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 class SuccessfulRunner {
   async runTask(options) {
     options.onEvent?.({
@@ -250,6 +362,15 @@ async function postRunAndCollectEvents(baseUrl, body) {
     events,
     runId: events.find((event) => event.event === "ready")?.data.runId,
   };
+}
+
+async function createChannel(baseUrl, cwd) {
+  return await postJson(`${baseUrl}/channels?cwd=${encodeURIComponent(cwd)}`, {
+    name: "Fork test",
+    status: "active",
+    boundPath: cwd,
+    allowedTools: ["read"],
+  });
 }
 
 async function getJson(url) {

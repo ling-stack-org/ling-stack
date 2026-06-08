@@ -413,6 +413,9 @@ export interface LingThread {
   readonly status: LingThreadStatus;
   readonly activeRunId?: string;
   readonly lastRunId?: string;
+  readonly parentThreadId?: string;
+  readonly parentTurnId?: string;
+  readonly forkedFromRunId?: string;
   readonly metadata?: LingThreadMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -433,6 +436,9 @@ export interface CreateLingThreadInput {
   readonly status?: LingThreadStatus;
   readonly activeRunId?: string;
   readonly lastRunId?: string;
+  readonly parentThreadId?: string;
+  readonly parentTurnId?: string;
+  readonly forkedFromRunId?: string;
 }
 
 export interface UpdateLingThreadInput {

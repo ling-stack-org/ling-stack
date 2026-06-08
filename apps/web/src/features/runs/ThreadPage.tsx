@@ -133,9 +133,11 @@ export function ThreadPage({
           cwd={cwd}
           thread={selectedThread}
           threadId={selectedThread.id}
+          visibleThreads={threads}
           isRunning={isRunning}
           onRefresh={refreshThreadAndRuns}
           onSelectRun={onSelectRun}
+          onSelectThreadId={setSelectedThreadId}
         />
       ) : (
         <section className="panel run-detail-panel thread-detail-panel" aria-label={t("Thread detail")}>

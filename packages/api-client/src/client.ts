@@ -122,6 +122,8 @@ import type {
   ListApprovalsRequest,
   LingThreadDetailResponse,
   LingThreadEvidenceResponse,
+  LingThreadForkRequest,
+  LingThreadForkResponse,
   LingThreadListRequest,
   LingThreadListResponse,
   LingThreadResumePreviewResponse,
@@ -529,6 +531,10 @@ export class LingDaemonClient {
 
   async previewLingThreadResume(cwd: string, threadId: string, input: LingThreadResumeRequest = {}): Promise<LingThreadResumePreviewResponse> {
     return this.post(`/threads/${encodeURIComponent(threadId)}/resume-preview`, { cwd }, input);
+  }
+
+  async forkLingThread(cwd: string, threadId: string, input: LingThreadForkRequest = {}): Promise<LingThreadForkResponse> {
+    return this.post(`/threads/${encodeURIComponent(threadId)}/fork`, { cwd }, input);
   }
 
   async getRun(runId: string, cwd?: string): Promise<RunSession> {

@@ -2,6 +2,8 @@ import type {
   CreateRunInterventionRequest,
   LingThreadDetailResponse,
   LingThreadEvidenceResponse,
+  LingThreadForkRequest,
+  LingThreadForkResponse,
   LingThreadListRequest,
   LingThreadListResponse,
   LingThreadResumePreviewResponse,
@@ -63,6 +65,14 @@ export async function previewLingThreadResume(
   input: LingThreadResumeRequest = {},
 ): Promise<LingThreadResumePreviewResponse> {
   return daemonClient.previewLingThreadResume(cwd, threadId, input);
+}
+
+export async function forkLingThread(
+  cwd: string,
+  threadId: string,
+  input: LingThreadForkRequest = {},
+): Promise<LingThreadForkResponse> {
+  return daemonClient.forkLingThread(cwd, threadId, input);
 }
 
 export async function listRunInterventions(cwd: string, runId: string, limit = 100): Promise<RunInterventionListResponse> {

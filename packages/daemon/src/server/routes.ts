@@ -75,6 +75,7 @@ export function parseLingThreadRoute(
   | { readonly kind: "evidence"; readonly threadId: string }
   | { readonly kind: "resume"; readonly threadId: string }
   | { readonly kind: "resume-preview"; readonly threadId: string }
+  | { readonly kind: "fork"; readonly threadId: string }
   | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "threads") {
@@ -91,6 +92,9 @@ export function parseLingThreadRoute(
   }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "resume-preview") {
     return { kind: "resume-preview", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "fork") {
+    return { kind: "fork", threadId: segments[1] };
   }
   return undefined;
 }
