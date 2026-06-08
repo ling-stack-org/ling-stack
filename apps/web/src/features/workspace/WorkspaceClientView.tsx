@@ -44,7 +44,7 @@ import {
   X,
 } from "lucide-react";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { artifactContentUrl, cancelRunIntervention, createRunIntervention, listRunInterventions } from "../../api.js";
+import { artifactContentUrl, cancelRunIntervention, createRunIntervention, getLingThreadEvidence, listRunInterventions } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -64,7 +64,7 @@ import {
   type ChannelActivityTriageDraft,
   type ChannelActivityTriageResult,
 } from "../../lib/channel-activity-triage.js";
-import { buildConversationWorkCellViewModel, groupRunsByThreadId } from "../../lib/conversation-work-cell.js";
+import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId } from "../../lib/conversation-work-cell.js";
 import {
   allChannelActivitySavedViewId,
   applyActivityViewFilter,
@@ -121,7 +121,7 @@ import {
   removeComposerInputRawToken,
   serializeComposerInputParts,
 } from "../../shared/components/index.js";
-import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, MessageBodyRenderer, MessageFooterActions, MessageRow, RightDrawer } from "../../shared/conversation/index.js";
+import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, MessageBodyRenderer, MessageFooterActions, MessageRow, RightDrawer, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -561,6 +561,7 @@ export function WorkspaceClientView({
   const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "progress");
   const [sidePanelOpen, setSidePanelOpen] = useState(() => Boolean(selectedTaskId));
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
+  const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
   const [attentionQueueOpen, setAttentionQueueOpen] = useState(true);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
@@ -608,6 +609,7 @@ export function WorkspaceClientView({
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
   const teammateManagerPanelRef = useRef<HTMLElement | null>(null);
+  const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
   const autoPreviewUrlsRef = useRef(new Set<string>());
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
   const previousChannelIdRef = useRef(selectedChannelId);
@@ -652,6 +654,10 @@ export function WorkspaceClientView({
     [channelWorkflowSteps, selectedChannelId],
   );
   const latestRun = channelRuns[0];
+  useEffect(() => {
+    conversationWorkCellEvidenceLoadsRef.current.clear();
+    setConversationWorkCellDetailsByKey((current) => Object.keys(current).length === 0 ? current : {});
+  }, [approvals, channelArtifactsByRun, cwd, runs]);
   const pendingChannelApprovals = useMemo(() => {
     return approvals.filter((approval) => {
       if (effectiveApprovalStatus(approval) !== "pending") {
@@ -1362,6 +1368,56 @@ export function WorkspaceClientView({
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setTeammateManagerOpen(false);
+  }
+
+  function conversationWorkCellDetailsCacheKey(threadId: string): string {
+    return `${cwd.trim()}::${threadId}`;
+  }
+
+  function loadConversationWorkCellDetails(threadId: string): void {
+    const cacheKey = conversationWorkCellDetailsCacheKey(threadId);
+    const existing = conversationWorkCellDetailsByKey[cacheKey];
+    if (existing?.status === "loading" || existing?.status === "loaded" || existing?.status === "empty" || conversationWorkCellEvidenceLoadsRef.current.has(cacheKey)) {
+      return;
+    }
+
+    conversationWorkCellEvidenceLoadsRef.current.add(cacheKey);
+    setConversationWorkCellDetailsByKey((current) => ({
+      ...current,
+      [cacheKey]: { status: "loading" },
+    }));
+
+    void getLingThreadEvidence(cwd.trim(), threadId)
+      .then((evidence) => {
+        const details = buildConversationWorkCellDetailsFromThreadEvidence({
+          threadId,
+          evidence,
+          t,
+          artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
+        });
+        const hasEvidence = details.evidenceLinks.length > 0 || details.groups.some((group) => group.rows.length > 0);
+        setConversationWorkCellDetailsByKey((current) => ({
+          ...current,
+          [cacheKey]: {
+            status: hasEvidence ? "loaded" : "empty",
+            groups: details.groups,
+            evidenceLinks: details.evidenceLinks,
+          },
+        }));
+      })
+      .catch((caught: unknown) => {
+        const message = caught instanceof Error ? caught.message : String(caught);
+        setConversationWorkCellDetailsByKey((current) => ({
+          ...current,
+          [cacheKey]: {
+            status: "error",
+            errorMessage: message || t("Evidence failed to load."),
+          },
+        }));
+      })
+      .finally(() => {
+        conversationWorkCellEvidenceLoadsRef.current.delete(cacheKey);
+      });
   }
 
   function openAttentionQueueItem(item: ChannelAttentionQueueItem): void {
@@ -2443,7 +2499,9 @@ export function WorkspaceClientView({
         return (
           <ConversationWorkCell
             model={workCell}
+            detailsState={conversationWorkCellDetailsByKey[conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
             onOpenRun={openRunInPanel}
+            onLoadDetails={loadConversationWorkCellDetails}
           />
         );
       }

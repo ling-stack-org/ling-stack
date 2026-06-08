@@ -6,7 +6,7 @@ export { ConversationShell, type ConversationShellProps } from "./ConversationSh
 export { ConversationStatusStrip, type ConversationStatusAction, type ConversationStatusMetaItem, type ConversationStatusStripProps } from "./ConversationStatusStrip.js";
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./ConversationSummaryRow.js";
 export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./ConversationVirtualFeed.js";
-export { ConversationWorkCell, type ConversationWorkCellProps } from "./ConversationWorkCell.js";
+export { ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./ConversationWorkCell.js";
 export { EvidenceDisclosure, type EvidenceDisclosureProps } from "./EvidenceDisclosure.js";
 export { ArtifactPreview, type ArtifactPreviewProps } from "./ArtifactPreview.js";
 export { ArtifactPreviewDrawer, type ArtifactPreviewDrawerProps } from "./ArtifactPreviewDrawer.js";

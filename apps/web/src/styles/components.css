@@ -884,13 +884,15 @@ button.artifact-action-link {
   font-size: 12px;
 }
 
-.inline-approval-strip {
+.composer-approval-overlay.inline-approval-strip {
   display: grid;
   gap: 9px;
-  margin-bottom: 10px;
+  margin: 0 0 10px;
   padding: 10px;
   border: 1px solid #d9bd71;
+  border-radius: 8px;
   background: #fffaf0;
+  box-shadow: 0 10px 24px rgba(73, 55, 17, 0.1);
 }
 
 .inline-approval-strip-head,
@@ -913,6 +915,13 @@ button.artifact-action-link {
 
 .inline-approval-strip-head strong {
   font-size: 13px;
+}
+
+.inline-approval-summary {
+  margin: 0;
+  color: #6f5c34;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .inline-approval-list {
@@ -963,6 +972,26 @@ button.artifact-action-link {
   gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.inline-approval-more {
+  display: grid;
+  gap: 8px;
+}
+
+.inline-approval-more summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  color: #6f4700;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inline-approval-more[open] summary {
+  margin-bottom: 8px;
 }
 
 .channel-active-status-strip.attention {
@@ -1944,6 +1973,30 @@ button.message-local-file-link {
   display: grid;
   gap: 7px;
   min-width: 0;
+}
+
+.conversation-work-cell-details-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.conversation-work-cell-details-state.failed {
+  border-color: var(--danger-border);
+  background: color-mix(in srgb, var(--danger-soft) 38%, var(--surface-panel));
+  color: var(--danger);
+}
+
+.conversation-work-cell-details-state span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .conversation-work-cell-active-stream {

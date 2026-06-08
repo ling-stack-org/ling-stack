@@ -1637,6 +1637,12 @@ test("thread-backed runs render as collapsed conversation work cells", async ({ 
       executedAt: "2026-05-25T00:21:30.000Z",
     },
   ];
+  const threadEvidenceRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/threads/thread_inspect/evidence")) {
+      threadEvidenceRequests.push(request.url());
+    }
+  });
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -1647,6 +1653,7 @@ test("thread-backed runs render as collapsed conversation work cells", async ({ 
   await expect(workCell).toContainText("Attempts");
   await expect(workCell.locator(".conversation-work-cell-group")).toHaveCount(0);
   await expect(workCell).not.toContainText(".ling-stack/sessions/run_failed.jsonl");
+  expect(threadEvidenceRequests).toHaveLength(0);
 
   await workCell.getByRole("button", { name: "Show details" }).click();
   await expect(workCell.getByLabel("Changed")).toContainText("WorkspaceClientView.tsx");
@@ -1654,10 +1661,86 @@ test("thread-backed runs render as collapsed conversation work cells", async ({ 
   await expect(workCell.getByRole("region", { name: "Evidence" })).toContainText("diff");
   await expect(workCell.getByLabel("Attention")).toContainText("No items recorded");
   await expect(workCell.getByRole("link", { name: /WorkspaceClientView\.tsx/ })).toHaveAttribute("href", /\/artifacts\/artifact_thread_diff\/content/);
+  expect(threadEvidenceRequests).toHaveLength(1);
+
+  await workCell.getByRole("button", { name: "Hide details" }).click();
+  await workCell.getByRole("button", { name: "Show details" }).click();
+  await expect(workCell.getByLabel("Changed")).toContainText("WorkspaceClientView.tsx");
+  expect(threadEvidenceRequests).toHaveLength(1);
 
   await workCell.getByRole("button", { name: "Open run" }).click();
   await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
   await expect(page.locator("article.task-detail")).toContainText("Latest run");
+});
+
+test("active runtime approvals render as a composer overlay and resolve from the composer", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const composer = page.getByLabel("Channel composer");
+  const overlay = composer.getByLabel("Composer approval overlay");
+  await expect(overlay).toBeVisible();
+  await expect(overlay).toContainText("Runtime approval needed");
+  await expect(overlay).toContainText("Highest risk: medium");
+  await expect(overlay).toContainText("Approve shell command");
+  await expect(page.getByLabel("Channel message feed").getByRole("button", { name: "Approve" })).toHaveCount(0);
+
+  await overlay.getByRole("button", { name: "Approve" }).click();
+  await expect(composer.getByLabel("Composer approval overlay")).toHaveCount(0);
+  await expect(composer).not.toContainText("Approve shell command");
+});
+
+test("composer approval overlay groups multiple local approvals and excludes review queue actions", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  const run = state.runs[0];
+  state.approvals.push(
+    {
+      id: "approval_write_overlay",
+      runId: run.id,
+      taskId: run.taskId,
+      actionType: "write",
+      risk: "high",
+      title: "Approve file write",
+      description: "Write report.md",
+      payload: { type: "file_write", path: "report.md" },
+      status: "pending",
+      createdAt: "2026-05-22T00:00:30.000Z",
+      expiresAt: "2099-01-01T00:01:00.000Z",
+    },
+    {
+      id: "approval_external_overlay",
+      channelId: "channel_engineering",
+      externalWorkActionId: "external_action_overlay",
+      actionType: "external_send",
+      risk: "critical",
+      title: "Approve external send",
+      description: "Post external update",
+      payload: { type: "external_action", actionKind: "comment" },
+      status: "pending",
+      createdAt: "2026-05-22T00:00:40.000Z",
+      expiresAt: "2099-01-01T00:01:00.000Z",
+    },
+  );
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const overlay = page.getByLabel("Channel composer").getByLabel("Composer approval overlay");
+  await expect(overlay).toContainText("Runtime approvals needed");
+  await expect(overlay).toContainText("Highest risk: high");
+  const primaryApproval = overlay.locator(".inline-approval-item.primary");
+  await expect(primaryApproval).toContainText("Approve file write");
+  await expect(primaryApproval).not.toContainText("Approve shell command");
+  await expect(overlay).not.toContainText("Approve external send");
+
+  await overlay.getByText("Show other approvals").click();
+  await expect(overlay).toContainText("Approve shell command");
 });
 
 test("channel activity derives task run approval transition and workflow events", async ({ page }) => {

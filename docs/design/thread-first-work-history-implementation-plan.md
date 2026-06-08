@@ -840,6 +840,13 @@ No daemon route or migration is required for P0a.
 - External work and media approvals stay in Review Queue.
 - Switching channels or threads hides unrelated overlays.
 
+Implementation note, 2026-06-08: P0a is implemented as a Web-only enhancement to the
+existing `InlineApprovalStrip`. The component now renders with composer-overlay
+semantics, sorts multiple local runtime approvals by risk then creation time, shows the
+highest-risk approval as the primary blocker, keeps remaining local approvals behind a
+details disclosure, and continues to resolve through the existing approval endpoint.
+External work and media approvals remain excluded by `inline-approvals.ts`.
+
 ### V2C-P0b: Lazy Evidence Hydration
 
 #### Goal
@@ -914,6 +921,15 @@ P0b.
 - Evidence groups render after load.
 - Raw diagnostics remain behind explicit deeper links.
 - Failed evidence load does not break the conversation feed.
+
+Implementation note, 2026-06-08: P0b is implemented as a Web-only lazy detail cache.
+Collapsed conversation work cells continue to render from already loaded run, approval,
+and artifact summaries. Expanding a cell calls the existing
+`GET /threads/:threadId/evidence` endpoint, maps the response back into Changed /
+Checked / Evidence / Attention groups, and caches the result in disposable front-end
+state keyed by `cwd + threadId`. The cache is cleared when cwd, runs, approvals, or
+artifact maps change. It is not durable state and is not used for run recovery or
+approval authority.
 
 ### V2C-lite Deferred Items
 

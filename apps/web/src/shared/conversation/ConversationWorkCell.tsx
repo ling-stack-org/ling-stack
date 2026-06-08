@@ -1,18 +1,31 @@
 import { useState } from "react";
-import { CheckCircle2, CircleAlert, Clock3, FileText, History, Loader2, ShieldCheck } from "lucide-react";
+import { CheckCircle2, CircleAlert, Clock3, FileText, History, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import type { ConversationWorkCellRow, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import type { ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+
+export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
+
+export interface ConversationWorkCellDetailsState {
+  readonly status: ConversationWorkCellDetailsStatus;
+  readonly groups?: readonly ConversationWorkCellGroup[];
+  readonly evidenceLinks?: readonly ConversationWorkCellEvidenceLink[];
+  readonly errorMessage?: string;
+}
 
 export interface ConversationWorkCellProps {
   readonly model: ConversationWorkCellViewModel;
+  readonly detailsState?: ConversationWorkCellDetailsState;
   readonly onOpenRun?: (runId: string) => void;
   readonly onOpenDetails?: (threadId: string) => void;
+  readonly onLoadDetails?: (threadId: string) => void;
 }
 
 export function ConversationWorkCell({
   model,
+  detailsState,
   onOpenRun,
   onOpenDetails,
+  onLoadDetails,
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -22,6 +35,19 @@ export function ConversationWorkCell({
     active ? "active" : "completed",
     `status-${model.status}`,
   ].join(" ");
+  const currentDetailsState: ConversationWorkCellDetailsState = detailsState ?? {
+    status: onLoadDetails ? "not_loaded" : "loaded",
+    groups: model.groups,
+    evidenceLinks: model.evidenceLinks,
+  };
+
+  function toggleDetails(): void {
+    const nextExpanded = !expanded;
+    setExpanded(nextExpanded);
+    if (nextExpanded && (currentDetailsState.status === "not_loaded" || currentDetailsState.status === "error")) {
+      onLoadDetails?.(model.threadId);
+    }
+  }
 
   return (
     <article className={rootClassName} data-thread-id={model.threadId} aria-label={t("Work result")}>
@@ -68,51 +94,114 @@ export function ConversationWorkCell({
               {t("Details")}
             </button>
           ) : null}
-          <button className="secondary-button compact-button" type="button" onClick={() => setExpanded((current) => !current)} aria-expanded={expanded}>
+          <button className="secondary-button compact-button" type="button" onClick={toggleDetails} aria-expanded={expanded}>
             {expanded ? t("Hide details") : t("Show details")}
           </button>
         </div>
 
         {expanded ? (
-          <div className="conversation-work-cell-details">
-            {model.groups.map((group) => (
-              <section key={group.id} className={`conversation-work-cell-group ${group.id}`} aria-label={group.label}>
-                <header>
-                  <strong>{group.label}</strong>
-                  <small>{group.summary}</small>
-                </header>
-                {group.rows.length > 0 ? (
-                  <div className="conversation-work-cell-row-list">
-                    {group.rows.map((row) => <WorkCellRow key={row.id} row={row} />)}
-                  </div>
-                ) : (
-                  <p className="conversation-work-cell-empty">{t("No items recorded")}</p>
-                )}
-              </section>
-            ))}
-            {model.evidenceLinks.length > 0 ? (
-              <div className="conversation-work-cell-evidence-links" aria-label={t("Evidence links")}>
-                {model.evidenceLinks.map((link) => (
-                  link.href ? (
-                    <a key={link.id} href={link.href} target="_blank" rel="noreferrer">
-                      <FileText size={13} />
-                      <span>{link.label}</span>
-                      {link.meta ? <small>{link.meta}</small> : null}
-                    </a>
-                  ) : (
-                    <span key={link.id}>
-                      <FileText size={13} />
-                      <span>{link.label}</span>
-                      {link.meta ? <small>{link.meta}</small> : null}
-                    </span>
-                  )
-                ))}
-              </div>
-            ) : null}
-          </div>
+          <WorkCellDetails
+            state={currentDetailsState}
+            onRetry={() => onLoadDetails?.(model.threadId)}
+          />
         ) : null}
       </div>
     </article>
+  );
+}
+
+function WorkCellDetails({
+  state,
+  onRetry,
+}: {
+  readonly state: ConversationWorkCellDetailsState;
+  readonly onRetry: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  if (state.status === "not_loaded") {
+    return (
+      <div className="conversation-work-cell-details">
+        <div className="conversation-work-cell-details-state">
+          <Clock3 size={13} />
+          <span>{t("Details are loaded on demand.")}</span>
+          <button className="secondary-button compact-button" type="button" onClick={onRetry}>
+            {t("Load details")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+  if (state.status === "loading") {
+    return (
+      <div className="conversation-work-cell-details">
+        <div className="conversation-work-cell-details-state">
+          <Loader2 className="spin" size={13} />
+          <span>{t("Loading details...")}</span>
+        </div>
+      </div>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <div className="conversation-work-cell-details">
+        <div className="conversation-work-cell-details-state failed">
+          <CircleAlert size={13} />
+          <span>{state.errorMessage || t("Evidence failed to load.")}</span>
+          <button className="secondary-button compact-button" type="button" onClick={onRetry}>
+            <RefreshCw size={13} />
+            {t("Retry details")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const groups = state.groups ?? [];
+  const evidenceLinks = state.evidenceLinks ?? [];
+  const empty = state.status === "empty" || (groups.every((group) => group.rows.length === 0) && evidenceLinks.length === 0);
+  return (
+    <div className="conversation-work-cell-details">
+      {empty ? (
+        <div className="conversation-work-cell-details-state">
+          <FileText size={13} />
+          <span>{t("No evidence captured yet.")}</span>
+        </div>
+      ) : null}
+      {groups.map((group) => (
+        <section key={group.id} className={`conversation-work-cell-group ${group.id}`} aria-label={group.label}>
+          <header>
+            <strong>{group.label}</strong>
+            <small>{group.summary}</small>
+          </header>
+          {group.rows.length > 0 ? (
+            <div className="conversation-work-cell-row-list">
+              {group.rows.map((row) => <WorkCellRow key={row.id} row={row} />)}
+            </div>
+          ) : (
+            <p className="conversation-work-cell-empty">{t("No items recorded")}</p>
+          )}
+        </section>
+      ))}
+      {evidenceLinks.length > 0 ? (
+        <div className="conversation-work-cell-evidence-links" aria-label={t("Evidence links")}>
+          {evidenceLinks.map((link) => (
+            link.href ? (
+              <a key={link.id} href={link.href} target="_blank" rel="noreferrer">
+                <FileText size={13} />
+                <span>{link.label}</span>
+                {link.meta ? <small>{link.meta}</small> : null}
+              </a>
+            ) : (
+              <span key={link.id}>
+                <FileText size={13} />
+                <span>{link.label}</span>
+                {link.meta ? <small>{link.meta}</small> : null}
+              </span>
+            )
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

@@ -1,4 +1,4 @@
-import type { ApprovalRequest, ExecutionAction, RunArtifact, RunSession } from "../types.js";
+import type { ApprovalRequest, ExecutionAction, LingThreadEvidenceResponse, RunArtifact, RunSession } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
@@ -50,6 +50,11 @@ export interface ConversationWorkCellViewModel {
   readonly groups: readonly ConversationWorkCellGroup[];
   readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
   readonly updatedAt: string;
+}
+
+export interface ConversationWorkCellDetailsModel {
+  readonly groups: readonly ConversationWorkCellGroup[];
+  readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
 }
 
 export interface BuildConversationWorkCellInput {
@@ -131,6 +136,40 @@ export function groupRunsByThreadId(runs: readonly RunSession[]): ReadonlyMap<st
     threadId,
     threadRuns.sort((left, right) => compareRunActivity(left, right)),
   ]));
+}
+
+export function buildConversationWorkCellDetailsFromThreadEvidence(input: {
+  readonly threadId: string;
+  readonly evidence: LingThreadEvidenceResponse;
+  readonly t: Translate;
+  readonly artifactHref?: (artifact: RunArtifact) => string;
+}): ConversationWorkCellDetailsModel {
+  const artifactsByRun: Record<string, readonly RunArtifact[]> = {};
+  for (const item of input.evidence.runs) {
+    artifactsByRun[item.run.id] = item.artifacts;
+  }
+  const cell = buildConversationWorkCellViewModel({
+    threadId: input.threadId,
+    runs: input.evidence.runs.map((item) => item.run),
+    approvals: input.evidence.runs.flatMap((item) => item.approvals),
+    artifactsByRun,
+    executionActions: input.evidence.actions,
+    t: input.t,
+    artifactHref: input.artifactHref,
+  });
+  return {
+    groups: cell?.groups ?? emptyWorkCellGroups(input.t),
+    evidenceLinks: cell?.evidenceLinks ?? [],
+  };
+}
+
+function emptyWorkCellGroups(t: Translate): readonly ConversationWorkCellGroup[] {
+  return [
+    { id: "changed", label: t("Changed"), summary: t("No changed files recorded"), rows: [] },
+    { id: "checked", label: t("Checked work"), summary: t("No items recorded"), rows: [] },
+    { id: "evidence", label: t("Evidence"), summary: t("{count} evidence items", { count: 0 }), rows: [] },
+    { id: "attention", label: t("Attention"), summary: t("No attention needed"), rows: [] },
+  ];
 }
 
 function buildActiveRows(input: {
