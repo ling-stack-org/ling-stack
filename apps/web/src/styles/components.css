@@ -6077,6 +6077,20 @@ code,
   opacity: 0.65;
 }
 
+.work-history-turn-group,
+.work-history-attempt-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.work-history-attempt-row {
+  min-height: 52px;
+  margin-left: 18px;
+  width: calc(100% - 18px);
+  background: var(--surface-panel);
+}
+
 .thread-evidence-trail,
 .thread-resume-composer {
   display: grid;

@@ -1509,6 +1509,30 @@ Manual smoke:
 - verify resume/rerun still work from the selected run;
 - open an older legacy run and verify no turn context is required.
 
+#### V2A-P1b Implementation Record
+
+Implemented P1b as a Web-only read-model slice:
+
+- `RunHistory` now lazily loads `GET /threads/:threadId/turns?cwd=...` for visible
+  thread ids and keeps the cache local to the Work History surface;
+- durable `LingTurn` / `LingTurnRun` data now drives the Work History thread list when
+  available, showing one user-intent group with linked attempts;
+- clicking a durable turn group opens the latest linked run detail;
+- clicking an attempt opens that exact run detail;
+- legacy thread rows still use the existing `ThreadDetailPanel` and thread evidence
+  workflow when turn data is empty, missing, or failed;
+- standalone runs without `threadId` remain in the run-only section;
+- selected run detail now shows an optional safe `Turn` context section with title,
+  status, kind, timestamps, and linked attempts;
+- resume, rerun, cancel, approval, provider repair, artifacts, and evidence actions remain
+  run/thread based and do not send `turnId`;
+- no daemon/core storage or mutation API changed.
+
+Validation coverage:
+
+- `corepack pnpm --filter @ling-stack/web typecheck`
+- `corepack pnpm --filter @ling-stack/web exec playwright test e2e/runtime.spec.ts -g "durable Ling turn attempts|turn loading fails"`
+
 ### Tests
 
 - Create/list turns under one thread.

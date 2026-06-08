@@ -20,7 +20,7 @@ import { LingDaemonError } from "@ling-stack/api-client";
 import { useEffect, useState } from "react";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
-import { artifactContentUrl, cancelRunIntervention, createRunIntervention, getLingThreadEvidence, listLingThreads, listRunInterventions, listRunShellSnapshots, previewLingThreadResume, resumeLingThread } from "../../api.js";
+import { artifactContentUrl, cancelRunIntervention, createRunIntervention, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, listRunShellSnapshots, previewLingThreadResume, resumeLingThread } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import {
   formatEventData,
@@ -72,6 +72,8 @@ import type {
   LingThread,
   LingThreadEvidenceResponse,
   LingThreadResumePreviewResponse,
+  LingTurn,
+  LingTurnRun,
   MemoryObject,
   ResourceLease,
   RunArtifact,
@@ -83,6 +85,43 @@ import type {
   UsedMemoryEvent,
   WorkUnitDetailResponse,
 } from "../../types.js";
+
+type WorkHistoryTurnLoadState =
+  | { readonly status: "loading"; readonly signature: string }
+  | {
+      readonly status: "loaded";
+      readonly turns: readonly LingTurn[];
+      readonly runLinks: readonly LingTurnRun[];
+      readonly signature: string;
+    }
+  | { readonly status: "failed"; readonly error: string; readonly signature: string };
+
+interface WorkHistoryTurnAttempt {
+  readonly run: RunSession;
+  readonly attemptNumber: number;
+  readonly role: LingTurnRun["role"] | "legacy";
+  readonly linkedAt: string;
+}
+
+interface WorkHistoryTurnGroup {
+  readonly id: string;
+  readonly threadId: string;
+  readonly turnId?: string;
+  readonly title: string;
+  readonly status: string;
+  readonly runIds: readonly string[];
+  readonly latestRunId: string;
+  readonly attemptCount: number;
+  readonly updatedAt: string;
+  readonly source: "durable_turn" | "legacy_thread";
+  readonly attempts: readonly WorkHistoryTurnAttempt[];
+  readonly thread: LingThread | undefined;
+}
+
+interface WorkHistoryTurnContext {
+  readonly group: WorkHistoryTurnGroup;
+  readonly turn: LingTurn;
+}
 
 export function RunHistory({
   cwd,
@@ -150,6 +189,7 @@ export function RunHistory({
   const [threadsLoading, setThreadsLoading] = useState(false);
   const [threadError, setThreadError] = useState("");
   const [selectedThreadId, setSelectedThreadId] = useState("");
+  const [turnStateByThreadKey, setTurnStateByThreadKey] = useState<Readonly<Record<string, WorkHistoryTurnLoadState>>>({});
 
   async function refreshThreads(): Promise<void> {
     if (!cwd.trim()) {
@@ -176,6 +216,80 @@ export function RunHistory({
 
   const visibleThreads = threads.length > 0 ? threads : deriveThreadsFromRuns(runs);
   const selectedThread = selectedThreadId ? visibleThreads.find((thread) => thread.id === selectedThreadId) : undefined;
+  const turnLoadRequests = buildWorkHistoryTurnLoadRequests(cwd, visibleThreads, runs, selectedRun);
+  const turnLoadSignature = turnLoadRequests.map((request) => `${request.threadId}:${request.signature}`).join("|");
+  const workHistoryGroups = buildWorkHistoryTurnGroups({
+    cwd,
+    runs,
+    visibleThreads,
+    turnStateByThreadKey,
+  });
+  const standaloneRuns = runs.filter((run) => !run.threadId);
+  const selectedTurnContext = buildTurnContextByRunId(selectedRunId, workHistoryGroups, turnStateByThreadKey, cwd);
+
+  useEffect(() => {
+    setTurnStateByThreadKey({});
+  }, [cwd]);
+
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || turnLoadRequests.length === 0) {
+      return;
+    }
+    const requests = turnLoadRequests.filter((request) => {
+      const current = turnStateByThreadKey[turnStateKey(workspaceCwd, request.threadId)];
+      return !current || current.signature !== request.signature;
+    });
+    if (requests.length === 0) {
+      return;
+    }
+    setTurnStateByThreadKey((current) => {
+      const next = { ...current };
+      for (const request of requests) {
+        next[turnStateKey(workspaceCwd, request.threadId)] = {
+          status: "loading",
+          signature: request.signature,
+        };
+      }
+      return next;
+    });
+    void Promise.allSettled(
+      requests.map(async (request) => ({
+        request,
+        response: await listLingThreadTurns(workspaceCwd, request.threadId, { limit: 100 }),
+      })),
+    ).then((results) => {
+      setTurnStateByThreadKey((current) => {
+        const next = { ...current };
+        for (const [index, result] of results.entries()) {
+          const request = requests[index];
+          if (!request) {
+            continue;
+          }
+          const key = turnStateKey(workspaceCwd, request.threadId);
+          if (current[key]?.signature !== request.signature) {
+            continue;
+          }
+          if (result.status === "fulfilled") {
+            const { response } = result.value;
+            next[key] = {
+              status: "loaded",
+              turns: response.turns,
+              runLinks: response.runLinks,
+              signature: request.signature,
+            };
+          } else {
+            next[key] = {
+              status: "failed",
+              error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+              signature: request.signature,
+            };
+          }
+        }
+        return next;
+      });
+    });
+  }, [cwd, turnLoadSignature, turnStateByThreadKey, turnLoadRequests]);
 
   function handleSelectRun(runId: string): void {
     setSelectedThreadId("");
@@ -187,6 +301,24 @@ export function RunHistory({
     const targetRunId = thread.activeRunId ?? thread.lastRunId;
     if (targetRunId && targetRunId !== selectedRunId) {
       onSelect(targetRunId);
+    }
+  }
+
+  function handleSelectWorkHistoryGroup(group: WorkHistoryTurnGroup): void {
+    if (group.source === "durable_turn") {
+      setSelectedThreadId("");
+      if (group.latestRunId !== selectedRunId) {
+        onSelect(group.latestRunId);
+      }
+      return;
+    }
+    if (group.thread) {
+      handleSelectThread(group.thread);
+      return;
+    }
+    setSelectedThreadId(group.threadId);
+    if (group.latestRunId && group.latestRunId !== selectedRunId) {
+      onSelect(group.latestRunId);
     }
   }
 
@@ -213,7 +345,7 @@ export function RunHistory({
           <div className="panel-title tight split">
             <span>
               <Workflow size={16} />
-              <h3>{t("Threads")}</h3>
+              <h3>{t("Work threads")}</h3>
             </span>
             <button className="secondary-button compact-button" type="button" onClick={() => void refreshThreads()} disabled={threadsLoading}>
               {threadsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
@@ -227,32 +359,60 @@ export function RunHistory({
             </div>
           ) : null}
           <div className="runs-list thread-list">
-            {visibleThreads.length === 0 ? (
+            {workHistoryGroups.length === 0 ? (
               <div className="empty-state compact-empty">
                 {threadsLoading ? <Loader2 className="spin" /> : <Workflow />}
-                <span>{threadsLoading ? t("Loading threads...") : t("No threads yet")}</span>
+                <span>{threadsLoading ? t("Loading work history...") : t("No work threads yet")}</span>
               </div>
             ) : (
-              visibleThreads.map((thread) => {
-                const targetRunId = thread.activeRunId ?? thread.lastRunId;
-                const selected = thread.id === selectedThreadId || (!selectedThreadId && targetRunId === selectedRunId);
+              workHistoryGroups.map((group) => {
+                const selected = group.source === "durable_turn"
+                  ? !selectedThreadId && group.runIds.includes(selectedRunId)
+                  : group.threadId === selectedThreadId || (!selectedThreadId && group.latestRunId === selectedRunId);
                 return (
-                  <button
-                    key={thread.id}
-                    className={selected ? "run-list-row selected" : "run-list-row"}
-                    type="button"
-                    onClick={() => handleSelectThread(thread)}
-                  >
-                    <span className={`status-dot ${thread.status}`} />
-                    <span className="run-list-main">
-                      <strong>{thread.title}</strong>
-                      <small>{thread.kind} · {thread.objective}</small>
-                    </span>
-                    <span className="run-list-meta">
-                      <StatusBadge status={thread.status} />
-                      <time>{formatDateTime(thread.updatedAt)}</time>
-                    </span>
-                  </button>
+                  <div key={group.id} className="work-history-turn-group">
+                    <button
+                      className={selected ? "run-list-row selected" : "run-list-row"}
+                      type="button"
+                      onClick={() => handleSelectWorkHistoryGroup(group)}
+                    >
+                      <span className={`status-dot ${group.status}`} />
+                      <span className="run-list-main">
+                        <strong>{group.title}</strong>
+                        <small>
+                          {group.source === "durable_turn" ? t("Durable turn") : group.thread?.kind ?? t("Work thread")}
+                          {" · "}
+                          {t("{count} attempts", { count: group.attemptCount })}
+                        </small>
+                      </span>
+                      <span className="run-list-meta">
+                        <StatusBadge status={group.status} />
+                        <time>{formatDateTime(group.updatedAt)}</time>
+                      </span>
+                    </button>
+                    {group.source === "durable_turn" && group.attempts.length > 1 ? (
+                      <div className="work-history-attempt-list" aria-label={t("Attempts")}>
+                        {group.attempts.map((attempt) => (
+                          <button
+                            key={attempt.run.id}
+                            className={attempt.run.id === selectedRunId && !selectedThreadId ? "run-list-row work-history-attempt-row selected" : "run-list-row work-history-attempt-row"}
+                            type="button"
+                            onClick={() => handleSelectRun(attempt.run.id)}
+                          >
+                            <span className={`status-dot ${attempt.run.status}`} />
+                            <span className="run-list-main">
+                              <strong>{t("Attempt {number}", { number: attempt.attemptNumber })}</strong>
+                              <small>{readTaskTitle(attempt.run.taskSnapshot) || attempt.run.taskId}</small>
+                            </span>
+                            <span className="run-list-meta">
+                              <StatusBadge status={attempt.run.status} />
+                              <time>{formatDateTime(attempt.run.updatedAt || attempt.run.createdAt)}</time>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 );
               })
             )}
@@ -262,7 +422,7 @@ export function RunHistory({
         <div className="panel-title tight">
           <span>
             <History size={16} />
-            <h3>{t("Runs")}</h3>
+            <h3>{t("Run-only records")}</h3>
           </span>
         </div>
 
@@ -274,13 +434,13 @@ export function RunHistory({
         ) : null}
 
         <div className="runs-list">
-          {runs.length === 0 ? (
+          {standaloneRuns.length === 0 ? (
             <div className="empty-state compact-empty">
               {isLoading ? <Loader2 className="spin" /> : <Clock3 />}
-              <span>{isLoading ? t("Loading runs...") : t("No persisted runs for this workspace")}</span>
+              <span>{isLoading ? t("Loading runs...") : t("No run-only records for this workspace")}</span>
             </div>
           ) : (
-            runs.map((item) => (
+            standaloneRuns.map((item) => (
               <button
                 key={item.id}
                 className={item.id === selectedRunId ? "run-list-row selected" : "run-list-row"}
@@ -322,6 +482,7 @@ export function RunHistory({
           stateTransitions={stateTransitions}
           workUnitDetail={workUnitDetail}
           assistantText={assistantText}
+          turnContext={selectedTurnContext}
           approvals={approvals}
           approvalsLoading={approvalsLoading}
           resolvingApprovals={resolvingApprovals}
@@ -335,6 +496,7 @@ export function RunHistory({
           onOpenProviders={onOpenProviders}
           onOpenApprovals={onOpenApprovals}
           onEditTask={onEditTask}
+          onSelectRun={handleSelectRun}
           cwd={cwd}
         />
       )}
@@ -779,6 +941,7 @@ function RunDetailPanel({
   stateTransitions,
   workUnitDetail,
   assistantText,
+  turnContext,
   approvals,
   approvalsLoading,
   resolvingApprovals,
@@ -792,6 +955,7 @@ function RunDetailPanel({
   onOpenProviders,
   onOpenApprovals,
   onEditTask,
+  onSelectRun,
   cwd,
 }: {
   readonly run: RunSession | undefined;
@@ -803,6 +967,7 @@ function RunDetailPanel({
   readonly stateTransitions: readonly StateTransitionEvent[];
   readonly workUnitDetail: WorkUnitDetailResponse | undefined;
   readonly assistantText: string;
+  readonly turnContext: WorkHistoryTurnContext | undefined;
   readonly approvals: readonly ApprovalRequest[];
   readonly approvalsLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
@@ -816,6 +981,7 @@ function RunDetailPanel({
   readonly onOpenProviders: (run?: RunSession) => void;
   readonly onOpenApprovals: (runId?: string) => void;
   readonly onEditTask: (run: RunSession) => void;
+  readonly onSelectRun: (runId: string) => void;
   readonly cwd: string;
 }): JSX.Element {
   const { t } = useI18n();
@@ -898,6 +1064,40 @@ function RunDetailPanel({
             <MetaRow label={t("Created")} value={formatDateTime(run.createdAt)} compact />
             <MetaRow label={t("Ended")} value={run.endedAt ? formatDateTime(run.endedAt) : "-"} compact />
           </div>
+
+          {turnContext ? (
+            <div className="run-detail-section work-history-turn-context">
+              <div className="panel-title tight split">
+                <span>
+                  <Workflow size={16} />
+                  <h3>{t("Turn")}</h3>
+                </span>
+                <span className="event-count">{t("{count} attempts", { count: turnContext.group.attemptCount })}</span>
+              </div>
+              <div className="run-detail-summary">
+                <MetaRow label={t("Title")} value={turnContext.turn.title} compact />
+                <MetaRow label={t("Status")} value={turnContext.turn.status} compact />
+                <MetaRow label={t("Kind")} value={turnContext.turn.kind} compact />
+                <MetaRow label={t("Created")} value={formatDateTime(turnContext.turn.createdAt)} compact />
+                <MetaRow label={t("Updated")} value={formatDateTime(turnContext.turn.updatedAt)} compact />
+              </div>
+              <div className="runtime-list">
+                {turnContext.group.attempts.map((attempt) => (
+                  <div key={attempt.run.id} className="runtime-list-row">
+                    <StatusBadge status={attempt.run.status} />
+                    <span>
+                      {t("Attempt {number}", { number: attempt.attemptNumber })}
+                      <small>{readTaskTitle(attempt.run.taskSnapshot) || attempt.run.taskId}</small>
+                    </span>
+                    <small>{attempt.role}</small>
+                    <button className="secondary-button compact-button" type="button" onClick={() => onSelectRun(attempt.run.id)} disabled={attempt.run.id === run.id}>
+                      {attempt.run.id === run.id ? t("Current run") : t("Open attempt")}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {runUsedMemoryEvents.length > 0 ? (
             <ConversationEvidenceBundlePanel
@@ -1167,6 +1367,209 @@ function buildThreadResumeDisabledReason(input: {
     return input.t("Another run is currently active; wait before starting a continuation.");
   }
   return "";
+}
+
+function turnStateKey(cwd: string, threadId: string): string {
+  return `${cwd.trim()}::${threadId}`;
+}
+
+function buildWorkHistoryTurnLoadRequests(
+  cwd: string,
+  visibleThreads: readonly LingThread[],
+  runs: readonly RunSession[],
+  selectedRun: RunSession | undefined,
+): ReadonlyArray<{ readonly threadId: string; readonly signature: string }> {
+  if (!cwd.trim()) {
+    return [];
+  }
+  const threadById = new Map(visibleThreads.map((thread) => [thread.id, thread]));
+  const threadIds = new Set<string>();
+  for (const thread of visibleThreads) {
+    threadIds.add(thread.id);
+  }
+  for (const run of runs) {
+    if (run.threadId) {
+      threadIds.add(run.threadId);
+    }
+  }
+  if (selectedRun?.threadId) {
+    threadIds.add(selectedRun.threadId);
+  }
+  return [...threadIds].slice(0, 100).map((threadId) => ({
+    threadId,
+    signature: buildWorkHistoryThreadSignature(threadById.get(threadId), runs.filter((run) => run.threadId === threadId)),
+  }));
+}
+
+function buildWorkHistoryThreadSignature(thread: LingThread | undefined, runs: readonly RunSession[]): string {
+  const runSignature = [...runs]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((run) => `${run.id}:${run.status}:${run.updatedAt || ""}:${run.endedAt || ""}`)
+    .join(",");
+  return `${thread?.updatedAt ?? ""}|${thread?.activeRunId ?? ""}|${thread?.lastRunId ?? ""}|${runSignature}`;
+}
+
+function buildWorkHistoryTurnGroups(input: {
+  readonly cwd: string;
+  readonly runs: readonly RunSession[];
+  readonly visibleThreads: readonly LingThread[];
+  readonly turnStateByThreadKey: Readonly<Record<string, WorkHistoryTurnLoadState>>;
+}): readonly WorkHistoryTurnGroup[] {
+  const workspaceCwd = input.cwd.trim();
+  const threadById = new Map(input.visibleThreads.map((thread) => [thread.id, thread]));
+  const runById = new Map(input.runs.map((run) => [run.id, run]));
+  const threadIds = new Set<string>(input.visibleThreads.map((thread) => thread.id));
+  for (const run of input.runs) {
+    if (run.threadId) {
+      threadIds.add(run.threadId);
+    }
+  }
+
+  const groups: WorkHistoryTurnGroup[] = [];
+  for (const threadId of threadIds) {
+    const thread = threadById.get(threadId) ?? deriveThreadFromThreadRuns(threadId, input.runs.filter((run) => run.threadId === threadId));
+    if (!thread) {
+      continue;
+    }
+    const threadRuns = input.runs.filter((run) => run.threadId === threadId);
+    const consumedRunIds = new Set<string>();
+    const turnState = workspaceCwd ? input.turnStateByThreadKey[turnStateKey(workspaceCwd, threadId)] : undefined;
+    if (turnState?.status === "loaded") {
+      const linksByTurnId = groupVisibleTurnRunLinks(turnState.runLinks, runById, threadId);
+      for (const turn of turnState.turns) {
+        const attempts = buildDurableTurnAttempts(linksByTurnId.get(turn.id) ?? [], runById);
+        if (attempts.length === 0) {
+          continue;
+        }
+        for (const attempt of attempts) {
+          consumedRunIds.add(attempt.run.id);
+        }
+        const latestRunId = resolveLatestTurnRunId(turn, attempts);
+        groups.push({
+          id: `turn:${turn.id}`,
+          threadId,
+          turnId: turn.id,
+          title: turn.title || thread.title,
+          status: turn.status,
+          runIds: attempts.map((attempt) => attempt.run.id),
+          latestRunId,
+          attemptCount: attempts.length,
+          updatedAt: turn.updatedAt || attempts.find((attempt) => attempt.run.id === latestRunId)?.run.updatedAt || thread.updatedAt,
+          source: "durable_turn",
+          attempts,
+          thread,
+        });
+      }
+    }
+
+    const ungroupedRuns = threadRuns.filter((run) => !consumedRunIds.has(run.id));
+    if (ungroupedRuns.length > 0 || !groups.some((group) => group.threadId === threadId)) {
+      groups.push(buildLegacyThreadGroup(thread, ungroupedRuns.length > 0 ? ungroupedRuns : threadRuns));
+    }
+  }
+
+  return groups.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
+}
+
+function groupVisibleTurnRunLinks(
+  links: readonly LingTurnRun[],
+  runById: ReadonlyMap<string, RunSession>,
+  threadId: string,
+): ReadonlyMap<string, readonly LingTurnRun[]> {
+  const linksByTurnId = new Map<string, LingTurnRun[]>();
+  const seenRunIds = new Set<string>();
+  for (const link of [...links].sort((left, right) => left.attemptNumber - right.attemptNumber || left.createdAt.localeCompare(right.createdAt))) {
+    const run = runById.get(link.runId);
+    if (!run || run.threadId !== threadId || seenRunIds.has(link.runId)) {
+      continue;
+    }
+    seenRunIds.add(link.runId);
+    linksByTurnId.set(link.turnId, [...(linksByTurnId.get(link.turnId) ?? []), link]);
+  }
+  return linksByTurnId;
+}
+
+function buildDurableTurnAttempts(
+  links: readonly LingTurnRun[],
+  runById: ReadonlyMap<string, RunSession>,
+): readonly WorkHistoryTurnAttempt[] {
+  const attempts: WorkHistoryTurnAttempt[] = [];
+  for (const link of links) {
+    const run = runById.get(link.runId);
+    if (!run) {
+      continue;
+    }
+    attempts.push({
+      run,
+      attemptNumber: link.attemptNumber,
+      role: link.role,
+      linkedAt: link.createdAt,
+    });
+  }
+  return attempts.sort((left, right) => left.attemptNumber - right.attemptNumber || left.linkedAt.localeCompare(right.linkedAt));
+}
+
+function resolveLatestTurnRunId(turn: LingTurn, attempts: readonly WorkHistoryTurnAttempt[]): string {
+  const activeAttempt = turn.activeRunId ? attempts.find((attempt) => attempt.run.id === turn.activeRunId) : undefined;
+  if (activeAttempt) {
+    return activeAttempt.run.id;
+  }
+  const lastAttempt = turn.lastRunId ? attempts.find((attempt) => attempt.run.id === turn.lastRunId) : undefined;
+  if (lastAttempt) {
+    return lastAttempt.run.id;
+  }
+  return [...attempts].sort((left, right) =>
+    compareRunRecency(right.run, left.run) || right.attemptNumber - left.attemptNumber
+  )[0]?.run.id ?? attempts[attempts.length - 1]?.run.id ?? "";
+}
+
+function buildLegacyThreadGroup(thread: LingThread, runs: readonly RunSession[]): WorkHistoryTurnGroup {
+  const orderedRuns = [...runs].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const latestRun = [...runs].sort((left, right) => compareRunRecency(right, left))[0];
+  const latestRunId = thread.activeRunId ?? thread.lastRunId ?? latestRun?.id ?? "";
+  return {
+    id: `thread:${thread.id}`,
+    threadId: thread.id,
+    title: thread.title,
+    status: thread.status,
+    runIds: orderedRuns.map((run) => run.id),
+    latestRunId,
+    attemptCount: Math.max(orderedRuns.length, latestRunId ? 1 : 0),
+    updatedAt: thread.updatedAt || latestRun?.updatedAt || latestRun?.createdAt || "",
+    source: "legacy_thread",
+    attempts: orderedRuns.map((run, index) => ({
+      run,
+      attemptNumber: index + 1,
+      role: "legacy",
+      linkedAt: run.createdAt,
+    })),
+    thread,
+  };
+}
+
+function buildTurnContextByRunId(
+  runId: string,
+  groups: readonly WorkHistoryTurnGroup[],
+  turnStateByThreadKey: Readonly<Record<string, WorkHistoryTurnLoadState>>,
+  cwd: string,
+): WorkHistoryTurnContext | undefined {
+  if (!runId || !cwd.trim()) {
+    return undefined;
+  }
+  const group = groups.find((item) => item.source === "durable_turn" && item.turnId && item.runIds.includes(runId));
+  if (!group?.turnId) {
+    return undefined;
+  }
+  const turnState = turnStateByThreadKey[turnStateKey(cwd, group.threadId)];
+  if (turnState?.status !== "loaded") {
+    return undefined;
+  }
+  const turn = turnState.turns.find((item) => item.id === group.turnId);
+  return turn ? { group, turn } : undefined;
+}
+
+function deriveThreadFromThreadRuns(threadId: string, runs: readonly RunSession[]): LingThread | undefined {
+  return deriveThreadsFromRuns(runs).find((thread) => thread.id === threadId);
 }
 
 function deriveThreadsFromRuns(runs: readonly RunSession[]): readonly LingThread[] {

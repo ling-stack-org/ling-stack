@@ -539,6 +539,193 @@ test("run history opens a thread-first detail with evidence and resume preview",
   await expect(detail).toContainText("Resume run");
 });
 
+test("run history groups durable Ling turn attempts and keeps run detail selected", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const primaryRun: MockRun = {
+    ...state.runs[0],
+    id: "run_turn_primary",
+    status: "failed",
+    threadId: "thread_work_history",
+    taskId: "task_turn_primary",
+    taskSnapshot: {
+      id: "task_turn_primary",
+      title: "Primary durable turn attempt",
+      prompt: "Build the first Work History attempt.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      task: {
+        id: "task_turn_primary",
+        title: "Primary durable turn attempt",
+        prompt: "Build the first Work History attempt.",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_turn_primary.jsonl",
+    createdAt: "2026-05-25T01:00:00.000Z",
+    updatedAt: "2026-05-25T01:01:00.000Z",
+    endedAt: "2026-05-25T01:01:00.000Z",
+  };
+  const retryRun: MockRun = {
+    ...primaryRun,
+    id: "run_turn_retry",
+    status: "succeeded",
+    taskId: "task_turn_retry",
+    taskSnapshot: {
+      id: "task_turn_retry",
+      title: "Retry durable turn grouping",
+      prompt: "Finish the durable Work History grouping.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      task: {
+        id: "task_turn_retry",
+        title: "Retry durable turn grouping",
+        prompt: "Finish the durable Work History grouping.",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_turn_retry.jsonl",
+    errorMessage: undefined,
+    createdAt: "2026-05-25T01:02:00.000Z",
+    updatedAt: "2026-05-25T01:03:00.000Z",
+    endedAt: "2026-05-25T01:03:00.000Z",
+  };
+  state.runs = [primaryRun, retryRun];
+  state.threads = [
+    {
+      id: "thread_work_history",
+      workspaceId: "workspace_default",
+      kind: "task",
+      channelId: "channel_engineering",
+      taskId: "task_turn_retry",
+      title: "Thread wrapper title",
+      objective: "Group durable Work History attempts.",
+      status: "succeeded",
+      lastRunId: retryRun.id,
+      createdAt: "2026-05-25T01:00:00.000Z",
+      updatedAt: "2026-05-25T01:03:00.000Z",
+    },
+  ];
+  state.turns = [
+    {
+      id: "turn_work_history",
+      workspaceId: "workspace_default",
+      threadId: "thread_work_history",
+      kind: "manual_followup",
+      status: "succeeded",
+      title: "Refactor durable Work History",
+      userInstruction: "Group retries under the same Work History turn.",
+      channelId: "channel_engineering",
+      taskId: "task_turn_retry",
+      lastRunId: retryRun.id,
+      createdByActor: "local-user",
+      createdAt: "2026-05-25T01:00:00.000Z",
+      updatedAt: "2026-05-25T01:03:00.000Z",
+      completedAt: "2026-05-25T01:03:00.000Z",
+    },
+  ];
+  state.turnRunLinks = [
+    {
+      turnId: "turn_work_history",
+      runId: primaryRun.id,
+      attemptNumber: 1,
+      role: "primary",
+      createdAt: "2026-05-25T01:00:00.000Z",
+    },
+    {
+      turnId: "turn_work_history",
+      runId: retryRun.id,
+      attemptNumber: 2,
+      role: "retry",
+      createdAt: "2026-05-25T01:02:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  const workList = page.locator(".thread-list");
+  await expect(workList.getByRole("button", { name: /Refactor durable Work History/ })).toBeVisible();
+  await expect(workList).toContainText("Durable turn");
+  await expect(workList).toContainText("2 attempts");
+  await expect(workList.getByRole("button", { name: /Attempt 1/ })).toBeVisible();
+  await expect(workList.getByRole("button", { name: /Attempt 2/ })).toBeVisible();
+  await expect(page.getByText("No run-only records for this workspace")).toBeVisible();
+
+  await workList.getByRole("button", { name: /Refactor durable Work History/ }).click();
+  const detail = page.getByLabel("Run detail");
+  await expect(detail.getByRole("heading", { name: "Run detail" })).toBeVisible();
+  await expect(detail).toContainText("Turn");
+  await expect(detail).toContainText("Refactor durable Work History");
+  await expect(detail).toContainText("Retry durable turn grouping");
+  await expect(detail).toContainText("Attempt 1");
+  await expect(detail).toContainText("Attempt 2");
+
+  await detail.getByRole("button", { name: "Open attempt" }).click();
+  await expect(detail).toContainText("Primary durable turn attempt");
+  await expect(detail.getByRole("button", { name: "Current run", exact: true })).toBeVisible();
+});
+
+test("run history falls back to legacy thread rows when Ling turn loading fails", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  const sourceRun: MockRun = {
+    ...state.runs[0],
+    id: "run_turn_fallback",
+    status: "failed",
+    threadId: "thread_turn_fallback",
+    taskSnapshot: {
+      id: "task_turn_fallback",
+      title: "Legacy fallback thread",
+      prompt: "Keep Work History visible when turns fail.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      task: {
+        id: "task_turn_fallback",
+        title: "Legacy fallback thread",
+        prompt: "Keep Work History visible when turns fail.",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_turn_fallback.jsonl",
+    createdAt: "2026-05-25T01:10:00.000Z",
+    updatedAt: "2026-05-25T01:11:00.000Z",
+    endedAt: "2026-05-25T01:11:00.000Z",
+  };
+  state.runs = [sourceRun];
+  state.threads = [
+    {
+      id: "thread_turn_fallback",
+      workspaceId: "workspace_default",
+      kind: "task",
+      channelId: "channel_engineering",
+      taskId: "task_turn_fallback",
+      title: "Legacy fallback thread",
+      objective: "Keep Work History visible when turns fail.",
+      status: "failed",
+      lastRunId: sourceRun.id,
+      createdAt: "2026-05-25T01:10:00.000Z",
+      updatedAt: "2026-05-25T01:11:00.000Z",
+    },
+  ];
+  state.failThreadTurnsForThreadIds = ["thread_turn_fallback"];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await page.locator(".thread-list").getByRole("button", { name: /Legacy fallback thread/ }).click();
+
+  const detail = page.getByLabel("Thread detail");
+  await expect(detail.getByRole("heading", { name: "Thread detail" })).toBeVisible();
+  await expect(detail).toContainText("Keep Work History visible when turns fail.");
+});
+
 test("thread detail keeps resume disabled while the thread has an active run", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   const activeRun: MockRun = {
