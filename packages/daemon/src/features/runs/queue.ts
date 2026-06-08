@@ -1,4 +1,4 @@
-import type { Channel, LingThread, RunSession, RunStore, WorkUnit, WorkUnitAttempt } from "@ling-stack/core";
+import type { Channel, LingThread, LingTurn, LingTurnRunRole, RunSession, RunStore, WorkUnit, WorkUnitAttempt } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { QueueableRunConflictCode } from "./concurrency.js";
@@ -16,6 +16,8 @@ export function createQueuedRunForConflict(input: {
   readonly channel?: Channel;
   readonly provider: PiRunnerProviderConfig;
   readonly thread?: LingThread;
+  readonly turn?: LingTurn;
+  readonly turnRunRole?: LingTurnRunRole;
   readonly selectedSkillId?: string;
   readonly queuedAt: string;
   readonly reason: QueueableRunConflictCode;
@@ -38,6 +40,7 @@ export function createQueuedRunForConflict(input: {
       workspaceCwd: input.workspaceCwd,
       provider: input.provider,
       threadId: input.thread?.id,
+      turnId: input.turn?.id,
       runnerResolution: {
         requestedRunnerId: input.workUnit.requestedRunnerId ?? input.workUnit.effectiveRunnerId ?? input.workUnit.runnerId,
         effectiveRunnerId: input.workUnit.effectiveRunnerId ?? input.workUnit.runnerId,
@@ -49,6 +52,8 @@ export function createQueuedRunForConflict(input: {
     },
     workUnitId: input.workUnit.id,
     threadId: input.thread?.id,
+    turnId: input.turn?.id,
+    turnRunRole: input.turnRunRole,
     createdAt: input.queuedAt,
   });
   input.store.linkRunToWorkUnit(run.id, input.workUnit.id, input.queuedAt);

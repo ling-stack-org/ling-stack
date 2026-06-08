@@ -166,6 +166,7 @@ import {
   createArtifactId,
   createEventId,
   createLingThreadId,
+  createLingTurnId,
   createRunInterventionId,
   runContinuationReasons,
   type AppendControlPlaneEventInput,
@@ -173,14 +174,22 @@ import {
   type ControlPlaneDomain,
   type ControlPlaneEvent,
   type CreateLingThreadInput,
+  type CreateLingTurnInput,
   type CreateRunArtifactInput,
   type CreateRunInterventionInput,
   type CreateRunInput,
+  type LinkRunToLingTurnInput,
   type LingThread,
   type LingThreadKind,
   type LingThreadStatus,
+  type LingTurn,
+  type LingTurnKind,
+  type LingTurnRun,
+  type LingTurnRunRole,
+  type LingTurnStatus,
   type ListControlPlaneEventsOptions,
   type ListLingThreadsOptions,
+  type ListLingTurnsOptions,
   type ListRunInterventionsOptions,
   type ListRunEventsOptions,
   type ListRunsOptions,
@@ -498,6 +507,8 @@ const CONTROL_PLANE_EVENTS_MIGRATION_VERSION = 42;
 const CONTROL_PLANE_EVENTS_MIGRATION_NAME = "create_control_plane_events";
 const WORK_ITEMS_MIGRATION_VERSION = 43;
 const WORK_ITEMS_MIGRATION_NAME = "create_work_items";
+const LING_TURNS_MIGRATION_VERSION = 44;
+const LING_TURNS_MIGRATION_NAME = "create_ling_turns";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -680,71 +691,279 @@ export class SqliteRunStore implements RunStore {
     return this.getLingThread(threadId);
   }
 
+  createLingTurn(input: CreateLingTurnInput, now: string): LingTurn {
+    const thread = this.getLingThread(input.threadId);
+    if (!thread) {
+      throw new Error(`Ling thread not found: ${input.threadId}`);
+    }
+    if (thread.status === "archived") {
+      throw new Error(`Ling thread is archived: ${input.threadId}`);
+    }
+    if (input.sourceTurnId) {
+      const sourceTurn = this.getLingTurn(input.sourceTurnId);
+      if (!sourceTurn) {
+        throw new Error(`Source Ling turn not found: ${input.sourceTurnId}`);
+      }
+      if (sourceTurn.threadId !== input.threadId) {
+        throw new Error(`Source Ling turn does not belong to thread: ${input.sourceTurnId}`);
+      }
+    }
+    if (input.activeRunId) {
+      this.assertLingTurnRunReference(input.activeRunId, input.threadId, "activeRunId");
+    }
+    if (input.lastRunId) {
+      this.assertLingTurnRunReference(input.lastRunId, input.threadId, "lastRunId");
+    }
+
+    const id = input.id ?? createLingTurnId();
+    this.database
+      .prepare(`
+        INSERT INTO ling_turns (
+          id,
+          workspace_id,
+          thread_id,
+          kind,
+          status,
+          title,
+          user_instruction,
+          channel_id,
+          task_id,
+          teammate_id,
+          workflow_step_id,
+          external_work_id,
+          automation_id,
+          source_message_id,
+          source_turn_id,
+          intervention_id,
+          active_run_id,
+          last_run_id,
+          created_by_actor,
+          created_at,
+          updated_at,
+          completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        DEFAULT_WORKSPACE_ID,
+        input.threadId,
+        input.kind,
+        input.status ?? "open",
+        String(redactSecrets(input.title)),
+        String(redactSecrets(input.userInstruction)),
+        input.channelId ?? thread.channelId ?? null,
+        input.taskId ?? thread.taskId ?? null,
+        input.teammateId ?? thread.teammateId ?? null,
+        input.workflowStepId ?? thread.workflowStepId ?? null,
+        input.externalWorkId ?? thread.externalWorkId ?? null,
+        input.automationId ?? null,
+        input.sourceMessageId ?? null,
+        input.sourceTurnId ?? null,
+        input.interventionId ?? null,
+        input.activeRunId ?? null,
+        input.lastRunId ?? null,
+        input.createdByActor ?? "local-user",
+        now,
+        now,
+        null,
+      );
+    const turn = this.getLingTurn(id);
+    if (!turn) {
+      throw new Error(`Failed to create Ling turn: ${id}`);
+    }
+    return turn;
+  }
+
+  getLingTurn(turnId: string): LingTurn | undefined {
+    const row = this.database.prepare(lingTurnSelectSql("WHERE id = ?")).get(turnId);
+    return row ? mapLingTurn(row) : undefined;
+  }
+
+  listLingTurns(options: ListLingTurnsOptions): LingTurn[] {
+    const clauses = ["workspace_id = ?", "thread_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.threadId];
+    if (options.beforeUpdatedAt) {
+      clauses.push("updated_at < ?");
+      params.push(options.beforeUpdatedAt);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${lingTurnSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .all(...params)
+      .map(mapLingTurn);
+  }
+
+  linkRunToLingTurn(input: LinkRunToLingTurnInput): LingTurnRun {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const link = this.insertLingTurnRun(input.turnId, input.runId, input.role ?? "primary", input.now);
+      this.reconcileLingTurnStatus(input.turnId, input.now);
+      this.database.exec("COMMIT");
+      return link;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  getLingTurnForRun(runId: string): LingTurn | undefined {
+    const row = this.database
+      .prepare(`
+        ${lingTurnSelectSql("INNER JOIN ling_turn_runs ON ling_turn_runs.turn_id = ling_turns.id WHERE ling_turn_runs.run_id = ?")}
+      `)
+      .get(runId);
+    return row ? mapLingTurn(row) : undefined;
+  }
+
+  listLingTurnRuns(turnId: string): LingTurnRun[] {
+    return this.database
+      .prepare(`
+        SELECT turn_id, run_id, attempt_number, role, created_at
+        FROM ling_turn_runs
+        WHERE turn_id = ?
+        ORDER BY attempt_number ASC, created_at ASC, run_id ASC
+      `)
+      .all(turnId)
+      .map(mapLingTurnRun);
+  }
+
+  reconcileLingTurnStatus(turnId: string, now: string): LingTurn | undefined {
+    const turn = this.getLingTurn(turnId);
+    if (!turn) {
+      return undefined;
+    }
+    const links = this.listLingTurnRuns(turnId);
+    const runs = links
+      .map((link) => ({ link, run: this.getRun(link.runId) }))
+      .filter((item): item is { readonly link: LingTurnRun; readonly run: RunSession } => Boolean(item.run));
+    const latest = [...runs]
+      .sort((left, right) =>
+        right.link.attemptNumber - left.link.attemptNumber ||
+        right.run.updatedAt.localeCompare(left.run.updatedAt) ||
+        right.run.id.localeCompare(left.run.id),
+      )[0];
+    const latestWaiting = [...runs]
+      .filter((item) => item.run.status === "waiting_for_approval")
+      .sort((left, right) =>
+        right.link.attemptNumber - left.link.attemptNumber ||
+        right.run.updatedAt.localeCompare(left.run.updatedAt) ||
+        right.run.id.localeCompare(left.run.id),
+      )[0];
+    const latestActive = latestWaiting ?? [...runs]
+      .filter((item) => item.run.status === "queued" || item.run.status === "running")
+      .sort((left, right) =>
+        right.link.attemptNumber - left.link.attemptNumber ||
+        right.run.updatedAt.localeCompare(left.run.updatedAt) ||
+        right.run.id.localeCompare(left.run.id),
+      )[0];
+    const nextStatus: LingTurnStatus = turn.status === "superseded"
+      ? "superseded"
+      : latestWaiting
+        ? "waiting_for_approval"
+        : latestActive
+          ? "running"
+          : latest
+            ? runStatusToLingTurnStatus(latest.run.status)
+            : "open";
+    const terminal = nextStatus === "succeeded" || nextStatus === "failed" || nextStatus === "cancelled" || nextStatus === "superseded";
+    this.database
+      .prepare(`
+        UPDATE ling_turns
+        SET status = ?,
+            active_run_id = ?,
+            last_run_id = ?,
+            updated_at = ?,
+            completed_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        nextStatus,
+        latestActive?.run.id ?? null,
+        latest?.run.id ?? null,
+        now,
+        terminal ? (turn.completedAt ?? now) : null,
+        turnId,
+      );
+    return this.getLingTurn(turnId);
+  }
+
   createRun(input: CreateRunInput): RunSession {
     const eventLogPath = getRunEventLogPath(this.paths, input.id);
     const redactedTaskSnapshot = redactSecrets(input.taskSnapshot);
     const redactedProviderSnapshot = redactSecrets(input.providerSnapshot);
     const redactedRequestSnapshot = redactSecrets(input.requestSnapshot);
 
-    this.database
-      .prepare(`
-        INSERT INTO run_sessions (
-          id,
-          status,
-          cwd,
-          task_id,
-          channel_id,
-          teammate_id,
-          workflow_step_id,
-          selected_skill_id,
-          provider_preset_id,
-          provider_name,
-          provider_model,
-          task_snapshot_json,
-          provider_snapshot_json,
-          request_snapshot_json,
-          event_log_path,
-          thread_id,
-          work_unit_id,
-          parent_run_id,
-          intervention_id,
-          continuation_reason,
-          summary_path,
-          error_message,
-          created_at,
-          started_at,
-          ended_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        input.id,
-        "queued",
-        input.cwd,
-        input.taskId,
-        input.channelId ?? null,
-        input.teammateId ?? null,
-        input.workflowStepId ?? null,
-        input.selectedSkillId ?? null,
-        input.providerPresetId ?? null,
-        input.providerName,
-        input.providerModel,
-        stringifyJson(redactedTaskSnapshot),
-        stringifyJson(redactedProviderSnapshot),
-        stringifyJson(redactedRequestSnapshot),
-        eventLogPath,
-        input.threadId ?? null,
-        input.workUnitId ?? null,
-        input.parentRunId ?? null,
-        input.interventionId ?? null,
-        input.continuationReason ?? null,
-        null,
-        null,
-        input.createdAt,
-        null,
-        null,
-        input.createdAt,
-      );
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database
+        .prepare(`
+          INSERT INTO run_sessions (
+            id,
+            status,
+            cwd,
+            task_id,
+            channel_id,
+            teammate_id,
+            workflow_step_id,
+            selected_skill_id,
+            provider_preset_id,
+            provider_name,
+            provider_model,
+            task_snapshot_json,
+            provider_snapshot_json,
+            request_snapshot_json,
+            event_log_path,
+            thread_id,
+            work_unit_id,
+            parent_run_id,
+            intervention_id,
+            continuation_reason,
+            summary_path,
+            error_message,
+            created_at,
+            started_at,
+            ended_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          input.id,
+          "queued",
+          input.cwd,
+          input.taskId,
+          input.channelId ?? null,
+          input.teammateId ?? null,
+          input.workflowStepId ?? null,
+          input.selectedSkillId ?? null,
+          input.providerPresetId ?? null,
+          input.providerName,
+          input.providerModel,
+          stringifyJson(redactedTaskSnapshot),
+          stringifyJson(redactedProviderSnapshot),
+          stringifyJson(redactedRequestSnapshot),
+          eventLogPath,
+          input.threadId ?? null,
+          input.workUnitId ?? null,
+          input.parentRunId ?? null,
+          input.interventionId ?? null,
+          input.continuationReason ?? null,
+          null,
+          null,
+          input.createdAt,
+          null,
+          null,
+          input.createdAt,
+        );
+      if (input.turnId) {
+        this.insertLingTurnRun(input.turnId, input.id, input.turnRunRole ?? "primary", input.createdAt);
+        this.reconcileLingTurnStatus(input.turnId, input.createdAt);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
 
     const session = this.getRun(input.id);
     if (!session) {
@@ -2205,6 +2424,7 @@ export class SqliteRunStore implements RunStore {
       idempotencyKey: input.idempotencyKey,
       createdAt: input.now,
     });
+    this.reconcileLingTurnStatusForRun(input.runId, input.now);
     return result;
   }
 
@@ -11038,6 +11258,69 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(WORK_ITEMS_MIGRATION_VERSION, WORK_ITEMS_MIGRATION_NAME);
       }
     }
+
+    const hasLingTurnsMigration = this.hasMigration(LING_TURNS_MIGRATION_VERSION);
+    if (!hasLingTurnsMigration || !this.hasTable("ling_turns") || !this.hasTable("ling_turn_runs")) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS ling_turns (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          thread_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          title TEXT NOT NULL,
+          user_instruction TEXT NOT NULL,
+          channel_id TEXT,
+          task_id TEXT,
+          teammate_id TEXT,
+          workflow_step_id TEXT,
+          external_work_id TEXT,
+          automation_id TEXT,
+          source_message_id TEXT,
+          source_turn_id TEXT,
+          intervention_id TEXT,
+          active_run_id TEXT,
+          last_run_id TEXT,
+          created_by_actor TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          completed_at TEXT,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(thread_id) REFERENCES ling_threads(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_turn_id) REFERENCES ling_turns(id) ON DELETE SET NULL,
+          FOREIGN KEY(active_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL,
+          FOREIGN KEY(last_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ling_turns_thread_updated
+        ON ling_turns(thread_id, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_ling_turns_workspace_status
+        ON ling_turns(workspace_id, status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_ling_turns_source
+        ON ling_turns(source_turn_id);
+
+        CREATE TABLE IF NOT EXISTS ling_turn_runs (
+          turn_id TEXT NOT NULL,
+          run_id TEXT NOT NULL,
+          attempt_number INTEGER NOT NULL,
+          role TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(turn_id, run_id),
+          UNIQUE(run_id),
+          UNIQUE(turn_id, attempt_number),
+          FOREIGN KEY(turn_id) REFERENCES ling_turns(id) ON DELETE CASCADE,
+          FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ling_turn_runs_run
+        ON ling_turn_runs(run_id);
+      `);
+      if (!hasLingTurnsMigration) {
+        this.recordMigration(LING_TURNS_MIGRATION_VERSION, LING_TURNS_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -11385,6 +11668,62 @@ export class SqliteRunStore implements RunStore {
         updatedAt,
         runId,
       );
+    this.reconcileLingTurnStatusForRun(runId, updatedAt);
+  }
+
+  private insertLingTurnRun(turnId: string, runId: string, role: LingTurnRunRole, createdAt: string): LingTurnRun {
+    const turn = this.getLingTurn(turnId);
+    if (!turn) {
+      throw new Error(`Ling turn not found: ${turnId}`);
+    }
+    const thread = this.getLingThread(turn.threadId);
+    if (!thread) {
+      throw new Error(`Ling thread not found for turn: ${turn.threadId}`);
+    }
+    if (thread.status === "archived") {
+      throw new Error(`Ling thread is archived: ${thread.id}`);
+    }
+    const run = this.getRun(runId);
+    if (!run) {
+      throw new Error(`Run session not found: ${runId}`);
+    }
+    if (run.threadId !== turn.threadId) {
+      throw new Error(`Run does not belong to Ling turn thread: ${runId}`);
+    }
+    const row = this.database
+      .prepare("SELECT COALESCE(MAX(attempt_number), 0) + 1 AS next_attempt FROM ling_turn_runs WHERE turn_id = ?")
+      .get(turnId);
+    const attemptNumber = readNumber(row, "next_attempt");
+    this.database
+      .prepare(`
+        INSERT INTO ling_turn_runs (turn_id, run_id, attempt_number, role, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `)
+      .run(turnId, runId, attemptNumber, role, createdAt);
+    return {
+      turnId,
+      runId,
+      attemptNumber,
+      role,
+      createdAt,
+    };
+  }
+
+  private reconcileLingTurnStatusForRun(runId: string, now: string): void {
+    const turn = this.getLingTurnForRun(runId);
+    if (turn) {
+      this.reconcileLingTurnStatus(turn.id, now);
+    }
+  }
+
+  private assertLingTurnRunReference(runId: string, threadId: string, fieldName: string): void {
+    const run = this.getRun(runId);
+    if (!run) {
+      throw new Error(`${fieldName} run not found: ${runId}`);
+    }
+    if (run.threadId !== threadId) {
+      throw new Error(`${fieldName} run does not belong to Ling turn thread: ${runId}`);
+    }
   }
 }
 
@@ -11412,6 +11751,43 @@ function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
     updatedAt: readString(row, "updated_at"),
     archivedAt: readNullableString(row, "archived_at"),
   });
+}
+
+function mapLingTurn(row: Record<string, SQLOutputValue>): LingTurn {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    threadId: readString(row, "thread_id"),
+    kind: readString(row, "kind") as LingTurnKind,
+    status: readString(row, "status") as LingTurnStatus,
+    title: readString(row, "title"),
+    userInstruction: readString(row, "user_instruction"),
+    channelId: readNullableString(row, "channel_id"),
+    taskId: readNullableString(row, "task_id"),
+    teammateId: readNullableString(row, "teammate_id"),
+    workflowStepId: readNullableString(row, "workflow_step_id"),
+    externalWorkId: readNullableString(row, "external_work_id"),
+    automationId: readNullableString(row, "automation_id"),
+    sourceMessageId: readNullableString(row, "source_message_id"),
+    sourceTurnId: readNullableString(row, "source_turn_id"),
+    interventionId: readNullableString(row, "intervention_id"),
+    activeRunId: readNullableString(row, "active_run_id"),
+    lastRunId: readNullableString(row, "last_run_id"),
+    createdByActor: readString(row, "created_by_actor") as LingTurn["createdByActor"],
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    completedAt: readNullableString(row, "completed_at"),
+  });
+}
+
+function mapLingTurnRun(row: Record<string, SQLOutputValue>): LingTurnRun {
+  return {
+    turnId: readString(row, "turn_id"),
+    runId: readString(row, "run_id"),
+    attemptNumber: readNumber(row, "attempt_number"),
+    role: readString(row, "role") as LingTurnRunRole,
+    createdAt: readString(row, "created_at"),
+  };
 }
 
 function mapAutomationDefinition(row: Record<string, SQLOutputValue>): AutomationDefinition {
@@ -11596,6 +11972,36 @@ function lingThreadSelectSql(whereClause: string): string {
       updated_at,
       archived_at
     FROM ling_threads
+    ${whereClause}
+  `;
+}
+
+function lingTurnSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      ling_turns.id,
+      ling_turns.workspace_id,
+      ling_turns.thread_id,
+      ling_turns.kind,
+      ling_turns.status,
+      ling_turns.title,
+      ling_turns.user_instruction,
+      ling_turns.channel_id,
+      ling_turns.task_id,
+      ling_turns.teammate_id,
+      ling_turns.workflow_step_id,
+      ling_turns.external_work_id,
+      ling_turns.automation_id,
+      ling_turns.source_message_id,
+      ling_turns.source_turn_id,
+      ling_turns.intervention_id,
+      ling_turns.active_run_id,
+      ling_turns.last_run_id,
+      ling_turns.created_by_actor,
+      ling_turns.created_at,
+      ling_turns.updated_at,
+      ling_turns.completed_at
+    FROM ling_turns
     ${whereClause}
   `;
 }
@@ -14957,6 +15363,13 @@ function readNullableRunContinuationReason(row: Record<string, SQLOutputValue>, 
   return value && runContinuationReasons.includes(value as RunContinuationReason)
     ? value as RunContinuationReason
     : undefined;
+}
+
+function runStatusToLingTurnStatus(status: RunStatus): LingTurnStatus {
+  if (status === "queued" || status === "running") {
+    return "running";
+  }
+  return status;
 }
 
 function readNullableNumber(row: Record<string, SQLOutputValue>, key: string): number | undefined {

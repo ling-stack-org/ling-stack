@@ -241,6 +241,101 @@ export function createLingThreadId(): string {
   return `thread_${randomUUID()}`;
 }
 
+export function createLingTurnId(): string {
+  return `turn_${randomUUID()}`;
+}
+
+export type LingTurnKind =
+  | "initial_request"
+  | "manual_followup"
+  | "queued_followup"
+  | "interrupt_redirect"
+  | "workflow_step"
+  | "external_work_update"
+  | "automation_tick"
+  | "review_queue_action";
+
+export type LingTurnStatus =
+  | "open"
+  | "running"
+  | "waiting_for_approval"
+  | "blocked"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "superseded";
+
+export type LingTurnCreatedByActor = "local-user" | "system" | "teammate" | "automation";
+
+export type LingTurnRunRole = "primary" | "retry" | "resume" | "repair" | "validation";
+
+export interface LingTurn {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly kind: LingTurnKind;
+  readonly status: LingTurnStatus;
+  readonly title: string;
+  readonly userInstruction: string;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly teammateId?: string;
+  readonly workflowStepId?: string;
+  readonly externalWorkId?: string;
+  readonly automationId?: string;
+  readonly sourceMessageId?: string;
+  readonly sourceTurnId?: string;
+  readonly interventionId?: string;
+  readonly activeRunId?: string;
+  readonly lastRunId?: string;
+  readonly createdByActor: LingTurnCreatedByActor;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt?: string;
+}
+
+export interface LingTurnRun {
+  readonly turnId: string;
+  readonly runId: string;
+  readonly attemptNumber: number;
+  readonly role: LingTurnRunRole;
+  readonly createdAt: string;
+}
+
+export interface CreateLingTurnInput {
+  readonly id?: string;
+  readonly threadId: string;
+  readonly kind: LingTurnKind;
+  readonly status?: LingTurnStatus;
+  readonly title: string;
+  readonly userInstruction: string;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly teammateId?: string;
+  readonly workflowStepId?: string;
+  readonly externalWorkId?: string;
+  readonly automationId?: string;
+  readonly sourceMessageId?: string;
+  readonly sourceTurnId?: string;
+  readonly interventionId?: string;
+  readonly activeRunId?: string;
+  readonly lastRunId?: string;
+  readonly createdByActor?: LingTurnCreatedByActor;
+}
+
+export interface ListLingTurnsOptions {
+  readonly threadId: string;
+  readonly limit?: number;
+  readonly beforeUpdatedAt?: string;
+}
+
+export interface LinkRunToLingTurnInput {
+  readonly turnId: string;
+  readonly runId: string;
+  readonly role?: LingTurnRunRole;
+  readonly now: string;
+}
+
 export type RunEventType =
   | "run_created"
   | "run_start"
@@ -465,6 +560,8 @@ export interface CreateRunInput {
   readonly requestSnapshot: unknown;
   readonly threadId?: string;
   readonly workUnitId?: string;
+  readonly turnId?: string;
+  readonly turnRunRole?: LingTurnRunRole;
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
@@ -628,6 +725,13 @@ export interface RunStore {
   }): LingThread | undefined;
   listLingThreads(options?: ListLingThreadsOptions): LingThread[];
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined;
+  createLingTurn(input: CreateLingTurnInput, now: string): LingTurn;
+  getLingTurn(turnId: string): LingTurn | undefined;
+  listLingTurns(options: ListLingTurnsOptions): LingTurn[];
+  linkRunToLingTurn(input: LinkRunToLingTurnInput): LingTurnRun;
+  getLingTurnForRun(runId: string): LingTurn | undefined;
+  listLingTurnRuns(turnId: string): LingTurnRun[];
+  reconcileLingTurnStatus(turnId: string, now: string): LingTurn | undefined;
   createRun(input: CreateRunInput): RunSession;
   markRunStarted(runId: string, startedAt: string): void;
   markRunWaitingForApproval(runId: string, updatedAt: string): void;

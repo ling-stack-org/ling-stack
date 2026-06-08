@@ -1,4 +1,7 @@
 import type {
+  LingTurn,
+  LingTurnKind,
+  LingTurnRunRole,
   LingThread,
   RunEventEnvelope,
   RunEventType,
@@ -72,6 +75,52 @@ export function ensureLingThreadForRun(store: RunStore, runRequest: RunRequest, 
     },
     now,
   );
+}
+
+export function ensureLingTurnForRun(store: RunStore, thread: LingThread, runRequest: RunRequest, now: string): LingTurn {
+  if (runRequest.turnId) {
+    const turn = store.getLingTurn(runRequest.turnId);
+    if (!turn) {
+      throw new Error(`Ling turn not found: ${runRequest.turnId}`);
+    }
+    if (turn.threadId !== thread.id) {
+      throw new Error(`Ling turn does not belong to thread: ${runRequest.turnId}`);
+    }
+    const role = inferLingTurnRunRole(runRequest);
+    if ((turn.status === "cancelled" || turn.status === "superseded") && role !== "retry" && role !== "resume") {
+      throw new Error(`Ling turn cannot be reused: ${runRequest.turnId}`);
+    }
+    return turn;
+  }
+
+  const sourceTurn = runRequest.parentRunId ? store.getLingTurnForRun(runRequest.parentRunId) : undefined;
+  return store.createLingTurn(
+    {
+      threadId: thread.id,
+      kind: inferLingTurnKind(thread, runRequest),
+      title: runRequest.task.title,
+      userInstruction: runRequest.task.prompt,
+      channelId: thread.channelId ?? runRequest.task.channelId,
+      taskId: thread.taskId ?? runRequest.task.id,
+      teammateId: thread.teammateId ?? runRequest.teammateId,
+      workflowStepId: thread.workflowStepId ?? runRequest.workflowStepId,
+      externalWorkId: thread.externalWorkId,
+      sourceTurnId: sourceTurn?.id,
+      interventionId: runRequest.interventionId,
+      createdByActor: inferLingTurnActor(thread),
+    },
+    now,
+  );
+}
+
+export function inferLingTurnRunRole(runRequest: RunRequest): LingTurnRunRole {
+  if (runRequest.continuationReason === "manual_resume" || runRequest.continuationReason === "queue_followup" || runRequest.continuationReason === "interrupt_redirect") {
+    return "resume";
+  }
+  if (runRequest.parentRunId) {
+    return "retry";
+  }
+  return "primary";
 }
 
 export function markLingThreadRunActive(
@@ -176,6 +225,38 @@ function findParentLingThread(store: RunStore, parentRunId: string | undefined):
     return undefined;
   }
   return store.getLingThread(parentRun.threadId);
+}
+
+function inferLingTurnKind(thread: LingThread, runRequest: RunRequest): LingTurnKind {
+  if (runRequest.continuationReason === "queue_followup") {
+    return "queued_followup";
+  }
+  if (runRequest.continuationReason === "interrupt_redirect") {
+    return "interrupt_redirect";
+  }
+  if (runRequest.continuationReason === "manual_resume" || runRequest.parentRunId) {
+    return "manual_followup";
+  }
+  if (thread.kind === "workflow_step" || runRequest.workflowStepId) {
+    return "workflow_step";
+  }
+  if (thread.kind === "external_work") {
+    return "external_work_update";
+  }
+  if (thread.kind === "automation") {
+    return "automation_tick";
+  }
+  return "initial_request";
+}
+
+function inferLingTurnActor(thread: LingThread): LingTurn["createdByActor"] {
+  if (thread.kind === "automation") {
+    return "automation";
+  }
+  if (thread.kind === "teammate_direct") {
+    return "teammate";
+  }
+  return "local-user";
 }
 
 function isTerminalRunStatus(status: RunStatus): status is Extract<RunStatus, "succeeded" | "failed" | "cancelled"> {

@@ -4,9 +4,12 @@ import {
   permissionPresets,
   sessionPermissionModes,
   type ApprovalRequest,
+  type CreateLingTurnInput,
   type LingThread,
   type LingThreadKind,
   type LingThreadStatus,
+  type LingTurnCreatedByActor,
+  type LingTurnKind,
   type PermissionConfirmation,
   type PermissionPreset,
   type RunEventEnvelope,
@@ -26,6 +29,7 @@ import type { RunRequest } from "./schemas.js";
 
 export type LingThreadRoute =
   | { readonly kind: "detail"; readonly threadId: string }
+  | { readonly kind: "turns"; readonly threadId: string }
   | { readonly kind: "evidence"; readonly threadId: string }
   | { readonly kind: "resume"; readonly threadId: string }
   | { readonly kind: "resume-preview"; readonly threadId: string };
@@ -106,6 +110,9 @@ export function handleLingThreadItem(
   if (route.kind === "resume-preview") {
     return handleLingThreadResumePreview(request, response, url, storeRegistry, route.threadId, options);
   }
+  if (route.kind === "turns") {
+    return handleLingThreadTurns(request, response, url, storeRegistry, route.threadId, options);
+  }
   if (request.method !== "GET") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for thread items` });
     return;
@@ -130,6 +137,58 @@ export function handleLingThreadItem(
   }
 
   writeJson(response, 200, { cwd, thread });
+}
+
+async function handleLingThreadTurns(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  threadId: string,
+  options?: HandleLingThreadRouteOptions,
+): Promise<void> {
+  if (request.method !== "GET" && request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for thread turns` });
+    return;
+  }
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    if (!thread) {
+      writeJson(response, 404, { error: "thread_not_found", message: `Ling thread not found: ${threadId}` });
+      return;
+    }
+    if (request.method === "POST") {
+      const body = await readOptionalJsonBody(request, options?.maxBodyBytes ?? 1024 * 1024);
+      const turn = store.createLingTurn(parseCreateLingTurnBody(body, thread), new Date().toISOString());
+      writeJson(response, 201, {
+        cwd,
+        threadId,
+        turn,
+        runLinks: store.listLingTurnRuns(turn.id),
+      });
+      return;
+    }
+
+    const turns = store.listLingTurns({
+      threadId,
+      limit: readOptionalIntegerQuery(url, "limit", 1),
+      beforeUpdatedAt: url.searchParams.get("beforeUpdatedAt") ?? undefined,
+    });
+    writeJson(response, 200, {
+      cwd,
+      threadId,
+      turns,
+      runLinks: turns.flatMap((turn) => store.listLingTurnRuns(turn.id)),
+    });
+  } catch (error) {
+    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 async function handleLingThreadResumePreview(
@@ -266,6 +325,70 @@ function buildLingThreadEvidence(store: RunStore, cwd: string, thread: LingThrea
     actions,
     transitions,
   };
+}
+
+const lingTurnKinds: readonly LingTurnKind[] = [
+  "initial_request",
+  "manual_followup",
+  "queued_followup",
+  "interrupt_redirect",
+  "workflow_step",
+  "external_work_update",
+  "automation_tick",
+  "review_queue_action",
+];
+
+const lingTurnActors: readonly LingTurnCreatedByActor[] = ["local-user", "system", "teammate", "automation"];
+
+function parseCreateLingTurnBody(body: unknown, thread: LingThread): CreateLingTurnInput {
+  if (!isRecord(body)) {
+    throw new Error("Turn request must be a JSON object");
+  }
+  const kind = readLingTurnKind(body, "kind");
+  return {
+    id: readOptionalString(body, "id"),
+    threadId: thread.id,
+    kind,
+    title: readRequiredString(body, "title"),
+    userInstruction: readRequiredString(body, "userInstruction"),
+    channelId: readOptionalString(body, "channelId") ?? thread.channelId,
+    taskId: readOptionalString(body, "taskId") ?? thread.taskId,
+    teammateId: readOptionalString(body, "teammateId") ?? thread.teammateId,
+    workflowStepId: readOptionalString(body, "workflowStepId") ?? thread.workflowStepId,
+    externalWorkId: readOptionalString(body, "externalWorkId") ?? thread.externalWorkId,
+    automationId: readOptionalString(body, "automationId"),
+    sourceMessageId: readOptionalString(body, "sourceMessageId"),
+    sourceTurnId: readOptionalString(body, "sourceTurnId"),
+    interventionId: readOptionalString(body, "interventionId"),
+    createdByActor: readOptionalLingTurnActor(body, "createdByActor"),
+  };
+}
+
+function readRequiredString(record: Record<string, unknown>, key: string): string {
+  const value = readOptionalString(record, key);
+  if (!value?.trim()) {
+    throw new Error(`${key} is required`);
+  }
+  return value;
+}
+
+function readLingTurnKind(record: Record<string, unknown>, key: string): LingTurnKind {
+  const value = readRequiredString(record, key);
+  if (!lingTurnKinds.includes(value as LingTurnKind)) {
+    throw new Error(`${key} is not a valid Ling turn kind`);
+  }
+  return value as LingTurnKind;
+}
+
+function readOptionalLingTurnActor(record: Record<string, unknown>, key: string): LingTurnCreatedByActor | undefined {
+  const value = readOptionalString(record, key);
+  if (!value) {
+    return undefined;
+  }
+  if (!lingTurnActors.includes(value as LingTurnCreatedByActor)) {
+    throw new Error(`${key} is not a valid Ling turn actor`);
+  }
+  return value as LingTurnCreatedByActor;
 }
 
 function buildLingThreadResumeContext(input: {

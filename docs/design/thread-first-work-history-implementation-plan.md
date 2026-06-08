@@ -570,6 +570,577 @@ POST /threads/:threadId/turns?cwd=...
 
 Run creation can accept optional `turnId` after the turn API exists.
 
+### V2A-P0 Detailed Implementation Design
+
+#### P0 Semantic Boundary
+
+`LingTurn` is the durable work-intent unit inside a `LingThread`.
+
+It is not:
+
+- a chat message;
+- a run attempt;
+- a durable transcript table;
+- a process-item/event log.
+
+One normal chat message may create zero turns. One executable user instruction should
+create one turn. A turn may have multiple linked run attempts. A run attempt should
+belong to at most one turn in P0. Shared evidence should be referenced through
+artifacts/actions later, not by linking one run to multiple turns.
+
+P0 must preserve the current V2C-lite fallback: old runs without turns still group by
+`RunSession.threadId` and render through the existing derived work cell.
+
+#### P0 Non-Goals
+
+- no fork/archive/pin APIs;
+- no turn-linked resume semantics;
+- no durable `LingTurnStep` or process item table;
+- no thread metadata rebuild;
+- no bulk historical backfill job;
+- no raw model transcript, hidden reasoning, raw stdout/stderr, provider payload, or
+  secret material in turn rows.
+
+#### Contracts
+
+Add contract types without changing existing run response shape by default:
+
+```text
+packages/contracts/src/turns.ts
+packages/core/src/run-types.ts
+packages/api-client/src/client.ts
+```
+
+P0 contract shape:
+
+```ts
+type LingTurnKind =
+  | "initial_request"
+  | "manual_followup"
+  | "queued_followup"
+  | "interrupt_redirect"
+  | "workflow_step"
+  | "external_work_update"
+  | "automation_tick"
+  | "review_queue_action";
+
+type LingTurnStatus =
+  | "open"
+  | "running"
+  | "waiting_for_approval"
+  | "blocked"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "superseded";
+
+interface LingTurn {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly kind: LingTurnKind;
+  readonly status: LingTurnStatus;
+  readonly title: string;
+  readonly userInstruction: string;
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly teammateId?: string;
+  readonly workflowStepId?: string;
+  readonly externalWorkId?: string;
+  readonly automationId?: string;
+  readonly sourceMessageId?: string;
+  readonly sourceTurnId?: string;
+  readonly interventionId?: string;
+  readonly activeRunId?: string;
+  readonly lastRunId?: string;
+  readonly createdByActor: "local-user" | "system" | "teammate" | "automation";
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt?: string;
+}
+
+interface LingTurnRun {
+  readonly turnId: string;
+  readonly runId: string;
+  readonly attemptNumber: number;
+  readonly role: "primary" | "retry" | "resume" | "repair" | "validation";
+  readonly createdAt: string;
+}
+```
+
+Keep `summaryArtifactId`, `evidenceBundleArtifactId`, `parentThreadId`,
+`parentTurnId`, and archived/pinned fields out of P0 unless the implementation needs
+them for an already landed route. Those belong to V2B/V2D.
+
+#### SQLite Migration
+
+Add a new additive migration after `create_ling_threads`:
+
+```text
+create_ling_turns
+```
+
+SQL shape:
+
+```sql
+CREATE TABLE IF NOT EXISTS ling_turns (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  title TEXT NOT NULL,
+  user_instruction TEXT NOT NULL,
+  channel_id TEXT,
+  task_id TEXT,
+  teammate_id TEXT,
+  workflow_step_id TEXT,
+  external_work_id TEXT,
+  automation_id TEXT,
+  source_message_id TEXT,
+  source_turn_id TEXT,
+  intervention_id TEXT,
+  active_run_id TEXT,
+  last_run_id TEXT,
+  created_by_actor TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY(thread_id) REFERENCES ling_threads(id) ON DELETE CASCADE,
+  FOREIGN KEY(source_turn_id) REFERENCES ling_turns(id) ON DELETE SET NULL,
+  FOREIGN KEY(active_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL,
+  FOREIGN KEY(last_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ling_turns_thread_updated
+  ON ling_turns(thread_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ling_turns_workspace_status
+  ON ling_turns(workspace_id, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ling_turns_source
+  ON ling_turns(source_turn_id);
+
+CREATE TABLE IF NOT EXISTS ling_turn_runs (
+  turn_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  attempt_number INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(turn_id, run_id),
+  UNIQUE(run_id),
+  UNIQUE(turn_id, attempt_number),
+  FOREIGN KEY(turn_id) REFERENCES ling_turns(id) ON DELETE CASCADE,
+  FOREIGN KEY(run_id) REFERENCES run_sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ling_turn_runs_run
+  ON ling_turn_runs(run_id);
+```
+
+Do not add `turn_id` to `run_sessions` in P0. The join table is the source for turn/run
+ownership. A future explicit `run_sessions.turn_id` column is allowed only if query
+pressure proves the join too expensive.
+
+#### Store Methods
+
+Add methods to `RunStore` and `SqliteRunStore`:
+
+```ts
+createLingTurn(input, now): LingTurn
+getLingTurn(turnId): LingTurn | undefined
+listLingTurns({ threadId, limit?, beforeUpdatedAt? }): LingTurn[]
+linkRunToLingTurn({ turnId, runId, role, now }): LingTurnRun
+getLingTurnForRun(runId): LingTurn | undefined
+listLingTurnRuns(turnId): LingTurnRun[]
+reconcileLingTurnStatus(turnId, now): LingTurn | undefined
+```
+
+Implementation rules:
+
+- `createLingTurn` validates that the thread exists and is not archived.
+- `linkRunToLingTurn` validates that the run exists and belongs to the same `threadId`.
+- `linkRunToLingTurn` assigns the next `attemptNumber` in a transaction.
+- `UNIQUE(run_id)` prevents ambiguous ownership.
+- creating a turn and creating/linking its first run should happen in one store
+  transaction when the same user action triggers both.
+- failed run creation should not leave an orphan running turn.
+
+#### Status Reconciliation
+
+Reconciliation is explicit and read-derived from linked runs. It must not infer approval
+authority or mutate run state.
+
+P0 mapping:
+
+```text
+no linked runs -> open
+latest active linked run queued/running -> running
+any active linked run waiting_for_approval -> waiting_for_approval
+latest terminal linked run succeeded -> succeeded
+latest terminal linked run failed -> failed
+latest terminal linked run cancelled -> cancelled
+explicit redirect/intervention supersedes source -> superseded
+```
+
+Use linked attempt order first, then run `updatedAt`, to decide the latest attempt. Set:
+
+- `activeRunId` to the latest queued/running/waiting run, otherwise null;
+- `lastRunId` to the latest linked run;
+- `completedAt` only for terminal statuses;
+- `updatedAt` to reconciliation time.
+
+`blocked` is reserved for explicit workflow or review-queue blockers. Do not derive
+`blocked` from a failed run alone.
+
+#### Write Paths
+
+Create/link turns only at work-triggering boundaries:
+
+- new task run: create an `initial_request` turn if the request has no `turnId`;
+- channel executable message: create an `initial_request` or `manual_followup` turn under
+  the active channel thread;
+- queued follow-up: create a `queued_followup` turn with `sourceTurnId` when known;
+- run retry for the same instruction: reuse the existing turn and link the new run as
+  `retry`;
+- continuation/resume-like run before V2D: link to the existing turn as `resume` only if
+  the user intent is the same; otherwise create a new `manual_followup` turn;
+- workflow step run: create a `workflow_step` turn owned by `workflowStepId`;
+- automation work run: create an `automation_tick` turn owned by `automationId`;
+- external work routed into Ling: create an `external_work_update` turn.
+
+If the caller provides `turnId`, the daemon must verify:
+
+- the turn exists;
+- the turn belongs to the requested `threadId`;
+- the turn belongs to the same workspace;
+- the parent thread is not archived;
+- cancelled or superseded turns are not reused unless the operation is an explicit
+  retry/resume path.
+
+#### API Scope
+
+P0 adds only read/create/list turn APIs:
+
+```text
+GET /threads/:threadId/turns?cwd=...
+POST /threads/:threadId/turns?cwd=...
+```
+
+`POST /threads/:threadId/turns` creates a turn record. It does not start a run by itself.
+Run creation may accept optional `turnId` after store support exists.
+The public create endpoint does not accept `status`, `activeRunId`, or `lastRunId`;
+those fields are derived from run links by reconciliation.
+
+Responses:
+
+```ts
+interface LingThreadTurnsResponse {
+  readonly cwd: string;
+  readonly threadId: string;
+  readonly turns: readonly LingTurn[];
+  readonly runLinks: readonly LingTurnRun[];
+}
+```
+
+Do not change `GET /threads/:threadId/evidence` in P0. It may accept `turnId` only after
+the turn/run link is used by Web or Work History.
+
+#### Web Integration
+
+P0 Web behavior should be conservative:
+
+- Work cells may prefer `LingTurnRun` links when turn data is loaded.
+- If no turn data is loaded or no run link exists, continue using
+  `RunSession.threadId` grouping.
+- The transcript still renders one compact result row by default.
+- No fork/archive/pin UI depends on V2A-P0.
+- Review Queue links may include `turnId` only when a source approval/action already has a
+  known turn.
+
+#### Implementation Files
+
+Expected touch points:
+
+- `packages/contracts/src/turns.ts`
+- `packages/contracts/src/index.ts`
+- `packages/core/src/run-types.ts`
+- `packages/core/src/storage/sqlite-run-store.ts`
+- `packages/core/test/*turn*.test.mjs` or nearby run-store tests
+- `packages/daemon/src/features/runs/thread-routes.ts`
+- `packages/daemon/src/features/runs/schemas.ts`
+- `packages/api-client/src/client.ts`
+- `apps/web/src/api/runs.ts`
+- `apps/web/e2e/channel.spec.ts` only if Web consumes the new response in the same slice
+
+#### V2A-P0 Acceptance
+
+- migration creates `ling_turns` and `ling_turn_runs` on a fresh database;
+- migration is idempotent on an existing database;
+- creating/listing turns under a thread works;
+- linking a run to a turn rejects cross-thread links;
+- one run cannot be linked to two turns;
+- attempt numbers are stable and monotonic per turn;
+- status reconciliation follows linked run terminal/active state;
+- new work-triggering runs can be created with a linked turn;
+- legacy runs without turns still render through V2C-lite derived grouping;
+- no raw transcript, hidden reasoning, stdout/stderr, provider payload, or secrets appear
+  in turn rows, API JSON, logs, or Web state.
+
+#### V2A-P0 Implementation Record
+
+Implemented P0 as a daemon/core contract slice:
+
+- added durable `LingTurn` / `LingTurnRun` contracts and api-client helpers;
+- added SQLite migration `create_ling_turns` with `ling_turns` and `ling_turn_runs`;
+- added `RunStore` methods for create/list/link/reconcile;
+- linked new daemon `/runs` requests to a turn, with optional `turnId` reuse;
+- added `GET/POST /threads/:threadId/turns?cwd=...`;
+- kept Web rendering on the existing V2C-lite fallback for this slice.
+
+Validation coverage:
+
+- `packages/core/test/ling-turns-store.test.mjs` covers migration, linking, retry
+  attempts, cross-thread rejection, one-run-one-turn ownership, legacy runs, status
+  reconciliation, and secret redaction.
+- `packages/daemon/test/ling-turns-api.test.mjs` covers daemon turn list/create APIs,
+  automatic run-created turns, explicit `turnId` run reuse, public create ignoring
+  derived status/run pointer fields, and API-level secret redaction.
+
+### V2A-P1 Web Read-Only Detailed Design
+
+#### P1 Goal
+
+Use durable `LingTurn` / `LingTurnRun` data as the preferred read model for the existing
+conversation work cell and Work History surfaces, while preserving the V2C-lite
+run/thread fallback.
+
+P1 should make Web able to answer:
+
+- which durable turn a visible work cell represents;
+- which run attempts belong to that turn;
+- whether the turn is active, waiting, terminal, or open without guessing only from the
+  latest run;
+- whether a run is legacy/unlinked and should still render through existing
+  `RunSession.threadId` grouping.
+
+#### P1 Non-Goals
+
+- no fork/archive/pin UI;
+- no turn edit/delete APIs;
+- no turn-linked resume behavior;
+- no backfill job for historical runs;
+- no new evidence browser;
+- no new durable table or Web cache table;
+- no approval decision controls inside `ConversationWorkCell`;
+- no raw event stream, stdout/stderr dump, provider payload, transcript replay, hidden
+  reasoning, or secret material in conversation state.
+
+#### Existing Web Baseline
+
+The current Web implementation already has the V2C-lite shape:
+
+- `apps/web/src/lib/conversation-work-cell.ts` derives
+  `ConversationWorkCellViewModel` from `RunSession.threadId`, approvals, artifacts, and
+  optional execution actions.
+- `apps/web/src/features/workspace/WorkspaceClientView.tsx` groups visible channel runs
+  with `groupRunsByThreadId(channelRuns)` and renders one `ConversationWorkCell` for the
+  anchor run.
+- detail expansion calls `GET /threads/:threadId/evidence`.
+
+P1 must extend this flow. It should not replace the component hierarchy or introduce a
+second work-cell component.
+
+#### Data Loading
+
+Load turns lazily and only for thread ids already visible in the selected conversation.
+
+Recommended first slice:
+
+1. derive visible `threadId`s from `channelRuns`;
+2. call `listLingThreadTurns(cwd, threadId, { limit })` for those ids;
+3. store results in a local keyed state/cache:
+
+```ts
+type ThreadTurnsLoadState =
+  | { readonly status: "not_loaded" }
+  | { readonly status: "loading" }
+  | { readonly status: "loaded"; readonly turns: readonly LingTurn[]; readonly runLinks: readonly LingTurnRun[] }
+  | { readonly status: "error"; readonly errorMessage: string };
+```
+
+Cache key:
+
+```text
+${cwd.trim()}::${threadId}
+```
+
+Invalidation:
+
+- clear on `cwd` change;
+- clear on selected channel change if visible thread set changes;
+- refresh a thread after a run in that thread changes status, starts, completes,
+  cancels, or enters `waiting_for_approval`;
+- refresh after explicit `turnId` run creation response if the caller can identify the
+  thread;
+- do not block transcript rendering while turn data is loading.
+
+Batching is not required in P1. If N visible thread ids creates too many requests, add a
+daemon batch endpoint later; do not add it speculatively.
+
+#### View-Model Merge
+
+Add turn-aware input to the builder rather than building a separate renderer:
+
+```ts
+interface BuildConversationWorkCellInput {
+  readonly threadId: string;
+  readonly runs: readonly RunSession[];
+  readonly turns?: readonly LingTurn[];
+  readonly turnRunLinks?: readonly LingTurnRun[];
+  // existing approvals/artifacts/actions fields remain unchanged
+}
+```
+
+Builder rules:
+
+- prefer `LingTurnRun` links when `turns` and `turnRunLinks` are loaded;
+- group run attempts by `turnId` first, then by `RunSession.threadId` for legacy runs;
+- choose the visible work cell anchor from the latest linked run attempt for the selected
+  turn;
+- if a linked run is not present in loaded `channelRuns`, keep the turn loaded but do not
+  render a conversation work cell until its run is visible or evidence details are loaded;
+- if no turn links exist for a thread, preserve existing V2C-lite grouping exactly;
+- if turn loading fails, preserve existing V2C-lite grouping and surface the error only
+  in details/debug affordances, not in the main transcript row.
+
+Model field mapping:
+
+- `id`: `work-cell:turn:${turn.id}` when linked turn data is used, otherwise current
+  `work-cell:${threadId}`;
+- `threadId`: always the parent thread id;
+- `runIds`: linked run ids sorted by `attemptNumber`, then run activity;
+- `anchorRunId`: latest visible linked run id;
+- `status`: from `LingTurn.status` when available, otherwise latest run status;
+- `mode`: active when turn status is `open`, `running`, `waiting_for_approval`, or
+  `blocked`; completed when `succeeded`, `failed`, `cancelled`, or `superseded`;
+- `title`: prefer `turn.title`, fallback to current run title logic;
+- `summary`: derive from turn status and bounded evidence counts, never from raw logs;
+- stats: show `Attempts` from linked attempts when available, otherwise run count.
+
+`open` turns with no visible linked run should not render as a completed work result. P1
+can either omit them from the conversation timeline or show them only in Work History
+once that surface has a turn rail.
+
+#### Details Loading
+
+Keep `GET /threads/:threadId/evidence` as the only detail source in P1.
+
+When expanding a turn-backed cell:
+
+- fetch thread evidence using the existing detail loader;
+- filter evidence rows to linked `runIds` client-side when the cell has loaded
+  `LingTurnRun` links;
+- if filtering produces no details, fall back to the existing thread-level evidence view;
+- do not add `turnId` to evidence API in P1.
+
+This keeps P1 read-only and avoids making evidence retrieval depend on the new turn table.
+
+#### Work History Surface
+
+Run History / Work History may consume turn data only as a display hint in P1:
+
+- show attempts grouped under a turn when `listLingThreadTurns` is already loaded;
+- otherwise keep the existing derived thread list;
+- do not add fork/archive/pin controls;
+- do not hide legacy runs;
+- do not make resume depend on a turn id.
+
+The first implementation can focus on the selected channel conversation and leave
+dedicated Work History grouping for a follow-up P1b.
+
+#### API/Error Semantics
+
+Use the existing api-client helper:
+
+```ts
+daemonClient.listLingThreadTurns(cwd, threadId, { limit, beforeUpdatedAt })
+```
+
+Error handling:
+
+- `404 thread_not_found`: drop cached turn state for that thread and fallback to derived
+  run grouping;
+- `400 bad_request`: keep fallback and expose error only in developer/debug surfaces;
+- network failure: keep fallback and retry on next explicit refresh;
+- empty `turns`: valid legacy state, not an error.
+
+Security/privacy:
+
+- the Web state may store only redacted `LingTurn` fields from API JSON;
+- do not concatenate `userInstruction` into telemetry, browser logs, or raw debug text;
+- do not pass `userInstruction` into artifact URLs or query params.
+
+#### Implementation Files
+
+Expected first-slice touch points:
+
+- `apps/web/src/api/runs.ts`: export `listLingThreadTurns`;
+- `apps/web/src/types.ts`: ensure `LingTurn`, `LingTurnRun`, and
+  `LingThreadTurnsResponse` are exported through existing contract type plumbing;
+- `apps/web/src/lib/conversation-work-cell.ts`: add optional turn-aware grouping and
+  mapping while preserving fallback behavior;
+- `apps/web/src/features/workspace/WorkspaceClientView.tsx`: load/cache turns for
+  visible thread ids and pass them into the builder;
+- `apps/web/e2e/support/mock-daemon.ts`: add
+  `GET /threads/:threadId/turns?cwd=...` mock support;
+- `apps/web/e2e/channel.spec.ts`: add one turn-backed work-cell case and one legacy
+  fallback case.
+
+Avoid touching global navigation, Review Queue mutation flows, provider settings, or
+daemon/core storage in P1 unless a type mismatch requires a narrow fix.
+
+#### Acceptance
+
+- conversation work cells render from durable turn/run links when turn data is loaded;
+- old runs with `threadId` but no turn links still render exactly through V2C-lite
+  fallback;
+- turn API loading/error states do not blank the transcript;
+- a turn with multiple linked attempts renders one work cell with attempt count matching
+  `LingTurnRun` links;
+- active/waiting/terminal status follows `LingTurn.status` when present;
+- detail expansion still uses thread evidence and filters to linked attempts when safe;
+- no new mutation behavior is exposed in Web;
+- no raw logs, provider payloads, transcripts, hidden reasoning, or unredacted secrets are
+  stored or rendered by the P1 code path.
+
+#### Test Plan
+
+Unit-level:
+
+- builder prefers `turn.title`, `turn.status`, and linked attempt count;
+- builder falls back to run/thread grouping when `turns` is undefined, loading failed, or
+  no links match visible runs;
+- builder ignores links to runs not present in the loaded run set for transcript anchor
+  selection;
+- details filtering keeps only linked run ids and falls back when the filtered set is
+  empty.
+
+E2E/mock:
+
+- mock daemon serves one thread with one `LingTurn` and two `LingTurnRun` attempts;
+- channel feed shows one work cell, not two run rows;
+- evidence expansion still opens existing grouped details;
+- a legacy thread with no turns still shows the current work cell;
+- simulated turn endpoint failure leaves the legacy work cell visible.
+
+Manual smoke:
+
+- start daemon/web;
+- run a new task and verify `/threads/:threadId/turns` returns a linked turn;
+- open the channel conversation and verify the work cell title/status comes from the turn;
+- run an older legacy fixture and verify it still renders.
+
 ### Tests
 
 - Create/list turns under one thread.

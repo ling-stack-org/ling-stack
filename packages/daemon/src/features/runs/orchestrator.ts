@@ -10,6 +10,7 @@ import {
   redactSecrets,
   type EffectiveRunPolicySnapshot,
   type LingThread,
+  type LingTurn,
   type RunEventEnvelope,
   type RunEventType,
   type RunArtifact,
@@ -75,6 +76,8 @@ import { appendFailureEvent, writeTerminalSummary } from "./terminal.js";
 import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
 import {
   ensureLingThreadForRun,
+  ensureLingTurnForRun,
+  inferLingTurnRunRole,
   markLingThreadRunActive,
   syncLingThreadForRunEvent,
   syncLingThreadForTerminalRun,
@@ -176,6 +179,7 @@ export async function executeRunRequest(
   let workUnit: WorkUnit | undefined;
   let attempt: WorkUnitAttempt | undefined;
   let thread: LingThread | undefined;
+  let turn: LingTurn | undefined;
   let runtime: RuntimeInstance | undefined;
   let runnerRequest: PiRunnerRunOptions;
   let preparedConcurrency: PreparedRunConcurrency = { taskExists: false, leases: [] };
@@ -310,6 +314,7 @@ export async function executeRunRequest(
       throw new HttpError(409, "duplicate_work_unit", `Duplicate work unit request: ${existingWorkUnit.id}`);
     }
     thread = ensureLingThreadForRun(store, runRequest, createdAt);
+    turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
     workUnit = store.createWorkUnit({
       workspaceId: DEFAULT_WORKSPACE_ID,
       kind: "task_run",
@@ -330,6 +335,7 @@ export async function executeRunRequest(
         effectivePolicySnapshot,
         workspaceCwd,
         threadId: thread.id,
+        turnId: turn.id,
         provider: resolvedProvider,
         runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
         runtimeSettings,
@@ -442,6 +448,7 @@ export async function executeRunRequest(
         effectivePolicySnapshot,
         workspaceCwd,
         threadId: thread.id,
+        turnId: turn.id,
         provider: resolvedProvider,
         runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
         runtimeSettings,
@@ -452,6 +459,8 @@ export async function executeRunRequest(
       },
       workUnitId: workUnit.id,
       threadId: thread.id,
+      turnId: turn.id,
+      turnRunRole: inferLingTurnRunRole(runRequest),
       parentRunId: runRequest.parentRunId,
       interventionId: runRequest.interventionId,
       continuationReason: runRequest.continuationReason,
@@ -523,6 +532,8 @@ export async function executeRunRequest(
         channel: error.channel ?? preparedConcurrency.channel,
         provider: resolvedProvider,
         thread,
+        turn,
+        turnRunRole: inferLingTurnRunRole(runRequest),
         selectedSkillId: selectedSkill?.skillId,
         queuedAt,
         reason: error.code,

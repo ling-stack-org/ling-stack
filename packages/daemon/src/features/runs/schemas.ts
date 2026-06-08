@@ -31,6 +31,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly teammateId?: string;
   readonly workflowStepId?: string;
   readonly threadId?: string;
+  readonly turnId?: string;
   readonly runnerId?: string;
   readonly requestedSkillId?: string;
   readonly tools?: readonly RunTool[];
@@ -58,6 +59,7 @@ export function parseRunRequest(value: unknown): RunRequest {
   const teammateId = readOptionalString(value, "teammateId");
   const workflowStepId = readOptionalString(value, "workflowStepId");
   const threadId = readOptionalString(value, "threadId");
+  const turnId = readOptionalString(value, "turnId");
   const runnerId = readOptionalString(value, "runnerId");
   const requestedSkillId = readOptionalString(value, "requestedSkillId");
   const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
@@ -88,6 +90,7 @@ export function parseRunRequest(value: unknown): RunRequest {
     teammateId,
     workflowStepId,
     threadId,
+    turnId,
     runnerId,
     requestedSkillId,
     skipProviderPreflight,

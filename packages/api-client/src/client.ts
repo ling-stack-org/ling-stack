@@ -70,6 +70,7 @@ import type {
   ControlPlaneSnapshotResponse,
   CreateAutomationDraftRequest,
   CreateAutomationRequest,
+  CreateLingTurnRequest,
   CreateTeammateDirectMessageRequest,
   CreateTeammatePrivateAttachmentRequest,
   CreateChannelWorkflowFromHandoffRequest,
@@ -126,6 +127,8 @@ import type {
   LingThreadResumePreviewResponse,
   LingThreadResumeRequest,
   LingThreadResumeResponse,
+  LingThreadTurnsResponse,
+  LingTurnMutationResponse,
   ListResourceLeasesRequest,
   ListStateTransitionsRequest,
   ListTasksRequest,
@@ -506,6 +509,18 @@ export class LingDaemonClient {
 
   async getLingThreadEvidence(cwd: string, threadId: string): Promise<LingThreadEvidenceResponse> {
     return this.get(`/threads/${encodeURIComponent(threadId)}/evidence`, { cwd });
+  }
+
+  async listLingThreadTurns(cwd: string, threadId: string, options: { readonly limit?: number; readonly beforeUpdatedAt?: string } = {}): Promise<LingThreadTurnsResponse> {
+    return this.get(`/threads/${encodeURIComponent(threadId)}/turns`, {
+      cwd,
+      limit: options.limit,
+      beforeUpdatedAt: options.beforeUpdatedAt,
+    });
+  }
+
+  async createLingTurn(cwd: string, threadId: string, input: CreateLingTurnRequest): Promise<LingTurnMutationResponse> {
+    return this.post(`/threads/${encodeURIComponent(threadId)}/turns`, { cwd }, input);
   }
 
   async resumeLingThread(cwd: string, threadId: string, input: LingThreadResumeRequest = {}): Promise<LingThreadResumeResponse> {
