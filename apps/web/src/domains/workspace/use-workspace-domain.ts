@@ -20,8 +20,8 @@ import {
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
 import {
+  defaultChannelCreateForm,
   defaultChannelEditForm,
-  defaultChannelForm,
 } from "../../lib/channels.js";
 import { useLatestKeyedRequestGuard } from "../../lib/use-latest-request.js";
 import type {
@@ -29,6 +29,7 @@ import type {
   ChannelAttachment,
   ChannelBrief,
   ChannelContextSummary,
+  ChannelCreateFormState,
   ChannelDecision,
   ChannelExecutionProposal,
   ChannelFormState,
@@ -66,7 +67,7 @@ export interface WorkspaceState {
   readonly channels: readonly Channel[];
   readonly channelsLoading: boolean;
   readonly selectedChannelId: string;
-  readonly channelForm: ChannelFormState;
+  readonly channelForm: ChannelCreateFormState;
   readonly channelCreateOpen: boolean;
   readonly channelEditForm: ChannelFormState;
   readonly tasks: readonly Task[];
@@ -103,7 +104,7 @@ export interface WorkspaceState {
 export interface WorkspaceActions {
   readonly setChannels: Dispatch<SetStateAction<readonly Channel[]>>;
   readonly setSelectedChannelId: Dispatch<SetStateAction<string>>;
-  readonly setChannelForm: Dispatch<SetStateAction<ChannelFormState>>;
+  readonly setChannelForm: Dispatch<SetStateAction<ChannelCreateFormState>>;
   readonly setChannelCreateOpen: Dispatch<SetStateAction<boolean>>;
   readonly setChannelEditForm: Dispatch<SetStateAction<ChannelFormState>>;
   readonly setTasks: Dispatch<SetStateAction<readonly Task[]>>;
@@ -149,8 +150,8 @@ export function useWorkspaceDomain(input: {
   const [channels, setChannels] = useState<readonly Channel[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(false);
   const [selectedChannelId, setSelectedChannelId] = useState("");
-  const [channelForm, setChannelForm] = useState<ChannelFormState>(() => ({
-    ...defaultChannelForm,
+  const [channelForm, setChannelForm] = useState<ChannelCreateFormState>(() => ({
+    ...defaultChannelCreateForm,
     boundPath: input.initialWorkspaceCwd,
   }));
   const [channelCreateOpen, setChannelCreateOpen] = useState(false);
@@ -595,7 +596,7 @@ export function useWorkspaceDomain(input: {
     setChannels([]);
     setSelectedChannelId("");
     setChannelForm((current) => ({
-      ...defaultChannelForm,
+      ...defaultChannelCreateForm,
       ...current,
       boundPath: cwd || current.boundPath,
     }));

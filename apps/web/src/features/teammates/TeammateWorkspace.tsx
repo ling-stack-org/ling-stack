@@ -64,6 +64,7 @@ import {
 } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
+import { deriveEffectiveTeammateChannelMemberships } from "../../lib/channel-teammates.js";
 import { attachmentCanPreview } from "../../lib/previews.js";
 import { providerPreflightReady } from "../../lib/providers.js";
 import { readSseResponse } from "../../sse.js";
@@ -312,7 +313,11 @@ export function TeammateWorkspace({
   }, [skillRows]);
   const executableSkillOptions = useMemo(() => effectiveSkills.filter((skill) => skill.executable), [effectiveSkills]);
   const channelsById = useMemo(() => new Map(channels.map((channel) => [channel.id, channel])), [channels]);
-  const membershipByChannelId = useMemo(() => new Map(memberships.map((membership) => [membership.channelId, membership])), [memberships]);
+  const effectiveMemberships = useMemo(
+    () => deriveEffectiveTeammateChannelMemberships({ teammate, channels, memberships }),
+    [channels, memberships, teammate],
+  );
+  const membershipByChannelId = useMemo(() => new Map(effectiveMemberships.map((membership) => [membership.channelId, membership])), [effectiveMemberships]);
   const mcpToolsByServerId = useMemo(() => {
     const grouped = new Map<string, McpTool[]>();
     for (const tool of mcpTools) {
@@ -324,7 +329,7 @@ export function TeammateWorkspace({
   const taskChannelOptions = useMemo(() => {
     const seen = new Set<string>();
     const ordered: Channel[] = [];
-    for (const membership of memberships) {
+    for (const membership of effectiveMemberships) {
       const channel = channelsById.get(membership.channelId);
       if (channel && !seen.has(channel.id)) {
         ordered.push(channel);
@@ -338,12 +343,12 @@ export function TeammateWorkspace({
       }
     }
     return ordered;
-  }, [channels, channelsById, memberships]);
+  }, [channels, channelsById, effectiveMemberships]);
   const settingsSections: readonly { readonly id: TeammateWorkspaceTab; readonly label: string; readonly count?: number; readonly danger?: boolean }[] = [
     { id: "profile", label: t("Profile") },
     { id: "model", label: t("Model") },
     { id: "permissions", label: t("Permissions") },
-    { id: "channels", label: t("Channels"), count: memberships.length },
+    { id: "channels", label: t("Channels"), count: effectiveMemberships.length },
     { id: "skills", label: t("Skills"), count: enabledSkillCount },
     { id: "memory", label: t("Memory"), count: memoryPromotionInbox.length || memoryScopes.length },
     { id: "mcp", label: t("MCP") },
@@ -1665,7 +1670,7 @@ export function TeammateWorkspace({
               <Hash size={16} />
               <h2>{t("Channels")}</h2>
             </span>
-            <small>{savingChannels ? t("Saving...") : channelMessage || memberships.length}</small>
+            <small>{savingChannels ? t("Saving...") : channelMessage || effectiveMemberships.length}</small>
           </div>
           {channels.length === 0 ? (
             <div className="client-empty-state teammate-empty">
@@ -2482,7 +2487,7 @@ export function TeammateWorkspace({
               <MetaRow label={t("Provider")} value={provider ? provider.displayName : t("None")} compact />
               <MetaRow label={t("Model")} value={provider?.model ?? "-"} compact />
               <MetaRow label={t("Approval")} value={approvalProfileText(teammate.approvalProfile, t)} compact />
-              <MetaRow label={t("Channels")} value={String(memberships.length)} compact />
+              <MetaRow label={t("Channels")} value={String(effectiveMemberships.length)} compact />
               <MetaRow label={t("Skills")} value={t("{count} executable", { count: skillStats.executable })} compact />
               <MetaRow label={t("Memory")} value={memoryScopes.some((scope) => scope.enabled) ? t("Recall enabled") : t("Recall off")} compact />
               <MetaRow label={t("MCP")} value={t("{count} authorized", { count: mcpBindings.length })} compact />

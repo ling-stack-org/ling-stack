@@ -15,6 +15,7 @@ import type {
   ChannelAttachment,
   Channel,
   ChannelContextSummary,
+  ChannelCreateFormState,
   ChannelDecision,
   ChannelFormState,
   ChannelHandoff,
@@ -84,10 +85,11 @@ import {
 import { buildInlineApprovalViews } from "../lib/inline-approvals.js";
 import {
   channelToForm,
+  defaultChannelCreateForm,
   defaultChannelEditForm,
-  defaultChannelForm,
 } from "../lib/channels.js";
 import { deriveChannelRuns, deriveChannelTasks } from "../lib/channel-artifacts.js";
+import { deriveSelectedChannelTeammateMemberships } from "../lib/channel-teammates.js";
 import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "../lib/channel-activity-triage.js";
 import { readDataString } from "../lib/data.js";
 import { titleFromPrompt } from "../lib/formatting.js";
@@ -732,15 +734,17 @@ export function AppShell(): JSX.Element {
     const workspaceCwd = form.cwd.trim();
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
     setChannelForm((current) => ({
-      ...defaultChannelForm,
+      ...defaultChannelCreateForm,
       ...current,
       name: "",
       status: "active",
       boundPath: selectedChannel?.boundPath || workspaceCwd || current.boundPath,
       defaultProviderPresetId: selectedChannel?.defaultProviderPresetId || form.providerPresetId || current.defaultProviderPresetId,
       defaultTeammateId: "",
-      allowedTools: selectedChannel?.allowedTools.length ? selectedChannel.allowedTools : defaultChannelForm.allowedTools,
-      runtimePolicy: selectedChannel?.runtimePolicy ?? defaultChannelForm.runtimePolicy,
+      selectedTeammateIds: [],
+      defaultResponderTeammateId: "",
+      allowedTools: selectedChannel?.allowedTools.length ? selectedChannel.allowedTools : defaultChannelCreateForm.allowedTools,
+      runtimePolicy: selectedChannel?.runtimePolicy ?? defaultChannelCreateForm.runtimePolicy,
     }));
     setChannelCreateOpen(true);
     setActiveView("workspace");
@@ -782,29 +786,10 @@ export function AppShell(): JSX.Element {
   );
   const selectedChannelTeammateMemberships = useMemo(() => {
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    const memberships = Object.values(teammateChannelMembershipsByTeammate)
-      .flat()
-      .filter((membership) => membership.channelId === selectedChannelId);
-    if (
-      selectedChannel?.defaultTeammateId &&
-      aiTeammates.some((teammate) => teammate.id === selectedChannel.defaultTeammateId) &&
-      !memberships.some((membership) => membership.teammateId === selectedChannel.defaultTeammateId)
-    ) {
-      memberships.push({
-        teammateId: selectedChannel.defaultTeammateId,
-        channelId: selectedChannel.id,
-        isDefault: true,
-        createdAt: selectedChannel.createdAt,
-        updatedAt: selectedChannel.updatedAt,
-      });
-    }
-    return memberships.sort((left, right) => {
-      const leftDefault = left.teammateId === selectedChannel?.defaultTeammateId;
-      const rightDefault = right.teammateId === selectedChannel?.defaultTeammateId;
-      if (leftDefault !== rightDefault) {
-        return leftDefault ? -1 : 1;
-      }
-      return left.teammateId.localeCompare(right.teammateId);
+    return deriveSelectedChannelTeammateMemberships({
+      channel: selectedChannel,
+      teammates: aiTeammates,
+      membershipsByTeammate: teammateChannelMembershipsByTeammate,
     });
   }, [aiTeammates, channels, selectedChannelId, teammateChannelMembershipsByTeammate]);
   const activeTeammateId = readTeammateSidebarTarget(activeSidebarTarget);
@@ -890,6 +875,10 @@ export function AppShell(): JSX.Element {
     const refreshes: Promise<unknown>[] = [];
     if (changed.has("runs")) {
       refreshes.push(refreshRuns(workspaceCwd));
+      if (selectedChannelId) {
+        refreshes.push(refreshChannelActivity());
+        refreshes.push(refreshRuntimeState(workspaceCwd));
+      }
     }
     if (changed.has("work_units")) {
       refreshes.push(refreshRuntimeState(workspaceCwd));
@@ -1248,6 +1237,8 @@ export function AppShell(): JSX.Element {
       refreshTasks(channelId),
       refreshChannelMessages(channelId),
       refreshChannelExecutionProposals(channelId),
+      refreshChannelFiles(channelId),
+      refreshChannelRunArtifacts(form.cwd.trim(), channelId, channelRunsForArtifacts),
       refreshChannelProtocol(channelId),
       refreshRuns(),
       refreshApprovals(),
@@ -1342,6 +1333,40 @@ export function AppShell(): JSX.Element {
     }
   }
 
+  function buildChannelCreatePayload(input: ChannelCreateFormState): ChannelFormState {
+    const defaultTeammateId = input.defaultResponderTeammateId || input.defaultTeammateId;
+    return {
+      name: input.name,
+      status: input.status,
+      boundPath: input.boundPath,
+      defaultProviderPresetId: input.defaultProviderPresetId,
+      defaultTeammateId,
+      allowedTools: input.allowedTools,
+      runtimePolicy: input.runtimePolicy,
+    };
+  }
+
+  function selectedCreateTeammateIds(input: ChannelCreateFormState): readonly string[] {
+    const ids = new Set(input.selectedTeammateIds.filter(Boolean));
+    if (input.defaultResponderTeammateId) {
+      ids.add(input.defaultResponderTeammateId);
+    }
+    return [...ids];
+  }
+
+  async function applyCreatedChannelTeammates(channelId: string, input: ChannelCreateFormState): Promise<void> {
+    const defaultTeammateId = input.defaultResponderTeammateId || input.defaultTeammateId;
+    const teammateIds = selectedCreateTeammateIds(input);
+    if (defaultTeammateId) {
+      await setDefaultChannelTeammate(channelId, defaultTeammateId);
+    }
+    for (const teammateId of teammateIds) {
+      if (teammateId !== defaultTeammateId) {
+        await addChannelTeammate(channelId, teammateId);
+      }
+    }
+  }
+
   async function saveChannel(): Promise<void> {
     if (!form.cwd.trim()) {
       setErrorMessage("本地工作区未就绪");
@@ -1354,7 +1379,8 @@ export function AppShell(): JSX.Element {
 
     try {
       setErrorMessage("");
-      const response = await createChannel(form.cwd.trim(), channelForm);
+      const response = await createChannel(form.cwd.trim(), buildChannelCreatePayload(channelForm));
+      await applyCreatedChannelTeammates(response.channel.id, channelForm);
       setSelectedChannelId(response.channel.id);
       setActiveSidebarTarget(channelSidebarTarget(response.channel.id));
       setChannelCreateOpen(false);
@@ -1362,6 +1388,9 @@ export function AppShell(): JSX.Element {
         ...current,
         name: "",
         defaultProviderPresetId: (current.defaultProviderPresetId || response.channel.defaultProviderPresetId) ?? "",
+        selectedTeammateIds: [],
+        defaultResponderTeammateId: "",
+        defaultTeammateId: "",
       }));
       await refreshChannels();
     } catch (error) {
@@ -1384,23 +1413,33 @@ export function AppShell(): JSX.Element {
         status: channelForm.status,
         boundPath: channelForm.boundPath.trim() || form.cwd.trim(),
         defaultProviderPresetId: readyProvider?.id ?? channelForm.defaultProviderPresetId,
-        defaultTeammateId: channelForm.defaultTeammateId,
+        defaultTeammateId: channelForm.defaultResponderTeammateId || channelForm.defaultTeammateId,
         allowedTools: channelForm.allowedTools.length > 0 ? channelForm.allowedTools : defaultTools,
         runtimePolicy: channelForm.runtimePolicy,
       });
+      await applyCreatedChannelTeammates(response.channel.id, channelForm);
       setSelectedChannelId(response.channel.id);
       setActiveSidebarTarget(channelSidebarTarget(response.channel.id));
       setChannelCreateOpen(false);
       setTaskRunProviderId("");
       if (readyProvider) {
-      void applyProviderToRun(readyProvider);
+        setForm((current) => ({
+          ...current,
+          providerPresetId: readyProvider.id,
+          provider: readyProvider.providerId,
+          model: readyProvider.model,
+          baseUrl: providerEffectiveBaseUrl(readyProvider, providerTemplates),
+          api: readyProvider.api,
+        }));
       }
       setChannelForm((current) => ({
         ...current,
         name: "",
         boundPath: current.boundPath || form.cwd.trim(),
         defaultProviderPresetId: readyProvider?.id ?? current.defaultProviderPresetId,
-        defaultTeammateId: current.defaultTeammateId,
+        defaultTeammateId: "",
+        selectedTeammateIds: [],
+        defaultResponderTeammateId: "",
       }));
       await refreshChannels();
     } catch (error) {
@@ -1621,10 +1660,10 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  async function createHandoffFromTask(task: Task): Promise<void> {
+  async function createHandoffFromTask(task: Task): Promise<ChannelHandoff | undefined> {
     if (!selectedChannelId) {
       setErrorMessage("请先选择 channel");
-      return;
+      return undefined;
     }
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
     const teammateId = task.assigneeTeammateId ?? selectedChannel?.defaultTeammateId ?? "engineer";
@@ -1642,8 +1681,10 @@ export function AppShell(): JSX.Element {
         createdBy: "local-user",
       });
       setChannelHandoffs((current) => [response.handoff, ...current]);
+      return response.handoff;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
+      return undefined;
     }
   }
 
@@ -2619,7 +2660,7 @@ export function AppShell(): JSX.Element {
             onSaveBrief={(input) => void saveChannelBrief(input)}
             onSupersedeDecision={(decision) => void supersedeChannelDecision(decision)}
             onRejectDecision={(decision) => void rejectChannelDecision(decision)}
-            onCreateHandoffFromTask={(task) => void createHandoffFromTask(task)}
+            onCreateHandoffFromTask={createHandoffFromTask}
             onUpdateHandoffStatus={(handoff, status) => void updateHandoffStatusValue(handoff, status)}
             onStartWorkflowFromHandoff={(handoff) => void startWorkflowFromHandoff(handoff)}
             onStartTemplateWorkflow={() => void startAutoplanWorkflow()}

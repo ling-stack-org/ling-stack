@@ -93,6 +93,11 @@ export interface ChannelFormState {
   readonly runtimePolicy: ChannelRuntimePolicy;
 }
 
+export interface ChannelCreateFormState extends ChannelFormState {
+  readonly selectedTeammateIds: readonly string[];
+  readonly defaultResponderTeammateId: string;
+}
+
 export interface TaskFormState {
   readonly title: string;
   readonly prompt: string;
