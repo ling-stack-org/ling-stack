@@ -811,6 +811,79 @@ button.artifact-action-link {
   margin-bottom: 8px;
 }
 
+.channel-run-guidance-strip {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-panel-strong) 88%, transparent);
+}
+
+.channel-run-guidance-head,
+.channel-run-guidance-actions,
+.channel-run-guidance-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.channel-run-guidance-head {
+  justify-content: space-between;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.channel-run-guidance-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.channel-run-guidance-strip textarea {
+  min-height: 54px;
+  resize: vertical;
+}
+
+.channel-run-guidance-actions {
+  flex-wrap: wrap;
+}
+
+.channel-run-guidance-list {
+  display: grid;
+  gap: 6px;
+}
+
+.channel-run-guidance-row {
+  justify-content: space-between;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+}
+
+.channel-run-guidance-row > span:not(.channel-run-guidance-status) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.channel-run-guidance-row small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-inline-error {
+  min-height: 30px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
 .inline-approval-strip {
   display: grid;
   gap: 9px;
@@ -2102,6 +2175,8 @@ code,
 .channel-left-drawer {
   gap: 14px;
   width: 232px;
+  height: 100%;
+  min-height: 0;
   padding: 60px 14px 18px;
   border-right: 1px solid var(--border);
   background: var(--surface-panel);
@@ -2151,9 +2226,22 @@ code,
   min-height: 0;
 }
 
-.channel-left-drawer .sidebar-section:last-of-type {
+.channel-left-drawer .sidebar-section:first-of-type {
   flex: 1 1 auto;
   grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.channel-left-drawer .sidebar-section:first-of-type .sidebar-section-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.channel-left-drawer .sidebar-section:last-of-type {
+  flex: 0 1 auto;
+  max-height: 34%;
+  grid-template-rows: auto minmax(0, auto);
   overflow: hidden;
 }
 
@@ -5818,6 +5906,95 @@ code,
 
 .channel-options {
   margin: 0 14px 14px;
+}
+
+.channel-create-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(15 23 42 / 28%);
+}
+
+.channel-create-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(720px, calc(100vw - 48px));
+  max-height: min(780px, calc(100dvh - 48px));
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.channel-create-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.channel-create-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.channel-create-grid {
+  padding-top: 0;
+}
+
+.channel-create-teammates {
+  display: grid;
+  gap: 8px;
+}
+
+.channel-create-teammate-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.channel-create-teammate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel-strong);
+  color: var(--text);
+  text-align: left;
+}
+
+.channel-create-teammate.selected {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.channel-create-teammate span:not(.avatar-initial) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.channel-create-teammate strong,
+.channel-create-teammate small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-create-teammate small {
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .channel-options-grid {

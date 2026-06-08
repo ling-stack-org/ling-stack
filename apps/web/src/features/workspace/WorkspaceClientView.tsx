@@ -44,7 +44,7 @@ import {
   X,
 } from "lucide-react";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { artifactContentUrl } from "../../api.js";
+import { artifactContentUrl, cancelRunIntervention, createRunIntervention, listRunInterventions } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -128,6 +128,7 @@ import type {
   ChannelAttachment,
   ChannelBrief,
   ChannelContextSummary,
+  ChannelCreateFormState,
   ChannelDecision,
   ChannelFormState,
   ChannelHandoff,
@@ -146,6 +147,7 @@ import type {
   ResourceLease,
   RuntimeDiagnosticsResponse,
   RunArtifact,
+  RunIntervention,
   RunSession,
   PermissionPreset,
   SessionPermissionMode,
@@ -210,6 +212,18 @@ interface PendingLinkPreviewItem {
   readonly state: PendingAssetState;
   readonly preview?: ChannelLinkPreview;
   readonly error?: string;
+}
+
+interface ChannelComposerSnapshot {
+  readonly messageDraft: string;
+  readonly pendingAttachments: readonly PendingAttachmentItem[];
+  readonly pendingLinkPreviews: readonly PendingLinkPreviewItem[];
+  readonly messageMentions: readonly ChannelMention[];
+  readonly sendState: ComposerSendState;
+  readonly sendError: string;
+  readonly activeThreadId: string;
+  readonly threadReplyDraft: string;
+  readonly threadReplyError: string;
 }
 
 interface ActiveMentionPicker {
@@ -406,7 +420,7 @@ export function WorkspaceClientView({
   readonly providerLabel: string;
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
-  readonly channelForm: ChannelFormState;
+  readonly channelForm: ChannelCreateFormState;
   readonly channelCreateOpen: boolean;
   readonly channelEditForm: ChannelFormState;
   readonly tasks: readonly Task[];
@@ -472,7 +486,7 @@ export function WorkspaceClientView({
   readonly runningWorkflowStepId: string;
   readonly orchestratingWorkflowId: string;
   readonly errorMessage: string;
-  readonly onChannelFormChange: (form: ChannelFormState) => void;
+  readonly onChannelFormChange: (form: ChannelCreateFormState) => void;
   readonly onChannelCreateOpenChange: (open: boolean) => void;
   readonly onChannelEditFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
@@ -501,7 +515,7 @@ export function WorkspaceClientView({
   readonly onSaveBrief: (input: UpdateChannelBriefRequest) => void;
   readonly onSupersedeDecision: (decision: ChannelDecision) => void;
   readonly onRejectDecision: (decision: ChannelDecision) => void;
-  readonly onCreateHandoffFromTask: (task: Task) => void;
+  readonly onCreateHandoffFromTask: (task: Task) => Promise<ChannelHandoff | undefined>;
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
   readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
   readonly onStartTemplateWorkflow: () => void;
@@ -596,6 +610,7 @@ export function WorkspaceClientView({
   const autoPreviewUrlsRef = useRef(new Set<string>());
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
   const previousChannelIdRef = useRef(selectedChannelId);
+  const composerSnapshotsRef = useRef<Record<string, ChannelComposerSnapshot>>({});
   const activeRun = activeRunId ? runById.get(activeRunId) : undefined;
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const taskChannelById = useMemo(() => new Map(tasks.map((task) => [task.id, task.channelId])), [tasks]);
@@ -673,9 +688,17 @@ export function WorkspaceClientView({
           icon: <SquareTerminal size={14} />,
           onClick: () => openRunInPanel(activeConversationRun.id),
         },
+        {
+          id: "stop-run",
+          label: isCancellingRun ? t("Stopping") : t("Stop"),
+          icon: isCancellingRun ? <Loader2 className="spin" size={14} /> : <Square size={14} />,
+          danger: true,
+          disabled: isCancellingRun,
+          onClick: () => onCancelActiveRun(activeConversationRun),
+        },
       ]}
     />
-  ) : pendingApprovalCount > 0 ? (
+  ) : pendingApprovalCount > 0 && inlineApprovalViews.length === 0 ? (
     <ConversationStatusStrip
       className="channel-active-status-strip attention"
       icon={<ShieldCheck size={15} />}
@@ -694,7 +717,7 @@ export function WorkspaceClientView({
         },
       ]}
     />
-  ) : providerBlocker ? (
+  ) : providerBlocker && inlineApprovalViews.length === 0 ? (
     <ConversationStatusStrip
       className="channel-active-status-strip attention"
       icon={<CircleAlert size={15} />}
@@ -1036,15 +1059,55 @@ export function WorkspaceClientView({
   }, [channelExecutionProposals]);
   const channelRunsForFiles = channelRuns;
 
+  function readCurrentComposerSnapshot(): ChannelComposerSnapshot {
+    return {
+      messageDraft,
+      pendingAttachments,
+      pendingLinkPreviews,
+      messageMentions,
+      sendState,
+      sendError,
+      activeThreadId,
+      threadReplyDraft,
+      threadReplyError,
+    };
+  }
+
+  function emptyComposerSnapshot(): ChannelComposerSnapshot {
+    return {
+      messageDraft: "",
+      pendingAttachments: [],
+      pendingLinkPreviews: [],
+      messageMentions: [],
+      sendState: "idle",
+      sendError: "",
+      activeThreadId: "",
+      threadReplyDraft: "",
+      threadReplyError: "",
+    };
+  }
+
+  function applyComposerSnapshot(snapshot: ChannelComposerSnapshot): void {
+    setMessageDraft(snapshot.messageDraft);
+    setPendingAttachments(snapshot.pendingAttachments);
+    setPendingLinkPreviews(snapshot.pendingLinkPreviews);
+    setMessageMentions(snapshot.messageMentions);
+    setSendState(snapshot.sendState);
+    setSendError(snapshot.sendError);
+    setActiveThreadId(snapshot.activeThreadId);
+    setThreadReplyDraft(snapshot.threadReplyDraft);
+    setThreadReplyError(snapshot.threadReplyError);
+    setMentionPicker(undefined);
+    setMentionActiveIndex(0);
+    autoPreviewUrlsRef.current = new Set(snapshot.pendingLinkPreviews.map((item) => item.url));
+  }
+
   useEffect(() => {
     setActivitySavedViews(readCustomChannelActivitySavedViews(cwd, selectedChannelId));
     applyActivityView(builtinChannelActivitySavedViews[0]);
     setActivityFiltersExpanded(false);
     setAttentionQueueExpanded(false);
     setActivityDrilldownItemId("");
-    setActiveThreadId("");
-    setThreadReplyDraft("");
-    setThreadReplyError("");
     setPendingChannelTeammateId("");
     setChannelNotificationLevel(readChannelNotificationLevel(cwd, selectedChannelId));
     messageFeedPinnedToLatestRef.current = true;
@@ -1118,16 +1181,12 @@ export function WorkspaceClientView({
     if (!previousChannelId || previousChannelId === selectedChannelId) {
       return;
     }
-    setMessageDraft("");
-    setMessageMentions([]);
-    setMentionPicker(undefined);
-    setMentionActiveIndex(0);
-    revokePendingAttachmentPreviews(pendingAttachments);
-    setPendingAttachments([]);
-    setPendingLinkPreviews([]);
-    autoPreviewUrlsRef.current.clear();
-    setSendState("idle");
-    setSendError("");
+    composerSnapshotsRef.current[previousChannelId] = readCurrentComposerSnapshot();
+    applyComposerSnapshot(
+      selectedChannelId
+        ? composerSnapshotsRef.current[selectedChannelId] ?? emptyComposerSnapshot()
+        : emptyComposerSnapshot(),
+    );
     setActivitySearch("");
     setActivityCategoryFilter("all");
     setActivityAttentionFilter("all");
@@ -1135,9 +1194,6 @@ export function WorkspaceClientView({
     setActivityFiltersExpanded(false);
     setAttentionQueueExpanded(false);
     setActivityDrilldownItemId("");
-    setActiveThreadId("");
-    setThreadReplyDraft("");
-    setThreadReplyError("");
     setPendingChannelTeammateId("");
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -1231,8 +1287,15 @@ export function WorkspaceClientView({
 
   function openRunInPanel(runId: string): void {
     const run = runById.get(runId);
+    setActivityToolsOpen(false);
+    setChannelMoreOpen(false);
+    setSidePanelView("progress");
+    setSidePanelOpen(true);
+    onRefreshChannelActivity();
+    onRefreshChannelFiles();
+    onRefreshTasks();
     if (run?.taskId && taskById.has(run.taskId)) {
-      selectTask(run.taskId);
+      onSelectTask(run.taskId);
       return;
     }
     onOpenRun(runId);
@@ -1343,6 +1406,47 @@ export function WorkspaceClientView({
     const teammateId = pendingChannelTeammateId;
     setPendingChannelTeammateId("");
     void onAddChannelTeammate(teammateId);
+  }
+
+  function toggleCreateChannelTeammate(teammateId: string): void {
+    const selected = new Set(channelForm.selectedTeammateIds);
+    if (selected.has(teammateId)) {
+      selected.delete(teammateId);
+    } else {
+      selected.add(teammateId);
+    }
+    const selectedTeammateIds = [...selected];
+    const defaultResponderTeammateId = selectedTeammateIds.includes(channelForm.defaultResponderTeammateId)
+      ? channelForm.defaultResponderTeammateId
+      : selectedTeammateIds[0] ?? "";
+    onChannelFormChange({
+      ...channelForm,
+      selectedTeammateIds,
+      defaultResponderTeammateId,
+      defaultTeammateId: defaultResponderTeammateId,
+    });
+  }
+
+  function setCreateChannelDefaultResponder(teammateId: string): void {
+    const selected = new Set(channelForm.selectedTeammateIds);
+    if (teammateId) {
+      selected.add(teammateId);
+    }
+    const selectedTeammateIds = [...selected];
+    onChannelFormChange({
+      ...channelForm,
+      selectedTeammateIds,
+      defaultResponderTeammateId: teammateId,
+      defaultTeammateId: teammateId,
+    });
+  }
+
+  function updateCreateChannelRuntimeForm(nextForm: ChannelFormState): void {
+    onChannelFormChange({
+      ...nextForm,
+      selectedTeammateIds: channelForm.selectedTeammateIds,
+      defaultResponderTeammateId: channelForm.defaultResponderTeammateId,
+    });
   }
 
   function applyActivityView(view: ChannelActivitySavedView): void {
@@ -1459,6 +1563,7 @@ export function WorkspaceClientView({
       workflows={channelWorkflows}
       workflowSteps={channelWorkflowSteps}
       onCreateHandoffFromTask={onCreateHandoffFromTask}
+      onOpenHandoffs={() => openProtocolFromActivity("handoffs")}
       onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
       onCheckThenRunTask={onCheckThenRunTask}
       onRunTask={onRunTask}
@@ -1592,6 +1697,10 @@ export function WorkspaceClientView({
     () => activeLocalTeammates.filter((teammate) => !teammate.hidden && !channelTeammateIds.has(teammate.id)),
     [activeLocalTeammates, channelTeammateIds],
   );
+  const createChannelTeammateOptions = useMemo(
+    () => activeLocalTeammates.filter((teammate) => !teammate.hidden),
+    [activeLocalTeammates],
+  );
 
   function updateMentionPicker(value: string, caret: number): void {
     const activeMention = findActiveMention(value, caret);
@@ -1668,6 +1777,11 @@ export function WorkspaceClientView({
 
   function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
     if (!mentionPicker || mentionPickerOptions.length === 0) {
+      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+        event.preventDefault();
+        void sendMessage();
+        return;
+      }
       if (event.key === "Escape") {
         setMentionPicker(undefined);
       }
@@ -2418,6 +2532,19 @@ export function WorkspaceClientView({
   const channelComposer = (
     <section className="composer-panel channel-composer" aria-label={t("Channel composer")}>
       {channelActiveStatusStrip}
+      {activeConversationRun ? (
+        <ChannelRunGuidanceStrip
+          cwd={cwd}
+          run={activeConversationRun}
+          canRedirect={!isCancellingRun}
+          onChanged={() => {
+            onRefreshChannelActivity();
+            onRefreshTasks();
+            onRefreshRuntime();
+            onRefreshRunApprovals();
+          }}
+        />
+      ) : null}
       <InlineApprovalStrip
         approvals={inlineApprovalViews}
         resolvingApprovals={resolvingApprovals}
@@ -3057,16 +3184,22 @@ export function WorkspaceClientView({
       ) : null}
 
       {channelCreateOpen ? (
-        <section className="workbench-settings-panel channel-options" aria-label={t("New channel")}>
-          <section className="channel-settings-card channel-management-panel">
-            <div className="channel-settings-section-head">
+        <div className="channel-create-overlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) {
+            onChannelCreateOpenChange(false);
+          }
+        }}>
+          <section className="channel-create-dialog" role="dialog" aria-modal="true" aria-label={t("New channel")}>
+            <div className="channel-create-head">
               <span>
-                <Plus size={15} />
+                <Plus size={16} />
                 <strong>{t("New channel")}</strong>
               </span>
-              <small>{t("Create or select a channel first.")}</small>
+              <button className="icon-button" type="button" onClick={() => onChannelCreateOpenChange(false)} aria-label={t("Cancel")} title={t("Cancel")}>
+                <X size={14} />
+              </button>
             </div>
-            <div className="channel-options-grid">
+            <div className="channel-options-grid channel-create-grid">
               <label className="field wide">
                 <span>{t("Run provider")}</span>
                 <select value={channelForm.defaultProviderPresetId} onChange={(event) => onChannelFormChange({ ...channelForm, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0}>
@@ -3076,25 +3209,53 @@ export function WorkspaceClientView({
               </label>
               <label className="field wide">
                 <span>{t("Name")}</span>
-                <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} />
+                <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} autoFocus />
               </label>
-              <label className="field wide">
-                <span>{t("Execution path")}</span>
-                <input value={channelForm.boundPath} onChange={(event) => onChannelFormChange({ ...channelForm, boundPath: event.target.value })} />
-              </label>
+              <section className="channel-create-teammates field wide" aria-label={t("AI teammates")}>
+                <span>{t("AI teammates")}</span>
+                {createChannelTeammateOptions.length === 0 ? (
+                  <div className="client-empty-state compact-empty">
+                    <UserPlus size={16} />
+                    <span>{t("Create a workspace teammate before assigning channel members.")}</span>
+                  </div>
+                ) : (
+                  <div className="channel-create-teammate-grid">
+                    {createChannelTeammateOptions.map((teammate) => {
+                      const selected = channelForm.selectedTeammateIds.includes(teammate.id);
+                      const isDefault = channelForm.defaultResponderTeammateId === teammate.id;
+                      return (
+                        <button
+                          key={teammate.id}
+                          className={selected ? "channel-create-teammate selected" : "channel-create-teammate"}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => toggleCreateChannelTeammate(teammate.id)}
+                        >
+                          <AvatarInitial label={teammate.displayName.slice(0, 1).toUpperCase() || "A"} tone={isDefault ? "teal" : "gray"} />
+                          <span>
+                            <strong>{teammate.displayName}</strong>
+                            <small>{isDefault ? t("Default teammate") : selected ? t("Joined channel") : t("Not joined")}</small>
+                          </span>
+                          {selected ? <Check size={14} /> : <Plus size={14} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
               <label className="field wide">
                 <span>{t("Default AI teammate")}</span>
-                <select value={channelForm.defaultTeammateId} onChange={(event) => onChannelFormChange({ ...channelForm, defaultTeammateId: event.target.value })}>
+                <select value={channelForm.defaultResponderTeammateId} onChange={(event) => setCreateChannelDefaultResponder(event.target.value)} disabled={createChannelTeammateOptions.length === 0}>
                   <option value="">{t("No default teammate")}</option>
-                  {teammateOptions.map((option) => (
-                    <option key={option.id} value={option.id}>{option.label}</option>
+                  {createChannelTeammateOptions.map((teammate) => (
+                    <option key={teammate.id} value={teammate.id}>{teammate.displayName}</option>
                   ))}
                 </select>
               </label>
-              <ChannelRuntimePolicyFields form={channelForm} onChange={onChannelFormChange} />
+              <ChannelRuntimePolicyFields form={channelForm} onChange={updateCreateChannelRuntimeForm} />
               <div className="channel-option-actions">
                 <button className="primary-button compact-button" type="button" onClick={onCreateChannel} disabled={channelsLoading}>
-                  <Plus size={14} />
+                  {channelsLoading ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
                   {t("Create channel")}
                 </button>
                 <button className="secondary-button compact-button" type="button" onClick={() => onChannelCreateOpenChange(false)}>
@@ -3103,7 +3264,7 @@ export function WorkspaceClientView({
               </div>
             </div>
           </section>
-        </section>
+        </div>
       ) : null}
 
       {errorMessage ? (
@@ -4392,6 +4553,171 @@ function openProgressTarget(
   onOpenContext();
 }
 
+function ChannelRunGuidanceStrip({
+  cwd,
+  run,
+  canRedirect,
+  onChanged,
+}: {
+  readonly cwd: string;
+  readonly run: RunSession;
+  readonly canRedirect: boolean;
+  readonly onChanged: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const sourceRunId = run.parentRunId ?? run.id;
+  const [instruction, setInstruction] = useState("");
+  const [interventions, setInterventions] = useState<readonly RunIntervention[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [submittingMode, setSubmittingMode] = useState<RunIntervention["mode"] | "">("");
+  const [cancellingId, setCancellingId] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const loadInterventions = async (): Promise<void> => {
+    if (!cwd || !sourceRunId) {
+      setInterventions([]);
+      return;
+    }
+    setLoading(true);
+    setErrorMessage("");
+    try {
+      const response = await listRunInterventions(cwd, sourceRunId, 100);
+      setInterventions(response.interventions);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadInterventions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cwd, sourceRunId]);
+
+  const submitGuidance = async (mode: RunIntervention["mode"]): Promise<void> => {
+    const trimmed = instruction.trim();
+    if (!trimmed) {
+      setErrorMessage(t("Please enter guidance first."));
+      return;
+    }
+    setSubmittingMode(mode);
+    setErrorMessage("");
+    try {
+      const response = await createRunIntervention(cwd, sourceRunId, {
+        mode,
+        instruction: trimmed,
+        idempotencyKey: `web-channel:${run.id}:${mode}:${Date.now()}`,
+      });
+      setInterventions((current) => [...current.filter((item) => item.id !== response.intervention.id), response.intervention]
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)));
+      setInstruction("");
+      onChanged();
+      window.setTimeout(() => {
+        void loadInterventions();
+        onChanged();
+      }, mode === "interrupt_redirect" ? 800 : 250);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSubmittingMode("");
+    }
+  };
+
+  const cancelGuidance = async (interventionId: string): Promise<void> => {
+    setCancellingId(interventionId);
+    setErrorMessage("");
+    try {
+      const response = await cancelRunIntervention(cwd, interventionId);
+      setInterventions((current) => current.map((item) => item.id === response.intervention.id ? response.intervention : item));
+      onChanged();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCancellingId("");
+    }
+  };
+
+  const visibleInterventions = interventions.filter((item) => item.sourceRunId === sourceRunId);
+
+  return (
+    <section className="channel-run-guidance-strip" aria-label={t("Run guidance")}>
+      <div className="channel-run-guidance-head">
+        <span>
+          <Workflow size={14} />
+          <strong>{t("Run guidance")}</strong>
+        </span>
+        {loading ? <Loader2 className="spin" size={13} /> : null}
+      </div>
+      <textarea
+        value={instruction}
+        rows={2}
+        onChange={(event) => setInstruction(event.currentTarget.value)}
+        placeholder={t("Tell this run what to do next...")}
+      />
+      <div className="channel-run-guidance-actions">
+        <button className="secondary-button compact-button" type="button" onClick={() => void submitGuidance("queue_followup")} disabled={Boolean(submittingMode) || !instruction.trim()}>
+          {submittingMode === "queue_followup" ? <Loader2 className="spin" size={13} /> : <Clock3 size={13} />}
+          {t("Queue guidance")}
+        </button>
+        <button className="secondary-button danger compact-button" type="button" onClick={() => void submitGuidance("interrupt_redirect")} disabled={Boolean(submittingMode) || !instruction.trim() || !canRedirect}>
+          {submittingMode === "interrupt_redirect" ? <Loader2 className="spin" size={13} /> : <Square size={13} />}
+          {t("Stop and redirect")}
+        </button>
+      </div>
+      {errorMessage ? (
+        <div className="inline-error compact-inline-error">
+          <CircleAlert size={14} />
+          {errorMessage}
+        </div>
+      ) : null}
+      {visibleInterventions.length > 0 ? (
+        <div className="channel-run-guidance-list">
+          {visibleInterventions.slice(0, 4).map((item) => (
+            <div key={item.id} className="channel-run-guidance-row">
+              <span className="channel-run-guidance-status" title={channelRunInterventionStatusLabel(item.status, t)}>
+                <StatusBadge status={item.status} />
+              </span>
+              <span>
+                <strong>{item.mode === "interrupt_redirect" ? t("Stop and redirect") : t("Queue guidance")}</strong>
+                <small>{item.instruction}</small>
+              </span>
+              {item.status === "queued" ? (
+                <button className="secondary-button compact-button" type="button" onClick={() => void cancelGuidance(item.id)} disabled={cancellingId === item.id}>
+                  {cancellingId === item.id ? <Loader2 className="spin" size={12} /> : null}
+                  {t("Cancel")}
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function channelRunInterventionStatusLabel(
+  status: RunIntervention["status"],
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  if (status === "cancelling_source") {
+    return t("Stopping source");
+  }
+  if (status === "starting_continuation") {
+    return t("Starting continuation");
+  }
+  if (status === "started") {
+    return t("Started");
+  }
+  if (status === "cancelled") {
+    return t("Cancelled");
+  }
+  if (status === "failed") {
+    return t("Failed");
+  }
+  return t("Queued");
+}
+
 function ChannelApprovalDetailPanel({
   approval,
   resolvingDecision,
@@ -4610,6 +4936,7 @@ function TaskDetailPanel({
   workflows,
   workflowSteps,
   onCreateHandoffFromTask,
+  onOpenHandoffs,
   onCreateTaskFromContextSummary,
   onCheckThenRunTask,
   onRunTask,
@@ -4644,7 +4971,8 @@ function TaskDetailPanel({
   readonly contextSummaries: readonly ChannelContextSummary[];
   readonly workflows: readonly ChannelWorkflow[];
   readonly workflowSteps: readonly ChannelWorkflowStep[];
-  readonly onCreateHandoffFromTask: (task: Task) => void;
+  readonly onCreateHandoffFromTask: (task: Task) => Promise<ChannelHandoff | undefined>;
+  readonly onOpenHandoffs: () => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
@@ -4694,6 +5022,32 @@ function TaskDetailPanel({
     }
     return timelineRunId ? approval.runId === timelineRunId : approval.taskId === task.id;
   });
+  const [handoffState, setHandoffState] = useState<{ readonly status: "idle" | "saving" | "saved" | "failed"; readonly message: string }>({
+    status: "idle",
+    message: "",
+  });
+
+  useEffect(() => {
+    setHandoffState({ status: "idle", message: "" });
+  }, [task.id]);
+
+  async function handleCreateHandoff(): Promise<void> {
+    if (handoffState.status === "saving") {
+      return;
+    }
+    setHandoffState({ status: "saving", message: "" });
+    try {
+      const handoff = await onCreateHandoffFromTask(task);
+      if (!handoff) {
+        setHandoffState({ status: "failed", message: t("Create handoff failed") });
+        return;
+      }
+      setHandoffState({ status: "saved", message: t("Handoff created") });
+      onOpenHandoffs();
+    } catch (error) {
+      setHandoffState({ status: "failed", message: error instanceof Error ? error.message : String(error) });
+    }
+  }
 
   return (
     <article className="client-task-card task-detail selected" aria-label={t("Task detail")}>
@@ -4823,9 +5177,9 @@ function TaskDetailPanel({
         </details>
       </div>
       <div className="task-actions">
-        <button className="secondary-button compact-button" type="button" onClick={() => onCreateHandoffFromTask(task)}>
-          <Workflow size={14} />
-          {t("Create handoff")}
+        <button className="secondary-button compact-button" type="button" onClick={() => void handleCreateHandoff()} disabled={handoffState.status === "saving"}>
+          {handoffState.status === "saving" ? <Loader2 className="spin" size={14} /> : <Workflow size={14} />}
+          {handoffState.status === "saving" ? t("Creating") : t("Create handoff")}
         </button>
         <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={taskActionsDisabled || !effectiveProvider || !canUseProviderForRun(effectiveProvider)}>
           {checkRunLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
@@ -4836,6 +5190,12 @@ function TaskDetailPanel({
           {t("Run")}
         </button>
       </div>
+      {handoffState.status === "saved" || handoffState.status === "failed" ? (
+        <div className={handoffState.status === "saved" ? "provider-run-notice ok" : "provider-run-notice"}>
+          {handoffState.status === "saved" ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
+          <span>{handoffState.message}</span>
+        </div>
+      ) : null}
       {pendingRunApprovals.length > 0 ? (
         <div className="inline-approval-panel task-approval-panel" aria-live="polite">
           <div className="inline-approval-head">
@@ -5122,7 +5482,7 @@ function ThreadReplyPanel({
           rows={3}
           onChange={(event) => onDraftChange(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               onSend();
             }

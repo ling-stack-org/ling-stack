@@ -483,6 +483,10 @@ test("wide channel attention popover keeps the accepted HTML spacing", async ({ 
 
 test("channel runtime policy and default teammate are visible and used when creating channels", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "pending" });
+  state.aiTeammates = [
+    createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
+    createMockTeammate({ id: "designer", roleKey: "designer", displayName: "Ling Designer" }),
+  ];
   const openAiTemplate = {
     templateId: "openai-gpt",
     description: "Official OpenAI endpoint.",
@@ -507,8 +511,9 @@ test("channel runtime policy and default teammate are visible and used when crea
   await expect(page.getByLabel("Channel management").getByLabel("Default AI teammate")).toHaveValue("engineer");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New channel" }).click();
-  const createChannelPanel = page.getByRole("region", { name: "New channel" });
+  const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
   await expect(createChannelPanel).toBeVisible();
+  await expect(createChannelPanel.getByLabel("Execution path")).toHaveCount(0);
   await createChannelPanel.getByLabel("Name").fill("Release");
   await createChannelPanel.getByLabel("Status").selectOption("paused");
   await createChannelPanel.getByLabel("Default AI teammate").selectOption("designer");
@@ -1101,9 +1106,13 @@ test("channel activity keeps the composer visible while the message feed scrolls
     element.dispatchEvent(new Event("scroll"));
   });
   await expect(latestButton).toBeVisible();
-  const latestButtonBox = await latestButton.boundingBox();
-  expect(latestButtonBox?.width ?? 0).toBeGreaterThanOrEqual(40);
-  expect(latestButtonBox?.height ?? 0).toBeGreaterThanOrEqual(40);
+  await expect.poll(async () => {
+    const latestButtonBox = await latestButton.boundingBox();
+    return {
+      width: Math.round(latestButtonBox?.width ?? 0),
+      height: Math.round(latestButtonBox?.height ?? 0),
+    };
+  }).toMatchObject({ width: 42, height: 42 });
   await latestButton.click({ force: true });
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   await expect(latestButton).toHaveCount(0);

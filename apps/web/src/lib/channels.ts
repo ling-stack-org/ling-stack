@@ -1,4 +1,4 @@
-import type { Channel, ChannelFormState } from "../types.js";
+import type { Channel, ChannelCreateFormState, ChannelFormState } from "../types.js";
 import { defaultTools } from "./tools.js";
 
 export const defaultChannelForm: ChannelFormState = {
@@ -25,6 +25,12 @@ export const defaultChannelEditForm: ChannelFormState = {
   defaultTeammateId: "",
   allowedTools: defaultTools,
   runtimePolicy: defaultChannelForm.runtimePolicy,
+};
+
+export const defaultChannelCreateForm: ChannelCreateFormState = {
+  ...defaultChannelForm,
+  selectedTeammateIds: [],
+  defaultResponderTeammateId: "",
 };
 
 export function effectiveChannelRuntimePolicy(channel: Pick<Channel, "runtimePolicy"> | undefined): ChannelFormState["runtimePolicy"] {
