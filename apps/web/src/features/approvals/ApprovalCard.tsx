@@ -57,7 +57,7 @@ export function ApprovalCard({
   const requiresSecondConfirmation = approval.risk === "high" || approval.risk === "critical";
   const trimmedReason = decisionReason.trim();
   const effectiveStatus = effectiveApprovalStatus(approval);
-  const timing = approvalTimingLabel(approval);
+  const timing = translateApprovalTimingLabel(approvalTimingLabel(approval), t);
   const ownerLabels = approvalOwnerLabels(approval);
 
   function submitDecision(decision: ApprovalResolution): void {
@@ -90,13 +90,13 @@ export function ApprovalCard({
       <div className="approval-main">
         <div className="approval-head">
           <strong>{approval.title}</strong>
-          <span className={`approval-state ${effectiveStatus}`}>{effectiveStatus}</span>
-          <span className={`approval-risk ${approval.risk}`}>{approval.risk}</span>
+          <span className={`approval-state ${effectiveStatus}`}>{t(effectiveStatus)}</span>
+          <span className={`approval-risk ${approval.risk}`}>{t(approval.risk)}</span>
         </div>
         <p>{approval.description}</p>
         <div className="provider-meta-line">
-          <span>{approval.actionType}</span>
-          {ownerLabels.map((label) => <span key={label}>{label}</span>)}
+          <span>{t(approval.actionType)}</span>
+          {ownerLabels.map((label) => <span key={label}>{t(label)}</span>)}
           <time>{formatDateTime(approval.createdAt)}</time>
           {timing ? <time>{timing}</time> : null}
           {approval.resolvedAt ? <time>{t("resolved {time}", { time: formatDateTime(approval.resolvedAt) })}</time> : null}
@@ -168,6 +168,16 @@ export function ApprovalCard({
       ) : null}
     </article>
   );
+}
+
+function translateApprovalTimingLabel(timing: string, t: (key: string, values?: Readonly<Record<string, string | number>>) => string): string {
+  if (timing.startsWith("expired ")) {
+    return t("expired {time}", { time: timing.slice("expired ".length) });
+  }
+  if (timing.startsWith("expires in ")) {
+    return t("expires in {duration}", { duration: timing.slice("expires in ".length) });
+  }
+  return timing;
 }
 
 function ExternalActionAuditPanel({

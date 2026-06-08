@@ -54,7 +54,7 @@ export function viewTitle(view: ViewId): string {
     return "Review Queue";
   }
   if (view === "work_board") {
-    return "Global Work Board";
+    return "Work Board";
   }
   if (view === "media") {
     return "Media jobs";
@@ -85,7 +85,7 @@ export function viewDescription(view: ViewId): string {
     return "处理跨频道注意事项、外部动作审批、已批准动作执行和离线本地审批。";
   }
   if (view === "work_board") {
-    return "跨频道查看当前工作、等待原因、来源、负责人和可操作入口。";
+    return "全局工作状态台账：按频道、来源、负责人、等待原因和阻塞状态查看所有工作。";
   }
   if (view === "media") {
     return "创建和查看媒体 job 元数据；当前切片只验证模型与适配器边界，不调用真实媒体生成 API。";

@@ -2,7 +2,8 @@
 
 ## Status
 
-Design plan.
+Design plan with current Web IA implemented for the top-level Review Queue and Work
+Board surfaces.
 
 This document defines the product boundary between Codex-style local runtime
 permission approvals, external-work review, the global Work Board, and channel-scoped
@@ -49,7 +50,7 @@ local runtime permission
 
 external event or cross-context attention
 -> Inbox / Review Queue for routing or review
--> Global Work Board as the full work ledger
+-> top-level Work Board / Global Work Board as the full work ledger
 -> Channel Work Board as the channel-filtered execution queue
 ```
 
@@ -76,6 +77,8 @@ connected to the current execution.
 ### Inbox / Review Queue
 
 Inbox is a review and routing queue, not the main permission UI.
+In the Web sidebar, the short navigation label is `Inbox` / `收件箱`; the product
+concept remains Review Queue.
 
 It answers:
 
@@ -91,6 +94,8 @@ cross-context visibility, external action review, or offline catch-up.
 ### Global Work Board
 
 Global Work Board is the full work ledger across channels and sources.
+In the Web sidebar, this is a top-level `Work Board` / `工作看板` entry. It is not a
+Model Workbench subview.
 
 It answers:
 
@@ -322,6 +327,10 @@ Global Work Board should support:
 This surface can be discoverable from navigation, but it should not become the homepage
 or the only place to understand active work.
 
+The first Web version uses a grouped ledger with a contextual detail drawer. The drawer
+is opened from Work Board rows and Review Queue-style links; it is not a separate
+navigation item.
+
 ### Channel Work Board
 
 Channel Work Board should be the main daily execution view for agent work:
@@ -357,8 +366,8 @@ The channel attention popover should stay lightweight:
 - Keep existing approval, run, external-work, and task stores unchanged.
 - Derive Inbox and board rows from existing records in the Web domain layer or daemon
   facade.
-- Make UI labels reflect the boundary: Inline Approval, Review Queue, Global Work Board,
-  Channel Work Board.
+- Make UI labels reflect the boundary: Inline Approval, `Inbox` / `Review Queue`,
+  top-level `Work Board` / `Global Work Board`, and Channel Work Board.
 
 ### Slice 2: Review Queue Routing
 
@@ -416,12 +425,16 @@ This slice is where the strongest OpenClaw Workboard execution protocol becomes 
 - No hidden prompt injection to steer an active run.
 - No migration from the embedded Pi runner backend to Codex app-server JSON-RPC.
 
+## Resolved IA Decisions
+
+- The Web sidebar uses `Inbox` / `收件箱` as the short label for Review Queue.
+- The Web sidebar uses a top-level `Work Board` / `工作看板` entry for Global Work Board.
+- Work detail is a contextual drawer inside Work Board or Review Queue flows, not a
+  navigation item.
+- Global Work Board does not live under Model Workbench.
+
 ## Open Questions
 
-- Should "Inbox" be renamed "Review Queue" in the UI, or should "Inbox" remain the
-  short navigation label with "Review Queue" as the page title?
-- Should Global Work Board be top-level navigation, or should it live behind Workspace
-  until there are enough cross-channel operators?
 - Should unassigned external work be allowed to auto-route by `WORKFLOW.md`, or should
   v1 require explicit user routing when multiple channels match?
 - Should runtime permission requests older than the active run remain visible inline,

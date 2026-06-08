@@ -2,7 +2,8 @@
 
 ## Status
 
-Design plan.
+Design plan with current Web IA implemented for the top-level Review Queue and Work
+Board surfaces.
 
 This document defines the detailed product and implementation plan for Review Queue,
 Global Work Board, and Channel Work Board. It is the external-work and multi-agent work
@@ -50,7 +51,7 @@ claim, heartbeat, retries, dependencies, and cross-channel routing cleanly.
 | Web approvals | `apps/web/src/features/approvals/ApprovalsPage.tsx` | can evolve into Review Queue for cross-context attention |
 | Web external work domain | `apps/web/src/domains/external-work/use-external-work-domain.ts` | external-work status, actions, CI triage state |
 | Web channel workspace | `apps/web/src/features/workspace/ChannelTaskWorkspace.tsx` | target location for Channel Work Board tab/panel |
-| App routing | `apps/web/src/app/view-types.ts`, `apps/web/src/app/lazy-pages.tsx` | future `review_queue` and `work_board` views |
+| App routing | `apps/web/src/app/view-types.ts`, `apps/web/src/app/lazy-pages.tsx` | existing `approvals` Review Queue surface and `work_board` top-level Work Board view |
 
 ## Goals
 
@@ -79,6 +80,8 @@ claim, heartbeat, retries, dependencies, and cross-channel routing cleanly.
 ### Review Queue
 
 Review Queue is the action-led triage surface.
+The current Web IA exposes it as the sidebar `Inbox` / `收件箱` item while keeping
+Review Queue as the product concept.
 
 It should contain:
 
@@ -99,6 +102,8 @@ It should not contain:
 ### Global Work Board
 
 Global Work Board is the all-work ledger.
+The current Web IA exposes it as the top-level sidebar `Work Board` / `工作看板` item.
+It is not a Model Workbench subview.
 
 It should contain:
 
@@ -535,7 +540,11 @@ reliably derived:
 ### P0: Documentation And Naming
 
 - Add the boundary and detailed design docs.
-- Decide UI naming: `Review Queue` page title with optional `Inbox` short nav label.
+- Resolve UI naming: `Inbox` / `收件箱` is the short navigation label for Review Queue.
+- Resolve IA placement: `Work Board` / `工作看板` is top-level navigation for Global
+  Work Board.
+- Treat Work detail as a contextual drawer opened from Work Board or Review Queue flows,
+  not as a navigation item.
 - Keep `ApprovalsPage` available as implementation anchor.
 
 ### P1: Review Queue From Existing Records
@@ -555,9 +564,11 @@ reliably derived:
 
 ### P3: Global Work Board Derived View
 
-- Add a global board view with channel/source/assignee/status filters.
+- Add a top-level global board view with channel/source/assignee/status filters.
 - Include unassigned intake if Review Queue wrappers exist.
 - Add operator diagnostics for stale running and long-blocked work.
+- Use a grouped ledger and contextual detail drawer before considering drag-and-drop or
+  durable ordering.
 
 ### P4: Routing And Assignment
 
@@ -605,10 +616,16 @@ Web tests:
 - Local runtime permissions remain primarily inline.
 - The first slice can ship without a `work_items` table.
 
+## Resolved IA Decisions
+
+- The navigation label is `Inbox` / `收件箱`, while the product concept remains Review
+  Queue.
+- Global Work Board is top-level navigation as `Work Board` / `工作看板`.
+- Work detail is contextual UI, not a sidebar navigation item.
+- Global Work Board does not belong under Model Workbench.
+
 ## Open Questions
 
-- Should the navigation label be `Inbox` or `Review Queue`?
-- Should Global Work Board be top-level navigation in v1, or a Workspace subview?
 - Should channel Work Board replace the existing task list, or live as a tab next to it?
 - How much manual ordering is needed before durable `work_items.position` is justified?
 - Should unassigned external work exist as a durable `work_item` before

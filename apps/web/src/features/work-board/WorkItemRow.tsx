@@ -10,7 +10,9 @@ export function WorkItemRow({
   item,
   channelName,
   routeChannels = [],
+  selected = false,
   routing,
+  onSelect,
   onOpenTask,
   onOpenRun,
   onOpenApproval,
@@ -23,7 +25,9 @@ export function WorkItemRow({
   readonly item: WorkItemView;
   readonly channelName?: string;
   readonly routeChannels?: readonly Channel[];
+  readonly selected?: boolean;
   readonly routing?: boolean;
+  readonly onSelect?: (workItemId: string) => void;
   readonly onOpenTask?: (taskId: string) => void;
   readonly onOpenRun?: (runId: string) => void;
   readonly onOpenApproval?: (approvalId: string) => void;
@@ -41,8 +45,23 @@ export function WorkItemRow({
   const busy = busyWorkItemId === item.id;
   const canClaim = Boolean(item.durable && !item.claim && !isTerminalWorkItem(item) && onClaimWorkItem);
   const canHeartbeat = Boolean(item.durable && item.claim?.token && onHeartbeatWorkItem);
+  const handleSelect = (): void => onSelect?.(item.id);
   return (
-    <article className={`work-item-row ${item.status}`} aria-label={item.title}>
+    <article
+      className={`work-item-row ${item.status}${selected ? " selected" : ""}${onSelect ? " selectable" : ""}`}
+      aria-label={item.title}
+      aria-pressed={selected}
+      role={onSelect ? "button" : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      onClick={handleSelect}
+      onKeyDown={(event) => {
+        if (!onSelect || (event.key !== "Enter" && event.key !== " ")) {
+          return;
+        }
+        event.preventDefault();
+        handleSelect();
+      }}
+    >
       <div className="work-item-main">
         <div className="work-item-title-row">
           {workItemIcon(item)}
@@ -51,11 +70,11 @@ export function WorkItemRow({
         </div>
         {item.subtitle ? <p>{item.subtitle}</p> : null}
         <div className="provider-meta-line">
-          <span>{item.sourceType}</span>
+          <span>{t(item.sourceType)}</span>
           {item.durable ? <span>{t("durable")}</span> : null}
           {channelName ? <span>#{channelName}</span> : null}
-          {item.waitingReason ? <span>{t("waiting: {reason}", { reason: item.waitingReason })}</span> : null}
-          <span>{item.priority}</span>
+          {item.waitingReason ? <span>{t("waiting: {reason}", { reason: t(item.waitingReason) })}</span> : null}
+          <span>{t(item.priority)}</span>
           {item.claim ? <span>{t("claimed by {owner}", { owner: item.claim.ownerId })}</span> : null}
           {item.attemptCount !== undefined && item.retryBudget !== undefined ? (
             <span>{t("attempt {count}/{budget}", { count: item.attemptCount, budget: item.retryBudget })}</span>
@@ -68,7 +87,11 @@ export function WorkItemRow({
           </div>
         ) : null}
       </div>
-      <div className="work-item-actions">
+      <div
+        className="work-item-actions"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
         {canClaim ? (
           <button
             className="secondary-button compact-button"
@@ -115,7 +138,7 @@ export function WorkItemRow({
         {primaryAction ? (
           <button className="secondary-button compact-button" type="button" onClick={primaryAction.onClick}>
             {primaryAction.icon}
-            {primaryAction.label}
+            {t(primaryAction.label)}
           </button>
         ) : null}
       </div>

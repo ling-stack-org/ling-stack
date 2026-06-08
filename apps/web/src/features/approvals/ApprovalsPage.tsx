@@ -9,12 +9,16 @@ import {
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
+  approvalOwnerLabels,
+  approvalTimingLabel,
   effectiveApprovalStatus,
   highestApprovalRisk,
 } from "../../lib/approvals.js";
+import { formatDateTime } from "../../lib/formatting.js";
 import {
   buildReviewQueueItems,
   reviewQueueCategoryLabel,
+  type ReviewQueueItem,
 } from "../../lib/review-queue.js";
 import { readTaskTitle } from "../../lib/run-evidence.js";
 import type { ApprovalRequest, Channel, ExternalWorkActionView, RunSession } from "../../types.js";
@@ -76,6 +80,7 @@ export function ApprovalsPage({
     runsById: repairRun ? new Map([[repairRun.id, repairRun]]) : undefined,
   });
   const focusedApprovals = repairRunId ? approvals.filter((approval) => approval.runId === repairRunId) : reviewQueueItems.map((item) => item.approval);
+  const selectedReviewQueueItem = reviewQueueItems.find((item) => item.approval.id === selectedApprovalId) ?? reviewQueueItems[0];
   const listEmptyCopy = repairRunId ? t("No approval records for this run") : t("Review Queue is clear");
 
   return (
@@ -124,14 +129,14 @@ export function ApprovalsPage({
         </div>
       ) : null}
 
-      <div className="approval-list">
-        {focusedApprovals.length === 0 ? (
-          <div className="empty-state compact-empty">
-            {isLoading ? <Loader2 className="spin" /> : <ShieldCheck />}
-            <span>{isLoading ? t("Loading approvals...") : listEmptyCopy}</span>
-          </div>
-        ) : (
-          repairRunId ? (
+      {repairRunId ? (
+        <div className="approval-list">
+          {focusedApprovals.length === 0 ? (
+            <div className="empty-state compact-empty">
+              {isLoading ? <Loader2 className="spin" /> : <ShieldCheck />}
+              <span>{isLoading ? t("Loading approvals...") : listEmptyCopy}</span>
+            </div>
+          ) : (
             focusedApprovals.map((approval) => (
               <ApprovalCard
                 key={approval.id}
@@ -147,40 +152,259 @@ export function ApprovalsPage({
                 onCancelExternalAction={onCancelExternalAction}
               />
             ))
-          ) : (
-            reviewQueueItems.map((item) => (
-              <div key={item.id} className={`review-queue-item ${item.category}`}>
-                <div className="review-queue-item-head">
-                  <span>{t(reviewQueueCategoryLabel(item.category))}</span>
-                  <span className={`approval-risk ${item.approval.risk}`}>{item.priority}</span>
-                </div>
-                {item.externalAction?.action.externalWorkId && onRouteExternalWork && channels && channels.length > 1 ? (
-                  <ReviewQueueRouteControl
-                    channels={channels}
-                    currentChannelId={item.externalAction.action.channelId}
-                    externalWorkId={item.externalAction.action.externalWorkId}
-                    routing={routingExternalWorkId === item.externalAction.action.externalWorkId}
-                    onRouteExternalWork={onRouteExternalWork}
-                  />
-                ) : null}
-                <ApprovalCard
-                  approval={item.approval}
-                  selected={item.approval.id === selectedApprovalId}
-                  externalAction={item.externalAction}
-                  externalActionBusy={item.approval.externalWorkActionId ? externalActionBusy[item.approval.externalWorkActionId] : undefined}
-                  cwd={cwd}
-                  resolvingDecision={resolvingApprovals[item.approval.id]}
-                  onSelect={onSelectApproval}
-                  onResolve={onResolve}
-                  onExecuteExternalAction={onExecuteExternalAction}
-                  onCancelExternalAction={onCancelExternalAction}
-                />
-              </div>
-            ))
-          )
-        )}
-      </div>
+          )}
+        </div>
+      ) : (
+        <ReviewQueueLayout
+          cwd={cwd}
+          items={reviewQueueItems}
+          selectedItem={selectedReviewQueueItem}
+          isLoading={isLoading}
+          listEmptyCopy={listEmptyCopy}
+          channels={channels}
+          routingExternalWorkId={routingExternalWorkId}
+          externalActionBusy={externalActionBusy}
+          resolvingApprovals={resolvingApprovals}
+          onSelectApproval={onSelectApproval}
+          onRouteExternalWork={onRouteExternalWork}
+          onResolve={onResolve}
+          onExecuteExternalAction={onExecuteExternalAction}
+          onCancelExternalAction={onCancelExternalAction}
+        />
+      )}
     </section>
+  );
+}
+
+function ReviewQueueLayout({
+  cwd,
+  items,
+  selectedItem,
+  isLoading,
+  listEmptyCopy,
+  channels,
+  routingExternalWorkId,
+  externalActionBusy,
+  resolvingApprovals,
+  onSelectApproval,
+  onRouteExternalWork,
+  onResolve,
+  onExecuteExternalAction,
+  onCancelExternalAction,
+}: {
+  readonly cwd: string;
+  readonly items: readonly ReviewQueueItem[];
+  readonly selectedItem?: ReviewQueueItem;
+  readonly isLoading: boolean;
+  readonly listEmptyCopy: string;
+  readonly channels?: readonly Channel[];
+  readonly routingExternalWorkId?: string;
+  readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly onSelectApproval: (approvalId: string) => void;
+  readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
+  readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onExecuteExternalAction: (actionId: string) => void;
+  readonly onCancelExternalAction: (actionId: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+
+  if (items.length === 0) {
+    return (
+      <div className="review-queue-layout empty">
+        <div className="empty-state compact-empty">
+          {isLoading ? <Loader2 className="spin" /> : <ShieldCheck />}
+          <span>{isLoading ? t("Loading approvals...") : listEmptyCopy}</span>
+        </div>
+        <ReviewQueueDetailPanel
+          cwd={cwd}
+          item={undefined}
+          channels={channels}
+          routingExternalWorkId={routingExternalWorkId}
+          externalActionBusy={externalActionBusy}
+          resolvingApprovals={resolvingApprovals}
+          onRouteExternalWork={onRouteExternalWork}
+          onSelectApproval={onSelectApproval}
+          onResolve={onResolve}
+          onExecuteExternalAction={onExecuteExternalAction}
+          onCancelExternalAction={onCancelExternalAction}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="review-queue-layout">
+      <div className="review-queue-list" aria-label={t("Review Queue")}>
+        {items.map((item) => (
+          <ReviewQueueRow
+            key={item.id}
+            item={item}
+            selected={selectedItem?.id === item.id}
+            onSelect={() => onSelectApproval(item.approval.id)}
+          />
+        ))}
+      </div>
+      <ReviewQueueDetailPanel
+        cwd={cwd}
+        item={selectedItem}
+        channels={channels}
+        routingExternalWorkId={routingExternalWorkId}
+        externalActionBusy={externalActionBusy}
+        resolvingApprovals={resolvingApprovals}
+        onRouteExternalWork={onRouteExternalWork}
+        onSelectApproval={onSelectApproval}
+        onResolve={onResolve}
+        onExecuteExternalAction={onExecuteExternalAction}
+        onCancelExternalAction={onCancelExternalAction}
+      />
+    </div>
+  );
+}
+
+function ReviewQueueRow({
+  item,
+  selected,
+  onSelect,
+}: {
+  readonly item: ReviewQueueItem;
+  readonly selected: boolean;
+  readonly onSelect: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const status = effectiveApprovalStatus(item.approval);
+  const ownerLabels = approvalOwnerLabels(item.approval);
+  const timing = translateReviewQueueTimingLabel(approvalTimingLabel(item.approval), t);
+
+  return (
+    <button
+      className={`review-queue-row ${item.category}${selected ? " selected" : ""}`}
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+    >
+      <span className="review-queue-row-top">
+        <strong>{item.title}</strong>
+        <span className={`approval-state ${status}`}>{t(status)}</span>
+      </span>
+      <span className="review-queue-row-description">{item.description}</span>
+      <span className="provider-meta-line">
+        <span>{t(reviewQueueCategoryLabel(item.category))}</span>
+        <span>{t(item.priority)}</span>
+        <span>{t(item.approval.risk)}</span>
+        <span>{t(item.approval.actionType)}</span>
+        {ownerLabels.slice(0, 3).map((label) => <span key={label}>{t(label)}</span>)}
+        <time>{formatDateTime(item.createdAt)}</time>
+        {timing ? <time>{timing}</time> : null}
+      </span>
+    </button>
+  );
+}
+
+function translateReviewQueueTimingLabel(timing: string, t: (key: string, values?: Readonly<Record<string, string | number>>) => string): string {
+  if (timing.startsWith("expired ")) {
+    return t("expired {time}", { time: timing.slice("expired ".length) });
+  }
+  if (timing.startsWith("expires in ")) {
+    return t("expires in {duration}", { duration: timing.slice("expires in ".length) });
+  }
+  return timing;
+}
+
+function ReviewQueueDetailPanel({
+  cwd,
+  item,
+  channels,
+  routingExternalWorkId,
+  externalActionBusy,
+  resolvingApprovals,
+  onRouteExternalWork,
+  onSelectApproval,
+  onResolve,
+  onExecuteExternalAction,
+  onCancelExternalAction,
+}: {
+  readonly cwd: string;
+  readonly item?: ReviewQueueItem;
+  readonly channels?: readonly Channel[];
+  readonly routingExternalWorkId?: string;
+  readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly onRouteExternalWork?: (externalWorkId: string, channelId: string) => void;
+  readonly onSelectApproval: (approvalId: string) => void;
+  readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onExecuteExternalAction: (actionId: string) => void;
+  readonly onCancelExternalAction: (actionId: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+
+  if (!item) {
+    return (
+      <aside className="review-queue-detail empty" aria-label={t("Review item detail")}>
+        <ShieldCheck size={22} />
+        <strong>{t("No review item selected")}</strong>
+        <p>{t("Select a queue item to inspect its approval payload, target, and available actions.")}</p>
+      </aside>
+    );
+  }
+
+  const status = effectiveApprovalStatus(item.approval);
+  const ownerLabels = approvalOwnerLabels(item.approval);
+  return (
+    <aside className="review-queue-detail" aria-label={t("Review item detail")}>
+      <div className="review-queue-detail-head">
+        <span>{t(reviewQueueCategoryLabel(item.category))}</span>
+        <h3>{item.title}</h3>
+        <div className="review-queue-detail-badges">
+          <span className={`approval-state ${status}`}>{t(status)}</span>
+          <span className={`approval-risk ${item.approval.risk}`}>{t(item.approval.risk)}</span>
+          <span>{t(item.priority)}</span>
+        </div>
+      </div>
+
+      <div className="review-queue-detail-meta">
+        <span>
+          <small>{t("Owner")}</small>
+          <strong>{ownerLabels.join(", ") || t("Unassigned")}</strong>
+        </span>
+        <span>
+          <small>{t("Action")}</small>
+          <strong>{t(item.approval.actionType)}</strong>
+        </span>
+        <span>
+          <small>{t("Created")}</small>
+          <strong>{formatDateTime(item.createdAt)}</strong>
+        </span>
+        <span>
+          <small>{t("Priority")}</small>
+          <strong>{t(item.priority)}</strong>
+        </span>
+      </div>
+
+      {item.externalAction?.action.externalWorkId && onRouteExternalWork && channels && channels.length > 1 ? (
+        <ReviewQueueRouteControl
+          channels={channels}
+          currentChannelId={item.externalAction.action.channelId}
+          externalWorkId={item.externalAction.action.externalWorkId}
+          routing={routingExternalWorkId === item.externalAction.action.externalWorkId}
+          onRouteExternalWork={onRouteExternalWork}
+        />
+      ) : null}
+
+      <ApprovalCard
+        approval={item.approval}
+        compact
+        selected
+        externalAction={item.externalAction}
+        externalActionBusy={item.approval.externalWorkActionId ? externalActionBusy[item.approval.externalWorkActionId] : undefined}
+        cwd={cwd}
+        resolvingDecision={resolvingApprovals[item.approval.id]}
+        onSelect={onSelectApproval}
+        onResolve={onResolve}
+        onExecuteExternalAction={onExecuteExternalAction}
+        onCancelExternalAction={onCancelExternalAction}
+      />
+    </aside>
   );
 }
 
