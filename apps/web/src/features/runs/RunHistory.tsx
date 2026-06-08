@@ -469,6 +469,7 @@ export function RunHistory({
           cwd={cwd}
           thread={selectedThread}
           threadId={selectedThreadId}
+          turnState={turnStateByThreadKey[turnStateKey(cwd, selectedThreadId)]}
           isRunning={isRunning}
           onRefresh={refreshThreadAndRuns}
           onSelectRun={handleSelectRun}
@@ -510,6 +511,7 @@ export function ThreadDetailPanel({
   cwd,
   thread,
   threadId,
+  turnState,
   isRunning,
   onRefresh,
   onSelectRun,
@@ -517,6 +519,7 @@ export function ThreadDetailPanel({
   readonly cwd: string;
   readonly thread: LingThread | undefined;
   readonly threadId: string;
+  readonly turnState?: WorkHistoryTurnLoadState;
   readonly isRunning: boolean;
   readonly onRefresh: () => void;
   readonly onSelectRun: (runId: string) => void;
@@ -530,6 +533,7 @@ export function ThreadDetailPanel({
   const [threadInterventions, setThreadInterventions] = useState<readonly RunIntervention[]>([]);
   const [threadInterventionsLoading, setThreadInterventionsLoading] = useState(false);
   const [threadInterventionError, setThreadInterventionError] = useState("");
+  const [selectedSourceTurnId, setSelectedSourceTurnId] = useState("");
   const [selectedSourceRunId, setSelectedSourceRunId] = useState("");
   const [resumedRunId, setResumedRunId] = useState("");
   const [resumePreview, setResumePreview] = useState<LingThreadResumePreviewResponse | undefined>(undefined);
@@ -537,27 +541,58 @@ export function ThreadDetailPanel({
   const displayThread = threadEvidence?.thread ?? thread;
   const evidenceRuns = threadEvidence?.runs ?? [];
   const threadArtifactById = buildThreadArtifactMap(threadEvidence);
-  const sourceRun = resolveThreadSourceRun(displayThread, evidenceRuns, selectedSourceRunId);
-  const sourceRunId = selectedSourceRunId || sourceRun?.id || displayThread?.lastRunId || "";
+  const loadedTurns = turnState?.status === "loaded" ? turnState.turns : [];
+  const loadedTurnRunLinks = turnState?.status === "loaded" ? turnState.runLinks : [];
+  const selectedSourceTurn = selectedSourceTurnId ? loadedTurns.find((turn) => turn.id === selectedSourceTurnId) : undefined;
+  const selectedSourceTurnRunIds = selectedSourceTurn ? resolveTurnRunIds(selectedSourceTurn, loadedTurnRunLinks) : undefined;
+  const selectedSourceTurnRunId = selectedSourceTurn
+    ? resolveDefaultRunIdForTurn(selectedSourceTurn, loadedTurnRunLinks, evidenceRuns)
+    : "";
+  const sourceRun = resolveThreadSourceRun(displayThread, evidenceRuns, selectedSourceRunId || selectedSourceTurnRunId);
+  const sourceRunId = selectedSourceRunId || selectedSourceTurnRunId || sourceRun?.id || displayThread?.lastRunId || "";
+  const sourceRunOptions = selectedSourceTurnRunIds && selectedSourceTurnRunIds.size > 0
+    ? evidenceRuns.filter((item) => selectedSourceTurnRunIds.has(item.run.id))
+    : evidenceRuns;
   const activeRun = displayThread?.activeRunId
     ? evidenceRuns.find((item) => item.run.id === displayThread.activeRunId)?.run
     : undefined;
   const hasActiveNonTerminalRun = Boolean(displayThread?.activeRunId && (!activeRun || runCanBeStopped(activeRun)));
+  const hasActiveSelectedTurn = Boolean(selectedSourceTurn && !isResumeSourceTurnTerminal(selectedSourceTurn));
   const canPreviewThreadResume = Boolean(displayThread && sourceRunId);
-  const canResumeThread = Boolean(canPreviewThreadResume && !hasActiveNonTerminalRun && !isRunning);
+  const canResumeThread = Boolean(canPreviewThreadResume && !hasActiveNonTerminalRun && !hasActiveSelectedTurn && !isRunning);
   const resumeDisabledReason = buildThreadResumeDisabledReason({
     hasThread: Boolean(displayThread),
     hasSourceRun: Boolean(sourceRunId),
     hasActiveNonTerminalRun,
+    hasActiveSelectedTurn,
     isRunning,
     t,
   });
+  const loadedTurnSignature = loadedTurns.map((turn) => `${turn.id}:${turn.status}:${turn.updatedAt}`).join("|");
+
+  useEffect(() => {
+    if (loadedTurns.length === 0) {
+      if (selectedSourceTurnId) {
+        setSelectedSourceTurnId("");
+      }
+      return;
+    }
+    if (selectedSourceTurnId && loadedTurns.some((turn) => turn.id === selectedSourceTurnId)) {
+      return;
+    }
+    const defaultTurnId = resolveDefaultResumeSourceTurn(loadedTurns)?.id ?? "";
+    setSelectedSourceTurnId(defaultTurnId);
+    if (defaultTurnId) {
+      setSelectedSourceRunId("");
+    }
+  }, [loadedTurnSignature, loadedTurns, selectedSourceTurnId]);
 
   useEffect(() => {
     setThreadEvidence(undefined);
     setThreadError("");
     setThreadInterventions([]);
     setThreadInterventionError("");
+    setSelectedSourceTurnId("");
     setSelectedSourceRunId(thread?.lastRunId ?? "");
     setResumedRunId("");
     setResumePreview(undefined);
@@ -626,6 +661,7 @@ export function ThreadDetailPanel({
     try {
       setResumePreview(await previewLingThreadResume(cwd, threadId, {
         sourceRunId,
+        ...(selectedSourceTurn?.id ? { turnId: selectedSourceTurn.id } : {}),
         instruction: resumeInstruction.trim() || "Resume this Ling thread from the thread detail.",
         includeArtifacts: true,
       }));
@@ -645,6 +681,7 @@ export function ThreadDetailPanel({
     try {
       const response = await resumeLingThread(cwd, threadId, {
         sourceRunId,
+        ...(selectedSourceTurn?.id ? { turnId: selectedSourceTurn.id } : {}),
         instruction: resumeInstruction.trim() || "Resume this Ling thread from the thread detail.",
       });
       setResumedRunId(response.runId ?? "");
@@ -832,6 +869,25 @@ export function ThreadDetailPanel({
             <span className="event-count">{sourceRunId || "-"}</span>
           </div>
           <label className="approval-reason-field thread-resume-composer">
+            <span>{t("Resume source turn")}</span>
+            <select
+              value={selectedSourceTurn?.id ?? ""}
+              onChange={(event) => {
+                setSelectedSourceTurnId(event.target.value);
+                setSelectedSourceRunId("");
+                setResumePreview(undefined);
+              }}
+              disabled={loadedTurns.length === 0 || threadActionLoading}
+            >
+              <option value="">{loadedTurns.length === 0 ? t("No source turn") : t("Source run fallback")}</option>
+              {loadedTurns.map((turn) => (
+                <option key={turn.id} value={turn.id}>
+                  {turn.title} · {turn.status} · {turn.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="approval-reason-field thread-resume-composer">
             <span>{t("Resume source run")}</span>
             <select
               value={sourceRunId}
@@ -842,10 +898,10 @@ export function ThreadDetailPanel({
               disabled={evidenceRuns.length === 0 || threadActionLoading}
             >
               {!sourceRunId ? <option value="">{t("No source run")}</option> : null}
-              {sourceRunId && !evidenceRuns.some((item) => item.run.id === sourceRunId) ? (
+              {sourceRunId && !sourceRunOptions.some((item) => item.run.id === sourceRunId) ? (
                 <option value={sourceRunId}>{sourceRunId}</option>
               ) : null}
-              {evidenceRuns.map((item) => (
+              {sourceRunOptions.map((item) => (
                 <option key={item.run.id} value={item.run.id}>
                   {readTaskTitle(item.run.taskSnapshot) || item.run.taskId} · {item.run.id}
                 </option>
@@ -888,7 +944,9 @@ export function ThreadDetailPanel({
             <details className="json-details compact-json" open>
               <summary>{t("Resume context preview")}</summary>
               <div className="run-evidence-grid">
+                {resumePreview.context.sourceTurnId ? <MetaRow label={t("Source turn")} value={resumePreview.context.sourceTurnId} compact /> : null}
                 <MetaRow label={t("Source run")} value={resumePreview.context.sourceRunId} compact />
+                {resumePreview.context.priorTurnIds ? <MetaRow label={t("Prior turns")} value={String(resumePreview.context.priorTurnIds.length)} compact /> : null}
                 <MetaRow label={t("Prior runs")} value={String(resumePreview.context.priorRunIds.length)} compact />
                 <MetaRow label={t("Events")} value={String(resumePreview.context.includedEventCount)} compact />
                 <MetaRow label={t("Approvals")} value={String(resumePreview.context.includedApprovalCount)} compact />
@@ -1206,6 +1264,7 @@ function RunDetailPanel({
           <RunEvidencePanel
             cwd={cwd}
             run={run}
+            turnContext={turnContext}
             terminalEvent={terminalEvent}
             toolEvents={toolEvents}
             assistantText={assistantText}
@@ -1341,6 +1400,37 @@ function resolveThreadSourceRun(
   return evidenceRuns.length > 0 ? evidenceRuns[evidenceRuns.length - 1]?.run : undefined;
 }
 
+function resolveDefaultResumeSourceTurn(turns: readonly LingTurn[]): LingTurn | undefined {
+  const sorted = [...turns].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
+  return sorted.find(isResumeSourceTurnTerminal) ?? sorted[0];
+}
+
+function isResumeSourceTurnTerminal(turn: LingTurn): boolean {
+  return turn.status === "succeeded" || turn.status === "failed" || turn.status === "cancelled" || turn.status === "superseded";
+}
+
+function resolveTurnRunIds(turn: LingTurn, links: readonly LingTurnRun[]): ReadonlySet<string> {
+  return new Set([
+    turn.activeRunId,
+    turn.lastRunId,
+    ...links.filter((link) => link.turnId === turn.id).map((link) => link.runId),
+  ].filter((runId): runId is string => Boolean(runId)));
+}
+
+function resolveDefaultRunIdForTurn(
+  turn: LingTurn,
+  links: readonly LingTurnRun[],
+  evidenceRuns: readonly LingThreadEvidenceResponse["runs"][number][],
+): string {
+  if (turn.lastRunId && evidenceRuns.some((item) => item.run.id === turn.lastRunId)) {
+    return turn.lastRunId;
+  }
+  const latestLink = links
+    .filter((link) => link.turnId === turn.id && evidenceRuns.some((item) => item.run.id === link.runId))
+    .sort((left, right) => right.attemptNumber - left.attemptNumber || right.createdAt.localeCompare(left.createdAt))[0];
+  return latestLink?.runId ?? "";
+}
+
 function uniqueInterventions(interventions: readonly RunIntervention[]): readonly RunIntervention[] {
   const byId = new Map<string, RunIntervention>();
   for (const intervention of interventions) {
@@ -1353,6 +1443,7 @@ function buildThreadResumeDisabledReason(input: {
   readonly hasThread: boolean;
   readonly hasSourceRun: boolean;
   readonly hasActiveNonTerminalRun: boolean;
+  readonly hasActiveSelectedTurn: boolean;
   readonly isRunning: boolean;
   readonly t: Translate;
 }): string {
@@ -1364,6 +1455,9 @@ function buildThreadResumeDisabledReason(input: {
   }
   if (input.hasActiveNonTerminalRun) {
     return input.t("Thread has an active run; resume is disabled until it reaches a terminal state.");
+  }
+  if (input.hasActiveSelectedTurn) {
+    return input.t("The selected turn is still active; wait for it to finish before resuming from it.");
   }
   if (input.isRunning) {
     return input.t("Another run is currently active; wait before starting a continuation.");
@@ -1994,6 +2088,7 @@ function RuntimeAuditBlock({
 function RunEvidencePanel({
   cwd,
   run,
+  turnContext,
   terminalEvent,
   toolEvents,
   assistantText,
@@ -2003,6 +2098,7 @@ function RunEvidencePanel({
 }: {
   readonly cwd: string;
   readonly run: RunSession;
+  readonly turnContext: WorkHistoryTurnContext | undefined;
   readonly terminalEvent: RunEventEnvelope | undefined;
   readonly toolEvents: readonly RunEventEnvelope[];
   readonly assistantText: string;
@@ -2027,6 +2123,7 @@ function RunEvidencePanel({
   const toolSummary = summarizeToolEvents(toolEvents);
   const artifactCwd = readRunWorkspaceCwd(run, run.cwd);
   const canResumeThread = Boolean(run.threadId && (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled"));
+  const resumeTurnId = turnContext?.turn.id;
   const threadArtifactById = buildThreadArtifactMap(threadEvidence);
 
   useEffect(() => {
@@ -2068,6 +2165,7 @@ function RunEvidencePanel({
     try {
       const response = await resumeLingThread(cwd, run.threadId, {
         sourceRunId: run.id,
+        ...(resumeTurnId ? { turnId: resumeTurnId } : {}),
         instruction: resumeInstruction.trim() || "Resume this thread from the selected run detail.",
       });
       setResumedRunId(response.runId ?? "");
@@ -2089,6 +2187,7 @@ function RunEvidencePanel({
     try {
       setResumePreview(await previewLingThreadResume(cwd, run.threadId, {
         sourceRunId: run.id,
+        ...(resumeTurnId ? { turnId: resumeTurnId } : {}),
         instruction: resumeInstruction.trim() || "Resume this thread from the selected run detail.",
         includeArtifacts: true,
       }));
@@ -2186,6 +2285,7 @@ function RunEvidencePanel({
           </div>
           <div className="run-evidence-grid">
             <MetaRow label={t("Thread")} value={run.threadId} compact />
+            <MetaRow label={t("Source turn")} value={resumeTurnId ?? "-"} compact />
             <MetaRow label={t("Thread status")} value={threadEvidence?.thread.status ?? "-"} compact />
             <MetaRow label={t("Parent run")} value={run.parentRunId ?? "-"} compact />
             <MetaRow label={t("Continuation")} value={run.continuationReason ?? "-"} compact />
@@ -2228,7 +2328,9 @@ function RunEvidencePanel({
             <details className="json-details compact-json" open>
               <summary>{t("Resume context preview")}</summary>
               <div className="run-evidence-grid">
+                {resumePreview.context.sourceTurnId ? <MetaRow label={t("Source turn")} value={resumePreview.context.sourceTurnId} compact /> : null}
                 <MetaRow label={t("Source run")} value={resumePreview.context.sourceRunId} compact />
+                {resumePreview.context.priorTurnIds ? <MetaRow label={t("Prior turns")} value={String(resumePreview.context.priorTurnIds.length)} compact /> : null}
                 <MetaRow label={t("Prior runs")} value={String(resumePreview.context.priorRunIds.length)} compact />
                 <MetaRow label={t("Events")} value={String(resumePreview.context.includedEventCount)} compact />
                 <MetaRow label={t("Approvals")} value={String(resumePreview.context.includedApprovalCount)} compact />

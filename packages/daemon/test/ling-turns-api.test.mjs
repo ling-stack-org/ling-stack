@@ -73,6 +73,108 @@ test("daemon API exposes durable Ling turns and links runs to turns", async () =
   }
 });
 
+test("daemon resume preview and execute can anchor to a durable Ling turn", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-turn-resume-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    const initial = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_turn_resume_source"));
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const initialRun = store.getRun(initial.runId);
+    assert.ok(initialRun);
+    assert.ok(initialRun.threadId);
+    const sourceTurn = store.getLingTurnForRun(initialRun.id);
+    assert.ok(sourceTurn);
+
+    const siblingTurn = await postJson(`${daemon.url}/threads/${encodeURIComponent(initialRun.threadId)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "manual_followup",
+      title: "Sibling follow-up turn",
+      userInstruction: "Create a second turn so source validation can reject mismatches.",
+      createdByActor: "local-user",
+    });
+    const sibling = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_turn_resume_sibling"),
+      threadId: initialRun.threadId,
+      turnId: siblingTurn.turn.id,
+    });
+    const siblingRun = store.getRun(sibling.runId);
+    assert.ok(siblingRun);
+    assert.equal(store.getLingTurnForRun(siblingRun.id)?.id, siblingTurn.turn.id);
+
+    const preview = await postJson(`${daemon.url}/threads/${encodeURIComponent(initialRun.threadId)}/resume-preview?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: sourceTurn.id,
+      instruction: "Resume from the first durable turn.",
+      includeArtifacts: true,
+    });
+    assert.equal(preview.sourceRun.id, initialRun.id);
+    assert.equal(preview.context.sourceRunId, initialRun.id);
+    assert.equal(preview.context.sourceTurnId, sourceTurn.id);
+    assert.deepEqual(preview.context.priorTurnIds, [sourceTurn.id]);
+    assert.equal(preview.context.includedTurnCount, 1);
+    assert.deepEqual(preview.context.priorRunIds, [initialRun.id]);
+    assert.match(preview.context.contextText, /Source turn:/);
+
+    const mismatch = await postJsonAllowError(`${daemon.url}/threads/${encodeURIComponent(initialRun.threadId)}/resume-preview?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: sourceTurn.id,
+      sourceRunId: siblingRun.id,
+    });
+    assert.equal(mismatch.status, 400);
+    assert.equal(mismatch.body.error, "source_run_not_in_turn");
+
+    const activeTurn = store.createLingTurn(
+      {
+        threadId: initialRun.threadId,
+        kind: "manual_followup",
+        status: "running",
+        title: "Active selected turn",
+        userInstruction: "Keep execute blocked while this turn is active.",
+        activeRunId: initialRun.id,
+        lastRunId: initialRun.id,
+      },
+      "2026-06-08T00:10:00.000Z",
+    );
+    const activePreview = await postJson(`${daemon.url}/threads/${encodeURIComponent(initialRun.threadId)}/resume-preview?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: activeTurn.id,
+    });
+    assert.equal(activePreview.context.sourceTurnId, activeTurn.id);
+    assert.equal(activePreview.context.warnings.some((warning) => warning.includes(activeTurn.id)), true);
+    const activeExecute = await postJsonAllowError(`${daemon.url}/threads/${encodeURIComponent(initialRun.threadId)}/resume?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: activeTurn.id,
+      idempotencyKey: "active-turn-resume-blocked",
+    });
+    assert.equal(activeExecute.status, 409, JSON.stringify(activeExecute.body));
+    assert.equal(activeExecute.body.error, "turn_active");
+
+    const resumed = await postJson(`${daemon.url}/threads/${encodeURIComponent(initialRun.threadId)}/resume?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: sourceTurn.id,
+      instruction: "Resume from the first durable turn.",
+      idempotencyKey: "turn-linked-resume",
+    });
+    assert.equal(resumed.continuationReason, "manual_resume");
+    assert.equal(resumed.sourceRun.id, initialRun.id);
+    assert.ok(resumed.runId);
+
+    await waitForCondition(() => {
+      const run = store.getRun(resumed.runId);
+      return Boolean(run && run.status === "succeeded");
+    }, "turn-linked resume should finish");
+    const resumedRun = store.getRun(resumed.runId);
+    assert.ok(resumedRun);
+    assert.equal(resumedRun.parentRunId, initialRun.id);
+    assert.equal(resumedRun.continuationReason, "manual_resume");
+    const childTurn = store.getLingTurnForRun(resumedRun.id);
+    assert.ok(childTurn);
+    assert.equal(childTurn.sourceTurnId, sourceTurn.id);
+    assert.deepEqual(store.listLingTurnRuns(childTurn.id).map((link) => [link.runId, link.role]), [
+      [resumedRun.id, "resume"],
+    ]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 class SuccessfulRunner {
   async runTask(options) {
     options.onEvent?.({
@@ -164,6 +266,19 @@ async function postJson(url, body) {
   return await readJsonResponse(response);
 }
 
+async function postJsonAllowError(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    body: text.trim() ? JSON.parse(text) : {},
+  };
+}
+
 async function readJsonResponse(response) {
   const text = await response.text();
   assert.ok(response.ok, text);
@@ -188,4 +303,15 @@ function parseSseEvent(raw) {
     return undefined;
   }
   return { event, data: data ? JSON.parse(data) : undefined };
+}
+
+async function waitForCondition(predicate, label, timeoutMs = 3_000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(label);
 }

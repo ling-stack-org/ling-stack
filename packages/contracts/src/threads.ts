@@ -95,6 +95,7 @@ export interface LingThreadResumeRequest {
   readonly instruction?: string;
   readonly idempotencyKey?: string;
   readonly sourceRunId?: string;
+  readonly turnId?: string;
   readonly includeArtifacts?: boolean;
 }
 
@@ -102,7 +103,10 @@ export interface ResumeContextPreview {
   readonly title: string;
   readonly instruction: string;
   readonly sourceRunId: string;
+  readonly sourceTurnId?: string;
   readonly priorRunIds: readonly string[];
+  readonly priorTurnIds?: readonly string[];
+  readonly includedTurnCount?: number;
   readonly includedEventCount: number;
   readonly includedApprovalCount: number;
   readonly includedArtifactIds: readonly string[];

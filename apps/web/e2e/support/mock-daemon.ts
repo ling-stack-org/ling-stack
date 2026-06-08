@@ -159,6 +159,7 @@ export interface MockRun {
   requestSnapshot: unknown;
   eventLogPath: string;
   threadId?: string;
+  turnId?: string;
   workUnitId?: string;
   parentRunId?: string;
   interventionId?: string;
@@ -942,27 +943,37 @@ export function buildMockThreadEvidence(state: MockState, thread: MockLingThread
 export function buildMockResumeContext(
   state: MockState,
   thread: MockLingThread,
+  sourceTurn: MockLingTurn | undefined,
   sourceRun: MockRun,
   body: Record<string, unknown>,
   hasActiveRun: boolean,
+  hasActiveTurn = false,
 ) {
   const evidence = buildMockThreadEvidence(state, thread);
+  const scopedEvidenceRuns = sourceTurn ? evidence.runs.filter((item) => isMockRunInTurn(state, sourceTurn, item.run)) : evidence.runs;
   const includeArtifacts = body.includeArtifacts === true;
-  const artifacts = includeArtifacts ? evidence.runs.flatMap((item) => item.artifacts) : [];
+  const artifacts = includeArtifacts ? scopedEvidenceRuns.flatMap((item) => item.artifacts) : [];
   const instruction = typeof body.instruction === "string" && body.instruction.trim()
     ? body.instruction.trim()
     : "Resume this Ling thread from durable evidence.";
   const pendingActionIds = evidence.actions
     .filter((action) => action.status === "proposed" || action.status === "waiting_for_approval" || action.status === "executing")
     .map((action) => action.id);
-  const warnings = hasActiveRun ? [`Thread already has an active run: ${thread.activeRunId}`] : [];
+  const warnings = [
+    ...(hasActiveRun ? [`Thread already has an active run: ${thread.activeRunId}`] : []),
+    ...(hasActiveTurn && sourceTurn ? [`Selected turn is not terminal: ${sourceTurn.id}`] : []),
+  ];
+  const priorTurnIds = sourceTurn ? resolveMockPriorTurns(state, thread, sourceTurn).map((turn) => turn.id) : undefined;
   return {
     title: `Resume: ${thread.title}`,
     instruction,
     sourceRunId: sourceRun.id,
-    priorRunIds: evidence.runs.map((item) => item.run.id),
-    includedEventCount: evidence.runs.reduce((count, item) => count + item.events.length, 0),
-    includedApprovalCount: evidence.runs.reduce((count, item) => count + item.approvals.length, 0),
+    sourceTurnId: sourceTurn?.id,
+    priorRunIds: scopedEvidenceRuns.map((item) => item.run.id),
+    priorTurnIds,
+    includedTurnCount: priorTurnIds?.length,
+    includedEventCount: scopedEvidenceRuns.reduce((count, item) => count + item.events.length, 0),
+    includedApprovalCount: scopedEvidenceRuns.reduce((count, item) => count + item.approvals.length, 0),
     includedArtifactIds: artifacts.map((artifact) => artifact.id),
     pendingActionIds,
     redactionNotes: includeArtifacts && artifacts.length > 0 ? ["Artifact contents are omitted; preview includes artifact ids only."] : [],
@@ -970,13 +981,102 @@ export function buildMockResumeContext(
     contextText: [
       `Thread: ${thread.title}`,
       `Objective: ${thread.objective}`,
+      sourceTurn ? `Source turn: ${sourceTurn.id}` : undefined,
       `Source run: ${sourceRun.id}`,
       `Instruction: ${instruction}`,
-      `Prior runs: ${evidence.runs.map((item) => item.run.id).join(", ") || "none"}`,
+      priorTurnIds ? `Prior turns: ${priorTurnIds.join(", ") || "none"}` : undefined,
+      `Prior runs: ${scopedEvidenceRuns.map((item) => item.run.id).join(", ") || "none"}`,
       `Artifacts: ${artifacts.map((artifact) => artifact.id).join(", ") || "none"}`,
       `Pending actions: ${pendingActionIds.join(", ") || "none"}`,
-    ].join("\n"),
+    ].filter((line): line is string => Boolean(line)).join("\n"),
   };
+}
+
+function resolveMockResumeAnchor(
+  state: MockState,
+  thread: MockLingThread,
+  body: Record<string, unknown>,
+): { sourceTurn?: MockLingTurn; sourceRun: MockRun } | { status: number; error: string; message: string } {
+  const turnId = typeof body.turnId === "string" ? body.turnId : undefined;
+  const requestedRunId = typeof body.sourceRunId === "string" ? body.sourceRunId : undefined;
+  if (!turnId) {
+    const sourceRunId = requestedRunId ?? thread.lastRunId;
+    const sourceRun = sourceRunId ? state.runs.find((run) => run.id === sourceRunId) : undefined;
+    if (!sourceRun) {
+      return { status: 404, error: "source_run_not_found", message: `Thread source run was not found: ${sourceRunId ?? "-"}` };
+    }
+    if (sourceRun.threadId !== thread.id) {
+      return { status: 400, error: "source_run_not_in_thread", message: `Source run does not belong to thread: ${sourceRun.id}` };
+    }
+    return { sourceRun };
+  }
+
+  const sourceTurn = state.turns.find((turn) => turn.id === turnId);
+  if (!sourceTurn) {
+    return { status: 404, error: "turn_not_found", message: `Ling turn not found: ${turnId}` };
+  }
+  if (sourceTurn.threadId !== thread.id) {
+    return { status: 400, error: "turn_not_in_thread", message: `Ling turn does not belong to thread: ${turnId}` };
+  }
+
+  const sourceRun = requestedRunId
+    ? state.runs.find((run) => run.id === requestedRunId)
+    : resolveMockSourceRunFromTurn(state, sourceTurn);
+  if (!sourceRun) {
+    return { status: 404, error: "source_run_not_found", message: `Ling turn has no source run to resume: ${sourceTurn.id}` };
+  }
+  if (sourceRun.threadId !== thread.id) {
+    return { status: 400, error: "source_run_not_in_thread", message: `Source run does not belong to thread: ${sourceRun.id}` };
+  }
+  if (!isMockRunInTurn(state, sourceTurn, sourceRun)) {
+    return { status: 400, error: "source_run_not_in_turn", message: `Source run does not belong to turn: ${sourceRun.id}` };
+  }
+  return { sourceTurn, sourceRun };
+}
+
+function resolveMockSourceRunFromTurn(state: MockState, turn: MockLingTurn): MockRun | undefined {
+  const candidateIds = [
+    turn.lastRunId,
+    ...state.turnRunLinks
+      .filter((link) => link.turnId === turn.id)
+      .sort((left, right) => right.attemptNumber - left.attemptNumber || right.createdAt.localeCompare(left.createdAt))
+      .map((link) => link.runId),
+  ].filter((runId): runId is string => Boolean(runId));
+  for (const runId of candidateIds) {
+    const run = state.runs.find((item) => item.id === runId);
+    if (run && isMockRunInTurn(state, turn, run)) {
+      return run;
+    }
+  }
+  return undefined;
+}
+
+function findMockTurnForRun(state: MockState, runId: string): MockLingTurn | undefined {
+  const linkedTurnId = state.turnRunLinks.find((link) => link.runId === runId)?.turnId;
+  return state.turns.find((turn) => turn.id === linkedTurnId || turn.activeRunId === runId || turn.lastRunId === runId);
+}
+
+function resolveMockPriorTurns(state: MockState, thread: MockLingThread, sourceTurn: MockLingTurn): MockLingTurn[] {
+  const turns = state.turns
+    .filter((turn) => turn.threadId === thread.id)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const index = turns.findIndex((turn) => turn.id === sourceTurn.id);
+  return index >= 0 ? turns.slice(0, index + 1) : [sourceTurn];
+}
+
+function isMockRunInTurn(state: MockState, turn: MockLingTurn, run: MockRun): boolean {
+  return run.turnId === turn.id ||
+    run.id === turn.activeRunId ||
+    run.id === turn.lastRunId ||
+    state.turnRunLinks.some((link) => link.turnId === turn.id && link.runId === run.id);
+}
+
+function isMockTurnActiveForResume(state: MockState, turn: MockLingTurn): boolean {
+  const activeRun = turn.activeRunId ? state.runs.find((run) => run.id === turn.activeRunId) : undefined;
+  if (activeRun && isMockRunActive(activeRun)) {
+    return true;
+  }
+  return turn.status === "open" || turn.status === "running" || turn.status === "waiting_for_approval" || turn.status === "blocked";
 }
 
 export function isMockRunActive(run: MockRun): boolean {
@@ -4365,15 +4465,16 @@ export async function handleDaemonRoute(
       } catch {
         body = {};
       }
-      const sourceRunId = typeof body.sourceRunId === "string" ? body.sourceRunId : thread.lastRunId;
-      const sourceRun = sourceRunId ? state.runs.find((item) => item.id === sourceRunId) : undefined;
-      if (!sourceRun) {
-        await route.fulfill({ status: 400, json: { error: "source_run_not_found" } });
+      const anchor = resolveMockResumeAnchor(state, thread, body);
+      if ("error" in anchor) {
+        await route.fulfill({ status: anchor.status, json: { error: anchor.error, message: anchor.message } });
         return;
       }
+      const { sourceRun, sourceTurn } = anchor;
       const activeRun = thread.activeRunId ? state.runs.find((item) => item.id === thread.activeRunId) : undefined;
       const hasActiveRun = Boolean(activeRun && isMockRunActive(activeRun));
-      const context = buildMockResumeContext(state, thread, sourceRun, body, hasActiveRun);
+      const hasActiveTurn = Boolean(sourceTurn && isMockTurnActiveForResume(state, sourceTurn));
+      const context = buildMockResumeContext(state, thread, sourceTurn, sourceRun, body, hasActiveRun, hasActiveTurn);
       if (action === "resume-preview") {
         await route.fulfill({ json: { cwd, thread, sourceRun, context } });
         return;
@@ -4382,18 +4483,26 @@ export async function handleDaemonRoute(
         await route.fulfill({ status: 400, json: { error: "thread_active", message: `Thread already has an active run: ${activeRun?.id}` } });
         return;
       }
+      if (hasActiveTurn) {
+        await route.fulfill({ status: 409, json: { error: "turn_active", message: `Selected turn is not terminal: ${sourceTurn?.id}` } });
+        return;
+      }
       const now = "2026-05-25T00:40:00.000Z";
       const runId = `run_resume_${state.runs.length + 1}`;
+      const linkedSourceTurn = sourceTurn ?? findMockTurnForRun(state, sourceRun.id);
+      const childTurnId = linkedSourceTurn ? `turn_resume_${state.turns.length + 1}` : undefined;
       const continuationRun: MockRun = {
         ...sourceRun,
         id: runId,
         status: "queued",
+        turnId: childTurnId,
         parentRunId: sourceRun.id,
         continuationReason: "manual_resume",
         taskSnapshot: { id: `task_${runId}`, title: `Resume: ${thread.title}`, prompt: context.contextText },
         requestSnapshot: {
           ...(isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {}),
           task: { id: `task_${runId}`, title: `Resume: ${thread.title}`, prompt: context.contextText },
+          turnId: childTurnId,
           parentRunId: sourceRun.id,
           continuationReason: "manual_resume",
         },
@@ -4406,6 +4515,35 @@ export async function handleDaemonRoute(
       };
       state.runs.unshift(continuationRun);
       state.eventsByRun[runId] = [];
+      if (linkedSourceTurn && childTurnId) {
+        state.turns.unshift({
+          id: childTurnId,
+          workspaceId: linkedSourceTurn.workspaceId,
+          threadId: thread.id,
+          kind: "manual_followup",
+          status: "running",
+          title: `Resume: ${thread.title}`,
+          userInstruction: context.contextText,
+          channelId: linkedSourceTurn.channelId ?? thread.channelId,
+          taskId: linkedSourceTurn.taskId ?? thread.taskId,
+          teammateId: linkedSourceTurn.teammateId ?? thread.teammateId,
+          workflowStepId: linkedSourceTurn.workflowStepId ?? thread.workflowStepId,
+          externalWorkId: linkedSourceTurn.externalWorkId ?? thread.externalWorkId,
+          sourceTurnId: linkedSourceTurn.id,
+          activeRunId: runId,
+          lastRunId: runId,
+          createdByActor: "local-user",
+          createdAt: now,
+          updatedAt: now,
+        });
+        state.turnRunLinks.push({
+          turnId: childTurnId,
+          runId,
+          attemptNumber: 1,
+          role: "resume",
+          createdAt: now,
+        });
+      }
       const updatedThread = { ...thread, status: "running", activeRunId: runId, lastRunId: runId, updatedAt: now };
       state.threads = state.threads.some((item) => item.id === thread.id)
         ? state.threads.map((item) => item.id === thread.id ? updatedThread : item)

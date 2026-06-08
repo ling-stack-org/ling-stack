@@ -2211,6 +2211,232 @@ Rules:
 - pin and search use metadata/read models only;
 - direct run APIs remain available.
 
+### V2D-P0/A: Turn-Linked Resume Foundation
+
+V2D should not start by implementing fork/archive/pin/search together. The first
+implementation slice is a compatibility extension of the existing thread resume flow so
+resume can anchor to a durable `LingTurn` when one is available.
+
+#### Goal
+
+Let the user resume from a selected durable turn instead of only choosing a source run,
+while preserving the existing run-based resume path.
+
+P0/A is successful when:
+
+- `resume-preview` and `resume` still work with the existing `{ sourceRunId }` request;
+- both routes may also accept `{ turnId }`;
+- a selected `turnId` deterministically resolves to one source run inside that turn;
+- preview explains which turn and run will be used before execution;
+- execute creates or links the follow-up work as a child/resume turn;
+- active-thread and active-turn guards remain intact.
+
+#### Hard Boundaries
+
+Do not include these in P0/A:
+
+- fork, archive, pin, or search UI/API;
+- channel tree lineage rendering;
+- Work History archived filters;
+- new durable tables beyond existing `ling_turns` / `ling_turn_runs`;
+- durable process-item cache;
+- PTY snapshots or manual capture;
+- raw log search;
+- any approval, rerun, cancel, or provider-repair request body changes.
+
+Metadata remains a read hint. It must not select resume context, approve work, cancel
+work, or recover active runs.
+
+#### API Contract
+
+Extend the current request shape additively:
+
+```ts
+interface LingThreadResumeRequest {
+  readonly instruction?: string;
+  readonly idempotencyKey?: string;
+  readonly sourceRunId?: string;
+  readonly turnId?: string;
+  readonly includeArtifacts?: boolean;
+}
+```
+
+Existing behavior remains the fallback:
+
+- no `turnId`: resolve the source run exactly as today from `sourceRunId` or
+  `thread.lastRunId`;
+- `turnId` only: resolve the turn, validate it belongs to `threadId`, then choose
+  `turn.lastRunId` when present, otherwise the latest linked `LingTurnRun` by
+  `attemptNumber`;
+- both `turnId` and `sourceRunId`: validate that the source run belongs to the same
+  turn through `ling_turn_runs` or `turn.lastRunId`;
+- mismatched `threadId` / `turnId` / `sourceRunId` returns a validation error before
+  building context;
+- active non-terminal threads still allow preview with warnings but reject execute;
+- active non-terminal selected turns also reject execute unless the current explicit
+  run-intervention path is used instead.
+
+Extend preview context additively:
+
+```ts
+interface ResumeContextPreview {
+  readonly sourceRunId: string;
+  readonly sourceTurnId?: string;
+  readonly priorRunIds: readonly string[];
+  readonly priorTurnIds?: readonly string[];
+  readonly includedTurnCount?: number;
+  // existing event/artifact/approval counts stay unchanged
+}
+```
+
+Old clients may ignore the new fields.
+
+#### Context Builder Rules
+
+Create a small resolver before the existing resume context builder:
+
+```text
+resolveThreadResumeAnchor(store, thread, body)
+  -> sourceTurn?: LingTurn
+  -> sourceRun: RunSession
+  -> warnings: string[]
+```
+
+Rules:
+
+- the resolver reads authoritative `ling_turns`, `ling_turn_runs`, and `runs` rows;
+- it does not read `metadata_json` for correctness;
+- it preserves the current provider snapshot validation on the chosen source run;
+- preview context should include turns up to and including the source turn when `turnId`
+  is supplied;
+- legacy run-only threads keep the existing all-prior-runs context behavior;
+- artifact contents remain omitted from preview text unless an existing explicit
+  include-artifacts flag already permits artifact ids.
+
+#### Execute Rules
+
+When executing from a selected turn:
+
+- use the resolved source run as the parent run;
+- create the continuation run with `continuationReason = "manual_resume"`;
+- link the continuation run to a child `LingTurn` with `role = "resume"`;
+- set the child turn `sourceTurnId` to the selected source turn;
+- keep the child turn in the same `threadId` and `channelId`;
+- do not fork a new `LingThread` in P0/A.
+
+If the existing run orchestration already infers the child turn from `parentRunId`, P0/A
+may reuse that path, but tests must verify the resulting `LingTurn.sourceTurnId` and
+`LingTurnRun.role`.
+
+#### Web UX
+
+Use Work History / thread detail as the first surface. Do not add a permanent resume
+button inside the transcript work cell for P0/A.
+
+Thread detail should show a bounded source selector:
+
+```text
+Resume source
+  Latest completed turn
+  Selected turn: <turn title/status>
+  Source run fallback: <run id>
+```
+
+Rules:
+
+- default to latest completed turn when durable turns exist;
+- if the user opened details from a conversation work cell with `turnId`, preselect that
+  turn;
+- if no durable turn data is loaded, keep the existing source-run selector;
+- preview shows `Source turn`, `Source run`, prior turn count, prior run count, event
+  count, approval count, artifact id count, pending action count, and warnings;
+- execute remains disabled when preview reports an active source conflict;
+- after resume succeeds, refresh thread turns, thread metadata, evidence, and the
+  selected run list.
+
+The conversation work cell may keep only `Open run` / `Show details` in this slice. A
+future navigation slice can add `Open Work History` or `Resume from this turn`.
+
+#### Error Handling
+
+Return stable validation errors for:
+
+- `turn_not_found`;
+- `turn_not_in_thread`;
+- `source_run_not_found`;
+- `source_run_not_in_thread`;
+- `source_run_not_in_turn`;
+- `thread_active`;
+- `turn_active`;
+- `resume_snapshot_unavailable`.
+
+User-facing copy should explain the action, not the storage model: for example, `This
+turn is still running. Use the active run controls or wait for it to finish before
+resuming from it.`
+
+#### Implementation Order
+
+1. Add optional `turnId` to contracts and API client request types.
+2. Add the resume anchor resolver in daemon thread routes.
+3. Extend preview context with optional turn fields.
+4. Ensure resume execution links the continuation run to a resume child turn.
+5. Update mock daemon for turn-linked preview/resume.
+6. Update Work History thread detail source selection and preview display.
+7. Add focused unit/e2e coverage.
+
+#### Acceptance
+
+- Existing `sourceRunId` resume preview and execute tests still pass unchanged.
+- Preview with `turnId` resolves the latest linked source run from that turn.
+- Preview with mismatched `turnId` / `sourceRunId` fails before context generation.
+- Execute with a terminal selected turn creates a resume continuation and child turn.
+- Execute with an active selected turn is blocked.
+- Web can preselect a turn, preview the exact source, and execute from that source.
+- No transcript approval controls, fork UI, archive UI, pin UI, or search route is added.
+
+#### Suggested Verification
+
+- `git diff --check`
+- `corepack pnpm --filter @ling-stack/contracts build`
+- `corepack pnpm --filter @ling-stack/core test`
+- `corepack pnpm --filter @ling-stack/web typecheck`
+- daemon resume route tests for run-only, turn-linked, mismatch, active-thread, and
+  active-turn cases;
+- targeted Web e2e for Work History turn-linked preview/resume.
+
+#### V2D-P0/A Implementation Record
+
+Implemented turn-linked resume as an additive compatibility slice:
+
+- added optional `turnId` to `LingThreadResumeRequest`;
+- added optional `sourceTurnId`, `priorTurnIds`, and `includedTurnCount` to resume
+  preview context;
+- kept existing `{ sourceRunId }` preview/resume behavior working unchanged;
+- added a daemon-side resume anchor resolver that validates `threadId`, `turnId`, and
+  `sourceRunId` against authoritative `ling_turns`, `ling_turn_runs`, and `runs` rows;
+- kept `metadata_json` out of resume source selection and action authority;
+- returned stable route errors for turn/source mismatches, active threads/turns, and
+  missing resume snapshots;
+- reused existing run orchestration so a manual resume run creates a child `LingTurn`
+  with `sourceTurnId` and `LingTurnRun.role = "resume"`;
+- updated Work History Run detail to include the selected durable turn in
+  preview/resume requests;
+- updated Thread detail to prefer a durable source turn when turn state is loaded and to
+  fall back to the legacy source-run selector otherwise;
+- updated the Web mock daemon to model turn-linked preview/resume and child-turn links;
+- did not add fork, archive, pin, search, new durable tables, process-item cache,
+  transcript resume controls, PTY snapshots, or manual capture.
+
+Validation:
+
+- `git diff --check`
+- `corepack pnpm --filter @ling-stack/contracts build`
+- `corepack pnpm --filter @ling-stack/core build`
+- `corepack pnpm --filter @ling-stack/daemon build`
+- `corepack pnpm --filter @ling-stack/web typecheck`
+- `cd packages/daemon && node --test --test-name-pattern "daemon resume preview and execute can anchor" test/ling-turns-api.test.mjs`
+- `corepack pnpm --filter @ling-stack/web exec playwright test e2e/runtime.spec.ts -g "run history groups durable Ling turn attempts|run history opens a thread-first detail|thread detail keeps resume disabled"`
+
 ### Tests
 
 - Resume from a selected turn includes the intended prior context.

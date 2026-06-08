@@ -702,6 +702,145 @@ Fork does not archive the source branch. Archive remains an explicit action.
 
 `pin` and `search` use metadata/read models only.
 
+### V2D-A Turn-Linked Resume Details
+
+V2D starts with turn-linked resume, not fork/archive/pin/search. The first slice extends
+the existing thread resume route so a resume can be anchored to a durable `LingTurn`
+without breaking current run-based clients.
+
+#### Request Shape
+
+Keep `sourceRunId` as the backward-compatible anchor and add optional `turnId`:
+
+```ts
+interface LingThreadResumeRequest {
+  readonly instruction?: string;
+  readonly idempotencyKey?: string;
+  readonly sourceRunId?: string;
+  readonly turnId?: string;
+  readonly includeArtifacts?: boolean;
+}
+```
+
+Resolution order:
+
+1. If `turnId` is absent, keep the current behavior: `sourceRunId`, then
+   `thread.lastRunId`.
+2. If `turnId` is present and `sourceRunId` is absent, resolve the source run from
+   `turn.lastRunId`, then from the latest linked `LingTurnRun`.
+3. If both are present, validate that the source run is linked to the selected turn.
+4. Reject any selected turn or source run that does not belong to the requested thread.
+
+This keeps old UI, automation, and tests stable while allowing Work History to resume
+from a selected turn.
+
+#### Resume Anchor Resolver
+
+Add a deterministic resolver before context generation:
+
+```ts
+interface ThreadResumeAnchor {
+  readonly thread: LingThread;
+  readonly sourceTurn?: LingTurn;
+  readonly sourceRun: RunSession;
+  readonly warnings: readonly string[];
+}
+```
+
+Resolver rules:
+
+- read `ling_turns`, `ling_turn_runs`, and `runs` as the authoritative source;
+- do not read `LingThreadMetadata` to choose a source turn or run;
+- validate `threadId`, `turnId`, and `sourceRunId` in one place;
+- preserve the existing provider snapshot checks on the chosen source run;
+- allow preview for active threads/turns with warnings;
+- block execute for active non-terminal threads or active selected turns.
+
+#### Preview Context
+
+Extend preview context additively:
+
+```ts
+interface ResumeContextPreview {
+  readonly sourceRunId: string;
+  readonly sourceTurnId?: string;
+  readonly priorRunIds: readonly string[];
+  readonly priorTurnIds?: readonly string[];
+  readonly includedTurnCount?: number;
+}
+```
+
+Preview remains side-effect free. When `sourceTurnId` is present, the preview should
+summarize context through that turn boundary rather than silently using every run in the
+thread. Existing event, approval, artifact id, pending-action, redaction, and warning
+fields stay unchanged.
+
+#### Execute Semantics
+
+Executing from a selected turn creates a continuation inside the same thread:
+
+```text
+source LingTurn
+  -> selected source run
+    -> manual_resume run
+      -> child LingTurn
+         sourceTurnId = source LingTurn
+         LingTurnRun.role = "resume"
+```
+
+Rules:
+
+- do not create a child `LingThread`;
+- do not archive, pin, or hide the source thread;
+- keep `channelId` from the source thread/turn;
+- set `continuationReason = "manual_resume"` on the new run;
+- link the resumed run as `role = "resume"`;
+- refresh thread status and metadata after the run is created.
+
+If the existing orchestration infers the child turn from `parentRunId`, this slice may
+reuse that code path. Tests still need to prove the resulting child turn points back to
+the selected source turn.
+
+#### Work History UI
+
+The first UI surface is Work History / thread detail. Conversation transcript work cells
+stay result-first and do not gain permanent resume buttons in V2D-A.
+
+Thread detail source selection:
+
+```text
+Resume source
+  Latest completed turn
+  Selected turn
+  Source run fallback
+```
+
+Rules:
+
+- prefer the latest completed turn when durable turns are loaded;
+- preselect a turn when navigation arrives from a work cell or turn detail anchor;
+- fall back to the existing source-run selector for legacy run-only threads;
+- preview shows source turn, source run, prior turn count, prior run count, event count,
+  approvals, artifact ids, pending actions, and warnings;
+- execute is disabled when preview reports an active selected turn or active thread;
+- after execute, refresh turns, run evidence, and metadata before rendering the result.
+
+#### Validation Errors
+
+Use stable machine-readable errors so Web and tests do not depend on prose:
+
+- `turn_not_found`
+- `turn_not_in_thread`
+- `source_run_not_found`
+- `source_run_not_in_thread`
+- `source_run_not_in_turn`
+- `thread_active`
+- `turn_active`
+- `resume_snapshot_unavailable`
+
+User-facing copy should describe the action boundary: for example, `This turn is still
+running. Use the active run controls or wait for it to finish before resuming from it.`
+
 ### Fork Display Rules
 
 Fork has to be visible in both the originating channel and Work History. Otherwise users

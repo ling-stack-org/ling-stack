@@ -8,6 +8,7 @@ import {
   type LingThread,
   type LingThreadKind,
   type LingThreadStatus,
+  type LingTurn,
   type LingTurnCreatedByActor,
   type LingTurnKind,
   type PermissionConfirmation,
@@ -20,6 +21,7 @@ import {
   type SkillApprovalProfile,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
+import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
@@ -45,13 +47,22 @@ interface ResumeContextPreview {
   readonly title: string;
   readonly instruction: string;
   readonly sourceRunId: string;
+  readonly sourceTurnId?: string;
   readonly priorRunIds: readonly string[];
+  readonly priorTurnIds?: readonly string[];
+  readonly includedTurnCount?: number;
   readonly includedEventCount: number;
   readonly includedApprovalCount: number;
   readonly includedArtifactIds: readonly string[];
   readonly pendingActionIds: readonly string[];
   readonly contextText: string;
   readonly redactionNotes: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+interface ThreadResumeAnchor {
+  readonly sourceTurn?: LingTurn;
+  readonly sourceRun: RunSession;
   readonly warnings: readonly string[];
 }
 
@@ -187,7 +198,7 @@ async function handleLingThreadTurns(
       runLinks: turns.flatMap((turn) => store.listLingTurnRuns(turn.id)),
     });
   } catch (error) {
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    writeLingThreadRouteError(response, error);
   }
 }
 
@@ -224,8 +235,15 @@ async function handleLingThreadResumePreview(
       context: resume.context,
     });
   } catch (error) {
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    writeLingThreadRouteError(response, error);
   }
+}
+
+function writeLingThreadRouteError(response: ServerResponse, error: unknown): void {
+  writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+    error: error instanceof HttpError ? error.code : "bad_request",
+    message: error instanceof Error ? error.message : String(error),
+  });
 }
 
 async function handleLingThreadResume(
@@ -271,7 +289,7 @@ async function handleLingThreadResume(
       continuationReason: "manual_resume",
     });
   } catch (error) {
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    writeLingThreadRouteError(response, error);
   }
 }
 
@@ -398,16 +416,25 @@ function buildLingThreadResumeContext(input: {
   readonly mode: "preview" | "execute";
 }): { readonly sourceRun: RunSession; readonly context: ResumeContextPreview; readonly runRequest: RunRequest } {
   const { store, thread, body } = input;
-  const warnings: string[] = [];
+  const anchor = resolveThreadResumeAnchor(store, thread, body);
+  const warnings: string[] = [...anchor.warnings];
   const activeRun = thread.activeRunId ? store.getRun(thread.activeRunId) : undefined;
   if (activeRun && !isTerminalRunStatus(activeRun.status)) {
     const message = `Thread already has an active run: ${activeRun.id}`;
     if (input.mode === "execute") {
-      throw new Error(message);
+      throw new HttpError(409, "thread_active", message);
     }
     warnings.push(message);
   }
-  const sourceRun = resolveThreadResumeSourceRun(store, thread, body);
+  const activeTurnRun = anchor.sourceTurn?.activeRunId ? store.getRun(anchor.sourceTurn.activeRunId) : undefined;
+  if (anchor.sourceTurn && isLingTurnActiveForResume(anchor.sourceTurn, activeTurnRun)) {
+    const message = `Selected turn is not terminal: ${anchor.sourceTurn.id}`;
+    if (input.mode === "execute") {
+      throw new HttpError(409, "turn_active", message);
+    }
+    warnings.push(message);
+  }
+  const sourceRun = anchor.sourceRun;
   const requestSnapshot = isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {};
   const taskSnapshot = isRecord(sourceRun.taskSnapshot) ? sourceRun.taskSnapshot : {};
   const instruction = isRecord(body)
@@ -429,11 +456,12 @@ function buildLingThreadResumeContext(input: {
     ? undefined
     : isRecord(requestSnapshot.provider) ? requestSnapshot.provider as unknown as PiRunnerProviderConfig : undefined;
   if (!providerPresetId && !inlineProvider) {
-    throw new Error("Cannot resume thread because the source run has no reusable provider snapshot.");
+    throw new HttpError(400, "resume_snapshot_unavailable", "Cannot resume thread because the source run has no reusable provider snapshot.");
   }
   const context = buildResumeContextPreview({
     store,
     thread,
+    sourceTurn: anchor.sourceTurn,
     sourceRun,
     originalTitle,
     originalPrompt,
@@ -479,25 +507,81 @@ function buildLingThreadResumeContext(input: {
   };
 }
 
-function resolveThreadResumeSourceRun(store: RunStore, thread: LingThread, body: unknown): RunSession {
+function resolveThreadResumeAnchor(store: RunStore, thread: LingThread, body: unknown): ThreadResumeAnchor {
+  const requestedTurnId = isRecord(body) ? readOptionalString(body, "turnId") : undefined;
   const requestedRunId = isRecord(body) ? readOptionalString(body, "sourceRunId") : undefined;
-  const sourceRunId = requestedRunId ?? thread.lastRunId;
+  if (!requestedTurnId) {
+    return {
+      sourceRun: resolveThreadResumeSourceRun(store, thread, requestedRunId ?? thread.lastRunId),
+      warnings: [],
+    };
+  }
+
+  const sourceTurn = store.getLingTurn(requestedTurnId);
+  if (!sourceTurn) {
+    throw new HttpError(404, "turn_not_found", `Ling turn not found: ${requestedTurnId}`);
+  }
+  if (sourceTurn.threadId !== thread.id) {
+    throw new HttpError(400, "turn_not_in_thread", `Ling turn does not belong to thread: ${requestedTurnId}`);
+  }
+
+  const sourceRun = requestedRunId
+    ? resolveThreadResumeSourceRun(store, thread, requestedRunId)
+    : resolveThreadResumeSourceRunFromTurn(store, thread, sourceTurn);
+  if (!isRunLinkedToTurn(store, sourceTurn, sourceRun)) {
+    throw new HttpError(400, "source_run_not_in_turn", `Source run does not belong to turn: ${sourceRun.id}`);
+  }
+  return {
+    sourceTurn,
+    sourceRun,
+    warnings: [],
+  };
+}
+
+function resolveThreadResumeSourceRun(store: RunStore, thread: LingThread, sourceRunId: string | undefined): RunSession {
   if (!sourceRunId) {
-    throw new Error("Thread has no source run to resume.");
+    throw new HttpError(404, "source_run_not_found", "Thread has no source run to resume.");
   }
   const sourceRun = store.getRun(sourceRunId);
   if (!sourceRun) {
-    throw new Error(`Thread source run was not found: ${sourceRunId}`);
+    throw new HttpError(404, "source_run_not_found", `Thread source run was not found: ${sourceRunId}`);
   }
   if (sourceRun.threadId !== thread.id) {
-    throw new Error(`Source run does not belong to thread: ${sourceRunId}`);
+    throw new HttpError(400, "source_run_not_in_thread", `Source run does not belong to thread: ${sourceRunId}`);
   }
   return sourceRun;
+}
+
+function resolveThreadResumeSourceRunFromTurn(store: RunStore, thread: LingThread, turn: LingTurn): RunSession {
+  const linkedRunIds = new Set(store.listLingTurnRuns(turn.id).map((link) => link.runId));
+  const candidateIds = [
+    turn.lastRunId,
+    ...[...store.listLingTurnRuns(turn.id)]
+      .sort((left, right) => right.attemptNumber - left.attemptNumber || right.createdAt.localeCompare(left.createdAt))
+      .map((link) => link.runId),
+  ].filter((id): id is string => Boolean(id));
+  for (const candidateId of candidateIds) {
+    const run = store.getRun(candidateId);
+    if (!run || run.threadId !== thread.id) {
+      continue;
+    }
+    if (run.id === turn.lastRunId || run.id === turn.activeRunId || linkedRunIds.has(run.id)) {
+      return run;
+    }
+  }
+  throw new HttpError(404, "source_run_not_found", `Ling turn has no source run to resume: ${turn.id}`);
+}
+
+function isRunLinkedToTurn(store: RunStore, turn: LingTurn, run: RunSession): boolean {
+  return run.id === turn.lastRunId ||
+    run.id === turn.activeRunId ||
+    store.listLingTurnRuns(turn.id).some((link) => link.runId === run.id);
 }
 
 function buildResumeContextPreview(input: {
   readonly store: RunStore;
   readonly thread: LingThread;
+  readonly sourceTurn?: LingTurn;
   readonly sourceRun: RunSession;
   readonly originalTitle: string;
   readonly originalPrompt: string;
@@ -505,12 +589,14 @@ function buildResumeContextPreview(input: {
   readonly includeArtifacts: boolean;
   readonly warnings: readonly string[];
 }): ResumeContextPreview {
-  const runs = [...input.store.listRuns({ threadId: input.thread.id, limit: 100 })]
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const scope = resolveResumeContextScope(input.store, input.thread, input.sourceTurn, input.sourceRun);
+  const runs = scope.runs;
   const events = runs.flatMap((run) => input.store.listEvents(run.id, { limit: 1000 }));
   const approvals = uniqueById(runs.flatMap((run) => input.store.listApprovalRequests({ runId: run.id, limit: 500 })));
   const artifacts = input.includeArtifacts ? runs.flatMap((run) => input.store.listArtifacts(run.id)) : [];
-  const actions = listExecutionActions(input.store, { threadId: input.thread.id, limit: 500 });
+  const scopedRunIds = new Set(runs.map((run) => run.id));
+  const actions = listExecutionActions(input.store, { threadId: input.thread.id, limit: 500 })
+    .filter((action) => !input.sourceTurn || !action.runId || scopedRunIds.has(action.runId));
   const pendingActionIds = actions
     .filter((action) => action.status === "proposed" || action.status === "waiting_for_approval" || action.status === "executing")
     .map((action) => action.id);
@@ -521,7 +607,10 @@ function buildResumeContextPreview(input: {
     title: `Resume: ${input.thread.title}`,
     instruction: input.instruction,
     sourceRunId: input.sourceRun.id,
+    sourceTurnId: input.sourceTurn?.id,
     priorRunIds: runs.map((run) => run.id),
+    priorTurnIds: scope.priorTurns?.map((turn) => turn.id),
+    includedTurnCount: scope.priorTurns?.length,
     includedEventCount: events.length,
     includedApprovalCount: approvals.length,
     includedArtifactIds: artifacts.map((artifact) => artifact.id),
@@ -538,18 +627,59 @@ function buildResumeContextPreview(input: {
       originalTitle: input.originalTitle,
       originalPrompt: input.originalPrompt,
       runs,
+      sourceTurn: input.sourceTurn,
+      priorTurns: scope.priorTurns,
       approvals,
       actions,
     }),
   };
 }
 
+function resolveResumeContextScope(
+  store: RunStore,
+  thread: LingThread,
+  sourceTurn: LingTurn | undefined,
+  sourceRun: RunSession,
+): { readonly runs: readonly RunSession[]; readonly priorTurns?: readonly LingTurn[] } {
+  const allRuns = [...store.listRuns({ threadId: thread.id, limit: 100 })]
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  if (!sourceTurn) {
+    return { runs: allRuns };
+  }
+  const turns = [...store.listLingTurns({ threadId: thread.id, limit: 500 })]
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const sourceTurnIndex = turns.findIndex((turn) => turn.id === sourceTurn.id);
+  const priorTurns = sourceTurnIndex >= 0 ? turns.slice(0, sourceTurnIndex + 1) : [sourceTurn];
+  const priorTurnIds = new Set(priorTurns.map((turn) => turn.id));
+  const scopedRunIds = new Set<string>([sourceRun.id]);
+  for (const turn of priorTurns) {
+    if (turn.activeRunId) {
+      scopedRunIds.add(turn.activeRunId);
+    }
+    if (turn.lastRunId) {
+      scopedRunIds.add(turn.lastRunId);
+    }
+  }
+  for (const turnId of priorTurnIds) {
+    for (const link of store.listLingTurnRuns(turnId)) {
+      scopedRunIds.add(link.runId);
+    }
+  }
+  const runs = allRuns.filter((run) => scopedRunIds.has(run.id));
+  return {
+    runs: runs.length > 0 ? runs : [sourceRun],
+    priorTurns,
+  };
+}
+
 function renderResumeContextText(input: Omit<ResumeContextPreview, "contextText"> & {
   readonly thread: LingThread;
+  readonly sourceTurn?: LingTurn;
   readonly sourceRun: RunSession;
   readonly originalTitle: string;
   readonly originalPrompt: string;
   readonly runs: readonly RunSession[];
+  readonly priorTurns?: readonly LingTurn[];
   readonly approvals: readonly ApprovalRequest[];
   readonly actions: ReturnType<typeof listExecutionActions>;
 }): string {
@@ -570,6 +700,19 @@ function renderResumeContextText(input: Omit<ResumeContextPreview, "contextText"
     ...input.runs.map((run) =>
       `- ${run.id}: ${run.status}, ${run.startedAt ?? run.createdAt} -> ${run.endedAt ?? "open"}, runner ${runnerAuditLine(run)}`),
     "",
+    ...(input.priorTurns ? [
+      "Prior turns:",
+      ...input.priorTurns.map((turn) => `- ${turn.id}: ${turn.status}, ${turn.title}`),
+      "",
+    ] : []),
+    ...(input.sourceTurn ? [
+      "Source turn:",
+      `Turn id: ${input.sourceTurn.id}`,
+      `Status: ${input.sourceTurn.status}`,
+      `Kind: ${input.sourceTurn.kind}`,
+      `Title: ${input.sourceTurn.title}`,
+      "",
+    ] : []),
     "Source run:",
     `Run id: ${input.sourceRun.id}`,
     `Status: ${input.sourceRun.status}`,
@@ -671,6 +814,13 @@ function uniqueById<T extends { readonly id: string }>(items: readonly T[]): T[]
 
 function isTerminalRunStatus(status: RunSession["status"]): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function isLingTurnActiveForResume(turn: LingTurn, activeRun: RunSession | undefined): boolean {
+  if (activeRun && !isTerminalRunStatus(activeRun.status)) {
+    return true;
+  }
+  return turn.status === "open" || turn.status === "running" || turn.status === "waiting_for_approval" || turn.status === "blocked";
 }
 
 function readSnapshotString(record: Record<string, unknown>, key: string): string | undefined {

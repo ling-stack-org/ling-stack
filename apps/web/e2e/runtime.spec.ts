@@ -657,6 +657,13 @@ test("run history groups durable Ling turn attempts and keeps run detail selecte
   await expect(workList.getByRole("button", { name: /Attempt 2/ })).toBeVisible();
   await expect(page.getByText("No run-only records for this workspace")).toBeVisible();
 
+  const resumePreviewRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/threads/thread_work_history/resume-preview")) {
+      resumePreviewRequests.push(request.postData() ?? "");
+    }
+  });
+
   await workList.getByRole("button", { name: /Refactor durable Work History/ }).click();
   const detail = page.getByLabel("Run detail");
   await expect(detail.getByRole("heading", { name: "Run detail" })).toBeVisible();
@@ -665,6 +672,23 @@ test("run history groups durable Ling turn attempts and keeps run detail selecte
   await expect(detail).toContainText("Retry durable turn grouping");
   await expect(detail).toContainText("Attempt 1");
   await expect(detail).toContainText("Attempt 2");
+
+  await detail.getByRole("button", { name: "Preview resume" }).click();
+  await expect.poll(() => resumePreviewRequests.length).toBe(1);
+  expect(resumePreviewRequests[0]).toContain("\"turnId\":\"turn_work_history\"");
+  const resumePreview = detail.locator(".compact-json").filter({ hasText: "Resume context preview" });
+  await expect(resumePreview).toContainText("Source turn");
+  await expect(resumePreview).toContainText("turn_work_history");
+  await expect(resumePreview).toContainText("Source run");
+  await expect(resumePreview).toContainText(retryRun.id);
+  await expect(resumePreview).toContainText("Prior turns");
+
+  await detail.getByRole("button", { name: "Resume thread" }).click();
+  await expect.poll(() => state.turns.find((turn) => turn.sourceTurnId === "turn_work_history")?.id).toMatch(/^turn_resume_/);
+  await expect.poll(() => {
+    const childTurn = state.turns.find((turn) => turn.sourceTurnId === "turn_work_history");
+    return childTurn ? state.turnRunLinks.some((link) => link.turnId === childTurn.id && link.role === "resume") : false;
+  }).toBe(true);
 
   await detail.getByRole("button", { name: "Open attempt" }).click();
   await expect(detail).toContainText("Primary durable turn attempt");
