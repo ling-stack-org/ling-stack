@@ -64,6 +64,7 @@ import {
   type ChannelActivityTriageDraft,
   type ChannelActivityTriageResult,
 } from "../../lib/channel-activity-triage.js";
+import { buildConversationWorkCellViewModel, groupRunsByThreadId } from "../../lib/conversation-work-cell.js";
 import {
   allChannelActivitySavedViewId,
   applyActivityViewFilter,
@@ -120,7 +121,7 @@ import {
   removeComposerInputRawToken,
   serializeComposerInputParts,
 } from "../../shared/components/index.js";
-import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, MessageBodyRenderer, MessageFooterActions, MessageRow, RightDrawer } from "../../shared/conversation/index.js";
+import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, MessageBodyRenderer, MessageFooterActions, MessageRow, RightDrawer } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -276,7 +277,7 @@ function channelSidePanelIcon(view: ChannelSidePanelView, size: number): JSX.Ele
 }
 
 function channelActivityVisibleInDefaultChat(item: ChannelActivityItem): boolean {
-  return item.kind === "message" || item.kind === "summary";
+  return item.kind === "message" || item.kind === "summary" || (item.kind === "run" && Boolean(item.record.threadId));
 }
 
 type MessageFeedItem =
@@ -622,6 +623,24 @@ export function WorkspaceClientView({
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
   );
+  const conversationWorkCellByThreadId = useMemo(() => {
+    const groupedRuns = groupRunsByThreadId(channelRuns);
+    const cells = new Map<string, NonNullable<ReturnType<typeof buildConversationWorkCellViewModel>>>();
+    for (const [threadId] of groupedRuns) {
+      const cell = buildConversationWorkCellViewModel({
+        threadId,
+        runs: channelRuns,
+        approvals,
+        artifactsByRun: channelArtifactsByRun,
+        t,
+        artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
+      });
+      if (cell) {
+        cells.set(threadId, cell);
+      }
+    }
+    return cells;
+  }, [approvals, channelArtifactsByRun, channelRuns, cwd, t]);
   const selectedChannelTaskIds = useMemo(
     () => tasks.filter((task) => task.channelId === selectedChannelId).map((task) => task.id),
     [selectedChannelId, tasks],
@@ -911,18 +930,28 @@ export function WorkspaceClientView({
     () => auditActivityVisible ? filteredActivityItems : filteredActivityItems.filter(channelActivityVisibleInDefaultChat),
     [auditActivityVisible, filteredActivityItems],
   );
+  const renderableActivityItems = useMemo(
+    () => visibleActivityItems.filter((item) => {
+      if (item.kind !== "run" || !item.record.threadId) {
+        return true;
+      }
+      const workCell = conversationWorkCellByThreadId.get(item.record.threadId);
+      return !workCell || workCell.anchorRunId === item.record.id;
+    }),
+    [conversationWorkCellByThreadId, visibleActivityItems],
+  );
   const latestVisibleActivityItemId =
-    visibleActivityItems.length > 0 ? visibleActivityItems[visibleActivityItems.length - 1]?.id ?? "" : "";
+    renderableActivityItems.length > 0 ? renderableActivityItems[renderableActivityItems.length - 1]?.id ?? "" : "";
   const messageFeedCanLoadOlder =
-    channelMessagesHasOlder && !activityFiltersActive && visibleActivityItems.length > 0;
+    channelMessagesHasOlder && !activityFiltersActive && renderableActivityItems.length > 0;
   const messageFeedItems = useMemo<readonly MessageFeedItem[]>(
     () => [
       ...(messageFeedCanLoadOlder ? [{ id: "older-channel-messages", kind: "older-loader" } satisfies MessageFeedItem] : []),
-      ...visibleActivityItems.map((item) => ({ id: item.id, kind: "activity" as const, item })),
+      ...renderableActivityItems.map((item) => ({ id: item.id, kind: "activity" as const, item })),
     ],
-    [messageFeedCanLoadOlder, visibleActivityItems],
+    [messageFeedCanLoadOlder, renderableActivityItems],
   );
-  const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && visibleActivityItems.length === 0;
+  const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && renderableActivityItems.length === 0;
   const messageFeedVirtualizer = useVirtualizer({
     count: messageFeedItems.length,
     getScrollElement: () => messageFeedRef.current,
@@ -1148,8 +1177,8 @@ export function WorkspaceClientView({
     channelProtocolLoading,
     latestVisibleActivityItemId,
     messageFeedItems.length,
+    renderableActivityItems.length,
     selectedChannelId,
-    visibleActivityItems.length,
   ]);
 
   useEffect(() => {
@@ -2406,6 +2435,18 @@ export function WorkspaceClientView({
     }
     if (item.kind === "run") {
       const run = item.record;
+      const workCell = run.threadId ? conversationWorkCellByThreadId.get(run.threadId) : undefined;
+      if (workCell) {
+        if (workCell.anchorRunId !== run.id) {
+          return null;
+        }
+        return (
+          <ConversationWorkCell
+            model={workCell}
+            onOpenRun={openRunInPanel}
+          />
+        );
+      }
       const taskTitle = item.task?.title ?? readRunTitle(run);
       return (
         <MessageBubble

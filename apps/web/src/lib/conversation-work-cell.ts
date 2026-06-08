@@ -1,0 +1,391 @@
+import type { ApprovalRequest, ExecutionAction, RunArtifact, RunSession } from "../types.js";
+import type { Translate } from "../i18n.js";
+import { effectiveApprovalStatus } from "./approvals.js";
+import { truncatePreview } from "./data.js";
+
+export type ConversationWorkCellMode = "active" | "completed";
+export type ConversationWorkCellStatus = RunSession["status"];
+export type ConversationWorkCellGroupKind = "changed" | "checked" | "evidence" | "attention";
+export type ConversationWorkCellRowTone = "neutral" | "running" | "waiting" | "success" | "failed";
+
+export interface ConversationWorkCellStat {
+  readonly id: string;
+  readonly label: string;
+  readonly value: string;
+}
+
+export interface ConversationWorkCellRow {
+  readonly id: string;
+  readonly title: string;
+  readonly description?: string;
+  readonly meta?: string;
+  readonly tone?: ConversationWorkCellRowTone;
+}
+
+export interface ConversationWorkCellEvidenceLink {
+  readonly id: string;
+  readonly label: string;
+  readonly meta?: string;
+  readonly href?: string;
+}
+
+export interface ConversationWorkCellGroup {
+  readonly id: ConversationWorkCellGroupKind;
+  readonly label: string;
+  readonly summary: string;
+  readonly rows: readonly ConversationWorkCellRow[];
+}
+
+export interface ConversationWorkCellViewModel {
+  readonly id: string;
+  readonly threadId: string;
+  readonly anchorRunId: string;
+  readonly runIds: readonly string[];
+  readonly mode: ConversationWorkCellMode;
+  readonly status: ConversationWorkCellStatus;
+  readonly title: string;
+  readonly summary: string;
+  readonly stats: readonly ConversationWorkCellStat[];
+  readonly activeRows: readonly ConversationWorkCellRow[];
+  readonly groups: readonly ConversationWorkCellGroup[];
+  readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
+  readonly updatedAt: string;
+}
+
+export interface BuildConversationWorkCellInput {
+  readonly threadId: string;
+  readonly runs: readonly RunSession[];
+  readonly approvals: readonly ApprovalRequest[];
+  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly executionActions?: readonly ExecutionAction[];
+  readonly t: Translate;
+  readonly artifactHref?: (artifact: RunArtifact) => string;
+}
+
+export function buildConversationWorkCellViewModel(input: BuildConversationWorkCellInput): ConversationWorkCellViewModel | undefined {
+  const runs = [...input.runs]
+    .filter((run) => run.threadId === input.threadId)
+    .sort((left, right) => compareRunActivity(left, right));
+  if (runs.length === 0) {
+    return undefined;
+  }
+
+  const latestRun = runs[0];
+  const runIds = runs.map((run) => run.id);
+  const runIdSet = new Set(runIds);
+  const approvals = input.approvals
+    .filter((approval) => approval.runId ? runIdSet.has(approval.runId) : false)
+    .sort((left, right) => (right.resolvedAt ?? right.createdAt).localeCompare(left.resolvedAt ?? left.createdAt));
+  const artifacts = runIds.flatMap((runId) => input.artifactsByRun[runId] ?? []);
+  const actions = (input.executionActions ?? [])
+    .filter((action) => action.threadId === input.threadId || (action.runId ? runIdSet.has(action.runId) : false))
+    .sort((left, right) => (right.completedAt ?? right.executedAt ?? right.resolvedAt ?? right.createdAt).localeCompare(left.completedAt ?? left.executedAt ?? left.resolvedAt ?? left.createdAt));
+  const pendingApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending");
+  const failedRuns = runs.filter((run) => run.status === "failed");
+  const failedActions = actions.filter((action) => action.status === "failed" || action.status === "denied" || action.status === "expired");
+  const mode: ConversationWorkCellMode = isRunActive(latestRun) ? "active" : "completed";
+  const title = readRunTitle(latestRun);
+  const evidenceLinks = artifacts.slice(0, 5).map((artifact) => ({
+    id: artifact.id,
+    label: artifact.title || artifact.path || artifact.id,
+    meta: [artifact.type, artifact.sizeBytes !== undefined ? formatBytes(artifact.sizeBytes) : undefined].filter(Boolean).join(" · "),
+    href: input.artifactHref?.(artifact),
+  }));
+
+  return {
+    id: `work-cell:${input.threadId}`,
+    threadId: input.threadId,
+    anchorRunId: latestRun.id,
+    runIds,
+    mode,
+    status: latestRun.status,
+    title,
+    summary: buildWorkCellSummary({
+      t: input.t,
+      latestRun,
+      runCount: runs.length,
+      artifactCount: artifacts.length,
+      pendingApprovalCount: pendingApprovals.length,
+    }),
+    stats: [
+      { id: "attempts", label: input.t("Attempts"), value: String(runs.length) },
+      { id: "artifacts", label: input.t("Evidence"), value: String(artifacts.length) },
+      { id: "approvals", label: input.t("Approvals"), value: String(approvals.length) },
+    ],
+    activeRows: buildActiveRows({ t: input.t, latestRun, runs, pendingApprovals, artifacts, actions }),
+    groups: buildWorkCellGroups({ t: input.t, runs, approvals, artifacts, actions, failedRuns, failedActions, pendingApprovals }),
+    evidenceLinks,
+    updatedAt: latestRun.endedAt ?? latestRun.startedAt ?? latestRun.updatedAt,
+  };
+}
+
+export function groupRunsByThreadId(runs: readonly RunSession[]): ReadonlyMap<string, readonly RunSession[]> {
+  const grouped = new Map<string, RunSession[]>();
+  for (const run of runs) {
+    if (!run.threadId) {
+      continue;
+    }
+    grouped.set(run.threadId, [...(grouped.get(run.threadId) ?? []), run]);
+  }
+  return new Map([...grouped.entries()].map(([threadId, threadRuns]) => [
+    threadId,
+    threadRuns.sort((left, right) => compareRunActivity(left, right)),
+  ]));
+}
+
+function buildActiveRows(input: {
+  readonly t: Translate;
+  readonly latestRun: RunSession;
+  readonly runs: readonly RunSession[];
+  readonly pendingApprovals: readonly ApprovalRequest[];
+  readonly artifacts: readonly RunArtifact[];
+  readonly actions: readonly ExecutionAction[];
+}): readonly ConversationWorkCellRow[] {
+  const rows: ConversationWorkCellRow[] = [];
+  rows.push({
+    id: `run:${input.latestRun.id}`,
+    title: input.latestRun.status === "waiting_for_approval"
+      ? input.t("Waiting for approval")
+      : input.latestRun.status === "queued"
+        ? input.t("Queued")
+        : input.t("Running attempt"),
+    description: readRunTitle(input.latestRun),
+    meta: input.latestRun.providerName ? `${input.latestRun.providerName} · ${input.latestRun.providerModel}` : undefined,
+    tone: input.latestRun.status === "waiting_for_approval" ? "waiting" : input.latestRun.status === "queued" || input.latestRun.status === "running" ? "running" : "neutral",
+  });
+
+  for (const approval of input.pendingApprovals.slice(0, 3)) {
+    rows.push({
+      id: `approval:${approval.id}`,
+      title: approval.title,
+      description: approval.description,
+      meta: input.t("Approval required"),
+      tone: "waiting",
+    });
+  }
+
+  for (const action of input.actions.slice(0, 4)) {
+    rows.push({
+      id: `action:${action.id}`,
+      title: action.title,
+      description: action.summary,
+      meta: action.status,
+      tone: action.status === "failed" || action.status === "denied" || action.status === "expired"
+        ? "failed"
+        : action.status === "succeeded"
+          ? "success"
+          : action.status === "waiting_for_approval"
+            ? "waiting"
+            : "running",
+    });
+  }
+
+  if (input.artifacts.length > 0) {
+    rows.push({
+      id: "artifacts",
+      title: input.t("Evidence captured"),
+      description: input.t("{count} artifacts", { count: input.artifacts.length }),
+      tone: "success",
+    });
+  }
+
+  if (input.runs.length > 1) {
+    rows.push({
+      id: "attempts",
+      title: input.t("Prior attempts"),
+      description: input.t("{count} attempts", { count: input.runs.length - 1 }),
+      tone: "neutral",
+    });
+  }
+
+  return rows;
+}
+
+function buildWorkCellGroups(input: {
+  readonly t: Translate;
+  readonly runs: readonly RunSession[];
+  readonly approvals: readonly ApprovalRequest[];
+  readonly artifacts: readonly RunArtifact[];
+  readonly actions: readonly ExecutionAction[];
+  readonly failedRuns: readonly RunSession[];
+  readonly failedActions: readonly ExecutionAction[];
+  readonly pendingApprovals: readonly ApprovalRequest[];
+}): readonly ConversationWorkCellGroup[] {
+  const changedArtifacts = input.artifacts.filter((artifact) => artifact.type === "diff" || artifact.type === "file" || Boolean(artifact.path));
+  const changedRows = uniqueBy(changedArtifacts, (artifact) => artifact.path || artifact.id).slice(0, 8).map((artifact) => ({
+    id: `artifact:${artifact.id}`,
+    title: artifact.title || artifact.path || artifact.id,
+    description: artifact.path,
+    meta: artifact.type,
+    tone: "neutral" as const,
+  }));
+  const checkedRows = input.runs.slice(0, 8).map((run) => ({
+    id: `run:${run.id}`,
+    title: readRunTitle(run),
+    description: run.errorMessage ? truncatePreview(run.errorMessage, 160) : run.providerName ? `${run.providerName} · ${run.providerModel}` : undefined,
+    meta: run.status,
+    tone: runStatusTone(run.status),
+  }));
+  const evidenceRows: ConversationWorkCellRow[] = [
+    ...input.artifacts.slice(0, 8).map((artifact) => ({
+      id: `evidence:${artifact.id}`,
+      title: artifact.title || artifact.path || artifact.id,
+      description: artifact.path,
+      meta: artifact.type,
+      tone: "neutral" as const,
+    })),
+    ...input.approvals.slice(0, 5).map((approval) => ({
+      id: `approval:${approval.id}`,
+      title: approval.title,
+      description: approval.description,
+      meta: effectiveApprovalStatus(approval),
+      tone: effectiveApprovalStatus(approval) === "pending" ? "waiting" as const : "neutral" as const,
+    })),
+  ];
+  const attentionRows: ConversationWorkCellRow[] = [
+    ...input.pendingApprovals.slice(0, 5).map((approval) => ({
+      id: `pending:${approval.id}`,
+      title: approval.title,
+      description: approval.description,
+      meta: input.t("Waiting for approval"),
+      tone: "waiting" as const,
+    })),
+    ...input.failedRuns.slice(0, 5).map((run) => ({
+      id: `failed-run:${run.id}`,
+      title: readRunTitle(run),
+      description: run.errorMessage ? truncatePreview(run.errorMessage, 180) : input.t("Run failed without a captured error message."),
+      meta: run.status,
+      tone: "failed" as const,
+    })),
+    ...input.failedActions.slice(0, 5).map((action) => ({
+      id: `failed-action:${action.id}`,
+      title: action.title,
+      description: action.summary,
+      meta: action.status,
+      tone: "failed" as const,
+    })),
+  ];
+
+  return [
+    {
+      id: "changed",
+      label: input.t("Changed"),
+      summary: changedRows.length > 0 ? input.t("{count} changed items", { count: changedRows.length }) : input.t("No changed files recorded"),
+      rows: changedRows,
+    },
+    {
+      id: "checked",
+      label: input.t("Checked work"),
+      summary: input.t("{count} attempts", { count: input.runs.length }),
+      rows: checkedRows,
+    },
+    {
+      id: "evidence",
+      label: input.t("Evidence"),
+      summary: input.t("{count} evidence items", { count: evidenceRows.length }),
+      rows: evidenceRows,
+    },
+    {
+      id: "attention",
+      label: input.t("Attention"),
+      summary: attentionRows.length > 0 ? input.t("{count} attention items", { count: attentionRows.length }) : input.t("No attention needed"),
+      rows: attentionRows,
+    },
+  ];
+}
+
+function buildWorkCellSummary(input: {
+  readonly t: Translate;
+  readonly latestRun: RunSession;
+  readonly runCount: number;
+  readonly artifactCount: number;
+  readonly pendingApprovalCount: number;
+}): string {
+  if (input.latestRun.status === "succeeded") {
+    return input.t("Completed {attempts} attempts with {artifacts} evidence items.", {
+      attempts: input.runCount,
+      artifacts: input.artifactCount,
+    });
+  }
+  if (input.latestRun.status === "failed") {
+    const issue = input.latestRun.errorMessage ? truncatePreview(input.latestRun.errorMessage, 180) : input.t("No failure message was captured.");
+    return input.t("Failed after {attempts} attempts: {issue}", {
+      attempts: input.runCount,
+      issue,
+    });
+  }
+  if (input.latestRun.status === "cancelled") {
+    return input.t("Cancelled after {attempts} attempts.", { attempts: input.runCount });
+  }
+  if (input.latestRun.status === "waiting_for_approval" || input.pendingApprovalCount > 0) {
+    return input.t("Waiting for {count} approvals before continuing.", { count: Math.max(1, input.pendingApprovalCount) });
+  }
+  if (input.latestRun.status === "queued") {
+    return input.t("Queued with {attempts} attempts in this work thread.", { attempts: input.runCount });
+  }
+  return input.t("Running with {attempts} attempts and {artifacts} evidence items.", {
+    attempts: input.runCount,
+    artifacts: input.artifactCount,
+  });
+}
+
+function compareRunActivity(left: RunSession, right: RunSession): number {
+  const leftTime = left.endedAt ?? left.startedAt ?? left.updatedAt;
+  const rightTime = right.endedAt ?? right.startedAt ?? right.updatedAt;
+  const timeComparison = rightTime.localeCompare(leftTime);
+  return timeComparison === 0 ? right.id.localeCompare(left.id) : timeComparison;
+}
+
+function isRunActive(run: RunSession): boolean {
+  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
+}
+
+function readRunTitle(run: RunSession): string {
+  if (typeof run.taskSnapshot === "object" && run.taskSnapshot !== null && "title" in run.taskSnapshot) {
+    const title = (run.taskSnapshot as { readonly title?: unknown }).title;
+    if (typeof title === "string" && title.trim()) {
+      return title.trim();
+    }
+  }
+  return run.taskId || run.id;
+}
+
+function runStatusTone(status: RunSession["status"]): ConversationWorkCellRowTone {
+  if (status === "succeeded") {
+    return "success";
+  }
+  if (status === "failed" || status === "cancelled") {
+    return "failed";
+  }
+  if (status === "waiting_for_approval") {
+    return "waiting";
+  }
+  if (status === "queued" || status === "running") {
+    return "running";
+  }
+  return "neutral";
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function uniqueBy<T>(items: readonly T[], keyOf: (item: T) => string): readonly T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const item of items) {
+    const key = keyOf(item);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(item);
+  }
+  return result;
+}

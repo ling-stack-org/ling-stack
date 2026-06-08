@@ -1592,6 +1592,74 @@ test("channel v1.2 workflow start and run uses the existing run surface", async 
   await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Run seeded step" })).toContainText("succeeded");
 });
 
+test("thread-backed runs render as collapsed conversation work cells", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const run = state.runs[0];
+  run.threadId = "thread_inspect";
+  run.status = "succeeded";
+  run.errorMessage = undefined;
+  run.startedAt = "2026-05-25T00:20:00.000Z";
+  run.endedAt = "2026-05-25T00:22:00.000Z";
+  run.updatedAt = "2026-05-25T00:22:00.000Z";
+  state.tasks = state.tasks.map((task) => isRecord(task) && task.id === "task_inspect" ? { ...task, status: "done", updatedAt: run.updatedAt } : task);
+  state.approvals = [];
+  state.artifactsByRun[run.id] = [
+    {
+      id: "artifact_thread_diff",
+      runId: run.id,
+      type: "diff",
+      path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+      title: "WorkspaceClientView.tsx",
+      contentType: "text/x-diff; charset=utf-8",
+      sizeBytes: 512,
+      createdAt: "2026-05-25T00:21:00.000Z",
+    },
+  ];
+  state.executionActions = [
+    {
+      id: "execution_action_thread_ui",
+      workspaceId: "workspace_default",
+      threadId: "thread_inspect",
+      runId: run.id,
+      actionType: "edit",
+      risk: "medium",
+      status: "succeeded",
+      title: "Render conversation work cell",
+      summary: "Conversation work cell was rendered from thread-backed run data.",
+      targetRefs: [{ type: "file", path: "apps/web/src/features/workspace/WorkspaceClientView.tsx" }],
+      previewArtifactIds: [],
+      resultArtifactIds: ["artifact_thread_diff"],
+      createdAt: "2026-05-25T00:20:30.000Z",
+      updatedAt: "2026-05-25T00:22:00.000Z",
+      executedAt: "2026-05-25T00:21:30.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const workCell = page.getByLabel("Channel message feed").locator(".conversation-work-cell").filter({ hasText: "Inspect workspace" });
+  await expect(workCell).toBeVisible();
+  await expect(workCell).toContainText("Work result");
+  await expect(workCell).toContainText("Completed 1 attempts with 1 evidence items.");
+  await expect(workCell).toContainText("Attempts");
+  await expect(workCell.locator(".conversation-work-cell-group")).toHaveCount(0);
+  await expect(workCell).not.toContainText(".ling-stack/sessions/run_failed.jsonl");
+
+  await workCell.getByRole("button", { name: "Show details" }).click();
+  await expect(workCell.getByLabel("Changed")).toContainText("WorkspaceClientView.tsx");
+  await expect(workCell.getByLabel("Checked work")).toContainText("succeeded");
+  await expect(workCell.getByRole("region", { name: "Evidence" })).toContainText("diff");
+  await expect(workCell.getByLabel("Attention")).toContainText("No items recorded");
+  await expect(workCell.getByRole("link", { name: /WorkspaceClientView\.tsx/ })).toHaveAttribute("href", /\/artifacts\/artifact_thread_diff\/content/);
+
+  await workCell.getByRole("button", { name: "Open run" }).click();
+  await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
+  await expect(page.locator("article.task-detail")).toContainText("Latest run");
+});
+
 test("channel activity derives task run approval transition and workflow events", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
