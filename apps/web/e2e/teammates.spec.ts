@@ -596,19 +596,37 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
     ["queue_followup", "queued", "Continue with only risks after this reply."],
   ]);
   await expect(guidance).toContainText("Queued");
+  await expect(guidance.getByRole("button", { name: "Run this guidance now" })).toBeEnabled();
   await guidance.getByRole("button", { name: "Cancel" }).click();
   await expect.poll(() => state.teammateDirectInterventions[0]?.status).toBe("cancelled");
 
-  await guidance.getByPlaceholder("Add guidance").fill("Stop and continue with blockers only.");
-  await guidance.getByRole("button", { name: "Stop and continue" }).click();
-  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.mode).toBe("interrupt_redirect");
-  await expect(guidance).toContainText("Stopping");
+  const guidanceAfterCancel = page.getByLabel("Replying");
+  await guidanceAfterCancel.getByPlaceholder("Add guidance").fill("Run this queued guidance immediately.");
+  await guidanceAfterCancel.getByRole("button", { name: "Queue guidance" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("queued");
+  await guidanceAfterCancel.getByRole("button", { name: "Run this guidance now" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("cancelling_source");
+  await expect.poll(() => state.workUnits[0]?.status).toBe("cancelled");
+  await expect(page.getByLabel("Private guidance")).toContainText("Stopping");
 
-  await guidance.getByRole("button", { name: "Stop reply" }).click();
+  state.workUnits[0] = {
+    ...state.workUnits[0],
+    status: "running",
+    endedAt: undefined,
+    updatedAt: "2026-06-04T00:33:00.000Z",
+  };
+  const resumedGuidance = page.getByLabel("Replying");
+  await resumedGuidance.getByPlaceholder("Add guidance").fill("Stop and continue with blockers only.");
+  await expect(resumedGuidance.getByRole("button", { name: "Stop and continue" })).toBeEnabled();
+  await resumedGuidance.getByRole("button", { name: "Stop and continue" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.mode).toBe("interrupt_redirect");
+  await expect(resumedGuidance).toContainText("Stopping");
+
+  await resumedGuidance.getByRole("button", { name: "Stop reply" }).click();
   await expect.poll(() => state.workUnits[0]?.status).toBe("cancelled");
   await expect.poll(() => {
     const message = state.teammateDirectMessages.find((item) => isRecord(item) && item.id === "tdmsg_pending_reply");
     return isRecord(message) ? message.status : undefined;
   }).toBe("cancelled");
-  await expect(page.getByText("Reply stopped")).toBeVisible();
+  await expect(page.getByLabel("Private message feed").getByText("Reply stopped").first()).toBeVisible();
 });

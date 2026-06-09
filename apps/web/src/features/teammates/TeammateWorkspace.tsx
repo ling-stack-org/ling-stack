@@ -58,6 +58,7 @@ import {
   listTeammateMemoryScopes,
   listTeammateSkills,
   listTeammateTasks,
+  promoteTeammateDirectIntervention,
   publishSkillImportDraft,
   replaceTeammateChannels,
   replaceTeammateMcpBindings,
@@ -211,6 +212,7 @@ export function TeammateWorkspace({
   const [directGuidanceInstruction, setDirectGuidanceInstruction] = useState("");
   const [directGuidanceSubmitting, setDirectGuidanceSubmitting] = useState<"queue_followup" | "interrupt_redirect" | "stop" | "">("");
   const [directGuidanceCancelingId, setDirectGuidanceCancelingId] = useState("");
+  const [directGuidancePromotingId, setDirectGuidancePromotingId] = useState("");
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
@@ -439,6 +441,7 @@ export function TeammateWorkspace({
     setDirectGuidanceInstruction("");
     setDirectGuidanceSubmitting("");
     setDirectGuidanceCancelingId("");
+    setDirectGuidancePromotingId("");
     privateFeedPinnedToLatestRef.current = true;
     setPrivateFeedLatestButtonVisible(false);
     setHardDeleteReason("");
@@ -740,6 +743,29 @@ export function TeammateWorkspace({
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
       setDirectGuidanceCancelingId("");
+    }
+  }
+
+  async function promoteDirectGuidance(interventionId: string): Promise<void> {
+    if (directGuidancePromotingId || directGuidanceSubmitting) {
+      return;
+    }
+    setDirectGuidancePromotingId(interventionId);
+    try {
+      setWorkspaceError("");
+      const response = await promoteTeammateDirectIntervention(cwd.trim(), interventionId, { reason: "user_requested" });
+      setDirectRuntime(response.runtime);
+      if (response.message) {
+        setWorkspaceError(response.message);
+      }
+      await refreshDirectRuntime();
+      const directMessagesResponse = await listTeammateDirectMessages(cwd.trim(), teammate.id);
+      setThread(directMessagesResponse.thread);
+      setMessages(directMessagesResponse.messages);
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDirectGuidancePromotingId("");
     }
   }
 
@@ -1622,8 +1648,12 @@ export function TeammateWorkspace({
                     instruction: intervention.instruction,
                     statusLabel: teammateDirectInterventionStatusLabel(intervention.status, t),
                     meta: teammateDirectInterventionModeLabel(intervention.mode, t),
+                    promoteLabel: t("立即执行这条引导"),
+                    promoteDisabled: Boolean(directGuidancePromotingId) || Boolean(directGuidanceSubmitting),
+                    promoteLoading: directGuidancePromotingId === intervention.id,
+                    onPromote: intervention.status === "queued" && directRuntime?.activeReply ? () => void promoteDirectGuidance(intervention.id) : undefined,
                     cancelLabel: t("Cancel"),
-                    cancelDisabled: directGuidanceCancelingId === intervention.id,
+                    cancelDisabled: directGuidanceCancelingId === intervention.id || directGuidancePromotingId === intervention.id,
                     onCancel: () => void cancelDirectGuidance(intervention.id),
                   }))}
                   onInstructionChange={setDirectGuidanceInstruction}

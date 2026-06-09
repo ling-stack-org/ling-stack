@@ -3893,6 +3893,72 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  const teammateDirectInterventionPromoteMatch = /^\/teammate-direct-interventions\/([^/]+)\/promote$/.exec(path);
+  if (teammateDirectInterventionPromoteMatch && request.method() === "POST") {
+    const interventionId = decodeURIComponent(teammateDirectInterventionPromoteMatch[1]);
+    const interventionIndex = state.teammateDirectInterventions.findIndex((item) => item.id === interventionId);
+    if (interventionIndex < 0) {
+      await route.fulfill({ status: 404, json: { error: "direct_intervention_not_found" } });
+      return;
+    }
+    const current = state.teammateDirectInterventions[interventionIndex];
+    if (current.status !== "queued") {
+      await route.fulfill({ status: 409, json: { error: "direct_intervention_not_queued", message: "Only queued guidance can run now." } });
+      return;
+    }
+    const thread = state.teammateDirectThreads[current.teammateId] ?? getOrCreateMockTeammateThread(state, current.teammateId, {});
+    const activeWorkUnitIndex = state.workUnits.findIndex((unit) =>
+      unit.kind === "teammate_direct_reply" &&
+      (unit.teammateId === current.teammateId || unit.ownerId === current.teammateId) &&
+      isActiveMockWorkUnit(unit.status)
+    );
+    if (activeWorkUnitIndex < 0) {
+      await route.fulfill({
+        json: {
+          cwd,
+          teammateId: current.teammateId,
+          intervention: current,
+          runtime: buildMockTeammateDirectRuntime(state, current.teammateId, thread),
+          message: "当前回复已结束，这条引导会按排队顺序继续执行。",
+        },
+      });
+      return;
+    }
+    const intervention = {
+      ...current,
+      status: "cancelling_source",
+      startedAt: "2026-06-04T00:32:30.000Z",
+      updatedAt: "2026-06-04T00:32:30.000Z",
+    } satisfies MockTeammateDirectIntervention;
+    state.teammateDirectInterventions[interventionIndex] = intervention;
+    const workUnit = {
+      ...state.workUnits[activeWorkUnitIndex],
+      status: "cancelled",
+      endedAt: "2026-06-04T00:32:30.000Z",
+      updatedAt: "2026-06-04T00:32:30.000Z",
+    };
+    state.workUnits[activeWorkUnitIndex] = workUnit;
+    const messageId = workUnit.linkedMessageId;
+    const messageIndex = state.teammateDirectMessages.findIndex((message) => isRecord(message) && message.id === messageId);
+    if (messageIndex >= 0 && isRecord(state.teammateDirectMessages[messageIndex])) {
+      state.teammateDirectMessages[messageIndex] = {
+        ...state.teammateDirectMessages[messageIndex],
+        status: "cancelled",
+        body: "Reply stopped",
+        errorMessage: "Reply stopped",
+        updatedAt: "2026-06-04T00:32:30.000Z",
+      };
+    }
+    await route.fulfill({
+      json: {
+        cwd,
+        teammateId: intervention.teammateId,
+        intervention,
+        runtime: buildMockTeammateDirectRuntime(state, intervention.teammateId, thread),
+      },
+    });
+    return;
+  }
   const teammateDirectReplyCancelMatch = /^\/teammate-direct-replies\/([^/]+)\/cancel$/.exec(path);
   if (teammateDirectReplyCancelMatch && request.method() === "POST") {
     const workUnitId = decodeURIComponent(teammateDirectReplyCancelMatch[1]);

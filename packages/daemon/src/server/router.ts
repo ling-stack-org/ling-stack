@@ -156,6 +156,7 @@ import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../feature
 import {
   DirectReplyControlService,
   handleTeammateDirectInterventionCancel,
+  handleTeammateDirectInterventionPromote,
   handleTeammateDirectInterventions,
   handleTeammateDirectReplyCancel,
   handleTeammateDirectRuntime,
@@ -910,6 +911,10 @@ export async function routeRequest(
 
   const teammateDirectInterventionRoute = parseTeammateDirectInterventionRoute(url.pathname);
   if (teammateDirectInterventionRoute) {
+    if (teammateDirectInterventionRoute.kind === "promote") {
+      await handleTeammateDirectInterventionPromote(request, response, config, storeRegistry, teammateDirectInterventionRoute.interventionId, directReplyControl);
+      return;
+    }
     await handleTeammateDirectInterventionCancel(request, response, config, storeRegistry, teammateDirectInterventionRoute.interventionId, directReplyControl);
     return;
   }

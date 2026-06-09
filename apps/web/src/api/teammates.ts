@@ -11,6 +11,7 @@ import type {
   ReplaceTeammateMcpBindingsRequest,
   ReplaceTeammateMemoryScopesRequest,
   ReplaceTeammateSkillBindingsRequest,
+  PromoteTeammateDirectReplyInterventionRequest,
   TaskListResponse,
   TeammateActivityListResponse,
   TeammateChannelMembershipListResponse,
@@ -147,6 +148,14 @@ export async function cancelTeammateDirectIntervention(
   input: CancelTeammateDirectReplyInterventionRequest = {},
 ): Promise<TeammateDirectInterventionResponse> {
   return daemonClient.cancelTeammateDirectIntervention(cwd, interventionId, input);
+}
+
+export async function promoteTeammateDirectIntervention(
+  cwd: string,
+  interventionId: string,
+  input: PromoteTeammateDirectReplyInterventionRequest = {},
+): Promise<TeammateDirectInterventionResponse> {
+  return daemonClient.promoteTeammateDirectIntervention(cwd, interventionId, input);
 }
 
 export async function cancelTeammateDirectReply(

@@ -145,6 +145,7 @@ const dictionaries: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     "停止回复": "Stop reply",
     "已排队": "Queued",
     "正在停止": "Stopping",
+    "立即执行这条引导": "Run this guidance now",
     "正在继续": "Continuing",
     "已按新引导继续": "Continued with new guidance",
     "已取消": "Cancelled",
@@ -2174,6 +2175,7 @@ const dictionaries: Readonly<Record<Locale, Readonly<Record<string, string>>>> =
     "Starting continuation": "正在启动续跑",
     "Started": "已启动",
     "Queued": "已排队",
+    "Run this guidance now": "立即执行这条引导",
     "Continuation": "续跑",
 
     "Recent runs": "最近运行",

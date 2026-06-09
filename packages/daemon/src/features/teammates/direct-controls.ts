@@ -137,6 +137,52 @@ export class DirectReplyControlService {
     return cancelled;
   }
 
+  promoteIntervention(input: {
+    readonly store: RunStore;
+    readonly interventionId: string;
+    readonly reason?: string;
+  }): { readonly intervention: TeammateDirectReplyIntervention; readonly message?: string } {
+    const intervention = input.store.getTeammateDirectReplyIntervention(input.interventionId);
+    if (!intervention) {
+      throw new HttpError(404, "direct_intervention_not_found", `Direct reply intervention not found: ${input.interventionId}`);
+    }
+    if (intervention.status !== "queued") {
+      throw new HttpError(409, "direct_intervention_not_queued", "只有已排队的引导可以立即执行。");
+    }
+    const teammate = this.requireTeammate(input.store, intervention.teammateId);
+    const thread = input.store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
+    const active = this.findActiveReply(input.store, teammate.id, intervention.threadId);
+    if (!active) {
+      return {
+        intervention,
+        message: "当前回复已结束，这条引导会按排队顺序继续执行。",
+      };
+    }
+    const now = new Date().toISOString();
+    const cancelling = input.store.updateTeammateDirectReplyInterventionStatus({
+      interventionId: intervention.id,
+      status: "cancelling_source",
+      startedAt: now,
+      now,
+    }) ?? intervention;
+    this.cancelReply({
+      store: input.store,
+      workUnitId: active.workUnitId,
+      reason: input.reason ?? "promote_queued_guidance",
+    });
+    queueMicrotask(() => {
+      void this.startContinuation({
+        store: input.store,
+        teammate,
+        thread,
+        intervention: cancelling,
+      });
+    });
+    return {
+      intervention: input.store.getTeammateDirectReplyIntervention(intervention.id) ?? cancelling,
+    };
+  }
+
   async maybeStartNextQueuedContinuation(input: { readonly store: RunStore; readonly teammateId: string; readonly threadId: string; readonly sourceWorkUnitId?: string }): Promise<void> {
     const candidates = input.store
       .listTeammateDirectReplyInterventions({
@@ -388,6 +434,43 @@ export async function handleTeammateDirectInterventionCancel(
     const body = parseOptionalReason(await readOptionalJsonBody(request, config.maxBodyBytes));
     const intervention = service.cancelIntervention({ store, interventionId, reason: body.reason });
     writeJson(response, 200, { cwd, intervention });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleTeammateDirectInterventionPromote(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  interventionId: string,
+  service: DirectReplyControlService,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    if (request.method !== "POST") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate direct intervention promote` });
+      return;
+    }
+    const body = parseOptionalReason(await readOptionalJsonBody(request, config.maxBodyBytes));
+    const result = service.promoteIntervention({ store, interventionId, reason: body.reason });
+    writeJson(response, 200, {
+      cwd,
+      teammateId: result.intervention.teammateId,
+      intervention: result.intervention,
+      runtime: service.getRuntime({ store, teammateId: result.intervention.teammateId }),
+      ...(result.message ? { message: result.message } : {}),
+    });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",

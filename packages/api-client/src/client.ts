@@ -78,6 +78,7 @@ import type {
   CreateTeammateDirectReplyInterventionRequest,
   CreateLingThreadRequest,
   CreateTeammateDirectMessageRequest,
+  PromoteTeammateDirectReplyInterventionRequest,
   CreateTeammatePrivateAttachmentRequest,
   CreateChannelWorkflowFromHandoffRequest,
   CreateChannelWorkflowTemplateCompileRequest,
@@ -980,6 +981,14 @@ export class LingDaemonClient {
     input: CancelTeammateDirectReplyInterventionRequest = {},
   ): Promise<TeammateDirectInterventionResponse> {
     return this.post(`/teammate-direct-interventions/${encodeURIComponent(interventionId)}/cancel`, { cwd }, input);
+  }
+
+  async promoteTeammateDirectIntervention(
+    cwd: string,
+    interventionId: string,
+    input: PromoteTeammateDirectReplyInterventionRequest = {},
+  ): Promise<TeammateDirectInterventionResponse> {
+    return this.post(`/teammate-direct-interventions/${encodeURIComponent(interventionId)}/promote`, { cwd }, input);
   }
 
   async cancelTeammateDirectReply(

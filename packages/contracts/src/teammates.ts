@@ -280,6 +280,10 @@ export interface CancelTeammateDirectReplyInterventionRequest {
   readonly reason?: string;
 }
 
+export interface PromoteTeammateDirectReplyInterventionRequest {
+  readonly reason?: string;
+}
+
 export interface TeammateDirectRuntimeResponse {
   readonly cwd: string;
   readonly teammateId: string;
@@ -307,6 +311,7 @@ export interface TeammateDirectInterventionResponse {
   readonly teammateId?: string;
   readonly intervention: TeammateDirectReplyIntervention;
   readonly runtime?: TeammateDirectRuntimeResponse;
+  readonly message?: string;
 }
 
 export interface TeammateDirectReplyCancelResponse {

@@ -69,10 +69,13 @@ export function parseRunInterventionRoute(
 
 export function parseTeammateDirectInterventionRoute(
   pathname: string,
-): { readonly kind: "cancel"; readonly interventionId: string } | undefined {
+): { readonly kind: "cancel" | "promote"; readonly interventionId: string } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 3 && segments[0] === "teammate-direct-interventions" && segments[2] === "cancel") {
     return { kind: "cancel", interventionId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "teammate-direct-interventions" && segments[2] === "promote") {
+    return { kind: "promote", interventionId: segments[1] };
   }
   return undefined;
 }

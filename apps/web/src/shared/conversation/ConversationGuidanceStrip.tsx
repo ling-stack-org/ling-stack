@@ -1,10 +1,14 @@
-import { Loader2, PauseCircle, Send, Square } from "lucide-react";
+import { CornerDownLeft, Loader2, PauseCircle, Send, Square } from "lucide-react";
 
 export interface ConversationGuidanceItem {
   readonly id: string;
   readonly instruction: string;
   readonly statusLabel: string;
   readonly meta?: string;
+  readonly promoteLabel?: string;
+  readonly promoteDisabled?: boolean;
+  readonly promoteLoading?: boolean;
+  readonly onPromote?: () => void;
   readonly cancelLabel?: string;
   readonly cancelDisabled?: boolean;
   readonly onCancel?: () => void;
@@ -76,6 +80,18 @@ export function ConversationGuidanceStrip({
               <span className="channel-run-guidance-status">{item.statusLabel}</span>
               <span>{item.instruction}</span>
               {item.meta ? <small>{item.meta}</small> : null}
+              {item.onPromote ? (
+                <button
+                  className="ghost-button compact-button icon-button"
+                  type="button"
+                  disabled={item.promoteDisabled || item.promoteLoading}
+                  onClick={item.onPromote}
+                  aria-label={item.promoteLabel ?? "Run now"}
+                  title={item.promoteLabel ?? "Run now"}
+                >
+                  {item.promoteLoading ? <Loader2 className="spin" size={14} /> : <CornerDownLeft size={14} />}
+                </button>
+              ) : null}
               {item.onCancel ? (
                 <button className="ghost-button compact-button" type="button" disabled={item.cancelDisabled} onClick={item.onCancel}>
                   {item.cancelLabel ?? "Cancel"}

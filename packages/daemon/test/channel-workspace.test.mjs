@@ -2721,6 +2721,62 @@ test("teammate direct reply cancel aborts active reply and marks pending message
   }
 });
 
+test("teammate direct queued guidance can promote to immediate continuation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-promote-guidance-"));
+  const runner = new AbortableDelayedRunner();
+  const daemon = await startDaemonForTest(runner);
+  const streamController = new AbortController();
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+
+    const streamResponse = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Start thinking.", providerPresetId: provider.id }),
+      signal: streamController.signal,
+    });
+    assert.equal(streamResponse.status, 200);
+    await waitForCondition(() => runner.runs.length === 1, "direct reply to start");
+
+    const runtime = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-runtime?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(runtime.activeReply?.workUnitId);
+    const queued = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "queue_followup",
+      instruction: "Use this queued guidance immediately.",
+      idempotencyKey: "test-promote-queued-guidance",
+    });
+    assert.equal(queued.intervention.status, "queued");
+
+    const promoted = await postJson(`${daemon.url}/teammate-direct-interventions/${encodeURIComponent(queued.intervention.id)}/promote?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(promoted.intervention.id, queued.intervention.id);
+    assert.equal(promoted.intervention.status, "cancelling_source");
+    assert.equal(runner.abortCount, 1);
+    await waitForCondition(() => runner.runs.length === 2, "promoted continuation to start");
+    assert.equal(runner.runs[1].task.prompt.includes("Use this queued guidance immediately."), true);
+    assert.equal(runner.runs[1].task.prompt.includes("排队引导"), true);
+
+    const listed = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-interventions?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.interventions.filter((item) => item.id === queued.intervention.id).length, 1);
+    assert.equal(listed.interventions.some((item) => item.status === "queued"), false);
+
+    runner.resolve("Promoted continuation reply");
+    await streamResponse.text().catch(() => "");
+    const messages = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    const cancelledReply = messages.messages.find((message) => message.id === runtime.activeReply.messageId);
+    assert.equal(cancelledReply.status, "cancelled");
+  } finally {
+    streamController.abort();
+    runner.resolve("cleanup");
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("private attachments avatar and hard delete stay scoped to teammate private data", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachments-hard-delete-"));
   const daemon = await startDaemonForTest();
