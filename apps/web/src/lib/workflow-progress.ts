@@ -64,7 +64,7 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
   const currentStep = blockedStep ?? waitingStep ?? runningStep ?? queuedStep ?? failedStep ?? orderedSteps[completedSteps] ?? orderedSteps.at(-1);
   const attention: WorkflowProgressAttention = blockedStep
     ? "blocked"
-    : failedStep || input.workflow.status === "failed" || input.workflow.status === "cancelled"
+    : failedStep || input.workflow.status === "failed"
       ? "failed"
       : waitingStep || pendingApprovals.length > 0 || input.workflow.status === "waiting_for_approval"
         ? "waiting"
