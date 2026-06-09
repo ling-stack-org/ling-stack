@@ -80,6 +80,14 @@ export interface LingThreadListRequest {
   readonly limit?: number;
 }
 
+export interface CreateLingThreadRequest {
+  readonly kind?: "channel_discussion";
+  readonly channelId: string;
+  readonly title?: string;
+  readonly objective?: string;
+  readonly idempotencyKey?: string;
+}
+
 export interface LingThreadSearchMatch {
   readonly threadId: string;
   readonly turnId?: string;

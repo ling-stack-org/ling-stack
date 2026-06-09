@@ -39,12 +39,14 @@ import type {
   ChannelHandoff,
   ChannelLinkPreview,
   ChannelMessage,
+  ChannelMessageRouteDecision,
   ChannelMessageListPage,
   ChannelUpdateInput,
   CreateChannelAttachmentInput,
   CreateChannelContextSummaryInput,
   CreateChannelDecisionInput,
   CreateChannelExecutionProposalInput,
+  CreateChannelMessageRouteDecisionInput,
   CreateWorkflowHandoffIntentInput,
   CreateWorkflowSelectorDecisionInput,
   CreateChannelWorkflowInput,
@@ -72,6 +74,7 @@ import type {
   ListChannelsOptions,
   ListChannelLinkPreviewsOptions,
   ListChannelMessagesOptions,
+  ListChannelMessageRouteDecisionsOptions,
   ListTeammatePrivateAttachmentsOptions,
   ListTeammateDirectMessagesOptions,
   ListTasksOptions,
@@ -90,6 +93,7 @@ import type {
   UpdateChannelContextSummaryInput,
   UpdateChannelDecisionInput,
   UpdateChannelExecutionProposalInput,
+  UpdateChannelMessageRouteDecisionInput,
   UpdateWorkflowHandoffIntentInput,
   UpdateWorkflowSelectorDecisionInput,
   UpdateChannelWorkflowInput,
@@ -993,6 +997,14 @@ export interface RunStore {
   getChannelMessage(id: string): ChannelMessage | undefined;
   listChannelMessages(options: ListChannelMessagesOptions): ChannelMessage[];
   listChannelMessagesPage(options: ListChannelMessagesOptions): ChannelMessageListPage;
+  createChannelMessageRouteDecision(input: CreateChannelMessageRouteDecisionInput, now: string): ChannelMessageRouteDecision;
+  getChannelMessageRouteDecision(id: string): ChannelMessageRouteDecision | undefined;
+  listChannelMessageRouteDecisions(options?: ListChannelMessageRouteDecisionsOptions): ChannelMessageRouteDecision[];
+  updateChannelMessageRouteDecision(
+    id: string,
+    input: UpdateChannelMessageRouteDecisionInput,
+    now: string,
+  ): ChannelMessageRouteDecision | undefined;
   createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal;
   getChannelExecutionProposal(id: string): ChannelExecutionProposal | undefined;
   listChannelExecutionProposals(options: ListChannelExecutionProposalsOptions): ChannelExecutionProposal[];

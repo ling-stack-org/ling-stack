@@ -48,11 +48,12 @@ export function ConversationVirtualFeed<TItem>({
   latestButtonNode,
 }: ConversationVirtualFeedProps<TItem>): JSX.Element {
   const resolvedFeedClassName = [feedClassName, empty ? emptyFeedClassName : ""].filter(Boolean).join(" ");
+  const showLoadingState = loading && items.length === 0;
 
   return (
     <div className={className}>
       <div ref={scrollRef} className={resolvedFeedClassName} aria-label={ariaLabel} onScroll={onScroll}>
-        {loading ? (
+        {showLoadingState ? (
           <ConversationEmptyState className="client-empty-state" label={loadingLabel} loading />
         ) : empty ? (
           <ConversationEmptyState className="client-empty-state message-feed-empty-state" icon={emptyIcon} label={emptyLabel} />

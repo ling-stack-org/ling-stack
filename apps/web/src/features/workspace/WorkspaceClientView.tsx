@@ -49,7 +49,7 @@ import {
 } from "lucide-react";
 import { LingDaemonError } from "@ling-stack/api-client";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, unpinLingThread } from "../../api.js";
+import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, unpinLingThread } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -149,6 +149,7 @@ import type {
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
+  ChannelMessageRouteDecision,
   ChannelExecutionProposal,
   ChannelWorkflow,
   ChannelWorkflowStep,
@@ -184,6 +185,8 @@ import type { ApprovalResolution } from "../approvals/types.js";
 import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
+
+const channelAutoRouteEnabled = import.meta.env.VITE_LING_STACK_CHANNEL_AUTO_ROUTE === "true";
 
 type ChannelSidePanelView = "progress" | "files" | "context" | "settings" | "task" | "approval";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "progress" | "files" | "context" | "settings">;
@@ -324,6 +327,7 @@ export function WorkspaceClientView({
   channelArtifactErrorsByRun,
   channelBrief,
   channelDecisions,
+  channelMessageRouteDecisions,
   channelHandoffs,
   channelContextSummaries,
   channelWorkflows,
@@ -455,6 +459,7 @@ export function WorkspaceClientView({
   readonly channelArtifactErrorsByRun: Readonly<Record<string, string>>;
   readonly channelBrief: ChannelBrief | undefined;
   readonly channelDecisions: readonly ChannelDecision[];
+  readonly channelMessageRouteDecisions: readonly ChannelMessageRouteDecision[];
   readonly channelHandoffs: readonly ChannelHandoff[];
   readonly channelContextSummaries: readonly ChannelContextSummary[];
   readonly channelWorkflows: readonly ChannelWorkflow[];
@@ -595,6 +600,7 @@ export function WorkspaceClientView({
   const [activityFiltersExpanded, setActivityFiltersExpanded] = useState(false);
   const [attentionQueueExpanded, setAttentionQueueExpanded] = useState(false);
   const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
+  const [openRouteExplanationDecisionId, setOpenRouteExplanationDecisionId] = useState("");
   const [inspectorMode, setInspectorMode] = useState<"brief" | "decisions" | "handoffs" | "runtime">("brief");
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
   const [teammateManagerOpen, setTeammateManagerOpen] = useState(false);
@@ -654,6 +660,24 @@ export function WorkspaceClientView({
     () => new Map(channelAttachments.map((attachment) => [attachment.id, attachment])),
     [channelAttachments],
   );
+  const routeDecisionByReplyMessageId = useMemo(() => {
+    const decisions = new Map<string, ChannelMessageRouteDecision>();
+    for (const decision of channelMessageRouteDecisions) {
+      if (decision.status === "accepted" && decision.replyMessageId && decision.createdBy !== "explicit_mention") {
+        decisions.set(decision.replyMessageId, decision);
+      }
+    }
+    return decisions;
+  }, [channelMessageRouteDecisions]);
+  const routeDecisionBySourceMessageId = useMemo(() => {
+    const decisions = new Map<string, ChannelMessageRouteDecision>();
+    for (const decision of channelMessageRouteDecisions) {
+      if ((decision.status === "suppressed" || decision.status === "failed") && decision.mode !== "mentions_only") {
+        decisions.set(decision.sourceMessageId, decision);
+      }
+    }
+    return decisions;
+  }, [channelMessageRouteDecisions]);
   const channelRuns = useMemo(
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
@@ -698,6 +722,11 @@ export function WorkspaceClientView({
   const activeWorkThread = activeWorkThreadId
     ? visibleChannelWorkThreads.find((thread) => thread.id === activeWorkThreadId)
     : undefined;
+  const channelMainBranchActionId = selectedChannelId ? `channel-main:${selectedChannelId}` : "channel-main";
+  const channelMainBranchActionPending = forkingWorkThreadId === channelMainBranchActionId;
+  const channelDiscussionRootThread = visibleChannelWorkThreads.find((thread) =>
+    isChannelDiscussionRootThread(thread, selectedChannelId)
+  );
   const channelRunsByThreadId = useMemo(() => groupRunsByThreadId(channelRuns), [channelRuns]);
   const visibleConversationThreadIds = useMemo(() => [...channelRunsByThreadId.keys()], [channelRunsByThreadId]);
   const visibleConversationThreadRunSignatures = useMemo(() => {
@@ -1473,6 +1502,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setSelectedApprovalId("");
     setSelectedWorkflowEvidenceWorkflowId("");
+    setOpenRouteExplanationDecisionId("");
     setCreateTaskOpen(false);
     setChannelNotificationLevel(readChannelNotificationLevel(cwd, selectedChannelId));
     messageFeedPinnedToLatestRef.current = true;
@@ -1735,6 +1765,73 @@ export function WorkspaceClientView({
       });
   }
 
+  async function materializeChannelMainBranch(workspaceCwd: string): Promise<LingThread | undefined> {
+    if (!selectedChannelId) {
+      return undefined;
+    }
+    const existing = channelDiscussionRootThread ?? visibleChannelWorkThreads.find((thread) =>
+      isChannelDiscussionRootThread(thread, selectedChannelId)
+    );
+    if (existing) {
+      return existing;
+    }
+
+    const response = await createLingThread(workspaceCwd, {
+      kind: "channel_discussion",
+      channelId: selectedChannelId,
+      title: t("Main branch"),
+      objective: selectedChannel
+        ? t("Main conversation branch for {channel}", { channel: selectedChannel.name })
+        : t("Main conversation branch"),
+      idempotencyKey: `channel-main:${selectedChannelId}`,
+    });
+    setChannelWorkThreads((current) => mergeLingThreads([response.thread], current));
+    return response.thread;
+  }
+
+  async function selectChannelMainBranch(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId || forkingWorkThreadId) {
+      return;
+    }
+    setForkingWorkThreadId(channelMainBranchActionId);
+    setChannelWorkThreadError("");
+    try {
+      const thread = await materializeChannelMainBranch(workspaceCwd);
+      if (thread) {
+        setActiveWorkThreadId(thread.id);
+      }
+    } catch (error) {
+      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setForkingWorkThreadId((current) => current === channelMainBranchActionId ? "" : current);
+    }
+  }
+
+  async function forkChannelMainBranch(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId || forkingWorkThreadId) {
+      return;
+    }
+    setForkingWorkThreadId(channelMainBranchActionId);
+    setChannelWorkThreadError("");
+    try {
+      const sourceThread = await materializeChannelMainBranch(workspaceCwd);
+      if (!sourceThread) {
+        return;
+      }
+      const response = await forkLingThread(workspaceCwd, sourceThread.id, {
+        idempotencyKey: `channel-main-fork:${sourceThread.id}:${sourceThread.updatedAt}`,
+      });
+      setChannelWorkThreads((current) => mergeLingThreads([response.childThread, response.sourceThread], current));
+      setActiveWorkThreadId(response.childThread.id);
+    } catch (error) {
+      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setForkingWorkThreadId((current) => current === channelMainBranchActionId ? "" : current);
+    }
+  }
+
   async function forkChannelWorkThread(thread: LingThread): Promise<void> {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || forkingWorkThreadId) {
@@ -1969,6 +2066,15 @@ export function WorkspaceClientView({
   function createTask(): void {
     onCreateTask();
     setCreateTaskOpen(false);
+  }
+
+  function openCreateTaskPanel(): void {
+    setCreateTaskOpen(true);
+    setSidePanelView("task");
+    setSidePanelOpen(true);
+    setActivityToolsOpen(false);
+    setAttentionQueueOpen(false);
+    setTeammateManagerOpen(false);
   }
 
   function activityActionRow(activityItemId: string, children?: ReactNode): JSX.Element {
@@ -2558,6 +2664,8 @@ export function WorkspaceClientView({
       const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
       const pendingAiReply = message.kind === "ai_reply" && message.status === "pending";
       const executionProposals = executionProposalsByMessageId.get(message.id) ?? [];
+      const acceptedRouteDecision = routeDecisionByReplyMessageId.get(message.id);
+      const sourceRouteDecision = routeDecisionBySourceMessageId.get(message.id);
       const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
       const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
         <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
@@ -2621,24 +2729,35 @@ export function WorkspaceClientView({
                 />
               ) : null}
               actionsNode={(
-                <MessageFooterActions
-                  className="channel-message-row-actions"
-                  actions={[
-                    {
-                      id: "copy",
-                      label: t("Copy message"),
-                      icon: <Copy size={11} />,
-                      onClick: () => copyMessageText(message.body),
-                    },
-                    {
-                      id: "reply",
-                      label: t("Reply in topic"),
-                      icon: <Reply size={11} />,
-                      className: "message-reply-button message-meta-action",
-                      onClick: () => openThreadForMessage(message),
-                    },
-                  ]}
-                />
+                <div className="channel-message-row-footer-stack">
+                  {acceptedRouteDecision ? <ChannelRouteDecisionPill decision={acceptedRouteDecision} t={t} /> : null}
+                  {sourceRouteDecision ? (
+                    <ChannelRouteExplanation
+                      decision={sourceRouteDecision}
+                      open={openRouteExplanationDecisionId === sourceRouteDecision.id}
+                      onToggle={() => setOpenRouteExplanationDecisionId((current) => current === sourceRouteDecision.id ? "" : sourceRouteDecision.id)}
+                      t={t}
+                    />
+                  ) : null}
+                  <MessageFooterActions
+                    className="channel-message-row-actions"
+                    actions={[
+                      {
+                        id: "copy",
+                        label: t("Copy message"),
+                        icon: <Copy size={11} />,
+                        onClick: () => copyMessageText(message.body),
+                      },
+                      {
+                        id: "reply",
+                        label: t("Reply in topic"),
+                        icon: <Reply size={11} />,
+                        className: "message-reply-button message-meta-action",
+                        onClick: () => openThreadForMessage(message),
+                      },
+                    ]}
+                  />
+                </div>
               )}
             />
             {executionProposals.map((proposal) => (
@@ -3431,6 +3550,18 @@ export function WorkspaceClientView({
             ))}
           </select>
         </label>
+        <label className="field wide">
+          <span>{t("Auto reply")}</span>
+          <select
+            value={channelEditForm.autoReplyMode}
+            onChange={(event) => onChannelEditFormChange({ ...channelEditForm, autoReplyMode: event.target.value as ChannelFormState["autoReplyMode"] })}
+            disabled={!selectedChannelId}
+          >
+            <option value="mentions_only">{t("Mentions only")}</option>
+            <option value="default_teammate">{t("Default teammate")}</option>
+            <option value="auto_route" disabled={!channelAutoRouteEnabled}>{t("Auto route")}</option>
+          </select>
+        </label>
         <ChannelRuntimePolicyFields form={channelEditForm} onChange={onChannelEditFormChange} />
         <div className="channel-option-actions">
           <button className="secondary-button compact-button" type="button" onClick={onRefreshChannels} disabled={channelsLoading}>
@@ -3760,6 +3891,17 @@ export function WorkspaceClientView({
                   ))}
                 </select>
               </label>
+              <label className="field wide">
+                <span>{t("Auto reply")}</span>
+                <select
+                  value={channelForm.autoReplyMode}
+                  onChange={(event) => onChannelFormChange({ ...channelForm, autoReplyMode: event.target.value as ChannelFormState["autoReplyMode"] })}
+                >
+                  <option value="mentions_only">{t("Mentions only")}</option>
+                  <option value="default_teammate">{t("Default teammate")}</option>
+                  <option value="auto_route" disabled={!channelAutoRouteEnabled}>{t("Auto route")}</option>
+                </select>
+              </label>
               <ChannelRuntimePolicyFields form={channelForm} onChange={updateCreateChannelRuntimeForm} />
               <div className="channel-option-actions">
                 <button className="primary-button compact-button" type="button" onClick={onCreateChannel} disabled={channelsLoading}>
@@ -3853,27 +3995,29 @@ export function WorkspaceClientView({
                       />
                     </div>
                   ) : null}
-                  {(channelWorkThreadsLoading || channelWorkThreadError || channelWorkThreadTreeRows.length > 0 || activeWorkThread || (channelWorkThreadSearchActive && visibleChannelWorkThreads.length > 0)) ? (
-                    <div className="channel-work-thread-tree" aria-label={t("Channel work threads")}>
+                  {selectedChannelId ? (
+                    <div className="channel-work-thread-tree" aria-label={t("Channel branches")}>
                       <div className="channel-work-thread-tree-head">
                         <span>
                           <GitBranch size={14} />
-                          {t("Work branches")}
+                          {t("Conversation branches")}
                         </span>
                         {channelWorkThreadsLoading ? (
                           <small><Loader2 className="spin" size={12} /> {t("Loading")}</small>
                         ) : null}
                       </div>
-                      <label className="activity-search-field channel-work-thread-search-field">
-                        <Search size={14} />
-                        <input
-                          type="search"
-                          value={channelWorkThreadSearch}
-                          onChange={(event) => setChannelWorkThreadSearch(event.target.value)}
-                          placeholder={t("Search branches")}
-                          aria-label={t("Search branches")}
-                        />
-                      </label>
+                      {visibleChannelWorkThreads.length > 0 || channelWorkThreadSearchActive ? (
+                        <label className="activity-search-field channel-work-thread-search-field">
+                          <Search size={14} />
+                          <input
+                            type="search"
+                            value={channelWorkThreadSearch}
+                            onChange={(event) => setChannelWorkThreadSearch(event.target.value)}
+                            placeholder={t("Search branches")}
+                            aria-label={t("Search branches")}
+                          />
+                        </label>
+                      ) : null}
                       {channelWorkThreadError ? (
                         <div className="inline-error compact">
                           <CircleAlert size={14} />
@@ -3881,17 +4025,19 @@ export function WorkspaceClientView({
                         </div>
                       ) : null}
                       <div className="channel-work-thread-row-list">
-                        <button
-                          className={!activeWorkThreadId ? "channel-work-thread-row selected" : "channel-work-thread-row"}
-                          type="button"
-                          onClick={() => setActiveWorkThreadId("")}
-                        >
-                          <span className="sidebar-hash" aria-hidden="true">#</span>
-                          <span className="channel-work-thread-row-main">
-                            <strong>{t("All channel work")}</strong>
-                            <small>{t("{count} branches", { count: visibleChannelWorkThreads.length })}</small>
-                          </span>
-                        </button>
+                        {visibleChannelWorkThreads.length > 0 || channelWorkThreadSearchActive ? (
+                          <button
+                            className={!activeWorkThreadId ? "channel-work-thread-row selected" : "channel-work-thread-row"}
+                            type="button"
+                            onClick={() => setActiveWorkThreadId("")}
+                          >
+                            <span className="sidebar-hash" aria-hidden="true">#</span>
+                            <span className="channel-work-thread-row-main">
+                              <strong>{t("All branches")}</strong>
+                              <small>{t("{count} branches", { count: visibleChannelWorkThreads.length })}</small>
+                            </span>
+                          </button>
+                        ) : null}
                         {channelWorkThreadTreeRows.map(({ thread, depth, parentHidden }) => (
                           <div
                             key={thread.id}
@@ -3928,8 +4074,8 @@ export function WorkspaceClientView({
                             <button
                               className="icon-button"
                               type="button"
-                              aria-label={t("Fork")}
-                              title={t("Fork")}
+                              aria-label={t("Fork branch")}
+                              title={t("Fork branch")}
                               disabled={forkingWorkThreadId === thread.id || thread.status === "archived" || Boolean(thread.archivedAt)}
                               onClick={() => void forkChannelWorkThread(thread)}
                             >
@@ -3973,6 +4119,32 @@ export function WorkspaceClientView({
                           <div className="empty-state compact-empty">
                             <Search />
                             <span>{t("No active branches match")}</span>
+                          </div>
+                        ) : null}
+                        {!channelWorkThreadsLoading && !channelWorkThreadError && visibleChannelWorkThreads.length === 0 && !channelWorkThreadSearchActive ? (
+                          <div className={channelMainBranchActionPending ? "channel-work-thread-row-shell channel-branch-empty selected" : "channel-work-thread-row-shell channel-branch-empty"}>
+                            <button
+                              className="channel-work-thread-row"
+                              type="button"
+                              disabled={channelMainBranchActionPending}
+                              onClick={() => void selectChannelMainBranch()}
+                            >
+                              <span className="status-dot open" />
+                              <span className="channel-work-thread-row-main">
+                                <strong>{t("Main branch")}</strong>
+                                <small>{t("Default channel branch")}</small>
+                              </span>
+                            </button>
+                            <button
+                              className="icon-button"
+                              type="button"
+                              aria-label={t("Fork branch")}
+                              title={t("Fork branch")}
+                              disabled={channelMainBranchActionPending}
+                              onClick={() => void forkChannelMainBranch()}
+                            >
+                              {channelMainBranchActionPending ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
+                            </button>
                           </div>
                         ) : null}
                       </div>
@@ -4082,14 +4254,7 @@ export function WorkspaceClientView({
                   <button
                     className="icon-button"
                     type="button"
-                    onClick={() => {
-                      setCreateTaskOpen(true);
-                      setSidePanelView("task");
-                      setSidePanelOpen(true);
-                      setActivityToolsOpen(false);
-                      setAttentionQueueOpen(false);
-                      setTeammateManagerOpen(false);
-                    }}
+                    onClick={openCreateTaskPanel}
                     disabled={!selectedChannelId}
                     aria-label={t("New task")}
                     title={t("New task")}
@@ -7008,6 +7173,121 @@ function ChannelFiles({
   );
 }
 
+function ChannelRouteDecisionPill({
+  decision,
+  t,
+}: {
+  readonly decision: ChannelMessageRouteDecision;
+  readonly t: Translate;
+}): JSX.Element | null {
+  const label = channelRouteDecisionModeLabel(decision, t);
+  if (!label) {
+    return null;
+  }
+  return (
+    <span className="channel-route-pill" title={channelRouteDecisionAcceptedTitle(decision, t)}>
+      <Info size={11} />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function ChannelRouteExplanation({
+  decision,
+  open,
+  onToggle,
+  t,
+}: {
+  readonly decision: ChannelMessageRouteDecision;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly t: Translate;
+}): JSX.Element {
+  const failed = decision.status === "failed";
+  const label = failed ? t("Auto reply failed") : t("Not auto-replied");
+  const reason = channelRouteDecisionUserReason(decision, t);
+  return (
+    <div className={failed ? "channel-route-explanation failed" : "channel-route-explanation"}>
+      <button
+        className="channel-route-explanation-toggle"
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <Info size={11} />
+        <span>{label}</span>
+        <small>{t("Why no reply?")}</small>
+      </button>
+      {open ? (
+        <div className="channel-route-explanation-popover" role="status">
+          <strong>{failed ? t("Auto reply failed") : t("Not auto-replied")}</strong>
+          <p>{reason}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function channelRouteDecisionModeLabel(decision: ChannelMessageRouteDecision, t: Translate): string {
+  if (decision.mode === "default_teammate") {
+    return t("Default teammate");
+  }
+  if (decision.mode === "auto_route") {
+    return t("Auto routed");
+  }
+  return "";
+}
+
+function channelRouteDecisionAcceptedTitle(decision: ChannelMessageRouteDecision, t: Translate): string {
+  if (decision.mode === "default_teammate") {
+    return t("The channel default teammate answered this message.");
+  }
+  if (decision.mode === "auto_route") {
+    return t("Ling selected this teammate for the reply.");
+  }
+  return "";
+}
+
+function channelRouteDecisionUserReason(decision: ChannelMessageRouteDecision, t: Translate): string {
+  const errorText = decision.errorMessage?.trim();
+  if (decision.status === "failed") {
+    if (errorText?.includes("strict JSON object") || errorText?.includes("JSON object") || errorText?.includes("schema")) {
+      return t("The route selector returned invalid output, so Ling did not create an automatic reply.");
+    }
+    if (errorText?.includes("unknown teammate")) {
+      return t("The route selector chose a teammate that is not available in this channel.");
+    }
+    if (errorText?.includes("No runnable provider")) {
+      return t("No runnable provider is available for the selected teammate.");
+    }
+    return t("Ling could not safely create an automatic reply.");
+  }
+
+  switch (decision.reason) {
+    case "Message is not reply-worthy.":
+      return t("This message looks like a note or acknowledgement, not a request for an AI reply.");
+    case "Repeated short greeting was suppressed.":
+      return t("A similar short greeting was already answered recently.");
+    case "Message is empty.":
+      return t("The message has no content for an AI teammate to answer.");
+    case "Thread replies are outside the first auto-reply scope.":
+      return t("Automatic replies currently only run for root channel messages.");
+    case "Channel is not active.":
+      return t("This channel is not active, so Ling did not create an automatic reply.");
+    case "No active teammate candidate has a runnable provider.":
+    case "Channel default teammate is missing, inactive, or not runnable.":
+      return t("No runnable teammate is available to answer this message.");
+    case "Channel auto_route feature flag is disabled.":
+      return t("Automatic routing is not enabled for this workspace.");
+    case "Route model confidence was below threshold.":
+      return t("Ling was not confident enough to choose one teammate automatically.");
+    case "An AI reply already exists for this source message.":
+      return t("This message already has an AI reply.");
+    default:
+      return t("Ling decided not to create an automatic reply for this message.");
+  }
+}
+
 function messageAuthorLabel(message: ChannelMessage, teammates: readonly ChannelMention[], deletedTeammateLabel = "Deleted teammate"): string {
   if (message.authorType === "system") {
     return "Ling Stack";
@@ -7343,6 +7623,18 @@ function mergeLingThreads(...groups: readonly (readonly LingThread[])[]): readon
     }
   }
   return [...byId.values()];
+}
+
+function isChannelDiscussionRootThread(thread: LingThread, channelId: string | undefined): boolean {
+  return thread.kind === "channel_discussion" &&
+    Boolean(channelId) &&
+    thread.channelId === channelId &&
+    !thread.parentThreadId &&
+    !thread.taskId &&
+    !thread.teammateId &&
+    !thread.workflowId &&
+    !thread.workflowStepId &&
+    !thread.externalWorkId;
 }
 
 function buildChannelWorkThreadTree(threads: readonly LingThread[]): ReadonlyArray<{

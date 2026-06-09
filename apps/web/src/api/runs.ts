@@ -1,4 +1,5 @@
 import type {
+  CreateLingThreadRequest,
   CreateRunInterventionRequest,
   LingThreadArchiveRequest,
   LingThreadDetailResponse,
@@ -38,6 +39,10 @@ export async function listRuns(cwd: string, options: RunListRequest | number = 5
 
 export async function listLingThreads(cwd: string, options: LingThreadListRequest = {}): Promise<LingThreadListResponse> {
   return daemonClient.listLingThreads(cwd, options);
+}
+
+export async function createLingThread(cwd: string, input: CreateLingThreadRequest): Promise<LingThreadMutationResponse> {
+  return daemonClient.createLingThread(cwd, input);
 }
 
 export async function getLingThread(cwd: string, threadId: string): Promise<LingThreadDetailResponse> {
