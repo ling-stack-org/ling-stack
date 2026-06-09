@@ -86,7 +86,7 @@ export function ConversationWorkCell({
             disabled={!onOpenRun}
           >
             <History size={13} />
-            {t("Open run")}
+            {t("Open diagnostics")}
           </button>
           {onOpenDetails ? (
             <button className="secondary-button compact-button" type="button" onClick={() => onOpenDetails(model.threadId)}>

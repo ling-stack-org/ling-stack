@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -12,6 +12,12 @@ import {
   openChannelContextPanel,
   readHorizontalOverflow,
 } from "./support/test-helpers";
+
+async function openRunDiagnostics(page: Page): Promise<void> {
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Developer/ }).click();
+  await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
+}
 
 test("runtime diagnostics surface supervisor state and work unit controls", async ({ page }) => {
   await page.addInitScript(() => {
@@ -224,7 +230,7 @@ test("run detail renders state transitions from daemon timeline API", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
   await page.getByLabel("Evidence").getByRole("button", { name: "Used memory" }).click();
@@ -256,7 +262,7 @@ test("run detail keeps debug event timeline contained", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
   await expect(page.getByRole("heading", { name: "Evidence" })).toBeVisible();
@@ -284,7 +290,7 @@ test("run detail can queue guidance and cancel queued intervention", async ({ pa
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
   const guidancePanel = page.locator(".run-guidance-panel");
@@ -326,7 +332,7 @@ test("failed provider runs route repair back to Model Workbench", async ({ page 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
   const providerRepair = page.locator(".run-repair-hint.providers");
   await expect(providerRepair).toContainText("Provider repair needed");
@@ -376,7 +382,7 @@ test("run detail renders artifact rows from the daemon API", async ({ page }) =>
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
@@ -517,7 +523,7 @@ test("run history opens a thread-first detail with evidence and resume preview",
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   await page.locator(".thread-list").getByRole("button", { name: /Thread-first execution audit/ }).click();
 
   const detail = page.getByLabel("Thread detail");
@@ -648,7 +654,7 @@ test("run history groups durable Ling turn attempts and keeps run detail selecte
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   const workList = page.locator(".thread-list");
   await expect(workList.getByRole("button", { name: /Refactor durable Work History/ })).toBeVisible();
   await expect(workList).toContainText("Durable turn");
@@ -765,7 +771,7 @@ test("fork lineage creates child thread and surfaces it in work history and chan
 
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
 
   const workList = page.locator(".thread-list");
   await workList.getByRole("button", { name: /Fork lineage source/ }).click();
@@ -866,7 +872,7 @@ test("fork and run starts an explicit child branch run from work history", async
 
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
 
   const workList = page.locator(".thread-list");
   const sourceRow = workList.locator(".work-history-branch-row").filter({ hasText: "Fork and run source" }).first();
@@ -992,16 +998,16 @@ test("run history archives restores pins and filters work threads", async ({ pag
 
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
 
   const workList = page.locator(".thread-list");
   await expect(workList).toContainText("Visibility active branch");
   await expect(workList).not.toContainText("Visibility archived branch");
-  const workSearch = page.getByLabel("Search work threads");
+  const workSearch = page.getByLabel("Search thread bindings");
   await workSearch.fill("archived");
   await expect(workList).not.toContainText("Visibility active branch");
   await expect(workList).not.toContainText("Visibility archived branch");
-  const filter = page.getByLabel("Work thread visibility");
+  const filter = page.getByLabel("Thread binding visibility");
   await filter.getByRole("button", { name: "All" }).click();
   await expect(workList).toContainText("Visibility archived branch");
   await workSearch.fill("active");
@@ -1100,7 +1106,7 @@ test("run history falls back to legacy thread rows when Ling turn loading fails"
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   await page.locator(".thread-list").getByRole("button", { name: /Legacy fallback thread/ }).click();
 
   const detail = page.getByLabel("Thread detail");
@@ -1155,7 +1161,7 @@ test("thread detail keeps resume disabled while the thread has an active run", a
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   await page.locator(".thread-list").getByRole("button", { name: /Active thread audit/ }).click();
 
   const detail = page.getByLabel("Thread detail");
@@ -1216,7 +1222,7 @@ test("run detail can stop an active run and keeps the permission snapshot visibl
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
   const detail = page.getByLabel("Run detail");
@@ -1258,7 +1264,7 @@ test("run detail shows stored permission preset and full access confirmation evi
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+  await openRunDiagnostics(page);
   await page.getByRole("button", { name: /Inspect workspace/ }).click();
 
   const detail = page.getByLabel("Run detail");

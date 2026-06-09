@@ -1669,7 +1669,7 @@ test("thread-backed runs render as collapsed conversation work cells", async ({ 
   await expect(workCell.getByLabel("Changed")).toContainText("WorkspaceClientView.tsx");
   expect(threadEvidenceRequests).toHaveLength(1);
 
-  await workCell.getByRole("button", { name: "Open run" }).click();
+  await workCell.getByRole("button", { name: "Open diagnostics" }).click();
   await expect(page.locator(".channel-side-panel")).toContainText("Task detail");
   await expect(page.locator("article.task-detail")).toContainText("Latest run");
 });

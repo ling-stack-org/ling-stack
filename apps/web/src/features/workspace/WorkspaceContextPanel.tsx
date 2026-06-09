@@ -453,9 +453,9 @@ function buildRunLoopReadinessItem(
     return {
       id: "run-loop",
       label: t("Run loop"),
-      detail: t("Loading run history"),
+      detail: t("Loading run diagnostics"),
       status: "loading",
-      actionLabel: t("Runs"),
+      actionLabel: t("Diagnostics"),
       onAction: onOpenRuns,
       disabled: true,
     };
@@ -466,7 +466,7 @@ function buildRunLoopReadinessItem(
       label: t("Run loop"),
       detail: t("Latest failed run needs review: {runId}", { runId: latestFailedRun.id }),
       status: "info",
-      actionLabel: t("Runs"),
+      actionLabel: t("Diagnostics"),
       onAction: onOpenRuns,
     };
   }
@@ -476,7 +476,7 @@ function buildRunLoopReadinessItem(
       label: t("Run loop"),
       detail: t("No successful run yet"),
       status: "info",
-      actionLabel: t("Runs"),
+      actionLabel: t("Diagnostics"),
       onAction: onOpenRuns,
     };
   }
@@ -485,7 +485,7 @@ function buildRunLoopReadinessItem(
     label: t("Run loop"),
     detail: t(succeededRunCount === 1 ? "{count} successful run" : "{count} successful runs", { count: succeededRunCount }),
     status: "ready",
-    actionLabel: t("Runs"),
+    actionLabel: t("Diagnostics"),
     onAction: onOpenRuns,
   };
 }
