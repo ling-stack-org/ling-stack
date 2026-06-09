@@ -17,6 +17,7 @@ export { FileChangeEvidencePanel, type FileChangeEvidencePanelProps } from "./Fi
 export { FileRefChip, type FileRefChipProps } from "./FileRefChip.js";
 export { LocalFileLink, type LocalFileLinkProps } from "./LocalFileLink.js";
 export { MessageBodyRenderer, type MessageBodyRendererProps } from "./MessageBodyRenderer.js";
+export { MessageBubble, type MessageBubbleProps, type MessageBubbleTone } from "./MessageBubble.js";
 export { MessageFooterActions, type MessageFooterAction, type MessageFooterActionsProps } from "./MessageFooterActions.js";
 export { MessageRow, type MessageRowAuthorType, type MessageRowProps } from "./MessageRow.js";
 export { RightDrawer, type RightDrawerNavItem, type RightDrawerProps } from "./RightDrawer.js";

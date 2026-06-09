@@ -498,14 +498,11 @@
 }
 
 .teammate-workspace-identity h2,
-.teammate-message-row header strong,
 .teammate-data-row strong {
   color: var(--text-strong);
 }
 
 .teammate-workspace-identity p,
-.teammate-message-row header time,
-.teammate-message-row small,
 .teammate-data-row small {
   color: var(--text-muted);
 }
@@ -532,8 +529,6 @@
   color: var(--text-muted);
 }
 
-.teammate-message-row > div,
-.teammate-message-row.ai-teammate > div,
 .teammate-data-row,
 .teammate-chat-composer {
   border-color: var(--border);
@@ -557,10 +552,6 @@
   border-color: var(--border);
   background: var(--surface-pressed);
   color: var(--text-muted);
-}
-
-.teammate-message-row p {
-  color: var(--text);
 }
 
 .teammate-chat-composer textarea {

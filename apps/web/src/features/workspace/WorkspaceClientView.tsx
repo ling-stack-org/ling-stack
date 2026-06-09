@@ -132,7 +132,7 @@ import {
   removeComposerInputRawToken,
   serializeComposerInputParts,
 } from "../../shared/components/index.js";
-import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, MessageBodyRenderer, MessageFooterActions, MessageRow, RightDrawer, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
+import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationStatusStrip, ConversationVirtualFeed, ConversationWorkCell, MessageBodyRenderer, MessageBubble, MessageFooterActions, MessageRow, RightDrawer, type ConversationWorkCellDetailsState } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -190,7 +190,6 @@ type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
 type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
-type MessageBubbleTone = "chat" | "chat-blocked" | "system" | "work" | "approval" | "protocol" | "runtime";
 type ChannelNotificationLevel = "all" | "mentions" | "muted";
 type AttentionProgressTone = "success" | "running" | "waiting" | "blocked" | "failed" | "neutral";
 type ThreadTurnsLoadState =
@@ -5715,59 +5714,6 @@ function TaskDetailPanel({
 
 function runCanBeStopped(run: RunSession): boolean {
   return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
-}
-
-function MessageBubble({
-  tone = "chat",
-  side = "start",
-  avatar,
-  author,
-  tag,
-  time,
-  body,
-  pending = false,
-  metaAction,
-  action,
-}: {
-  readonly tone?: MessageBubbleTone;
-  readonly side?: "start" | "end";
-  readonly avatar: JSX.Element;
-  readonly author: string;
-  readonly tag?: string;
-  readonly time: string;
-  readonly body: string;
-  readonly pending?: boolean;
-  readonly metaAction?: JSX.Element;
-  readonly action?: JSX.Element;
-}): JSX.Element {
-  const inlineAuthor = tone === "chat" || tone === "chat-blocked";
-  const sideClass = inlineAuthor ? side === "end" ? " message-bubble-own" : " message-bubble-peer" : "";
-  const ownMessage = inlineAuthor && side === "end";
-  const peerMessage = inlineAuthor && side === "start";
-  const showTime = !inlineAuthor && time.length > 0;
-  return (
-    <article className={`message-bubble message-bubble-${tone}${inlineAuthor ? " message-bubble-inline" : ""}${sideClass}${pending ? " message-bubble-pending" : ""}`}>
-      {!inlineAuthor || peerMessage ? avatar : null}
-      <div className={metaAction ? "message-content has-floating-action" : "message-content"}>
-        {ownMessage ? (
-          metaAction ? <span className="message-meta-action">{metaAction}</span> : null
-        ) : (
-          <div className={metaAction ? "message-meta has-meta-action" : "message-meta"}>
-            <strong>{author}</strong>
-            {tag ? <small>{tag}</small> : null}
-            {showTime ? <time>{time}</time> : null}
-            {metaAction ? <span className="message-meta-action">{metaAction}</span> : null}
-          </div>
-        )}
-        <div className={pending ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
-          {pending ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-          <MessageBodyRenderer text={body} compact />
-        </div>
-        {action ? <div className="message-action">{action}</div> : null}
-      </div>
-      {inlineAuthor && side === "end" ? avatar : null}
-    </article>
-  );
 }
 
 function ChannelExecutionProposalCard({

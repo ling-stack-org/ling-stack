@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
   ArrowLeft,
+  ArrowDown,
   Bot,
   Brain,
   ChevronDown,
@@ -81,7 +83,7 @@ import {
   removeComposerInputRawToken,
   serializeComposerInputParts,
 } from "../../shared/components/index.js";
-import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationFeed, ConversationShell, ConversationStatusStrip, MessageFooterActions, MessageRow } from "../../shared/conversation/index.js";
+import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationShell, ConversationStatusStrip, ConversationVirtualFeed, MessageBubble, MessageFooterActions } from "../../shared/conversation/index.js";
 import type {
   AiTeammate,
   Channel,
@@ -239,6 +241,7 @@ export function TeammateWorkspace({
   const [settingsForm, setSettingsForm] = useState<TeammateSettingsForm>(() => teammateToSettingsForm(teammate));
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [privateFeedLatestButtonVisible, setPrivateFeedLatestButtonVisible] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [savingChannels, setSavingChannels] = useState(false);
   const [savingSkills, setSavingSkills] = useState(false);
@@ -257,6 +260,8 @@ export function TeammateWorkspace({
   const [mcpToolSearchByServerId, setMcpToolSearchByServerId] = useState<Readonly<Record<string, string>>>({});
   const [mcpToolFilterByServerId, setMcpToolFilterByServerId] = useState<Readonly<Record<string, McpToolFilter>>>({});
   const [workspaceError, setWorkspaceError] = useState("");
+  const privateFeedRef = useRef<HTMLDivElement | null>(null);
+  const privateFeedPinnedToLatestRef = useRef(true);
   const provider = teammate.providerPresetId ? providers.find((item) => item.id === teammate.providerPresetId) : undefined;
   const skillDefinitions = useMemo(() => {
     if (skillRegistryEntries.length > 0) {
@@ -366,6 +371,15 @@ export function TeammateWorkspace({
       return `${message.body} ${attachmentText}`.toLowerCase().includes(normalizedMessageSearchQuery);
     });
   }, [messages, normalizedMessageSearchQuery, privateAttachmentById]);
+  const latestVisiblePrivateMessageId = visibleMessages.at(-1)?.id ?? "";
+  const privateMessageFeedVirtualizer = useVirtualizer({
+    count: visibleMessages.length,
+    getScrollElement: () => privateFeedRef.current,
+    estimateSize: () => 112,
+    overscan: 8,
+    getItemKey: (index) => visibleMessages[index]?.id ?? index,
+  });
+  const privateMessageFeedVirtualRows = privateMessageFeedVirtualizer.getVirtualItems();
   const directAttachments = useMemo(
     () => privateAttachments.filter((attachment) => attachment.scope === "teammate_direct_thread"),
     [privateAttachments],
@@ -407,6 +421,8 @@ export function TeammateWorkspace({
     setMessageSearchOpen(false);
     setMessageSearchQuery("");
     setPendingAttachmentIds([]);
+    privateFeedPinnedToLatestRef.current = true;
+    setPrivateFeedLatestButtonVisible(false);
     setHardDeleteReason("");
     setTaskForm({ channelId: "", requestedSkillId: "", title: "", prompt: "" });
     setSkillImportForm({ name: "", sourcePath: "", source: "custom", content: "" });
@@ -418,6 +434,40 @@ export function TeammateWorkspace({
   useEffect(() => {
     void refreshTeammateWorkspace();
   }, [cwd, teammate.id]);
+
+  useEffect(() => {
+    privateFeedPinnedToLatestRef.current = true;
+    setPrivateFeedLatestButtonVisible(false);
+  }, [normalizedMessageSearchQuery]);
+
+  useEffect(() => {
+    if (loading || workspaceView !== "chat" || !privateFeedPinnedToLatestRef.current) {
+      return undefined;
+    }
+    const feed = privateFeedRef.current;
+    if (!feed) {
+      return undefined;
+    }
+    const frameIds: number[] = [];
+    const scrollToLatest = (attempt: number): void => {
+      if (visibleMessages.length > 0) {
+        privateMessageFeedVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: "end" });
+      } else {
+        feed.scrollTop = feed.scrollHeight;
+      }
+      privateFeedPinnedToLatestRef.current = true;
+      setPrivateFeedLatestButtonVisible(false);
+      if (attempt < 4) {
+        const frameId = globalThis.requestAnimationFrame(() => scrollToLatest(attempt + 1));
+        frameIds.push(frameId);
+      }
+    };
+    const frameId = globalThis.requestAnimationFrame(() => scrollToLatest(0));
+    frameIds.push(frameId);
+    return () => {
+      frameIds.forEach((scheduledFrameId) => globalThis.cancelAnimationFrame(scheduledFrameId));
+    };
+  }, [latestVisiblePrivateMessageId, loading, privateMessageFeedVirtualizer, visibleMessages.length, workspaceView]);
 
   useEffect(() => {
     setTaskForm((current) => {
@@ -690,6 +740,34 @@ export function TeammateWorkspace({
 
   function removeComposerFileReference(raw: string, occurrenceIndex: number): void {
     setMessageDraft((current) => removeComposerInputRawToken(current, raw, occurrenceIndex));
+  }
+
+  function handlePrivateFeedScroll(): void {
+    const feed = privateFeedRef.current;
+    if (!feed) {
+      return;
+    }
+    const maxScrollTop = feed.scrollHeight - feed.clientHeight;
+    const pinnedToLatest = maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
+    privateFeedPinnedToLatestRef.current = pinnedToLatest;
+    setPrivateFeedLatestButtonVisible((visible) => {
+      const nextVisible = !pinnedToLatest && maxScrollTop > 0;
+      return visible === nextVisible ? visible : nextVisible;
+    });
+  }
+
+  function scrollPrivateFeedToLatest(): void {
+    const feed = privateFeedRef.current;
+    if (!feed) {
+      return;
+    }
+    if (visibleMessages.length > 0) {
+      privateMessageFeedVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: "end" });
+    } else {
+      feed.scrollTop = feed.scrollHeight;
+    }
+    privateFeedPinnedToLatestRef.current = true;
+    setPrivateFeedLatestButtonVisible(false);
   }
 
   function copyMessageText(text: string): void {
@@ -1280,27 +1358,46 @@ export function TeammateWorkspace({
           className="teammate-private-chat"
           ariaLabel={t("Private chat")}
           feedNode={(
-            <ConversationFeed
-              className="teammate-message-list"
-              emptyClassName="client-empty-state teammate-empty"
-              items={visibleMessages}
-              dayLabel={t("Today")}
+            <ConversationVirtualFeed
+              scrollRef={privateFeedRef}
+              ariaLabel={t("Private message feed")}
+              feedClassName="message-feed teammate-message-list"
+              emptyFeedClassName="message-feed teammate-message-list message-feed-empty"
+              loading={loading}
+              empty={!loading && visibleMessages.length === 0}
+              loadingLabel={t("Loading teammate workspace...")}
               emptyIcon={<MessageSquare size={18} />}
               emptyLabel={normalizedMessageSearchQuery ? t("No private messages match search") : t("No private messages yet")}
+              totalSize={privateMessageFeedVirtualizer.getTotalSize()}
+              virtualRows={privateMessageFeedVirtualRows}
+              items={visibleMessages}
               getItemId={(message) => message.id}
+              getItemKind={(message) => message.authorType}
+              measureElement={privateMessageFeedVirtualizer.measureElement}
+              onScroll={handlePrivateFeedScroll}
               renderItem={(message) => {
                 const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
+                const pendingAiReply = message.authorType === "ai-teammate" && message.status === "pending";
+                const blockedMessage = message.status === "blocked" || message.status === "failed";
+                const systemMessage = message.authorType === "system";
+                const authorName = message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "system" ? t("System") : t("You");
+                const messageBody = pendingAiReply && !message.body.trim() ? t("AI teammate is replying...") : message.body;
                 return (
-                  <MessageRow
-                    className="teammate-message-row"
-                    authorType={message.authorType}
-                    avatar={message.authorType === "ai-teammate" ? <TeammateAvatar teammate={teammate} cwd={cwd} compact /> : <AvatarInitial label="U" tone="gray" />}
-                    authorName={message.authorType === "ai-teammate" ? teammate.displayName : t("You")}
-                    createdAtLabel={formatDateTime(message.createdAt)}
-                    statusNode={<StatusBadge status={message.status} />}
-                    body={message.body}
+                  <MessageBubble
+                    className={`teammate-message-row ${message.authorType}`}
+                    tone={systemMessage ? "system" : blockedMessage ? "chat-blocked" : "chat"}
+                    side={message.authorType === "local-user" ? "end" : "start"}
+                    avatar={
+                      message.authorType === "ai-teammate"
+                        ? <TeammateAvatar teammate={teammate} cwd={cwd} compact />
+                        : <AvatarInitial label={message.authorType === "system" ? "S" : "U"} tone={message.authorType === "system" ? "violet" : "gray"} />
+                    }
+                    author={authorName}
+                    time={formatDateTime(message.createdAt)}
+                    body={messageBody}
                     bodyCwd={cwd}
                     bodyCompact
+                    pending={pendingAiReply}
                     attachmentsNode={message.attachmentIds.length > 0 ? (
                       <ConversationAttachmentStrip
                         className="teammate-message-attachments"
@@ -1342,8 +1439,8 @@ export function TeammateWorkspace({
                         }}
                       />
                     ) : null}
-                    errorNode={message.errorMessage ? <small>{message.errorMessage}</small> : null}
-                    actionsNode={(
+                    errorNode={message.errorMessage ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
+                    action={(
                       <MessageFooterActions
                         className="teammate-message-actions"
                         actions={[
@@ -1367,6 +1464,18 @@ export function TeammateWorkspace({
                   />
                 );
               }}
+              latestButtonNode={
+                privateFeedLatestButtonVisible ? (
+                  <button
+                    className="message-feed-latest-button"
+                    type="button"
+                    onClick={scrollPrivateFeedToLatest}
+                    aria-label={t("Jump to latest message")}
+                  >
+                    <ArrowDown size={22} />
+                  </button>
+                ) : null
+              }
             />
           )}
           composerNode={(

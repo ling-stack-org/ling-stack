@@ -187,6 +187,21 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
       createdAt: "2026-05-29T00:10:01.000Z",
     },
   ];
+  state.teammateDirectMessages = [
+    {
+      id: "tdmsg_pending_reply",
+      workspaceId: "workspace_default",
+      threadId: `tdthread_${teammateId}`,
+      teammateId,
+      authorType: "ai-teammate",
+      authorId: teammateId,
+      body: "",
+      attachmentIds: [],
+      status: "pending",
+      createdAt: "2026-05-29T00:09:58.000Z",
+      updatedAt: "2026-05-29T00:09:58.000Z",
+    },
+  ];
   state.channelMessages = [
     {
       id: "chmsg_deleted_teammate_history",
@@ -252,6 +267,16 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   }
 
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0);
+  const privateFeed = page.getByLabel("Private message feed", { exact: true });
+  await expect(privateFeed).toBeVisible();
+  await expect(privateFeed.locator(".message-feed-virtualizer")).toBeVisible();
+  const pendingPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "AI teammate is replying..." });
+  await expect(pendingPrivateRow).toBeVisible();
+  await expect(pendingPrivateRow).toHaveClass(/message-bubble/);
+  await expect(pendingPrivateRow).toHaveClass(/message-bubble-peer/);
+  await expect(pendingPrivateRow).toHaveClass(/message-bubble-pending/);
+  await expect(pendingPrivateRow.locator(".message-pending-spinner")).toBeVisible();
+  await expect(pendingPrivateRow.locator(".status-badge")).toHaveCount(0);
   await page.locator(".teammate-direct-composer input[type=file]").setInputFiles({
     name: "private-notes.md",
     mimeType: "text/markdown",
@@ -264,9 +289,17 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByText("Please refine the private workspace acceptance criteria.")).toBeVisible();
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
   const privateMessageRow = page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." });
+  await expect(privateMessageRow).toHaveClass(/message-bubble-inline/);
+  await expect(privateMessageRow).toHaveClass(/message-bubble-own/);
+  await expect(privateMessageRow.locator("header")).toHaveCount(0);
+  await expect(privateMessageRow.locator(".status-badge")).toHaveCount(0);
   await expect(privateMessageRow.getByRole("link", { name: "private-notes.md" })).toHaveAttribute("href", /\/attachments\/tpatt_1\/content/);
+  const blockedPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "AI teammate is blocked: No provider preset is selected for this teammate." });
+  await expect(blockedPrivateRow).toHaveClass(/message-bubble-chat-blocked/);
+  await expect(blockedPrivateRow).toHaveClass(/message-bubble-peer/);
+  await expect(blockedPrivateRow.locator(".status-badge")).toHaveCount(0);
   await expect(page.getByLabel("Conversation context").getByText("Private acceptance memory")).toBeVisible();
-  await expect.poll(() => state.teammateDirectMessages.length).toBe(2);
+  await expect.poll(() => state.teammateDirectMessages.length).toBe(3);
   await expect.poll(() => {
     const message = state.teammateDirectMessages.find((item) =>
       isRecord(item) && item.body === "Please refine the private workspace acceptance criteria."
