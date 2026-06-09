@@ -407,6 +407,7 @@ export function TeammateWorkspace({
     [messages],
   );
   const providerReady = Boolean(provider && providerPreflightReady(provider));
+  const providerRecovered = providerReady && Boolean(provider);
   const hasPendingDirectReply = messages.some((message) => message.authorType === "ai-teammate" && message.status === "pending");
   const openDirectInterventions = directRuntime?.interventions ?? [];
   const hasDirectRuntimeActivity = Boolean(directRuntime?.activeReply || hasPendingDirectReply || openDirectInterventions.length > 0);
@@ -1496,13 +1497,16 @@ export function TeammateWorkspace({
                 const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
                 const pendingAiReply = message.authorType === "ai-teammate" && message.status === "pending";
                 const blockedMessage = message.status === "blocked" || message.status === "failed" || message.status === "cancelled";
+                const recoveredHistoricalProviderFailure = providerRecovered && isHistoricalProviderPreflightMessage(message);
                 const systemMessage = message.authorType === "system";
                 const authorName = message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "system" ? t("System") : t("You");
                 const messageBody = pendingAiReply && !message.body.trim()
                   ? t("AI teammate is replying...")
                   : message.status === "cancelled" && !message.body.trim()
                     ? t("Reply stopped")
-                    : message.body;
+                    : recoveredHistoricalProviderFailure
+                      ? t("Historical model check failed. The model is available now; resend or continue the chat.")
+                      : message.body;
                 return (
                   <MessageBubble
                     className={`teammate-message-row ${message.authorType}`}
@@ -1560,7 +1564,7 @@ export function TeammateWorkspace({
                         }}
                       />
                     ) : null}
-                    errorNode={message.errorMessage ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
+                    errorNode={message.errorMessage && !recoveredHistoricalProviderFailure ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
                     action={(
                       <MessageFooterActions
                         className="teammate-message-actions"
@@ -3164,6 +3168,19 @@ function teammateDirectInterventionModeLabel(
     case "interrupt_redirect":
       return t("停止并继续");
   }
+}
+
+function isHistoricalProviderPreflightMessage(message: TeammateDirectMessage): boolean {
+  if (message.status !== "blocked") {
+    return false;
+  }
+  const text = `${message.body} ${message.errorMessage ?? ""}`.toLowerCase();
+  return (
+    (text.includes("provider_preflight_failed") ||
+      text.includes("provider check failed") ||
+      text.includes("provider has not been checked")) &&
+    (text.includes("network_failed") || text.includes("timeout") || text.includes("aborted"))
+  );
 }
 
 function TeammateAvatar({ teammate, cwd, compact = false }: { readonly teammate: AiTeammate; readonly cwd: string; readonly compact?: boolean }): JSX.Element {

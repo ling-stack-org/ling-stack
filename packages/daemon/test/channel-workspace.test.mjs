@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -1706,6 +1707,61 @@ test("AI teammate private workspace endpoints persist roster, setup, private mes
   }
 });
 
+test("AI teammate private reply waits for startup provider refresh instead of using stale timeout", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-provider-startup-refresh-"));
+  const relay = await startMockOpenAICompatibleServer();
+  const runner = new RecordingRunner();
+  let daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      kind: "openai-compatible",
+      displayName: "中转站",
+      providerId: "relay",
+      model: "relay-chat",
+      api: "openai-completions",
+      baseUrl: `${relay.url}/v1`,
+      authHeader: true,
+      apiKey: "local-relay-secret",
+    })).provider;
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await daemon.close();
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      store.recordProviderCheckResult(provider.id, {
+        ok: false,
+        code: "network_failed",
+        message: "Provider network check failed: The operation was aborted due to timeout",
+        checkedAt: "2026-05-01T00:00:00.000Z",
+      });
+    } finally {
+      store.close();
+    }
+
+    daemon = await startDaemonForTest(runner);
+    const created = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "重启后直接发一条私聊。",
+      requestAiReply: true,
+    });
+
+    assert.equal(created.aiReply.status, "ready");
+    assert.equal(created.aiReply.body, "Designer reply");
+    assert.equal(runner.runs.length, 1);
+    assert.equal(relay.requests.some((request) => request.method === "POST" && request.path === "/v1/chat/completions"), true);
+
+    const refreshed = await getJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(refreshed.provider.lastCheck.ok, true);
+    assert.equal(refreshed.provider.lastCheck.code, "ready");
+  } finally {
+    await daemon.close();
+    await relay.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("memory API scopes lexical recall and channel replies audit used memory", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-api-"));
   const runner = new RecordingRunner();
@@ -2516,6 +2572,39 @@ async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {
     enabled: true,
     ...overrides,
   });
+}
+
+async function startMockOpenAICompatibleServer() {
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const bodyText = Buffer.concat(chunks).toString("utf8");
+    requests.push({
+      method: request.method,
+      path: request.url,
+      authorization: request.headers.authorization,
+      body: bodyText ? JSON.parse(bodyText) : {},
+    });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-startup-refresh",
+      object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+    }));
+  });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () => new Promise((resolveClose, rejectClose) => {
+      server.close((error) => error ? rejectClose(error) : resolveClose());
+    }),
+  };
 }
 
 async function postTaskRunAndReadReadyRunId(baseUrl, cwd, taskId, body) {

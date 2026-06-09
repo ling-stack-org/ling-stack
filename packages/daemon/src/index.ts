@@ -26,6 +26,7 @@ import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-wor
 import { ControlPlaneEventHub } from "./features/control-plane/events.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
+import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RegisteredRunner, type RunnerRegistry } from "./runtime/runners.js";
@@ -75,11 +76,16 @@ export function createDaemonServer(
   const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
   const externalWorkFetch = dependencies.externalWorkFetch;
   const mcpBroker = dependencies.mcpBroker ?? createDefaultMcpBroker();
-  const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore);
+  const controlPlaneEvents = new ControlPlaneEventHub();
+  const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents });
+  const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createSqliteRunStore, {
+    onStoreInitialized: (cwd, store) => {
+      void providerStartupRefresh.start(cwd, store);
+    },
+  });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
   const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig);
-  const controlPlaneEvents = new ControlPlaneEventHub();
   const automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,
@@ -105,6 +111,7 @@ export function createDaemonServer(
     backgroundSchedulers,
     automationSchedulers,
     controlPlaneEvents,
+    providerStartupRefresh,
   };
   const server = createServer(async (request, response) => {
     try {

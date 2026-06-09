@@ -250,6 +250,7 @@ export async function routeRequest(
     backgroundSchedulers,
     automationSchedulers,
     controlPlaneEvents,
+    providerStartupRefresh,
   } = context;
   const directReplyControl = new DirectReplyControlService({
     runnerRegistry,
@@ -257,6 +258,7 @@ export async function routeRequest(
     secretResolver,
     activeDirectReplies,
     runControl: new RunControlService(),
+    providerStartupRefresh,
   });
   setCorsHeaders(response);
 
@@ -1324,6 +1326,11 @@ export async function routeRequest(
         teammateRoute.teammateId,
         async ({ store, teammate, thread, sourceMessage, providerPresetId, onWorkUnitStarted }) => {
           let sourceWorkUnitId: string | undefined;
+          await providerStartupRefresh.refreshBeforeRun({
+            cwd: store.paths.cwd,
+            store,
+            providerPresetId: providerPresetId ?? teammate.providerPresetId,
+          });
           const reply = await createAiTeammateDirectReply({
             runnerRegistry,
             store,
@@ -1365,6 +1372,11 @@ export async function routeRequest(
         teammateRoute.teammateId,
         async ({ store, teammate, thread, sourceMessage, providerPresetId, signal, onWorkUnitStarted, stream }) => {
           let sourceWorkUnitId: string | undefined;
+          await providerStartupRefresh.refreshBeforeRun({
+            cwd: store.paths.cwd,
+            store,
+            providerPresetId: providerPresetId ?? teammate.providerPresetId,
+          });
           const reply = await createAiTeammateDirectReply({
             runnerRegistry,
             store,

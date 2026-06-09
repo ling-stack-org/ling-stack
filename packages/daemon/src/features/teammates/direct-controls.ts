@@ -16,6 +16,7 @@ import type { RunControlService } from "../../run-control.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
+import type { ProviderStartupRefreshService } from "../providers/startup-refresh.js";
 import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { createAiTeammateDirectReply } from "./direct-replies.js";
@@ -43,6 +44,7 @@ export class DirectReplyControlService {
       readonly secretResolver: SecretResolver;
       readonly activeDirectReplies: ActiveDirectReplyRegistry;
       readonly runControl: RunControlService;
+      readonly providerStartupRefresh: ProviderStartupRefreshService;
     },
   ) {}
 
@@ -183,6 +185,11 @@ export class DirectReplyControlService {
       );
       const abortController = new AbortController();
       let continuationWorkUnitId: string | undefined;
+      await this.dependencies.providerStartupRefresh.refreshBeforeRun({
+        cwd: input.store.paths.cwd,
+        store: input.store,
+        providerPresetId: input.teammate.providerPresetId,
+      });
       const reply = await createAiTeammateDirectReply({
         runnerRegistry: this.dependencies.runnerRegistry,
         store: input.store,

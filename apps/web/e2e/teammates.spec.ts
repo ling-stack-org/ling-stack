@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
+  createChatProvider,
   createMockTeammate,
   cwd,
   defaultRuntimePolicy,
@@ -489,6 +490,50 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const deletedHistoryMessage = page.locator(".message-group").filter({ hasText: "Historical channel reply from a teammate that will be deleted." });
   await expect(deletedHistoryMessage).toContainText("Deleted teammate");
   await expect(deletedHistoryMessage).not.toContainText(teammateId);
+});
+
+test("AI teammate private chat demotes recovered provider preflight history", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_builtin_engineer";
+  const provider = createChatProvider({
+    id: "provider_relay",
+    displayName: "中转站",
+    lastCheck: {
+      ok: true,
+      code: "ready",
+      message: "Provider is reachable and accepted the configured model.",
+      checkedAt: "2026-06-09T00:00:00.000Z",
+    },
+  });
+  state.providers = [provider];
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: "provider_relay" })];
+  state.teammateDirectMessages = [
+    {
+      id: "tdmsg_old_timeout",
+      workspaceId: "workspace_default",
+      threadId: `tdthread_${teammateId}`,
+      teammateId,
+      authorType: "ai-teammate",
+      authorId: teammateId,
+      body: "AI teammate is blocked: 中转站: provider check failed (network_failed). Provider network check failed: The operation was aborted due to timeout",
+      errorMessage: "中转站: provider check failed (network_failed). Provider network check failed: The operation was aborted due to timeout",
+      attachmentIds: [],
+      status: "blocked",
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  const privateChat = page.locator(".teammate-private-chat");
+  await expect(privateChat).toContainText("历史模型检查失败，当前模型已恢复。可以重新发送或继续对话。");
+  await expect(privateChat).not.toContainText("AI teammate is blocked");
+  await expect(privateChat).not.toContainText("Provider network check failed");
 });
 
 test("AI teammate private chat exposes direct reply guidance and stop controls", async ({ page }) => {
