@@ -27,7 +27,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { writeJson } from "../../shared/response.js";
-import { isRecord, readOptionalBoolean, readOptionalString } from "../../shared/validation.js";
+import { isRecord, readOptionalBoolean, readOptionalString, readString } from "../../shared/validation.js";
 import { listExecutionActions } from "./execution-actions.js";
 import type { RunRequest } from "./schemas.js";
 
@@ -81,13 +81,14 @@ interface ThreadForkAnchor {
   readonly sourceRun?: RunSession;
 }
 
-export function handleLingThreadsCollection(
+export async function handleLingThreadsCollection(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
   storeRegistry: RunStoreRegistry,
-): void {
-  if (request.method !== "GET") {
+  maxBodyBytes: number,
+): Promise<void> {
+  if (request.method !== "GET" && request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /threads` });
     return;
   }
@@ -100,6 +101,34 @@ export function handleLingThreadsCollection(
 
   try {
     const store = storeRegistry.getStore(cwd);
+    if (request.method === "POST") {
+      const body = await readOptionalJsonBody(request, maxBodyBytes);
+      const input = parseCreateLingThreadBody(body);
+      const channel = store.getChannel(input.channelId);
+      if (!channel) {
+        writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
+        return;
+      }
+      const existing = findActiveChannelDiscussionRootThread(store, input.channelId);
+      if (existing) {
+        writeJson(response, 200, { cwd, thread: existing });
+        return;
+      }
+      const now = new Date().toISOString();
+      const thread = store.createLingThread(
+        {
+          kind: "channel_discussion",
+          channelId: input.channelId,
+          title: input.title || "Main branch",
+          objective: input.objective || `Main conversation branch for ${channel.name}.`,
+          status: "open",
+        },
+        now,
+      );
+      writeJson(response, 201, { cwd, thread });
+      return;
+    }
+
     const searchQuery = readOptionalLingThreadSearchQuery(url);
     const listOptions = {
       kind: readOptionalLingThreadKindQuery(url),
@@ -1543,6 +1572,42 @@ function readSnapshotThinkingLevel(record: Record<string, unknown>, key: string)
 
 function isRunTool(value: unknown): value is RunTool {
   return typeof value === "string" && ["read", "grep", "find", "ls", "bash", "edit", "write"].includes(value);
+}
+
+function parseCreateLingThreadBody(value: unknown): {
+  readonly channelId: string;
+  readonly title?: string;
+  readonly objective?: string;
+} {
+  if (!isRecord(value)) {
+    throw new HttpError(400, "bad_request", "Thread create request must be a JSON object.");
+  }
+  const kind = readOptionalString(value, "kind");
+  if (kind && kind !== "channel_discussion") {
+    throw new HttpError(400, "thread_kind_not_supported", "Only channel discussion branches can be created from /threads.");
+  }
+  const channelId = readString(value, "channelId").trim();
+  if (!channelId) {
+    throw new HttpError(400, "channel_required", "channelId is required.");
+  }
+  return {
+    channelId,
+    title: readOptionalString(value, "title")?.trim(),
+    objective: readOptionalString(value, "objective")?.trim(),
+  };
+}
+
+function findActiveChannelDiscussionRootThread(store: RunStore, channelId: string): LingThread | undefined {
+  return store
+    .listLingThreads({ kind: "channel_discussion", channelId, archived: "exclude", limit: 100 })
+    .find((thread) =>
+      !thread.parentThreadId &&
+      !thread.taskId &&
+      !thread.teammateId &&
+      !thread.workflowId &&
+      !thread.workflowStepId &&
+      !thread.externalWorkId
+    );
 }
 
 function readOptionalLingThreadKindQuery(url: URL): LingThreadKind | undefined {

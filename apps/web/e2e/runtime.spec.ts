@@ -794,11 +794,55 @@ test("fork lineage creates child thread and surfaces it in work history and chan
   await expect(detail).toContainText("turn_fork_source");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  const branchTree = page.getByLabel("Channel work threads");
-  await expect(branchTree).toContainText("Work branches");
+  const branchTree = page.getByLabel("Channel branches");
+  await expect(branchTree).toContainText("Conversation branches");
+  await expect(branchTree.getByRole("button", { name: "New task" })).toHaveCount(0);
   await expect(branchTree).toContainText("Fork lineage source");
   await expect(branchTree).toContainText(childThread?.title ?? "Fork");
   await branchTree.getByRole("button", { name: new RegExp(childThread?.title ?? "Fork") }).click();
+  await expect(page.getByText("No work recorded in this branch yet")).toBeVisible();
+});
+
+test("empty channel branches can fork main branch without creating a task or run", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.tasks = [];
+  state.runs = [];
+  state.eventsByRun = {};
+  state.approvals = [];
+  state.threads = [];
+  state.turns = [];
+  state.turnRunLinks = [];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const branchTree = page.getByLabel("Channel branches");
+  await expect(branchTree).toContainText("Conversation branches");
+  await expect(branchTree).toContainText("Main branch");
+  await expect(branchTree).toContainText("Default channel branch");
+  await expect(branchTree.getByRole("button", { name: "New task" })).toHaveCount(0);
+
+  await branchTree.getByRole("button", { name: "Fork branch" }).click();
+  await expect.poll(() => state.threads.length).toBe(2);
+  const mainThread = state.threads.find((thread) =>
+    thread.kind === "channel_discussion" &&
+    thread.channelId === "channel_engineering" &&
+    !thread.parentThreadId
+  );
+  expect(mainThread).toBeTruthy();
+  const childThread = state.threads.find((thread) => thread.parentThreadId === mainThread?.id);
+  expect(childThread).toBeTruthy();
+  expect(mainThread?.taskId).toBeUndefined();
+  expect(childThread?.taskId).toBeUndefined();
+  expect(state.tasks).toHaveLength(0);
+  expect(state.runs).toHaveLength(0);
+
+  await expect(branchTree).toContainText("Main branch");
+  await expect(branchTree).toContainText(childThread?.title ?? "Fork: Main branch");
+  await branchTree.getByRole("button", { name: new RegExp(childThread?.title ?? "Fork: Main branch") }).click();
   await expect(page.getByText("No work recorded in this branch yet")).toBeVisible();
 });
 
@@ -899,7 +943,7 @@ test("fork and run starts an explicit child branch run from work history", async
   await expect(detail).toContainText("Forked from");
   await expect(detail).toContainText("thread_fork_run_source");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  const branchTree = page.getByLabel("Channel work threads");
+  const branchTree = page.getByLabel("Channel branches");
   await expect(branchTree).toContainText(childThread?.title ?? "Fork");
   await branchTree.getByRole("button", { name: new RegExp(childThread?.title ?? "Fork") }).click();
   const workCell = page.locator(".conversation-work-cell").filter({ hasText: "Work in progress" });
@@ -907,7 +951,7 @@ test("fork and run starts an explicit child branch run from work history", async
   await expect(workCell).toContainText("Implement child branch immediately.");
 });
 
-test("run history archives restores pins and filters work threads", async ({ page }) => {
+test("run history archives restores pins and filters channel branches", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -1042,7 +1086,8 @@ test("run history archives restores pins and filters work threads", async ({ pag
   await expect(workList).toContainText("Visibility archived branch");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  const branchTree = page.getByLabel("Channel work threads");
+  const branchTree = page.getByLabel("Channel branches");
+  await expect(branchTree.getByRole("button", { name: "New task" })).toHaveCount(0);
   await expect(branchTree).toContainText("Visibility active branch");
   await expect(branchTree).not.toContainText("Visibility archived branch");
   const branchSearch = branchTree.getByLabel("Search branches");

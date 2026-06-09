@@ -5,6 +5,11 @@ import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import {
+  routeChannelMessageReply,
+  routeExplicitChannelMention,
+  type ChannelMessageRouteInput,
+} from "./channel-message-router.js";
 import { validateChannelMessageReferences } from "./protocol.js";
 import { parseChannelMessageRequest } from "./schemas.js";
 
@@ -14,6 +19,7 @@ export type CreateChannelAiReply = (input: {
   readonly sourceMessage: ChannelMessage;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
+  readonly proposalMode?: "allow" | "disabled";
 }) => Promise<ChannelMessage>;
 
 export async function handleChannelMessagesCollection(
@@ -23,6 +29,7 @@ export async function handleChannelMessagesCollection(
   storeRegistry: RunStoreRegistry,
   channelId: string,
   createAiReply: CreateChannelAiReply,
+  routeDependencies: Omit<ChannelMessageRouteInput, "store" | "channel" | "sourceMessage" | "requestedProviderPresetId" | "requestedTeammateId">,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -87,14 +94,51 @@ export async function handleChannelMessagesCollection(
       );
 
       let aiReply: ChannelMessage | undefined;
+      let routeDecisionId: string | undefined;
       if (input.requestAiReply) {
+        const route = routeExplicitChannelMention({
+          ...routeDependencies,
+          store,
+          channel,
+          sourceMessage: message,
+          requestedProviderPresetId: input.providerPresetId,
+          requestedTeammateId: input.teammateId,
+        });
+        routeDecisionId = route.decisionId;
         aiReply = await createAiReply({
           store,
           channel,
           sourceMessage: message,
-          providerPresetId: input.providerPresetId,
-          teammateId: input.teammateId,
+          providerPresetId: route.action === "reply" ? route.providerPresetId ?? input.providerPresetId : input.providerPresetId,
+          teammateId: route.action === "reply" ? route.teammateId : input.teammateId,
+          proposalMode: "allow",
         });
+      } else {
+        const route = await routeChannelMessageReply({
+          ...routeDependencies,
+          store,
+          channel,
+          sourceMessage: message,
+          requestedProviderPresetId: input.providerPresetId,
+          requestedTeammateId: input.teammateId,
+        });
+        routeDecisionId = route.decisionId;
+        if (route.action === "reply") {
+          aiReply = await createAiReply({
+            store,
+            channel,
+            sourceMessage: message,
+            providerPresetId: route.providerPresetId ?? input.providerPresetId,
+            teammateId: route.teammateId,
+            proposalMode: "disabled",
+          });
+        }
+      }
+
+      if (routeDecisionId && aiReply) {
+        store.updateChannelMessageRouteDecision(routeDecisionId, {
+          replyMessageId: aiReply.id,
+        }, new Date().toISOString());
       }
 
       writeJson(response, 201, aiReply ? { message, aiReply } : { message });

@@ -4,8 +4,9 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
-import { createSqliteRunStore } from "../../core/dist/index.js";
+import { createCompositeSecretResolver, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
+import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
 
 test("channel messages persist and AI blocker replies do not drop the user message", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-messages-"));
@@ -71,6 +72,452 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
     assert.equal(finalReply.body, "Designer reply");
     assert.equal(runner.runs.length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("mentions_only records suppressed route evidence without running an AI reply", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-mentions-only-route-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "这个频道自动回复怎么设计？",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(runner.runs.length, 0);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].mode, "mentions_only");
+    assert.equal(decisions.decisions[0].action, "no_reply");
+    assert.equal(decisions.decisions[0].status, "suppressed");
+    assert.equal(decisions.decisions[0].createdBy, "deterministic");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("default_teammate routes reply-worthy messages to the channel default without proposals", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-default-teammate-route-"));
+  const runner = new ScriptedRunner([
+    `<ling_task_proposal>{"title":"Should not persist","prompt":"Create a task","acceptanceCriteria":["never"],"requiredTools":["read"],"riskSummary":"blocked by proposalMode"}</ling_task_proposal>Visible default reply`,
+    "这个频道当前有多个 AI 队友，具体数量以频道成员列表为准。",
+  ]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "engineer",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "这个实现边界怎么处理？",
+    });
+
+    assert.equal(created.aiReply.status, "pending");
+    assert.equal(created.aiReply.authorId, "teammate_builtin_engineer");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.match(finalReply.body, /ling_task_proposal/);
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].systemPrompt, /Do not include hidden proposal blocks/);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].mode, "default_teammate");
+    assert.equal(decisions.decisions[0].action, "reply");
+    assert.equal(decisions.decisions[0].status, "accepted");
+    assert.equal(decisions.decisions[0].createdBy, "deterministic");
+    assert.equal(decisions.decisions[0].selectedTeammateId, "teammate_builtin_engineer");
+    assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
+
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(proposals.proposals, []);
+    assert.deepEqual((await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`)).tasks, []);
+    assert.deepEqual((await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`)).runs, []);
+
+    const countQuestion = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "现在频道有多少个队友",
+    });
+    assert.equal(countQuestion.aiReply.status, "pending");
+    const countReplyList = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, countQuestion.aiReply.id, "ready");
+    const countReply = countReplyList.messages.find((message) => message.id === countQuestion.aiReply.id);
+    assert.equal(countReply.body, "这个频道当前有多个 AI 队友，具体数量以频道成员列表为准。");
+
+    const countDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(countQuestion.message.id)}`);
+    assert.equal(countDecisions.decisions.length, 1);
+    assert.equal(countDecisions.decisions[0].mode, "default_teammate");
+    assert.equal(countDecisions.decisions[0].action, "reply");
+    assert.equal(countDecisions.decisions[0].status, "accepted");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("default_teammate route suppresses duplicate replies for the same source message", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-default-teammate-idempotent-"));
+  const now = "2026-06-09T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const provider = store.createProviderPreset(
+      {
+        kind: "glm",
+        displayName: "Static Chat",
+        providerId: "static-chat",
+        model: "static-model",
+        api: "google-generative-ai",
+        capabilities: ["chat"],
+        input: ["text"],
+        authHeader: false,
+        enabled: true,
+      },
+      now,
+    );
+    store.recordProviderCheckResult(provider.id, {
+      ok: true,
+      code: "static_check",
+      message: "Provider configuration is valid.",
+      checkedAt: now,
+    });
+    const channel = store.createChannel(
+      {
+        name: "Engineering",
+        boundPath: cwd,
+        defaultProviderPresetId: provider.id,
+        defaultTeammateId: "engineer",
+        autoReplyMode: "default_teammate",
+      },
+      now,
+    );
+    const sourceMessage = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        authorType: "local-user",
+        body: "这个问题应该怎么回复？",
+      },
+      now,
+    );
+    store.createChannelMessage(
+      {
+        channelId: channel.id,
+        threadId: sourceMessage.id,
+        kind: "ai_reply",
+        authorType: "ai-teammate",
+        authorId: "teammate_builtin_engineer",
+        body: "Existing reply.",
+      },
+      now,
+    );
+
+    const route = await routeChannelMessageReply({
+      store,
+      channel,
+      sourceMessage,
+      config: testDaemonConfig(cwd),
+      secretResolver: createCompositeSecretResolver({ env: {} }),
+      runnerRegistry: unusedRunnerRegistry(),
+    });
+
+    assert.equal(route.action, "no_reply");
+    assert.equal(route.reason, "An AI reply already exists for this source message.");
+    const decisions = store.listChannelMessageRouteDecisions({ channelId: channel.id, sourceMessageId: sourceMessage.id });
+    assert.equal(decisions.length, 1);
+    assert.equal(decisions[0].status, "suppressed");
+    assert.equal(decisions[0].reason, "An AI reply already exists for this source message.");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("default_teammate answers the first greeting after mode is enabled and suppresses answered repeats", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-default-teammate-greeting-"));
+  const runner = new ScriptedRunner([
+    "你好，我在。可以继续说你的问题。",
+  ]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "engineer",
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read"],
+    })).channel;
+
+    const preConfigGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "你好？",
+    });
+    assert.equal(preConfigGreeting.aiReply, undefined);
+    await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      autoReplyMode: "default_teammate",
+    });
+
+    const firstGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "你好？",
+    });
+    assert.equal(firstGreeting.aiReply.status, "pending");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, firstGreeting.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === firstGreeting.aiReply.id);
+    assert.equal(finalReply.body, "你好，我在。可以继续说你的问题。");
+
+    const repeatedGreeting = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "你好？",
+    });
+    assert.equal(repeatedGreeting.aiReply, undefined);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(repeatedGreeting.message.id)}`);
+    assert.equal(decisions.decisions[0].status, "suppressed");
+    assert.equal(decisions.decisions[0].reason, "Repeated short greeting was suppressed.");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("default_teammate suppresses when the channel has no runnable default teammate", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-default-teammate-suppressed-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "这个问题谁来回复？",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(runner.runs.length, 0);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].mode, "default_teammate");
+    assert.equal(decisions.decisions[0].action, "no_reply");
+    assert.equal(decisions.decisions[0].status, "suppressed");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("explicit mentions still reply and keep proposal extraction enabled", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-explicit-route-"));
+  const runner = new ScriptedRunner([
+    `Visible explicit reply<ling_task_proposal>{"title":"Explicit proposal","prompt":"Create explicit task","acceptanceCriteria":["ok"],"requiredTools":["read"],"riskSummary":"explicit"}</ling_task_proposal>`,
+  ]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Designer 这个明确任务可以处理吗？",
+      mentions: [{ id: "designer", label: "Designer", kind: "ai-teammate" }],
+      requestAiReply: true,
+    });
+
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.equal(finalReply.body, "Visible explicit reply");
+    assert.match(runner.runs[0].systemPrompt, /include one hidden proposal block/);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions[0].createdBy, "explicit_mention");
+    assert.equal(decisions.decisions[0].status, "accepted");
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].title, "Explicit proposal");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("auto_route is rejected by channel create and update while the feature flag is disabled", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-disabled-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const createResponse = await fetch(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Engineering",
+        boundPath: cwd,
+        autoReplyMode: "auto_route",
+      }),
+    });
+    assert.equal(createResponse.status, 400);
+    assert.equal((await createResponse.json()).error, "auto_route_disabled");
+
+    const channel = await createChannel(daemon.url, cwd);
+    const updateResponse = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoReplyMode: "auto_route" }),
+    });
+    assert.equal(updateResponse.status, 400);
+    assert.equal((await updateResponse.json()).error, "auto_route_disabled");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("auto_route uses the model selector and records accepted route evidence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-model-"));
+  const runner = new ScriptedRunner([
+    JSON.stringify({
+      action: "reply",
+      teammateId: "teammate_builtin_designer",
+      confidence: 0.9,
+      reason: "Designer owns UI wording.",
+      alternativesConsidered: [
+        {
+          teammateId: "teammate_builtin_designer",
+          label: "Designer",
+          score: 0.9,
+          reason: "Best fit.",
+        },
+      ],
+    }),
+    `<ling_task_proposal>{"title":"Should not persist","prompt":"Create auto task","acceptanceCriteria":["never"],"requiredTools":["read"],"riskSummary":"blocked by proposalMode"}</ling_task_proposal>Designer auto route reply`,
+  ]);
+  const daemon = await startDaemonForTest(runner, {}, { channels: { autoRoute: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Design",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "auto_route",
+      allowedTools: ["read"],
+    })).channel;
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "这个设置文案应该怎么改？",
+    });
+
+    assert.equal(created.aiReply.authorId, teammateId);
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
+    assert.match(finalReply.body, /ling_task_proposal/);
+    assert.equal(runner.runs.length, 2);
+    assert.match(runner.runs[0].systemPrompt, /channel message router/i);
+    assert.match(runner.runs[1].systemPrompt, /Do not include hidden proposal blocks/);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].mode, "auto_route");
+    assert.equal(decisions.decisions[0].createdBy, "model");
+    assert.equal(decisions.decisions[0].status, "accepted");
+    assert.equal(decisions.decisions[0].selectedTeammateId, teammateId);
+    assert.equal(decisions.decisions[0].confidence, 0.9);
+    assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
+    assert.deepEqual((await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`)).proposals, []);
+    assert.deepEqual((await getJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`)).tasks, []);
+    assert.deepEqual((await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}`)).runs, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("auto_route fails closed on invalid or low-confidence selector output", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-fail-closed-"));
+  const runner = new ScriptedRunner(["not json"]);
+  const daemon = await startDaemonForTest(runner, {}, { channels: { autoRoute: true } });
+  try {
+    const channel = await createAutoRouteTestChannel(daemon.url, cwd);
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "这个交给谁回复？",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(runner.runs.length, 1);
+    let decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions[0].status, "failed");
+    assert.equal(decisions.decisions[0].createdBy, "model");
+
+    runner.responses.push(JSON.stringify({
+      action: "reply",
+      teammateId: "teammate_builtin_designer",
+      confidence: 0.2,
+      reason: "Unsure.",
+      alternativesConsidered: [],
+    }));
+    const lowConfidence = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "这个 UI 问题可以自动判断吗？",
+    });
+    assert.equal(lowConfidence.aiReply, undefined);
+    decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(lowConfidence.message.id)}`);
+    assert.equal(decisions.decisions[0].status, "suppressed");
+    assert.equal(decisions.decisions[0].reason, "Route model confidence was below threshold.");
+
+    runner.responses.push(`Here is the decision: ${JSON.stringify({
+      action: "reply",
+      teammateId: "teammate_builtin_designer",
+      confidence: 0.9,
+      reason: "Wrapped JSON should fail strict parsing.",
+      alternativesConsidered: [],
+    })}`);
+    const wrappedJson = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "这个带解释的模型输出应该失败吗？",
+    });
+    assert.equal(wrappedJson.aiReply, undefined);
+    decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(wrappedJson.message.id)}`);
+    assert.equal(decisions.decisions[0].status, "failed");
+    assert.match(decisions.decisions[0].errorMessage, /strict JSON object/);
+
+    runner.responses.push(JSON.stringify({
+      action: "reply",
+      teammateId: "teammate_missing",
+      confidence: 0.9,
+      reason: "Unknown teammate should fail closed.",
+      alternativesConsidered: [],
+    }));
+    const unknownTeammate = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "这个未知 teammate 应该失败吗？",
+    });
+    assert.equal(unknownTeammate.aiReply, undefined);
+    decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(unknownTeammate.message.id)}`);
+    assert.equal(decisions.decisions[0].status, "failed");
+    assert.match(decisions.decisions[0].errorMessage, /unknown teammate/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -2361,6 +2808,28 @@ class RecordingRunner {
   }
 }
 
+class ScriptedRunner {
+  constructor(responses) {
+    this.responses = responses.slice();
+    this.runs = [];
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    const response = this.responses.shift();
+    if (response instanceof Error) {
+      throw response;
+    }
+    const text = response ?? "";
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return {
+      taskId: options.task.id,
+      messages: [text],
+      events: [],
+    };
+  }
+}
+
 class SelectiveFailingRunner {
   constructor(failingTitles) {
     this.failingTitles = new Set(failingTitles);
@@ -2478,8 +2947,34 @@ class ParallelDelayedRunner {
   }
 }
 
-async function startDaemonForTest(runner, dependencies = {}) {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, {
+function testDaemonConfig(cwd) {
+  return {
+    host: "127.0.0.1",
+    port: 0,
+    maxBodyBytes: 1024 * 1024,
+    defaultWorkspaceCwd: cwd,
+    runners: {},
+    runtimeTools: {},
+    channels: { autoRoute: false },
+  };
+}
+
+function unusedRunnerRegistry() {
+  return {
+    get() {
+      return undefined;
+    },
+    list() {
+      return [];
+    },
+    resolve() {
+      throw new Error("runner registry should not be used by deterministic route test");
+    },
+  };
+}
+
+async function startDaemonForTest(runner, dependencies = {}, config = {}) {
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, ...config }, {
     ...dependencies,
     ...(runner ? { runner } : {}),
   });
@@ -2557,6 +3052,27 @@ async function createWorkflowTestChannel(baseUrl, cwd, name) {
       queueOnConflict: true,
     },
   })).channel;
+}
+
+async function createAutoRouteTestChannel(baseUrl, cwd) {
+  const provider = (await createStaticChatProvider(baseUrl, cwd)).provider;
+  await postJson(`${baseUrl}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+  const channel = (await postJson(`${baseUrl}/channels?cwd=${encodeURIComponent(cwd)}`, {
+    name: "Design",
+    status: "active",
+    boundPath: cwd,
+    defaultProviderPresetId: provider.id,
+    autoReplyMode: "auto_route",
+    allowedTools: ["read"],
+  })).channel;
+  const teammateId = "teammate_builtin_designer";
+  await patchJson(`${baseUrl}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+    providerPresetId: provider.id,
+  });
+  await putJson(`${baseUrl}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+    memberships: [{ channelId: channel.id }],
+  });
+  return channel;
 }
 
 async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {

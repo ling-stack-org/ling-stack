@@ -34,6 +34,7 @@ Related docs:
 - [Channel Workspace v1.22 Long Conversation Virtual Feed](channel-workspace-v1.22.md)
 - [Channel Workspace v1.23 Explicit Task Selection](channel-workspace-v1.23.md)
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
+- [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
@@ -1799,6 +1800,16 @@ Current MVP implementation status:
   as mutable progress rows and popover state, terminal work folds into compact summaries,
   and selector/handoff/runtime evidence remains expandable instead of becoming a separate
   multi-agent transcript UI,
+- the channel auto reply router is now split into its own design: ordinary channel
+  messages may use `mentions_only`, `default_teammate`, or `auto_route`, with
+  `auto_route` feature-gated until the message-level explanation and local validation
+  path is proven. This path creates only ordinary `ai_reply` messages and must not start
+  workflows, tasks, runs, approvals, or memory activation. Route explanations belong to
+  the message interaction layer: accepted replies may show `Default teammate` or
+  `Auto routed`; suppressed or failed messages may expose a lightweight `Why no reply?`
+  popover. Do not send route evidence into the default timeline, do not use the right
+  drawer for ordinary route explanation, and do not show confidence numbers or raw
+  selector JSON in the normal channel UI,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.

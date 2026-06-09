@@ -3,6 +3,7 @@ export type * from "@ling-stack/contracts";
 import type {
   ApprovalToolDecision,
   ChannelRuntimePolicy,
+  ChannelAutoReplyMode,
   ChannelStatus,
   McpServerTransportType,
   MediaOperation,
@@ -89,6 +90,7 @@ export interface ChannelFormState {
   readonly boundPath: string;
   readonly defaultProviderPresetId: string;
   readonly defaultTeammateId: string;
+  readonly autoReplyMode: ChannelAutoReplyMode;
   readonly allowedTools: readonly ToolName[];
   readonly runtimePolicy: ChannelRuntimePolicy;
 }

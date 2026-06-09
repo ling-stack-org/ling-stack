@@ -15,6 +15,7 @@ import type {
   ChannelLinkPreviewMutationResponse,
   ChannelListResponse,
   ChannelMessageListResponse,
+  ChannelMessageRouteDecisionListResponse,
   ChannelMessageMutationResponse,
   ChannelMutationResponse,
   ChannelWorkflowCancelResponse,
@@ -84,6 +85,14 @@ export async function createChannelMessage(
   input: CreateChannelMessageRequest,
 ): Promise<ChannelMessageMutationResponse> {
   return daemonClient.createChannelMessage(cwd, channelId, input);
+}
+
+export async function listChannelMessageRouteDecisions(
+  cwd: string,
+  channelId: string,
+  options: { readonly sourceMessageId?: string; readonly status?: string; readonly limit?: number } = {},
+): Promise<ChannelMessageRouteDecisionListResponse> {
+  return daemonClient.listChannelMessageRouteDecisions(cwd, channelId, options);
 }
 
 export async function listChannelExecutionProposals(cwd: string, channelId: string): Promise<ChannelExecutionProposalListResponse> {

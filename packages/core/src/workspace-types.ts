@@ -31,6 +31,10 @@ export type ChannelStatus = "active" | "paused" | "archived";
 
 export const channelStatuses: readonly ChannelStatus[] = ["active", "paused", "archived"];
 
+export type ChannelAutoReplyMode = "mentions_only" | "default_teammate" | "auto_route";
+
+export const channelAutoReplyModes: readonly ChannelAutoReplyMode[] = ["mentions_only", "default_teammate", "auto_route"];
+
 export type ChannelExecutionMode = "serial" | "parallel";
 
 export type ChannelWriteLockScope = "channel" | "boundPath" | "workspace";
@@ -67,6 +71,7 @@ export interface Channel {
   readonly boundPath?: string;
   readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
+  readonly autoReplyMode: ChannelAutoReplyMode;
   readonly allowedTools: readonly RunTool[];
   readonly runtimePolicy: ChannelRuntimePolicy;
   readonly createdAt: string;
@@ -79,6 +84,7 @@ export interface CreateChannelInput {
   readonly boundPath?: string;
   readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
+  readonly autoReplyMode?: ChannelAutoReplyMode;
   readonly allowedTools?: readonly RunTool[];
   readonly runtimePolicy?: Partial<ChannelRuntimePolicy>;
 }
@@ -89,6 +95,7 @@ export interface ChannelUpdateInput {
   readonly boundPath?: string | null;
   readonly defaultProviderPresetId?: string | null;
   readonly defaultTeammateId?: string | null;
+  readonly autoReplyMode?: ChannelAutoReplyMode | null;
   readonly allowedTools?: readonly RunTool[];
   readonly runtimePolicy?: Partial<ChannelRuntimePolicy>;
 }
@@ -489,6 +496,81 @@ export interface ChannelMessageListPage {
   readonly messages: readonly ChannelMessage[];
   readonly hasMore: boolean;
   readonly nextBeforeMessageId?: string;
+}
+
+export type ChannelMessageRouteAction = "reply" | "no_reply";
+
+export type ChannelMessageRouteDecisionStatus = "accepted" | "suppressed" | "failed";
+
+export const channelMessageRouteDecisionStatuses: readonly ChannelMessageRouteDecisionStatus[] = ["accepted", "suppressed", "failed"];
+
+export type ChannelMessageRouteDecisionCreatedBy = "explicit_mention" | "deterministic" | "model";
+
+export const channelMessageRouteDecisionCreatedByValues: readonly ChannelMessageRouteDecisionCreatedBy[] = [
+  "explicit_mention",
+  "deterministic",
+  "model",
+];
+
+export interface ChannelMessageRouteAlternative {
+  readonly teammateId?: string;
+  readonly label: string;
+  readonly score?: number;
+  readonly reason: string;
+}
+
+export interface ChannelMessageRouteDecision {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceMessageId: string;
+  readonly replyMessageId?: string;
+  readonly mode: ChannelAutoReplyMode;
+  readonly action: ChannelMessageRouteAction;
+  readonly selectedTeammateId?: string;
+  readonly selectedProviderPresetId?: string;
+  readonly confidence?: number;
+  readonly reason: string;
+  readonly alternativesConsidered: readonly ChannelMessageRouteAlternative[];
+  readonly status: ChannelMessageRouteDecisionStatus;
+  readonly createdBy: ChannelMessageRouteDecisionCreatedBy;
+  readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelMessageRouteDecisionInput {
+  readonly channelId: string;
+  readonly sourceMessageId: string;
+  readonly replyMessageId?: string;
+  readonly mode: ChannelAutoReplyMode;
+  readonly action: ChannelMessageRouteAction;
+  readonly selectedTeammateId?: string;
+  readonly selectedProviderPresetId?: string;
+  readonly confidence?: number;
+  readonly reason: string;
+  readonly alternativesConsidered?: readonly ChannelMessageRouteAlternative[];
+  readonly status: ChannelMessageRouteDecisionStatus;
+  readonly createdBy: ChannelMessageRouteDecisionCreatedBy;
+  readonly errorMessage?: string;
+}
+
+export interface UpdateChannelMessageRouteDecisionInput {
+  readonly replyMessageId?: string | null;
+  readonly selectedProviderPresetId?: string | null;
+  readonly confidence?: number | null;
+  readonly reason?: string;
+  readonly alternativesConsidered?: readonly ChannelMessageRouteAlternative[];
+  readonly status?: ChannelMessageRouteDecisionStatus;
+  readonly errorMessage?: string | null;
+}
+
+export interface ListChannelMessageRouteDecisionsOptions {
+  readonly channelId?: string;
+  readonly sourceMessageId?: string;
+  readonly status?: ChannelMessageRouteDecisionStatus;
+  readonly limit?: number;
 }
 
 export type ChannelExecutionProposalStatus = "draft" | "accepted" | "cancelled" | "superseded" | "blocked" | "run_failed";
@@ -1376,6 +1458,10 @@ export function createTeammateDirectReplyInterventionId(): string {
 
 export function createChannelMessageId(): string {
   return `msg_${randomUUID()}`;
+}
+
+export function createChannelMessageRouteDecisionId(): string {
+  return `route_${randomUUID()}`;
 }
 
 export function createChannelExecutionProposalId(): string {

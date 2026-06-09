@@ -26,6 +26,7 @@ import {
   readOptionalChannelDecisionStatusQuery,
   readOptionalChannelContextSummaryTargetTypeQuery,
   readOptionalChannelExecutionProposalStatusQuery,
+  readOptionalChannelMessageRouteDecisionStatusQuery,
   readOptionalChannelHandoffStatusQuery,
 } from "./schemas.js";
 
@@ -54,7 +55,12 @@ export async function handleChannelsCollection(
 
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const channel = store.createChannel(parseCreateChannelInput(body), new Date().toISOString());
+      const input = parseCreateChannelInput(body);
+      if (input.autoReplyMode === "auto_route" && !config.channels.autoRoute) {
+        writeJson(response, 400, { error: "auto_route_disabled", message: "Channel auto_route is disabled." });
+        return;
+      }
+      const channel = store.createChannel(input, new Date().toISOString());
       writeJson(response, 201, { channel });
       return;
     }
@@ -97,7 +103,12 @@ export async function handleChannelItem(
 
     if (request.method === "PATCH") {
       const body = await readJsonBody(request, config.maxBodyBytes);
-      const updated = store.updateChannel(channelId, parseChannelUpdateInput(body), new Date().toISOString());
+      const input = parseChannelUpdateInput(body);
+      if (input.autoReplyMode === "auto_route" && !config.channels.autoRoute) {
+        writeJson(response, 400, { error: "auto_route_disabled", message: "Channel auto_route is disabled." });
+        return;
+      }
+      const updated = store.updateChannel(channelId, input, new Date().toISOString());
       writeJson(response, 200, { channel: updated });
       return;
     }
@@ -219,6 +230,62 @@ export async function handleChannelExecutionProposalItem(
     }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel proposal` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleChannelMessageRouteDecisionsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      const sourceMessageId = url.searchParams.get("sourceMessageId") ?? undefined;
+      if (sourceMessageId) {
+        const messageError = validateChannelMessageOwner(store, channelId, sourceMessageId);
+        if (messageError) {
+          writeJson(response, messageError.statusCode, {
+            error: messageError.code,
+            message: messageError.message,
+          });
+          return;
+        }
+      }
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        decisions: store.listChannelMessageRouteDecisions({
+          channelId,
+          sourceMessageId,
+          status: readOptionalChannelMessageRouteDecisionStatusQuery(url),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel route decisions` });
   } catch (error) {
     writeJson(response, 400, {
       error: "bad_request",

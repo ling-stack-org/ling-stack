@@ -21,6 +21,7 @@ export interface MockState {
   teammateMcpBindings: MockTeammateMcpBinding[];
   channels: unknown[];
   channelMessages: unknown[];
+  channelMessageRouteDecisions: unknown[];
   channelExecutionProposals: unknown[];
   channelAttachments: unknown[];
   channelLinkPreviews: unknown[];
@@ -794,6 +795,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
         status: "active",
         boundPath: cwd,
         defaultTeammateId: "engineer",
+        autoReplyMode: "mentions_only",
         allowedTools: ["read", "grep", "find", "ls"],
         runtimePolicy: defaultRuntimePolicy,
         createdAt: "2026-05-22T00:00:00.000Z",
@@ -801,6 +803,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
       },
     ],
     channelMessages: [],
+    channelMessageRouteDecisions: [],
     channelMessageQueries: [],
     channelExecutionProposals: [],
     channelAttachments: [],
@@ -2658,20 +2661,37 @@ export function createProviderFromBody(body: Record<string, unknown>, id: string
   };
 }
 
-export function createChannelFromBody(body: Record<string, unknown>, id: string): Record<string, unknown> {
+export function createChannelFromBody(body: Record<string, unknown>, id: string, existing: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
-    workspaceId: "workspace_default",
-    name: typeof body.name === "string" ? body.name : "Engineering",
-    status: body.status === "paused" || body.status === "archived" ? body.status : "active",
-    boundPath: typeof body.boundPath === "string" ? body.boundPath : cwd,
-    defaultProviderPresetId: typeof body.defaultProviderPresetId === "string" ? body.defaultProviderPresetId : undefined,
-    defaultTeammateId: typeof body.defaultTeammateId === "string" ? body.defaultTeammateId : undefined,
-    allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools : ["read", "grep", "find", "ls"],
-    runtimePolicy: isRecord(body.runtimePolicy) ? { ...defaultRuntimePolicy, ...body.runtimePolicy } : defaultRuntimePolicy,
-    createdAt: "2026-05-25T00:15:00.000Z",
+    workspaceId: typeof existing.workspaceId === "string" ? existing.workspaceId : "workspace_default",
+    name: typeof body.name === "string" ? body.name : typeof existing.name === "string" ? existing.name : "Engineering",
+    status: body.status === "paused" || body.status === "archived" || body.status === "active"
+      ? body.status
+      : existing.status === "paused" || existing.status === "archived" || existing.status === "active"
+        ? existing.status
+        : "active",
+    boundPath: typeof body.boundPath === "string" ? body.boundPath : typeof existing.boundPath === "string" ? existing.boundPath : cwd,
+    defaultProviderPresetId: typeof body.defaultProviderPresetId === "string" ? body.defaultProviderPresetId : typeof existing.defaultProviderPresetId === "string" ? existing.defaultProviderPresetId : undefined,
+    defaultTeammateId: typeof body.defaultTeammateId === "string" ? body.defaultTeammateId : typeof existing.defaultTeammateId === "string" ? existing.defaultTeammateId : undefined,
+    autoReplyMode: body.autoReplyMode === null
+      ? "mentions_only"
+      : body.autoReplyMode !== undefined
+        ? readChannelAutoReplyMode(body.autoReplyMode)
+        : readChannelAutoReplyMode(existing.autoReplyMode),
+    allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools : Array.isArray(existing.allowedTools) ? existing.allowedTools : ["read", "grep", "find", "ls"],
+    runtimePolicy: isRecord(body.runtimePolicy)
+      ? { ...defaultRuntimePolicy, ...(isRecord(existing.runtimePolicy) ? existing.runtimePolicy : {}), ...body.runtimePolicy }
+      : isRecord(existing.runtimePolicy)
+        ? existing.runtimePolicy
+        : defaultRuntimePolicy,
+    createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-05-25T00:15:00.000Z",
     updatedAt: "2026-05-25T00:15:00.000Z",
   };
+}
+
+function readChannelAutoReplyMode(value: unknown): string {
+  return value === "default_teammate" || value === "auto_route" ? value : "mentions_only";
 }
 
 export function createMockTeammate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -4150,6 +4170,22 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  const channelRouteDecisionsMatch = /^\/channels\/([^/]+)\/message-route-decisions$/.exec(path);
+  if (channelRouteDecisionsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelRouteDecisionsMatch[1]);
+    const sourceMessageId = url.searchParams.get("sourceMessageId");
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        decisions: state.channelMessageRouteDecisions.filter((decision) =>
+          isRecord(decision) &&
+          decision.channelId === channelId &&
+          (!sourceMessageId || decision.sourceMessageId === sourceMessageId)),
+      },
+    });
+    return;
+  }
   if (channelMessagesMatch && request.method() === "POST") {
     const channelId = decodeURIComponent(channelMessagesMatch[1]);
     const body = await request.postDataJSON() as Record<string, unknown>;
@@ -4182,7 +4218,41 @@ export async function handleDaemonRoute(
       updatedAt: "2026-05-25T00:18:00.000Z",
     };
     state.channelMessages.push(message);
-    const aiReply = body.requestAiReply === true
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    const autoReplyMode = isRecord(channel) && typeof channel.autoReplyMode === "string" ? channel.autoReplyMode : "mentions_only";
+    const shouldAutoReply = body.requestAiReply === true ||
+      (
+        typeof message.body === "string" &&
+        message.authorType === "local-user" &&
+        message.kind === "message" &&
+        message.intent === "discuss" &&
+        !message.threadId &&
+        (message.body.includes("?") || message.body.includes("？")) &&
+        (autoReplyMode === "default_teammate" || autoReplyMode === "auto_route")
+      );
+    const routedTeammateId = body.requestAiReply === true
+      ? typeof body.teammateId === "string" ? body.teammateId : "engineer"
+      : autoReplyMode === "auto_route" ? "designer" : isRecord(channel) && typeof channel.defaultTeammateId === "string" ? channel.defaultTeammateId : undefined;
+    const routeDecision = {
+      schemaVersion: 1,
+      id: `route_${state.channelMessageRouteDecisions.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId,
+      sourceMessageId: message.id,
+      mode: body.requestAiReply === true ? autoReplyMode : autoReplyMode,
+      action: shouldAutoReply && routedTeammateId ? "reply" : "no_reply",
+      selectedTeammateId: shouldAutoReply ? routedTeammateId : undefined,
+      selectedProviderPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : undefined,
+      confidence: shouldAutoReply ? 1 : undefined,
+      reason: shouldAutoReply ? "Mock route accepted." : "Mock route suppressed.",
+      alternativesConsidered: [],
+      status: shouldAutoReply && routedTeammateId ? "accepted" : "suppressed",
+      createdBy: body.requestAiReply === true ? "explicit_mention" : autoReplyMode === "auto_route" ? "model" : "deterministic",
+      createdAt: "2026-05-25T00:18:00.500Z",
+      updatedAt: "2026-05-25T00:18:00.500Z",
+    };
+    state.channelMessageRouteDecisions.push(routeDecision);
+    const aiReply = shouldAutoReply && routedTeammateId
       ? {
           id: `msg_${state.channelMessages.length + 1}`,
           workspaceId: "workspace_default",
@@ -4191,7 +4261,7 @@ export async function handleDaemonRoute(
           kind: "ai_reply",
           intent: "discuss",
           authorType: "ai-teammate",
-          authorId: "engineer",
+          authorId: routedTeammateId,
           body: "AI teammate is preparing a reply...",
           mentions: [],
           attachmentIds: [],
@@ -4203,6 +4273,10 @@ export async function handleDaemonRoute(
       : undefined;
     if (aiReply) {
       state.channelMessages.push(aiReply);
+      const index = state.channelMessageRouteDecisions.findIndex((decision) => isRecord(decision) && decision.id === routeDecision.id);
+      if (index !== -1) {
+        state.channelMessageRouteDecisions[index] = { ...routeDecision, replyMessageId: aiReply.id, updatedAt: "2026-05-25T00:18:01.000Z" };
+      }
       state.pendingChannelAiReplies ??= {};
       state.pendingChannelAiReplies[aiReply.id] = "收到，我会按频道上下文推进。";
     }
@@ -4735,7 +4809,7 @@ export async function handleDaemonRoute(
     const body = await request.postDataJSON() as Record<string, unknown>;
     const existing = state.channels[channelIndex];
     const channel = isRecord(existing)
-      ? { ...existing, ...createChannelFromBody(body, channelId), id: channelId, updatedAt: "2026-05-25T00:16:00.000Z" }
+      ? { ...existing, ...createChannelFromBody(body, channelId, existing), id: channelId, updatedAt: "2026-05-25T00:16:00.000Z" }
       : createChannelFromBody(body, channelId);
     state.channels[channelIndex] = channel;
     await route.fulfill({ json: { channel } });
@@ -4873,6 +4947,65 @@ export async function handleDaemonRoute(
       ? state.tasks.filter((task) => isRecord(task) && task.channelId === channelId)
       : state.tasks;
     await route.fulfill({ json: { cwd, tasks } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/threads") {
+    let body: Record<string, unknown> = {};
+    try {
+      body = request.postDataJSON() as Record<string, unknown>;
+    } catch {
+      body = {};
+    }
+    const kind = typeof body.kind === "string" ? body.kind : "channel_discussion";
+    if (kind !== "channel_discussion") {
+      await route.fulfill({ status: 400, json: { error: "thread_kind_not_supported", message: "Only channel discussion branches can be created from /threads." } });
+      return;
+    }
+    const channelId = typeof body.channelId === "string" ? body.channelId.trim() : "";
+    if (!channelId) {
+      await route.fulfill({ status: 400, json: { error: "channel_required", message: "channelId is required." } });
+      return;
+    }
+    const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
+    if (!channel) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    const existing = state.threads.find((thread) =>
+      thread.kind === "channel_discussion" &&
+      thread.channelId === channelId &&
+      !thread.parentThreadId &&
+      !thread.taskId &&
+      !thread.teammateId &&
+      !thread.workflowId &&
+      !thread.workflowStepId &&
+      !thread.externalWorkId &&
+      !thread.archivedAt &&
+      thread.status !== "archived"
+    );
+    if (existing) {
+      await route.fulfill({ status: 200, json: { cwd, thread: existing } });
+      return;
+    }
+    const now = "2026-05-25T00:40:00.000Z";
+    const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : "Main branch";
+    const channelName = isRecord(channel) && typeof channel.name === "string" ? channel.name : channelId;
+    const objective = typeof body.objective === "string" && body.objective.trim()
+      ? body.objective.trim()
+      : `Main conversation branch for ${channelName}.`;
+    const thread: MockLingThread = {
+      id: `thread_channel_main_${channelId}`,
+      workspaceId: "workspace_default",
+      kind: "channel_discussion",
+      channelId,
+      title,
+      objective,
+      status: "open",
+      createdAt: now,
+      updatedAt: now,
+    };
+    state.threads.unshift(thread);
+    await route.fulfill({ status: 201, json: { cwd, thread } });
     return;
   }
   if (request.method() === "GET" && path === "/threads") {

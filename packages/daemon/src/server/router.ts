@@ -49,6 +49,7 @@ import {
   handleChannelHandoffItem,
   handleChannelHandoffsCollection,
   handleChannelItem,
+  handleChannelMessageRouteDecisionsCollection,
   handleChannelsCollection,
 } from "../features/channels/routes.js";
 import {
@@ -668,7 +669,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/threads") {
-    handleLingThreadsCollection(request, response, url, storeRegistry);
+    await handleLingThreadsCollection(request, response, url, storeRegistry, config.maxBodyBytes);
     return;
   }
 
@@ -1230,7 +1231,16 @@ export async function routeRequest(
           runtimeSupervisor,
           secretResolver,
           ...input,
-        }));
+        }),
+        {
+          runnerRegistry,
+          secretResolver,
+          config,
+        });
+      return;
+    }
+    if (channelRoute.action === "message-route-decisions") {
+      await handleChannelMessageRouteDecisionsCollection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
     if (channelRoute.action === "proposals") {

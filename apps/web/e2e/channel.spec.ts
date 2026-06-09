@@ -47,6 +47,7 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
     const chat = document.querySelector(".activity-chat-layout");
     const activityShell = document.querySelector(".activity-shell");
     const activityMain = document.querySelector(".activity-chat-main");
+    const branchTree = document.querySelector(".channel-work-thread-tree");
     const workbenchMain = document.querySelector(".task-workbench-main");
     const workbenchWindow = document.querySelector(".task-workbench-window");
     const workspace = document.querySelector(".workspace");
@@ -160,6 +161,8 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
       activityShellHeight: Math.round(activityShell?.getBoundingClientRect().height ?? 0),
       chatHeight: Math.round(chatRect?.height ?? 0),
       activityMainHeight: Math.round(activityMain?.getBoundingClientRect().height ?? 0),
+      branchTreeHeight: Math.round(branchTree?.getBoundingClientRect().height ?? 0),
+      branchTreeText: branchTree?.textContent?.trim() ?? "",
       emptyStateText: emptyState?.textContent?.trim() ?? "",
       emptyStateCenterDelta: feedRect && emptyStateRect
         ? Math.round((emptyStateRect.top + emptyStateRect.height / 2) - (feedRect.top + feedRect.height / 2))
@@ -238,7 +241,9 @@ test("channel drawers match the accepted HTML layout", async ({ page }) => {
   expect(expanded.emptyStateIconCount).toBe(1);
   expect(Math.abs(expanded.emptyStateCenterDelta)).toBeLessThanOrEqual(2);
   expect(expanded.composerBottomGap).toBeLessThanOrEqual(18);
-  expect(expanded.feedHeight).toBeGreaterThan(300);
+  expect(expanded.branchTreeText).toContain("Conversation branches");
+  expect(expanded.branchTreeHeight).toBeGreaterThan(40);
+  expect(expanded.feedHeight).toBeGreaterThan(240);
   expect(expanded.feedBottomComposerGap).toBe(0);
   expect(expanded.sidebarBottomDisplay).toBe("grid");
   expect(expanded.sidebarBottomBorderTop).toBe("1px");
@@ -508,15 +513,26 @@ test("channel runtime policy and default teammate are visible and used when crea
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByText("active channel")).toHaveCount(0);
   await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
-  await expect(page.getByLabel("Channel management").getByLabel("Default AI teammate")).toHaveValue("engineer");
+  const currentManagement = page.getByLabel("Channel management");
+  await expect(currentManagement.getByLabel("Default AI teammate")).toHaveValue("engineer");
+  await expect(currentManagement.getByLabel("Auto reply")).toHaveValue("mentions_only");
+  await expect(currentManagement.getByLabel("Auto reply").locator('option[value="auto_route"]')).toHaveAttribute("disabled", "");
+  await currentManagement.getByLabel("Auto reply").selectOption("default_teammate");
+  await currentManagement.getByRole("button", { name: "Save channel" }).click();
+  await expect.poll(() => {
+    const updated = state.channels.find((channel) => isRecord(channel) && channel.id === "channel_engineering");
+    return isRecord(updated) ? updated.autoReplyMode : undefined;
+  }).toBe("default_teammate");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New channel" }).click();
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
   await expect(createChannelPanel).toBeVisible();
   await expect(createChannelPanel.getByLabel("Execution path")).toHaveCount(0);
+  await expect(createChannelPanel.getByLabel("Auto reply").locator('option[value="auto_route"]')).toHaveAttribute("disabled", "");
   await createChannelPanel.getByLabel("Name").fill("Release");
   await createChannelPanel.getByLabel("Status").selectOption("paused");
   await createChannelPanel.getByLabel("Default AI teammate").selectOption("designer");
+  await createChannelPanel.getByLabel("Auto reply").selectOption("default_teammate");
   await createChannelPanel.getByLabel("Execution mode").selectOption("parallel");
   await createChannelPanel.getByLabel("Write lock").selectOption("workspace");
   await createChannelPanel.getByLabel("Max runs").fill("2");
@@ -528,6 +544,7 @@ test("channel runtime policy and default teammate are visible and used when crea
   expect(created).toBeTruthy();
   expect(isRecord(created) ? created.status : undefined).toBe("paused");
   expect(isRecord(created) ? created.defaultTeammateId : undefined).toBe("designer");
+  expect(isRecord(created) ? created.autoReplyMode : undefined).toBe("default_teammate");
   const runtimePolicy = isRecord(created) && isRecord(created.runtimePolicy) ? created.runtimePolicy : {};
   expect(runtimePolicy.executionMode).toBe("parallel");
   expect(runtimePolicy.writeLockScope).toBe("workspace");
@@ -538,6 +555,7 @@ test("channel runtime policy and default teammate are visible and used when crea
   await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
   const details = page.getByLabel("Channel management");
   await expect(details.getByLabel("Default AI teammate")).toHaveValue("designer");
+  await expect(details.getByLabel("Auto reply")).toHaveValue("default_teammate");
   await expect(details.getByRole("button", { name: "Create channel" })).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create default" })).toHaveCount(0);
   await details.getByLabel("Name").fill("Release QA");
@@ -669,7 +687,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await page.getByLabel("Message tools").getByRole("button", { name: "Mention teammate" }).click();
   await expect(composerInput).toHaveValue("@");
   await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
-  await composerInput.fill("@Eng");
+  await composerInput.type("Eng");
   await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
   await page.getByRole("option", { name: /@Engineer/ }).click();
   await expect(page.getByLabel("Pending message assets")).toContainText("@Engineer");
