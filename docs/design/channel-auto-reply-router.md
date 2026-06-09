@@ -1,11 +1,12 @@
 # Channel Auto Reply Router
 
-Status: P0 implemented and validated; later work is message-level route explanation and local auto_route validation
+Status: P0 implemented and validated; message-level route explanation and runtime-gated local auto_route enablement implemented
 Date: 2026-06-09
 
 Related docs:
 
 - [Channel Workspace Design](channel-workspace.md)
+- [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
@@ -106,6 +107,12 @@ entry points.
 
 Do not reuse the workflow selector runtime directly for ordinary chat. Reuse only the
 pattern: structured decision, validation, durable evidence, and safe fallback.
+
+The missing channel-to-workflow entry is specified separately in
+[Channel Intent To Workflow Selector](channel-intent-workflow-selector.md). That layer
+decides whether an ordinary message should stay as `no_reply` / `single_reply` /
+`clarify`, become a confirmed workflow proposal, or enter a validated direct workflow
+path. Auto reply remains the single-teammate ordinary conversation path.
 
 ## Terms
 
@@ -625,8 +632,9 @@ Behavior:
 - `mentions_only` behavior must be identical whether the feature flag is enabled or
   disabled.
 
-If the implementation does not yet have a capabilities endpoint for daemon feature flags,
-P0 can keep Web `auto_route` hidden and cover the behavior through daemon/API tests first.
+The daemon health response exposes `features.channels.autoRoute`. Web must use that
+runtime capability instead of a build-time-only Vite flag so local dogfood can enable
+`auto_route` by restarting the daemon with `LING_STACK_CHANNEL_AUTO_ROUTE=1`.
 
 ## Current Code Entry Points
 
@@ -944,7 +952,7 @@ the remaining work as a follow-up:
 
 ### P2 Message-Level Route Explanation And Local Auto Route Validation
 
-After P0 proves the route behavior:
+Implemented behavior:
 
 - expose a compact route explanation entry from the source message or AI reply footer;
 - show `Default teammate`, `Auto routed`, `Not auto-replied`, or `Auto reply failed`
@@ -952,6 +960,10 @@ After P0 proves the route behavior:
 - open a small anchored popover for the human-readable reason when the user asks why;
 - do not use the right drawer for ordinary route explanation;
 - do not display selector confidence numbers or raw JSON in ordinary UI;
+- while a just-sent user message is still waiting for the daemon route/reply response,
+  Web may show a local-only conversation preview with a compact `Thinking...` status;
+  this preview must be replaced by the daemon message, pending AI reply, or route
+  explanation once the request resolves and must not be persisted as route evidence;
 - validate the local product flow with `LING_STACK_CHANNEL_AUTO_ROUTE=1`: setting becomes
   selectable, a normal message reaches the selector, one teammate replies, and failure
   cases explain themselves at the message level.

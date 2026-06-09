@@ -1,12 +1,14 @@
 # Multi-Agent Orchestration P4-P7 Detailed Design
 
 Status: initial implementation landed; workflow model-assisted selector remains a follow-up.
-Channel `auto_route` is split out and is the next channel-message implementation priority.
+Channel `auto_route` is split out; the channel-message entry into workflow selector is
+documented as a future slice.
 Date: 2026-06-09
 
 Source design:
 
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
+- [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
 - [P1 Workflow Graph](multi-agent-orchestration-p1-workflow-graph-implementation-plan.md)
 - [P2 Packet Standardization](multi-agent-orchestration-p2-packets-implementation-plan.md)
@@ -104,6 +106,12 @@ decision and validation pattern, but they should use
 [Channel Auto Reply Router](channel-auto-reply-router.md) and create only normal
 `ai_reply` messages. They must not invoke workflow selector authority or advance a
 workflow.
+
+When an ordinary message is likely to start coordinated work, it should first pass
+through [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md). That
+entry layer may produce a compact workflow proposal or a validated direct-workflow entry,
+then hand normalized intent into this P5 workflow selector. It must not turn ordinary
+channel discussion into a shared multi-agent transcript.
 
 ## Execution Stage Boundary
 
