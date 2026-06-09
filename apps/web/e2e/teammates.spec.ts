@@ -490,3 +490,80 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(deletedHistoryMessage).toContainText("Deleted teammate");
   await expect(deletedHistoryMessage).not.toContainText(teammateId);
 });
+
+test("AI teammate private chat exposes direct reply guidance and stop controls", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_builtin_engineer";
+  const threadId = `tdthread_${teammateId}`;
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Ling Engineer", providerPresetId: undefined })];
+  state.teammateDirectMessages = [
+    {
+      id: "tdmsg_pending_reply",
+      workspaceId: "workspace_default",
+      threadId,
+      teammateId,
+      authorType: "ai-teammate",
+      authorId: teammateId,
+      body: "",
+      attachmentIds: [],
+      status: "pending",
+      createdAt: "2026-05-29T00:09:58.000Z",
+      updatedAt: "2026-05-29T00:09:58.000Z",
+    },
+  ];
+  state.workUnits = [
+    {
+      id: "wu_direct_pending",
+      workspaceId: "workspace_default",
+      kind: "teammate_direct_reply",
+      ownerType: "teammate",
+      ownerId: teammateId,
+      teammateId,
+      idempotencyKey: "direct-reply:pending",
+      status: "running",
+      priority: 50,
+      attemptCount: 1,
+      activeAttemptId: "wua_direct_pending",
+      createdByActor: "user",
+      request: { sourceMessageId: "tdmsg_user_source" },
+      timeoutPolicy: { staleAfterMs: 120000, timeoutAfterMs: 300000 },
+      linkedMessageId: "tdmsg_pending_reply",
+      createdAt: "2026-05-29T00:09:57.000Z",
+      updatedAt: "2026-05-29T00:09:58.000Z",
+      startedAt: "2026-05-29T00:09:58.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  const guidance = page.getByLabel("Replying");
+  await expect(guidance).toBeVisible();
+  await expect(guidance.getByRole("button", { name: "Stop reply" })).toBeEnabled();
+  await expect(guidance.getByRole("button", { name: "Queue guidance" })).toBeDisabled();
+
+  await guidance.getByPlaceholder("Add guidance").fill("Continue with only risks after this reply.");
+  await guidance.getByRole("button", { name: "Queue guidance" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.map((item) => [item.mode, item.status, item.instruction])).toEqual([
+    ["queue_followup", "queued", "Continue with only risks after this reply."],
+  ]);
+  await expect(guidance).toContainText("Queued");
+  await guidance.getByRole("button", { name: "Cancel" }).click();
+  await expect.poll(() => state.teammateDirectInterventions[0]?.status).toBe("cancelled");
+
+  await guidance.getByPlaceholder("Add guidance").fill("Stop and continue with blockers only.");
+  await guidance.getByRole("button", { name: "Stop and continue" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.mode).toBe("interrupt_redirect");
+  await expect(guidance).toContainText("Stopping");
+
+  await guidance.getByRole("button", { name: "Stop reply" }).click();
+  await expect.poll(() => state.workUnits[0]?.status).toBe("cancelled");
+  await expect.poll(() => {
+    const message = state.teammateDirectMessages.find((item) => isRecord(item) && item.id === "tdmsg_pending_reply");
+    return isRecord(message) ? message.status : undefined;
+  }).toBe("cancelled");
+  await expect(page.getByText("Reply stopped")).toBeVisible();
+});

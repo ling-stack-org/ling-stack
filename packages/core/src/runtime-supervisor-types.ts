@@ -184,7 +184,9 @@ export interface ListWorkUnitsOptions {
   readonly ownerType?: string;
   readonly ownerId?: string;
   readonly channelId?: string;
+  readonly teammateId?: string;
   readonly linkedRunId?: string;
+  readonly linkedMessageId?: string;
   readonly limit?: number;
 }
 

@@ -1897,6 +1897,53 @@ test("teammate direct message stream emits ready delta and done events", async (
   }
 });
 
+test("teammate direct reply cancel aborts active reply and marks pending message cancelled", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-cancel-"));
+  const runner = new AbortableDelayedRunner();
+  const daemon = await startDaemonForTest(runner);
+  const streamController = new AbortController();
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_designer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Start a cancellable private reply.", providerPresetId: provider.id }),
+      signal: streamController.signal,
+    });
+    assert.equal(response.status, 200);
+    await waitForCondition(() => runner.runs.length === 1, "private reply runner to start");
+
+    const runtime = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-runtime?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(runtime.activeReply.status, "running");
+    assert.ok(runtime.activeReply.workUnitId);
+    assert.ok(runtime.activeReply.messageId);
+
+    const cancelled = await postJson(`${daemon.url}/teammate-direct-replies/${encodeURIComponent(runtime.activeReply.workUnitId)}/cancel?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cancelled.workUnit.status, "cancelled");
+    assert.equal(cancelled.message.status, "cancelled");
+    assert.equal(cancelled.message.body, "回复已停止");
+    assert.equal(runner.abortCount, 1);
+
+    runner.resolve("Late private reply");
+    await response.text().catch(() => "");
+    const listed = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
+    const aiReply = listed.messages.find((message) => message.id === runtime.activeReply.messageId);
+    assert.equal(aiReply.status, "cancelled");
+    assert.equal(aiReply.body, "回复已停止");
+  } finally {
+    streamController.abort();
+    runner.resolve("cleanup");
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("private attachments avatar and hard delete stay scoped to teammate private data", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachments-hard-delete-"));
   const daemon = await startDaemonForTest();
@@ -2027,6 +2074,36 @@ class DelayedRunner {
 
   resolve(text) {
     this.pending?.(text);
+    this.pending = undefined;
+  }
+}
+
+class AbortableDelayedRunner {
+  constructor() {
+    this.runs = [];
+    this.abortCount = 0;
+    this.pending = undefined;
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    const text = await new Promise((resolve, reject) => {
+      this.pending = { resolve, reject };
+      options.signal?.addEventListener("abort", () => {
+        this.abortCount += 1;
+        reject(new Error("aborted by test"));
+      }, { once: true });
+    });
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return {
+      taskId: options.task.id,
+      messages: [text],
+      events: [],
+    };
+  }
+
+  resolve(text) {
+    this.pending?.resolve(text);
     this.pending = undefined;
   }
 }

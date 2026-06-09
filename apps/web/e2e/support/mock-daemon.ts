@@ -40,6 +40,7 @@ export interface MockState {
   usedMemoryEvents: unknown[];
   teammateDirectThreads: Record<string, unknown>;
   teammateDirectMessages: unknown[];
+  teammateDirectInterventions: MockTeammateDirectIntervention[];
   teammatePrivateAttachments: unknown[];
   retentionTombstones: unknown[];
   tasks: unknown[];
@@ -214,6 +215,27 @@ export interface MockRunIntervention {
   instruction: string;
   requestedBy: "local-user" | "system";
   idempotencyKey: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  failureReason?: string;
+}
+
+export interface MockTeammateDirectIntervention {
+  id: string;
+  workspaceId: string;
+  teammateId: string;
+  threadId: string;
+  sourceMessageId: string;
+  sourceWorkUnitId?: string;
+  mode: "queue_followup" | "interrupt_redirect";
+  status: "queued" | "cancelling_source" | "starting_continuation" | "started" | "failed" | "cancelled";
+  instruction: string;
+  idempotencyKey: string;
+  requestedBy: "local-user" | "system";
+  continuationMessageId?: string;
+  continuationWorkUnitId?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -522,6 +544,8 @@ export interface MockWorkUnit {
   request: unknown;
   timeoutPolicy: Record<string, number>;
   linkedRunId?: string;
+  linkedMessageId?: string;
+  teammateId?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -797,6 +821,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     usedMemoryEvents: [],
     teammateDirectThreads: {},
     teammateDirectMessages: [],
+    teammateDirectInterventions: [],
     teammatePrivateAttachments: [],
     retentionTombstones: [],
     tasks: [
@@ -3616,6 +3641,67 @@ export async function handleDaemonRoute(
       });
       return;
     }
+    if (action === "direct-runtime" && request.method() === "GET") {
+      const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
+      await route.fulfill({ json: buildMockTeammateDirectRuntime(state, teammateId, thread) });
+      return;
+    }
+    if (action === "direct-interventions") {
+      const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
+      if (request.method() === "GET") {
+        await route.fulfill({
+          json: {
+            cwd,
+            teammateId,
+            thread,
+            interventions: listOpenMockTeammateDirectInterventions(state, teammateId, thread.id),
+          },
+        });
+        return;
+      }
+      if (request.method() === "POST") {
+        const body = safePostDataJson(request);
+        const runtime = buildMockTeammateDirectRuntime(state, teammateId, thread);
+        if (!runtime.activeReply) {
+          await route.fulfill({ status: 409, json: { error: "direct_reply_not_active", message: "No active direct reply." } });
+          return;
+        }
+        const mode = body.mode === "interrupt_redirect" ? "interrupt_redirect" : "queue_followup";
+        const instruction = typeof body.instruction === "string" ? body.instruction.trim() : "";
+        const idempotencyKey = typeof body.idempotencyKey === "string"
+          ? body.idempotencyKey
+          : `direct-guidance:${runtime.activeReply.workUnitId}:${mode}:${instruction}`;
+        const existing = state.teammateDirectInterventions.find((item) => item.idempotencyKey === idempotencyKey);
+        const intervention = existing ?? {
+          id: `tdint_${state.teammateDirectInterventions.length + 1}`,
+          workspaceId: "workspace_default",
+          teammateId,
+          threadId: thread.id,
+          sourceMessageId: runtime.activeReply.sourceMessageId,
+          sourceWorkUnitId: runtime.activeReply.workUnitId,
+          mode,
+          status: mode === "interrupt_redirect" ? "cancelling_source" : "queued",
+          instruction,
+          idempotencyKey,
+          requestedBy: "local-user",
+          createdAt: "2026-06-04T00:30:00.000Z",
+          updatedAt: "2026-06-04T00:30:00.000Z",
+        } satisfies MockTeammateDirectIntervention;
+        if (!existing) {
+          state.teammateDirectInterventions.push(intervention);
+        }
+        await route.fulfill({
+          status: 201,
+          json: {
+            cwd,
+            teammateId,
+            intervention,
+            runtime: buildMockTeammateDirectRuntime(state, teammateId, thread),
+          },
+        });
+        return;
+      }
+    }
     if (action === "direct-messages/stream" && request.method() === "POST") {
       const body = await request.postDataJSON() as Record<string, unknown>;
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
@@ -3760,6 +3846,63 @@ export async function handleDaemonRoute(
       });
       return;
     }
+  }
+  const teammateDirectInterventionCancelMatch = /^\/teammate-direct-interventions\/([^/]+)\/cancel$/.exec(path);
+  if (teammateDirectInterventionCancelMatch && request.method() === "POST") {
+    const interventionId = decodeURIComponent(teammateDirectInterventionCancelMatch[1]);
+    const interventionIndex = state.teammateDirectInterventions.findIndex((item) => item.id === interventionId);
+    if (interventionIndex < 0) {
+      await route.fulfill({ status: 404, json: { error: "direct_intervention_not_found" } });
+      return;
+    }
+    const intervention = {
+      ...state.teammateDirectInterventions[interventionIndex],
+      status: "cancelled",
+      completedAt: "2026-06-04T00:31:00.000Z",
+      updatedAt: "2026-06-04T00:31:00.000Z",
+    } satisfies MockTeammateDirectIntervention;
+    state.teammateDirectInterventions[interventionIndex] = intervention;
+    const thread = state.teammateDirectThreads[intervention.teammateId] ?? getOrCreateMockTeammateThread(state, intervention.teammateId, {});
+    await route.fulfill({
+      json: {
+        cwd,
+        teammateId: intervention.teammateId,
+        intervention,
+        runtime: buildMockTeammateDirectRuntime(state, intervention.teammateId, thread),
+      },
+    });
+    return;
+  }
+  const teammateDirectReplyCancelMatch = /^\/teammate-direct-replies\/([^/]+)\/cancel$/.exec(path);
+  if (teammateDirectReplyCancelMatch && request.method() === "POST") {
+    const workUnitId = decodeURIComponent(teammateDirectReplyCancelMatch[1]);
+    const workUnitIndex = state.workUnits.findIndex((unit) => unit.id === workUnitId);
+    if (workUnitIndex < 0) {
+      await route.fulfill({ status: 404, json: { error: "work_unit_not_found" } });
+      return;
+    }
+    const workUnit = {
+      ...state.workUnits[workUnitIndex],
+      status: "cancelled",
+      endedAt: "2026-06-04T00:32:00.000Z",
+      updatedAt: "2026-06-04T00:32:00.000Z",
+    };
+    state.workUnits[workUnitIndex] = workUnit;
+    const messageId = workUnit.linkedMessageId;
+    const messageIndex = state.teammateDirectMessages.findIndex((message) => isRecord(message) && message.id === messageId);
+    const message = messageIndex >= 0 && isRecord(state.teammateDirectMessages[messageIndex])
+      ? {
+          ...state.teammateDirectMessages[messageIndex],
+          status: "cancelled",
+          body: "",
+          updatedAt: "2026-06-04T00:32:00.000Z",
+        }
+      : undefined;
+    if (message && messageIndex >= 0) {
+      state.teammateDirectMessages[messageIndex] = message;
+    }
+    await route.fulfill({ json: { cwd, workUnit, ...(message ? { message } : {}) } });
+    return;
   }
   if (request.method() === "POST" && path === "/provider-check") {
     const body = await request.postDataJSON() as Record<string, unknown>;
@@ -6002,6 +6145,56 @@ export function getOrCreateMockTeammateThread(
   };
   state.teammateDirectThreads[teammateId] = thread;
   return thread;
+}
+
+export function buildMockTeammateDirectRuntime(
+  state: MockState,
+  teammateId: string,
+  thread: Record<string, unknown>,
+): Record<string, unknown> {
+  const threadId = typeof thread.id === "string" ? thread.id : `tdthread_${teammateId}`;
+  const activeWorkUnit = state.workUnits.find((unit) =>
+    unit.kind === "teammate_direct_reply" &&
+    (unit.teammateId === teammateId || unit.ownerId === teammateId) &&
+    isActiveMockWorkUnit(unit.status)
+  );
+  const message = activeWorkUnit?.linkedMessageId
+    ? state.teammateDirectMessages.find((item) => isRecord(item) && item.id === activeWorkUnit.linkedMessageId)
+    : undefined;
+  const request = isRecord(activeWorkUnit?.request) ? activeWorkUnit.request : {};
+  const activeReply = activeWorkUnit
+    ? {
+        status: activeWorkUnit.status === "cancelling" ? "cancelling" : "running",
+        workUnitId: activeWorkUnit.id,
+        messageId: typeof activeWorkUnit.linkedMessageId === "string" ? activeWorkUnit.linkedMessageId : "",
+        sourceMessageId: typeof request.sourceMessageId === "string"
+          ? request.sourceMessageId
+          : typeof activeWorkUnit.linkedMessageId === "string"
+            ? activeWorkUnit.linkedMessageId
+            : "",
+        workUnit: activeWorkUnit,
+        ...(isRecord(message) ? { message } : {}),
+      }
+    : undefined;
+  return {
+    cwd,
+    teammateId,
+    thread,
+    ...(activeReply ? { activeReply } : {}),
+    interventions: listOpenMockTeammateDirectInterventions(state, teammateId, threadId),
+  };
+}
+
+export function listOpenMockTeammateDirectInterventions(
+  state: MockState,
+  teammateId: string,
+  threadId: string,
+): MockTeammateDirectIntervention[] {
+  return state.teammateDirectInterventions.filter((item) =>
+    item.teammateId === teammateId &&
+    item.threadId === threadId &&
+    (item.status === "queued" || item.status === "cancelling_source" || item.status === "starting_continuation")
+  );
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

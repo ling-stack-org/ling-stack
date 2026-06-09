@@ -53,6 +53,7 @@ import type {
   CreateChannelMessageInput,
   CreateAiTeammateInput,
   CreateTeammateDirectMessageInput,
+  CreateTeammateDirectReplyInterventionInput,
   CreateTeammatePrivateAttachmentInput,
   CreateTaskInput,
   HardDeleteAiTeammateInput,
@@ -69,6 +70,7 @@ import type {
   ListChannelLinkPreviewsOptions,
   ListChannelMessagesOptions,
   ListTeammatePrivateAttachmentsOptions,
+  ListTeammateDirectReplyInterventionsOptions,
   ListTeammateDirectMessagesOptions,
   ListTasksOptions,
   ReplaceTeammateChannelMembershipInput,
@@ -78,6 +80,7 @@ import type {
   TaskUpdateInput,
   TeammateChannelMembership,
   TeammateDirectMessage,
+  TeammateDirectReplyIntervention,
   TeammateDirectThread,
   TeammateMemoryScope,
   TeammatePrivateAttachment,
@@ -90,6 +93,7 @@ import type {
   UpdateChannelWorkflowStepInput,
   UpdateChannelHandoffInput,
   UpdateChannelLinkPreviewInput,
+  UpdateTeammateDirectReplyInterventionStatusInput,
 } from "./workspace-types.js";
 import type {
   CreateResourceLeaseInput,
@@ -967,6 +971,11 @@ export interface RunStore {
     },
     now: string,
   ): TeammateDirectMessage | undefined;
+  createTeammateDirectReplyIntervention(input: CreateTeammateDirectReplyInterventionInput, now: string): TeammateDirectReplyIntervention;
+  getTeammateDirectReplyIntervention(interventionId: string): TeammateDirectReplyIntervention | undefined;
+  listTeammateDirectReplyInterventions(options?: ListTeammateDirectReplyInterventionsOptions): TeammateDirectReplyIntervention[];
+  updateTeammateDirectReplyInterventionStatus(input: UpdateTeammateDirectReplyInterventionStatusInput): TeammateDirectReplyIntervention | undefined;
+  cancelTeammateDirectReplyIntervention(interventionId: string, now: string, reason?: string): TeammateDirectReplyIntervention | undefined;
   createTeammatePrivateAttachment(input: CreateTeammatePrivateAttachmentInput): TeammatePrivateAttachment;
   getTeammatePrivateAttachment(id: string): TeammatePrivateAttachment | undefined;
   listTeammatePrivateAttachments(options: ListTeammatePrivateAttachmentsOptions): TeammatePrivateAttachment[];

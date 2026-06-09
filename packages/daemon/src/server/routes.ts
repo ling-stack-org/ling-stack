@@ -67,6 +67,26 @@ export function parseRunInterventionRoute(
   return undefined;
 }
 
+export function parseTeammateDirectInterventionRoute(
+  pathname: string,
+): { readonly kind: "cancel"; readonly interventionId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "teammate-direct-interventions" && segments[2] === "cancel") {
+    return { kind: "cancel", interventionId: segments[1] };
+  }
+  return undefined;
+}
+
+export function parseTeammateDirectReplyRoute(
+  pathname: string,
+): { readonly kind: "cancel"; readonly workUnitId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "teammate-direct-replies" && segments[2] === "cancel") {
+    return { kind: "cancel", workUnitId: segments[1] };
+  }
+  return undefined;
+}
+
 export function parseLingThreadRoute(
   pathname: string,
 ):
@@ -239,7 +259,7 @@ export function parseTeammateRoute(
   pathname: string,
 ): {
   readonly teammateId: string;
-  readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "direct-messages-stream" | "direct-attachments" | "avatar" | "hard-delete" | "tasks" | "activity";
+  readonly action?: "channels" | "skills" | "memory-scopes" | "mcp" | "persona-draft" | "direct-thread" | "direct-messages" | "direct-messages-stream" | "direct-runtime" | "direct-interventions" | "direct-attachments" | "avatar" | "hard-delete" | "tasks" | "activity";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "teammates") {
@@ -256,6 +276,8 @@ export function parseTeammateRoute(
       segments[2] === "persona-draft" ||
       segments[2] === "direct-thread" ||
       segments[2] === "direct-messages" ||
+      segments[2] === "direct-runtime" ||
+      segments[2] === "direct-interventions" ||
       segments[2] === "direct-attachments" ||
       segments[2] === "avatar" ||
       segments[2] === "hard-delete" ||

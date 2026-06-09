@@ -71,6 +71,9 @@ import type {
   CreateAutomationDraftRequest,
   CreateAutomationRequest,
   CreateLingTurnRequest,
+  CancelTeammateDirectReplyInterventionRequest,
+  CancelTeammateDirectReplyRequest,
+  CreateTeammateDirectReplyInterventionRequest,
   CreateTeammateDirectMessageRequest,
   CreateTeammatePrivateAttachmentRequest,
   CreateChannelWorkflowFromHandoffRequest,
@@ -236,6 +239,10 @@ import type {
   TeammateChannelMembershipListResponse,
   TeammateDirectMessageListResponse,
   TeammateDirectMessageMutationResponse,
+  TeammateDirectInterventionListResponse,
+  TeammateDirectInterventionResponse,
+  TeammateDirectReplyCancelResponse,
+  TeammateDirectRuntimeResponse,
   TeammateDirectThreadResponse,
   TeammatePrivateAttachmentListResponse,
   TeammatePrivateAttachmentMutationResponse,
@@ -929,6 +936,38 @@ export class LingDaemonClient {
     input: CreateTeammateDirectMessageRequest,
   ): Promise<TeammateDirectMessageMutationResponse> {
     return this.post(`/teammates/${encodeURIComponent(teammateId)}/direct-messages`, { cwd }, input);
+  }
+
+  async getTeammateDirectRuntime(cwd: string, teammateId: string): Promise<TeammateDirectRuntimeResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-runtime`, { cwd });
+  }
+
+  async listTeammateDirectInterventions(cwd: string, teammateId: string): Promise<TeammateDirectInterventionListResponse> {
+    return this.get(`/teammates/${encodeURIComponent(teammateId)}/direct-interventions`, { cwd });
+  }
+
+  async createTeammateDirectIntervention(
+    cwd: string,
+    teammateId: string,
+    input: CreateTeammateDirectReplyInterventionRequest,
+  ): Promise<TeammateDirectInterventionResponse> {
+    return this.post(`/teammates/${encodeURIComponent(teammateId)}/direct-interventions`, { cwd }, input);
+  }
+
+  async cancelTeammateDirectIntervention(
+    cwd: string,
+    interventionId: string,
+    input: CancelTeammateDirectReplyInterventionRequest = {},
+  ): Promise<TeammateDirectInterventionResponse> {
+    return this.post(`/teammate-direct-interventions/${encodeURIComponent(interventionId)}/cancel`, { cwd }, input);
+  }
+
+  async cancelTeammateDirectReply(
+    cwd: string,
+    workUnitId: string,
+    input: CancelTeammateDirectReplyRequest = {},
+  ): Promise<TeammateDirectReplyCancelResponse> {
+    return this.post(`/teammate-direct-replies/${encodeURIComponent(workUnitId)}/cancel`, { cwd }, input);
   }
 
   async streamTeammateDirectMessage(

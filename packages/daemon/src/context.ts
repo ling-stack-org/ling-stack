@@ -16,6 +16,7 @@ import type { ResolvedDaemonConfig } from "./config.js";
 import type { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
 import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import type { ControlPlaneEventHub } from "./features/control-plane/events.js";
+import type { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import type { ActiveRunRegistry } from "./runtime/active-runs.js";
 import type { RunStoreFactory } from "./runtime/store-registry.js";
 import type { RunStoreRegistry } from "./runtime/store-registry.js";
@@ -73,6 +74,7 @@ export interface DaemonContext {
   readonly extensionRegistry: LingExtensionRegistry;
   readonly storeRegistry: RunStoreRegistry;
   readonly activeRuns: ActiveRunRegistry;
+  readonly activeDirectReplies: ActiveDirectReplyRegistry;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly externalSecretStore: ExternalSecretStore;

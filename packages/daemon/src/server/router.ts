@@ -143,6 +143,13 @@ import { handleLingThreadItem, handleLingThreadsCollection } from "../features/r
 import { resolveProviderForRun } from "../features/runs/providers.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
+import {
+  DirectReplyControlService,
+  handleTeammateDirectInterventionCancel,
+  handleTeammateDirectInterventions,
+  handleTeammateDirectReplyCancel,
+  handleTeammateDirectRuntime,
+} from "../features/teammates/direct-controls.js";
 import { handleTeammateDirectMessagesCollection, handleTeammateDirectMessageStream, handleTeammateDirectThread } from "../features/teammates/direct-messages.js";
 import { createAiTeammateDirectReply } from "../features/teammates/direct-replies.js";
 import { handleTeammateAvatar, handleTeammateDirectAttachments, handleTeammateHardDelete } from "../features/teammates/private-attachments.js";
@@ -203,10 +210,13 @@ import {
   parseRunRoute,
   parseSkillRoute,
   parseTaskRoute,
+  parseTeammateDirectInterventionRoute,
+  parseTeammateDirectReplyRoute,
   parseTeammateRoute,
   parseWorkItemRoute,
   parseWorkUnitRoute,
 } from "./routes.js";
+import { RunControlService } from "../run-control.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 
 export async function routeRequest(
@@ -220,6 +230,7 @@ export async function routeRequest(
     extensionRegistry,
     storeRegistry,
     activeRuns,
+    activeDirectReplies,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -229,6 +240,13 @@ export async function routeRequest(
     automationSchedulers,
     controlPlaneEvents,
   } = context;
+  const directReplyControl = new DirectReplyControlService({
+    runnerRegistry,
+    runtimeSupervisor,
+    secretResolver,
+    activeDirectReplies,
+    runControl: new RunControlService(),
+  });
   setCorsHeaders(response);
 
   if (request.method === "OPTIONS") {
@@ -876,6 +894,18 @@ export async function routeRequest(
     return;
   }
 
+  const teammateDirectInterventionRoute = parseTeammateDirectInterventionRoute(url.pathname);
+  if (teammateDirectInterventionRoute) {
+    await handleTeammateDirectInterventionCancel(request, response, config, storeRegistry, teammateDirectInterventionRoute.interventionId, directReplyControl);
+    return;
+  }
+
+  const teammateDirectReplyRoute = parseTeammateDirectReplyRoute(url.pathname);
+  if (teammateDirectReplyRoute) {
+    await handleTeammateDirectReplyCancel(request, response, config, storeRegistry, teammateDirectReplyRoute.workUnitId, directReplyControl);
+    return;
+  }
+
   const workUnitRoute = parseWorkUnitRoute(url.pathname);
   if (workUnitRoute) {
     handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled);
@@ -1234,6 +1264,14 @@ export async function routeRequest(
       await handleTeammateDirectThread(request, response, config, storeRegistry, teammateRoute.teammateId);
       return;
     }
+    if (teammateRoute.action === "direct-runtime") {
+      await handleTeammateDirectRuntime(request, response, config, storeRegistry, teammateRoute.teammateId, directReplyControl);
+      return;
+    }
+    if (teammateRoute.action === "direct-interventions") {
+      await handleTeammateDirectInterventions(request, response, config, storeRegistry, teammateRoute.teammateId, directReplyControl);
+      return;
+    }
     if (teammateRoute.action === "direct-messages") {
       await handleTeammateDirectMessagesCollection(
         request,
@@ -1241,8 +1279,9 @@ export async function routeRequest(
         config,
         storeRegistry,
         teammateRoute.teammateId,
-        ({ store, teammate, thread, sourceMessage, providerPresetId }) =>
-          createAiTeammateDirectReply({
+        async ({ store, teammate, thread, sourceMessage, providerPresetId, onWorkUnitStarted }) => {
+          let sourceWorkUnitId: string | undefined;
+          const reply = await createAiTeammateDirectReply({
             runnerRegistry,
             store,
             teammate,
@@ -1251,7 +1290,14 @@ export async function routeRequest(
             providerPresetId,
             runtimeSupervisor,
             secretResolver,
-          }),
+            onWorkUnitStarted: (handle) => {
+              sourceWorkUnitId = handle.workUnitId;
+              onWorkUnitStarted?.(handle);
+            },
+          });
+          await directReplyControl.maybeStartNextQueuedContinuation({ store, teammateId: teammate.id, threadId: thread.id, sourceWorkUnitId });
+          return reply;
+        },
       );
       return;
     }
@@ -1274,8 +1320,9 @@ export async function routeRequest(
         config,
         storeRegistry,
         teammateRoute.teammateId,
-        ({ store, teammate, thread, sourceMessage, providerPresetId, signal, stream }) =>
-          createAiTeammateDirectReply({
+        async ({ store, teammate, thread, sourceMessage, providerPresetId, signal, onWorkUnitStarted, stream }) => {
+          let sourceWorkUnitId: string | undefined;
+          const reply = await createAiTeammateDirectReply({
             runnerRegistry,
             store,
             teammate,
@@ -1285,8 +1332,16 @@ export async function routeRequest(
             runtimeSupervisor,
             secretResolver,
             signal,
+            onWorkUnitStarted: (handle) => {
+              sourceWorkUnitId = handle.workUnitId;
+              onWorkUnitStarted?.(handle);
+            },
             stream,
-          }),
+          });
+          await directReplyControl.maybeStartNextQueuedContinuation({ store, teammateId: teammate.id, threadId: thread.id, sourceWorkUnitId });
+          return reply;
+        },
+        activeDirectReplies,
       );
       return;
     }

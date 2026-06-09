@@ -1,8 +1,11 @@
 import type {
   AiTeammateListResponse,
   AiTeammateMutationResponse,
+  CancelTeammateDirectReplyInterventionRequest,
+  CancelTeammateDirectReplyRequest,
   CreateAiTeammateRequest,
   CreateTeammateDirectMessageRequest,
+  CreateTeammateDirectReplyInterventionRequest,
   HardDeleteAiTeammateResponse,
   ReplaceTeammateChannelMembershipRequest,
   ReplaceTeammateMcpBindingsRequest,
@@ -13,6 +16,10 @@ import type {
   TeammateChannelMembershipListResponse,
   TeammateDirectMessageListResponse,
   TeammateDirectMessageMutationResponse,
+  TeammateDirectInterventionListResponse,
+  TeammateDirectInterventionResponse,
+  TeammateDirectReplyCancelResponse,
+  TeammateDirectRuntimeResponse,
   TeammateDirectThreadResponse,
   TeammateMcpBindingListResponse,
   TeammateMemoryScopeListResponse,
@@ -116,6 +123,38 @@ export async function createTeammateDirectMessage(
   input: CreateTeammateDirectMessageRequest,
 ): Promise<TeammateDirectMessageMutationResponse> {
   return daemonClient.createTeammateDirectMessage(cwd, teammateId, input);
+}
+
+export async function getTeammateDirectRuntime(cwd: string, teammateId: string): Promise<TeammateDirectRuntimeResponse> {
+  return daemonClient.getTeammateDirectRuntime(cwd, teammateId);
+}
+
+export async function listTeammateDirectInterventions(cwd: string, teammateId: string): Promise<TeammateDirectInterventionListResponse> {
+  return daemonClient.listTeammateDirectInterventions(cwd, teammateId);
+}
+
+export async function createTeammateDirectIntervention(
+  cwd: string,
+  teammateId: string,
+  input: CreateTeammateDirectReplyInterventionRequest,
+): Promise<TeammateDirectInterventionResponse> {
+  return daemonClient.createTeammateDirectIntervention(cwd, teammateId, input);
+}
+
+export async function cancelTeammateDirectIntervention(
+  cwd: string,
+  interventionId: string,
+  input: CancelTeammateDirectReplyInterventionRequest = {},
+): Promise<TeammateDirectInterventionResponse> {
+  return daemonClient.cancelTeammateDirectIntervention(cwd, interventionId, input);
+}
+
+export async function cancelTeammateDirectReply(
+  cwd: string,
+  workUnitId: string,
+  input: CancelTeammateDirectReplyRequest = {},
+): Promise<TeammateDirectReplyCancelResponse> {
+  return daemonClient.cancelTeammateDirectReply(cwd, workUnitId, input);
 }
 
 export async function streamTeammateDirectMessage(

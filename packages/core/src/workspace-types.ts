@@ -268,7 +268,7 @@ export interface TeammateDirectThread {
   readonly updatedAt: string;
 }
 
-export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "failed";
+export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "failed" | "cancelled";
 
 export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
 
@@ -306,6 +306,69 @@ export interface ListTeammateDirectMessagesOptions {
   readonly teammateId: string;
   readonly threadId?: string;
   readonly limit?: number;
+}
+
+export type TeammateDirectReplyInterventionMode = "queue_followup" | "interrupt_redirect";
+
+export type TeammateDirectReplyInterventionStatus =
+  | "queued"
+  | "cancelling_source"
+  | "starting_continuation"
+  | "started"
+  | "cancelled"
+  | "failed";
+
+export interface TeammateDirectReplyIntervention {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly teammateId: string;
+  readonly threadId: string;
+  readonly sourceMessageId: string;
+  readonly sourceWorkUnitId?: string;
+  readonly mode: TeammateDirectReplyInterventionMode;
+  readonly status: TeammateDirectReplyInterventionStatus;
+  readonly instruction: string;
+  readonly idempotencyKey: string;
+  readonly requestedBy: "local-user" | "system";
+  readonly continuationMessageId?: string;
+  readonly continuationWorkUnitId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly failureReason?: string;
+}
+
+export interface CreateTeammateDirectReplyInterventionInput {
+  readonly id?: string;
+  readonly teammateId: string;
+  readonly threadId: string;
+  readonly sourceMessageId: string;
+  readonly sourceWorkUnitId?: string;
+  readonly mode: TeammateDirectReplyInterventionMode;
+  readonly instruction: string;
+  readonly idempotencyKey: string;
+  readonly requestedBy?: TeammateDirectReplyIntervention["requestedBy"];
+}
+
+export interface ListTeammateDirectReplyInterventionsOptions {
+  readonly teammateId?: string;
+  readonly threadId?: string;
+  readonly sourceWorkUnitId?: string;
+  readonly status?: TeammateDirectReplyInterventionStatus;
+  readonly mode?: TeammateDirectReplyInterventionMode;
+  readonly limit?: number;
+}
+
+export interface UpdateTeammateDirectReplyInterventionStatusInput {
+  readonly interventionId: string;
+  readonly status: TeammateDirectReplyInterventionStatus;
+  readonly continuationMessageId?: string | null;
+  readonly continuationWorkUnitId?: string | null;
+  readonly startedAt?: string | null;
+  readonly completedAt?: string | null;
+  readonly failureReason?: string | null;
+  readonly now: string;
 }
 
 export type TeammatePrivateAttachmentScope = "teammate_direct_thread" | "teammate_profile_avatar";
@@ -1031,6 +1094,10 @@ export function createTeammateDirectThreadId(): string {
 
 export function createTeammateDirectMessageId(): string {
   return `dm_msg_${randomUUID()}`;
+}
+
+export function createTeammateDirectReplyInterventionId(): string {
+  return `dm_int_${randomUUID()}`;
 }
 
 export function createChannelMessageId(): string {

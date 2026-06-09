@@ -33,12 +33,16 @@ import {
   archiveSkill,
   attachmentContentUrl,
   attachmentContentUrlById,
+  cancelTeammateDirectIntervention,
+  cancelTeammateDirectReply,
   createSkillImportDraft,
   createTask,
+  createTeammateDirectIntervention,
   createTeammatePersonaDraft,
   deleteAttachment,
   deleteTeammateAvatar,
   getMemoryHealth,
+  getTeammateDirectRuntime,
   getMemoryReviewPolicy,
   listMemoryObjects,
   listMemoryPromotionInbox,
@@ -83,7 +87,7 @@ import {
   removeComposerInputRawToken,
   serializeComposerInputParts,
 } from "../../shared/components/index.js";
-import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationShell, ConversationStatusStrip, ConversationVirtualFeed, MessageBubble, MessageFooterActions } from "../../shared/conversation/index.js";
+import { ConversationAttachmentStrip, ConversationEvidenceBundlePanel, ConversationGuidanceStrip, ConversationShell, ConversationStatusStrip, ConversationVirtualFeed, MessageBubble, MessageFooterActions } from "../../shared/conversation/index.js";
 import type {
   AiTeammate,
   Channel,
@@ -105,6 +109,8 @@ import type {
   TeammateActivityItem,
   TeammateChannelMembership,
   TeammateDirectMessage,
+  TeammateDirectReplyIntervention,
+  TeammateDirectRuntimeResponse,
   TeammateDirectThread,
   TeammateMcpBinding,
   TeammateMemoryScope,
@@ -201,6 +207,10 @@ export function TeammateWorkspace({
   const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("profile");
   const [thread, setThread] = useState<TeammateDirectThread | undefined>();
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
+  const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
+  const [directGuidanceInstruction, setDirectGuidanceInstruction] = useState("");
+  const [directGuidanceSubmitting, setDirectGuidanceSubmitting] = useState<"queue_followup" | "interrupt_redirect" | "stop" | "">("");
+  const [directGuidanceCancelingId, setDirectGuidanceCancelingId] = useState("");
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
@@ -397,6 +407,9 @@ export function TeammateWorkspace({
     [messages],
   );
   const providerReady = Boolean(provider && providerPreflightReady(provider));
+  const hasPendingDirectReply = messages.some((message) => message.authorType === "ai-teammate" && message.status === "pending");
+  const openDirectInterventions = directRuntime?.interventions ?? [];
+  const hasDirectRuntimeActivity = Boolean(directRuntime?.activeReply || hasPendingDirectReply || openDirectInterventions.length > 0);
 
   useEffect(() => {
     setSettingsForm(teammateToSettingsForm(teammate));
@@ -421,6 +434,10 @@ export function TeammateWorkspace({
     setMessageSearchOpen(false);
     setMessageSearchQuery("");
     setPendingAttachmentIds([]);
+    setDirectRuntime(undefined);
+    setDirectGuidanceInstruction("");
+    setDirectGuidanceSubmitting("");
+    setDirectGuidanceCancelingId("");
     privateFeedPinnedToLatestRef.current = true;
     setPrivateFeedLatestButtonVisible(false);
     setHardDeleteReason("");
@@ -486,6 +503,29 @@ export function TeammateWorkspace({
     }
   }, [selectedSkillId, selectedSkillRow]);
 
+  useEffect(() => {
+    if (workspaceView !== "chat" || !hasDirectRuntimeActivity || !cwd.trim()) {
+      return undefined;
+    }
+    let cancelled = false;
+    const refresh = async (): Promise<void> => {
+      try {
+        await refreshDirectRuntime();
+      } catch {
+        // Runtime polling is opportunistic; primary send errors still surface through workspaceError.
+      }
+    };
+    const intervalId = globalThis.setInterval(() => {
+      if (!cancelled) {
+        void refresh();
+      }
+    }, 1500);
+    return () => {
+      cancelled = true;
+      globalThis.clearInterval(intervalId);
+    };
+  }, [cwd, hasDirectRuntimeActivity, teammate.id, workspaceView]);
+
   async function refreshTeammateWorkspace(): Promise<void> {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) {
@@ -497,6 +537,7 @@ export function TeammateWorkspace({
       setWorkspaceError("");
       const [
         directResponse,
+        directRuntimeResponse,
         privateAttachmentsResponse,
         skillRegistryResponse,
         channelResponse,
@@ -514,6 +555,7 @@ export function TeammateWorkspace({
         activityResponse,
       ] = await Promise.all([
         listTeammateDirectMessages(workspaceCwd, teammate.id),
+        getTeammateDirectRuntime(workspaceCwd, teammate.id),
         listTeammatePrivateAttachments(workspaceCwd, teammate.id),
         listSkills(workspaceCwd),
         listTeammateChannels(workspaceCwd, teammate.id),
@@ -532,6 +574,7 @@ export function TeammateWorkspace({
       ]);
       setThread(directResponse.thread);
       setMessages(directResponse.messages);
+      setDirectRuntime(directRuntimeResponse);
       setPrivateAttachments(privateAttachmentsResponse.attachments);
       setSkillRegistryEntries(skillRegistryResponse.skills);
       setMemberships(channelResponse.memberships);
@@ -553,6 +596,20 @@ export function TeammateWorkspace({
     } finally {
       setLoading(false);
     }
+  }
+
+  async function refreshDirectRuntime(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      return;
+    }
+    const [directResponse, runtimeResponse] = await Promise.all([
+      listTeammateDirectMessages(workspaceCwd, teammate.id),
+      getTeammateDirectRuntime(workspaceCwd, teammate.id),
+    ]);
+    setThread(directResponse.thread);
+    setMessages(directResponse.messages);
+    setDirectRuntime(runtimeResponse);
   }
 
   async function sendPrivateMessage(): Promise<void> {
@@ -618,10 +675,70 @@ export function TeammateWorkspace({
       setMemoryHealthReport(memoryHealthResponse.report);
       setMemoryReviewPolicy(memoryReviewPolicyResponse.policy);
       setMemoryPromotionInbox(memoryPromotionInboxResponse.items);
+      await refreshDirectRuntime();
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
       setSending(false);
+    }
+  }
+
+  async function stopDirectReply(): Promise<void> {
+    const activeReply = directRuntime?.activeReply;
+    if (!activeReply || directGuidanceSubmitting) {
+      return;
+    }
+    setDirectGuidanceSubmitting("stop");
+    try {
+      setWorkspaceError("");
+      const response = await cancelTeammateDirectReply(cwd.trim(), activeReply.workUnitId, { reason: "user_requested" });
+      if (response.message) {
+        setMessages((current) => upsertDirectMessages(current, [response.message!]));
+      }
+      await refreshDirectRuntime();
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDirectGuidanceSubmitting("");
+    }
+  }
+
+  async function submitDirectGuidance(mode: "queue_followup" | "interrupt_redirect"): Promise<void> {
+    const instruction = directGuidanceInstruction.trim();
+    if (!instruction || !directRuntime?.activeReply || directGuidanceSubmitting) {
+      return;
+    }
+    setDirectGuidanceSubmitting(mode);
+    try {
+      setWorkspaceError("");
+      const response = await createTeammateDirectIntervention(cwd.trim(), teammate.id, {
+        mode,
+        instruction,
+        idempotencyKey: `direct-guidance:${directRuntime.activeReply.workUnitId}:${mode}:${instruction}`,
+      });
+      setDirectRuntime(response.runtime);
+      setDirectGuidanceInstruction("");
+      await refreshDirectRuntime();
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDirectGuidanceSubmitting("");
+    }
+  }
+
+  async function cancelDirectGuidance(interventionId: string): Promise<void> {
+    if (directGuidanceCancelingId) {
+      return;
+    }
+    setDirectGuidanceCancelingId(interventionId);
+    try {
+      setWorkspaceError("");
+      await cancelTeammateDirectIntervention(cwd.trim(), interventionId, { reason: "cancelled_by_user" });
+      await refreshDirectRuntime();
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDirectGuidanceCancelingId("");
     }
   }
 
@@ -1378,10 +1495,14 @@ export function TeammateWorkspace({
               renderItem={(message) => {
                 const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
                 const pendingAiReply = message.authorType === "ai-teammate" && message.status === "pending";
-                const blockedMessage = message.status === "blocked" || message.status === "failed";
+                const blockedMessage = message.status === "blocked" || message.status === "failed" || message.status === "cancelled";
                 const systemMessage = message.authorType === "system";
                 const authorName = message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "system" ? t("System") : t("You");
-                const messageBody = pendingAiReply && !message.body.trim() ? t("AI teammate is replying...") : message.body;
+                const messageBody = pendingAiReply && !message.body.trim()
+                  ? t("AI teammate is replying...")
+                  : message.status === "cancelled" && !message.body.trim()
+                    ? t("Reply stopped")
+                    : message.body;
                 return (
                   <MessageBubble
                     className={`teammate-message-row ${message.authorType}`}
@@ -1479,49 +1600,78 @@ export function TeammateWorkspace({
             />
           )}
           composerNode={(
-            <MessageComposer
-              className="teammate-direct-composer"
-              label={t("Private chat composer")}
-              value={messageDraft}
-              rows={3}
-              sending={sending}
-              sendDisabled={!messageDraft.trim() && pendingAttachmentIds.length === 0}
-              sendLabel={t("Send")}
-              sendingLabel={t("Sending...")}
-              attachLabel={uploadingAttachments ? t("Uploading...") : t("Attach files")}
-              accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
-              placeholder={t("Message this AI teammate privately")}
-              onChange={setMessageDraft}
-              onSend={sendPrivateMessage}
-              onAttachFiles={(files) => void uploadPrivateFiles(Array.from(files))}
-              previewContent={pendingAttachments.length > 0 || composerFileReferenceParts.length > 0 ? (
-                <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
-                  {composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
-                    <ComposerFileReferenceToken
-                      key={`${part.raw}-${index}`}
-                      path={part.path}
-                      line={part.line}
-                      removeLabel={t("Remove file reference")}
-                      onRemove={() => removeComposerFileReference(part.raw, occurrenceIndex)}
-                    />
-                  ))}
-                  {pendingAttachments.map((attachment) => (
-                    <div key={attachment.id} className="composer-preview-card file ready">
-                      <span className="composer-preview-file-icon" aria-hidden="true">
-                        <Paperclip size={16} />
-                      </span>
-                      <span className="composer-preview-body">
-                        <strong title={attachment.fileName}>{attachment.fileName}</strong>
-                        <small>{formatBytes(attachment.sizeBytes)}</small>
-                      </span>
-                      <button className="composer-preview-remove" type="button" onClick={() => void removePendingAttachment(attachment.id)} aria-label={t("Remove pending attachment")}>
-                        <X size={13} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
+            <>
+              {hasDirectRuntimeActivity ? (
+                <ConversationGuidanceStrip
+                  title={directRuntime?.activeReply ? t("正在回复") : t("私聊引导")}
+                  description={directRuntime?.activeReply ? t("可以停止当前回复，或把新引导排队。") : t("已有排队引导。")}
+                  instruction={directGuidanceInstruction}
+                  instructionPlaceholder={t("输入新的引导，例如：先停一下，改为只列风险和下一步")}
+                  queueLabel={t("排队引导")}
+                  redirectLabel={t("停止并继续")}
+                  stopLabel={t("停止回复")}
+                  submitting={directGuidanceSubmitting}
+                  stopDisabled={!directRuntime?.activeReply}
+                  submitDisabled={!directRuntime?.activeReply || !directGuidanceInstruction.trim()}
+                  items={openDirectInterventions.map((intervention) => ({
+                    id: intervention.id,
+                    instruction: intervention.instruction,
+                    statusLabel: teammateDirectInterventionStatusLabel(intervention.status, t),
+                    meta: teammateDirectInterventionModeLabel(intervention.mode, t),
+                    cancelLabel: t("Cancel"),
+                    cancelDisabled: directGuidanceCancelingId === intervention.id,
+                    onCancel: () => void cancelDirectGuidance(intervention.id),
+                  }))}
+                  onInstructionChange={setDirectGuidanceInstruction}
+                  onQueue={() => void submitDirectGuidance("queue_followup")}
+                  onRedirect={() => void submitDirectGuidance("interrupt_redirect")}
+                  onStop={() => void stopDirectReply()}
+                />
               ) : null}
-            />
+              <MessageComposer
+                className="teammate-direct-composer"
+                label={t("Private chat composer")}
+                value={messageDraft}
+                rows={3}
+                sending={sending}
+                sendDisabled={!messageDraft.trim() && pendingAttachmentIds.length === 0}
+                sendLabel={t("Send")}
+                sendingLabel={t("Sending...")}
+                attachLabel={uploadingAttachments ? t("Uploading...") : t("Attach files")}
+                accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
+                placeholder={t("Message this AI teammate privately")}
+                onChange={setMessageDraft}
+                onSend={sendPrivateMessage}
+                onAttachFiles={(files) => void uploadPrivateFiles(Array.from(files))}
+                previewContent={pendingAttachments.length > 0 || composerFileReferenceParts.length > 0 ? (
+                  <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
+                    {composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
+                      <ComposerFileReferenceToken
+                        key={`${part.raw}-${index}`}
+                        path={part.path}
+                        line={part.line}
+                        removeLabel={t("Remove file reference")}
+                        onRemove={() => removeComposerFileReference(part.raw, occurrenceIndex)}
+                      />
+                    ))}
+                    {pendingAttachments.map((attachment) => (
+                      <div key={attachment.id} className="composer-preview-card file ready">
+                        <span className="composer-preview-file-icon" aria-hidden="true">
+                          <Paperclip size={16} />
+                        </span>
+                        <span className="composer-preview-body">
+                          <strong title={attachment.fileName}>{attachment.fileName}</strong>
+                          <small>{formatBytes(attachment.sizeBytes)}</small>
+                        </span>
+                        <button className="composer-preview-remove" type="button" onClick={() => void removePendingAttachment(attachment.id)} aria-label={t("Remove pending attachment")}>
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              />
+            </>
           )}
         />
       ) : null}
@@ -2982,6 +3132,38 @@ function upsertDirectMessages(
     byId.set(message.id, message);
   }
   return Array.from(byId.values()).sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+}
+
+function teammateDirectInterventionStatusLabel(
+  status: TeammateDirectReplyIntervention["status"],
+  t: Translate,
+): string {
+  switch (status) {
+    case "queued":
+      return t("已排队");
+    case "cancelling_source":
+      return t("正在停止");
+    case "starting_continuation":
+      return t("正在继续");
+    case "started":
+      return t("已按新引导继续");
+    case "cancelled":
+      return t("已取消");
+    case "failed":
+      return t("引导失败");
+  }
+}
+
+function teammateDirectInterventionModeLabel(
+  mode: TeammateDirectReplyIntervention["mode"],
+  t: Translate,
+): string {
+  switch (mode) {
+    case "queue_followup":
+      return t("回复后继续");
+    case "interrupt_redirect":
+      return t("停止并继续");
+  }
 }
 
 function TeammateAvatar({ teammate, cwd, compact = false }: { readonly teammate: AiTeammate; readonly cwd: string; readonly compact?: boolean }): JSX.Element {

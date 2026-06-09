@@ -18,6 +18,12 @@ export async function createAiTeammateDirectReply(input: {
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly signal?: AbortSignal;
+  readonly onWorkUnitStarted?: (handle: {
+    readonly workUnitId: string;
+    readonly messageId: string;
+    readonly teammateId: string;
+    readonly threadId: string;
+  }) => void;
   readonly stream?: {
     readonly onReady: (aiReply: TeammateDirectMessage) => void;
     readonly onDelta: (aiReply: TeammateDirectMessage, delta: string) => void;
@@ -63,6 +69,12 @@ export async function createAiTeammateDirectReply(input: {
       providerPresetId,
       runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
     },
+  });
+  input.onWorkUnitStarted?.({
+    workUnitId: supervised.workUnit.id,
+    messageId: pending.id,
+    teammateId: input.teammate.id,
+    threadId: input.thread.id,
   });
   if (input.teammate.status !== "active") {
     const blocked = finishDirectMessageWorkUnit(input.store, supervised, pending.id, {
@@ -224,6 +236,11 @@ function finishDirectMessageWorkUnit(
   input: { readonly body: string; readonly status: TeammateDirectMessage["status"]; readonly errorMessage?: string | null },
 ): TeammateDirectMessage {
   const now = new Date().toISOString();
+  const currentWorkUnit = store.getWorkUnit(supervised.workUnit.id);
+  const currentMessage = store.getTeammateDirectMessage(messageId);
+  if (currentWorkUnit?.status === "cancelled" && currentMessage?.status === "cancelled") {
+    return currentMessage;
+  }
   transitionWorkUnitTerminal(store, {
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
