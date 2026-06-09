@@ -1,6 +1,7 @@
 # Multi-Agent Orchestration P4-P7 Detailed Design
 
-Status: initial implementation landed; model-assisted selector remains a follow-up
+Status: initial implementation landed; workflow model-assisted selector remains a follow-up.
+Channel `auto_route` is split out and is the next channel-message implementation priority.
 Date: 2026-06-09
 
 Source design:
@@ -13,6 +14,7 @@ Source design:
 - [Memory Health And Multi-Agent Memory Fan-In](memory-health-and-fanin.md)
 - [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Channel Auto Reply Router](channel-auto-reply-router.md)
 
 ## Purpose
 
@@ -96,6 +98,12 @@ compact.
 The existing code already anticipates P4/P5 by adding `selectorDecisionIds` and
 `handoffIntentIds` to context/output packets and workflow-step metadata. P4-P7 should
 populate those ids and render them as evidence, not create a parallel transcript system.
+
+Ordinary channel auto replies are a separate entry point. They may reuse the structured
+decision and validation pattern, but they should use
+[Channel Auto Reply Router](channel-auto-reply-router.md) and create only normal
+`ai_reply` messages. They must not invoke workflow selector authority or advance a
+workflow.
 
 ## Execution Stage Boundary
 

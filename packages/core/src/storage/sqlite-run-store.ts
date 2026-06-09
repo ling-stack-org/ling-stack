@@ -46,6 +46,7 @@ import {
   createChannelId,
   createChannelLinkPreviewId,
   createChannelMessageId,
+  createChannelMessageRouteDecisionId,
   createChannelWorkflowId,
   createChannelWorkflowStepId,
   createWorkflowHandoffIntentId,
@@ -57,6 +58,9 @@ import {
   createTeammatePrivateAttachmentId,
   createTaskId,
   channelWorkflowStepStatuses,
+  channelAutoReplyModes,
+  channelMessageRouteDecisionCreatedByValues,
+  channelMessageRouteDecisionStatuses,
   normalizeChannelRuntimePolicy,
   type AiTeammate,
   type AiTeammateStatus,
@@ -81,6 +85,10 @@ import {
   type ChannelMessageIntent,
   type ChannelMessageKind,
   type ChannelMessageListPage,
+  type ChannelMessageRouteAlternative,
+  type ChannelMessageRouteDecision,
+  type ChannelMessageRouteDecisionCreatedBy,
+  type ChannelMessageRouteDecisionStatus,
   type ChannelRuntimePolicy,
   type ChannelStatus,
   type ChannelUpdateInput,
@@ -99,6 +107,7 @@ import {
   type CreateChannelInput,
   type CreateChannelLinkPreviewInput,
   type CreateChannelMessageInput,
+  type CreateChannelMessageRouteDecisionInput,
   type CreateChannelWorkflowInput,
   type CreateChannelWorkflowStepInput,
   type CreateWorkflowHandoffIntentInput,
@@ -117,6 +126,7 @@ import {
   type ListChannelsOptions,
   type ListChannelLinkPreviewsOptions,
   type ListChannelMessagesOptions,
+  type ListChannelMessageRouteDecisionsOptions,
   type ListChannelWorkflowsOptions,
   type ListChannelWorkflowStepsOptions,
   type ListWorkflowHandoffIntentsOptions,
@@ -145,6 +155,7 @@ import {
   type UpdateChannelContextSummaryInput,
   type UpdateChannelDecisionInput,
   type UpdateChannelExecutionProposalInput,
+  type UpdateChannelMessageRouteDecisionInput,
   type UpdateChannelHandoffInput,
   type UpdateChannelLinkPreviewInput,
   type UpdateChannelWorkflowInput,
@@ -541,6 +552,8 @@ const CHANNEL_WORKFLOW_METADATA_MIGRATION_VERSION = 48;
 const CHANNEL_WORKFLOW_METADATA_MIGRATION_NAME = "add_channel_workflow_metadata";
 const WORKFLOW_COORDINATION_RECORDS_MIGRATION_VERSION = 49;
 const WORKFLOW_COORDINATION_RECORDS_MIGRATION_NAME = "create_workflow_coordination_records";
+const CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_VERSION = 50;
+const CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_NAME = "create_channel_auto_reply_router";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -2773,6 +2786,7 @@ export class SqliteRunStore implements RunStore {
       boundPath: input.boundPath,
       defaultProviderPresetId: input.defaultProviderPresetId,
       defaultTeammateId: input.defaultTeammateId,
+      autoReplyMode: input.autoReplyMode ?? "mentions_only",
       allowedTools: input.allowedTools ?? [...readOnlyRunTools],
       runtimePolicy: normalizeChannelRuntimePolicy(input.runtimePolicy),
       createdAt: now,
@@ -2789,11 +2803,12 @@ export class SqliteRunStore implements RunStore {
           bound_path,
           default_provider_preset_id,
           default_teammate_id,
+          auto_reply_mode,
           allowed_tools_json,
           runtime_policy_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         channel.id,
@@ -2803,6 +2818,7 @@ export class SqliteRunStore implements RunStore {
         channel.boundPath ?? null,
         channel.defaultProviderPresetId ?? null,
         channel.defaultTeammateId ?? null,
+        channel.autoReplyMode,
         stringifyJson(channel.allowedTools),
         stringifyJson(channel.runtimePolicy),
         channel.createdAt,
@@ -2842,6 +2858,7 @@ export class SqliteRunStore implements RunStore {
       boundPath: nullableUpdate(input.boundPath, existing.boundPath),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, existing.defaultProviderPresetId),
       defaultTeammateId: nullableUpdate(input.defaultTeammateId, existing.defaultTeammateId),
+      autoReplyMode: input.autoReplyMode === null ? "mentions_only" : input.autoReplyMode ?? existing.autoReplyMode,
       allowedTools: input.allowedTools ?? existing.allowedTools,
       runtimePolicy: input.runtimePolicy ? normalizeChannelRuntimePolicy({ ...existing.runtimePolicy, ...input.runtimePolicy }) : existing.runtimePolicy,
       updatedAt: now,
@@ -2856,6 +2873,7 @@ export class SqliteRunStore implements RunStore {
           bound_path = ?,
           default_provider_preset_id = ?,
           default_teammate_id = ?,
+          auto_reply_mode = ?,
           allowed_tools_json = ?,
           runtime_policy_json = ?,
           updated_at = ?
@@ -2867,6 +2885,7 @@ export class SqliteRunStore implements RunStore {
         next.boundPath ?? null,
         next.defaultProviderPresetId ?? null,
         next.defaultTeammateId ?? null,
+        next.autoReplyMode,
         stringifyJson(next.allowedTools),
         stringifyJson(next.runtimePolicy),
         next.updatedAt,
@@ -4821,6 +4840,178 @@ export class SqliteRunStore implements RunStore {
       hasMore,
       nextBeforeMessageId: hasMore && messages.length > 0 ? messages[0].id : undefined,
     };
+  }
+
+  createChannelMessageRouteDecision(input: CreateChannelMessageRouteDecisionInput, now: string): ChannelMessageRouteDecision {
+    validateChannelMessageRouteDecisionInput(input);
+    if (!this.getChannel(input.channelId)) {
+      throw new Error(`Channel not found: ${input.channelId}`);
+    }
+    const sourceMessage = this.getChannelMessage(input.sourceMessageId);
+    if (!sourceMessage || sourceMessage.channelId !== input.channelId) {
+      throw new Error(`Source message does not belong to channel: ${input.sourceMessageId}`);
+    }
+    if (input.replyMessageId) {
+      const replyMessage = this.getChannelMessage(input.replyMessageId);
+      if (!replyMessage || replyMessage.channelId !== input.channelId) {
+        throw new Error(`Reply message does not belong to channel: ${input.replyMessageId}`);
+      }
+    }
+    const decision: ChannelMessageRouteDecision = {
+      schemaVersion: 1,
+      id: createChannelMessageRouteDecisionId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      sourceMessageId: input.sourceMessageId,
+      replyMessageId: input.replyMessageId,
+      mode: input.mode,
+      action: input.action,
+      selectedTeammateId: input.selectedTeammateId,
+      selectedProviderPresetId: input.selectedProviderPresetId,
+      confidence: input.confidence,
+      reason: input.reason,
+      alternativesConsidered: input.alternativesConsidered ?? [],
+      status: input.status,
+      createdBy: input.createdBy,
+      errorMessage: input.errorMessage,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.database
+      .prepare(`
+        INSERT INTO channel_message_route_decisions (
+          id,
+          schema_version,
+          workspace_id,
+          channel_id,
+          source_message_id,
+          reply_message_id,
+          mode,
+          action,
+          selected_teammate_id,
+          selected_provider_preset_id,
+          confidence,
+          reason,
+          alternatives_json,
+          status,
+          created_by,
+          error_message,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        decision.id,
+        decision.schemaVersion,
+        decision.workspaceId,
+        decision.channelId,
+        decision.sourceMessageId,
+        decision.replyMessageId ?? null,
+        decision.mode,
+        decision.action,
+        decision.selectedTeammateId ?? null,
+        decision.selectedProviderPresetId ?? null,
+        decision.confidence ?? null,
+        decision.reason,
+        stringifyJson(decision.alternativesConsidered),
+        decision.status,
+        decision.createdBy,
+        decision.errorMessage ?? null,
+        decision.createdAt,
+        decision.updatedAt,
+      );
+
+    const created = this.getChannelMessageRouteDecision(decision.id);
+    if (!created) {
+      throw new Error(`Failed to create channel message route decision: ${decision.id}`);
+    }
+    return created;
+  }
+
+  getChannelMessageRouteDecision(id: string): ChannelMessageRouteDecision | undefined {
+    const row = this.database.prepare(channelMessageRouteDecisionSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelMessageRouteDecision(row) : undefined;
+  }
+
+  listChannelMessageRouteDecisions(options: ListChannelMessageRouteDecisionsOptions = {}): ChannelMessageRouteDecision[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.sourceMessageId) {
+      clauses.push("source_message_id = ?");
+      params.push(options.sourceMessageId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${channelMessageRouteDecisionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC LIMIT ?`)
+      .all(...params)
+      .map(mapChannelMessageRouteDecision);
+  }
+
+  updateChannelMessageRouteDecision(
+    id: string,
+    input: UpdateChannelMessageRouteDecisionInput,
+    now: string,
+  ): ChannelMessageRouteDecision | undefined {
+    const existing = this.getChannelMessageRouteDecision(id);
+    if (!existing) {
+      return undefined;
+    }
+    const next: ChannelMessageRouteDecision = {
+      ...existing,
+      replyMessageId: nullableUpdate(input.replyMessageId, existing.replyMessageId),
+      selectedProviderPresetId: nullableUpdate(input.selectedProviderPresetId, existing.selectedProviderPresetId),
+      confidence: nullableUpdate(input.confidence, existing.confidence),
+      reason: input.reason ?? existing.reason,
+      alternativesConsidered: input.alternativesConsidered ?? existing.alternativesConsidered,
+      status: input.status ?? existing.status,
+      errorMessage: nullableUpdate(input.errorMessage, existing.errorMessage),
+      updatedAt: now,
+    };
+    validateChannelMessageRouteDecisionInput(next);
+    if (next.replyMessageId) {
+      const replyMessage = this.getChannelMessage(next.replyMessageId);
+      if (!replyMessage || replyMessage.channelId !== next.channelId) {
+        throw new Error(`Reply message does not belong to channel: ${next.replyMessageId}`);
+      }
+    }
+
+    this.database
+      .prepare(`
+        UPDATE channel_message_route_decisions
+        SET
+          reply_message_id = ?,
+          selected_provider_preset_id = ?,
+          confidence = ?,
+          reason = ?,
+          alternatives_json = ?,
+          status = ?,
+          error_message = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.replyMessageId ?? null,
+        next.selectedProviderPresetId ?? null,
+        next.confidence ?? null,
+        next.reason,
+        stringifyJson(next.alternativesConsidered),
+        next.status,
+        next.errorMessage ?? null,
+        next.updatedAt,
+        id,
+      );
+
+    return this.getChannelMessageRouteDecision(id);
   }
 
   createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal {
@@ -9510,6 +9701,7 @@ export class SqliteRunStore implements RunStore {
           bound_path TEXT,
           default_provider_preset_id TEXT,
           default_teammate_id TEXT,
+          auto_reply_mode TEXT NOT NULL DEFAULT 'mentions_only',
           allowed_tools_json TEXT NOT NULL,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -12066,6 +12258,57 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(WORKFLOW_COORDINATION_RECORDS_MIGRATION_VERSION, WORKFLOW_COORDINATION_RECORDS_MIGRATION_NAME);
       }
     }
+
+    const hasChannelAutoReplyRouterMigration = this.hasMigration(CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_VERSION);
+    if (
+      !hasChannelAutoReplyRouterMigration ||
+      !this.hasColumn("channels", "auto_reply_mode") ||
+      !this.hasTable("channel_message_route_decisions")
+    ) {
+      if (!this.hasColumn("channels", "auto_reply_mode")) {
+        this.database.exec("ALTER TABLE channels ADD COLUMN auto_reply_mode TEXT NOT NULL DEFAULT 'mentions_only';");
+      }
+
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS channel_message_route_decisions (
+          id TEXT PRIMARY KEY,
+          schema_version INTEGER NOT NULL,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          source_message_id TEXT NOT NULL,
+          reply_message_id TEXT,
+          mode TEXT NOT NULL,
+          action TEXT NOT NULL,
+          selected_teammate_id TEXT,
+          selected_provider_preset_id TEXT,
+          confidence REAL,
+          reason TEXT NOT NULL,
+          alternatives_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_message_id) REFERENCES channel_messages(id) ON DELETE CASCADE,
+          FOREIGN KEY(reply_message_id) REFERENCES channel_messages(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_message_route_decisions_source
+        ON channel_message_route_decisions(source_message_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_message_route_decisions_channel
+        ON channel_message_route_decisions(channel_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_message_route_decisions_status
+        ON channel_message_route_decisions(channel_id, status, updated_at);
+      `);
+
+      if (!hasChannelAutoReplyRouterMigration) {
+        this.recordMigration(CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_VERSION, CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -13058,6 +13301,7 @@ function mapChannel(row: Record<string, SQLOutputValue>): Channel {
     boundPath: readNullableString(row, "bound_path"),
     defaultProviderPresetId: readNullableString(row, "default_provider_preset_id"),
     defaultTeammateId: readNullableString(row, "default_teammate_id"),
+    autoReplyMode: readString(row, "auto_reply_mode") as Channel["autoReplyMode"],
     allowedTools: parseJsonStringArray(readString(row, "allowed_tools_json")) as RunTool[],
     runtimePolicy: parseChannelRuntimePolicy(readString(row, "runtime_policy_json")),
     createdAt: readString(row, "created_at"),
@@ -13359,6 +13603,29 @@ function mapChannelMessage(row: Record<string, SQLOutputValue>): ChannelMessage 
     linkedTaskId: readNullableString(row, "linked_task_id"),
     linkedRunId: readNullableString(row, "linked_run_id"),
     status: readString(row, "status") as ChannelMessage["status"],
+    errorMessage: readNullableString(row, "error_message"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapChannelMessageRouteDecision(row: Record<string, SQLOutputValue>): ChannelMessageRouteDecision {
+  return omitUndefined({
+    schemaVersion: readNumber(row, "schema_version") as 1,
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    sourceMessageId: readString(row, "source_message_id"),
+    replyMessageId: readNullableString(row, "reply_message_id"),
+    mode: readString(row, "mode") as ChannelMessageRouteDecision["mode"],
+    action: readString(row, "action") as ChannelMessageRouteDecision["action"],
+    selectedTeammateId: readNullableString(row, "selected_teammate_id"),
+    selectedProviderPresetId: readNullableString(row, "selected_provider_preset_id"),
+    confidence: readNullableNumber(row, "confidence"),
+    reason: readString(row, "reason"),
+    alternativesConsidered: parseChannelMessageRouteAlternatives(readString(row, "alternatives_json")),
+    status: readString(row, "status") as ChannelMessageRouteDecisionStatus,
+    createdBy: readString(row, "created_by") as ChannelMessageRouteDecisionCreatedBy,
     errorMessage: readNullableString(row, "error_message"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
@@ -14222,6 +14489,7 @@ function channelSelectSql(whereClause: string): string {
       bound_path,
       default_provider_preset_id,
       default_teammate_id,
+      auto_reply_mode,
       allowed_tools_json,
       runtime_policy_json,
       created_at,
@@ -14703,6 +14971,32 @@ function channelMessageSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM channel_messages
+    ${whereClause}
+  `;
+}
+
+function channelMessageRouteDecisionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      schema_version,
+      workspace_id,
+      channel_id,
+      source_message_id,
+      reply_message_id,
+      mode,
+      action,
+      selected_teammate_id,
+      selected_provider_preset_id,
+      confidence,
+      reason,
+      alternatives_json,
+      status,
+      created_by,
+      error_message,
+      created_at,
+      updated_at
+    FROM channel_message_route_decisions
     ${whereClause}
   `;
 }
@@ -15923,6 +16217,32 @@ function parseWorkflowSelectorAlternatives(value: string): WorkflowSelectorAlter
   });
 }
 
+function parseChannelMessageRouteAlternatives(value: string): ChannelMessageRouteAlternative[] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Expected channel message route alternatives array from SQLite");
+  }
+  return parsed.map((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new Error("Expected channel message route alternative object from SQLite");
+    }
+    const record = item as Record<string, unknown>;
+    if (typeof record.label !== "string" || typeof record.reason !== "string") {
+      throw new Error("Invalid channel message route alternative from SQLite");
+    }
+    const score = record.score;
+    if (score !== undefined && typeof score !== "number") {
+      throw new Error("Invalid channel message route alternative score from SQLite");
+    }
+    return omitUndefined({
+      teammateId: readOptionalStringValue(record.teammateId),
+      label: record.label,
+      score,
+      reason: record.reason,
+    });
+  });
+}
+
 function parseOptionalWorkflowHandoffValidation(value: string | undefined): WorkflowHandoffValidation | undefined {
   if (!value) {
     return undefined;
@@ -16366,6 +16686,37 @@ function validateWorkflowSelectorDecision(decision: WorkflowSelectorDecision): v
     validateNonEmptyString(alternative.targetId, "workflow selector alternative target id");
     validateNonEmptyString(alternative.label, "workflow selector alternative label");
     validateNonEmptyString(alternative.reason, "workflow selector alternative reason");
+  }
+}
+
+function validateChannelMessageRouteDecisionInput(
+  decision: Pick<
+    CreateChannelMessageRouteDecisionInput,
+    "mode" | "action" | "confidence" | "reason" | "alternativesConsidered" | "status" | "createdBy"
+  >,
+): void {
+  if (!channelAutoReplyModes.includes(decision.mode)) {
+    throw new Error("channel message route mode is not supported");
+  }
+  if (decision.action !== "reply" && decision.action !== "no_reply") {
+    throw new Error("channel message route action is not supported");
+  }
+  if (!channelMessageRouteDecisionStatuses.includes(decision.status)) {
+    throw new Error("channel message route status is not supported");
+  }
+  if (!channelMessageRouteDecisionCreatedByValues.includes(decision.createdBy)) {
+    throw new Error("channel message route createdBy is not supported");
+  }
+  if (decision.confidence !== undefined && (decision.confidence < 0 || decision.confidence > 1)) {
+    throw new Error("channel message route confidence must be between 0 and 1");
+  }
+  validateNonEmptyString(decision.reason, "channel message route reason");
+  for (const alternative of decision.alternativesConsidered ?? []) {
+    validateNonEmptyString(alternative.label, "channel message route alternative label");
+    validateNonEmptyString(alternative.reason, "channel message route alternative reason");
+    if (alternative.score !== undefined && (alternative.score < 0 || alternative.score > 1)) {
+      throw new Error("channel message route alternative score must be between 0 and 1");
+    }
   }
 }
 

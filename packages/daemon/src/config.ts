@@ -7,6 +7,11 @@ export interface DaemonConfig {
   readonly defaultWorkspaceCwd?: string;
   readonly runners?: RunnerFeatureConfig;
   readonly runtimeTools?: RuntimeToolFeatureConfig;
+  readonly channels?: ChannelFeatureConfig;
+}
+
+export interface ChannelFeatureConfig {
+  readonly autoRoute?: boolean;
 }
 
 export interface RuntimeToolFeatureConfig {
@@ -41,6 +46,7 @@ export interface ResolvedDaemonConfig {
   readonly defaultWorkspaceCwd: string;
   readonly runners: RunnerFeatureConfig;
   readonly runtimeTools: RuntimeToolFeatureConfig;
+  readonly channels: ChannelFeatureConfig;
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -57,5 +63,15 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     defaultWorkspaceCwd: resolvePath(config.defaultWorkspaceCwd ?? process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? process.cwd()),
     runners: config.runners ?? {},
     runtimeTools: config.runtimeTools ?? {},
+    channels: {
+      autoRoute: config.channels?.autoRoute ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_AUTO_ROUTE, false),
+    },
   };
+}
+
+function readBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) {
+    return fallback;
+  }
+  return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }

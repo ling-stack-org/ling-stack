@@ -18,6 +18,7 @@ export async function createAiChannelReply(input: {
   readonly sourceMessage: ChannelMessage;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
+  readonly proposalMode?: "allow" | "disabled";
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
 }): Promise<ChannelMessage> {
@@ -90,6 +91,7 @@ async function completeAiChannelReply(input: {
   readonly sourceMessage: ChannelMessage;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
+  readonly proposalMode?: "allow" | "disabled";
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly pending: ChannelMessage;
@@ -132,10 +134,16 @@ async function completeAiChannelReply(input: {
       "Reply concisely and only to the current channel discussion.",
       "This MVP does not give you attachment contents or web page bodies. Do not claim to inspect them.",
       "Do not perform tool use or side effects.",
-      "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
-      `Use exact teammate ids in proposal JSON. Default assigneeTeammateId and collaboration teammateId to "${input.canonicalTeammateId}" unless the user explicitly selected another teammate id.`,
-      `<ling_task_proposal>{"title":"...","prompt":"...","assigneeTeammateId":"${input.canonicalTeammateId}","acceptanceCriteria":["..."],"collaborationSteps":[{"teammateId":"${input.canonicalTeammateId}","action":"coordinated","summary":"..."}],"requiredTools":["read"],"riskSummary":"..."}</ling_task_proposal>`,
-      "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
+      ...(input.proposalMode === "disabled"
+        ? [
+            "Do not include hidden proposal blocks. Do not create or suggest tasks, runs, workflows, branches, approvals, or side effects.",
+          ]
+        : [
+            "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
+            `Use exact teammate ids in proposal JSON. Default assigneeTeammateId and collaboration teammateId to "${input.canonicalTeammateId}" unless the user explicitly selected another teammate id.`,
+            `<ling_task_proposal>{"title":"...","prompt":"...","assigneeTeammateId":"${input.canonicalTeammateId}","acceptanceCriteria":["..."],"collaborationSteps":[{"teammateId":"${input.canonicalTeammateId}","action":"coordinated","summary":"..."}],"requiredTools":["read"],"riskSummary":"..."}</ling_task_proposal>`,
+            "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
+          ]),
       memoryPrompt,
     ].filter((line): line is string => Boolean(line)).join("\n");
     const provider = resolveProviderForRun(
@@ -194,7 +202,9 @@ async function completeAiChannelReply(input: {
       },
     });
     const rawReplyText = textDeltas.join("").trim() || extractAssistantText(result.messages) || "AI reply completed without text.";
-    const extractedProposal = extractChannelExecutionProposal(rawReplyText, input.canonicalTeammateId, isRunTool);
+    const extractedProposal = input.proposalMode === "disabled"
+      ? undefined
+      : extractChannelExecutionProposal(rawReplyText, input.canonicalTeammateId, isRunTool);
     const replyText = extractedProposal?.visibleBody || rawReplyText;
     const reply = finishChannelMessageWorkUnit(input.store, input.supervised, input.pending.id, {
       body: replyText,

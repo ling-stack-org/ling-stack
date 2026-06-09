@@ -14,6 +14,7 @@ export function channelFormToPayload(form: ChannelFormState): CreateChannelReque
     boundPath: form.boundPath.trim() || undefined,
     defaultProviderPresetId: form.defaultProviderPresetId || undefined,
     defaultTeammateId: form.defaultTeammateId || undefined,
+    autoReplyMode: form.autoReplyMode,
     allowedTools: form.allowedTools.filter(isRunnerTool),
     runtimePolicy: form.runtimePolicy,
   };
@@ -26,6 +27,7 @@ export function channelFormToUpdatePayload(form: ChannelFormState): UpdateChanne
     boundPath: form.boundPath.trim() || null,
     defaultProviderPresetId: form.defaultProviderPresetId || null,
     defaultTeammateId: form.defaultTeammateId || null,
+    autoReplyMode: form.autoReplyMode,
     allowedTools: form.allowedTools.filter(isRunnerTool),
     runtimePolicy: form.runtimePolicy,
   };

@@ -223,6 +223,7 @@ test("form payload adapters preserve daemon request boundary semantics", () => {
     boundPath: "",
     defaultProviderPresetId: "",
     defaultTeammateId: "",
+    autoReplyMode: "mentions_only",
     allowedTools: ["read", "bash"],
     runtimePolicy,
   } satisfies ChannelFormState;
@@ -231,6 +232,7 @@ test("form payload adapters preserve daemon request boundary semantics", () => {
     boundPath: undefined,
     defaultProviderPresetId: undefined,
     defaultTeammateId: undefined,
+    autoReplyMode: "mentions_only",
     allowedTools: ["read", "bash"],
   });
   expect(channelFormToUpdatePayload(channelForm)).toMatchObject({
@@ -238,6 +240,7 @@ test("form payload adapters preserve daemon request boundary semantics", () => {
     boundPath: null,
     defaultProviderPresetId: null,
     defaultTeammateId: null,
+    autoReplyMode: "mentions_only",
   });
 
   expect(taskEditFormToPayload({ title: "T", prompt: "P", status: "review" })).toEqual({

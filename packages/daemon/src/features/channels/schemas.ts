@@ -2,6 +2,8 @@ import {
   channelDecisionStatuses,
   channelContextSummaryAuthorTypes,
   channelContextSummaryTargetTypes,
+  channelAutoReplyModes,
+  channelMessageRouteDecisionStatuses,
   channelHandoffStatuses,
   channelWorkflowStatuses,
   channelWorkflowStepStatuses,
@@ -17,6 +19,7 @@ import {
   type ChannelMessageAuthorType,
   type ChannelMessageIntent,
   type ChannelMessageKind,
+  type ChannelMessageRouteDecisionStatus,
   type ChannelWorkflowStatus,
   type ChannelWorkflowStepStartMode,
   type ChannelWorkflowStepStatus,
@@ -229,6 +232,7 @@ export function parseCreateChannelInput(value: unknown): CreateChannelInput {
     boundPath: readOptionalString(value, "boundPath"),
     defaultProviderPresetId: readOptionalString(value, "defaultProviderPresetId"),
     defaultTeammateId: readOptionalString(value, "defaultTeammateId"),
+    autoReplyMode: readOptionalChannelAutoReplyMode(value, "autoReplyMode"),
     allowedTools: readOptionalRunTools(value, "allowedTools"),
     runtimePolicy: readOptionalChannelRuntimePolicy(value, "runtimePolicy"),
   };
@@ -246,6 +250,7 @@ export function parseChannelUpdateInput(value: unknown): ChannelUpdateInput {
     boundPath: readNullableString(value, "boundPath"),
     defaultProviderPresetId: readNullableString(value, "defaultProviderPresetId"),
     defaultTeammateId: readNullableString(value, "defaultTeammateId"),
+    autoReplyMode: readNullableChannelAutoReplyMode(value, "autoReplyMode"),
     allowedTools: readOptionalRunTools(value, "allowedTools"),
     runtimePolicy: readOptionalChannelRuntimePolicy(value, "runtimePolicy"),
   };
@@ -302,6 +307,17 @@ export function readOptionalChannelExecutionProposalStatusQuery(url: URL): Chann
     throw new Error("status must be one of: draft, accepted, cancelled, superseded, blocked, run_failed");
   }
   return value;
+}
+
+export function readOptionalChannelMessageRouteDecisionStatusQuery(url: URL): ChannelMessageRouteDecisionStatus | undefined {
+  const value = url.searchParams.get("status");
+  if (value === null) {
+    return undefined;
+  }
+  if (!channelMessageRouteDecisionStatuses.includes(value as ChannelMessageRouteDecisionStatus)) {
+    throw new Error(`status must be one of: ${channelMessageRouteDecisionStatuses.join(", ")}`);
+  }
+  return value as ChannelMessageRouteDecisionStatus;
 }
 
 export function parseChannelDecisionRequest(value: unknown): ChannelDecisionRequest {
@@ -860,6 +876,31 @@ function readOptionalChannelStatus(record: Record<string, unknown>, key: string)
     throw new Error(`${key} must be one of: active, paused, archived`);
   }
   return value;
+}
+
+function readOptionalChannelAutoReplyMode(record: Record<string, unknown>, key: string): Channel["autoReplyMode"] | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!channelAutoReplyModes.includes(value as Channel["autoReplyMode"])) {
+    throw new Error(`${key} must be one of: ${channelAutoReplyModes.join(", ")}`);
+  }
+  return value as Channel["autoReplyMode"];
+}
+
+function readNullableChannelAutoReplyMode(record: Record<string, unknown>, key: string): ChannelUpdateInput["autoReplyMode"] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || !channelAutoReplyModes.includes(value as Channel["autoReplyMode"])) {
+    throw new Error(`${key} must be one of: ${channelAutoReplyModes.join(", ")}`);
+  }
+  return value as Channel["autoReplyMode"];
 }
 
 function readOptionalChannelRuntimePolicy(

@@ -2160,7 +2160,7 @@ Keep these out of the first implementation:
 - `POST /threads/:threadId/fork`;
 - `POST /threads/:threadId/archive`;
 - `POST /threads/:threadId/pin`;
-- channel work-thread tree;
+- channel branch tree;
 - archive row action pattern;
 - Work History lineage display;
 - search across turn summaries;
@@ -2203,7 +2203,7 @@ Rules:
 - fork keeps the child thread attached to the source channel by default;
 - fork does not create/copy a channel and does not automatically archive the source
   branch;
-- forked child threads appear in the current channel's sidebar work-thread tree and in
+- forked child threads appear in the current channel's sidebar branch tree and in
   Work History lineage;
 - selecting a source or child thread from the channel tree switches the center
   conversation to that `LingThread`;
@@ -2445,7 +2445,7 @@ Validation:
 
 ### V2D-B: Fork Lineage
 
-V2D-B should add fork as a durable work-thread branch, not as topic reply UI and not as
+V2D-B should add fork as a durable session branch, not as topic reply UI and not as
 a full transcript clone.
 
 #### Goal
@@ -2461,7 +2461,7 @@ V2D-B is successful when:
 - fork does not copy turns, runs, events, artifacts, raw logs, channel membership, or
   channel settings;
 - fork does not archive, pin, or hide the source thread;
-- the channel work-thread tree shows source and child branches under the same channel;
+- the channel branch tree shows source and child branches under the same channel;
 - selecting either branch switches the center conversation to that thread;
 - Work History can show parent and child lineage without using metadata as authority.
 
@@ -2598,7 +2598,7 @@ special `LingTurnRun.role`. Fork lineage stays on the thread, not on each child 
 
 Primary surfaces:
 
-- channel sidebar work-thread tree;
+- channel sidebar branch tree;
 - Work History thread detail lineage strip.
 
 After fork succeeds:
@@ -2614,14 +2614,19 @@ Channel tree display:
 
 ```text
 Channel
-  Source work thread
-    Child fork thread
-      Grandchild fork thread
+  Source branch
+    Child fork branch
+      Grandchild fork branch
 ```
 
 Rules:
 
 - build the tree from `parentThreadId` among the channel's visible threads;
+- an empty channel still exposes a default `Main branch` source row; clicking fork
+  materializes or reuses a root `LingThread(kind="channel_discussion")` and then creates
+  a child branch from it;
+- materializing or forking the default channel branch must not create a `Task`, start a
+  `Run`, or rely on the right-side `New task` drawer;
 - orphaned children whose parent is filtered out should appear as top-level rows with a
   `Parent hidden` affordance;
 - indentation and a branch marker are enough for V2D-B;
@@ -2645,7 +2650,7 @@ Work History display:
 4. Add `POST /threads/:threadId/fork` route and source resolver.
 5. Update Web API client and mock daemon.
 6. Add a pure channel tree builder from flat `LingThread[]`.
-7. Render channel work-thread tree with fork indentation and selection.
+7. Render channel branch tree with fork indentation and selection.
 8. Add Work History source/child lineage display.
 9. Add focused daemon tests and Web e2e.
 
@@ -2697,6 +2702,9 @@ Implemented in V2D-B on 2026-06-09:
   thread detail;
 - channel workspace renders a compact work-thread branch strip from visible threads and
   filters the conversation feed by selected work branch;
+- an empty channel branch tree presents `Main branch` as the fork source; the first fork
+  creates/reuses a root `channel_discussion` thread and a child thread without creating
+  tasks or runs;
 - empty child branches show an empty-state message instead of copied source transcript.
 
 Validation for this implementation:
@@ -2726,10 +2734,12 @@ They should still be implemented as separate slices.
 
 Shared rules:
 
-- `LingThread` remains the durable work-branch object;
+- `LingThread` remains the internal durable work-branch object;
 - lineage authority stays on `parentThreadId` / `parentTurnId`, not metadata;
 - `metadata_json` may cache pin/search/archive presentation hints, but it must not decide
   execution authority;
+- product UI should say branch/session branch, not work thread; `LingThread` is the
+  storage/runtime carrier, not the user-facing concept;
 - default channel and Work History lists show active, unarchived work;
 - archived work is hidden by default but reachable through explicit archived filters,
   lineage links, and search filters;
@@ -2852,6 +2862,9 @@ Channel work-branch tree:
   `Show all branches` or `Open nearest source`;
 - pin/unpin uses an icon button and updates local ordering optimistically after daemon
   success.
+- product wording should keep Codex-like branch semantics: root `LingThread` rows may
+  be shown as the main branch/source branch, child rows with `parentThreadId` are forked
+  branches, and no `New task` action should be presented as branch creation.
 
 Work History:
 
@@ -3204,7 +3217,7 @@ corepack pnpm --filter @ling-stack/web exec playwright test e2e/runtime.spec.ts 
 - Fork creates a child thread with `parentThreadId` / `parentTurnId` lineage.
 - Forked child thread keeps the source `channelId`.
 - Fork does not archive or hide the source thread.
-- Source and child threads appear under the current channel's sidebar work-thread tree.
+- Source and child threads appear under the current channel's sidebar branch tree.
 - Clicking a source or child tree row switches the center conversation.
 - Optional source transcript branch notice does not duplicate the child transcript.
 - Work History shows parent/child lineage for source and child threads.

@@ -57,6 +57,89 @@ test("sqlite channels persist default and edited runtime policy", async () => {
   }
 });
 
+test("sqlite channel auto reply mode and route decisions round trip", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-reply-"));
+  const now = "2026-06-09T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel(
+      {
+        name: "Engineering",
+        boundPath: cwd,
+      },
+      now,
+    );
+    assert.equal(channel.autoReplyMode, "mentions_only");
+
+    const updated = store.updateChannel(channel.id, { autoReplyMode: "default_teammate" }, "2026-06-09T00:01:00.000Z");
+    assert.equal(updated.autoReplyMode, "default_teammate");
+    const reset = store.updateChannel(channel.id, { autoReplyMode: null }, "2026-06-09T00:02:00.000Z");
+    assert.equal(reset.autoReplyMode, "mentions_only");
+
+    const message = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        authorType: "local-user",
+        body: "这个频道自动回复怎么做？",
+      },
+      "2026-06-09T00:03:00.000Z",
+    );
+    const reply = store.createChannelMessage(
+      {
+        channelId: channel.id,
+        threadId: message.id,
+        kind: "ai_reply",
+        authorType: "ai-teammate",
+        authorId: "teammate_builtin_engineer",
+        body: "Use default_teammate for deterministic replies.",
+      },
+      "2026-06-09T00:04:00.000Z",
+    );
+    const decision = store.createChannelMessageRouteDecision(
+      {
+        channelId: channel.id,
+        sourceMessageId: message.id,
+        replyMessageId: reply.id,
+        mode: "default_teammate",
+        action: "reply",
+        selectedTeammateId: "teammate_builtin_engineer",
+        selectedProviderPresetId: "provider_static",
+        confidence: 1,
+        reason: "Default teammate answered.",
+        alternativesConsidered: [
+          {
+            teammateId: "teammate_builtin_engineer",
+            label: "Engineer",
+            score: 1,
+            reason: "Default teammate candidate.",
+          },
+        ],
+        status: "accepted",
+        createdBy: "deterministic",
+      },
+      "2026-06-09T00:05:00.000Z",
+    );
+
+    assert.equal(store.getChannelMessageRouteDecision(decision.id).replyMessageId, reply.id);
+    assert.deepEqual(store.listChannelMessageRouteDecisions({ channelId: channel.id, sourceMessageId: message.id }).map((item) => item.id), [decision.id]);
+    const failed = store.updateChannelMessageRouteDecision(
+      decision.id,
+      {
+        status: "failed",
+        errorMessage: "selector failed",
+        confidence: 0.2,
+      },
+      "2026-06-09T00:06:00.000Z",
+    );
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.errorMessage, "selector failed");
+    assert.equal(failed.confidence, 0.2);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite channel workspace assets persist messages, attachments, and link previews", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workspace-"));
   const now = "2026-05-28T00:00:00.000Z";

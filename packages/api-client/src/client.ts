@@ -42,6 +42,7 @@ import type {
   ChannelListResponse,
   ChannelMessageListResponse,
   ChannelMessageMutationResponse,
+  ChannelMessageRouteDecisionListResponse,
   ChannelMutationResponse,
   ChannelWorkflowListResponse,
   ChannelWorkflowCancelResponse,
@@ -72,6 +73,7 @@ import type {
   CreateAutomationDraftRequest,
   CreateAutomationRequest,
   CreateLingTurnRequest,
+  CreateLingThreadRequest,
   CreateTeammateDirectMessageRequest,
   CreateTeammatePrivateAttachmentRequest,
   CreateChannelWorkflowFromHandoffRequest,
@@ -513,6 +515,10 @@ export class LingDaemonClient {
     });
   }
 
+  async createLingThread(cwd: string, input: CreateLingThreadRequest): Promise<LingThreadMutationResponse> {
+    return this.post("/threads", { cwd }, input);
+  }
+
   async getLingThread(cwd: string, threadId: string): Promise<LingThreadDetailResponse> {
     return this.get(`/threads/${encodeURIComponent(threadId)}`, { cwd });
   }
@@ -811,6 +817,19 @@ export class LingDaemonClient {
     input: CreateChannelMessageRequest,
   ): Promise<ChannelMessageMutationResponse> {
     return this.post(`/channels/${encodeURIComponent(channelId)}/messages`, { cwd }, input);
+  }
+
+  async listChannelMessageRouteDecisions(
+    cwd: string,
+    channelId: string,
+    options: { readonly sourceMessageId?: string; readonly status?: string; readonly limit?: number } = {},
+  ): Promise<ChannelMessageRouteDecisionListResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/message-route-decisions`, {
+      cwd,
+      sourceMessageId: options.sourceMessageId,
+      status: options.status,
+      limit: options.limit,
+    });
   }
 
   async listChannelExecutionProposals(cwd: string, channelId: string, limit = 100): Promise<ChannelExecutionProposalListResponse> {

@@ -280,6 +280,7 @@ export function AppShell(): JSX.Element {
     channelArtifactErrorsByRun,
     channelBrief,
     channelDecisions,
+    channelMessageRouteDecisions,
     channelHandoffs,
     channelContextSummaries,
     channelWorkflows,
@@ -323,6 +324,7 @@ export function AppShell(): JSX.Element {
     refreshChannelFiles,
     refreshChannelRunArtifacts,
     refreshChannelActivityTransitions,
+    refreshChannelMessageRouteDecisions,
     refreshChannelProtocol,
     refreshUsedMemoryAudit,
     resetSelectedChannelActivity,
@@ -1349,6 +1351,7 @@ export function AppShell(): JSX.Element {
       boundPath: input.boundPath,
       defaultProviderPresetId: input.defaultProviderPresetId,
       defaultTeammateId,
+      autoReplyMode: input.autoReplyMode,
       allowedTools: input.allowedTools,
       runtimePolicy: input.runtimePolicy,
     };
@@ -1422,6 +1425,7 @@ export function AppShell(): JSX.Element {
         boundPath: channelForm.boundPath.trim() || form.cwd.trim(),
         defaultProviderPresetId: readyProvider?.id ?? channelForm.defaultProviderPresetId,
         defaultTeammateId: channelForm.defaultResponderTeammateId || channelForm.defaultTeammateId,
+        autoReplyMode: channelForm.autoReplyMode,
         allowedTools: channelForm.allowedTools.length > 0 ? channelForm.allowedTools : defaultTools,
         runtimePolicy: channelForm.runtimePolicy,
       });
@@ -1563,6 +1567,7 @@ export function AppShell(): JSX.Element {
         await refreshChannelExecutionProposals(selectedChannelId);
         await refreshUsedMemoryAudit(form.cwd.trim());
       }
+      await refreshChannelMessageRouteDecisions(selectedChannelId);
       await refreshChannelFiles(selectedChannelId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -2589,6 +2594,7 @@ export function AppShell(): JSX.Element {
             channelArtifactErrorsByRun={channelArtifactErrorsByRun}
             channelBrief={channelBrief}
             channelDecisions={channelDecisions}
+            channelMessageRouteDecisions={channelMessageRouteDecisions}
             channelHandoffs={channelHandoffs}
             channelContextSummaries={channelContextSummaries}
             channelWorkflows={channelWorkflows}
@@ -2682,6 +2688,7 @@ export function AppShell(): JSX.Element {
             onLoadOlderChannelMessages={loadOlderChannelMessages}
             onRefreshChannelMessages={() => void Promise.all([
               refreshChannelMessages(),
+              refreshChannelMessageRouteDecisions(),
               refreshChannelExecutionProposals(),
               refreshUsedMemoryAudit(form.cwd.trim()),
             ])}
