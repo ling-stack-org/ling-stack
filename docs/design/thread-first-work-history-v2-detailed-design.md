@@ -5,6 +5,11 @@ Date: 2026-06-08
 Scope: conversation work cells, durable turns, thread metadata, process disclosure,
 evidence layering, Work History integration, and V2 implementation slices
 
+IA update, 2026-06-09: customer-facing navigation and surface placement are superseded
+by [Work History IA Cleanup](work-history-ia-cleanup.md). The durable V2 models and APIs
+remain valid, but future UI work should not treat Work History as the customer-primary
+global work surface.
+
 ## Purpose
 
 V1 renamed and reframed the Runs surface into a thread-first Work History shell. V2

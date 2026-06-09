@@ -363,7 +363,7 @@ export function RunHistory({
         <div className="panel-title split">
           <span>
             <History size={18} />
-            <h2 id="run-history-title">{t("Recent runs")}</h2>
+            <h2 id="run-history-title">{t("Run records")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
             {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
@@ -375,14 +375,14 @@ export function RunHistory({
           <div className="panel-title tight split">
             <span>
               <Workflow size={16} />
-              <h3>{t("Work threads")}</h3>
+              <h3>{t("Thread bindings")}</h3>
             </span>
             <button className="secondary-button compact-button" type="button" onClick={() => void refreshThreads()} disabled={threadsLoading}>
               {threadsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
               {t("Refresh")}
             </button>
           </div>
-          <div className="segmented-control work-history-filter" aria-label={t("Work thread visibility")}>
+          <div className="segmented-control work-history-filter" aria-label={t("Thread binding visibility")}>
             {([
               ["exclude", t("Active")],
               ["include", t("All")],
@@ -404,8 +404,8 @@ export function RunHistory({
               type="search"
               value={threadSearch}
               onChange={(event) => setThreadSearch(event.target.value)}
-              placeholder={t("Search work threads")}
-              aria-label={t("Search work threads")}
+              placeholder={t("Search thread bindings")}
+              aria-label={t("Search thread bindings")}
             />
           </label>
           {threadError ? (
@@ -418,7 +418,7 @@ export function RunHistory({
             {workHistoryGroups.length === 0 ? (
               <div className="empty-state compact-empty">
                 {threadsLoading ? <Loader2 className="spin" /> : <Workflow />}
-                <span>{threadsLoading ? t("Loading work history...") : t("No work threads yet")}</span>
+                <span>{threadsLoading ? t("Loading diagnostics...") : t("No thread bindings yet")}</span>
               </div>
             ) : (
               workHistoryTreeRows.map(({ group, depth, parentHidden }) => {
@@ -491,7 +491,7 @@ export function RunHistory({
         <div className="panel-title tight">
           <span>
             <History size={16} />
-            <h3>{t("Run-only records")}</h3>
+            <h3>{t("Legacy run-only records")}</h3>
           </span>
         </div>
 

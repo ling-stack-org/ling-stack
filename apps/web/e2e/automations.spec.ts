@@ -50,7 +50,7 @@ test("automations page creates, previews, runs, links runs, and controls the loc
   await expect(page.getByText("Recent automation runs")).toBeVisible();
   await expect(page.getByRole("button", { name: "Open run" })).toBeVisible();
   await page.getByRole("button", { name: "Open run" }).click();
-  await expect(page.getByRole("heading", { name: "Run history" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Run Diagnostics" })).toBeVisible();
   await expect(page.getByRole("link", { name: /Automation context: Daily Brief/ })).toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();

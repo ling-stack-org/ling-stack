@@ -694,6 +694,13 @@ export function AppShell(): JSX.Element {
     setActiveSidebarTarget(view);
   }
 
+  function openRunDiagnosticsView(): void {
+    setThreadPageTargetId("");
+    setChannelCreateOpen(false);
+    setActiveView("runs");
+    setActiveSidebarTarget("settings");
+  }
+
   function selectWorkspaceChannel(channelId: string): void {
     setChannelCreateOpen(false);
     markChannelRead(channelId);
@@ -2459,7 +2466,7 @@ export function AppShell(): JSX.Element {
 
   async function openRunFromWorkspace(runId: string): Promise<void> {
     await selectRun(runId);
-    openPlainView("runs");
+    openRunDiagnosticsView();
   }
 
   function openTaskFromWorkBoard(taskId: string): void {
@@ -2783,8 +2790,7 @@ export function AppShell(): JSX.Element {
                 initialThreadId={threadPageTargetId}
                 onRefreshRuns={() => void refreshRuns()}
                 onSelectRun={(runId) => {
-                  setActiveView("runs");
-                  setActiveSidebarTarget("runs");
+                  openRunDiagnosticsView();
                   void selectRun(runId);
                 }}
                   />
@@ -2976,6 +2982,9 @@ export function AppShell(): JSX.Element {
                     onConfigureExternalWorkWorkflow={(input) => configureExternalWorkWorkflowAction(input)}
                     onConfigureExternalWorkSecret={(token) => configureExternalWorkSecretAction(token)}
                     onDeleteExternalWorkSecret={() => deleteExternalWorkSecretAction()}
+                    onOpenRunDiagnostics={() => {
+                      openRunDiagnosticsView();
+                    }}
                     onRefreshMcp={() => void refreshMcp()}
                     onCreateMcpServer={addMcpServer}
                     onUpdateMcpServer={saveMcpServer}

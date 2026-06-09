@@ -5,6 +5,12 @@ Date: 2026-06-08
 Scope: V1 thread-first Work History UI, derived turn groups, evidence hierarchy, link
 routing, i18n, tests, and V2 contract preparation
 
+IA update, 2026-06-09: customer-facing navigation and surface placement are superseded
+by [Work History IA Cleanup](work-history-ia-cleanup.md). The already implemented V1/V2
+storage, evidence, archive/search, fork, and fork-and-run work remains valid. Future UI
+slices should reposition Work History as Developer Run Diagnostics and move customer
+actions back to Channel Conversation and Settings Archived.
+
 ## Purpose
 
 This document turns [Thread-First Work History](thread-first-work-history.md) into
@@ -3224,6 +3230,24 @@ Suggested PRs:
 10. V2D turn-linked resume/fork/search/archive.
 
 Do not combine V2 durable schema work with V1 presentation refactors.
+
+## IA Cleanup Implementation Record
+
+Implemented on 2026-06-09 as the P0/P1 cleanup from
+[Work History IA Cleanup](work-history-ia-cleanup.md):
+
+- P0 documented the corrected IA: Channel Conversation is the customer work surface,
+  Settings Archived owns restore, and Runs/Work History is downgraded to Developer Run
+  Diagnostics.
+- P1 removed `Runs` from the main navigation and added
+  `Settings -> Developer -> Run Diagnostics`.
+- The existing `runs` component remains route-compatible and still serves direct
+  `Open run` links, but its title/copy now emphasizes raw run/debug records.
+- The diagnostics list keeps thread binding filters and legacy run-only records because
+  those are useful support/debug artifacts, not customer work-management surfaces.
+- P2 remains open: move archive/restore to Settings Archived, keep
+  fork/resume/fork-and-run in channel branch/action surfaces, and complete Work Cell
+  evidence so normal customer audit does not depend on the diagnostics page.
 
 ## Open Decisions Before V1 Implementation
 

@@ -42,7 +42,7 @@ export function viewTitle(view: ViewId): string {
     return "AI Teammates";
   }
   if (view === "runs") {
-    return "Run history";
+    return "Run Diagnostics";
   }
   if (view === "threads") {
     return "Threads";
@@ -73,7 +73,7 @@ export function viewDescription(view: ViewId): string {
     return "通过分步流程创建 AI 队友，选择默认角色、模型、频道、记忆和文件范围。";
   }
   if (view === "runs") {
-    return "查看当前 workspace 的持久化 run，点击任意记录读取事件和上下文。";
+    return "查看 raw runs、事件、证据、shell snapshots 和线程绑定，用于开发与支持诊断。";
   }
   if (view === "threads") {
     return "查看长期线程的 lineage、证据、动作审计和 resume context。";

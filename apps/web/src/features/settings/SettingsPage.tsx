@@ -59,7 +59,7 @@ import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins
 import { McpToolsPage } from "../mcp/McpToolsPage.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
 
-type SettingsSection = "external-work" | "interface" | "runtime" | "approval-policy" | "skill-library" | "mcp" | "plugins";
+type SettingsSection = "external-work" | "interface" | "runtime" | "approval-policy" | "skill-library" | "mcp" | "plugins" | "developer";
 
 export function SettingsPage({
   cwd,
@@ -119,6 +119,7 @@ export function SettingsPage({
   onDeleteExternalWorkSecret,
   onOpenExternalWorkRecords,
   onOpenExternalWorkTriage,
+  onOpenRunDiagnostics,
   onRefreshMcp,
   onCreateMcpServer,
   onUpdateMcpServer,
@@ -187,6 +188,7 @@ export function SettingsPage({
   readonly onDeleteExternalWorkSecret: () => Promise<void>;
   readonly onOpenExternalWorkRecords: () => void;
   readonly onOpenExternalWorkTriage: () => void;
+  readonly onOpenRunDiagnostics: () => void;
   readonly onRefreshMcp: () => void;
   readonly onCreateMcpServer: (form: McpServerFormState) => Promise<void>;
   readonly onUpdateMcpServer: (serverId: string, form: McpServerFormState) => Promise<void>;
@@ -319,6 +321,17 @@ export function SettingsPage({
           <span>
             <strong>{t("Plugins")}</strong>
             <small>{t("Managed capabilities")}</small>
+          </span>
+        </button>
+        <button
+          className={activeSection === "developer" ? "settings-section-item active" : "settings-section-item"}
+          type="button"
+          onClick={() => setActiveSection("developer")}
+        >
+          <span className="settings-section-icon"><Database size={16} /></span>
+          <span>
+            <strong>{t("Developer")}</strong>
+            <small>{t("Diagnostics and raw records")}</small>
           </span>
         </button>
       </nav>
@@ -822,6 +835,24 @@ export function SettingsPage({
             setActiveSection("mcp");
           }}
         />
+      ) : null}
+      {activeSection === "developer" ? (
+        <section className="panel settings-panel developer-settings-panel" aria-labelledby="developer-settings-title">
+          <div className="panel-title">
+            <Database size={18} />
+            <h2 id="developer-settings-title">{t("Developer")}</h2>
+          </div>
+          <div className="external-work-secret-box">
+            <div>
+              <strong>{t("Run Diagnostics")}</strong>
+              <small>{t("Inspect raw runs, events, artifacts, approvals, shell snapshots, and thread bindings for support debugging.")}</small>
+            </div>
+            <button className="secondary-button" type="button" onClick={onOpenRunDiagnostics}>
+              <Database size={16} />
+              {t("Open Run Diagnostics")}
+            </button>
+          </div>
+        </section>
       ) : null}
       </div>
     </div>
