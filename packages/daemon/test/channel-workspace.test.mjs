@@ -7,6 +7,24 @@ import { createCompositeSecretResolver, createSqliteRunStore } from "../../core/
 import { createDaemonServer } from "../dist/index.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
 
+test("health exposes channel auto_route capability", async () => {
+  const disabledDaemon = await startDaemonForTest();
+  try {
+    const health = await getJson(`${disabledDaemon.url}/health`);
+    assert.equal(health.features.channels.autoRoute, false);
+  } finally {
+    await disabledDaemon.close();
+  }
+
+  const enabledDaemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: true } });
+  try {
+    const health = await getJson(`${enabledDaemon.url}/health`);
+    assert.equal(health.features.channels.autoRoute, true);
+  } finally {
+    await enabledDaemon.close();
+  }
+});
+
 test("channel messages persist and AI blocker replies do not drop the user message", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-messages-"));
   const daemon = await startDaemonForTest();
@@ -161,6 +179,72 @@ test("default_teammate routes reply-worthy messages to the channel default witho
     assert.equal(countDecisions.decisions[0].mode, "default_teammate");
     assert.equal(countDecisions.decisions[0].action, "reply");
     assert.equal(countDecisions.decisions[0].status, "accepted");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel intent selector creates workflow proposals instead of all-teammate replies", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-workflow-proposal-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "teammate_builtin_engineer",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+      runtimePolicy: {
+        maxConcurrentRuns: 1,
+        executionMode: "serial",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    for (const teammateId of ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"]) {
+      await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: provider.id,
+      });
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "所有队友都回复我一下：Architect 先拆，Engineer 实现，QA 验证",
+    });
+
+    assert.equal(created.message.body, "所有队友都回复我一下：Architect 先拆，Engineer 实现，QA 验证");
+    assert.equal(created.aiReply, undefined);
+    assert.equal(runner.runs.length, 0);
+
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].sourceMessageId, created.message.id);
+    assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].assigneeTeammateId, "teammate_builtin_engineer");
+    assert.deepEqual(
+      proposals.proposals[0].collaborationSteps.map((step) => step.teammateId),
+      ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa", "teammate_builtin_designer", "teammate_builtin_product-strategist"],
+    );
+    assert.match(proposals.proposals[0].riskSummary, /instead of visible group chat/i);
+
+    const listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listedMessages.messages.filter((message) => message.kind === "ai_reply").length, 0);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "no_reply");
+    assert.equal(decisions.decisions[0].status, "suppressed");
+    assert.equal(decisions.decisions[0].createdBy, "deterministic");
+    assert.match(decisions.decisions[0].reason, /Workflow proposal created from channel intent/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

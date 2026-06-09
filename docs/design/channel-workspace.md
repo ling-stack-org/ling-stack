@@ -35,6 +35,7 @@ Related docs:
 - [Channel Workspace v1.23 Explicit Task Selection](channel-workspace-v1.23.md)
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
+- [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [AI Teammates and Skills](ai-teammates-and-skills.md)
@@ -1802,14 +1803,21 @@ Current MVP implementation status:
   multi-agent transcript UI,
 - the channel auto reply router is now split into its own design: ordinary channel
   messages may use `mentions_only`, `default_teammate`, or `auto_route`, with
-  `auto_route` feature-gated until the message-level explanation and local validation
-  path is proven. This path creates only ordinary `ai_reply` messages and must not start
+  `auto_route` still daemon-feature-gated but now exposed to Web through runtime
+  daemon capabilities rather than a build-time-only flag. This path creates only ordinary
+  `ai_reply` messages and must not start
   workflows, tasks, runs, approvals, or memory activation. Route explanations belong to
   the message interaction layer: accepted replies may show `Default teammate` or
   `Auto routed`; suppressed or failed messages may expose a lightweight `Why no reply?`
   popover. Do not send route evidence into the default timeline, do not use the right
   drawer for ordinary route explanation, and do not show confidence numbers or raw
   selector JSON in the normal channel UI,
+- the channel intent-to-workflow selector is now documented as the future bridge from
+  ordinary messages into workflow-shaped collaboration: `no_reply`, `single_reply`,
+  `clarify`, `workflow_proposal`, or validated `direct_workflow`. The first
+  deterministic implementation creates one draft execution proposal for clear multi-role
+  requests and explicitly prevents requests like `所有队友都回复我一下` from becoming
+  all-agents-visible group chat,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.
@@ -1953,6 +1961,8 @@ Current MVP implementation status:
   top inset.
 - [x] Keep the Activity composer sticky at the bottom of the channel conversation.
 - [x] Add clear sending, failed-send retry, and AI reply pending/blocker states.
+- [x] Show a local-only sent-message preview plus compact `Thinking...` status while the
+  daemon is still routing or creating the first pending AI reply.
 - [x] Keep pending attachments and URL previews inside the composer without switching
   tabs.
 - [x] Keep task creation connected to the `Tasks` tab without keeping conversion buttons

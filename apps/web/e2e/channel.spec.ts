@@ -566,6 +566,95 @@ test("channel runtime policy and default teammate are visible and used when crea
   }).toBe("Release QA");
 });
 
+test("channel auto route becomes selectable when daemon capability is enabled", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.aiTeammates = [
+    createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
+    createMockTeammate({ id: "designer", roleKey: "designer", displayName: "Ling Designer" }),
+  ];
+  await mockDaemon(page, state, { channelAutoRouteEnabled: true });
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  const currentManagement = page.getByLabel("Channel management");
+  const editAutoReply = currentManagement.getByLabel("Auto reply");
+  await expect(editAutoReply.locator('option[value="auto_route"]')).not.toHaveAttribute("disabled", "");
+  await editAutoReply.selectOption("auto_route");
+  await currentManagement.getByRole("button", { name: "Save channel" }).click();
+  await expect.poll(() => {
+    const updated = state.channels.find((channel) => isRecord(channel) && channel.id === "channel_engineering");
+    return isRecord(updated) ? updated.autoReplyMode : undefined;
+  }).toBe("auto_route");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New channel" }).click();
+  const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
+  const createAutoReply = createChannelPanel.getByLabel("Auto reply");
+  await expect(createAutoReply.locator('option[value="auto_route"]')).not.toHaveAttribute("disabled", "");
+  await createChannelPanel.getByLabel("Name").fill("Auto Route");
+  await createChannelPanel.getByLabel("Default AI teammate").selectOption("designer");
+  await createAutoReply.selectOption("auto_route");
+  await createChannelPanel.getByRole("button", { name: "Create channel" }).click();
+
+  await expect.poll(() => {
+    const created = state.channels.find((channel) => isRecord(channel) && channel.name === "Auto Route");
+    return isRecord(created) ? created.autoReplyMode : undefined;
+  }).toBe("auto_route");
+});
+
+test("multi-role channel messages create workflow proposals instead of AI replies", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, defaultTeammateId: "teammate_builtin_engineer", autoReplyMode: "default_teammate" }
+      : channel,
+  );
+  state.aiTeammates = [
+    createMockTeammate({
+      id: "teammate_builtin_architect",
+      templateId: "architect",
+      roleKey: "architect",
+      displayName: "Architect",
+      allowedTools: ["read", "grep"],
+    }),
+    createMockTeammate({
+      id: "teammate_builtin_engineer",
+      displayName: "Engineer",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    }),
+    createMockTeammate({
+      id: "teammate_builtin_qa",
+      templateId: "qa",
+      roleKey: "qa",
+      displayName: "QA",
+      allowedTools: ["read", "grep", "find", "ls", "bash"],
+    }),
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByPlaceholder("Message this channel or @ an AI teammate").fill("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  await expect.poll(() => state.lastChannelMessageRequest?.requestAiReply).toBe(false);
+  await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
+  await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
+  const proposal = page.getByLabel("Execution proposal");
+  await expect(proposal).toContainText("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
+  await expect(proposal).toContainText("Engineer");
+  await expect(proposal.locator(".channel-proposal-collaboration")).toContainText("Collaboration 3 records");
+  await expect(proposal).toContainText("Multi-agent work starts only after confirmation");
+  await expect(proposal.getByRole("button", { name: "Start handling" })).toBeVisible();
+  await expect(page.getByText("AI teammate is preparing a reply...")).toHaveCount(0);
+  await expect.poll(() => {
+    const decision = state.channelMessageRouteDecisions[0];
+    return isRecord(decision) ? [decision.action, decision.status, decision.createdBy].join("|") : "";
+  }).toBe("no_reply|suppressed|deterministic");
+});
+
 test("channel settings can add remove and set default teammates", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -1207,6 +1296,31 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   await expect(page.getByLabel("Channel message feed").getByText("Retryable channel message")).toBeVisible();
   await expect(composerInput).toHaveValue("");
   await expect(page.getByText("Message failed")).toHaveCount(0);
+});
+
+test("channel composer moves sent messages into the feed while routing is pending", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+  if (isRecord(channel)) {
+    channel.autoReplyMode = "auto_route";
+  }
+  state.channelMessageDelayMs = 1_000;
+  await mockDaemon(page, state, { channelAutoRouteEnabled: true });
+  await page.goto("/");
+
+  const composerInput = page.getByPlaceholder("Message this channel or @ an AI teammate");
+  const channelFeed = page.getByLabel("Channel message feed");
+  await composerInput.fill("Who owns the release checklist?");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
+
+  await expect(composerInput).toHaveValue("");
+  await expect(channelFeed.getByText("Who owns the release checklist?")).toBeVisible();
+  await expect(channelFeed.getByText("Thinking...")).toBeVisible();
+  await expect(channelFeed.getByText("AI teammate is replying...")).toBeVisible({ timeout: 3_000 });
+  await expect(channelFeed.getByText("Thinking...")).toHaveCount(0);
 });
 
 test("channel URL preview blocked state stays in Activity and still allows sending text", async ({ page }) => {

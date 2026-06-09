@@ -27,6 +27,7 @@ import type {
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
   ControlPlaneDomain,
+  DaemonFeatureFlags,
   ExternalWorkActionView,
   MediaJob,
   ProviderCheckResult,
@@ -192,6 +193,7 @@ export function AppShell(): JSX.Element {
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(true);
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
+  const [daemonFeatures, setDaemonFeatures] = useState<DaemonFeatureFlags>({ channels: { autoRoute: false } });
   const [channelUnreadById, setChannelUnreadById] = useState<Readonly<Record<string, boolean>>>({});
   const channelSeenMessageAtRef = useRef<Record<string, string>>({});
   const [runningWorkflowStepId, setRunningWorkflowStepId] = useState("");
@@ -1166,6 +1168,7 @@ export function AppShell(): JSX.Element {
     try {
       const health = await getDaemonHealth();
       setDaemonHealthy(health.ok);
+      setDaemonFeatures(health.features ?? { channels: { autoRoute: false } });
       const viteDefaultWorkspaceCwd = getViteDefaultWorkspaceCwd();
       const defaultWorkspaceCwd = health.defaultWorkspaceCwd?.trim() || viteDefaultWorkspaceCwd;
       const canApplyDaemonDefault =
@@ -1198,6 +1201,7 @@ export function AppShell(): JSX.Element {
       }
     } catch {
       setDaemonHealthy(false);
+      setDaemonFeatures({ channels: { autoRoute: false } });
     }
   }
 
@@ -1563,8 +1567,8 @@ export function AppShell(): JSX.Element {
         response.message,
         ...(response.aiReply ? [response.aiReply] : []),
       ]);
+      await refreshChannelExecutionProposals(selectedChannelId);
       if (response.aiReply) {
-        await refreshChannelExecutionProposals(selectedChannelId);
         await refreshUsedMemoryAudit(form.cwd.trim());
       }
       await refreshChannelMessageRouteDecisions(selectedChannelId);
@@ -2576,6 +2580,7 @@ export function AppShell(): JSX.Element {
               <WorkspaceClientView
             cwd={form.cwd}
             daemonHealthy={daemonHealthy}
+            channelAutoRouteEnabled={daemonFeatures.channels.autoRoute}
             providerLabel={`${form.provider}/${form.model}`}
             channels={channels}
             selectedChannelId={selectedChannelId}

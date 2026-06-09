@@ -10,6 +10,7 @@ import {
   routeExplicitChannelMention,
   type ChannelMessageRouteInput,
 } from "./channel-message-router.js";
+import { selectChannelWorkflowIntent } from "./channel-intent-selector.js";
 import { validateChannelMessageReferences } from "./protocol.js";
 import { parseChannelMessageRequest } from "./schemas.js";
 
@@ -114,6 +115,18 @@ export async function handleChannelMessagesCollection(
           proposalMode: "allow",
         });
       } else {
+        const workflowIntent = selectChannelWorkflowIntent({
+          store,
+          channel,
+          sourceMessage: message,
+          requestedProviderPresetId: input.providerPresetId,
+          secretResolver: routeDependencies.secretResolver,
+        });
+        if (workflowIntent.action === "workflow_proposal") {
+          writeJson(response, 201, { message });
+          return;
+        }
+
         const route = await routeChannelMessageReply({
           ...routeDependencies,
           store,

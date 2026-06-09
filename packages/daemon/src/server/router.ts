@@ -274,6 +274,11 @@ export async function routeRequest(
       ok: true,
       service: "ling-stack-daemon",
       defaultWorkspaceCwd: config.defaultWorkspaceCwd,
+      features: {
+        channels: {
+          autoRoute: config.channels.autoRoute === true,
+        },
+      },
     });
     return;
   }
