@@ -49,7 +49,7 @@ import {
 } from "lucide-react";
 import { LingDaemonError } from "@ling-stack/api-client";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, unpinLingThread } from "../../api.js";
+import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, unpinLingThread } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -69,7 +69,8 @@ import {
   type ChannelActivityTriageDraft,
   type ChannelActivityTriageResult,
 } from "../../lib/channel-activity-triage.js";
-import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId } from "../../lib/conversation-work-cell.js";
+import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { buildConversationWorkCellDetailsFromWorkflowEvidence, buildWorkflowProgressModel, workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "../../lib/workflow-progress.js";
 import {
   allChannelActivitySavedViewId,
   applyActivityViewFilter,
@@ -579,6 +580,7 @@ export function WorkspaceClientView({
   const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "progress");
   const [sidePanelOpen, setSidePanelOpen] = useState(() => Boolean(selectedTaskId));
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
+  const [selectedWorkflowEvidenceWorkflowId, setSelectedWorkflowEvidenceWorkflowId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
@@ -730,6 +732,40 @@ export function WorkspaceClientView({
     }
     return cells;
   }, [approvals, channelArtifactsByRun, channelRuns, channelRunsByThreadId, conversationThreadTurnsByKey, cwd, t]);
+  const workflowProgressByWorkflowId = useMemo(() => {
+    const cells = new Map<string, WorkflowProgressModel>();
+    for (const workflow of channelWorkflows.filter((item) => item.channelId === selectedChannelId)) {
+      const steps = channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
+      if (steps.length === 0) {
+        continue;
+      }
+      cells.set(workflow.id, buildWorkflowProgressModel({
+        workflow,
+        steps,
+        runs: channelRuns,
+        approvals,
+        artifactsByRun: channelArtifactsByRun,
+        t,
+        artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
+      }));
+    }
+    return cells;
+  }, [approvals, channelArtifactsByRun, channelRuns, channelWorkflowSteps, channelWorkflows, cwd, selectedChannelId, t]);
+  const selectedWorkflowProgressModel = selectedWorkflowEvidenceWorkflowId
+    ? workflowProgressByWorkflowId.get(selectedWorkflowEvidenceWorkflowId)
+    : undefined;
+  const selectedWorkflowWorkCell = selectedWorkflowProgressModel
+    ? workflowProgressToConversationWorkCell(selectedWorkflowProgressModel)
+    : undefined;
+  const workflowRepresentedRunIds = useMemo(() => {
+    const runIds = new Set<string>();
+    for (const model of workflowProgressByWorkflowId.values()) {
+      for (const runId of model.runIds) {
+        runIds.add(runId);
+      }
+    }
+    return runIds;
+  }, [workflowProgressByWorkflowId]);
   const selectedChannelTaskIds = useMemo(
     () => tasks.filter((task) => task.channelId === selectedChannelId).map((task) => task.id),
     [selectedChannelId, tasks],
@@ -844,7 +880,7 @@ export function WorkspaceClientView({
   useEffect(() => {
     conversationWorkCellEvidenceLoadsRef.current.clear();
     setConversationWorkCellDetailsByKey((current) => Object.keys(current).length === 0 ? current : {});
-  }, [approvals, channelArtifactsByRun, conversationWorkCellByThreadId, cwd, runs]);
+  }, [approvals, channelArtifactsByRun, channelWorkflowSteps, channelWorkflows, conversationWorkCellByThreadId, cwd, runs]);
   const pendingChannelApprovals = useMemo(() => {
     return approvals.filter((approval) => {
       if (effectiveApprovalStatus(approval) !== "pending") {
@@ -1121,22 +1157,30 @@ export function WorkspaceClientView({
   const auditActivityVisible = activityToolsOpen || activityFiltersActive;
   const visibleActivityItems = useMemo(
     () => {
-      const baseItems = auditActivityVisible ? filteredActivityItems : filteredActivityItems.filter(channelActivityVisibleInDefaultChat);
+      const baseItems = auditActivityVisible
+        ? filteredActivityItems
+        : filteredActivityItems.filter((item) => channelActivityVisibleInDefaultChat(item) || (item.kind === "workflow" && workflowProgressByWorkflowId.has(item.record.id)));
       return activeWorkThreadId
         ? baseItems.filter((item) => item.kind === "run" && item.record.threadId === activeWorkThreadId)
         : baseItems;
     },
-    [activeWorkThreadId, auditActivityVisible, filteredActivityItems],
+    [activeWorkThreadId, auditActivityVisible, filteredActivityItems, workflowProgressByWorkflowId],
   );
   const renderableActivityItems = useMemo(
     () => visibleActivityItems.filter((item) => {
+      if (!auditActivityVisible && item.kind === "workflow-step" && workflowProgressByWorkflowId.has(item.record.workflowId)) {
+        return false;
+      }
+      if (!auditActivityVisible && item.kind === "run" && workflowRepresentedRunIds.has(item.record.id)) {
+        return false;
+      }
       if (item.kind !== "run" || !item.record.threadId) {
         return true;
       }
       const workCell = conversationWorkCellByThreadId.get(item.record.threadId);
       return !workCell || workCell.anchorRunId === item.record.id;
     }),
-    [conversationWorkCellByThreadId, visibleActivityItems],
+    [auditActivityVisible, conversationWorkCellByThreadId, visibleActivityItems, workflowProgressByWorkflowId, workflowRepresentedRunIds],
   );
   const latestVisibleActivityItemId =
     renderableActivityItems.length > 0 ? renderableActivityItems[renderableActivityItems.length - 1]?.id ?? "" : "";
@@ -1428,6 +1472,7 @@ export function WorkspaceClientView({
     setSidePanelView("progress");
     setSidePanelOpen(false);
     setSelectedApprovalId("");
+    setSelectedWorkflowEvidenceWorkflowId("");
     setCreateTaskOpen(false);
     setChannelNotificationLevel(readChannelNotificationLevel(cwd, selectedChannelId));
     messageFeedPinnedToLatestRef.current = true;
@@ -1542,11 +1587,27 @@ export function WorkspaceClientView({
   }
 
   function openProgressPanel(): void {
+    setSelectedWorkflowEvidenceWorkflowId("");
     setSidePanelView("progress");
     setSidePanelOpen(true);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setTeammateManagerOpen(false);
+  }
+
+  function openWorkflowEvidencePanel(workflowIdOrThreadId: string): void {
+    const workflowId = workflowIdFromWorkCellThreadId(workflowIdOrThreadId);
+    if (!workflowId) {
+      openProgressPanel();
+      return;
+    }
+    setSelectedWorkflowEvidenceWorkflowId(workflowId);
+    setSidePanelView("progress");
+    setSidePanelOpen(true);
+    setChannelMoreOpen(false);
+    setActivityToolsOpen(false);
+    setTeammateManagerOpen(false);
+    loadWorkflowWorkCellDetails(workflowId);
   }
 
   function openApprovalInPanel(approval: ApprovalRequest | undefined): void {
@@ -1565,6 +1626,12 @@ export function WorkspaceClientView({
   function conversationWorkCellDetailsCacheKey(threadId: string): string {
     const workCell = conversationWorkCellByThreadId.get(threadId);
     return `${cwd.trim()}::${workCell?.id ?? threadId}`;
+  }
+
+  function workflowWorkCellDetailsCacheKey(workflowId: string): string {
+    const normalizedWorkflowId = workflowIdFromWorkCellThreadId(workflowId);
+    const model = workflowProgressByWorkflowId.get(normalizedWorkflowId);
+    return `${cwd.trim()}::${model?.id ?? `workflow-progress:${normalizedWorkflowId}`}`;
   }
 
   function threadTurnsCacheKey(threadId: string): string {
@@ -1591,6 +1658,55 @@ export function WorkspaceClientView({
           threadId,
           evidence,
           runIds: workCell?.turnId ? workCell.runIds : undefined,
+          t,
+          artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
+        });
+        const hasEvidence = details.evidenceLinks.length > 0 || details.groups.some((group) => group.rows.length > 0);
+        setConversationWorkCellDetailsByKey((current) => ({
+          ...current,
+          [cacheKey]: {
+            status: hasEvidence ? "loaded" : "empty",
+            groups: details.groups,
+            evidenceLinks: details.evidenceLinks,
+          },
+        }));
+      })
+      .catch((caught: unknown) => {
+        const message = caught instanceof Error ? caught.message : String(caught);
+        setConversationWorkCellDetailsByKey((current) => ({
+          ...current,
+          [cacheKey]: {
+            status: "error",
+            errorMessage: message || t("Evidence failed to load."),
+          },
+        }));
+      })
+      .finally(() => {
+        conversationWorkCellEvidenceLoadsRef.current.delete(cacheKey);
+      });
+  }
+
+  function loadWorkflowWorkCellDetails(workflowIdOrThreadId: string, options: { readonly force?: boolean } = {}): void {
+    const workflowId = workflowIdFromWorkCellThreadId(workflowIdOrThreadId);
+    if (!workflowId) {
+      return;
+    }
+    const cacheKey = workflowWorkCellDetailsCacheKey(workflowId);
+    const existing = conversationWorkCellDetailsByKey[cacheKey];
+    if (!options.force && (existing?.status === "loading" || existing?.status === "loaded" || existing?.status === "empty" || conversationWorkCellEvidenceLoadsRef.current.has(cacheKey))) {
+      return;
+    }
+
+    conversationWorkCellEvidenceLoadsRef.current.add(cacheKey);
+    setConversationWorkCellDetailsByKey((current) => ({
+      ...current,
+      [cacheKey]: { status: "loading" },
+    }));
+
+    void getChannelWorkflowEvidence(cwd.trim(), workflowId)
+      .then((evidence) => {
+        const details = buildConversationWorkCellDetailsFromWorkflowEvidence({
+          evidence,
           t,
           artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
         });
@@ -1959,6 +2075,9 @@ export function WorkspaceClientView({
       onRefreshTasks();
       onRefreshChannelActivity();
       onRefreshWorkItems();
+      if (sidePanelView === "progress" && selectedWorkflowEvidenceWorkflowId) {
+        loadWorkflowWorkCellDetails(selectedWorkflowEvidenceWorkflowId, { force: true });
+      }
       return;
     }
     if (sidePanelView === "context") {
@@ -2638,6 +2757,20 @@ export function WorkspaceClientView({
     if (item.kind === "workflow") {
       const workflow = item.record;
       const steps = channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
+      const progressModel = workflowProgressByWorkflowId.get(workflow.id);
+      if (progressModel && !auditActivityVisible) {
+        const workCell = workflowProgressToConversationWorkCell(progressModel);
+        const detailsKey = workflowWorkCellDetailsCacheKey(workflow.id);
+        return (
+          <ConversationWorkCell
+            model={workCell}
+            detailsState={conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
+            onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : openRunInPanel}
+            onOpenDetails={openWorkflowEvidencePanel}
+            onLoadDetails={loadWorkflowWorkCellDetails}
+          />
+        );
+      }
       return (
         <MessageBubble
           tone="runtime"
@@ -3161,6 +3294,7 @@ export function WorkspaceClientView({
   );
 
   const channelHasChatContent = channelMessages.length > 0 || channelContextSummaries.length > 0;
+  const channelHasProgressContent = channelHasChatContent || workflowProgressByWorkflowId.size > 0;
   const attentionContextRowCandidates: readonly (AttentionContextRow | undefined)[] = [
     selectedChannel ? {
       id: "channel",
@@ -3200,8 +3334,14 @@ export function WorkspaceClientView({
     } : undefined,
   ];
   const attentionContextRows: readonly AttentionContextRow[] = attentionContextRowCandidates.filter((row): row is AttentionContextRow => row !== undefined);
-  const attentionProgressRowCandidates: readonly (AttentionProgressRow | undefined)[] = channelHasChatContent
+  const workflowAttentionProgressRows: readonly AttentionProgressRow[] = buildWorkflowAttentionProgressRows({
+    models: [...workflowProgressByWorkflowId.values()],
+    t,
+    onOpen: () => openSidePanelView("context"),
+  });
+  const attentionProgressRowCandidates: readonly (AttentionProgressRow | undefined)[] = channelHasProgressContent
     ? [
+        ...workflowAttentionProgressRows,
         selectedTask ? {
           id: "current-task",
           icon: <SquareTerminal size={18} />,
@@ -3233,7 +3373,7 @@ export function WorkspaceClientView({
         },
       ]
     : [];
-  const attentionProgressRows: readonly AttentionProgressRow[] = channelHasChatContent
+  const attentionProgressRows: readonly AttentionProgressRow[] = channelHasProgressContent
     ? attentionProgressRowCandidates.filter((row): row is AttentionProgressRow => row !== undefined)
     : [];
 
@@ -3306,7 +3446,11 @@ export function WorkspaceClientView({
     </section>
   );
 
-  const sidePanelTitle = createTaskOpen && sidePanelView === "task" ? t("New task") : t(channelSidePanelLabel(sidePanelView));
+  const sidePanelTitle = sidePanelView === "progress" && selectedWorkflowWorkCell
+    ? t("Workflow evidence")
+    : createTaskOpen && sidePanelView === "task"
+      ? t("New task")
+      : t(channelSidePanelLabel(sidePanelView));
   const sidePanelContent = sidePanelView === "progress" ? (
     <ChannelProgressPanel
       selectedTask={selectedTask}
@@ -3315,6 +3459,8 @@ export function WorkspaceClientView({
       attentionItems={attentionQueueItems}
       proposals={channelExecutionProposals}
       teammates={teammateOptions}
+      selectedWorkflowWorkCell={selectedWorkflowWorkCell}
+      selectedWorkflowDetailsState={selectedWorkflowEvidenceWorkflowId ? conversationWorkCellDetailsByKey[workflowWorkCellDetailsCacheKey(selectedWorkflowEvidenceWorkflowId)] ?? { status: "not_loaded" } : undefined}
       externalWorkCiTriage={externalWorkCiTriage}
       externalWorkCiTriageLoading={externalWorkCiTriageLoading}
       channelHasChatContent={channelHasChatContent}
@@ -3322,6 +3468,8 @@ export function WorkspaceClientView({
       onOpenRun={openRunInPanel}
       onOpenApproval={openApprovalInPanel}
       onOpenContext={() => openProtocolFromActivity("runtime")}
+      onClearSelectedWorkflow={() => setSelectedWorkflowEvidenceWorkflowId("")}
+      onLoadWorkflowDetails={loadWorkflowWorkCellDetails}
       onRefreshExternalWorkCiTriage={onRefreshExternalWorkCiTriage}
     />
   ) : sidePanelView === "files" ? (
@@ -3399,7 +3547,7 @@ export function WorkspaceClientView({
       {taskDetailContent}
     </section>
   );
-  const attentionQueueVisible = attentionQueueOpen && !teammateManagerOpen && !sidePanelOpen && (activityToolsOpen || channelHasChatContent) && attentionQueueItems.length > 0;
+  const attentionQueueVisible = attentionQueueOpen && !teammateManagerOpen && !sidePanelOpen && (activityToolsOpen || channelHasProgressContent) && attentionQueueItems.length > 0;
 
   return (
     <div className="client-window task-workbench-window" aria-label={t("Workspace")}>
@@ -4815,6 +4963,8 @@ function ChannelProgressPanel({
   attentionItems,
   proposals,
   teammates,
+  selectedWorkflowWorkCell,
+  selectedWorkflowDetailsState,
   externalWorkCiTriage,
   externalWorkCiTriageLoading,
   channelHasChatContent,
@@ -4822,6 +4972,8 @@ function ChannelProgressPanel({
   onOpenRun,
   onOpenApproval,
   onOpenContext,
+  onClearSelectedWorkflow,
+  onLoadWorkflowDetails,
   onRefreshExternalWorkCiTriage,
 }: {
   readonly selectedTask: Task | undefined;
@@ -4830,6 +4982,8 @@ function ChannelProgressPanel({
   readonly attentionItems: readonly ChannelAttentionQueueItem[];
   readonly proposals: readonly ChannelExecutionProposal[];
   readonly teammates: readonly ChannelMention[];
+  readonly selectedWorkflowWorkCell?: ConversationWorkCellViewModel;
+  readonly selectedWorkflowDetailsState?: ConversationWorkCellDetailsState;
   readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
   readonly externalWorkCiTriageLoading: boolean;
   readonly channelHasChatContent: boolean;
@@ -4837,6 +4991,8 @@ function ChannelProgressPanel({
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApproval: (approval: ApprovalRequest | undefined) => void;
   readonly onOpenContext: () => void;
+  readonly onClearSelectedWorkflow: () => void;
+  readonly onLoadWorkflowDetails: (workflowIdOrThreadId: string, options?: { readonly force?: boolean }) => void;
   readonly onRefreshExternalWorkCiTriage: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -4858,6 +5014,7 @@ function ChannelProgressPanel({
       pendingApprovals.length > 0 ||
       visibleAttentionItems.length > 0 ||
       collaborationRows.length > 0 ||
+      Boolean(selectedWorkflowWorkCell) ||
       externalWorkCiTriage.length > 0,
   );
 
@@ -4874,6 +5031,27 @@ function ChannelProgressPanel({
 
   return (
     <section className="channel-progress-panel" aria-label={t("Progress")}>
+      {selectedWorkflowWorkCell ? (
+        <section className="channel-progress-section">
+          <div className="task-strip-head">
+            <span>
+              <Workflow size={15} />
+              <strong>{t("Workflow evidence")}</strong>
+            </span>
+            <button className="secondary-button compact-button" type="button" onClick={onClearSelectedWorkflow}>
+              <X size={13} />
+              {t("Back")}
+            </button>
+          </div>
+          <ConversationWorkCell
+            model={selectedWorkflowWorkCell}
+            detailsState={selectedWorkflowDetailsState ?? { status: "not_loaded" }}
+            onOpenRun={selectedWorkflowWorkCell.anchorRunId.startsWith("workflow:") ? undefined : onOpenRun}
+            onLoadDetails={onLoadWorkflowDetails}
+          />
+        </section>
+      ) : null}
+
       <div className="channel-progress-summary-grid">
         {selectedTask ? (
           <button className="channel-progress-card" type="button" onClick={() => onOpenTask(selectedTask.id)}>
@@ -5038,6 +5216,10 @@ function openProgressTarget(
     return;
   }
   onOpenContext();
+}
+
+function workflowIdFromWorkCellThreadId(value: string): string {
+  return value.startsWith("workflow:") ? value.slice("workflow:".length) : value;
 }
 
 function ChannelRunGuidanceStrip({
@@ -7016,6 +7198,109 @@ function runProgressIcon(status: RunSession["status"]): JSX.Element {
     return <X size={18} />;
   }
   return <Clock3 size={18} />;
+}
+
+function buildWorkflowAttentionProgressRows(input: {
+  readonly models: readonly WorkflowProgressModel[];
+  readonly t: Translate;
+  readonly onOpen: () => void;
+}): readonly AttentionProgressRow[] {
+  const candidates = input.models
+    .filter((model) => model.mode === "active" || model.attention !== "none")
+    .sort((left, right) => workflowProgressPriority(right) - workflowProgressPriority(left) || right.updatedAt.localeCompare(left.updatedAt));
+  const primary = candidates[0];
+  if (!primary) {
+    return [];
+  }
+  const rows: AttentionProgressRow[] = [{
+    id: `workflow-progress:${primary.workflowId}`,
+    icon: workflowProgressIcon(primary),
+    tone: workflowProgressTone(primary),
+    primary: workflowProgressPrimaryText(primary, input.t),
+    secondary: primary.summary,
+    onOpen: input.onOpen,
+  }];
+  if (candidates.length > 1) {
+    rows.push({
+      id: "workflow-progress-more",
+      icon: <Workflow size={18} />,
+      tone: "neutral",
+      primary: input.t("{count} active workflows", { count: candidates.length }),
+      secondary: input.t("Open progress for details"),
+      onOpen: input.onOpen,
+    });
+  }
+  return rows;
+}
+
+function workflowProgressPriority(model: WorkflowProgressModel): number {
+  if (model.attention === "blocked") {
+    return 50;
+  }
+  if (model.attention === "failed") {
+    return 40;
+  }
+  if (model.attention === "waiting") {
+    return 30;
+  }
+  if (model.status === "running") {
+    return 20;
+  }
+  if (model.status === "ready" || model.status === "draft") {
+    return 10;
+  }
+  return 0;
+}
+
+function workflowProgressTone(model: WorkflowProgressModel): AttentionProgressTone {
+  if (model.attention === "blocked") {
+    return "blocked";
+  }
+  if (model.attention === "failed") {
+    return "failed";
+  }
+  if (model.attention === "waiting") {
+    return "waiting";
+  }
+  if (model.status === "succeeded") {
+    return "success";
+  }
+  if (model.mode === "active") {
+    return "running";
+  }
+  return "neutral";
+}
+
+function workflowProgressIcon(model: WorkflowProgressModel): JSX.Element {
+  if (model.attention === "blocked" || model.attention === "failed") {
+    return <CircleAlert size={18} />;
+  }
+  if (model.attention === "waiting") {
+    return <ShieldCheck size={18} />;
+  }
+  if (model.status === "succeeded") {
+    return <CheckCircle2 size={18} />;
+  }
+  if (model.mode === "active") {
+    return <Loader2 className="spin" size={18} />;
+  }
+  return <Workflow size={18} />;
+}
+
+function workflowProgressPrimaryText(model: WorkflowProgressModel, t: Translate): string {
+  if (model.attention === "blocked") {
+    return t("Workflow blocked");
+  }
+  if (model.attention === "failed") {
+    return t("Workflow needs attention");
+  }
+  if (model.attention === "waiting") {
+    return t("Workflow waiting for approval");
+  }
+  if (model.status === "succeeded") {
+    return t("Workflow done");
+  }
+  return t("Workflow in progress");
 }
 
 function deriveWorkspaceThreadsFromRuns(runs: readonly RunSession[]): readonly LingThread[] {

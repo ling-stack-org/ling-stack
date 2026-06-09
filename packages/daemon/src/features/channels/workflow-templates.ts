@@ -18,18 +18,21 @@ import {
   type WorkflowStepFailurePolicy,
   type WorkflowStepGate,
   type WorkflowStepTemplate,
+  type WorkflowGraph,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { isRecord, readOptionalBoolean, readOptionalNumber, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
+import { compileWorkflowGraph, readOptionalWorkflowGraph } from "./workflow-graph.js";
 
 export interface CompileWorkflowTemplateInput {
   readonly channelId: string;
   readonly templateId?: string;
   readonly customTemplate?: CustomWorkflowTemplate;
   readonly customTemplateId?: string;
+  readonly workflowGraph?: WorkflowGraph;
   readonly title?: string;
   readonly objective: string;
   readonly createdBy?: string;
@@ -72,7 +75,8 @@ export function isWorkflowTemplateCompileRequest(value: unknown): boolean {
   return isRecord(value) && (
     typeof value.templateId === "string" ||
     typeof value.customTemplateId === "string" ||
-    isRecord(value.customTemplate)
+    isRecord(value.customTemplate) ||
+    isRecord(value.workflowGraph)
   );
 }
 
@@ -83,15 +87,17 @@ export function parseWorkflowTemplateCompileRequest(value: unknown, channelId: s
   const templateId = readOptionalString(value, "templateId");
   const customTemplateId = readOptionalString(value, "customTemplateId");
   const customTemplate = readOptionalCustomWorkflowTemplate(value, "customTemplate");
-  const templateKinds = [templateId, customTemplateId, customTemplate].filter((item) => item !== undefined).length;
+  const workflowGraph = readOptionalWorkflowGraph(value, "workflowGraph");
+  const templateKinds = [templateId, customTemplateId, customTemplate, workflowGraph].filter((item) => item !== undefined).length;
   if (templateKinds !== 1) {
-    throw new Error("Workflow template request must include exactly one of templateId, customTemplateId, or customTemplate");
+    throw new Error("Workflow template request must include exactly one of templateId, customTemplateId, customTemplate, or workflowGraph");
   }
   return {
     channelId,
     templateId,
     customTemplateId,
     customTemplate,
+    workflowGraph,
     title: readOptionalString(value, "title"),
     objective: readString(value, "objective"),
     createdBy: readOptionalString(value, "createdBy"),
@@ -116,8 +122,11 @@ export function compileWorkflowTemplate(store: RunStore, input: CompileWorkflowT
   if (input.customTemplate) {
     return compileCustomWorkflowTemplate(store, input, input.customTemplate, now, runnerRegistry);
   }
+  if (input.workflowGraph) {
+    return compileWorkflowGraph(store, { ...input, workflowGraph: input.workflowGraph }, now, runnerRegistry);
+  }
   if (!input.templateId) {
-    throw new HttpError(400, "workflow_template_required", "templateId or customTemplate is required");
+    throw new HttpError(400, "workflow_template_required", "templateId, customTemplate, or workflowGraph is required");
   }
   const skillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
   if (!skillPack) {

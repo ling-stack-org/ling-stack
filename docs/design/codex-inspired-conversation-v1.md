@@ -31,6 +31,7 @@ This document connects existing Ling Stack designs:
 - [Channel Workspace v1.21 Codex-Style Chat Workspace](channel-workspace-v1.21.md)
 - [Channel Workspace v1.22 Long Conversation Virtual Feed](channel-workspace-v1.22.md)
 - [Channel Workspace v1.24 Right Drawer Workspace](channel-workspace-v1.24.md)
+- [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Codex-Like Execution Experience](codex-like-execution.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
@@ -60,6 +61,9 @@ Ling-specific changes:
 - Ling has workspace-level and channel-level work surfaces; the left drawer must remain
   stable when switching between channel chat, private chat, teammate settings, model
   workbench, runs, approvals, and settings.
+- Ling orchestration may involve several teammates, but live execution should reuse the
+  existing active mutable cell, progress popover, folded evidence, and right-drawer
+  patterns instead of creating a separate multi-agent transcript UI.
 
 Do not borrow:
 

@@ -67,14 +67,27 @@ Implemented in the first backend slice:
   completed step count, linked run count, artifact count, and changed-file/artifact path
   refs.
 
-Still pending:
+Implemented follow-up slices:
 
-- Parallel branches and custom auto-startable templates.
+- Parallel branch scheduling and custom auto-startable templates are implemented through
+  workflow graph/template metadata and the existing runtime policy budget.
+- P4-P7 orchestration evidence is implemented as structured handoff intents,
+  deterministic selector decisions, fan-in summary artifacts, candidate-only memory
+  output, workflow evidence APIs, and Web work-cell/right-drawer drilldown.
+- Model-assisted selector decisions remain a future explicit policy/feature-flag slice;
+  current selector decisions are deterministic routing evidence.
 
 Advanced follow-up design:
 
 - [Orchestrator Advanced](orchestrator-advanced.md) defines the parallel branch scheduler,
   custom auto-startable template schema, fan-in packet behavior, and additional tests.
+- [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md) defines
+  the user-facing visibility boundary: live progress is visible while work runs, terminal
+  work folds into compact summaries, and raw selector, handoff, and runtime evidence stays
+  expandable instead of becoming default chat content.
+- [Multi-Agent Orchestration P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md)
+  splits the next orchestration work into structured handoff intent, selector decisions,
+  graph-defined fan-out/fan-in with memory candidates, and workflow evidence detail.
 
 Implemented hardening:
 

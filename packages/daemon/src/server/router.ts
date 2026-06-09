@@ -25,6 +25,13 @@ import { createAiChannelReply } from "../features/channels/ai-replies.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
 import { handleChannelMessagesCollection } from "../features/channels/messages.js";
 import {
+  handleWorkflowHandoffIntentAccept,
+  handleWorkflowHandoffIntentItem,
+  handleWorkflowHandoffIntentsCollection,
+  handleWorkflowSelectorDecisionItem,
+  handleWorkflowSelectorDecisionsCollection,
+} from "../features/channels/workflow-coordination-routes.js";
+import {
   cancelChannelWorkflow,
   finalizeOrchestratedWorkflowStepRun,
   orchestrateChannelWorkflow,
@@ -45,8 +52,10 @@ import {
   handleChannelsCollection,
 } from "../features/channels/routes.js";
 import {
+  handleChannelWorkflowEvidence,
   handleChannelWorkflowFromHandoff,
   handleChannelWorkflowItem,
+  handleChannelWorkflowStepEvidence,
   handleChannelWorkflowStepItem,
   handleChannelWorkflowStepStartRoute,
   handleChannelWorkflowStepsCollection,
@@ -188,6 +197,8 @@ import {
   parseChannelLinkPreviewRoute,
   parseChannelRoute,
   parseChannelWorkflowRoute,
+  parseWorkflowHandoffIntentRoute,
+  parseWorkflowSelectorDecisionRoute,
   parseExternalWorkActionRoute,
   parseExternalWorkBackgroundStopRoute,
   parseExternalWorkCiTriageItemRoute,
@@ -993,6 +1004,30 @@ export async function routeRequest(
     return startOrchestratedRun;
   };
 
+  const workflowHandoffIntentRoute = parseWorkflowHandoffIntentRoute(url.pathname);
+  if (workflowHandoffIntentRoute) {
+    if (workflowHandoffIntentRoute.kind === "collection") {
+      await handleWorkflowHandoffIntentsCollection(request, response, config, storeRegistry);
+      return;
+    }
+    if (workflowHandoffIntentRoute.action === "accept") {
+      await handleWorkflowHandoffIntentAccept(request, response, config, storeRegistry, workflowHandoffIntentRoute.intentId);
+      return;
+    }
+    await handleWorkflowHandoffIntentItem(request, response, config, storeRegistry, workflowHandoffIntentRoute.intentId);
+    return;
+  }
+
+  const workflowSelectorDecisionRoute = parseWorkflowSelectorDecisionRoute(url.pathname);
+  if (workflowSelectorDecisionRoute) {
+    if (workflowSelectorDecisionRoute.kind === "collection") {
+      await handleWorkflowSelectorDecisionsCollection(request, response, config, storeRegistry);
+      return;
+    }
+    await handleWorkflowSelectorDecisionItem(request, response, config, storeRegistry, workflowSelectorDecisionRoute.decisionId);
+    return;
+  }
+
   const workflowRoute = parseChannelWorkflowRoute(url.pathname);
   if (workflowRoute) {
     if (workflowRoute.kind === "workflow") {
@@ -1065,11 +1100,19 @@ export async function routeRequest(
         }
         return;
       }
+      if (workflowRoute.action === "evidence") {
+        await handleChannelWorkflowEvidence(request, response, config, storeRegistry, workflowRoute.workflowId);
+        return;
+      }
       await handleChannelWorkflowItem(request, response, config, storeRegistry, workflowRoute.workflowId);
       return;
     }
     if (workflowRoute.kind === "steps") {
       await handleChannelWorkflowStepsCollection(request, response, config, storeRegistry, workflowRoute.workflowId);
+      return;
+    }
+    if (workflowRoute.action === "evidence") {
+      await handleChannelWorkflowStepEvidence(request, response, config, storeRegistry, workflowRoute.workflowStepId);
       return;
     }
     if (workflowRoute.action === "retry") {

@@ -45,6 +45,8 @@ import type {
   CreateChannelContextSummaryInput,
   CreateChannelDecisionInput,
   CreateChannelExecutionProposalInput,
+  CreateWorkflowHandoffIntentInput,
+  CreateWorkflowSelectorDecisionInput,
   CreateChannelWorkflowInput,
   CreateChannelWorkflowStepInput,
   CreateChannelHandoffInput,
@@ -62,6 +64,8 @@ import type {
   ListChannelContextSummariesOptions,
   ListChannelDecisionsOptions,
   ListChannelExecutionProposalsOptions,
+  ListWorkflowHandoffIntentsOptions,
+  ListWorkflowSelectorDecisionsOptions,
   ListChannelWorkflowStepsOptions,
   ListChannelWorkflowsOptions,
   ListChannelHandoffsOptions,
@@ -86,9 +90,13 @@ import type {
   UpdateChannelContextSummaryInput,
   UpdateChannelDecisionInput,
   UpdateChannelExecutionProposalInput,
+  UpdateWorkflowHandoffIntentInput,
+  UpdateWorkflowSelectorDecisionInput,
   UpdateChannelWorkflowInput,
   UpdateChannelWorkflowStepInput,
   UpdateChannelHandoffInput,
+  WorkflowHandoffIntent,
+  WorkflowSelectorDecision,
   UpdateChannelLinkPreviewInput,
 } from "./workspace-types.js";
 import type {
@@ -1007,6 +1015,14 @@ export interface RunStore {
   getChannelHandoff(id: string): ChannelHandoff | undefined;
   listChannelHandoffs(options: ListChannelHandoffsOptions): ChannelHandoff[];
   updateChannelHandoff(id: string, input: UpdateChannelHandoffInput, now: string): ChannelHandoff | undefined;
+  createWorkflowHandoffIntent(input: CreateWorkflowHandoffIntentInput, now: string): WorkflowHandoffIntent;
+  getWorkflowHandoffIntent(id: string): WorkflowHandoffIntent | undefined;
+  listWorkflowHandoffIntents(options?: ListWorkflowHandoffIntentsOptions): WorkflowHandoffIntent[];
+  updateWorkflowHandoffIntent(id: string, input: UpdateWorkflowHandoffIntentInput, now: string): WorkflowHandoffIntent | undefined;
+  createWorkflowSelectorDecision(input: CreateWorkflowSelectorDecisionInput, now: string): WorkflowSelectorDecision;
+  getWorkflowSelectorDecision(id: string): WorkflowSelectorDecision | undefined;
+  listWorkflowSelectorDecisions(options?: ListWorkflowSelectorDecisionsOptions): WorkflowSelectorDecision[];
+  updateWorkflowSelectorDecision(id: string, input: UpdateWorkflowSelectorDecisionInput, now: string): WorkflowSelectorDecision | undefined;
   createChannelContextSummary(input: CreateChannelContextSummaryInput, now: string): ChannelContextSummary;
   getChannelContextSummary(id: string): ChannelContextSummary | undefined;
   listChannelContextSummaries(options: ListChannelContextSummariesOptions): ChannelContextSummary[];

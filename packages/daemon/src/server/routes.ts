@@ -380,9 +380,9 @@ export function parseChannelHandoffRoute(pathname: string): { readonly handoffId
 export function parseChannelWorkflowRoute(
   pathname: string,
 ):
-  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" }
+  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" }
   | { readonly kind: "steps"; readonly workflowId: string }
-  | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" | "retry" }
+  | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" | "retry" | "evidence" }
   | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "workflows") {
@@ -393,6 +393,9 @@ export function parseChannelWorkflowRoute(
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "cancel") {
     return { kind: "workflow", workflowId: segments[1], action: "cancel" };
+  }
+  if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "evidence") {
+    return { kind: "workflow", workflowId: segments[1], action: "evidence" };
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "steps") {
     return { kind: "steps", workflowId: segments[1] };
@@ -405,6 +408,44 @@ export function parseChannelWorkflowRoute(
   }
   if (segments.length === 3 && segments[0] === "workflow-steps" && segments[2] === "retry") {
     return { kind: "workflow-step", workflowStepId: segments[1], action: "retry" };
+  }
+  if (segments.length === 3 && segments[0] === "workflow-steps" && segments[2] === "evidence") {
+    return { kind: "workflow-step", workflowStepId: segments[1], action: "evidence" };
+  }
+  return undefined;
+}
+
+export function parseWorkflowHandoffIntentRoute(
+  pathname: string,
+):
+  | { readonly kind: "collection" }
+  | { readonly kind: "item"; readonly intentId: string; readonly action?: "accept" }
+  | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 1 && segments[0] === "workflow-handoff-intents") {
+    return { kind: "collection" };
+  }
+  if (segments.length === 2 && segments[0] === "workflow-handoff-intents") {
+    return { kind: "item", intentId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "workflow-handoff-intents" && segments[2] === "accept") {
+    return { kind: "item", intentId: segments[1], action: "accept" };
+  }
+  return undefined;
+}
+
+export function parseWorkflowSelectorDecisionRoute(
+  pathname: string,
+):
+  | { readonly kind: "collection" }
+  | { readonly kind: "item"; readonly decisionId: string }
+  | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 1 && segments[0] === "workflow-selector-decisions") {
+    return { kind: "collection" };
+  }
+  if (segments.length === 2 && segments[0] === "workflow-selector-decisions") {
+    return { kind: "item", decisionId: segments[1] };
   }
   return undefined;
 }

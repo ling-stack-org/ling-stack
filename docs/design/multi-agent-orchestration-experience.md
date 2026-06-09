@@ -1,0 +1,475 @@
+# Multi-Agent Orchestration Experience
+
+## Status
+
+Design baseline for the next multi-agent orchestration slices.
+
+P0-P3 implementation status as of 2026-06-09:
+
+- P1 `WorkflowGraph` is additive and compiles into existing `ChannelWorkflow` /
+  `ChannelWorkflowStep` rows.
+- P2 workflow step context/output packets carry graph, teammate, skill, source-ref,
+  blocker, and changed-path fields as evidence artifacts.
+- P3 Web live progress reuses `ConversationWorkCell`, attention progress rows, and the
+  existing right-drawer/runtime surfaces instead of introducing a separate multi-agent
+  transcript UI.
+
+P4-P7 implementation status as of 2026-06-09:
+
+- P4-P7 are split as structured handoff intent, selector coordinator, graph-defined
+  fan-out/fan-in with memory candidates, and workflow evidence detail.
+- Initial backend/Web implementation keeps the existing Codex-inspired conversation
+  surfaces as the compatibility boundary: default feed stays compact, active progress
+  stays visible, and coordination evidence stays expandable.
+- Structured handoff intents, deterministic selector decisions, fan-in summary artifacts,
+  candidate-only memory output, workflow evidence APIs, and right-drawer work-cell
+  drilldown are implemented.
+- Model-assisted selector decisions remain a follow-up behind an explicit policy/feature
+  flag; the current selector records deterministic routing evidence and alternatives.
+- Detailed design:
+  [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md).
+
+This document connects the implemented channel conversation work with the existing
+durable orchestrator. It should guide future implementation without turning the
+Codex-inspired conversation model into a rewrite.
+
+## Summary
+
+Ling Stack is not a multi-agent chatroom. It is:
+
+```text
+channel collaboration space
+-> visible live work progress
+-> Ling-owned multi-agent orchestration
+-> expandable audit evidence
+```
+
+The user should feel that work is happening while an orchestration is running, then see
+the completed work collapse into a compact result summary. Raw agent chatter, tool
+events, selector traces, and handoff evidence remain inspectable, but they are not default
+conversation content.
+
+Product rule:
+
+```text
+Live progress is visible.
+Internal chatter is not default content.
+Evidence remains inspectable.
+Completed work collapses into summaries.
+```
+
+## Existing Boundaries
+
+Current Ling behavior already has the important production shape:
+
+- `Channel` is the user's collaboration space.
+- `Task` and `ChannelWorkflowStep` are executable work units.
+- Each executable step runs one scoped `AiTeammate` through the normal task/run path.
+- Pi remains the default single-run coding-agent kernel.
+- Ling owns workflow state, approval policy, resource leases, state machines, artifacts,
+  memory candidates, and audit evidence.
+- The Web channel surface already borrows Codex-style active mutable cells, compact run
+  summaries, folded evidence, attention/progress popovers, and right-drawer drilldown.
+
+Future multi-agent work must extend this shape. It must not replace it with shared group
+chat, a new runtime, or a broad conversation UI refactor.
+
+## Visibility Model
+
+### 1. Shaping Stage
+
+Before work is clear enough to execute, multiple teammates may be visible in the channel
+when their output changes the user's decision.
+
+Visible specialist participation is appropriate when:
+
+- the user explicitly mentions a teammate,
+- the coordinator needs requirements clarification,
+- product, architecture, design, security, or QA judgment changes scope,
+- specialists disagree and the user must arbitrate,
+- a blocker or risk changes the proposed execution boundary.
+
+Routine agent-to-agent process should not become visible channel speech. The coordinator
+may show a collapsed collaboration record such as:
+
+```text
+Collaboration: Product clarified scope, Architect flagged integration risk,
+QA added acceptance criteria.
+```
+
+### 2. Live Execution Stage
+
+After the user confirms an execution proposal or starts a workflow, the channel should show
+live progress without streaming raw internal chatter into the main feed.
+
+Good default progress rows:
+
+```text
+Architect is defining the implementation boundary.
+Engineer is running the implementation step.
+QA is validating 2 checks.
+Blocked: waiting for approval to write files.
+Done: 3 steps completed, 1 artifact generated.
+```
+
+Bad default content:
+
+```text
+Engineer: I am about to read files.
+QA: OK, I will wait.
+Engineer: I finished reading.
+QA: I will start checking now.
+```
+
+The live surface should reuse the existing Codex-inspired conversation model:
+
+- one active mutable run/work summary row,
+- the channel progress or attention popover for compact operational state,
+- the right drawer for detail,
+- folded evidence for runtime, memory, tools, files, lineage, approvals, and raw events.
+
+### 3. Terminal Stage
+
+When a workflow finishes, fails, or blocks, the live cell becomes a stable summary row.
+
+The default feed should show:
+
+- terminal outcome,
+- completed/blocked step count,
+- active assignee or last responsible teammate,
+- artifacts or changed files when relevant,
+- next action when one exists.
+
+The expanded evidence should show:
+
+- selector decisions,
+- handoff intents and accepted handoffs,
+- step prompts and output packets,
+- tool calls and approvals,
+- linked runs and artifacts,
+- raw event detail.
+
+## Borrowed Designs
+
+Ling should borrow patterns from Microsoft Agent Framework and historical AutoGen only as
+design references. It should not import those runtimes.
+
+### Workflow Graph
+
+The current durable step engine already supports ordered steps, dependency metadata,
+branch groups, join groups, dependency modes, gates, retry, and serial orchestration.
+Future graph work should make those concepts explicit as a versioned workflow graph:
+
+```ts
+interface WorkflowGraph {
+  readonly schemaVersion: 1;
+  readonly entryNodeId: string;
+  readonly nodes: readonly WorkflowGraphNode[];
+  readonly edges: readonly WorkflowGraphEdge[];
+  readonly termination: WorkflowTerminationPolicy;
+}
+
+interface WorkflowGraphNode {
+  readonly id: string;
+  readonly kind: "step" | "selector" | "handoff" | "join" | "wait";
+  readonly teammateId?: string;
+  readonly skillId?: string;
+  readonly prompt?: string;
+  readonly policy?: WorkflowStepPolicy;
+}
+
+interface WorkflowGraphEdge {
+  readonly fromNodeId: string;
+  readonly toNodeId: string;
+  readonly condition?: WorkflowEdgeCondition;
+}
+```
+
+This graph should compile into durable `ChannelWorkflowStep` rows. The graph is a planning
+and scheduling shape, not a model-owned mutable object.
+
+### Checkpoint And Resume
+
+Each graph node should have a durable checkpoint boundary:
+
+- queued,
+- running,
+- waiting for input,
+- waiting for approval,
+- blocked,
+- succeeded,
+- failed,
+- skipped,
+- cancelled.
+
+Daemon restart, model interruption, approval wait, user pause, and continuation must resume
+from durable state. Do not inject a new hidden prompt into an already-running Pi session.
+
+### Structured Handoff Intent
+
+An agent may propose a handoff, but a handoff is not execution authority.
+
+```ts
+interface HandoffIntent {
+  readonly toTeammateId: string;
+  readonly reason: string;
+  readonly requiredInput: string;
+  readonly expectedOutput: string;
+  readonly riskSummary?: string;
+  readonly sourceStepId?: string;
+}
+```
+
+Ling validates teammate availability, provider readiness, skill binding, approval policy,
+and resource leases before creating the next durable handoff or workflow step.
+
+### Selector Coordinator
+
+A selector coordinator may choose the next teammate or graph branch from:
+
+- current objective,
+- channel brief and decisions,
+- workflow graph state,
+- available teammate registry,
+- step output packets,
+- blockers and approvals,
+- user mentions or explicit commands.
+
+The selector result must be structured and auditable:
+
+```ts
+interface SelectorDecision {
+  readonly selectedTeammateId: string;
+  readonly selectedSkillId?: string;
+  readonly reason: string;
+  readonly alternativesConsidered: readonly string[];
+  readonly confidence: "low" | "medium" | "high";
+  readonly requiresUserConfirmation: boolean;
+}
+```
+
+The selector should never silently grant tools, change approval policy, rewrite the graph,
+or start side effects.
+
+### Output And Context Packets
+
+Workflow steps should pass structured packets, not hidden free-form group-chat state.
+
+```ts
+interface StepOutputPacket {
+  readonly workflowStepId: string;
+  readonly runId?: string;
+  readonly status: "succeeded" | "failed" | "blocked" | "cancelled";
+  readonly resultSummary: string;
+  readonly artifactIds: readonly string[];
+  readonly changedPaths: readonly string[];
+  readonly decisions: readonly string[];
+  readonly blockers: readonly string[];
+}
+
+interface StepContextPacket {
+  readonly objective: string;
+  readonly channelBriefId?: string;
+  readonly dependencyOutputs: readonly StepOutputPacket[];
+  readonly sourceRefs: readonly string[];
+}
+```
+
+Fan-in and memory-candidate flows should consume these packets. They should not silently
+rewrite active memory, teammate persona, approval policy, or the workflow graph.
+
+### Termination Policy
+
+Every workflow template or graph must define termination behavior:
+
+- success criteria,
+- maximum turns or maximum orchestrator ticks,
+- failed-step behavior,
+- blocked-step behavior,
+- approval-denied behavior,
+- optional branch behavior,
+- user-input wait behavior.
+
+Multi-agent workflows without termination policy are not shippable.
+
+### Teammate Registry Schema
+
+Selectors and handoffs need more than display names. Each teammate should expose a
+registry-facing capability profile:
+
+```ts
+interface TeammateCapabilityProfile {
+  readonly teammateId: string;
+  readonly roleKey: string;
+  readonly capabilitySummary: string;
+  readonly workflowPhases: readonly string[];
+  readonly canAcceptHandoffsFrom: readonly string[];
+  readonly canHandoffTo: readonly string[];
+  readonly forbiddenScopes: readonly string[];
+  readonly requiredTools: readonly string[];
+  readonly providerRequirements: readonly string[];
+  readonly approvalProfileId: string;
+}
+```
+
+This profile is metadata for routing and explanation. It does not grant permission by
+itself.
+
+### Fan-Out And Fan-In
+
+Parallel reviewers, researchers, QA steps, or design checks can run concurrently only when:
+
+- the workflow graph allows it,
+- channel runtime policy allows it,
+- resource leases and runner semaphores allow it,
+- side-effectful actions remain approval-gated,
+- fan-in reads durable output packets from terminal dependency steps.
+
+The fan-in step may summarize branch outputs, but the raw branch evidence remains
+expandable.
+
+## Experience Surfaces
+
+### Main Feed
+
+Allowed by default:
+
+- user messages,
+- coordinator or mentioned-teammate replies,
+- execution proposals,
+- active mutable workflow/run progress rows,
+- terminal workflow/run summaries,
+- blocked and approval-needed summaries.
+
+Not allowed by default:
+
+- raw selector prompts,
+- raw handoff messages,
+- raw run event timelines,
+- tool-call logs,
+- repeated agent process chatter,
+- JSON payloads or raw ids.
+
+### Progress Popover
+
+The progress section should be the glanceable operational surface for active multi-agent
+work. It can show:
+
+- active workflow name,
+- current step or branch group,
+- current teammate,
+- completed step count,
+- blocked or waiting state,
+- top pending approval.
+
+It should not become a second workflow detail drawer.
+
+### Right Drawer And Evidence
+
+The right drawer remains the durable detail surface. It should expose:
+
+- workflow graph/step list,
+- active step detail,
+- output packet,
+- selector and handoff evidence,
+- linked runs and artifacts,
+- approvals,
+- raw runtime evidence when opened.
+
+## Implementation Slices
+
+### P0: Documentation And Existing Contract Alignment
+
+- Keep this document linked from the channel and Codex-style conversation design baselines.
+- Treat existing Codex-style conversation components as the UI compatibility boundary.
+- Document that active progress is visible during execution and folds only after terminal
+  state.
+
+### P1: Workflow Graph Schema
+
+- Add a versioned graph schema that compiles into existing durable workflow steps.
+- Keep deterministic compilation.
+- Keep model-generated graph rewrites out of scope.
+- Add graph termination and failure policy.
+- Implementation plan:
+  [P1 Workflow Graph](multi-agent-orchestration-p1-workflow-graph-implementation-plan.md).
+
+### P2: Output And Context Packet Standardization
+
+- Make step output and dependency context packet shapes explicit across backend and UI.
+- Ensure fan-in and memory-candidate flows read packets instead of free-form hidden
+  transcript summaries.
+- Expose packet evidence through the right drawer.
+- Implementation plan:
+  [P2 Packet Standardization](multi-agent-orchestration-p2-packets-implementation-plan.md).
+
+### P3: Live Multi-Agent Progress Presentation
+
+- Extend existing active run/work summary presentation to multi-step workflows.
+- Show current teammate, current phase, completed step count, blockers, and artifacts.
+- Reuse the existing conversation row, attention/progress popover, and right drawer
+  patterns.
+- Do not rebuild the conversation feed or replace the Codex-inspired component model.
+- Implementation plan:
+  [P3 Live Progress](multi-agent-orchestration-p3-live-progress-implementation-plan.md).
+
+### P4: Structured Handoff Intent
+
+- Add an agent output contract for handoff proposals.
+- Validate handoff intent before creating durable handoff/workflow-step records.
+- Show accepted handoffs as live progress or collapsed evidence depending on execution
+  state.
+- Implementation detail:
+  [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md#p4-structured-handoff-intent).
+
+### P5: Selector Coordinator
+
+- Add a structured selector decision contract.
+- Persist selector decisions for audit.
+- Show only user-relevant selector outcomes in live progress.
+- Keep raw selector reasoning inside evidence.
+- Implementation detail:
+  [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md#p5-selector-coordinator).
+
+### P6: Fan-Out And Fan-In
+
+- Allow graph-defined parallel branches only within runtime policy and lease constraints.
+- Add join/fan-in summaries backed by dependency output packets.
+- Keep branch evidence expandable.
+- Fan-in may create reviewable memory candidates, but must not activate memory or inject
+  unreviewed candidates into later steps.
+- Implementation detail:
+  [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md#p6-fan-out-fan-in-and-memory-candidates).
+
+### P7: Timeline And Audit Polish
+
+- Make terminal workflow summaries expandable into selector, handoff, packet, run, approval,
+  artifact, and raw-event evidence.
+- Keep summaries concise in the main feed.
+- Add browser checks for active progress visibility and terminal folding.
+- Implementation detail:
+  [P4-P7 Detailed Design](multi-agent-orchestration-p4-p7-detailed-design.md#p7-workflow-evidence-detail).
+
+## Non-Goals
+
+- No AutoGen runtime.
+- No Microsoft Agent Framework runtime.
+- No shared long-context group chat as the execution model.
+- No hidden model-generated workflow graph rewrite.
+- No hidden mid-run prompt injection.
+- No bypass of approval policy, resource leases, state machines, or runner registry.
+- No conversation feed refactor solely to support orchestration.
+- No default display of raw agent-to-agent chatter.
+
+## Validation
+
+Documentation-only validation:
+
+```bash
+git diff --check
+```
+
+Implementation slices should add targeted backend tests for graph compilation, handoff
+intent validation, selector decision persistence, output packet fan-in, and restart
+recovery. UI slices should add browser checks that active progress remains visible while
+running and terminal work folds into compact summaries with expandable evidence.

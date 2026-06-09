@@ -374,6 +374,73 @@ test("channel handoff workflows start steps, create tasks, and expose blockers",
   }
 });
 
+test("workflow handoff intents validate, accept, and stay visible as workflow evidence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-handoff-intents-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const now = new Date().toISOString();
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Handoff intent workflow",
+      objective: "Validate workflow handoff intent evidence.",
+      status: "ready",
+      createdBy: "local-user",
+    }, now);
+    const sourceStep = createParallelWorkflowStep(store, workflow.id, "Source Step", {
+      branchGroupId: "source",
+    });
+
+    const created = await postJson(`${daemon.url}/workflow-handoff-intents?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      workflowId: workflow.id,
+      sourceWorkflowStepId: sourceStep.id,
+      fromParticipantId: "teammate_builtin_architect",
+      fromParticipantLabel: "Architect",
+      toParticipantId: "teammate_builtin_engineer",
+      toParticipantLabel: "Engineer",
+      reason: "Engineer should implement the validated boundary.",
+      requiredInput: "Design boundary",
+      expectedOutput: "Patch",
+      riskSummary: "No permission is granted by this packet.",
+      sourceRefs: [
+        { type: "workflow", id: workflow.id, label: workflow.title },
+        { type: "workflow_step", id: sourceStep.id, label: sourceStep.title },
+      ],
+      createdBy: "orchestrator",
+    });
+    assert.equal(created.handoffIntent.status, "validated");
+    assert.equal(created.handoffIntent.validation.targetTeammateExists, true);
+    assert.equal(created.handoffIntent.validation.targetTeammateActive, true);
+
+    const stepAfterIntent = store.getChannelWorkflowStep(sourceStep.id);
+    assert.ok(stepAfterIntent.metadata.handoffIntentIds.includes(created.handoffIntent.id));
+
+    const accepted = await postJson(`${daemon.url}/workflow-handoff-intents/${encodeURIComponent(created.handoffIntent.id)}/accept?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(accepted.intent.status, "accepted");
+    assert.ok(accepted.intent.channelHandoffId);
+
+    const listed = await getJson(`${daemon.url}/workflow-handoff-intents?cwd=${encodeURIComponent(cwd)}&workflowId=${encodeURIComponent(workflow.id)}`);
+    assert.deepEqual(listed.handoffIntents.map((intent) => intent.id), [created.handoffIntent.id]);
+
+    const evidence = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/evidence?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(evidence.handoffIntents.some((intent) => intent.id === created.handoffIntent.id && intent.status === "accepted"), true);
+    assert.equal(evidence.handoffs.some((handoff) => handoff.id === accepted.intent.channelHandoffId && handoff.status === "accepted"), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("autoplan-lite workflow compiles durable steps and orchestrates them through the runner", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-orchestrator-"));
   const runner = new RecordingRunner();
@@ -502,6 +569,114 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
       "QA",
       "Ship",
     ]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow graph compiles into durable steps and emits standardized packets", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-graph-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Graph workflow");
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+
+    const compiled = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+      workflowGraph: {
+        schemaVersion: 1,
+        id: "graph_test",
+        name: "Graph Test",
+        summary: "Graph compile test",
+        entryNodeId: "plan",
+        nodes: [
+          {
+            id: "plan",
+            kind: "step",
+            name: "Plan",
+            prompt: "Draft the implementation boundary.",
+            teammateTemplateId: "architect",
+            skillId: "spec",
+            autoStart: true,
+          },
+          {
+            id: "review",
+            kind: "step",
+            name: "Review",
+            prompt: "Review the implementation boundary.",
+            teammateTemplateId: "engineer",
+            skillId: "review",
+            autoStart: true,
+          },
+        ],
+        edges: [
+          {
+            id: "plan_to_review",
+            fromNodeId: "plan",
+            toNodeId: "review",
+            condition: { kind: "all_succeeded" },
+          },
+        ],
+        termination: {
+          success: "all_required_succeeded",
+          onFailedRequiredNode: "fail_workflow",
+          onApprovalDenied: "block_for_user",
+        },
+        maxParallelSteps: 1,
+      },
+      objective: "Ship graph compile test.",
+      providerPresetId: provider.id,
+      runnerId: "pi",
+      createdBy: "local-user",
+    });
+    assert.equal(compiled.workflow.status, "ready");
+    assert.equal(compiled.workflow.metadata.workflowGraphId, "graph_test");
+    assert.equal(compiled.workflow.metadata.workflowGraphSchemaVersion, 1);
+    assert.equal(compiled.workflow.metadata.termination.onFailedRequiredNode, "fail_workflow");
+    assert.equal(compiled.workflowSteps.length, 2);
+    assert.deepEqual(compiled.workflowSteps.map((step) => step.metadata.graphNodeId), ["plan", "review"]);
+    assert.equal(compiled.workflowSteps[1].metadata.dependsOnStepIds.length, 1);
+    assert.equal(compiled.workflowSteps[1].metadata.dependsOnStepIds[0], compiled.workflowSteps[0].id);
+
+    const firstTick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(firstTick.status, "started");
+    await waitForCondition(() => runner.runs.length === 2, "workflow graph runner sequence");
+
+    const finalWorkflow = await getJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(finalWorkflow.workflow.status, "succeeded");
+    const finalSteps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
+    const planStep = finalSteps.workflowSteps.find((step) => step.metadata.graphNodeId === "plan");
+    const reviewStep = finalSteps.workflowSteps.find((step) => step.metadata.graphNodeId === "review");
+    assert.ok(planStep);
+    assert.ok(reviewStep);
+    assert.ok(planStep.metadata.contextArtifactId);
+    assert.ok(planStep.metadata.outputArtifactId);
+    assert.ok(reviewStep.metadata.contextArtifactId);
+
+    const planContext = await getArtifactJson(daemon.url, cwd, planStep.metadata.contextArtifactId);
+    assert.equal(planContext.graphId, "graph_test");
+    assert.equal(planContext.graphNodeId, "plan");
+    assert.equal(planContext.teammateId, planStep.toParticipantId);
+    assert.equal(planContext.skillId, "spec");
+    assert.equal(planContext.sourceRefs.some((ref) => ref.type === "workflow" && ref.id === compiled.workflow.id), true);
+
+    const planOutput = await getArtifactJson(daemon.url, cwd, planStep.metadata.outputArtifactId);
+    assert.equal(planOutput.graphId, "graph_test");
+    assert.equal(planOutput.graphNodeId, "plan");
+    assert.equal(planOutput.teammateId, planStep.toParticipantId);
+    assert.equal(planOutput.skillId, "spec");
+    assert.ok(Array.isArray(planOutput.blockers));
+    assert.ok(Array.isArray(planOutput.changedPaths));
+    assert.equal(planOutput.sourceRefs.some((ref) => ref.type === "run" && ref.id === planStep.runId), true);
+
+    const reviewContext = await getArtifactJson(daemon.url, cwd, reviewStep.metadata.contextArtifactId);
+    assert.equal(reviewContext.dependencies.length, 1);
+    assert.equal(reviewContext.dependencies[0].workflowStepId, planStep.id);
+    assert.equal(reviewContext.dependencies[0].outputArtifactId, planStep.metadata.outputArtifactId);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1263,6 +1438,105 @@ test("workflow dependencyMode any_succeeded can start a fan-in after mixed termi
     assert.equal(tick.startedSteps.length, 1);
     assert.equal(runner.runs.length, 1);
     assert.equal(runner.runs[0].task.title, "Fan-in");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow fan-in creates summary artifact, memory candidate, selector decision, and evidence drilldown", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-fanin-evidence-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Fan-in evidence workflow",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      allowedTools: ["read"],
+      runtimePolicy: {
+        maxConcurrentRuns: 2,
+        executionMode: "parallel",
+        writeLockScope: "boundPath",
+        allowReadOnlyParallel: true,
+        queueOnConflict: true,
+      },
+    })).channel;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const now = new Date().toISOString();
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Fan-in evidence",
+      objective: "Create auditable fan-in evidence.",
+      status: "ready",
+      createdBy: "local-user",
+    }, now);
+    const succeeded = createParallelWorkflowStep(store, workflow.id, "Succeeded Evidence Branch", {
+      branchGroupId: "branch-a",
+      providerPresetId: provider.id,
+      status: "succeeded",
+    });
+    const failed = createParallelWorkflowStep(store, workflow.id, "Failed Evidence Branch", {
+      branchGroupId: "branch-b",
+      providerPresetId: provider.id,
+      status: "failed",
+    });
+    const fanIn = createParallelWorkflowStep(store, workflow.id, "Fan-in Evidence", {
+      branchGroupId: "join",
+      joinGroupId: "join-evidence",
+      providerPresetId: provider.id,
+      dependsOnStepIds: [succeeded.id, failed.id],
+      dependencyMode: "any_succeeded",
+      maxParallelSiblings: 2,
+      fanInPolicy: {
+        mode: "memory_candidates",
+        requireAllBranchesTerminal: true,
+        includeFailedBranches: true,
+        createSummaryArtifact: true,
+        createMemoryCandidates: true,
+        memoryCandidateScope: "channel",
+        maxInputArtifacts: 8,
+      },
+    });
+
+    const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(tick.status, "started");
+    assert.equal(tick.workflowStep.id, fanIn.id);
+    const completedFanIn = await waitForWorkflowStepStatus(daemon.url, cwd, workflow.id, fanIn.id, "succeeded");
+    assert.ok(completedFanIn.metadata.selectorDecisionIds.length > 0);
+    assert.ok(completedFanIn.metadata.outputArtifactId);
+    assert.ok(completedFanIn.metadata.fanInSummaryArtifactId);
+    assert.equal(completedFanIn.metadata.memoryCandidateIds.length, 1);
+
+    const outputPacket = await getArtifactJson(daemon.url, cwd, completedFanIn.metadata.outputArtifactId);
+    assert.equal(outputPacket.sourceRefs.some((ref) => ref.type === "workflow_selector_decision" && ref.id === completedFanIn.metadata.selectorDecisionIds[0]), true);
+
+    const workflowEvidence = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/evidence?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(workflowEvidence.selectorDecisions.some((decision) => decision.id === completedFanIn.metadata.selectorDecisionIds[0] && decision.status === "accepted"), true);
+    assert.equal(workflowEvidence.memoryCandidates.some((candidate) =>
+      candidate.memory.id === completedFanIn.metadata.memoryCandidateIds[0] &&
+      candidate.memory.reviewState === "candidate" &&
+      candidate.memory.verifyBeforeUse === true &&
+      candidate.sourceWorkflowStepIds.includes(completedFanIn.id)
+    ), true);
+
+    const stepEvidence = await getJson(`${daemon.url}/workflow-steps/${encodeURIComponent(completedFanIn.id)}/evidence?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(stepEvidence.workflowStep.step.id, completedFanIn.id);
+    assert.equal(stepEvidence.selectorDecisions.length, 1);
+    assert.equal(stepEvidence.memoryCandidates.length, 1);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -2101,6 +2375,7 @@ function createParallelWorkflowStep(store, workflowId, title, metadata = {}) {
         joinGroupId: metadata.joinGroupId,
         dependsOnStepIds: metadata.dependsOnStepIds,
         dependencyMode: metadata.dependencyMode,
+        fanInPolicy: metadata.fanInPolicy,
         maxParallelSiblings: metadata.maxParallelSiblings,
         providerPresetId: metadata.providerPresetId,
       },

@@ -6,12 +6,15 @@ import {
   type ChannelWorkflowStatus,
   type ChannelWorkflowStep,
   type ChannelWorkflowStepStatus,
+  type MemoryObject,
+  type RunArtifact,
   type RunStore,
   type RunTool,
   type SkillApprovalProfile,
   type Task,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
+import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
@@ -21,6 +24,10 @@ import {
   isWorkflowTemplateCompileRequest,
   parseWorkflowTemplateCompileRequest,
 } from "./workflow-templates.js";
+import {
+  readWorkflowStepContextPacketArtifact,
+  readWorkflowStepOutputPacketArtifact,
+} from "./workflow-step-packets.js";
 import {
   parseChannelWorkflowFromHandoffRequest,
   parseChannelWorkflowRequest,
@@ -34,6 +41,18 @@ import {
 } from "./schemas.js";
 
 const WORKFLOW_STEP_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
+
+interface WorkflowEvidenceDiagnostic {
+  readonly kind:
+    | "missing_context_packet"
+    | "missing_output_packet"
+    | "missing_run"
+    | "bad_packet"
+    | "blocked"
+    | "failed";
+  readonly severity: "info" | "warning" | "critical";
+  readonly message: string;
+}
 
 export interface WorkflowStepRunRequest {
   readonly workspaceCwd: string;
@@ -311,6 +330,82 @@ export async function handleChannelWorkflowStepItem(
     writeJson(response, 200, { workflowStep: workflowStep ?? store.getChannelWorkflowStep(workflowStepId) ?? existing });
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+export async function handleChannelWorkflowEvidence(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  workflowId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow evidence` });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const evidence = buildWorkflowEvidence(store, workflowId);
+    writeJson(response, 200, evidence);
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleChannelWorkflowStepEvidence(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  workflowStepId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow step evidence` });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const step = store.getChannelWorkflowStep(workflowStepId);
+    if (!step) {
+      throw new HttpError(404, "workflow_step_not_found", `Channel workflow step not found: ${workflowStepId}`);
+    }
+    const evidence = buildWorkflowEvidence(store, step.workflowId);
+    const workflowStep = evidence.steps.find((item) => item.step.id === workflowStepId);
+    if (!workflowStep) {
+      throw new HttpError(404, "workflow_step_not_found", `Channel workflow step not found: ${workflowStepId}`);
+    }
+    writeJson(response, 200, {
+      workflow: evidence.workflow,
+      workflowStep,
+      selectorDecisions: evidence.selectorDecisions.filter((decision) =>
+        decision.sourceWorkflowStepId === workflowStepId || decision.selectedWorkflowStepId === workflowStepId,
+      ),
+      handoffIntents: evidence.handoffIntents.filter((intent) => intent.sourceWorkflowStepId === workflowStepId),
+      handoffs: evidence.handoffs,
+      approvals: evidence.approvals.filter((approval) => approval.workflowStepId === workflowStepId),
+      memoryCandidates: evidence.memoryCandidates.filter((candidate) => candidate.sourceWorkflowStepIds.includes(workflowStepId)),
+    });
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -724,6 +819,142 @@ export function completeWorkflowIfStepsFinished(store: RunStore, workflowId: str
   });
 }
 
+export function buildWorkflowEvidence(store: RunStore, workflowId: string): {
+  readonly workflow: ChannelWorkflow;
+  readonly steps: readonly {
+    readonly step: ChannelWorkflowStep;
+    readonly contextPacket?: ReturnType<typeof readWorkflowStepContextPacketArtifact>;
+    readonly outputPacket?: ReturnType<typeof readWorkflowStepOutputPacketArtifact>;
+    readonly linkedRun?: ReturnType<RunStore["getRun"]>;
+    readonly packetArtifacts: readonly RunArtifact[];
+    readonly linkedArtifacts: readonly RunArtifact[];
+    readonly diagnostics: readonly WorkflowEvidenceDiagnostic[];
+  }[];
+  readonly selectorDecisions: ReturnType<RunStore["listWorkflowSelectorDecisions"]>;
+  readonly handoffIntents: ReturnType<RunStore["listWorkflowHandoffIntents"]>;
+  readonly handoffs: readonly ChannelHandoff[];
+  readonly approvals: ReturnType<RunStore["listApprovalRequests"]>;
+  readonly artifacts: readonly RunArtifact[];
+  readonly memoryCandidates: readonly {
+    readonly memory: MemoryObject;
+    readonly sourceWorkflowId: string;
+    readonly sourceWorkflowStepIds: readonly string[];
+  }[];
+} {
+  const workflow = store.getChannelWorkflow(workflowId);
+  if (!workflow) {
+    throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${workflowId}`);
+  }
+  const steps = store.listChannelWorkflowSteps({ workflowId, limit: 500 });
+  const evidenceSteps = steps.map((step) => buildWorkflowEvidenceStep(store, step));
+  const selectorDecisions = store.listWorkflowSelectorDecisions({ workflowId, limit: 500 });
+  const handoffIntents = store.listWorkflowHandoffIntents({ workflowId, limit: 500 });
+  const handoffIds = uniqueStrings([
+    workflow.sourceHandoffId,
+    ...steps.map((step) => step.sourceHandoffId),
+    ...handoffIntents.map((intent) => intent.channelHandoffId),
+  ]);
+  const handoffs = handoffIds
+    .map((handoffId) => handoffId ? store.getChannelHandoff(handoffId) : undefined)
+    .filter((handoff): handoff is ChannelHandoff => Boolean(handoff));
+  const approvals = steps.flatMap((step) => store.listApprovalRequests({ workflowStepId: step.id, limit: 500 }));
+  const artifacts = uniqueArtifacts(evidenceSteps.flatMap((step) => [...step.packetArtifacts, ...step.linkedArtifacts]));
+  return {
+    workflow,
+    steps: evidenceSteps,
+    selectorDecisions,
+    handoffIntents,
+    handoffs,
+    approvals,
+    artifacts,
+    memoryCandidates: collectWorkflowMemoryCandidates(store, workflow, steps, artifacts),
+  };
+}
+
+function buildWorkflowEvidenceStep(store: RunStore, step: ChannelWorkflowStep): {
+  readonly step: ChannelWorkflowStep;
+  readonly contextPacket?: ReturnType<typeof readWorkflowStepContextPacketArtifact>;
+  readonly outputPacket?: ReturnType<typeof readWorkflowStepOutputPacketArtifact>;
+  readonly linkedRun?: ReturnType<RunStore["getRun"]>;
+  readonly packetArtifacts: readonly RunArtifact[];
+  readonly linkedArtifacts: readonly RunArtifact[];
+  readonly diagnostics: readonly WorkflowEvidenceDiagnostic[];
+} {
+  const diagnostics: WorkflowEvidenceDiagnostic[] = [];
+  const contextArtifact = step.metadata?.contextArtifactId ? store.getArtifact(step.metadata.contextArtifactId) : undefined;
+  const outputArtifact = step.metadata?.outputArtifactId ? store.getArtifact(step.metadata.outputArtifactId) : undefined;
+  const contextPacket = contextArtifact
+    ? readWorkflowStepContextPacketArtifact({ store, artifactId: contextArtifact.id })
+    : undefined;
+  const outputPacket = outputArtifact
+    ? readWorkflowStepOutputPacketArtifact({ store, artifactId: outputArtifact.id })
+    : undefined;
+  if (step.metadata?.contextArtifactId && !contextPacket) {
+    diagnostics.push({ kind: "bad_packet", severity: "warning", message: "Context packet evidence could not be read." });
+  } else if ((step.status === "running" || step.status === "succeeded") && !step.metadata?.contextArtifactId) {
+    diagnostics.push({ kind: "missing_context_packet", severity: "info", message: "No context packet has been captured for this step." });
+  }
+  if (step.metadata?.outputArtifactId && !outputPacket) {
+    diagnostics.push({ kind: "bad_packet", severity: "warning", message: "Output packet evidence could not be read." });
+  } else if ((step.status === "succeeded" || step.status === "failed" || step.status === "blocked") && !step.metadata?.outputArtifactId) {
+    diagnostics.push({ kind: "missing_output_packet", severity: "info", message: "No output packet has been captured for this terminal step." });
+  }
+  const linkedRun = step.runId ? store.getRun(step.runId) : undefined;
+  if (step.runId && !linkedRun) {
+    diagnostics.push({ kind: "missing_run", severity: "warning", message: "Linked run was not found." });
+  }
+  if (step.status === "blocked") {
+    diagnostics.push({ kind: "blocked", severity: "warning", message: step.blocker ?? "Workflow step is blocked." });
+  }
+  if (step.status === "failed") {
+    diagnostics.push({ kind: "failed", severity: "critical", message: step.blocker ?? step.resultSummary ?? "Workflow step failed." });
+  }
+  return {
+    step,
+    contextPacket,
+    outputPacket,
+    linkedRun,
+    packetArtifacts: [contextArtifact, outputArtifact].filter((artifact): artifact is RunArtifact => Boolean(artifact)),
+    linkedArtifacts: linkedRun ? store.listArtifacts(linkedRun.id) : [],
+    diagnostics,
+  };
+}
+
+function collectWorkflowMemoryCandidates(
+  store: RunStore,
+  workflow: ChannelWorkflow,
+  steps: readonly ChannelWorkflowStep[],
+  artifacts: readonly RunArtifact[],
+): readonly { readonly memory: MemoryObject; readonly sourceWorkflowId: string; readonly sourceWorkflowStepIds: readonly string[] }[] {
+  const sourceIds = new Set<string>([
+    workflow.id,
+    ...steps.map((step) => step.id),
+    ...steps.map((step) => step.runId).filter((runId): runId is string => Boolean(runId)),
+    ...artifacts.map((artifact) => artifact.id),
+  ]);
+  return store.listMemoryObjects({ workspaceId: workflow.workspaceId, reviewState: "candidate", limit: 500 })
+    .filter((memory) => memory.sourceRefs.some((ref) => sourceIds.has(ref.id)))
+    .map((memory) => ({
+      memory,
+      sourceWorkflowId: workflow.id,
+      sourceWorkflowStepIds: steps
+        .filter((step) => memory.sourceRefs.some((ref) => buildWorkflowStepEvidenceSourceIds(store, step).has(ref.id)))
+        .map((step) => step.id),
+    }));
+}
+
+function buildWorkflowStepEvidenceSourceIds(store: RunStore, step: ChannelWorkflowStep): ReadonlySet<string> {
+  return new Set([
+    step.id,
+    step.runId,
+    step.metadata?.contextArtifactId,
+    step.metadata?.outputArtifactId,
+    step.metadata?.fanInSummaryArtifactId,
+    ...(step.metadata?.outputArtifactIds ?? []),
+    ...(step.runId ? store.listArtifacts(step.runId).map((artifact) => artifact.id) : []),
+  ].filter((id): id is string => Boolean(id)));
+}
+
 function formatWorkflowStepTaskPrompt(
   prompt: string,
   workflow: ChannelWorkflow,
@@ -797,8 +1028,16 @@ function formatApprovalProfileSummary(profile: SkillApprovalProfile): string {
   ].filter((item): item is string => Boolean(item)).join("; ");
 }
 
-function uniqueStrings(values: readonly string[]): readonly string[] {
-  return [...new Set(values)];
+function uniqueStrings(values: readonly (string | undefined)[]): readonly string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value && value.trim().length > 0)))];
+}
+
+function uniqueArtifacts(values: readonly RunArtifact[]): readonly RunArtifact[] {
+  const byId = new Map<string, RunArtifact>();
+  for (const artifact of values) {
+    byId.set(artifact.id, artifact);
+  }
+  return [...byId.values()];
 }
 
 function transitionWorkflowToStatus(
