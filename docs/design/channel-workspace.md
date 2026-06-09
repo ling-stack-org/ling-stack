@@ -1794,6 +1794,11 @@ Current MVP implementation status:
   counts and top actionable items third. It borrows Codex's glanceable floating status
   model without copying its single-agent repo assumptions, dark panel styling, or raw
   execution detail surface,
+- the multi-agent orchestration experience now keeps v1.21/v1.25 as the compatibility
+  boundary: shaping-stage specialist input can be visible in chat, live execution appears
+  as mutable progress rows and popover state, terminal work folds into compact summaries,
+  and selector/handoff/runtime evidence remains expandable instead of becoming a separate
+  multi-agent transcript UI,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.
@@ -2226,6 +2231,23 @@ Current MVP implementation status:
   exists.
 - [x] Add targeted browser checks for desktop, mobile, drawer-open, no-current-work, and
   Chinese-label popover states.
+
+### Phase 34: Multi-Agent Orchestration Experience
+
+- [x] Define the compatibility and experience boundary in
+  `docs/design/multi-agent-orchestration-experience.md`.
+- [x] Split the first implementation-ready plans into
+  `docs/design/multi-agent-orchestration-p1-workflow-graph-implementation-plan.md`,
+  `docs/design/multi-agent-orchestration-p2-packets-implementation-plan.md`, and
+  `docs/design/multi-agent-orchestration-p3-live-progress-implementation-plan.md`.
+- [ ] Keep existing Codex-inspired conversation components as the UI baseline for live
+  orchestration progress.
+- [ ] Extend progress rows and terminal summaries for multi-step workflows without
+  rebuilding the channel feed.
+- [ ] Add expandable evidence for selector decisions, structured handoff intents, step
+  output packets, approvals, artifacts, and raw runtime events.
+- [ ] Add targeted browser checks for visible live progress, terminal folding, and
+  evidence expansion.
 
 ## Validation Plan
 

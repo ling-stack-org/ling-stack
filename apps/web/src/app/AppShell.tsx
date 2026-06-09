@@ -364,6 +364,7 @@ export function AppShell(): JSX.Element {
     previewSelectedAutomation,
     runSelectedAutomation,
     archiveSelectedAutomation,
+    setSelectedStatus,
     setSelectedSchedule,
     startScheduler: startAutomationSchedulerAction,
     stopScheduler: stopAutomationSchedulerAction,
@@ -2826,6 +2827,7 @@ export function AppShell(): JSX.Element {
                 onPreview={() => void previewSelectedAutomation()}
                 onRun={() => void runSelectedAutomation()}
                 onArchive={() => void archiveSelectedAutomation()}
+                onSetStatus={(status) => void setSelectedStatus(status)}
                 onSetSchedule={(trigger) => void setSelectedSchedule(trigger)}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 onOpenThread={(threadId) => {

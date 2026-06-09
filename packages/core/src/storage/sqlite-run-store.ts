@@ -48,6 +48,8 @@ import {
   createChannelMessageId,
   createChannelWorkflowId,
   createChannelWorkflowStepId,
+  createWorkflowHandoffIntentId,
+  createWorkflowSelectorDecisionId,
   createRetentionTombstoneId,
   createTeammateDirectMessageId,
   createTeammateDirectReplyInterventionId,
@@ -84,6 +86,7 @@ import {
   type ChannelStatus,
   type ChannelUpdateInput,
   type ChannelWorkflow,
+  type ChannelWorkflowMetadata,
   type ChannelWorkflowStep,
   type ChannelWorkflowStepMetadata,
   type ChannelWorkflowStepStatus,
@@ -99,6 +102,8 @@ import {
   type CreateChannelMessageInput,
   type CreateChannelWorkflowInput,
   type CreateChannelWorkflowStepInput,
+  type CreateWorkflowHandoffIntentInput,
+  type CreateWorkflowSelectorDecisionInput,
   type CreateTeammateDirectMessageInput,
   type CreateTeammateDirectReplyInterventionInput,
   type CreateTeammatePrivateAttachmentInput,
@@ -116,6 +121,8 @@ import {
   type ListChannelMessagesOptions,
   type ListChannelWorkflowsOptions,
   type ListChannelWorkflowStepsOptions,
+  type ListWorkflowHandoffIntentsOptions,
+  type ListWorkflowSelectorDecisionsOptions,
   type ListTeammateDirectMessagesOptions,
   type ListTeammateDirectReplyInterventionsOptions,
   type ListTeammatePrivateAttachmentsOptions,
@@ -149,6 +156,17 @@ import {
   type UpdateTeammateDirectReplyInterventionStatusInput,
   type UpdateChannelWorkflowInput,
   type UpdateChannelWorkflowStepInput,
+  type UpdateWorkflowHandoffIntentInput,
+  type UpdateWorkflowSelectorDecisionInput,
+  type WorkflowFanInPolicy,
+  type WorkflowHandoffIntent,
+  type WorkflowHandoffIntentStatus,
+  type WorkflowHandoffValidation,
+  type WorkflowPacketSourceRef,
+  type WorkflowSelectorAlternative,
+  type WorkflowSelectorDecision,
+  type WorkflowSelectorDecisionStatus,
+  type WorkflowSelectorTargetKind,
   type WorkflowStepFailurePolicy,
   type WorkflowStepGate,
   type WorkflowStepPolicy,
@@ -526,7 +544,11 @@ const LING_THREAD_FORK_LINEAGE_MIGRATION_VERSION = 46;
 const LING_THREAD_FORK_LINEAGE_MIGRATION_NAME = "add_ling_thread_fork_lineage";
 const LING_THREAD_VISIBILITY_MIGRATION_VERSION = 47;
 const LING_THREAD_VISIBILITY_MIGRATION_NAME = "add_ling_thread_visibility_fields";
-const TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_VERSION = 48;
+const CHANNEL_WORKFLOW_METADATA_MIGRATION_VERSION = 48;
+const CHANNEL_WORKFLOW_METADATA_MIGRATION_NAME = "add_channel_workflow_metadata";
+const WORKFLOW_COORDINATION_RECORDS_MIGRATION_VERSION = 49;
+const WORKFLOW_COORDINATION_RECORDS_MIGRATION_NAME = "create_workflow_coordination_records";
+const TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_VERSION = 50;
 const TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_NAME = "create_teammate_direct_reply_interventions";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
@@ -5686,6 +5708,362 @@ export class SqliteRunStore implements RunStore {
     return this.getChannelHandoff(id);
   }
 
+  createWorkflowHandoffIntent(input: CreateWorkflowHandoffIntentInput, now: string): WorkflowHandoffIntent {
+    this.assertChannelExists(input.channelId);
+    this.assertWorkflowCoordinationRefsInChannel(input.channelId, {
+      workflowId: input.workflowId,
+      workflowStepId: input.sourceWorkflowStepId,
+      runId: input.sourceRunId,
+      messageId: input.sourceMessageId,
+      handoffId: input.channelHandoffId,
+    });
+    this.assertWorkflowPacketSourceRefsInChannel(input.channelId, input.sourceRefs ?? []);
+    const intent: WorkflowHandoffIntent = {
+      schemaVersion: 1,
+      id: createWorkflowHandoffIntentId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      workflowId: input.workflowId,
+      sourceWorkflowStepId: input.sourceWorkflowStepId,
+      sourceRunId: input.sourceRunId,
+      sourceMessageId: input.sourceMessageId,
+      channelHandoffId: input.channelHandoffId,
+      fromParticipantId: input.fromParticipantId,
+      fromParticipantLabel: input.fromParticipantLabel,
+      toParticipantId: input.toParticipantId,
+      toParticipantLabel: input.toParticipantLabel,
+      reason: input.reason,
+      requiredInput: input.requiredInput,
+      expectedOutput: input.expectedOutput,
+      riskSummary: input.riskSummary,
+      sourceRefs: [...(input.sourceRefs ?? [])],
+      status: input.status ?? "proposed",
+      validation: input.validation,
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+    validateWorkflowHandoffIntent(intent);
+    this.database
+      .prepare(`
+        INSERT INTO workflow_handoff_intents (
+          id,
+          workspace_id,
+          channel_id,
+          workflow_id,
+          source_workflow_step_id,
+          source_run_id,
+          source_message_id,
+          channel_handoff_id,
+          from_participant_id,
+          from_participant_label,
+          to_participant_id,
+          to_participant_label,
+          reason,
+          required_input,
+          expected_output,
+          risk_summary,
+          source_refs_json,
+          status,
+          validation_json,
+          created_by,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        intent.id,
+        intent.workspaceId,
+        intent.channelId,
+        intent.workflowId ?? null,
+        intent.sourceWorkflowStepId ?? null,
+        intent.sourceRunId ?? null,
+        intent.sourceMessageId ?? null,
+        intent.channelHandoffId ?? null,
+        intent.fromParticipantId,
+        intent.fromParticipantLabel,
+        intent.toParticipantId,
+        intent.toParticipantLabel ?? null,
+        intent.reason,
+        intent.requiredInput,
+        intent.expectedOutput,
+        intent.riskSummary ?? null,
+        stringifyJson(intent.sourceRefs),
+        intent.status,
+        intent.validation ? stringifyJson(intent.validation) : null,
+        intent.createdBy,
+        intent.createdAt,
+        intent.updatedAt,
+      );
+    const created = this.getWorkflowHandoffIntent(intent.id);
+    if (!created) {
+      throw new Error(`Failed to create workflow handoff intent: ${intent.id}`);
+    }
+    return created;
+  }
+
+  getWorkflowHandoffIntent(id: string): WorkflowHandoffIntent | undefined {
+    const row = this.database.prepare(workflowHandoffIntentSelectSql("WHERE id = ?")).get(id);
+    return row ? mapWorkflowHandoffIntent(row) : undefined;
+  }
+
+  listWorkflowHandoffIntents(options: ListWorkflowHandoffIntentsOptions = {}): WorkflowHandoffIntent[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.workflowId) {
+      clauses.push("workflow_id = ?");
+      params.push(options.workflowId);
+    }
+    if (options.sourceWorkflowStepId) {
+      clauses.push("source_workflow_step_id = ?");
+      params.push(options.sourceWorkflowStepId);
+    }
+    if (options.sourceRunId) {
+      clauses.push("source_run_id = ?");
+      params.push(options.sourceRunId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${workflowHandoffIntentSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, rowid DESC LIMIT ?`)
+      .all(...params)
+      .map(mapWorkflowHandoffIntent);
+  }
+
+  updateWorkflowHandoffIntent(id: string, input: UpdateWorkflowHandoffIntentInput, now: string): WorkflowHandoffIntent | undefined {
+    const existing = this.getWorkflowHandoffIntent(id);
+    if (!existing) {
+      return undefined;
+    }
+    const channelHandoffId = nullableUpdate(input.channelHandoffId, existing.channelHandoffId);
+    if (channelHandoffId) {
+      this.assertHandoffInChannel(existing.channelId, channelHandoffId);
+    }
+    const sourceRefs = input.sourceRefs ? [...input.sourceRefs] : existing.sourceRefs;
+    this.assertWorkflowPacketSourceRefsInChannel(existing.channelId, sourceRefs);
+    const next: WorkflowHandoffIntent = {
+      ...existing,
+      channelHandoffId,
+      toParticipantLabel: nullableUpdate(input.toParticipantLabel, existing.toParticipantLabel),
+      reason: input.reason ?? existing.reason,
+      requiredInput: input.requiredInput ?? existing.requiredInput,
+      expectedOutput: input.expectedOutput ?? existing.expectedOutput,
+      riskSummary: nullableUpdate(input.riskSummary, existing.riskSummary),
+      sourceRefs,
+      status: input.status ?? existing.status,
+      validation: nullableUpdate(input.validation, existing.validation),
+      updatedAt: now,
+    };
+    validateWorkflowHandoffIntent(next);
+    this.database
+      .prepare(`
+        UPDATE workflow_handoff_intents
+        SET
+          channel_handoff_id = ?,
+          to_participant_label = ?,
+          reason = ?,
+          required_input = ?,
+          expected_output = ?,
+          risk_summary = ?,
+          source_refs_json = ?,
+          status = ?,
+          validation_json = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.channelHandoffId ?? null,
+        next.toParticipantLabel ?? null,
+        next.reason,
+        next.requiredInput,
+        next.expectedOutput,
+        next.riskSummary ?? null,
+        stringifyJson(next.sourceRefs),
+        next.status,
+        next.validation ? stringifyJson(next.validation) : null,
+        next.updatedAt,
+        id,
+      );
+    return this.getWorkflowHandoffIntent(id);
+  }
+
+  createWorkflowSelectorDecision(input: CreateWorkflowSelectorDecisionInput, now: string): WorkflowSelectorDecision {
+    this.assertChannelExists(input.channelId);
+    this.assertWorkflowCoordinationRefsInChannel(input.channelId, {
+      workflowId: input.workflowId,
+      workflowStepId: input.sourceWorkflowStepId,
+    });
+    this.assertWorkflowSelectorTargetsInChannel(input.channelId, input);
+    this.assertWorkflowPacketSourceRefsInChannel(input.channelId, input.sourceRefs ?? []);
+    const decision: WorkflowSelectorDecision = {
+      schemaVersion: 1,
+      id: createWorkflowSelectorDecisionId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      channelId: input.channelId,
+      workflowId: input.workflowId,
+      sourceWorkflowStepId: input.sourceWorkflowStepId,
+      selectorNodeId: input.selectorNodeId,
+      targetKind: input.targetKind,
+      selectedWorkflowStepId: input.selectedWorkflowStepId,
+      selectedGraphNodeId: input.selectedGraphNodeId,
+      selectedTeammateId: input.selectedTeammateId,
+      selectedSkillId: input.selectedSkillId,
+      selectedHandoffIntentId: input.selectedHandoffIntentId,
+      reason: input.reason,
+      alternativesConsidered: [...(input.alternativesConsidered ?? [])],
+      confidence: input.confidence ?? "medium",
+      requiresUserConfirmation: input.requiresUserConfirmation ?? false,
+      status: input.status ?? "accepted",
+      sourceRefs: [...(input.sourceRefs ?? [])],
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+    validateWorkflowSelectorDecision(decision);
+    this.database
+      .prepare(`
+        INSERT INTO workflow_selector_decisions (
+          id,
+          workspace_id,
+          channel_id,
+          workflow_id,
+          source_workflow_step_id,
+          selector_node_id,
+          target_kind,
+          selected_workflow_step_id,
+          selected_graph_node_id,
+          selected_teammate_id,
+          selected_skill_id,
+          selected_handoff_intent_id,
+          reason,
+          alternatives_json,
+          confidence,
+          requires_user_confirmation,
+          status,
+          source_refs_json,
+          created_by,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        decision.id,
+        decision.workspaceId,
+        decision.channelId,
+        decision.workflowId,
+        decision.sourceWorkflowStepId ?? null,
+        decision.selectorNodeId ?? null,
+        decision.targetKind,
+        decision.selectedWorkflowStepId ?? null,
+        decision.selectedGraphNodeId ?? null,
+        decision.selectedTeammateId ?? null,
+        decision.selectedSkillId ?? null,
+        decision.selectedHandoffIntentId ?? null,
+        decision.reason,
+        stringifyJson(decision.alternativesConsidered),
+        decision.confidence,
+        decision.requiresUserConfirmation ? 1 : 0,
+        decision.status,
+        stringifyJson(decision.sourceRefs),
+        decision.createdBy,
+        decision.createdAt,
+        decision.updatedAt,
+      );
+    const created = this.getWorkflowSelectorDecision(decision.id);
+    if (!created) {
+      throw new Error(`Failed to create workflow selector decision: ${decision.id}`);
+    }
+    return created;
+  }
+
+  getWorkflowSelectorDecision(id: string): WorkflowSelectorDecision | undefined {
+    const row = this.database.prepare(workflowSelectorDecisionSelectSql("WHERE id = ?")).get(id);
+    return row ? mapWorkflowSelectorDecision(row) : undefined;
+  }
+
+  listWorkflowSelectorDecisions(options: ListWorkflowSelectorDecisionsOptions = {}): WorkflowSelectorDecision[] {
+    const clauses = ["workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.channelId) {
+      clauses.push("channel_id = ?");
+      params.push(options.channelId);
+    }
+    if (options.workflowId) {
+      clauses.push("workflow_id = ?");
+      params.push(options.workflowId);
+    }
+    if (options.sourceWorkflowStepId) {
+      clauses.push("source_workflow_step_id = ?");
+      params.push(options.sourceWorkflowStepId);
+    }
+    if (options.selectedWorkflowStepId) {
+      clauses.push("selected_workflow_step_id = ?");
+      params.push(options.selectedWorkflowStepId);
+    }
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    params.push(limit);
+    return this.database
+      .prepare(`${workflowSelectorDecisionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, rowid DESC LIMIT ?`)
+      .all(...params)
+      .map(mapWorkflowSelectorDecision);
+  }
+
+  updateWorkflowSelectorDecision(id: string, input: UpdateWorkflowSelectorDecisionInput, now: string): WorkflowSelectorDecision | undefined {
+    const existing = this.getWorkflowSelectorDecision(id);
+    if (!existing) {
+      return undefined;
+    }
+    const sourceRefs = input.sourceRefs ? [...input.sourceRefs] : existing.sourceRefs;
+    this.assertWorkflowPacketSourceRefsInChannel(existing.channelId, sourceRefs);
+    const next: WorkflowSelectorDecision = {
+      ...existing,
+      reason: input.reason ?? existing.reason,
+      alternativesConsidered: input.alternativesConsidered ? [...input.alternativesConsidered] : existing.alternativesConsidered,
+      confidence: input.confidence ?? existing.confidence,
+      requiresUserConfirmation: input.requiresUserConfirmation ?? existing.requiresUserConfirmation,
+      status: input.status ?? existing.status,
+      sourceRefs,
+      updatedAt: now,
+    };
+    validateWorkflowSelectorDecision(next);
+    this.database
+      .prepare(`
+        UPDATE workflow_selector_decisions
+        SET
+          reason = ?,
+          alternatives_json = ?,
+          confidence = ?,
+          requires_user_confirmation = ?,
+          status = ?,
+          source_refs_json = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        next.reason,
+        stringifyJson(next.alternativesConsidered),
+        next.confidence,
+        next.requiresUserConfirmation ? 1 : 0,
+        next.status,
+        stringifyJson(next.sourceRefs),
+        next.updatedAt,
+        id,
+      );
+    return this.getWorkflowSelectorDecision(id);
+  }
+
   createChannelContextSummary(input: CreateChannelContextSummaryInput, now: string): ChannelContextSummary {
     this.assertChannelExists(input.channelId);
     this.assertSummaryTargetInChannel(input.channelId, input.targetType, input.targetId);
@@ -5858,6 +6236,7 @@ export class SqliteRunStore implements RunStore {
       objective: input.objective,
       status: input.status ?? "draft",
       createdBy: input.createdBy,
+      metadata: input.metadata,
       createdAt: now,
       updatedAt: now,
     };
@@ -5873,9 +6252,10 @@ export class SqliteRunStore implements RunStore {
           objective,
           status,
           created_by,
+          metadata_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         workflow.id,
@@ -5886,6 +6266,7 @@ export class SqliteRunStore implements RunStore {
         workflow.objective,
         workflow.status,
         workflow.createdBy,
+        workflow.metadata ? stringifyJson(workflow.metadata) : null,
         workflow.createdAt,
         workflow.updatedAt,
       );
@@ -5927,15 +6308,16 @@ export class SqliteRunStore implements RunStore {
       title: input.title ?? existing.title,
       objective: input.objective ?? existing.objective,
       status: input.status ?? existing.status,
+      metadata: nullableUpdate(input.metadata, existing.metadata),
       updatedAt: now,
     };
     this.database
       .prepare(`
         UPDATE channel_workflows
-        SET title = ?, objective = ?, status = ?, updated_at = ?
+        SET title = ?, objective = ?, status = ?, metadata_json = ?, updated_at = ?
         WHERE id = ?
       `)
-      .run(next.title, next.objective, next.status, next.updatedAt, id);
+      .run(next.title, next.objective, next.status, next.metadata ? stringifyJson(next.metadata) : null, next.updatedAt, id);
     return this.getChannelWorkflow(id);
   }
 
@@ -9868,6 +10250,7 @@ export class SqliteRunStore implements RunStore {
           objective TEXT NOT NULL,
           status TEXT NOT NULL,
           created_by TEXT NOT NULL,
+          metadata_json TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -11784,6 +12167,96 @@ export class SqliteRunStore implements RunStore {
       }
     }
 
+    const hasChannelWorkflowMetadataMigration = this.hasMigration(CHANNEL_WORKFLOW_METADATA_MIGRATION_VERSION);
+    if (!hasChannelWorkflowMetadataMigration || !this.hasColumn("channel_workflows", "metadata_json")) {
+      if (!this.hasColumn("channel_workflows", "metadata_json")) {
+        this.database.exec("ALTER TABLE channel_workflows ADD COLUMN metadata_json TEXT;");
+      }
+      if (!hasChannelWorkflowMetadataMigration) {
+        this.recordMigration(CHANNEL_WORKFLOW_METADATA_MIGRATION_VERSION, CHANNEL_WORKFLOW_METADATA_MIGRATION_NAME);
+      }
+    }
+
+    const hasWorkflowCoordinationRecordsMigration = this.hasMigration(WORKFLOW_COORDINATION_RECORDS_MIGRATION_VERSION);
+    if (
+      !hasWorkflowCoordinationRecordsMigration ||
+      !this.hasTable("workflow_handoff_intents") ||
+      !this.hasTable("workflow_selector_decisions")
+    ) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS workflow_handoff_intents (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          workflow_id TEXT,
+          source_workflow_step_id TEXT,
+          source_run_id TEXT,
+          source_message_id TEXT,
+          channel_handoff_id TEXT,
+          from_participant_id TEXT NOT NULL,
+          from_participant_label TEXT NOT NULL,
+          to_participant_id TEXT NOT NULL,
+          to_participant_label TEXT,
+          reason TEXT NOT NULL,
+          required_input TEXT NOT NULL,
+          expected_output TEXT NOT NULL,
+          risk_summary TEXT,
+          source_refs_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          validation_json TEXT,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_workflow_handoff_intents_workflow
+        ON workflow_handoff_intents(workflow_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_workflow_handoff_intents_step
+        ON workflow_handoff_intents(source_workflow_step_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_workflow_handoff_intents_channel
+        ON workflow_handoff_intents(channel_id, status, updated_at);
+
+        CREATE TABLE IF NOT EXISTS workflow_selector_decisions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          workflow_id TEXT NOT NULL,
+          source_workflow_step_id TEXT,
+          selector_node_id TEXT,
+          target_kind TEXT NOT NULL,
+          selected_workflow_step_id TEXT,
+          selected_graph_node_id TEXT,
+          selected_teammate_id TEXT,
+          selected_skill_id TEXT,
+          selected_handoff_intent_id TEXT,
+          reason TEXT NOT NULL,
+          alternatives_json TEXT NOT NULL,
+          confidence TEXT NOT NULL,
+          requires_user_confirmation INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_workflow_selector_decisions_workflow
+        ON workflow_selector_decisions(workflow_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_workflow_selector_decisions_step
+        ON workflow_selector_decisions(source_workflow_step_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_workflow_selector_decisions_selected_step
+        ON workflow_selector_decisions(selected_workflow_step_id, status, updated_at);
+      `);
+
+      if (!hasWorkflowCoordinationRecordsMigration) {
+        this.recordMigration(WORKFLOW_COORDINATION_RECORDS_MIGRATION_VERSION, WORKFLOW_COORDINATION_RECORDS_MIGRATION_NAME);
+      }
+    }
+
     const hasTeammateDirectReplyInterventionsMigration = this.hasMigration(TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_VERSION);
     if (!hasTeammateDirectReplyInterventionsMigration || !this.hasTable("teammate_direct_reply_interventions")) {
       this.database.exec(`
@@ -12057,6 +12530,26 @@ export class SqliteRunStore implements RunStore {
     }
   }
 
+  private assertWorkflowInChannel(channelId: string, workflowId: string): void {
+    const workflow = this.getChannelWorkflow(workflowId);
+    if (!workflow) {
+      throw new Error(`Channel workflow not found: ${workflowId}`);
+    }
+    if (workflow.channelId !== channelId) {
+      throw new Error(`Workflow does not belong to channel: ${workflowId}`);
+    }
+  }
+
+  private assertWorkflowStepInChannel(channelId: string, workflowStepId: string): void {
+    const step = this.getChannelWorkflowStep(workflowStepId);
+    if (!step) {
+      throw new Error(`Channel workflow step not found: ${workflowStepId}`);
+    }
+    if (step.channelId !== channelId) {
+      throw new Error(`Workflow step does not belong to channel: ${workflowStepId}`);
+    }
+  }
+
   private assertDecisionInChannel(channelId: string, decisionId: string): void {
     const decision = this.getChannelDecision(decisionId);
     if (!decision) {
@@ -12074,6 +12567,26 @@ export class SqliteRunStore implements RunStore {
     }
     if (handoff.channelId !== channelId) {
       throw new Error(`Handoff does not belong to channel: ${handoffId}`);
+    }
+  }
+
+  private assertWorkflowHandoffIntentInChannel(channelId: string, intentId: string): void {
+    const intent = this.getWorkflowHandoffIntent(intentId);
+    if (!intent) {
+      throw new Error(`Workflow handoff intent not found: ${intentId}`);
+    }
+    if (intent.channelId !== channelId) {
+      throw new Error(`Workflow handoff intent does not belong to channel: ${intentId}`);
+    }
+  }
+
+  private assertWorkflowSelectorDecisionInChannel(channelId: string, decisionId: string): void {
+    const decision = this.getWorkflowSelectorDecision(decisionId);
+    if (!decision) {
+      throw new Error(`Workflow selector decision not found: ${decisionId}`);
+    }
+    if (decision.channelId !== channelId) {
+      throw new Error(`Workflow selector decision does not belong to channel: ${decisionId}`);
     }
   }
 
@@ -12099,6 +12612,112 @@ export class SqliteRunStore implements RunStore {
     }
     if (input.sourceRunId) {
       this.assertRunInChannel(channelId, input.sourceRunId);
+    }
+  }
+
+  private assertWorkflowCoordinationRefsInChannel(
+    channelId: string,
+    refs: {
+      readonly workflowId?: string;
+      readonly workflowStepId?: string;
+      readonly runId?: string;
+      readonly messageId?: string;
+      readonly handoffId?: string;
+    },
+  ): void {
+    if (refs.workflowId) {
+      this.assertWorkflowInChannel(channelId, refs.workflowId);
+    }
+    if (refs.workflowStepId) {
+      this.assertWorkflowStepInChannel(channelId, refs.workflowStepId);
+      if (refs.workflowId) {
+        const step = this.getChannelWorkflowStep(refs.workflowStepId);
+        if (step?.workflowId !== refs.workflowId) {
+          throw new Error(`Workflow step does not belong to workflow: ${refs.workflowStepId}`);
+        }
+      }
+    }
+    if (refs.runId) {
+      this.assertRunInChannel(channelId, refs.runId);
+    }
+    if (refs.messageId) {
+      this.assertMessageInChannel(channelId, refs.messageId);
+    }
+    if (refs.handoffId) {
+      this.assertHandoffInChannel(channelId, refs.handoffId);
+    }
+  }
+
+  private assertWorkflowSelectorTargetsInChannel(
+    channelId: string,
+    input: Pick<CreateWorkflowSelectorDecisionInput, "workflowId" | "selectedWorkflowStepId" | "selectedTeammateId" | "selectedHandoffIntentId">,
+  ): void {
+    if (input.selectedWorkflowStepId) {
+      this.assertWorkflowStepInChannel(channelId, input.selectedWorkflowStepId);
+      const step = this.getChannelWorkflowStep(input.selectedWorkflowStepId);
+      if (step?.workflowId !== input.workflowId) {
+        throw new Error(`Selected workflow step does not belong to workflow: ${input.selectedWorkflowStepId}`);
+      }
+    }
+    if (input.selectedTeammateId) {
+      const teammate = this.getAiTeammate(input.selectedTeammateId);
+      if (!teammate) {
+        throw new Error(`AI teammate not found: ${input.selectedTeammateId}`);
+      }
+      if (teammate.workspaceId !== DEFAULT_WORKSPACE_ID) {
+        throw new Error(`AI teammate does not belong to workspace: ${input.selectedTeammateId}`);
+      }
+    }
+    if (input.selectedHandoffIntentId) {
+      this.assertWorkflowHandoffIntentInChannel(channelId, input.selectedHandoffIntentId);
+    }
+  }
+
+  private assertWorkflowPacketSourceRefsInChannel(channelId: string, sourceRefs: readonly WorkflowPacketSourceRef[]): void {
+    for (const sourceRef of sourceRefs) {
+      switch (sourceRef.type) {
+        case "channel_message":
+          this.assertMessageInChannel(channelId, sourceRef.id);
+          break;
+        case "channel_decision":
+          this.assertDecisionInChannel(channelId, sourceRef.id);
+          break;
+        case "context_summary":
+          this.assertContextSummaryInChannel(channelId, sourceRef.id);
+          break;
+        case "task":
+          this.assertTaskInChannel(channelId, sourceRef.id);
+          break;
+        case "run":
+          this.assertRunInChannel(channelId, sourceRef.id);
+          break;
+        case "workflow":
+          this.assertWorkflowInChannel(channelId, sourceRef.id);
+          break;
+        case "workflow_step":
+          this.assertWorkflowStepInChannel(channelId, sourceRef.id);
+          break;
+        case "workflow_handoff_intent":
+          this.assertWorkflowHandoffIntentInChannel(channelId, sourceRef.id);
+          break;
+        case "workflow_selector_decision":
+          this.assertWorkflowSelectorDecisionInChannel(channelId, sourceRef.id);
+          break;
+        case "approval": {
+          const approval = this.getApprovalRequest(sourceRef.id);
+          if (!approval) {
+            throw new Error(`Approval request not found: ${sourceRef.id}`);
+          }
+          if (approval.channelId !== channelId) {
+            throw new Error(`Approval request does not belong to channel: ${sourceRef.id}`);
+          }
+          break;
+        }
+        case "artifact":
+        case "channel_brief":
+        case "memory":
+          break;
+      }
     }
   }
 
@@ -13117,6 +13736,61 @@ function mapChannelHandoff(row: Record<string, SQLOutputValue>): ChannelHandoff 
   });
 }
 
+function mapWorkflowHandoffIntent(row: Record<string, SQLOutputValue>): WorkflowHandoffIntent {
+  return omitUndefined({
+    schemaVersion: 1 as const,
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    workflowId: readNullableString(row, "workflow_id"),
+    sourceWorkflowStepId: readNullableString(row, "source_workflow_step_id"),
+    sourceRunId: readNullableString(row, "source_run_id"),
+    sourceMessageId: readNullableString(row, "source_message_id"),
+    channelHandoffId: readNullableString(row, "channel_handoff_id"),
+    fromParticipantId: readString(row, "from_participant_id"),
+    fromParticipantLabel: readString(row, "from_participant_label"),
+    toParticipantId: readString(row, "to_participant_id"),
+    toParticipantLabel: readNullableString(row, "to_participant_label"),
+    reason: readString(row, "reason"),
+    requiredInput: readString(row, "required_input"),
+    expectedOutput: readString(row, "expected_output"),
+    riskSummary: readNullableString(row, "risk_summary"),
+    sourceRefs: parseWorkflowPacketSourceRefs(readString(row, "source_refs_json")),
+    status: readString(row, "status") as WorkflowHandoffIntentStatus,
+    validation: parseOptionalWorkflowHandoffValidation(readNullableString(row, "validation_json")),
+    createdBy: readString(row, "created_by") as WorkflowHandoffIntent["createdBy"],
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function mapWorkflowSelectorDecision(row: Record<string, SQLOutputValue>): WorkflowSelectorDecision {
+  return omitUndefined({
+    schemaVersion: 1 as const,
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    channelId: readString(row, "channel_id"),
+    workflowId: readString(row, "workflow_id"),
+    sourceWorkflowStepId: readNullableString(row, "source_workflow_step_id"),
+    selectorNodeId: readNullableString(row, "selector_node_id"),
+    targetKind: readString(row, "target_kind") as WorkflowSelectorTargetKind,
+    selectedWorkflowStepId: readNullableString(row, "selected_workflow_step_id"),
+    selectedGraphNodeId: readNullableString(row, "selected_graph_node_id"),
+    selectedTeammateId: readNullableString(row, "selected_teammate_id"),
+    selectedSkillId: readNullableString(row, "selected_skill_id"),
+    selectedHandoffIntentId: readNullableString(row, "selected_handoff_intent_id"),
+    reason: readString(row, "reason"),
+    alternativesConsidered: parseWorkflowSelectorAlternatives(readString(row, "alternatives_json")),
+    confidence: readString(row, "confidence") as WorkflowSelectorDecision["confidence"],
+    requiresUserConfirmation: readBoolean(row, "requires_user_confirmation"),
+    status: readString(row, "status") as WorkflowSelectorDecisionStatus,
+    sourceRefs: parseWorkflowPacketSourceRefs(readString(row, "source_refs_json")),
+    createdBy: readString(row, "created_by") as WorkflowSelectorDecision["createdBy"],
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
 function mapChannelContextSummary(row: Record<string, SQLOutputValue>): ChannelContextSummary {
   return omitUndefined({
     id: readString(row, "id"),
@@ -13146,6 +13820,7 @@ function mapChannelWorkflow(row: Record<string, SQLOutputValue>): ChannelWorkflo
     objective: readString(row, "objective"),
     status: readString(row, "status") as ChannelWorkflowStatus,
     createdBy: readString(row, "created_by"),
+    metadata: parseOptionalChannelWorkflowMetadata(readNullableString(row, "metadata_json")),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
@@ -14447,6 +15122,65 @@ function channelHandoffSelectSql(whereClause: string): string {
   `;
 }
 
+function workflowHandoffIntentSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      workflow_id,
+      source_workflow_step_id,
+      source_run_id,
+      source_message_id,
+      channel_handoff_id,
+      from_participant_id,
+      from_participant_label,
+      to_participant_id,
+      to_participant_label,
+      reason,
+      required_input,
+      expected_output,
+      risk_summary,
+      source_refs_json,
+      status,
+      validation_json,
+      created_by,
+      created_at,
+      updated_at
+    FROM workflow_handoff_intents
+    ${whereClause}
+  `;
+}
+
+function workflowSelectorDecisionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      workflow_id,
+      source_workflow_step_id,
+      selector_node_id,
+      target_kind,
+      selected_workflow_step_id,
+      selected_graph_node_id,
+      selected_teammate_id,
+      selected_skill_id,
+      selected_handoff_intent_id,
+      reason,
+      alternatives_json,
+      confidence,
+      requires_user_confirmation,
+      status,
+      source_refs_json,
+      created_by,
+      created_at,
+      updated_at
+    FROM workflow_selector_decisions
+    ${whereClause}
+  `;
+}
+
 function channelContextSummarySelectSql(whereClause: string): string {
   return `
     SELECT
@@ -14480,6 +15214,7 @@ function channelWorkflowSelectSql(whereClause: string): string {
       objective,
       status,
       created_by,
+      metadata_json,
       created_at,
       updated_at
     FROM channel_workflows
@@ -15168,6 +15903,8 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     workflowTemplateId: readOptionalStringValue(record.workflowTemplateId),
     templateVersion: readOptionalStringValue(record.templateVersion),
     templateStepId: readOptionalStringValue(record.templateStepId),
+    graphId: readOptionalStringValue(record.graphId),
+    graphNodeId: readOptionalStringValue(record.graphNodeId),
     dependsOnStepIds: readOptionalStringListValue(record.dependsOnStepIds),
     branchGroupId: readOptionalStringValue(record.branchGroupId),
     joinGroupId: readOptionalStringValue(record.joinGroupId),
@@ -15183,11 +15920,62 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     preStepApprovalId: readOptionalStringValue(record.preStepApprovalId),
     policy: parseOptionalWorkflowStepPolicyValue(record.policy),
     gates: parseOptionalWorkflowStepGateListValue(record.gates),
+    fanInPolicy: parseOptionalWorkflowFanInPolicyValue(record.fanInPolicy),
     activeGateStage: readOptionalGateStageValue(record.activeGateStage),
     postStepApprovalId: readOptionalStringValue(record.postStepApprovalId),
     contextArtifactId: readOptionalStringValue(record.contextArtifactId),
     outputArtifactId: readOptionalStringValue(record.outputArtifactId),
     outputArtifactIds: readOptionalStringListValue(record.outputArtifactIds),
+    selectorDecisionIds: readOptionalStringListValue(record.selectorDecisionIds),
+    handoffIntentIds: readOptionalStringListValue(record.handoffIntentIds),
+    fanInSummaryArtifactId: readOptionalStringValue(record.fanInSummaryArtifactId),
+    memoryCandidateIds: readOptionalStringListValue(record.memoryCandidateIds),
+  });
+}
+
+function parseOptionalChannelWorkflowMetadata(value: string | undefined): ChannelWorkflowMetadata | undefined {
+  if (!value) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  return omitUndefined({
+    workflowGraphId: readOptionalStringValue(record.workflowGraphId),
+    workflowGraphSchemaVersion: readOptionalPositiveIntegerValue(record.workflowGraphSchemaVersion),
+    workflowGraphArtifactId: readOptionalStringValue(record.workflowGraphArtifactId),
+    termination: parseOptionalWorkflowTerminationPolicyValue(record.termination),
+    maxParallelSteps: readOptionalPositiveIntegerValue(record.maxParallelSteps),
+  });
+}
+
+function parseOptionalWorkflowTerminationPolicyValue(value: unknown): ChannelWorkflowMetadata["termination"] | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const success = record.success;
+  const onFailedRequiredNode = record.onFailedRequiredNode;
+  const onApprovalDenied = record.onApprovalDenied;
+  if (
+    (success !== "all_terminal" && success !== "all_required_succeeded") ||
+    (onFailedRequiredNode !== "block_for_user" && onFailedRequiredNode !== "fail_workflow") ||
+    (onApprovalDenied !== "block_for_user" && onApprovalDenied !== "fail_workflow")
+  ) {
+    return undefined;
+  }
+  return omitUndefined({
+    success: success as NonNullable<ChannelWorkflowMetadata["termination"]>["success"],
+    onFailedRequiredNode: onFailedRequiredNode as NonNullable<ChannelWorkflowMetadata["termination"]>["onFailedRequiredNode"],
+    onApprovalDenied: onApprovalDenied as NonNullable<ChannelWorkflowMetadata["termination"]>["onApprovalDenied"],
+    maxTicks: readOptionalPositiveIntegerValue(record.maxTicks),
   });
 }
 
@@ -15229,6 +16017,46 @@ function parseOptionalWorkflowStepPolicyValue(value: unknown): WorkflowStepPolic
     retryable: record.retryable,
     maxRetries: typeof record.maxRetries === "number" && Number.isFinite(record.maxRetries) ? record.maxRetries : undefined,
   });
+}
+
+function parseOptionalWorkflowFanInPolicyValue(value: unknown): WorkflowFanInPolicy | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const mode = readWorkflowFanInModeValue(record.mode);
+  const memoryCandidateScope = readWorkflowFanInMemoryCandidateScopeValue(record.memoryCandidateScope);
+  const maxInputArtifacts = readOptionalPositiveIntegerValue(record.maxInputArtifacts);
+  if (
+    !mode ||
+    !memoryCandidateScope ||
+    maxInputArtifacts === undefined ||
+    typeof record.requireAllBranchesTerminal !== "boolean" ||
+    typeof record.includeFailedBranches !== "boolean" ||
+    typeof record.createSummaryArtifact !== "boolean" ||
+    typeof record.createMemoryCandidates !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    mode,
+    requireAllBranchesTerminal: record.requireAllBranchesTerminal,
+    includeFailedBranches: record.includeFailedBranches,
+    createSummaryArtifact: record.createSummaryArtifact,
+    createMemoryCandidates: record.createMemoryCandidates,
+    memoryCandidateScope,
+    maxInputArtifacts,
+  };
+}
+
+function readWorkflowFanInModeValue(value: unknown): WorkflowFanInPolicy["mode"] | undefined {
+  return value === "summarize_outputs" || value === "compare_outputs" || value === "collect_checks" || value === "memory_candidates"
+    ? value
+    : undefined;
+}
+
+function readWorkflowFanInMemoryCandidateScopeValue(value: unknown): WorkflowFanInPolicy["memoryCandidateScope"] | undefined {
+  return value === "run" || value === "task" || value === "channel" ? value : undefined;
 }
 
 function parseOptionalWorkflowStepGateListValue(value: unknown): readonly WorkflowStepGate[] | undefined {
@@ -15324,6 +16152,86 @@ function parseJsonStringArray(value: string): string[] {
     throw new Error("Expected JSON string array from SQLite");
   }
   return parsed as string[];
+}
+
+function parseWorkflowPacketSourceRefs(value: string): WorkflowPacketSourceRef[] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Expected workflow packet source refs array from SQLite");
+  }
+  return parsed.map((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new Error("Expected workflow packet source ref object from SQLite");
+    }
+    const record = item as Record<string, unknown>;
+    if (!isWorkflowPacketSourceRefTypeValue(record.type) || typeof record.id !== "string") {
+      throw new Error("Invalid workflow packet source ref from SQLite");
+    }
+    return omitUndefined({
+      type: record.type,
+      id: record.id,
+      label: readOptionalStringValue(record.label),
+    });
+  });
+}
+
+function parseWorkflowSelectorAlternatives(value: string): WorkflowSelectorAlternative[] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Expected workflow selector alternatives array from SQLite");
+  }
+  return parsed.map((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new Error("Expected workflow selector alternative object from SQLite");
+    }
+    const record = item as Record<string, unknown>;
+    if (
+      !isWorkflowSelectorTargetKindValue(record.targetKind) ||
+      typeof record.targetId !== "string" ||
+      typeof record.label !== "string" ||
+      typeof record.reason !== "string"
+    ) {
+      throw new Error("Invalid workflow selector alternative from SQLite");
+    }
+    return {
+      targetKind: record.targetKind,
+      targetId: record.targetId,
+      label: record.label,
+      reason: record.reason,
+    };
+  });
+}
+
+function parseOptionalWorkflowHandoffValidation(value: string | undefined): WorkflowHandoffValidation | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = parseJson(value);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    typeof record.targetTeammateExists !== "boolean" ||
+    typeof record.targetTeammateActive !== "boolean" ||
+    typeof record.skillExecutable !== "boolean" ||
+    typeof record.providerRunnable !== "boolean" ||
+    typeof record.approvalProfileCompatible !== "boolean" ||
+    typeof record.resourceLeaseAvailable !== "boolean" ||
+    !Array.isArray(record.blockers) ||
+    record.blockers.some((item) => typeof item !== "string")
+  ) {
+    return undefined;
+  }
+  return {
+    targetTeammateExists: record.targetTeammateExists,
+    targetTeammateActive: record.targetTeammateActive,
+    skillExecutable: record.skillExecutable,
+    providerRunnable: record.providerRunnable,
+    approvalProfileCompatible: record.approvalProfileCompatible,
+    resourceLeaseAvailable: record.resourceLeaseAvailable,
+    blockers: record.blockers,
+  };
 }
 
 function parseNullableJsonStringArray(value: string | undefined): string[] | undefined {
@@ -15693,6 +16601,103 @@ function validateMemoryObject(memory: MemoryObject): void {
   }
   if (!isMemorySensitivity(memory.sensitivity)) {
     throw new Error("sensitivity is not supported");
+  }
+}
+
+function validateWorkflowHandoffIntent(intent: WorkflowHandoffIntent): void {
+  validateNonEmptyString(intent.fromParticipantId, "workflow handoff from participant id");
+  validateNonEmptyString(intent.fromParticipantLabel, "workflow handoff from participant label");
+  validateNonEmptyString(intent.toParticipantId, "workflow handoff target participant id");
+  validateNonEmptyString(intent.reason, "workflow handoff reason");
+  validateNonEmptyString(intent.requiredInput, "workflow handoff required input");
+  validateNonEmptyString(intent.expectedOutput, "workflow handoff expected output");
+  if (!isWorkflowHandoffIntentStatusValue(intent.status)) {
+    throw new Error("workflow handoff intent status is not supported");
+  }
+  if (intent.createdBy !== "local-user" && intent.createdBy !== "ai-teammate" && intent.createdBy !== "orchestrator") {
+    throw new Error("workflow handoff intent createdBy is not supported");
+  }
+  validateWorkflowPacketSourceRefs(intent.sourceRefs);
+  if (intent.validation) {
+    validateStringList(intent.validation.blockers, "workflow handoff validation blockers");
+  }
+}
+
+function validateWorkflowSelectorDecision(decision: WorkflowSelectorDecision): void {
+  if (!isWorkflowSelectorTargetKindValue(decision.targetKind)) {
+    throw new Error("workflow selector target kind is not supported");
+  }
+  if (!isWorkflowSelectorDecisionStatusValue(decision.status)) {
+    throw new Error("workflow selector decision status is not supported");
+  }
+  if (decision.confidence !== "low" && decision.confidence !== "medium" && decision.confidence !== "high") {
+    throw new Error("workflow selector decision confidence is not supported");
+  }
+  if (decision.createdBy !== "deterministic" && decision.createdBy !== "model" && decision.createdBy !== "local-user") {
+    throw new Error("workflow selector decision createdBy is not supported");
+  }
+  validateNonEmptyString(decision.reason, "workflow selector decision reason");
+  validateWorkflowPacketSourceRefs(decision.sourceRefs);
+  for (const alternative of decision.alternativesConsidered) {
+    if (!isWorkflowSelectorTargetKindValue(alternative.targetKind)) {
+      throw new Error("workflow selector alternative target kind is not supported");
+    }
+    validateNonEmptyString(alternative.targetId, "workflow selector alternative target id");
+    validateNonEmptyString(alternative.label, "workflow selector alternative label");
+    validateNonEmptyString(alternative.reason, "workflow selector alternative reason");
+  }
+}
+
+function validateWorkflowPacketSourceRefs(sourceRefs: readonly WorkflowPacketSourceRef[]): void {
+  for (const sourceRef of sourceRefs) {
+    if (!isWorkflowPacketSourceRefTypeValue(sourceRef.type)) {
+      throw new Error("workflow packet source ref type is not supported");
+    }
+    validateNonEmptyString(sourceRef.id, "workflow packet source ref id");
+  }
+}
+
+function isWorkflowHandoffIntentStatusValue(value: unknown): value is WorkflowHandoffIntentStatus {
+  return value === "proposed" || value === "validated" || value === "accepted" || value === "declined" || value === "converted" || value === "failed";
+}
+
+function isWorkflowSelectorDecisionStatusValue(value: unknown): value is WorkflowSelectorDecisionStatus {
+  return value === "proposed" || value === "accepted" || value === "rejected" || value === "blocked" || value === "superseded";
+}
+
+function isWorkflowSelectorTargetKindValue(value: unknown): value is WorkflowSelectorTargetKind {
+  return value === "workflow_step" || value === "graph_node" || value === "teammate" || value === "skill" || value === "handoff" || value === "wait";
+}
+
+function isWorkflowPacketSourceRefTypeValue(value: unknown): value is WorkflowPacketSourceRef["type"] {
+  return (
+    value === "channel_message" ||
+    value === "channel_brief" ||
+    value === "channel_decision" ||
+    value === "context_summary" ||
+    value === "task" ||
+    value === "run" ||
+    value === "workflow" ||
+    value === "workflow_step" ||
+    value === "workflow_handoff_intent" ||
+    value === "workflow_selector_decision" ||
+    value === "artifact" ||
+    value === "approval" ||
+    value === "memory"
+  );
+}
+
+function validateNonEmptyString(value: string, label: string): void {
+  if (!value.trim()) {
+    throw new Error(`${label} must not be empty`);
+  }
+}
+
+function validateStringList(value: readonly string[], label: string): void {
+  for (const item of value) {
+    if (!item.trim()) {
+      throw new Error(`${label} must not contain empty strings`);
+    }
   }
 }
 

@@ -22,6 +22,7 @@ import type {
   AutomationDraft,
   AutomationRun,
   AutomationSchedulerState,
+  AutomationStatus,
   AutomationTrigger,
   BuiltinAutomationTemplate,
   BuiltinAutomationTemplateId,
@@ -59,6 +60,7 @@ export interface AutomationsActions {
   readonly previewSelectedAutomation: () => Promise<void>;
   readonly runSelectedAutomation: () => Promise<void>;
   readonly archiveSelectedAutomation: () => Promise<void>;
+  readonly setSelectedStatus: (status: AutomationStatus) => Promise<void>;
   readonly setSelectedSchedule: (trigger: AutomationTrigger) => Promise<void>;
   readonly refreshSchedulers: (cwd?: string) => Promise<void>;
   readonly startScheduler: () => Promise<void>;
@@ -354,6 +356,24 @@ export function useAutomationsDomain(input: {
     }
   }
 
+  async function setSelectedStatus(status: AutomationStatus): Promise<void> {
+    const automationId = selectedAutomationId;
+    const cwd = input.cwd.trim();
+    if (!cwd || !automationId) {
+      return;
+    }
+    setMutatingAutomationId(automationId);
+    try {
+      input.setErrorMessage("");
+      const response = await updateAutomation(cwd, automationId, { status });
+      setAutomations((current) => current.map((automation) => automation.id === response.automation.id ? response.automation : automation));
+    } catch (caught) {
+      input.setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setMutatingAutomationId("");
+    }
+  }
+
   async function setSelectedSchedule(trigger: AutomationTrigger): Promise<void> {
     const automationId = selectedAutomationId;
     const cwd = input.cwd.trim();
@@ -454,6 +474,7 @@ export function useAutomationsDomain(input: {
       previewSelectedAutomation,
       runSelectedAutomation,
       archiveSelectedAutomation,
+      setSelectedStatus,
       setSelectedSchedule,
       refreshSchedulers,
       startScheduler,

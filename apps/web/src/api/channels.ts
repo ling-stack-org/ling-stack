@@ -26,6 +26,7 @@ import type {
   ChannelWorkflowStepRetryResponse,
   ChannelWorkflowStepStartResponse,
   ChannelWorkflowTemplateMutationResponse,
+  WorkflowEvidenceResponse,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
   CreateChannelExecutionProposalRequest,
@@ -223,6 +224,10 @@ export async function updateChannelWorkflow(
   input: UpdateChannelWorkflowRequest,
 ): Promise<ChannelWorkflowMutationResponse> {
   return daemonClient.updateChannelWorkflow(cwd, workflowId, input);
+}
+
+export async function getChannelWorkflowEvidence(cwd: string, workflowId: string): Promise<WorkflowEvidenceResponse> {
+  return daemonClient.getChannelWorkflowEvidence(cwd, workflowId);
 }
 
 export async function cancelChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowCancelResponse> {

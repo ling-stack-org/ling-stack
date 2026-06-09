@@ -41,6 +41,21 @@ test("automations page creates, previews, runs, links runs, and controls the loc
   await expect.poll(() => automationState.automations.length).toBe(1);
   await expect(page.getByRole("heading", { name: "Daily Brief" })).toBeVisible();
   await expect(page.getByText("No runs yet")).toBeVisible();
+  await page.getByRole("button", { name: "Close details" }).click();
+  await expect(page.locator(".automation-detail-panel")).toHaveCount(0);
+  const dailyBriefRow = page.locator(".automation-list-section", { hasText: "Saved automations" }).getByRole("button", { name: /Daily Brief/ });
+  await dailyBriefRow.click();
+  await expect(page.getByRole("heading", { name: "Daily Brief" })).toBeVisible();
+  await dailyBriefRow.click();
+  await expect(page.locator(".automation-detail-panel")).toHaveCount(0);
+  await dailyBriefRow.click();
+  await expect(page.getByRole("heading", { name: "Daily Brief" })).toBeVisible();
+  await page.getByRole("button", { name: "Pause" }).click();
+  await expect(page.locator(".automation-detail-panel")).toContainText("paused");
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Resume" }).click();
+  await expect(page.locator(".automation-detail-panel")).toContainText("enabled");
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
 
   await page.getByRole("button", { name: "Preview" }).click();
   await expect(page.locator(".automation-preview pre")).toContainText("Ship automations P0 and P1");

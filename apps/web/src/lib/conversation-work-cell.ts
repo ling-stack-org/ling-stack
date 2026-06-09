@@ -1,10 +1,10 @@
-import type { ApprovalRequest, ExecutionAction, LingThreadEvidenceResponse, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
+import type { ApprovalRequest, ChannelWorkflow, ExecutionAction, LingThreadEvidenceResponse, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
 
 export type ConversationWorkCellMode = "active" | "completed";
-export type ConversationWorkCellStatus = RunSession["status"] | LingTurn["status"];
+export type ConversationWorkCellStatus = RunSession["status"] | LingTurn["status"] | ChannelWorkflow["status"];
 export type ConversationWorkCellGroupKind = "changed" | "checked" | "evidence" | "attention";
 export type ConversationWorkCellRowTone = "neutral" | "running" | "waiting" | "success" | "failed";
 
@@ -460,7 +460,7 @@ function isRunActive(run: RunSession): boolean {
 }
 
 function isWorkCellStatusActive(status: ConversationWorkCellStatus): boolean {
-  return status === "open" || status === "queued" || status === "running" || status === "waiting_for_approval" || status === "blocked";
+  return status === "draft" || status === "ready" || status === "open" || status === "queued" || status === "running" || status === "waiting_for_approval" || status === "blocked";
 }
 
 function readRunTitle(run: RunSession): string {

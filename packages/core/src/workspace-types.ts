@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
 import type { RunnerFallbackReason, RunnerRequestSource } from "./runtime-supervisor-types.js";
 import type { AiTeammateRoleKey, SkillApprovalProfile } from "./skill-types.js";
+import type { WorkflowTerminationPolicy } from "./workflow-graph-types.js";
 
 export const DEFAULT_WORKSPACE_ID = "workspace_default";
 
@@ -905,6 +906,22 @@ export interface WorkflowStepGate {
   readonly requiredForStatuses?: readonly ChannelWorkflowStepStatus[];
 }
 
+export type WorkflowFanInMode =
+  | "summarize_outputs"
+  | "compare_outputs"
+  | "collect_checks"
+  | "memory_candidates";
+
+export interface WorkflowFanInPolicy {
+  readonly mode: WorkflowFanInMode;
+  readonly requireAllBranchesTerminal: boolean;
+  readonly includeFailedBranches: boolean;
+  readonly createSummaryArtifact: boolean;
+  readonly createMemoryCandidates: boolean;
+  readonly memoryCandidateScope: "run" | "task" | "channel";
+  readonly maxInputArtifacts: number;
+}
+
 export interface RunnerResolutionAudit {
   readonly requestedRunnerId: string;
   readonly effectiveRunnerId: string;
@@ -923,15 +940,244 @@ export interface WorkflowStepOutputRef {
   readonly branchGroupId?: string;
 }
 
+export type WorkflowPacketSourceRefType =
+  | "channel_message"
+  | "channel_brief"
+  | "channel_decision"
+  | "context_summary"
+  | "task"
+  | "run"
+  | "workflow"
+  | "workflow_step"
+  | "workflow_handoff_intent"
+  | "workflow_selector_decision"
+  | "artifact"
+  | "approval"
+  | "memory";
+
+export interface WorkflowPacketSourceRef {
+  readonly type: WorkflowPacketSourceRefType;
+  readonly id: string;
+  readonly label?: string;
+}
+
+export type WorkflowHandoffIntentStatus =
+  | "proposed"
+  | "validated"
+  | "accepted"
+  | "declined"
+  | "converted"
+  | "failed";
+
+export const workflowHandoffIntentStatuses: readonly WorkflowHandoffIntentStatus[] = [
+  "proposed",
+  "validated",
+  "accepted",
+  "declined",
+  "converted",
+  "failed",
+];
+
+export type WorkflowHandoffIntentCreatedBy = "local-user" | "ai-teammate" | "orchestrator";
+
+export interface WorkflowHandoffValidation {
+  readonly targetTeammateExists: boolean;
+  readonly targetTeammateActive: boolean;
+  readonly skillExecutable: boolean;
+  readonly providerRunnable: boolean;
+  readonly approvalProfileCompatible: boolean;
+  readonly resourceLeaseAvailable: boolean;
+  readonly blockers: readonly string[];
+}
+
+export interface WorkflowHandoffIntent {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly workflowId?: string;
+  readonly sourceWorkflowStepId?: string;
+  readonly sourceRunId?: string;
+  readonly sourceMessageId?: string;
+  readonly channelHandoffId?: string;
+  readonly fromParticipantId: string;
+  readonly fromParticipantLabel: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel?: string;
+  readonly reason: string;
+  readonly requiredInput: string;
+  readonly expectedOutput: string;
+  readonly riskSummary?: string;
+  readonly sourceRefs: readonly WorkflowPacketSourceRef[];
+  readonly status: WorkflowHandoffIntentStatus;
+  readonly validation?: WorkflowHandoffValidation;
+  readonly createdBy: WorkflowHandoffIntentCreatedBy;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateWorkflowHandoffIntentInput {
+  readonly channelId: string;
+  readonly workflowId?: string;
+  readonly sourceWorkflowStepId?: string;
+  readonly sourceRunId?: string;
+  readonly sourceMessageId?: string;
+  readonly channelHandoffId?: string;
+  readonly fromParticipantId: string;
+  readonly fromParticipantLabel: string;
+  readonly toParticipantId: string;
+  readonly toParticipantLabel?: string;
+  readonly reason: string;
+  readonly requiredInput: string;
+  readonly expectedOutput: string;
+  readonly riskSummary?: string;
+  readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  readonly status?: WorkflowHandoffIntentStatus;
+  readonly validation?: WorkflowHandoffValidation;
+  readonly createdBy: WorkflowHandoffIntentCreatedBy;
+}
+
+export interface UpdateWorkflowHandoffIntentInput {
+  readonly channelHandoffId?: string | null;
+  readonly toParticipantLabel?: string | null;
+  readonly reason?: string;
+  readonly requiredInput?: string;
+  readonly expectedOutput?: string;
+  readonly riskSummary?: string | null;
+  readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  readonly status?: WorkflowHandoffIntentStatus;
+  readonly validation?: WorkflowHandoffValidation | null;
+}
+
+export interface ListWorkflowHandoffIntentsOptions {
+  readonly channelId?: string;
+  readonly workflowId?: string;
+  readonly sourceWorkflowStepId?: string;
+  readonly sourceRunId?: string;
+  readonly status?: WorkflowHandoffIntentStatus;
+  readonly limit?: number;
+}
+
+export type WorkflowSelectorDecisionStatus =
+  | "proposed"
+  | "accepted"
+  | "rejected"
+  | "blocked"
+  | "superseded";
+
+export const workflowSelectorDecisionStatuses: readonly WorkflowSelectorDecisionStatus[] = [
+  "proposed",
+  "accepted",
+  "rejected",
+  "blocked",
+  "superseded",
+];
+
+export type WorkflowSelectorTargetKind =
+  | "workflow_step"
+  | "graph_node"
+  | "teammate"
+  | "skill"
+  | "handoff"
+  | "wait";
+
+export const workflowSelectorTargetKinds: readonly WorkflowSelectorTargetKind[] = [
+  "workflow_step",
+  "graph_node",
+  "teammate",
+  "skill",
+  "handoff",
+  "wait",
+];
+
+export type WorkflowSelectorDecisionCreatedBy = "deterministic" | "model" | "local-user";
+
+export interface WorkflowSelectorAlternative {
+  readonly targetKind: WorkflowSelectorTargetKind;
+  readonly targetId: string;
+  readonly label: string;
+  readonly reason: string;
+}
+
+export interface WorkflowSelectorDecision {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly workflowId: string;
+  readonly sourceWorkflowStepId?: string;
+  readonly selectorNodeId?: string;
+  readonly targetKind: WorkflowSelectorTargetKind;
+  readonly selectedWorkflowStepId?: string;
+  readonly selectedGraphNodeId?: string;
+  readonly selectedTeammateId?: string;
+  readonly selectedSkillId?: string;
+  readonly selectedHandoffIntentId?: string;
+  readonly reason: string;
+  readonly alternativesConsidered: readonly WorkflowSelectorAlternative[];
+  readonly confidence: "low" | "medium" | "high";
+  readonly requiresUserConfirmation: boolean;
+  readonly status: WorkflowSelectorDecisionStatus;
+  readonly sourceRefs: readonly WorkflowPacketSourceRef[];
+  readonly createdBy: WorkflowSelectorDecisionCreatedBy;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateWorkflowSelectorDecisionInput {
+  readonly channelId: string;
+  readonly workflowId: string;
+  readonly sourceWorkflowStepId?: string;
+  readonly selectorNodeId?: string;
+  readonly targetKind: WorkflowSelectorTargetKind;
+  readonly selectedWorkflowStepId?: string;
+  readonly selectedGraphNodeId?: string;
+  readonly selectedTeammateId?: string;
+  readonly selectedSkillId?: string;
+  readonly selectedHandoffIntentId?: string;
+  readonly reason: string;
+  readonly alternativesConsidered?: readonly WorkflowSelectorAlternative[];
+  readonly confidence?: "low" | "medium" | "high";
+  readonly requiresUserConfirmation?: boolean;
+  readonly status?: WorkflowSelectorDecisionStatus;
+  readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  readonly createdBy: WorkflowSelectorDecisionCreatedBy;
+}
+
+export interface UpdateWorkflowSelectorDecisionInput {
+  readonly reason?: string;
+  readonly alternativesConsidered?: readonly WorkflowSelectorAlternative[];
+  readonly confidence?: "low" | "medium" | "high";
+  readonly requiresUserConfirmation?: boolean;
+  readonly status?: WorkflowSelectorDecisionStatus;
+  readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+}
+
+export interface ListWorkflowSelectorDecisionsOptions {
+  readonly channelId?: string;
+  readonly workflowId?: string;
+  readonly sourceWorkflowStepId?: string;
+  readonly selectedWorkflowStepId?: string;
+  readonly status?: WorkflowSelectorDecisionStatus;
+  readonly limit?: number;
+}
+
 export interface ChannelWorkflowStepContextPacket {
   readonly schemaVersion: 1;
   readonly workflowId: string;
   readonly workflowStepId: string;
+  readonly graphId?: string;
+  readonly graphNodeId?: string;
+  readonly teammateId?: string;
+  readonly skillId?: string;
   readonly objective: string;
   readonly stepTitle: string;
   readonly stepPrompt: string;
   readonly dependencies: readonly WorkflowStepOutputRef[];
   readonly priorOutputArtifactIds: readonly string[];
+  readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  readonly selectorDecisionIds?: readonly string[];
+  readonly handoffIntentIds?: readonly string[];
   readonly requestedRunnerId?: string;
   readonly effectiveRunnerId?: string;
   readonly providerPresetId?: string;
@@ -944,9 +1190,19 @@ export interface ChannelWorkflowStepOutputPacket {
   readonly workflowId: string;
   readonly workflowStepId: string;
   readonly runId?: string;
+  readonly graphId?: string;
+  readonly graphNodeId?: string;
+  readonly teammateId?: string;
+  readonly skillId?: string;
   readonly status: ChannelWorkflowStepStatus;
   readonly resultSummary?: string;
   readonly artifactIds: readonly string[];
+  readonly decisions?: readonly string[];
+  readonly blockers?: readonly string[];
+  readonly changedPaths?: readonly string[];
+  readonly sourceRefs?: readonly WorkflowPacketSourceRef[];
+  readonly selectorDecisionIds?: readonly string[];
+  readonly handoffIntentIds?: readonly string[];
   readonly runnerAudit?: RunnerResolutionAudit;
   readonly generatedAt: string;
 }
@@ -955,6 +1211,8 @@ export interface ChannelWorkflowStepMetadata {
   readonly workflowTemplateId?: string;
   readonly templateVersion?: string;
   readonly templateStepId?: string;
+  readonly graphId?: string;
+  readonly graphNodeId?: string;
   readonly dependsOnStepIds?: readonly string[];
   readonly branchGroupId?: string;
   readonly joinGroupId?: string;
@@ -970,11 +1228,24 @@ export interface ChannelWorkflowStepMetadata {
   readonly preStepApprovalId?: string;
   readonly policy?: WorkflowStepPolicy;
   readonly gates?: readonly WorkflowStepGate[];
+  readonly fanInPolicy?: WorkflowFanInPolicy;
   readonly activeGateStage?: "pre" | "post";
   readonly postStepApprovalId?: string;
   readonly contextArtifactId?: string;
   readonly outputArtifactId?: string;
   readonly outputArtifactIds?: readonly string[];
+  readonly selectorDecisionIds?: readonly string[];
+  readonly handoffIntentIds?: readonly string[];
+  readonly fanInSummaryArtifactId?: string;
+  readonly memoryCandidateIds?: readonly string[];
+}
+
+export interface ChannelWorkflowMetadata {
+  readonly workflowGraphId?: string;
+  readonly workflowGraphSchemaVersion?: number;
+  readonly workflowGraphArtifactId?: string;
+  readonly termination?: WorkflowTerminationPolicy;
+  readonly maxParallelSteps?: number;
 }
 
 export interface ChannelWorkflow {
@@ -986,6 +1257,7 @@ export interface ChannelWorkflow {
   readonly objective: string;
   readonly status: ChannelWorkflowStatus;
   readonly createdBy: string;
+  readonly metadata?: ChannelWorkflowMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -997,12 +1269,14 @@ export interface CreateChannelWorkflowInput {
   readonly objective: string;
   readonly status?: ChannelWorkflowStatus;
   readonly createdBy: string;
+  readonly metadata?: ChannelWorkflowMetadata;
 }
 
 export interface UpdateChannelWorkflowInput {
   readonly title?: string;
   readonly objective?: string;
   readonly status?: ChannelWorkflowStatus;
+  readonly metadata?: ChannelWorkflowMetadata | null;
 }
 
 export interface ListChannelWorkflowsOptions {
@@ -1134,6 +1408,14 @@ export function createChannelDecisionId(): string {
 
 export function createChannelHandoffId(): string {
   return `handoff_${randomUUID()}`;
+}
+
+export function createWorkflowHandoffIntentId(): string {
+  return `wf_handoff_intent_${randomUUID()}`;
+}
+
+export function createWorkflowSelectorDecisionId(): string {
+  return `wf_selector_decision_${randomUUID()}`;
 }
 
 export function createChannelContextSummaryId(): string {

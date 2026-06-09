@@ -54,6 +54,7 @@ import type {
   ChannelWorkflowStepStartResponse,
   ChannelWorkflowStepStatus,
   ChannelWorkflowTemplateMutationResponse,
+  WorkflowEvidenceResponse,
   CreateChannelAttachmentRequest,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
@@ -1203,6 +1204,10 @@ export class LingDaemonClient {
 
   async getChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowMutationResponse> {
     return this.get(`/workflows/${encodeURIComponent(workflowId)}`, { cwd });
+  }
+
+  async getChannelWorkflowEvidence(cwd: string, workflowId: string): Promise<WorkflowEvidenceResponse> {
+    return this.get(`/workflows/${encodeURIComponent(workflowId)}/evidence`, { cwd });
   }
 
   async updateChannelWorkflow(

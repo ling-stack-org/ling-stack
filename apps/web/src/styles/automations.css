@@ -5,6 +5,10 @@
   align-items: start;
 }
 
+.automations-layout.detail-closed {
+  grid-template-columns: minmax(0, 720px);
+}
+
 .automations-list-panel,
 .automation-detail-panel {
   min-width: 0;

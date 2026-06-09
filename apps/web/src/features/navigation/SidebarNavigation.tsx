@@ -11,6 +11,7 @@ import {
   Plus,
   Settings,
   ShieldCheck,
+  Timer,
   Users,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
@@ -81,6 +82,7 @@ export function SidebarNavigation({
       <nav className="primary-nav">
         <NavItem icon={<PlugZap />} label={t("Model Workbench")} active={activeSidebarTarget === "providers"} onClick={() => onOpenView("providers")} />
         <NavItem icon={<Kanban />} label={t("Work Board")} active={activeSidebarTarget === "work_board"} onClick={() => onOpenView("work_board")} />
+        <NavItem icon={<Timer />} label={t("Automations")} active={activeSidebarTarget === "automations"} onClick={() => onOpenView("automations")} />
         <NavItem icon={<Inbox />} label={t("Review Queue")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} />
         <NavItem icon={<Database />} label={t("Media Jobs")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />
         <NavItem icon={<Users />} label={t("AI Teammates")} active={activeSidebarTarget === "teammates"} onClick={() => onOpenView("teammates")} />

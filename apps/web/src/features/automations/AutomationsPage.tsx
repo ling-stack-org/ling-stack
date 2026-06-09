@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Archive,
@@ -9,6 +9,7 @@ import {
   Layers,
   Loader2,
   MessageSquare,
+  Pause,
   Play,
   RefreshCw,
   Sparkles,
@@ -28,6 +29,7 @@ import type {
   AutomationPromptTemplate,
   AutomationRun,
   AutomationSchedulerState,
+  AutomationStatus,
   AutomationTarget,
   AutomationTrigger,
   BuiltinAutomationTemplate,
@@ -71,6 +73,7 @@ export function AutomationsPage({
   onPreview,
   onRun,
   onArchive,
+  onSetStatus,
   onSetSchedule,
   onOpenRun,
   onOpenThread,
@@ -105,16 +108,20 @@ export function AutomationsPage({
   readonly onPreview: () => void;
   readonly onRun: () => void;
   readonly onArchive: () => void;
+  readonly onSetStatus: (status: AutomationStatus) => void;
   readonly onSetSchedule: (trigger: AutomationTrigger) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenThread: (threadId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [dialog, setDialog] = useState<CreateDialog>("");
-  const selectedDraft = automationDrafts.find((draft) => draft.id === selectedDraftId);
-  const selectedAutomation = selectedDraft
+  const [detailOpen, setDetailOpen] = useState(true);
+  const selectedDraftCandidate = automationDrafts.find((draft) => draft.id === selectedDraftId);
+  const selectedAutomationCandidate = selectedDraftCandidate
     ? undefined
     : automations.find((automation) => automation.id === selectedAutomationId) ?? automations[0];
+  const selectedDraft = detailOpen ? selectedDraftCandidate : undefined;
+  const selectedAutomation = detailOpen ? selectedAutomationCandidate : undefined;
   const selectedRuns = selectedAutomation
     ? automationRuns.filter((run) => run.automationId === selectedAutomation.id)
     : [];
@@ -123,6 +130,10 @@ export function AutomationsPage({
   const busyAutomation = Boolean(selectedAutomation && mutatingAutomationId === selectedAutomation.id);
   const busyDraft = Boolean(selectedDraft && mutatingDraftId === selectedDraft.id);
   const scheduler = schedulers[0];
+
+  useEffect(() => {
+    setDetailOpen(true);
+  }, [selectedAutomationId, selectedDraftId]);
 
   async function createTemplateDraft(templateId: BuiltinAutomationTemplateId): Promise<void> {
     await onCreateFromTemplate(templateId);
@@ -139,8 +150,27 @@ export function AutomationsPage({
     setDialog("");
   }
 
+  function selectDraft(draftId: string): void {
+    if (detailOpen && selectedDraftCandidate?.id === draftId) {
+      setDetailOpen(false);
+      return;
+    }
+    onSelectDraft(draftId);
+    setDetailOpen(true);
+  }
+
+  function selectAutomation(automationId: string): void {
+    if (detailOpen && !selectedDraftCandidate && selectedAutomationCandidate?.id === automationId) {
+      setDetailOpen(false);
+      return;
+    }
+    onSelectDraft("");
+    onSelectAutomation(automationId);
+    setDetailOpen(true);
+  }
+
   return (
-    <div className="automations-layout">
+    <div className={detailOpen ? "automations-layout" : "automations-layout detail-closed"}>
       <section className="panel automations-list-panel" aria-labelledby="automations-title">
         <div className="panel-title split">
           <span>
@@ -215,7 +245,8 @@ export function AutomationsPage({
                   key={draft.id}
                   className={selectedDraft?.id === draft.id ? "automation-row selected draft" : "automation-row draft"}
                   type="button"
-                  onClick={() => onSelectDraft(draft.id)}
+                  aria-expanded={selectedDraft?.id === draft.id}
+                  onClick={() => selectDraft(draft.id)}
                 >
                   <span className="automation-row-main">
                     <strong>{draft.title ?? t("Untitled draft")}</strong>
@@ -247,7 +278,8 @@ export function AutomationsPage({
                     key={automation.id}
                     className={selectedAutomation?.id === automation.id ? "automation-row selected" : "automation-row"}
                     type="button"
-                    onClick={() => onSelectAutomation(automation.id)}
+                    aria-expanded={selectedAutomation?.id === automation.id}
+                    onClick={() => selectAutomation(automation.id)}
                   >
                     <span className="automation-row-main">
                       <strong>{automation.title}</strong>
@@ -265,47 +297,52 @@ export function AutomationsPage({
         </div>
       </section>
 
-      <section className="panel automation-detail-panel" aria-labelledby="automation-detail-title">
-        {selectedDraft ? (
-          <AutomationDraftReview
-            key={selectedDraft.id}
-            cwd={cwd}
-            channels={channels}
-            draft={selectedDraft}
-            preview={draftPreview}
-            busy={busyDraft}
-            onSave={(partial) => onUpdateDraft(selectedDraft.id, partial)}
-            onPreview={async (partial) => {
-              await onUpdateDraft(selectedDraft.id, partial);
-              await onPreviewDraft(selectedDraft.id);
-            }}
-            onConfirm={async (partial) => {
-              await onUpdateDraft(selectedDraft.id, partial);
-              await onConfirmDraft(selectedDraft.id);
-            }}
-            onDiscard={() => onDiscardDraft(selectedDraft.id)}
-          />
-        ) : selectedAutomation ? (
-          <AutomationDetail
-            automation={selectedAutomation}
-            channels={channels}
-            runs={selectedRuns}
-            preview={preview}
-            busy={busyAutomation}
-            onPreview={onPreview}
-            onRun={onRun}
-            onArchive={onArchive}
-            onSetSchedule={onSetSchedule}
-            onOpenRun={onOpenRun}
-            onOpenThread={onOpenThread}
-          />
-        ) : (
-          <div className="empty-state">
-            <Timer />
-            <span>{t("Create an automation draft")}</span>
-          </div>
-        )}
-      </section>
+      {detailOpen ? (
+        <section className="panel automation-detail-panel" aria-labelledby="automation-detail-title">
+          {selectedDraft ? (
+            <AutomationDraftReview
+              key={selectedDraft.id}
+              cwd={cwd}
+              channels={channels}
+              draft={selectedDraft}
+              preview={draftPreview}
+              busy={busyDraft}
+              onSave={(partial) => onUpdateDraft(selectedDraft.id, partial)}
+              onPreview={async (partial) => {
+                await onUpdateDraft(selectedDraft.id, partial);
+                await onPreviewDraft(selectedDraft.id);
+              }}
+              onConfirm={async (partial) => {
+                await onUpdateDraft(selectedDraft.id, partial);
+                await onConfirmDraft(selectedDraft.id);
+              }}
+              onDiscard={() => onDiscardDraft(selectedDraft.id)}
+              onClose={() => setDetailOpen(false)}
+            />
+          ) : selectedAutomation ? (
+            <AutomationDetail
+              automation={selectedAutomation}
+              channels={channels}
+              runs={selectedRuns}
+              preview={preview}
+              busy={busyAutomation}
+              onPreview={onPreview}
+              onRun={onRun}
+              onArchive={onArchive}
+              onSetStatus={onSetStatus}
+              onSetSchedule={onSetSchedule}
+              onOpenRun={onOpenRun}
+              onOpenThread={onOpenThread}
+              onClose={() => setDetailOpen(false)}
+            />
+          ) : (
+            <div className="empty-state">
+              <Timer />
+              <span>{t("Create an automation draft")}</span>
+            </div>
+          )}
+        </section>
+      ) : null}
 
       {dialog === "templates" ? (
         <AutomationTemplateModal
@@ -343,9 +380,11 @@ function AutomationDetail({
   onPreview,
   onRun,
   onArchive,
+  onSetStatus,
   onSetSchedule,
   onOpenRun,
   onOpenThread,
+  onClose,
 }: {
   readonly automation: AutomationDefinition;
   readonly channels: readonly Channel[];
@@ -355,11 +394,14 @@ function AutomationDetail({
   readonly onPreview: () => void;
   readonly onRun: () => void;
   readonly onArchive: () => void;
+  readonly onSetStatus: (status: AutomationStatus) => void;
   readonly onSetSchedule: (trigger: AutomationTrigger) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenThread: (threadId: string) => void;
+  readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const canToggleStatus = automation.status === "enabled" || automation.status === "paused" || automation.status === "disabled" || automation.status === "error";
   return (
     <>
       <div className="panel-title split">
@@ -379,8 +421,20 @@ function AutomationDetail({
             {busy ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
             {t("Run")}
           </button>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => onSetStatus(automation.status === "enabled" ? "paused" : "enabled")}
+            disabled={busy || !canToggleStatus}
+          >
+            {automation.status === "enabled" ? <Pause size={14} /> : <Play size={14} />}
+            {automation.status === "enabled" ? t("Pause") : t("Resume")}
+          </button>
           <button className="ghost-icon-button" type="button" onClick={onArchive} disabled={busy} aria-label={t("Archive")} title={t("Archive")}>
             <Archive size={15} />
+          </button>
+          <button className="ghost-icon-button" type="button" onClick={onClose} aria-label={t("Close details")} title={t("Close details")}>
+            <X size={15} />
           </button>
         </span>
       </div>
@@ -462,6 +516,7 @@ function AutomationDraftReview({
   onPreview,
   onConfirm,
   onDiscard,
+  onClose,
 }: {
   readonly cwd: string;
   readonly channels: readonly Channel[];
@@ -472,6 +527,7 @@ function AutomationDraftReview({
   readonly onPreview: (partialAutomation: Partial<CreateAutomationRequest>) => Promise<void>;
   readonly onConfirm: (partialAutomation: Partial<CreateAutomationRequest>) => Promise<void>;
   readonly onDiscard: () => Promise<void>;
+  readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [title, setTitle] = useState(draft.title ?? "");
@@ -518,6 +574,9 @@ function AutomationDraftReview({
           </button>
           <button className="ghost-icon-button" type="button" onClick={onDiscard} disabled={busy} aria-label={t("Discard")} title={t("Discard")}>
             <Trash2 size={15} />
+          </button>
+          <button className="ghost-icon-button" type="button" onClick={onClose} aria-label={t("Close details")} title={t("Close details")}>
+            <X size={15} />
           </button>
         </span>
       </div>

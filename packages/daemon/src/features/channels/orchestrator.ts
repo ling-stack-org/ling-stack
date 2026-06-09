@@ -15,7 +15,9 @@ import {
   completeWorkflowIfStepsFinished,
   prepareWorkflowStepStart,
 } from "./workflows.js";
+import { maybeCreateWorkflowFanInEvidence } from "./workflow-fanin.js";
 import { createWorkflowStepOutputArtifact } from "./workflow-step-packets.js";
+import { ensureDeterministicWorkflowSelectorDecision } from "./workflow-selector.js";
 
 export interface OrchestrateWorkflowInput {
   readonly store: RunStore;
@@ -140,10 +142,17 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     if (startedSteps.length >= startBudget) {
       break;
     }
-    const latestCandidate = input.store.getChannelWorkflowStep(candidate.id) ?? candidate;
+    let latestCandidate = input.store.getChannelWorkflowStep(candidate.id) ?? candidate;
     if (latestCandidate.metadata?.autoStart === false) {
       continue;
     }
+    latestCandidate = ensureDeterministicWorkflowSelectorDecision({
+      store: input.store,
+      workflow: input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow,
+      selectedStep: latestCandidate,
+      eligibleSteps,
+      now: new Date().toISOString(),
+    }).workflowStep;
     const isApprovedGatedStep = latestCandidate.status === "running" && latestCandidate.metadata?.preStepApprovalId && !latestCandidate.runId && !latestCandidate.taskId;
     if (!isApprovedGatedStep) {
       const gateResult = maybeRequestPreStepApproval(input.store, input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow, latestCandidate);
@@ -446,8 +455,18 @@ export function finalizeOrchestratedWorkflowStepRun(
   }
   try {
     attachWorkflowStepOutputArtifact(store, workflowStepId, run, now);
+    const latestStep = store.getChannelWorkflowStep(workflowStepId);
+    if (latestStep && isTerminalWorkflowStepStatus(latestStep.status)) {
+      maybeCreateWorkflowFanInEvidence({
+        store,
+        workflow,
+        step: latestStep,
+        run,
+        now,
+      });
+    }
   } catch {
-    // Output packets are audit evidence; terminal workflow state must remain authoritative if artifact IO fails.
+    // Output packets and fan-in summaries are audit evidence; terminal workflow state remains authoritative if artifact IO fails.
   }
   store.releaseResourceLeasesForOwner("workflow_step", workflowStepId, now);
   return store.getChannelWorkflowStep(workflowStepId);
