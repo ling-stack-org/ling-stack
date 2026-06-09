@@ -796,6 +796,263 @@ test("fork lineage creates child thread and surfaces it in work history and chan
   await expect(page.getByText("No work recorded in this branch yet")).toBeVisible();
 });
 
+test("fork and run starts an explicit child branch run from work history", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const sourceRun: MockRun = {
+    ...state.runs[0],
+    id: "run_fork_run_source",
+    status: "succeeded",
+    threadId: "thread_fork_run_source",
+    taskId: "task_fork_run_source",
+    taskSnapshot: {
+      id: "task_fork_run_source",
+      title: "Fork and run source",
+      prompt: "Create a completed source thread for immediate child work.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      task: {
+        id: "task_fork_run_source",
+        title: "Fork and run source",
+        prompt: "Create a completed source thread for immediate child work.",
+        channelId: "channel_engineering",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_fork_run_source.jsonl",
+    errorMessage: undefined,
+    createdAt: "2026-05-25T01:30:00.000Z",
+    updatedAt: "2026-05-25T01:31:00.000Z",
+    endedAt: "2026-05-25T01:31:00.000Z",
+  };
+  state.runs = [sourceRun];
+  state.threads = [
+    {
+      id: "thread_fork_run_source",
+      workspaceId: "workspace_default",
+      kind: "task",
+      channelId: "channel_engineering",
+      taskId: "task_fork_run_source",
+      title: "Fork and run source",
+      objective: "Create a completed source thread for immediate child work.",
+      status: "succeeded",
+      lastRunId: sourceRun.id,
+      createdAt: "2026-05-25T01:30:00.000Z",
+      updatedAt: "2026-05-25T01:31:00.000Z",
+    },
+  ];
+  state.turns = [
+    {
+      id: "turn_fork_run_source",
+      workspaceId: "workspace_default",
+      threadId: "thread_fork_run_source",
+      kind: "manual_followup",
+      status: "succeeded",
+      title: "Complete fork-run source turn",
+      userInstruction: "Finish source work before branching.",
+      channelId: "channel_engineering",
+      taskId: "task_fork_run_source",
+      lastRunId: sourceRun.id,
+      createdByActor: "local-user",
+      createdAt: "2026-05-25T01:30:00.000Z",
+      updatedAt: "2026-05-25T01:31:00.000Z",
+      completedAt: "2026-05-25T01:31:00.000Z",
+    },
+  ];
+  state.turnRunLinks = [];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+
+  const workList = page.locator(".thread-list");
+  const sourceRow = workList.locator(".work-history-branch-row").filter({ hasText: "Fork and run source" }).first();
+  await sourceRow.click();
+  await expect(sourceRow).toHaveClass(/selected/);
+  const detail = page.getByLabel("Thread detail");
+  await expect(detail).toContainText("Fork and run");
+  await detail.getByLabel("Child instruction").fill("Implement child branch immediately.");
+  await detail.getByRole("button", { name: "Start child branch" }).click();
+
+  await expect.poll(() => state.threads.find((thread) => thread.parentThreadId === "thread_fork_run_source")?.id).toMatch(/^thread_fork_/);
+  const childThread = state.threads.find((thread) => thread.parentThreadId === "thread_fork_run_source");
+  expect(childThread).toBeTruthy();
+  const childTurn = state.turns.find((turn) => turn.threadId === childThread?.id);
+  expect(childTurn).toBeTruthy();
+  const childRun = state.runs.find((run) => run.threadId === childThread?.id);
+  expect(childRun).toBeTruthy();
+  expect(childThread?.parentTurnId).toBe("turn_fork_run_source");
+  expect(childThread?.forkedFromRunId).toBe(sourceRun.id);
+  expect(childThread?.activeRunId).toBe(childRun?.id);
+  expect(childTurn?.userInstruction).toBe("Implement child branch immediately.");
+  expect(state.turnRunLinks.some((link) => link.turnId === childTurn?.id && link.runId === childRun?.id && link.role === "primary")).toBe(true);
+
+  await expect(detail).toContainText("Forked from");
+  await expect(detail).toContainText("thread_fork_run_source");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  const branchTree = page.getByLabel("Channel work threads");
+  await expect(branchTree).toContainText(childThread?.title ?? "Fork");
+  await branchTree.getByRole("button", { name: new RegExp(childThread?.title ?? "Fork") }).click();
+  const workCell = page.locator(".conversation-work-cell").filter({ hasText: "Work in progress" });
+  await expect(workCell).toBeVisible();
+  await expect(workCell).toContainText("Implement child branch immediately.");
+});
+
+test("run history archives restores pins and filters work threads", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const activeRun: MockRun = {
+    ...state.runs[0],
+    id: "run_visibility_active",
+    status: "succeeded",
+    threadId: "thread_visibility_active",
+    taskId: "task_visibility_active",
+    taskSnapshot: {
+      id: "task_visibility_active",
+      title: "Visibility active branch",
+      prompt: "Archive and restore this branch.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      task: {
+        id: "task_visibility_active",
+        title: "Visibility active branch",
+        prompt: "Archive and restore this branch.",
+        channelId: "channel_engineering",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_visibility_active.jsonl",
+    errorMessage: undefined,
+    createdAt: "2026-05-25T02:00:00.000Z",
+    updatedAt: "2026-05-25T02:01:00.000Z",
+    endedAt: "2026-05-25T02:01:00.000Z",
+  };
+  const archivedRun: MockRun = {
+    ...activeRun,
+    id: "run_visibility_archived",
+    threadId: "thread_visibility_archived",
+    taskId: "task_visibility_archived",
+    taskSnapshot: {
+      id: "task_visibility_archived",
+      title: "Visibility archived branch",
+      prompt: "Keep this branch hidden by default.",
+    },
+    requestSnapshot: {
+      cwd,
+      providerPresetId: "provider_local",
+      task: {
+        id: "task_visibility_archived",
+        title: "Visibility archived branch",
+        prompt: "Keep this branch hidden by default.",
+        channelId: "channel_engineering",
+      },
+    },
+    eventLogPath: ".ling-stack/sessions/run_visibility_archived.jsonl",
+    createdAt: "2026-05-25T01:50:00.000Z",
+    updatedAt: "2026-05-25T01:51:00.000Z",
+    endedAt: "2026-05-25T01:51:00.000Z",
+  };
+  state.runs = [activeRun, archivedRun];
+  state.threads = [
+    {
+      id: "thread_visibility_active",
+      workspaceId: "workspace_default",
+      kind: "task",
+      channelId: "channel_engineering",
+      taskId: "task_visibility_active",
+      title: "Visibility active branch",
+      objective: "Archive and restore this branch.",
+      status: "succeeded",
+      lastRunId: activeRun.id,
+      createdAt: "2026-05-25T02:00:00.000Z",
+      updatedAt: "2026-05-25T02:01:00.000Z",
+    },
+    {
+      id: "thread_visibility_archived",
+      workspaceId: "workspace_default",
+      kind: "task",
+      channelId: "channel_engineering",
+      taskId: "task_visibility_archived",
+      title: "Visibility archived branch",
+      objective: "Keep this branch hidden by default.",
+      status: "succeeded",
+      lastRunId: archivedRun.id,
+      archivedAt: "2026-05-25T01:52:00.000Z",
+      archivedReason: "Finished branch",
+      createdAt: "2026-05-25T01:50:00.000Z",
+      updatedAt: "2026-05-25T01:52:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Runs" }).click();
+
+  const workList = page.locator(".thread-list");
+  await expect(workList).toContainText("Visibility active branch");
+  await expect(workList).not.toContainText("Visibility archived branch");
+  const workSearch = page.getByLabel("Search work threads");
+  await workSearch.fill("archived");
+  await expect(workList).not.toContainText("Visibility active branch");
+  await expect(workList).not.toContainText("Visibility archived branch");
+  const filter = page.getByLabel("Work thread visibility");
+  await filter.getByRole("button", { name: "All" }).click();
+  await expect(workList).toContainText("Visibility archived branch");
+  await workSearch.fill("active");
+  await expect(workList).toContainText("Visibility active branch");
+  await expect(workList).not.toContainText("Visibility archived branch");
+  await workSearch.fill("");
+  await filter.getByRole("button", { name: "Active" }).click();
+  await expect(workList).toContainText("Visibility active branch");
+
+  await workList.getByRole("button", { name: /Visibility active branch/ }).click();
+  const detail = page.getByLabel("Thread detail");
+  await detail.getByRole("button", { name: "Pin" }).click();
+  await expect.poll(() => state.threads.find((thread) => thread.id === "thread_visibility_active")?.pinnedAt).toBeTruthy();
+  await expect(detail).toContainText("Pinned");
+
+  await detail.getByRole("button", { name: "Archive" }).click();
+  await expect.poll(() => state.threads.find((thread) => thread.id === "thread_visibility_active")?.archivedAt).toBeTruthy();
+  await expect(workList).not.toContainText("Visibility active branch");
+
+  await filter.getByRole("button", { name: "Archived" }).click();
+  await expect(workList).toContainText("Visibility active branch");
+  await expect(workList).toContainText("Visibility archived branch");
+
+  await detail.getByRole("button", { name: "Unarchive" }).click();
+  await expect.poll(() => state.threads.find((thread) => thread.id === "thread_visibility_active")?.archivedAt).toBeFalsy();
+  await filter.getByRole("button", { name: "Active" }).click();
+  await expect(workList).toContainText("Visibility active branch");
+  await expect(workList).not.toContainText("Visibility archived branch");
+
+  await filter.getByRole("button", { name: "All" }).click();
+  await expect(workList).toContainText("Visibility active branch");
+  await expect(workList).toContainText("Visibility archived branch");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  const branchTree = page.getByLabel("Channel work threads");
+  await expect(branchTree).toContainText("Visibility active branch");
+  await expect(branchTree).not.toContainText("Visibility archived branch");
+  const branchSearch = branchTree.getByLabel("Search branches");
+  await branchSearch.fill("missing branch");
+  await expect(branchTree).toContainText("No active branches match");
+  await branchSearch.fill("active");
+  await expect(branchTree).toContainText("Visibility active branch");
+  const activeBranchRow = branchTree.locator(".channel-work-thread-row-shell", { hasText: "Visibility active branch" });
+  await activeBranchRow.getByRole("button", { name: "Unpin" }).click();
+  await expect.poll(() => state.threads.find((thread) => thread.id === "thread_visibility_active")?.pinnedAt).toBeFalsy();
+  await activeBranchRow.getByRole("button", { name: "Archive" }).click();
+  await activeBranchRow.getByRole("button", { name: "Confirm" }).click();
+  await expect.poll(() => state.threads.find((thread) => thread.id === "thread_visibility_active")?.archivedAt).toBeTruthy();
+  await expect(page.locator(".channel-work-thread-row-shell", { hasText: "Visibility active branch" })).toHaveCount(0);
+});
+
 test("run history falls back to legacy thread rows when Ling turn loading fails", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   const sourceRun: MockRun = {

@@ -8,6 +8,16 @@ import type { LingTurn } from "./turns.js";
 export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work" | "automation";
 
 export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
+export type LingThreadArchivedFilter = "exclude" | "include" | "only";
+export type LingThreadSearchField =
+  | "thread_title"
+  | "thread_objective"
+  | "turn_title"
+  | "turn_instruction"
+  | "task_id"
+  | "task_title"
+  | "task_prompt"
+  | "metadata_summary";
 
 export interface LingThreadMetadata {
   readonly schemaVersion: 1;
@@ -45,15 +55,19 @@ export interface LingThread {
   readonly metadata?: LingThreadMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly pinnedAt?: string;
   readonly archivedAt?: string;
+  readonly archivedReason?: string;
 }
 
 export interface LingThreadListResponse {
   readonly cwd: string;
   readonly threads: readonly LingThread[];
+  readonly matches?: readonly LingThreadSearchMatch[];
 }
 
 export interface LingThreadListRequest {
+  readonly q?: string;
   readonly kind?: LingThreadKind;
   readonly channelId?: string;
   readonly taskId?: string;
@@ -62,7 +76,16 @@ export interface LingThreadListRequest {
   readonly externalWorkId?: string;
   readonly status?: LingThreadStatus;
   readonly includeArchived?: boolean;
+  readonly archived?: LingThreadArchivedFilter;
   readonly limit?: number;
+}
+
+export interface LingThreadSearchMatch {
+  readonly threadId: string;
+  readonly turnId?: string;
+  readonly runId?: string;
+  readonly field: LingThreadSearchField;
+  readonly snippet: string;
 }
 
 export interface LingThreadDetailResponse {
@@ -146,4 +169,47 @@ export interface LingThreadForkResponse {
     readonly parentTurnId?: string;
     readonly forkedFromRunId?: string;
   };
+}
+
+export interface LingThreadForkRunRequest {
+  readonly turnId?: string;
+  readonly sourceRunId?: string;
+  readonly title?: string;
+  readonly objective?: string;
+  readonly instruction: string;
+  readonly providerPresetId?: string;
+  readonly runnerId?: string;
+  readonly idempotencyKey: string;
+}
+
+export type LingThreadForkRunStatus = "fork_created" | "fork_reused" | "run_started" | "run_failed";
+
+export interface LingThreadForkRunResponse {
+  readonly cwd: string;
+  readonly sourceThread: LingThread;
+  readonly sourceTurn?: LingTurn;
+  readonly sourceRun?: RunSession;
+  readonly childThread: LingThread;
+  readonly childTurn?: LingTurn;
+  readonly childRun?: RunSession;
+  readonly runId?: string;
+  readonly status: LingThreadForkRunStatus;
+  readonly error?: {
+    readonly code: string;
+    readonly message: string;
+  };
+}
+
+export interface LingThreadArchiveRequest {
+  readonly reason?: string;
+  readonly idempotencyKey?: string;
+}
+
+export interface LingThreadPinRequest {
+  readonly idempotencyKey?: string;
+}
+
+export interface LingThreadMutationResponse {
+  readonly cwd: string;
+  readonly thread: LingThread;
 }

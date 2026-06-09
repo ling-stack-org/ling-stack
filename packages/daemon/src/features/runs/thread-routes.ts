@@ -6,6 +6,7 @@ import {
   type ApprovalRequest,
   type CreateLingTurnInput,
   type LingThread,
+  type LingThreadArchivedFilter,
   type LingThreadKind,
   type LingThreadStatus,
   type LingTurn,
@@ -24,6 +25,7 @@ import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
+import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalBoolean, readOptionalString } from "../../shared/validation.js";
 import { listExecutionActions } from "./execution-actions.js";
@@ -35,13 +37,20 @@ export type LingThreadRoute =
   | { readonly kind: "evidence"; readonly threadId: string }
   | { readonly kind: "resume"; readonly threadId: string }
   | { readonly kind: "resume-preview"; readonly threadId: string }
-  | { readonly kind: "fork"; readonly threadId: string };
+  | { readonly kind: "fork"; readonly threadId: string }
+  | { readonly kind: "fork-run"; readonly threadId: string }
+  | { readonly kind: "archive"; readonly threadId: string }
+  | { readonly kind: "unarchive"; readonly threadId: string }
+  | { readonly kind: "pin"; readonly threadId: string }
+  | { readonly kind: "unpin"; readonly threadId: string };
 
 export type StartLingThreadResumeRun = (runRequest: RunRequest) => Promise<string | undefined>;
+export type StartLingThreadForkRun = (runRequest: RunRequest) => Promise<string | undefined>;
 
 export interface HandleLingThreadRouteOptions {
   readonly maxBodyBytes: number;
   readonly startResumeRun?: StartLingThreadResumeRun;
+  readonly startForkRun?: StartLingThreadForkRun;
 }
 
 interface ResumeContextPreview {
@@ -91,25 +100,34 @@ export function handleLingThreadsCollection(
 
   try {
     const store = storeRegistry.getStore(cwd);
+    const searchQuery = readOptionalLingThreadSearchQuery(url);
+    const listOptions = {
+      kind: readOptionalLingThreadKindQuery(url),
+      channelId: url.searchParams.get("channelId") ?? undefined,
+      taskId: url.searchParams.get("taskId") ?? undefined,
+      teammateId: url.searchParams.get("teammateId") ?? undefined,
+      workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
+      externalWorkId: url.searchParams.get("externalWorkId") ?? undefined,
+      status: readOptionalLingThreadStatusQuery(url),
+      archived: readOptionalLingThreadArchivedFilterQuery(url),
+      includeArchived: url.searchParams.get("includeArchived") === "true",
+      limit: readOptionalIntegerQuery(url, "limit", 1),
+    };
+    if (searchQuery) {
+      const result = store.searchLingThreads({ ...listOptions, q: searchQuery });
+      writeJson(response, 200, {
+        cwd,
+        threads: result.threads,
+        matches: result.matches,
+      });
+      return;
+    }
     writeJson(response, 200, {
       cwd,
-      threads: store.listLingThreads({
-        kind: readOptionalLingThreadKindQuery(url),
-        channelId: url.searchParams.get("channelId") ?? undefined,
-        taskId: url.searchParams.get("taskId") ?? undefined,
-        teammateId: url.searchParams.get("teammateId") ?? undefined,
-        workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
-        externalWorkId: url.searchParams.get("externalWorkId") ?? undefined,
-        status: readOptionalLingThreadStatusQuery(url),
-        includeArchived: url.searchParams.get("includeArchived") === "true",
-        limit: readOptionalIntegerQuery(url, "limit", 1),
-      }),
+      threads: store.listLingThreads(listOptions),
     });
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
-      message: error instanceof Error ? error.message : String(error),
-    });
+    writeLingThreadRouteError(response, error);
   }
 }
 
@@ -129,6 +147,12 @@ export function handleLingThreadItem(
   }
   if (route.kind === "fork") {
     return handleLingThreadFork(request, response, url, storeRegistry, route.threadId, options);
+  }
+  if (route.kind === "fork-run") {
+    return handleLingThreadForkRun(request, response, url, storeRegistry, route.threadId, options);
+  }
+  if (route.kind === "archive" || route.kind === "unarchive" || route.kind === "pin" || route.kind === "unpin") {
+    return handleLingThreadVisibilityMutation(request, response, url, storeRegistry, route);
   }
   if (route.kind === "turns") {
     return handleLingThreadTurns(request, response, url, storeRegistry, route.threadId, options);
@@ -255,6 +279,139 @@ function writeLingThreadRouteError(response: ServerResponse, error: unknown): vo
   });
 }
 
+async function handleLingThreadVisibilityMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  route: Extract<LingThreadRoute, { readonly kind: "archive" | "unarchive" | "pin" | "unpin" }>,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for thread ${route.kind}` });
+    return;
+  }
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(route.threadId);
+    if (!thread) {
+      writeJson(response, 404, { error: "thread_not_found", message: `Ling thread not found: ${route.threadId}` });
+      return;
+    }
+    const body = await readOptionalJsonBody(request, 1024 * 1024);
+    const now = new Date().toISOString();
+    const updated = mutateLingThreadVisibility({
+      store,
+      thread,
+      body,
+      kind: route.kind,
+      now,
+    });
+    writeJson(response, 200, { cwd, thread: updated });
+  } catch (error) {
+    writeLingThreadRouteError(response, error);
+  }
+}
+
+function mutateLingThreadVisibility(input: {
+  readonly store: RunStore;
+  readonly thread: LingThread;
+  readonly body: unknown;
+  readonly kind: "archive" | "unarchive" | "pin" | "unpin";
+  readonly now: string;
+}): LingThread {
+  const { store, thread, body, kind, now } = input;
+  const idempotencyKey = isRecord(body) ? readOptionalString(body, "idempotencyKey")?.trim() : undefined;
+
+  if (kind === "archive") {
+    if (thread.status === "archived" || thread.archivedAt) {
+      if (idempotencyKey) {
+        return thread;
+      }
+      throw new HttpError(409, "thread_already_archived", `Ling thread is already archived: ${thread.id}`);
+    }
+    assertLingThreadCanArchive(store, thread);
+    const rawReason = isRecord(body) ? readOptionalString(body, "reason")?.trim() : undefined;
+    const reason = rawReason ? truncateArchiveReason(redactTextWithSecrets(rawReason)) : undefined;
+    const updated = store.updateLingThread(thread.id, { archivedAt: now, archivedReason: reason ?? null }, now);
+    if (!updated) {
+      throw new HttpError(404, "thread_not_found", `Ling thread not found: ${thread.id}`);
+    }
+    return updated;
+  }
+
+  if (kind === "unarchive") {
+    if (thread.status !== "archived" && !thread.archivedAt) {
+      if (idempotencyKey) {
+        return thread;
+      }
+      throw new HttpError(409, "thread_not_archived", `Ling thread is not archived: ${thread.id}`);
+    }
+    const updated = store.updateLingThread(
+      thread.id,
+      {
+        archivedAt: null,
+        archivedReason: null,
+        status: thread.status === "archived" ? "open" : thread.status,
+      },
+      now,
+    );
+    if (!updated) {
+      throw new HttpError(404, "thread_not_found", `Ling thread not found: ${thread.id}`);
+    }
+    return updated;
+  }
+
+  if (kind === "pin") {
+    if (thread.pinnedAt) {
+      if (idempotencyKey) {
+        return thread;
+      }
+      throw new HttpError(409, "thread_already_pinned", `Ling thread is already pinned: ${thread.id}`);
+    }
+    const updated = store.updateLingThread(thread.id, { pinnedAt: now }, now);
+    if (!updated) {
+      throw new HttpError(404, "thread_not_found", `Ling thread not found: ${thread.id}`);
+    }
+    return updated;
+  }
+
+  if (!thread.pinnedAt) {
+    if (idempotencyKey) {
+      return thread;
+    }
+    throw new HttpError(409, "thread_not_pinned", `Ling thread is not pinned: ${thread.id}`);
+  }
+  const updated = store.updateLingThread(thread.id, { pinnedAt: null }, now);
+  if (!updated) {
+    throw new HttpError(404, "thread_not_found", `Ling thread not found: ${thread.id}`);
+  }
+  return updated;
+}
+
+function assertLingThreadCanArchive(store: RunStore, thread: LingThread): void {
+  if (thread.activeRunId) {
+    const activeRun = store.getRun(thread.activeRunId);
+    if (!activeRun || !isTerminalRunStatus(activeRun.status)) {
+      throw new HttpError(409, "active_thread_archive_blocked", `Cannot archive thread with active work: ${thread.id}`);
+    }
+  }
+  const activeTurn = store
+    .listLingTurns({ threadId: thread.id, limit: 500 })
+    .find((turn) => isLingTurnActiveForResume(turn, turn.activeRunId ? store.getRun(turn.activeRunId) : undefined));
+  if (activeTurn) {
+    throw new HttpError(409, "active_thread_archive_blocked", `Cannot archive thread with active turn: ${activeTurn.id}`);
+  }
+}
+
+function truncateArchiveReason(reason: string): string {
+  return reason.length > 500 ? reason.slice(0, 500) : reason;
+}
+
 async function handleLingThreadFork(
   request: IncomingMessage,
   response: ServerResponse,
@@ -292,6 +449,86 @@ async function handleLingThreadFork(
         parentTurnId: fork.sourceTurn?.id,
         forkedFromRunId: fork.sourceRun?.id,
       },
+    });
+  } catch (error) {
+    writeLingThreadRouteError(response, error);
+  }
+}
+
+async function handleLingThreadForkRun(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  threadId: string,
+  options?: HandleLingThreadRouteOptions,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for thread fork-run` });
+    return;
+  }
+  const startForkRun = options?.startForkRun ?? options?.startResumeRun;
+  if (!startForkRun) {
+    writeJson(response, 501, { error: "fork_run_unavailable", message: "Thread fork-and-run execution is not configured." });
+    return;
+  }
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const sourceThread = store.getLingThread(threadId);
+    if (!sourceThread) {
+      writeJson(response, 404, { error: "thread_not_found", message: `Ling thread not found: ${threadId}` });
+      return;
+    }
+    const body = await readOptionalJsonBody(request, options?.maxBodyBytes ?? 1024 * 1024);
+    const forkRun = createLingThreadForkRunRequest({ store, sourceThread, body, cwd, now: new Date().toISOString() });
+    let runId: string | undefined;
+    try {
+      runId = await startForkRun(forkRun.runRequest);
+    } catch (error) {
+      const startError = serializeForkRunStartError(error);
+      writeJson(response, 500, {
+        cwd,
+        sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
+        sourceTurn: forkRun.sourceTurn,
+        sourceRun: forkRun.sourceRun,
+        childThread: store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread,
+        childTurn: store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
+        status: "run_failed",
+        error: startError,
+      });
+      return;
+    }
+    if (!runId) {
+      writeJson(response, 500, {
+        cwd,
+        sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
+        sourceTurn: forkRun.sourceTurn,
+        sourceRun: forkRun.sourceRun,
+        childThread: store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread,
+        childTurn: store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
+        status: "run_failed",
+        error: {
+          code: "fork_run_start_failed",
+          message: "Fork-and-run child run failed to start.",
+        },
+      });
+      return;
+    }
+    writeJson(response, 202, {
+      cwd,
+      sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
+      sourceTurn: forkRun.sourceTurn,
+      sourceRun: forkRun.sourceRun,
+      childThread: store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread,
+      childTurn: store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
+      childRun: store.getRun(runId),
+      runId,
+      status: "run_started",
     });
   } catch (error) {
     writeLingThreadRouteError(response, error);
@@ -416,6 +653,206 @@ function createLingThreadFork(input: {
     sourceRun: anchor.sourceRun,
     childThread,
     created: true,
+  };
+}
+
+function createLingThreadForkRunRequest(input: {
+  readonly store: RunStore;
+  readonly sourceThread: LingThread;
+  readonly body: unknown;
+  readonly cwd: string;
+  readonly now: string;
+}): {
+  readonly sourceTurn?: LingTurn;
+  readonly sourceRun?: RunSession;
+  readonly childThread: LingThread;
+  readonly childTurn: LingTurn;
+  readonly runRequest: RunRequest;
+} {
+  const { store, sourceThread, body, cwd, now } = input;
+  if (!isRecord(body)) {
+    throw new HttpError(400, "bad_request", "Fork-and-run request must be a JSON object.");
+  }
+  const instruction = readOptionalString(body, "instruction")?.trim();
+  if (!instruction) {
+    throw new HttpError(400, "fork_run_instruction_required", "Fork-and-run requires a non-empty instruction.");
+  }
+  const userIdempotencyKey = readOptionalString(body, "idempotencyKey")?.trim();
+  if (!userIdempotencyKey) {
+    throw new HttpError(400, "fork_run_idempotency_required", "Fork-and-run requires an idempotency key.");
+  }
+  const anchor = resolveThreadForkAnchor(store, sourceThread, body);
+  const operationKey = buildForkRunOperationKey({
+    sourceThreadId: sourceThread.id,
+    sourceTurnId: anchor.sourceTurn?.id,
+    sourceRunId: anchor.sourceRun?.id,
+    idempotencyKey: userIdempotencyKey,
+  });
+  const fork = createLingThreadFork({
+    store,
+    sourceThread,
+    body: {
+      ...body,
+      idempotencyKey: operationKey,
+    },
+    now,
+  });
+  const childTurn = createOrReuseForkRunChildTurn({
+    store,
+    childThread: fork.childThread,
+    sourceTurn: fork.sourceTurn,
+    operationKey,
+    instruction,
+    now,
+  });
+  return {
+    sourceTurn: fork.sourceTurn,
+    sourceRun: fork.sourceRun,
+    childThread: fork.childThread,
+    childTurn,
+    runRequest: buildForkRunRunRequest({
+      cwd,
+      sourceThread,
+      sourceRun: fork.sourceRun,
+      childThread: fork.childThread,
+      childTurn,
+      body,
+      instruction,
+      operationKey,
+    }),
+  };
+}
+
+function createOrReuseForkRunChildTurn(input: {
+  readonly store: RunStore;
+  readonly childThread: LingThread;
+  readonly sourceTurn?: LingTurn;
+  readonly operationKey: string;
+  readonly instruction: string;
+  readonly now: string;
+}): LingTurn {
+  const childTurnId = deterministicForkRunTurnId(input.operationKey);
+  const existing = input.store.getLingTurn(childTurnId);
+  if (existing) {
+    if (
+      existing.threadId !== input.childThread.id ||
+      existing.userInstruction !== input.instruction
+    ) {
+      throw new HttpError(409, "fork_run_child_turn_conflict", `Fork-and-run child turn conflicts with an existing turn: ${childTurnId}`);
+    }
+    return existing;
+  }
+  return input.store.createLingTurn(
+    {
+      id: childTurnId,
+      threadId: input.childThread.id,
+      kind: "initial_request",
+      status: "open",
+      title: titleFromInstruction(input.instruction, "Fork and run"),
+      userInstruction: input.instruction,
+      channelId: input.childThread.channelId,
+      taskId: input.childThread.taskId,
+      teammateId: input.childThread.teammateId,
+      workflowStepId: input.childThread.workflowStepId,
+      externalWorkId: input.childThread.externalWorkId,
+      createdByActor: "local-user",
+    },
+    input.now,
+  );
+}
+
+function buildForkRunRunRequest(input: {
+  readonly cwd: string;
+  readonly sourceThread: LingThread;
+  readonly sourceRun?: RunSession;
+  readonly childThread: LingThread;
+  readonly childTurn: LingTurn;
+  readonly body: Record<string, unknown>;
+  readonly instruction: string;
+  readonly operationKey: string;
+}): RunRequest {
+  const sourceRun = input.sourceRun;
+  const requestSnapshot = sourceRun && isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {};
+  const taskSnapshot = sourceRun && isRecord(sourceRun.taskSnapshot) ? sourceRun.taskSnapshot : {};
+  const requestedProviderPresetId = readOptionalString(input.body, "providerPresetId")?.trim();
+  const providerPresetId =
+    requestedProviderPresetId ||
+    readSnapshotString(requestSnapshot, "providerPresetId") ||
+    sourceRun?.providerPresetId;
+  const inlineProvider = providerPresetId || !isRecord(requestSnapshot.provider)
+    ? undefined
+    : requestSnapshot.provider as unknown as PiRunnerProviderConfig;
+  if (!providerPresetId && !inlineProvider) {
+    throw new HttpError(400, "fork_run_snapshot_unavailable", "Cannot fork and run because no reusable provider snapshot or providerPresetId is available.");
+  }
+  const requestedRunnerId = readOptionalString(input.body, "runnerId")?.trim();
+  const taskId = deterministicForkRunTaskId(input.operationKey);
+  return {
+    workspaceCwd: readSnapshotString(requestSnapshot, "workspaceCwd") ?? sourceRun?.cwd ?? input.cwd,
+    cwd: readSnapshotString(requestSnapshot, "cwd") ?? sourceRun?.cwd ?? input.cwd,
+    providerPresetId,
+    provider: inlineProvider,
+    teammateId: input.childThread.teammateId ?? readSnapshotString(requestSnapshot, "teammateId") ?? sourceRun?.teammateId,
+    workflowStepId: input.childThread.workflowStepId ?? sourceRun?.workflowStepId,
+    threadId: input.childThread.id,
+    turnId: input.childTurn.id,
+    runnerId: requestedRunnerId || readSnapshotString(requestSnapshot, "runnerId"),
+    requestedSkillId: readSnapshotString(requestSnapshot, "requestedSkillId") ?? sourceRun?.selectedSkillId,
+    skipProviderPreflight: readSnapshotBoolean(requestSnapshot, "skipProviderPreflight") ?? false,
+    idempotencyKey: input.operationKey,
+    task: {
+      id: taskId,
+      title: input.childTurn.title,
+      prompt: input.instruction,
+      channelId:
+        input.childThread.channelId ??
+        readSnapshotString(taskSnapshot, "channelId") ??
+        readSnapshotString(isRecord(requestSnapshot.task) ? requestSnapshot.task : {}, "channelId") ??
+        sourceRun?.channelId,
+    },
+    tools: readSnapshotRunTools(requestSnapshot, "tools"),
+    approvalProfile: isRecord(requestSnapshot.approvalProfile) ? requestSnapshot.approvalProfile as unknown as SkillApprovalProfile : undefined,
+    permissionPreset: readSnapshotPermissionPreset(requestSnapshot, "permissionPreset"),
+    permissionMode: readSnapshotSessionPermissionMode(requestSnapshot, "permissionMode"),
+    permissionConfirmation: readSnapshotPermissionConfirmation(requestSnapshot, "permissionConfirmation"),
+    thinkingLevel: readSnapshotThinkingLevel(requestSnapshot, "thinkingLevel"),
+    systemPrompt: readSnapshotString(requestSnapshot, "systemPrompt"),
+    appendSystemPrompt: readSnapshotStringArray(requestSnapshot, "appendSystemPrompt"),
+    agentDir: readSnapshotString(requestSnapshot, "agentDir"),
+  };
+}
+
+function buildForkRunOperationKey(input: {
+  readonly sourceThreadId: string;
+  readonly sourceTurnId?: string;
+  readonly sourceRunId?: string;
+  readonly idempotencyKey: string;
+}): string {
+  return `fork-run:${input.sourceThreadId}:${input.sourceTurnId ?? ""}:${input.sourceRunId ?? ""}:${input.idempotencyKey}`;
+}
+
+function deterministicForkRunTurnId(operationKey: string): string {
+  const digest = createHash("sha256").update(operationKey).digest("hex").slice(0, 32);
+  return `turn_fork_run_${digest}`;
+}
+
+function deterministicForkRunTaskId(operationKey: string): string {
+  const digest = createHash("sha256").update(`task:${operationKey}`).digest("hex").slice(0, 32);
+  return `task_fork_run_${digest}`;
+}
+
+function titleFromInstruction(instruction: string, fallback: string): string {
+  const firstLine = instruction.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  if (!firstLine) {
+    return fallback;
+  }
+  return firstLine.length > 96 ? `${firstLine.slice(0, 93)}...` : firstLine;
+}
+
+function serializeForkRunStartError(error: unknown): { readonly code: string; readonly message: string } {
+  return {
+    code: error instanceof HttpError ? error.code : "fork_run_start_failed",
+    message: error instanceof Error ? error.message : String(error),
   };
 }
 
@@ -1128,4 +1565,30 @@ function readOptionalLingThreadStatusQuery(url: URL): LingThreadStatus | undefin
     throw new Error("status must be one of: open, running, waiting_for_approval, blocked, succeeded, failed, cancelled, archived");
   }
   return value as LingThreadStatus;
+}
+
+function readOptionalLingThreadSearchQuery(url: URL): string | undefined {
+  const value = url.searchParams.get("q");
+  if (value === null) {
+    return undefined;
+  }
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (normalized.length < 2) {
+    throw new HttpError(400, "search_query_too_short", "q must include at least two visible characters");
+  }
+  if (normalized.length > 128) {
+    throw new HttpError(400, "search_query_too_long", "q must be at most 128 characters");
+  }
+  return normalized;
+}
+
+function readOptionalLingThreadArchivedFilterQuery(url: URL): LingThreadArchivedFilter | undefined {
+  const value = url.searchParams.get("archived");
+  if (value === null) {
+    return undefined;
+  }
+  if (value !== "exclude" && value !== "include" && value !== "only") {
+    throw new HttpError(400, "bad_archived_filter", "archived must be one of: exclude, include, only");
+  }
+  return value;
 }

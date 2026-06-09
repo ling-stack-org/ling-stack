@@ -382,6 +382,16 @@ export type RunInterventionStatus = (typeof runInterventionStatuses)[number];
 
 export type LingThreadKind = "task" | "channel_discussion" | "teammate_direct" | "workflow_step" | "external_work" | "automation";
 export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
+export type LingThreadArchivedFilter = "exclude" | "include" | "only";
+export type LingThreadSearchField =
+  | "thread_title"
+  | "thread_objective"
+  | "turn_title"
+  | "turn_instruction"
+  | "task_id"
+  | "task_title"
+  | "task_prompt"
+  | "metadata_summary";
 
 export interface LingThreadMetadata {
   readonly schemaVersion: 1;
@@ -419,7 +429,9 @@ export interface LingThread {
   readonly metadata?: LingThreadMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly pinnedAt?: string;
   readonly archivedAt?: string;
+  readonly archivedReason?: string;
 }
 
 export interface CreateLingThreadInput {
@@ -439,6 +451,9 @@ export interface CreateLingThreadInput {
   readonly parentThreadId?: string;
   readonly parentTurnId?: string;
   readonly forkedFromRunId?: string;
+  readonly pinnedAt?: string;
+  readonly archivedAt?: string;
+  readonly archivedReason?: string;
 }
 
 export interface UpdateLingThreadInput {
@@ -447,10 +462,13 @@ export interface UpdateLingThreadInput {
   readonly status?: LingThreadStatus;
   readonly activeRunId?: string | null;
   readonly lastRunId?: string | null;
+  readonly pinnedAt?: string | null;
   readonly archivedAt?: string | null;
+  readonly archivedReason?: string | null;
 }
 
 export interface ListLingThreadsOptions {
+  readonly q?: string;
   readonly kind?: LingThreadKind;
   readonly channelId?: string;
   readonly taskId?: string;
@@ -459,7 +477,21 @@ export interface ListLingThreadsOptions {
   readonly externalWorkId?: string;
   readonly status?: LingThreadStatus;
   readonly includeArchived?: boolean;
+  readonly archived?: LingThreadArchivedFilter;
   readonly limit?: number;
+}
+
+export interface LingThreadSearchMatch {
+  readonly threadId: string;
+  readonly turnId?: string;
+  readonly runId?: string;
+  readonly field: LingThreadSearchField;
+  readonly snippet: string;
+}
+
+export interface SearchLingThreadsResult {
+  readonly threads: readonly LingThread[];
+  readonly matches: readonly LingThreadSearchMatch[];
 }
 
 export type ExecutionActionType = ApprovalActionType;
@@ -746,6 +778,7 @@ export interface RunStore {
     readonly channelId?: string;
   }): LingThread | undefined;
   listLingThreads(options?: ListLingThreadsOptions): LingThread[];
+  searchLingThreads(options: ListLingThreadsOptions & { readonly q: string }): SearchLingThreadsResult;
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined;
   rebuildLingThreadMetadata(threadId: string, now: string): LingThread | undefined;
   rebuildLingThreadMetadataForRun(runId: string, now: string): LingThread | undefined;

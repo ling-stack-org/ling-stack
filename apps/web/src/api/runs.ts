@@ -1,11 +1,16 @@
 import type {
   CreateRunInterventionRequest,
+  LingThreadArchiveRequest,
   LingThreadDetailResponse,
   LingThreadEvidenceResponse,
+  LingThreadForkRunRequest,
+  LingThreadForkRunResponse,
   LingThreadForkRequest,
   LingThreadForkResponse,
   LingThreadListRequest,
   LingThreadListResponse,
+  LingThreadMutationResponse,
+  LingThreadPinRequest,
   LingThreadResumePreviewResponse,
   LingThreadResumeRequest,
   LingThreadResumeResponse,
@@ -73,6 +78,46 @@ export async function forkLingThread(
   input: LingThreadForkRequest = {},
 ): Promise<LingThreadForkResponse> {
   return daemonClient.forkLingThread(cwd, threadId, input);
+}
+
+export async function forkRunLingThread(
+  cwd: string,
+  threadId: string,
+  input: LingThreadForkRunRequest,
+): Promise<LingThreadForkRunResponse> {
+  return daemonClient.forkRunLingThread(cwd, threadId, input);
+}
+
+export async function archiveLingThread(
+  cwd: string,
+  threadId: string,
+  input: LingThreadArchiveRequest = {},
+): Promise<LingThreadMutationResponse> {
+  return daemonClient.archiveLingThread(cwd, threadId, input);
+}
+
+export async function unarchiveLingThread(
+  cwd: string,
+  threadId: string,
+  input: LingThreadArchiveRequest = {},
+): Promise<LingThreadMutationResponse> {
+  return daemonClient.unarchiveLingThread(cwd, threadId, input);
+}
+
+export async function pinLingThread(
+  cwd: string,
+  threadId: string,
+  input: LingThreadPinRequest = {},
+): Promise<LingThreadMutationResponse> {
+  return daemonClient.pinLingThread(cwd, threadId, input);
+}
+
+export async function unpinLingThread(
+  cwd: string,
+  threadId: string,
+  input: LingThreadPinRequest = {},
+): Promise<LingThreadMutationResponse> {
+  return daemonClient.unpinLingThread(cwd, threadId, input);
 }
 
 export async function listRunInterventions(cwd: string, runId: string, limit = 100): Promise<RunInterventionListResponse> {

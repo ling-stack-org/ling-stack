@@ -1,5 +1,7 @@
 import {
   Activity,
+  Archive,
+  ArchiveRestore,
   Bot,
   CheckCircle2,
   CircleAlert,
@@ -9,6 +11,8 @@ import {
   History,
   Loader2,
   Pencil,
+  Pin,
+  PinOff,
   RefreshCw,
   RotateCcw,
   Search,
@@ -21,7 +25,7 @@ import { LingDaemonError } from "@ling-stack/api-client";
 import { useEffect, useState } from "react";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
-import { artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, listRunShellSnapshots, previewLingThreadResume, resumeLingThread } from "../../api.js";
+import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, forkRunLingThread, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, listRunShellSnapshots, pinLingThread, previewLingThreadResume, resumeLingThread, unarchiveLingThread, unpinLingThread } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import {
   formatEventData,
@@ -71,8 +75,10 @@ import { EventRow } from "./EventRow.js";
 import type {
   ApprovalRequest,
   LingThread,
+  LingThreadArchivedFilter,
   LingThreadEvidenceResponse,
   LingThreadResumePreviewResponse,
+  LingThreadSearchMatch,
   LingTurn,
   LingTurnRun,
   MemoryObject,
@@ -188,24 +194,35 @@ export function RunHistory({
   const { t } = useI18n();
   const [threads, setThreads] = useState<readonly LingThread[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
+  const [threadsFallbackFromRuns, setThreadsFallbackFromRuns] = useState(false);
   const [threadError, setThreadError] = useState("");
   const [selectedThreadId, setSelectedThreadId] = useState("");
+  const [threadArchivedFilter, setThreadArchivedFilter] = useState<LingThreadArchivedFilter>("exclude");
+  const [threadSearch, setThreadSearch] = useState("");
+  const [threadSearchMatches, setThreadSearchMatches] = useState<readonly LingThreadSearchMatch[]>([]);
   const [turnStateByThreadKey, setTurnStateByThreadKey] = useState<Readonly<Record<string, WorkHistoryTurnLoadState>>>({});
 
   async function refreshThreads(): Promise<void> {
     if (!cwd.trim()) {
       setThreads([]);
+      setThreadsFallbackFromRuns(false);
+      setThreadSearchMatches([]);
       setThreadError("");
       return;
     }
     setThreadsLoading(true);
     setThreadError("");
     try {
-      const response = await listLingThreads(cwd, { limit: 50 });
+      const q = normalizeWorkHistorySearchQuery(threadSearch);
+      const response = await listLingThreads(cwd, { ...(q ? { q } : {}), archived: threadArchivedFilter, limit: 50 });
       setThreads(response.threads);
+      setThreadSearchMatches(response.matches ?? []);
+      setThreadsFallbackFromRuns(false);
     } catch (error) {
       if (error instanceof LingDaemonError && error.status === 404) {
         setThreads([]);
+        setThreadsFallbackFromRuns(true);
+        setThreadSearchMatches([]);
         setThreadError("");
         return;
       }
@@ -215,16 +232,22 @@ export function RunHistory({
     }
   }
 
-  const visibleThreads = threads.length > 0 ? threads : deriveThreadsFromRuns(runs);
+  const visibleThreads = threadsFallbackFromRuns && threadArchivedFilter === "exclude" ? deriveThreadsFromRuns(runs) : threads;
   const selectedThread = selectedThreadId ? visibleThreads.find((thread) => thread.id === selectedThreadId) : undefined;
-  const turnLoadRequests = buildWorkHistoryTurnLoadRequests(cwd, visibleThreads, runs, selectedRun);
+  const visibleThreadIds = new Set(visibleThreads.map((thread) => thread.id));
+  const workHistoryRuns = visibleThreads.length > 0 || threadsFallbackFromRuns
+    ? runs.filter((run) => !run.threadId || visibleThreadIds.has(run.threadId))
+    : runs.filter((run) => !run.threadId);
+  const selectedRunForWorkHistory = selectedRun?.threadId && !visibleThreadIds.has(selectedRun.threadId) && !threadsFallbackFromRuns ? undefined : selectedRun;
+  const turnLoadRequests = buildWorkHistoryTurnLoadRequests(cwd, visibleThreads, workHistoryRuns, selectedRunForWorkHistory);
   const turnLoadSignature = turnLoadRequests.map((request) => `${request.threadId}:${request.signature}`).join("|");
   const workHistoryGroups = buildWorkHistoryTurnGroups({
     cwd,
-    runs,
+    runs: workHistoryRuns,
     visibleThreads,
     turnStateByThreadKey,
   });
+  const searchMatchByThreadId = buildThreadSearchMatchMap(threadSearchMatches);
   const workHistoryTreeRows = buildWorkHistoryGroupTree(workHistoryGroups);
   const standaloneRuns = runs.filter((run) => !run.threadId);
   const selectedTurnContext = buildTurnContextByRunId(selectedRunId, workHistoryGroups, turnStateByThreadKey, cwd);
@@ -232,6 +255,11 @@ export function RunHistory({
   useEffect(() => {
     setTurnStateByThreadKey({});
   }, [cwd]);
+
+  useEffect(() => {
+    void refreshThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cwd, threadArchivedFilter, threadSearch]);
 
   useEffect(() => {
     const workspaceCwd = cwd.trim();
@@ -354,6 +382,32 @@ export function RunHistory({
               {t("Refresh")}
             </button>
           </div>
+          <div className="segmented-control work-history-filter" aria-label={t("Work thread visibility")}>
+            {([
+              ["exclude", t("Active")],
+              ["include", t("All")],
+              ["only", t("Archived")],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                className={threadArchivedFilter === value ? "active" : ""}
+                type="button"
+                onClick={() => setThreadArchivedFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <label className="activity-search-field work-history-search-field">
+            <Search size={14} />
+            <input
+              type="search"
+              value={threadSearch}
+              onChange={(event) => setThreadSearch(event.target.value)}
+              placeholder={t("Search work threads")}
+              aria-label={t("Search work threads")}
+            />
+          </label>
           {threadError ? (
             <div className="inline-error compact">
               <CircleAlert size={15} />
@@ -372,6 +426,7 @@ export function RunHistory({
                   ? !selectedThreadId && group.runIds.includes(selectedRunId)
                   : group.threadId === selectedThreadId || (!selectedThreadId && group.latestRunId === selectedRunId);
                 const metadataHint = formatWorkHistoryMetadataHint(group.thread, t);
+                const searchMatch = searchMatchByThreadId.get(group.threadId);
                 return (
                   <div key={group.id} className="work-history-turn-group">
                     <button
@@ -386,11 +441,18 @@ export function RunHistory({
                         <small>
                           {group.thread?.parentThreadId ? `${t("Fork branch")} · ` : ""}
                           {parentHidden ? `${t("Parent hidden")} · ` : ""}
+                          {group.thread?.pinnedAt ? `${t("Pinned")} · ` : ""}
+                          {group.thread?.archivedAt || group.thread?.status === "archived" ? `${t("Archived")} · ` : ""}
                           {group.source === "durable_turn" ? t("Durable turn") : group.thread?.kind ?? t("Work thread")}
                           {" · "}
                           {t("{count} attempts", { count: group.attemptCount })}
                           {metadataHint ? ` · ${metadataHint}` : ""}
                         </small>
+                        {searchMatch ? (
+                          <small>
+                            {formatLingThreadSearchMatch(searchMatch, t)}: {searchMatch.snippet}
+                          </small>
+                        ) : null}
                       </span>
                       <span className="run-list-meta">
                         <StatusBadge status={group.status} />
@@ -539,6 +601,7 @@ export function ThreadDetailPanel({
   const [threadEvidence, setThreadEvidence] = useState<LingThreadEvidenceResponse | undefined>(undefined);
   const [threadEvidenceLoading, setThreadEvidenceLoading] = useState(false);
   const [threadActionLoading, setThreadActionLoading] = useState(false);
+  const [threadVisibilityLoading, setThreadVisibilityLoading] = useState(false);
   const [threadPreviewLoading, setThreadPreviewLoading] = useState(false);
   const [threadError, setThreadError] = useState("");
   const [threadInterventions, setThreadInterventions] = useState<readonly RunIntervention[]>([]);
@@ -546,6 +609,8 @@ export function ThreadDetailPanel({
   const [threadInterventionError, setThreadInterventionError] = useState("");
   const [threadForkLoading, setThreadForkLoading] = useState(false);
   const [forkedThreadId, setForkedThreadId] = useState("");
+  const [forkRunInstruction, setForkRunInstruction] = useState("");
+  const [forkRunRunId, setForkRunRunId] = useState("");
   const [selectedSourceTurnId, setSelectedSourceTurnId] = useState("");
   const [selectedSourceRunId, setSelectedSourceRunId] = useState("");
   const [resumedRunId, setResumedRunId] = useState("");
@@ -579,9 +644,12 @@ export function ThreadDetailPanel({
     : undefined;
   const hasActiveNonTerminalRun = Boolean(displayThread?.activeRunId && (!activeRun || runCanBeStopped(activeRun)));
   const hasActiveSelectedTurn = Boolean(selectedSourceTurn && !isResumeSourceTurnTerminal(selectedSourceTurn));
+  const isThreadArchived = Boolean(displayThread?.archivedAt || displayThread?.status === "archived");
+  const isThreadPinned = Boolean(displayThread?.pinnedAt);
   const canPreviewThreadResume = Boolean(displayThread && sourceRunId);
   const canResumeThread = Boolean(canPreviewThreadResume && !hasActiveNonTerminalRun && !hasActiveSelectedTurn && !isRunning);
-  const canForkThread = Boolean(displayThread && displayThread.status !== "archived" && !displayThread.archivedAt && !threadForkLoading);
+  const canForkThread = Boolean(displayThread && !isThreadArchived && !threadForkLoading);
+  const canForkRunThread = Boolean(canForkThread && sourceRunId && forkRunInstruction.trim() && !threadActionLoading);
   const resumeDisabledReason = buildThreadResumeDisabledReason({
     hasThread: Boolean(displayThread),
     hasSourceRun: Boolean(sourceRunId),
@@ -615,6 +683,8 @@ export function ThreadDetailPanel({
     setThreadInterventions([]);
     setThreadInterventionError("");
     setForkedThreadId("");
+    setForkRunInstruction("");
+    setForkRunRunId("");
     setSelectedSourceTurnId("");
     setSelectedSourceRunId(thread?.lastRunId ?? "");
     setResumedRunId("");
@@ -741,6 +811,59 @@ export function ThreadDetailPanel({
     }
   }
 
+  async function handleForkRunThread(): Promise<void> {
+    if (!displayThread || !canForkRunThread || !sourceRunId) {
+      return;
+    }
+    const instruction = forkRunInstruction.trim();
+    const idempotencyKey = `work-history-fork-run:${stableBrowserHash(`${threadId}:${selectedSourceTurn?.id ?? ""}:${sourceRunId}:${instruction}`)}`;
+    setThreadActionLoading(true);
+    setThreadError("");
+    setForkRunRunId("");
+    try {
+      const response = await forkRunLingThread(cwd, threadId, {
+        ...(selectedSourceTurn?.id ? { turnId: selectedSourceTurn.id } : {}),
+        sourceRunId,
+        instruction,
+        idempotencyKey,
+      });
+      setForkedThreadId(response.childThread.id);
+      setForkRunRunId(response.runId ?? response.childRun?.id ?? "");
+      setForkRunInstruction("");
+      onRefresh();
+      onSelectThreadId(response.childThread.id);
+      void loadThreadEvidence(response.childThread.id);
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setThreadActionLoading(false);
+    }
+  }
+
+  async function handleThreadVisibilityAction(action: "archive" | "unarchive" | "pin" | "unpin"): Promise<void> {
+    if (!displayThread || threadVisibilityLoading) {
+      return;
+    }
+    setThreadVisibilityLoading(true);
+    setThreadError("");
+    try {
+      const idempotencyKey = `work-history-${action}:${displayThread.id}`;
+      const response = action === "archive"
+        ? await archiveLingThread(cwd, displayThread.id, { idempotencyKey })
+        : action === "unarchive"
+          ? await unarchiveLingThread(cwd, displayThread.id, { idempotencyKey })
+          : action === "pin"
+            ? await pinLingThread(cwd, displayThread.id, { idempotencyKey })
+            : await unpinLingThread(cwd, displayThread.id, { idempotencyKey });
+      setThreadEvidence((current) => current ? { ...current, thread: response.thread } : current);
+      onRefresh();
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setThreadVisibilityLoading(false);
+    }
+  }
+
   return (
     <section className="panel run-detail-panel thread-detail-panel" aria-labelledby="thread-detail-title" aria-label={t("Thread detail")}>
       <div className="panel-title split">
@@ -761,6 +884,24 @@ export function ThreadDetailPanel({
             {threadForkLoading ? <Loader2 className="spin" size={15} /> : <GitBranch size={15} />}
             {t("Fork")}
           </button>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => void handleThreadVisibilityAction(isThreadPinned ? "unpin" : "pin")}
+            disabled={!displayThread || threadVisibilityLoading}
+          >
+            {threadVisibilityLoading ? <Loader2 className="spin" size={15} /> : isThreadPinned ? <PinOff size={15} /> : <Pin size={15} />}
+            {isThreadPinned ? t("Unpin") : t("Pin")}
+          </button>
+          <button
+            className={isThreadArchived ? "secondary-button compact-button" : "secondary-button danger compact-button"}
+            type="button"
+            onClick={() => void handleThreadVisibilityAction(isThreadArchived ? "unarchive" : "archive")}
+            disabled={!displayThread || threadVisibilityLoading}
+          >
+            {threadVisibilityLoading ? <Loader2 className="spin" size={15} /> : isThreadArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+            {isThreadArchived ? t("Unarchive") : t("Archive")}
+          </button>
         </span>
       </div>
 
@@ -776,6 +917,9 @@ export function ThreadDetailPanel({
           <MetaRow label={t("Parent turn")} value={displayThread?.parentTurnId ?? "-"} compact />
           <MetaRow label={t("Fork source run")} value={displayThread?.forkedFromRunId ?? "-"} compact />
           <MetaRow label={t("Workflow step")} value={displayThread?.workflowStepId ?? "-"} compact />
+          <MetaRow label={t("Pinned")} value={displayThread?.pinnedAt ? formatDateTime(displayThread.pinnedAt) : "-"} compact />
+          <MetaRow label={t("Archived")} value={displayThread?.archivedAt ? formatDateTime(displayThread.archivedAt) : displayThread?.status === "archived" ? t("Legacy archived") : "-"} compact />
+          <MetaRow label={t("Archive reason")} value={displayThread?.archivedReason ?? "-"} compact />
           <MetaRow label={t("Updated")} value={displayThread ? formatDateTime(displayThread.updatedAt) : "-"} compact />
         </div>
 
@@ -799,6 +943,44 @@ export function ThreadDetailPanel({
             {threadError}
           </div>
         ) : null}
+
+        <div className="run-detail-section thread-resume-panel thread-fork-run-panel">
+          <div className="panel-title tight split">
+            <span>
+              <GitBranch size={16} />
+              <h3>{t("Fork and run")}</h3>
+            </span>
+            <span className="event-count">{sourceRunId || "-"}</span>
+          </div>
+          <label className="approval-reason-field thread-resume-composer">
+            <span>{t("Child instruction")}</span>
+            <textarea
+              value={forkRunInstruction}
+              rows={3}
+              placeholder={t("Start the child branch with this instruction...")}
+              onChange={(event) => setForkRunInstruction(event.target.value)}
+              disabled={!canForkThread || threadActionLoading}
+            />
+          </label>
+          {!sourceRunId ? (
+            <p className="run-evidence-copy">
+              <strong>{t("Fork guard")}</strong>
+              {t("Select a source run before starting a child branch.")}
+            </p>
+          ) : null}
+          <div className="button-row compact">
+            <button className="primary-button compact-button" type="button" onClick={() => void handleForkRunThread()} disabled={!canForkRunThread}>
+              {threadActionLoading ? <Loader2 className="spin" size={14} /> : <Activity size={14} />}
+              {t("Start child branch")}
+            </button>
+          </div>
+          {forkRunRunId ? (
+            <p className="run-evidence-copy">
+              <strong>{t("Run started")}</strong>
+              {forkRunRunId}
+            </p>
+          ) : null}
+        </div>
 
         <div className="run-detail-section thread-branch-lineage">
           <div className="panel-title tight split">
@@ -1711,6 +1893,8 @@ function buildWorkHistoryGroupTree(groups: readonly WorkHistoryTurnGroup[]): Rea
 
   const sortThreadIds = (threadIds: readonly string[]): string[] =>
     [...new Set(threadIds)].sort((leftId, rightId) =>
+      Number(Boolean(threadById.get(rightId)?.pinnedAt)) - Number(Boolean(threadById.get(leftId)?.pinnedAt)) ||
+      (threadById.get(rightId)?.pinnedAt ?? "").localeCompare(threadById.get(leftId)?.pinnedAt ?? "") ||
       latestThreadGroupUpdatedAt(groupsByThreadId.get(rightId) ?? []).localeCompare(latestThreadGroupUpdatedAt(groupsByThreadId.get(leftId) ?? [])) ||
       leftId.localeCompare(rightId));
 
@@ -1907,6 +2091,46 @@ function formatWorkHistoryMetadataHint(thread: LingThread | undefined, t: Transl
     items.push(t("{count} artifacts", { count: metadata.artifactCount }));
   }
   return items.slice(0, 2).join(" · ");
+}
+
+function normalizeWorkHistorySearchQuery(value: string): string | undefined {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  return normalized.length >= 2 ? normalized : undefined;
+}
+
+function buildThreadSearchMatchMap(matches: readonly LingThreadSearchMatch[]): ReadonlyMap<string, LingThreadSearchMatch> {
+  const result = new Map<string, LingThreadSearchMatch>();
+  for (const match of matches) {
+    if (!result.has(match.threadId)) {
+      result.set(match.threadId, match);
+    }
+  }
+  return result;
+}
+
+function formatLingThreadSearchMatch(match: LingThreadSearchMatch, t: Translate): string {
+  if (match.field === "thread_title") {
+    return t("Thread title");
+  }
+  if (match.field === "thread_objective") {
+    return t("Thread objective");
+  }
+  if (match.field === "turn_title") {
+    return t("Turn title");
+  }
+  if (match.field === "turn_instruction") {
+    return t("Turn instruction");
+  }
+  if (match.field === "task_title") {
+    return t("Task title");
+  }
+  if (match.field === "task_prompt") {
+    return t("Task prompt");
+  }
+  if (match.field === "metadata_summary") {
+    return t("Thread summary");
+  }
+  return t("Task id");
 }
 
 function threadStatusFromRun(run: RunSession): LingThread["status"] {
@@ -2830,6 +3054,15 @@ function formatActionTargets(targetRefs: LingThreadEvidenceResponse["actions"][n
       return value ? `${ref.type}:${value}` : ref.type;
     })
     .join(" · ");
+}
+
+function stableBrowserHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 function ToolEventDetails({

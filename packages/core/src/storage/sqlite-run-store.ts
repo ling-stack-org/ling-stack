@@ -180,6 +180,8 @@ import {
   type CreateRunInput,
   type LinkRunToLingTurnInput,
   type LingThread,
+  type LingThreadSearchField,
+  type LingThreadSearchMatch,
   type LingThreadKind,
   type LingThreadMetadata,
   type LingThreadStatus,
@@ -204,6 +206,7 @@ import {
   type RunSession,
   type RunStore,
   type RunStatus,
+  type SearchLingThreadsResult,
   type UpdateLingThreadInput,
   type UpdateRunInterventionStatusInput,
 } from "../run-types.js";
@@ -514,6 +517,8 @@ const LING_THREAD_METADATA_MIGRATION_VERSION = 45;
 const LING_THREAD_METADATA_MIGRATION_NAME = "add_ling_thread_metadata";
 const LING_THREAD_FORK_LINEAGE_MIGRATION_VERSION = 46;
 const LING_THREAD_FORK_LINEAGE_MIGRATION_NAME = "add_ling_thread_fork_lineage";
+const LING_THREAD_VISIBILITY_MIGRATION_VERSION = 47;
+const LING_THREAD_VISIBILITY_MIGRATION_NAME = "add_ling_thread_visibility_fields";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -566,8 +571,10 @@ export class SqliteRunStore implements RunStore {
           metadata_json,
           created_at,
           updated_at,
-          archived_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          pinned_at,
+          archived_at,
+          archived_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -590,7 +597,9 @@ export class SqliteRunStore implements RunStore {
         null,
         now,
         now,
-        null,
+        input.pinnedAt ?? null,
+        input.archivedAt ?? null,
+        input.archivedReason ?? null,
       );
     this.tryRebuildLingThreadMetadata(id, now);
     const thread = this.getLingThread(id);
@@ -654,15 +663,103 @@ export class SqliteRunStore implements RunStore {
     if (options.status) {
       clauses.push("status = ?");
       params.push(options.status);
-    } else if (!options.includeArchived) {
-      clauses.push("status != 'archived'");
+    }
+    const archivedFilter = options.archived ?? (options.includeArchived || options.status ? "include" : "exclude");
+    if (archivedFilter === "exclude") {
+      clauses.push("(archived_at IS NULL AND status != 'archived')");
+    } else if (archivedFilter === "only") {
+      clauses.push("(archived_at IS NOT NULL OR status = 'archived')");
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
     return this.database
-      .prepare(`${lingThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC LIMIT ?`)
+      .prepare(`${lingThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY pinned_at IS NULL ASC, pinned_at DESC, updated_at DESC LIMIT ?`)
       .all(...params)
       .map(mapLingThread);
+  }
+
+  searchLingThreads(options: ListLingThreadsOptions & { readonly q: string }): SearchLingThreadsResult {
+    const query = normalizeLingThreadSearchQuery(options.q);
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    const candidates = this.listLingThreads({
+      ...options,
+      limit: 500,
+    });
+    if (candidates.length === 0) {
+      return { threads: [], matches: [] };
+    }
+    const matchesByThreadId = new Map<string, LingThreadSearchMatch[]>();
+    const threadIds = new Set(candidates.map((thread) => thread.id));
+
+    for (const thread of candidates) {
+      addLingThreadSearchMatch(matchesByThreadId, thread, "thread_title", thread.title, query);
+      addLingThreadSearchMatch(matchesByThreadId, thread, "thread_objective", thread.objective, query);
+      addLingThreadSearchMatch(matchesByThreadId, thread, "task_id", thread.taskId, query);
+      addLingThreadSearchMatch(matchesByThreadId, thread, "task_id", thread.workflowStepId, query);
+      addLingThreadSearchMatch(matchesByThreadId, thread, "task_id", thread.externalWorkId, query);
+      addLingThreadSearchMatch(matchesByThreadId, thread, "metadata_summary", thread.metadata?.summary, query);
+    }
+
+    const threadIdPlaceholders = [...threadIds].map(() => "?").join(", ");
+    const turnRows = this.database
+      .prepare(`
+        SELECT id, thread_id, title, user_instruction, task_id, source_turn_id
+        FROM ling_turns
+        WHERE thread_id IN (${threadIdPlaceholders})
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 5000
+      `)
+      .all(...threadIds);
+    for (const row of turnRows) {
+      const threadId = readString(row, "thread_id");
+      if (!threadIds.has(threadId)) {
+        continue;
+      }
+      const turnId = readString(row, "id");
+      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "turn_title", readNullableString(row, "title"), query, { turnId });
+      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "turn_instruction", readNullableString(row, "user_instruction"), query, { turnId });
+      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_id", readNullableString(row, "task_id"), query, { turnId });
+      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_id", readNullableString(row, "source_turn_id"), query, { turnId });
+    }
+
+    const runRows = this.database
+      .prepare(`
+        SELECT id, thread_id, task_id, task_snapshot_json, summary_path
+        FROM run_sessions
+        WHERE thread_id IN (${threadIdPlaceholders})
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 5000
+      `)
+      .all(...threadIds);
+    for (const row of runRows) {
+      const threadId = readNullableString(row, "thread_id");
+      if (!threadId || !threadIds.has(threadId)) {
+        continue;
+      }
+      const runId = readString(row, "id");
+      const taskSnapshot = parseNullableSearchJsonObject(readString(row, "task_snapshot_json"));
+      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_id", readNullableString(row, "task_id"), query, { runId });
+      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_title", readOptionalSearchString(taskSnapshot, "title"), query, { runId });
+      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_prompt", readOptionalSearchString(taskSnapshot, "prompt"), query, { runId });
+      addLingThreadSearchMatch(matchesByThreadId, { id: threadId }, "task_title", basenameSearchValue(readNullableString(row, "summary_path")), query, { runId });
+    }
+
+    const matchedThreads = candidates
+      .filter((thread) => (matchesByThreadId.get(thread.id)?.length ?? 0) > 0)
+      .sort((left, right) =>
+        bestLingThreadSearchRank(left, matchesByThreadId.get(left.id) ?? [], query) -
+        bestLingThreadSearchRank(right, matchesByThreadId.get(right.id) ?? [], query) ||
+        right.updatedAt.localeCompare(left.updatedAt) ||
+        right.id.localeCompare(left.id)
+      )
+      .slice(0, limit);
+    const visibleThreadIds = new Set(matchedThreads.map((thread) => thread.id));
+    const matches = matchedThreads.flatMap((thread) =>
+      (matchesByThreadId.get(thread.id) ?? [])
+        .slice(0, 5)
+        .filter((match) => visibleThreadIds.has(match.threadId))
+    );
+    return { threads: matchedThreads, matches };
   }
 
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined {
@@ -677,7 +774,9 @@ export class SqliteRunStore implements RunStore {
       status: input.status ?? existing.status,
       activeRunId: nullableUpdate(input.activeRunId, existing.activeRunId),
       lastRunId: nullableUpdate(input.lastRunId, existing.lastRunId),
+      pinnedAt: nullableUpdate(input.pinnedAt, existing.pinnedAt),
       archivedAt: nullableUpdate(input.archivedAt, existing.archivedAt),
+      archivedReason: nullableUpdate(input.archivedReason, existing.archivedReason),
       updatedAt: now,
     };
     this.database
@@ -689,7 +788,9 @@ export class SqliteRunStore implements RunStore {
             active_run_id = ?,
             last_run_id = ?,
             updated_at = ?,
-            archived_at = ?
+            pinned_at = ?,
+            archived_at = ?,
+            archived_reason = ?
         WHERE id = ?
       `)
       .run(
@@ -699,7 +800,9 @@ export class SqliteRunStore implements RunStore {
         next.activeRunId ?? null,
         next.lastRunId ?? null,
         next.updatedAt,
+        next.pinnedAt ?? null,
         next.archivedAt ?? null,
+        next.archivedReason ?? null,
         threadId,
       );
     this.tryRebuildLingThreadMetadata(threadId, now);
@@ -745,7 +848,7 @@ export class SqliteRunStore implements RunStore {
     const metadata: LingThreadMetadata = omitUndefined({
       schemaVersion: 1 as const,
       summary: summarizeLingThreadForMetadata(thread, latestTurn),
-      pinnedAt: thread.metadata?.pinnedAt,
+      pinnedAt: thread.pinnedAt,
       lastTurnId: latestTurn?.id,
       lastActivityAt: maxIsoTimestamp(activityTimestamps),
       pendingApprovalCount: approvals.filter((approval) => approval.status === "pending").length,
@@ -11002,7 +11105,9 @@ export class SqliteRunStore implements RunStore {
           metadata_json TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
+          pinned_at TEXT,
           archived_at TEXT,
+          archived_reason TEXT,
           FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
           FOREIGN KEY(active_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL,
           FOREIGN KEY(last_run_id) REFERENCES run_sessions(id) ON DELETE SET NULL,
@@ -11016,6 +11121,9 @@ export class SqliteRunStore implements RunStore {
 
         CREATE INDEX IF NOT EXISTS idx_ling_threads_status_updated
         ON ling_threads(workspace_id, status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_ling_threads_visible_channel
+        ON ling_threads(channel_id, archived_at, pinned_at, updated_at);
 
         CREATE INDEX IF NOT EXISTS idx_run_sessions_thread
         ON run_sessions(thread_id);
@@ -11452,6 +11560,37 @@ export class SqliteRunStore implements RunStore {
       `);
       if (!hasLingThreadForkLineageMigration) {
         this.recordMigration(LING_THREAD_FORK_LINEAGE_MIGRATION_VERSION, LING_THREAD_FORK_LINEAGE_MIGRATION_NAME);
+      }
+    }
+
+    const hasLingThreadVisibilityMigration = this.hasMigration(LING_THREAD_VISIBILITY_MIGRATION_VERSION);
+    if (
+      !hasLingThreadVisibilityMigration ||
+      !this.hasColumn("ling_threads", "pinned_at") ||
+      !this.hasColumn("ling_threads", "archived_at") ||
+      !this.hasColumn("ling_threads", "archived_reason")
+    ) {
+      if (!this.hasColumn("ling_threads", "pinned_at")) {
+        this.database.exec("ALTER TABLE ling_threads ADD COLUMN pinned_at TEXT;");
+      }
+      if (!this.hasColumn("ling_threads", "archived_at")) {
+        this.database.exec("ALTER TABLE ling_threads ADD COLUMN archived_at TEXT;");
+      }
+      if (!this.hasColumn("ling_threads", "archived_reason")) {
+        this.database.exec("ALTER TABLE ling_threads ADD COLUMN archived_reason TEXT;");
+      }
+      this.database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_ling_threads_visible_channel
+        ON ling_threads(channel_id, archived_at, pinned_at, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_ling_threads_archived
+        ON ling_threads(channel_id, archived_at, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_ling_threads_pinned
+        ON ling_threads(parent_thread_id, pinned_at, updated_at);
+      `);
+      if (!hasLingThreadVisibilityMigration) {
+        this.recordMigration(LING_THREAD_VISIBILITY_MIGRATION_VERSION, LING_THREAD_VISIBILITY_MIGRATION_NAME);
       }
     }
   }
@@ -11953,7 +12092,9 @@ function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
     metadata: parseOptionalLingThreadMetadata(readNullableString(row, "metadata_json")),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
+    pinnedAt: readNullableString(row, "pinned_at"),
     archivedAt: readNullableString(row, "archived_at"),
+    archivedReason: readNullableString(row, "archived_reason"),
   });
 }
 
@@ -12178,7 +12319,9 @@ function lingThreadSelectSql(whereClause: string): string {
       metadata_json,
       created_at,
       updated_at,
-      archived_at
+      pinned_at,
+      archived_at,
+      archived_reason
     FROM ling_threads
     ${whereClause}
   `;
@@ -14538,6 +14681,100 @@ function isAutomationDraftField(value: string): value is AutomationDraftField {
 function countWhere(database: DatabaseSync, table: string, whereClause: string, params: readonly (string | number)[]): number {
   const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${whereClause}`).get(...params) as Record<string, SQLOutputValue> | undefined;
   return row ? readNumber(row, "count") : 0;
+}
+
+function normalizeLingThreadSearchQuery(query: string): string {
+  const normalized = query.trim().replace(/\s+/g, " ").toLowerCase();
+  if (normalized.length < 2) {
+    throw new Error("search query must include at least two visible characters");
+  }
+  if (normalized.length > 128) {
+    throw new Error("search query must be at most 128 characters");
+  }
+  return normalized;
+}
+
+function addLingThreadSearchMatch(
+  matchesByThreadId: Map<string, LingThreadSearchMatch[]>,
+  thread: { readonly id: string },
+  field: LingThreadSearchField,
+  value: string | undefined | null,
+  query: string,
+  refs: { readonly turnId?: string; readonly runId?: string } = {},
+): void {
+  if (!value || !normalizedSearchText(value).includes(query)) {
+    return;
+  }
+  const existing = matchesByThreadId.get(thread.id) ?? [];
+  if (existing.some((match) => match.field === field && match.turnId === refs.turnId && match.runId === refs.runId)) {
+    return;
+  }
+  matchesByThreadId.set(thread.id, [
+    ...existing,
+    omitUndefined({
+      threadId: thread.id,
+      turnId: refs.turnId,
+      runId: refs.runId,
+      field,
+      snippet: buildSearchSnippet(value, query),
+    }),
+  ]);
+}
+
+function bestLingThreadSearchRank(thread: LingThread, matches: readonly LingThreadSearchMatch[], query: string): number {
+  const archivedPenalty = thread.archivedAt || thread.status === "archived" ? 100 : 0;
+  const pinnedBonus = thread.pinnedAt ? -5 : 0;
+  return Math.min(...matches.map((match) => archivedPenalty + pinnedBonus + lingThreadSearchFieldRank(thread, match, query)));
+}
+
+function lingThreadSearchFieldRank(thread: LingThread, match: LingThreadSearchMatch, query: string): number {
+  const title = normalizedSearchText(thread.title);
+  if (match.field === "thread_title" && title === query) {
+    return 0;
+  }
+  if (match.field === "thread_title" && title.startsWith(query)) {
+    return 10;
+  }
+  if (match.field === "thread_title" || match.field === "thread_objective") {
+    return 20;
+  }
+  if (match.field === "metadata_summary") {
+    return 30;
+  }
+  if (match.field === "task_id" || match.field === "task_title" || match.field === "task_prompt") {
+    return 40;
+  }
+  return 50;
+}
+
+function normalizedSearchText(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function buildSearchSnippet(value: string, query: string): string {
+  const redacted = String(redactSecrets(value));
+  const normalized = normalizedSearchText(redacted);
+  const index = normalized.indexOf(query);
+  const start = index > 30 ? index - 30 : 0;
+  const end = Math.min(redacted.length, Math.max(index + query.length + 80, 160));
+  const snippet = redacted.slice(start, end).trim();
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < redacted.length ? "..." : "";
+  return `${prefix}${snippet}${suffix}`;
+}
+
+function parseNullableSearchJsonObject(value: string): Record<string, unknown> | undefined {
+  const parsed = parseJson(value);
+  return isRecord(parsed) ? parsed : undefined;
+}
+
+function readOptionalSearchString(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function basenameSearchValue(value: string | undefined): string | undefined {
+  return value?.split(/[\\/]/).filter(Boolean).at(-1);
 }
 
 function parseJson(value: string): unknown {

@@ -650,6 +650,7 @@ GET /threads/:threadId/process?cwd=...&turnId=...
 POST /threads/:threadId/resume-preview?cwd=...&turnId=...
 POST /threads/:threadId/resume?cwd=...&turnId=...
 POST /threads/:threadId/fork?cwd=...
+POST /threads/:threadId/fork-run?cwd=...
 POST /threads/:threadId/archive?cwd=...
 POST /threads/:threadId/pin?cwd=...
 GET /threads?cwd=...&q=...
@@ -1165,6 +1166,546 @@ Rules:
 - unarchive belongs in Work History detail, lineage/search results, or an archived filter,
   not the default active channel tree;
 - pin is independent from archive and can share the same hover action cluster.
+
+### V2D-C/D/E Follow-Up Details
+
+V2D-C, V2D-D, and V2D-E should share one visibility/search model but remain separate
+implementation slices. Archive/pin establishes the visibility contract, search consumes
+that contract, and fork-and-run composes V2D-B fork lineage with existing run start
+orchestration.
+
+Shared invariants:
+
+- lineage is read from `ling_threads.parent_thread_id` and `parent_turn_id`;
+- archive and pin state are explicit thread fields, not derived from thread metadata;
+- metadata can cache counts and summaries, but never authorizes resume, fork, cancel,
+  approve, rerun, or provider repair;
+- default operational views exclude archived work;
+- archived work can be reached through explicit filters, direct links, lineage detail,
+  and search with archived inclusion;
+- search never scans raw JSONL logs, shell snapshots, PTY captures, or artifact bodies in
+  V2D-D;
+- fork-and-run uses the normal run pipeline after the child thread/turn has been created.
+
+### V2D-C Archive, Pin, And Archived Filters Details
+
+#### Thread Fields
+
+Promote archive/pin from reserved metadata hints to queryable thread fields:
+
+```ts
+interface LingThread {
+  readonly pinnedAt?: string;
+  readonly archivedAt?: string;
+  readonly archivedReason?: string;
+}
+```
+
+SQLite fields:
+
+```text
+pinned_at TEXT NULL
+archived_at TEXT NULL
+archived_reason TEXT NULL
+```
+
+Indexes:
+
+```text
+idx_ling_threads_visible_channel(channel_id, archived_at, pinned_at, updated_at)
+idx_ling_threads_archived(channel_id, archived_at, updated_at)
+idx_ling_threads_pinned(parent_thread_id, pinned_at, updated_at)
+```
+
+`archivedAt` is a visibility marker. It must not overwrite `status`. A succeeded thread
+remains `succeeded`; a failed thread remains `failed`; the UI layers an `Archived` badge.
+
+#### Routes
+
+```text
+POST /threads/:threadId/archive?cwd=...
+POST /threads/:threadId/unarchive?cwd=...
+POST /threads/:threadId/pin?cwd=...
+POST /threads/:threadId/unpin?cwd=...
+GET /threads?cwd=...&archived=exclude|include|only
+```
+
+Archive request:
+
+```ts
+interface LingThreadArchiveRequest {
+  readonly reason?: string;
+  readonly idempotencyKey?: string;
+}
+```
+
+Pin request:
+
+```ts
+interface LingThreadPinRequest {
+  readonly idempotencyKey?: string;
+}
+```
+
+Responses:
+
+```ts
+interface LingThreadMutationResponse {
+  readonly cwd: string;
+  readonly thread: LingThread;
+}
+```
+
+#### Archive Guards
+
+Archive should be conservative:
+
+1. Read the current `LingThread`.
+2. Reject missing thread with `thread_not_found`.
+3. Reject already archived source on archive with `thread_already_archived`.
+4. Reject unarchive on non-archived rows with `thread_not_archived`.
+5. If `activeRunId` points to a queued/running/waiting run, reject with
+   `active_thread_archive_blocked`.
+6. If any turn in the thread is open/running/waiting/blocked, reject with
+   `active_thread_archive_blocked`.
+7. Otherwise set `archivedAt` and optional redacted `archivedReason`.
+
+Archive does not cascade. Parent and child rows can be archived independently. If a
+visible child has an archived parent, show `Parent archived` / `Parent hidden` instead of
+moving or mutating lineage.
+
+Forking archived sources stays blocked until unarchive. Resuming archived threads is
+blocked in V2D-C; the user should unarchive first.
+
+#### Pin Sorting
+
+Pin only affects ordering:
+
+```text
+pinnedAt DESC NULLS LAST
+lastActivityAt / updatedAt DESC
+thread id ASC
+```
+
+Apply sorting inside the current sibling group so pinned child threads do not jump above
+their parent lineage group. In archived-only views, pinned archived rows sort first inside
+that archived result set.
+
+#### Filters
+
+`archived` query values:
+
+- `exclude`: default; `archivedAt IS NULL`;
+- `include`: active plus archived;
+- `only`: `archivedAt IS NOT NULL`.
+
+Invalid values return `bad_archived_filter`. Existing callers that omit `archived` keep
+the V2D-B active-only behavior.
+
+#### UI State
+
+Channel tree row action state:
+
+```ts
+type ThreadRowActionState =
+  | { readonly mode: "idle" }
+  | { readonly mode: "archive_confirm"; readonly threadId: string }
+  | { readonly mode: "pin_pending"; readonly threadId: string }
+  | { readonly mode: "archive_pending"; readonly threadId: string };
+```
+
+Rules:
+
+- only one row may be in archive-confirm state;
+- confirm state clears on Escape, Cancel, channel change, branch selection, or successful
+  mutation;
+- archive confirmation is inline;
+- Work History detail can use normal text buttons because detail pages are explicit
+  inspection surfaces;
+- the composer should not show archive/pin actions.
+
+#### Test Matrix
+
+- archive hides a row from default channel tree and Work History active list;
+- archive preserves direct run evidence and lineage detail;
+- unarchive restores default visibility;
+- archive does not cascade to child branches;
+- active thread archive is blocked;
+- pin sorts above sibling rows without breaking lineage nesting;
+- archived filters show `exclude`, `include`, and `only` behavior.
+
+#### Implementation Record
+
+V2D-C shipped as an archive/pin visibility slice, not as search or fork-and-run:
+
+- `LingThread` contracts now expose `pinnedAt`, `archivedAt`, and `archivedReason`;
+- list requests accept `archived=exclude|include|only`; legacy
+  `includeArchived=true` still maps to include behavior;
+- SQLite stores visibility in explicit columns and upgrades older `ling_threads` tables
+  that are missing any of `pinned_at`, `archived_at`, or `archived_reason`;
+- default list behavior excludes rows with `archived_at` or legacy `status='archived'`;
+- archived-only includes rows with explicit `archived_at` or legacy archived status;
+- mutation routes return `{ cwd, thread }` and keep archive idempotent when an
+  idempotency key is provided;
+- unarchive clears `archivedAt` / `archivedReason`; legacy `status='archived'` is restored
+  to `open`;
+- pin/unpin only updates ordering metadata and does not mutate lineage, turns, runs, or
+  evidence;
+- archive rejects active runs, missing active-run records, and open/running/waiting/blocked
+  turns with `active_thread_archive_blocked`;
+- fork from archived sources still fails with `source_thread_archived`.
+
+Web implementation:
+
+- Work History owns the first restore surface through `Active / All / Archived`;
+- Work History detail exposes Archive/Unarchive and Pin/Unpin text actions;
+- channel branch tree rows expose Pin/Unpin plus inline Archive Confirm/Cancel;
+- channel branch tree consumes daemon active-only results by default and avoids deriving
+  hidden archived rows back from recent run records;
+- channel tree does not add its own archived filter in this slice.
+
+Deferred polish:
+
+- keep-selected-archived-branch center-view behavior after channel row archive;
+- channel-local archived filter / show-all control;
+- structured search result badges and match reasons;
+- fork-and-run composition.
+
+Validation commands used:
+
+```text
+corepack pnpm --filter @ling-stack/contracts build
+corepack pnpm --filter @ling-stack/core build
+corepack pnpm --filter @ling-stack/daemon build
+corepack pnpm --filter @ling-stack/web typecheck
+node --test --test-name-pattern "daemon archive pin and archived filters" packages/daemon/test/ling-turns-api.test.mjs
+corepack pnpm --filter @ling-stack/web exec playwright test e2e/runtime.spec.ts -g "run history archives restores pins and filters work threads"
+corepack pnpm --filter @ling-stack/web exec playwright test e2e/runtime.spec.ts -g "fork lineage creates child thread"
+```
+
+### V2D-D Search Details
+
+#### Search Scope
+
+First implementation searches only structured fields:
+
+| Entity | Fields |
+| --- | --- |
+| `LingThread` | `title`, `objective`, `taskId`, owner ids |
+| `LingTurn` | `title`, `userInstruction`, `taskId`, `sourceTurnId` |
+| `RunSession` | `taskId`, task snapshot `title`, task snapshot `prompt`, `summaryPath` basename |
+| `LingThreadMetadata` | `summary` only after redaction |
+
+Excluded in V2D-D:
+
+- raw JSONL event logs;
+- shell snapshot text;
+- PTY buffers;
+- artifact bodies;
+- approval reasons beyond structured non-secret status labels;
+- message transcript body search outside work-thread/turn fields.
+
+#### Query Shape
+
+Prefer extending the existing list endpoint:
+
+```text
+GET /threads?cwd=...&q=...&archived=exclude|include|only&limit=...
+```
+
+Response extension:
+
+```ts
+interface LingThreadSearchMatch {
+  readonly threadId: string;
+  readonly turnId?: string;
+  readonly runId?: string;
+  readonly field:
+    | "thread_title"
+    | "thread_objective"
+    | "turn_title"
+    | "turn_instruction"
+    | "task_id"
+    | "task_title"
+    | "task_prompt"
+    | "metadata_summary";
+  readonly snippet: string;
+}
+
+interface LingThreadListResponse {
+  readonly cwd: string;
+  readonly threads: readonly LingThread[];
+  readonly matches?: readonly LingThreadSearchMatch[];
+}
+```
+
+If the response extension makes list callers awkward, split later into
+`GET /threads/search`. Do not start with a separate durable search index.
+
+#### Matching And Ranking
+
+Normalize query:
+
+- trim whitespace;
+- collapse internal whitespace;
+- lower-case with locale-insensitive comparison;
+- reject fewer than two visible characters;
+- cap at 128 characters.
+
+Ranking:
+
+1. active pinned exact thread-title match;
+2. active thread title/objective prefix match;
+3. active thread title/objective substring match;
+4. active turn/run task match;
+5. archived matches when archived filter includes them;
+6. newest `updatedAt` tie-breaker.
+
+Snippets:
+
+- run through redaction before returning;
+- cap snippet length;
+- never return raw JSON;
+- include enough field context for UI labels.
+
+Stable errors:
+
+- `search_query_too_short`;
+- `search_query_too_long`;
+- `bad_archived_filter`.
+
+#### UI Behavior
+
+Work History:
+
+- search input lives above the work-thread list;
+- filters combine as `query AND archived filter`;
+- result rows show match reason, status, pinned badge, archived badge, and lineage hint;
+- selecting a turn match opens thread detail and selects/highlights the turn when loaded;
+- if turn details are not loaded, show `Matched turn will load with thread evidence`.
+
+Channel branch tree:
+
+- lightweight branch search filters visible branch rows for the selected channel only;
+- empty search state should distinguish `No active branches match` from
+  `Archived branches hidden`;
+- changing channels clears branch search.
+
+#### Test Matrix
+
+- thread title search;
+- turn instruction search;
+- run task prompt search;
+- archived exclude/include/only interaction;
+- secret-looking snippet redaction;
+- Web Work History search result navigation;
+- channel branch search empty state.
+
+#### Implementation Record
+
+V2D-D shipped as structured read-through search over existing durable tables:
+
+- list response now accepts `q` and may return `matches`;
+- no separate `GET /threads/search` route was added;
+- no durable search index/cache table was added;
+- matching is case-insensitive substring matching over normalized text;
+- candidate rows still use the V2D-C archived filter first, then search matches within
+  those candidates;
+- ranking prefers exact/prefix thread title, then thread title/objective, metadata
+  summary, task fields, and turn fields, with pinned rows favored and archived rows
+  penalized when included;
+- snippets are redacted with the core secret redaction helper and capped;
+- daemon validates query length before hitting the store.
+
+Search scope implemented:
+
+- `LingThread.title`;
+- `LingThread.objective`;
+- `LingThread.taskId`, `workflowStepId`, `externalWorkId`;
+- `LingThread.metadata.summary`;
+- `LingTurn.title`;
+- `LingTurn.userInstruction`;
+- `LingTurn.taskId`;
+- `LingTurn.sourceTurnId`;
+- `RunSession.taskId`;
+- `RunSession.taskSnapshot.title`;
+- `RunSession.taskSnapshot.prompt`;
+- `RunSession.summaryPath` basename.
+
+Excluded by design:
+
+- run event JSONL;
+- shell snapshots;
+- PTY buffers;
+- artifact bodies;
+- channel transcript message bodies.
+
+Web implementation:
+
+- Work History search input combines with `Active / All / Archived`;
+- Work History rows show the first match label/snippet;
+- selecting a search result uses the existing thread row navigation;
+- channel branch tree search filters only visible active branches for the selected
+  channel and shows `No active branches match` when the local filter removes all rows.
+
+Deferred polish:
+
+- turn-specific scroll/highlight after opening a matched thread;
+- richer match chips and multi-match expansion;
+- archived branch local search/restore inside the channel tree;
+- durable search index if structured scans become too slow.
+
+Validation commands used:
+
+```text
+corepack pnpm --filter @ling-stack/web typecheck
+corepack pnpm --filter @ling-stack/daemon build
+node --test --test-name-pattern "daemon structured thread search" packages/daemon/test/ling-turns-api.test.mjs
+corepack pnpm --filter @ling-stack/web exec playwright test e2e/runtime.spec.ts -g "run history archives restores pins and filters work threads"
+```
+
+### V2D-E Fork-And-Run Details
+
+#### Product Contract
+
+Plain Fork and Fork-and-run are different commands:
+
+- `Fork`: create a child thread branch and stop.
+- `Fork and run`: create or reuse the child branch, create or reuse the child first turn,
+  and start a normal run from that turn.
+
+Codex-like default behavior is plain Fork. The user lands in the child branch and can
+decide the next instruction. Fork-and-run should be offered only when the source is
+terminal and the user explicitly provides an immediate next instruction. It must not
+replace manual branch review or silently start work after every fork.
+
+#### Route
+
+```text
+POST /threads/:threadId/fork-run?cwd=...
+```
+
+Request:
+
+```ts
+interface LingThreadForkRunRequest {
+  readonly turnId?: string;
+  readonly sourceRunId?: string;
+  readonly title?: string;
+  readonly objective?: string;
+  readonly instruction: string;
+  readonly providerPresetId?: string;
+  readonly runnerId?: string;
+  readonly idempotencyKey: string;
+}
+```
+
+Response:
+
+```ts
+interface LingThreadForkRunResponse {
+  readonly cwd: string;
+  readonly sourceThread: LingThread;
+  readonly sourceTurn?: LingTurn;
+  readonly sourceRun?: RunSession;
+  readonly childThread: LingThread;
+  readonly childTurn?: LingTurn;
+  readonly childRun?: RunSession;
+  readonly runId?: string;
+  readonly status: "fork_created" | "fork_reused" | "run_started" | "run_failed";
+  readonly error?: {
+    readonly code: string;
+    readonly message: string;
+  };
+}
+```
+
+#### Durable Operation
+
+Do not wrap the whole operation in an all-or-nothing illusion. Use durable phases:
+
+1. Validate instruction and idempotency key.
+2. Resolve source thread/turn/run with V2D-B rules.
+3. Create or reuse deterministic child thread.
+4. Create or reuse deterministic first child turn.
+5. Start normal run using existing provider/runner/concurrency/approval paths.
+6. Return child thread even if run start fails after the child exists.
+
+`ling_turns.source_turn_id` remains a same-thread pointer. Fork-and-run must not use it
+to point from the child branch back to a parent branch turn. Cross-branch source lineage
+is expressed by `LingThread.parentThreadId`, `LingThread.parentTurnId`, and
+`LingThread.forkedFromRunId`.
+
+Idempotency keys:
+
+```text
+fork-run:<sourceThreadId>:<sourceTurnId?>:<sourceRunId?>:<userKey>
+```
+
+Derived ids:
+
+- child thread id uses the existing fork deterministic id;
+- child turn id uses the fork-run idempotency key;
+- child run id uses existing run idempotency behavior when supported by the run creation
+  path.
+
+Failure rules:
+
+- source validation failure creates nothing;
+- child thread success is never rolled back;
+- child turn success is never rolled back;
+- run-start failure returns `run_failed` with a retryable error;
+- retry with the same key reuses child thread/turn and starts the missing run when
+  possible;
+- retry after a run already started returns the existing run.
+
+The child branch's first run is a primary run in that child thread. Do not mark it as a
+retry/resume by setting `parentRunId`; source run lineage is already carried by
+`forkedFromRunId` on the child thread.
+
+Stable errors:
+
+- all V2D-B fork source errors;
+- `fork_run_instruction_required`;
+- `fork_run_idempotency_required`;
+- `fork_run_child_turn_conflict`;
+- `fork_run_start_failed`;
+- normal provider/runner/concurrency errors from existing run creation.
+
+#### UI Flow
+
+Work History thread detail:
+
+```text
+[Fork] [Fork and run]
+
+Fork and run opens an inline composer:
+  instruction textarea
+  optional provider/runner menu
+  [Start child branch]
+```
+
+After success:
+
+- select the child branch;
+- show the running Conversation Work Cell in the conversation feed;
+- show a compact lineage banner in child thread detail;
+- do not insert source transcript rows into the child branch.
+
+After run-start failure:
+
+- keep child branch selected;
+- show error banner with retry using the same idempotency key;
+- keep plain run repair flows unchanged.
+
+#### Test Matrix
+
+- successful fork-and-run creates child thread, child turn, and child run;
+- retry with same idempotency key creates no duplicates;
+- source validation failure creates no child;
+- run-start failure after child creation preserves child thread and returns error;
+- Web selects child branch and shows active work cell;
+- plain fork still creates no turn and no run.
 
 ## UI Design
 

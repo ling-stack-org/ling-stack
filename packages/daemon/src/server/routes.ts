@@ -76,6 +76,11 @@ export function parseLingThreadRoute(
   | { readonly kind: "resume"; readonly threadId: string }
   | { readonly kind: "resume-preview"; readonly threadId: string }
   | { readonly kind: "fork"; readonly threadId: string }
+  | { readonly kind: "fork-run"; readonly threadId: string }
+  | { readonly kind: "archive"; readonly threadId: string }
+  | { readonly kind: "unarchive"; readonly threadId: string }
+  | { readonly kind: "pin"; readonly threadId: string }
+  | { readonly kind: "unpin"; readonly threadId: string }
   | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "threads") {
@@ -95,6 +100,21 @@ export function parseLingThreadRoute(
   }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "fork") {
     return { kind: "fork", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "fork-run") {
+    return { kind: "fork-run", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "archive") {
+    return { kind: "archive", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "unarchive") {
+    return { kind: "unarchive", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "pin") {
+    return { kind: "pin", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "unpin") {
+    return { kind: "unpin", threadId: segments[1] };
   }
   return undefined;
 }

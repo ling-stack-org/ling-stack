@@ -287,6 +287,298 @@ test("daemon fork creates child thread lineage without copying runs", async () =
   }
 });
 
+test("daemon fork-run creates child thread turn and run idempotently", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-thread-fork-run-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const channelId = channel.id;
+    const initial = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_turn_fork_run_source"),
+      task: {
+        id: "task_turn_fork_run_source",
+        title: "Fork-run source thread",
+        prompt: "Create a terminal turn that can start a child branch.",
+        channelId,
+      },
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const sourceRun = store.getRun(initial.runId);
+    assert.ok(sourceRun);
+    assert.ok(sourceRun.threadId);
+    const sourceThread = store.getLingThread(sourceRun.threadId);
+    assert.ok(sourceThread);
+    const sourceTurn = store.getLingTurnForRun(sourceRun.id);
+    assert.ok(sourceTurn);
+
+    const forkRun = await postJson(`${daemon.url}/threads/${encodeURIComponent(sourceRun.threadId)}/fork-run?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: sourceTurn.id,
+      sourceRunId: sourceRun.id,
+      instruction: "Implement the first child branch task.",
+      idempotencyKey: "fork-run-source-turn",
+    });
+    assert.equal(forkRun.status, "run_started");
+    assert.equal(forkRun.sourceThread.id, sourceRun.threadId);
+    assert.equal(forkRun.sourceTurn.id, sourceTurn.id);
+    assert.equal(forkRun.sourceRun.id, sourceRun.id);
+    assert.equal(forkRun.childThread.parentThreadId, sourceRun.threadId);
+    assert.equal(forkRun.childThread.parentTurnId, sourceTurn.id);
+    assert.equal(forkRun.childThread.forkedFromRunId, sourceRun.id);
+    assert.equal(forkRun.childThread.channelId, channelId);
+    assert.equal(forkRun.childTurn.threadId, forkRun.childThread.id);
+    assert.equal(forkRun.childTurn.sourceTurnId, undefined);
+    assert.equal(forkRun.childTurn.userInstruction, "Implement the first child branch task.");
+    assert.ok(forkRun.runId);
+
+    await waitForCondition(() => {
+      const run = store.getRun(forkRun.runId);
+      return Boolean(run && run.status === "succeeded");
+    }, "fork-run child run should finish");
+    const childRun = store.getRun(forkRun.runId);
+    assert.ok(childRun);
+    assert.equal(childRun.threadId, forkRun.childThread.id);
+    assert.equal(store.getLingTurnForRun(childRun.id)?.id, forkRun.childTurn.id);
+    assert.equal(childRun.parentRunId, undefined);
+    assert.equal(childRun.continuationReason, undefined);
+    assert.equal(store.getLingThread(sourceRun.threadId).status, "succeeded");
+    assert.deepEqual(store.listLingTurnRuns(forkRun.childTurn.id).map((link) => [link.runId, link.role]), [
+      [childRun.id, "primary"],
+    ]);
+
+    const repeated = await postJson(`${daemon.url}/threads/${encodeURIComponent(sourceRun.threadId)}/fork-run?cwd=${encodeURIComponent(cwd)}`, {
+      turnId: sourceTurn.id,
+      sourceRunId: sourceRun.id,
+      instruction: "Implement the first child branch task.",
+      idempotencyKey: "fork-run-source-turn",
+    });
+    assert.equal(repeated.childThread.id, forkRun.childThread.id);
+    assert.equal(repeated.childTurn.id, forkRun.childTurn.id);
+    assert.equal(repeated.runId, childRun.id);
+    assert.equal(store.listRuns({ threadId: forkRun.childThread.id, limit: 10 }).length, 1);
+    assert.equal(store.listLingTurns({ threadId: forkRun.childThread.id, limit: 10 }).length, 1);
+
+    const archivedThread = store.createLingThread(
+      {
+        kind: "task",
+        channelId,
+        title: "Archived fork-run source",
+        objective: "Archived sources cannot start fork-run.",
+      },
+      "2026-06-08T00:30:00.000Z",
+    );
+    store.updateLingThread(archivedThread.id, { archivedAt: "2026-06-08T00:30:30.000Z" }, "2026-06-08T00:30:30.000Z");
+    const archivedForkRun = await postJsonAllowError(`${daemon.url}/threads/${encodeURIComponent(archivedThread.id)}/fork-run?cwd=${encodeURIComponent(cwd)}`, {
+      instruction: "This should not create a child branch.",
+      providerPresetId: "provider_test",
+      idempotencyKey: "fork-run-archived-source",
+    });
+    assert.equal(archivedForkRun.status, 409);
+    assert.equal(archivedForkRun.body.error, "source_thread_archived");
+    assert.equal(store.listLingThreads({ limit: 100 }).some((thread) => thread.parentThreadId === archivedThread.id), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon archive pin and archived filters", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-thread-visibility-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const channelId = channel.id;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const first = store.createLingThread(
+      {
+        kind: "task",
+        channelId,
+        title: "First visible branch",
+        objective: "Visible branch that can be archived.",
+        status: "succeeded",
+      },
+      "2026-06-08T00:30:00.000Z",
+    );
+    const second = store.createLingThread(
+      {
+        kind: "task",
+        channelId,
+        title: "Second visible branch",
+        objective: "Visible branch used to verify pin ordering.",
+        status: "succeeded",
+      },
+      "2026-06-08T00:31:00.000Z",
+    );
+
+    const pinned = await postJson(`${daemon.url}/threads/${encodeURIComponent(first.id)}/pin?cwd=${encodeURIComponent(cwd)}`, {
+      idempotencyKey: "pin-first-visible-branch",
+    });
+    assert.equal(pinned.thread.id, first.id);
+    assert.ok(pinned.thread.pinnedAt);
+    const activeAfterPin = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channelId)}&archived=exclude&limit=10`);
+    assert.deepEqual(activeAfterPin.threads.map((thread) => thread.id).slice(0, 2), [first.id, second.id]);
+
+    const archived = await postJson(`${daemon.url}/threads/${encodeURIComponent(first.id)}/archive?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "hide this finished branch",
+      idempotencyKey: "archive-first-visible-branch",
+    });
+    assert.equal(archived.thread.id, first.id);
+    assert.ok(archived.thread.archivedAt);
+    assert.equal(archived.thread.status, "succeeded");
+    assert.equal(archived.thread.archivedReason, "hide this finished branch");
+
+    const defaultList = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channelId)}&limit=10`);
+    assert.equal(defaultList.threads.some((thread) => thread.id === first.id), false);
+    assert.equal(defaultList.threads.some((thread) => thread.id === second.id), true);
+
+    const includeList = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channelId)}&archived=include&limit=10`);
+    assert.equal(includeList.threads.some((thread) => thread.id === first.id), true);
+    assert.equal(includeList.threads.some((thread) => thread.id === second.id), true);
+
+    const archivedOnly = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channelId)}&archived=only&limit=10`);
+    assert.deepEqual(archivedOnly.threads.map((thread) => thread.id), [first.id]);
+
+    const archivedFork = await postJsonAllowError(`${daemon.url}/threads/${encodeURIComponent(first.id)}/fork?cwd=${encodeURIComponent(cwd)}`, {
+      idempotencyKey: "fork-archived-visibility-source",
+    });
+    assert.equal(archivedFork.status, 409);
+    assert.equal(archivedFork.body.error, "source_thread_archived");
+
+    const unarchived = await postJson(`${daemon.url}/threads/${encodeURIComponent(first.id)}/unarchive?cwd=${encodeURIComponent(cwd)}`, {
+      idempotencyKey: "unarchive-first-visible-branch",
+    });
+    assert.equal(unarchived.thread.id, first.id);
+    assert.equal(unarchived.thread.archivedAt, undefined);
+    assert.equal(unarchived.thread.archivedReason, undefined);
+    const restoredList = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channelId)}&archived=exclude&limit=10`);
+    assert.equal(restoredList.threads.some((thread) => thread.id === first.id), true);
+
+    const unpinned = await postJson(`${daemon.url}/threads/${encodeURIComponent(first.id)}/unpin?cwd=${encodeURIComponent(cwd)}`, {
+      idempotencyKey: "unpin-first-visible-branch",
+    });
+    assert.equal(unpinned.thread.pinnedAt, undefined);
+
+    const activeThread = store.createLingThread(
+      {
+        kind: "task",
+        channelId,
+        title: "Active branch",
+        objective: "Archive should be blocked while a turn is active.",
+      },
+      "2026-06-08T00:32:00.000Z",
+    );
+    store.createLingTurn(
+      {
+        threadId: activeThread.id,
+        kind: "manual_followup",
+        status: "open",
+        title: "Open turn",
+        userInstruction: "Keep this turn active.",
+        createdByActor: "local-user",
+      },
+      "2026-06-08T00:32:30.000Z",
+    );
+    const activeArchive = await postJsonAllowError(`${daemon.url}/threads/${encodeURIComponent(activeThread.id)}/archive?cwd=${encodeURIComponent(cwd)}`, {
+      idempotencyKey: "archive-active-thread",
+    });
+    assert.equal(activeArchive.status, 409);
+    assert.equal(activeArchive.body.error, "active_thread_archive_blocked");
+
+    const badFilter = await getJsonAllowError(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&archived=invalid`);
+    assert.equal(badFilter.status, 400);
+    assert.equal(badFilter.body.error, "bad_archived_filter");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon structured thread search uses durable fields and archived filters", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-thread-search-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const channelId = channel.id;
+    const initial = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_search_prompt"),
+      task: {
+        id: "task_search_prompt",
+        title: "Search prompt run",
+        prompt: "Calibrate crawler prompt from the run task snapshot.",
+        channelId,
+      },
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const run = store.getRun(initial.runId);
+    assert.ok(run?.threadId);
+    const thread = store.getLingThread(run.threadId);
+    assert.ok(thread);
+    store.updateLingThread(thread.id, {
+      title: "Structured alpha branch",
+      objective: "Keep sk-searchsecret123456789 for secret audit matching.",
+    }, "2026-06-08T01:00:00.000Z");
+    const turn = store.createLingTurn(
+      {
+        threadId: thread.id,
+        kind: "manual_followup",
+        status: "succeeded",
+        title: "Nebula investigation turn",
+        userInstruction: "Investigate nebula branch routing from durable turn text.",
+        taskId: "task_search_prompt",
+        lastRunId: run.id,
+        createdByActor: "local-user",
+      },
+      "2026-06-08T01:01:00.000Z",
+    );
+    const archivedThread = store.createLingThread(
+      {
+        kind: "task",
+        channelId,
+        title: "Archived search branch",
+        objective: "Archived branch should only show when filters include it.",
+        status: "succeeded",
+        archivedAt: "2026-06-08T01:02:00.000Z",
+      },
+      "2026-06-08T01:02:00.000Z",
+    );
+
+    const titleSearch = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent("alpha")}&limit=10`);
+    assert.equal(titleSearch.threads.some((item) => item.id === thread.id), true);
+    assert.equal(titleSearch.matches.some((match) => match.threadId === thread.id && match.field === "thread_title"), true);
+
+    const turnSearch = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent("nebula")}&limit=10`);
+    assert.equal(turnSearch.threads.some((item) => item.id === thread.id), true);
+    assert.equal(turnSearch.matches.some((match) => match.threadId === thread.id && match.turnId === turn.id && match.field === "turn_instruction"), true);
+
+    const promptSearch = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent("crawler prompt")}&limit=10`);
+    assert.equal(promptSearch.threads.some((item) => item.id === thread.id), true);
+    assert.equal(promptSearch.matches.some((match) => match.threadId === thread.id && match.runId === run.id && match.field === "task_prompt"), true);
+
+    const defaultArchivedSearch = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent("archived search")}&limit=10`);
+    assert.equal(defaultArchivedSearch.threads.some((item) => item.id === archivedThread.id), false);
+    const archivedOnlySearch = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent("archived search")}&archived=only&limit=10`);
+    assert.deepEqual(archivedOnlySearch.threads.map((item) => item.id), [archivedThread.id]);
+
+    const secretSearch = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent("secret audit")}&limit=10`);
+    const secretMatch = secretSearch.matches.find((match) => match.threadId === thread.id && match.field === "thread_objective");
+    assert.ok(secretMatch);
+    assert.equal(secretMatch.snippet.includes("sk-searchsecret123456789"), false);
+    assert.equal(secretMatch.snippet.includes("[REDACTED]"), true);
+
+    const tooShort = await getJsonAllowError(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&q=a`);
+    assert.equal(tooShort.status, 400);
+    assert.equal(tooShort.body.error, "search_query_too_short");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 class SuccessfulRunner {
   async runTask(options) {
     options.onEvent?.({
@@ -376,6 +668,15 @@ async function createChannel(baseUrl, cwd) {
 async function getJson(url) {
   const response = await fetch(url);
   return await readJsonResponse(response);
+}
+
+async function getJsonAllowError(url) {
+  const response = await fetch(url);
+  const text = await response.text();
+  return {
+    status: response.status,
+    body: text.trim() ? JSON.parse(text) : {},
+  };
 }
 
 async function postJson(url, body) {

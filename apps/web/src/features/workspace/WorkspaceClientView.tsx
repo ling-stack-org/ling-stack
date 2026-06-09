@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardE
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
+  Archive,
   ArrowDown,
   AtSign,
   Bell,
@@ -29,6 +30,8 @@ import {
   MoreHorizontal,
   PanelRightClose,
   PanelRightOpen,
+  Pin,
+  PinOff,
   Play,
   Plus,
   RefreshCw,
@@ -44,8 +47,9 @@ import {
   Workflow,
   X,
 } from "lucide-react";
+import { LingDaemonError } from "@ling-stack/api-client";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions } from "../../api.js";
+import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createRunIntervention, forkLingThread, getLingThreadEvidence, listLingThreads, listLingThreadTurns, listRunInterventions, pinLingThread, unpinLingThread } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
@@ -614,8 +618,13 @@ export function WorkspaceClientView({
   const [activeWorkThreadId, setActiveWorkThreadId] = useState("");
   const [channelWorkThreads, setChannelWorkThreads] = useState<readonly LingThread[]>([]);
   const [channelWorkThreadsLoading, setChannelWorkThreadsLoading] = useState(false);
+  const [channelWorkThreadsFallbackFromRuns, setChannelWorkThreadsFallbackFromRuns] = useState(false);
   const [channelWorkThreadError, setChannelWorkThreadError] = useState("");
   const [forkingWorkThreadId, setForkingWorkThreadId] = useState("");
+  const [workThreadVisibilityId, setWorkThreadVisibilityId] = useState("");
+  const [archiveConfirmWorkThreadId, setArchiveConfirmWorkThreadId] = useState("");
+  const [archivedChannelWorkThreadIds, setArchivedChannelWorkThreadIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [channelWorkThreadSearch, setChannelWorkThreadSearch] = useState("");
   const [threadReplyDraft, setThreadReplyDraft] = useState("");
   const [threadReplyPending, setThreadReplyPending] = useState(false);
   const [threadReplyError, setThreadReplyError] = useState("");
@@ -653,15 +662,38 @@ export function WorkspaceClientView({
     [channelRuns],
   );
   const visibleChannelWorkThreads = useMemo(
-    () => mergeLingThreads(channelWorkThreads, derivedChannelWorkThreads)
+    () => mergeLingThreads(channelWorkThreads, channelWorkThreadsFallbackFromRuns ? derivedChannelWorkThreads : [])
       .filter((thread) => !thread.channelId || thread.channelId === selectedChannelId)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id)),
-    [channelWorkThreads, derivedChannelWorkThreads, selectedChannelId],
+      .filter((thread) => !archivedChannelWorkThreadIds.has(thread.id) && thread.status !== "archived" && !thread.archivedAt)
+      .sort((left, right) =>
+        Number(Boolean(right.pinnedAt)) - Number(Boolean(left.pinnedAt)) ||
+        (right.pinnedAt ?? "").localeCompare(left.pinnedAt ?? "") ||
+        right.updatedAt.localeCompare(left.updatedAt) ||
+        left.id.localeCompare(right.id)
+      ),
+    [archivedChannelWorkThreadIds, channelWorkThreads, channelWorkThreadsFallbackFromRuns, derivedChannelWorkThreads, selectedChannelId],
   );
+  const searchedChannelWorkThreads = useMemo(() => {
+    const query = channelWorkThreadSearch.trim().replace(/\s+/g, " ").toLowerCase();
+    if (query.length < 2) {
+      return visibleChannelWorkThreads;
+    }
+    return visibleChannelWorkThreads.filter((thread) =>
+      [
+        thread.title,
+        thread.objective,
+        thread.id,
+        thread.taskId,
+        thread.lastRunId,
+        thread.parentThreadId,
+      ].some((value) => value?.toLowerCase().includes(query))
+    );
+  }, [channelWorkThreadSearch, visibleChannelWorkThreads]);
   const channelWorkThreadTreeRows = useMemo(
-    () => buildChannelWorkThreadTree(visibleChannelWorkThreads),
-    [visibleChannelWorkThreads],
+    () => buildChannelWorkThreadTree(searchedChannelWorkThreads),
+    [searchedChannelWorkThreads],
   );
+  const channelWorkThreadSearchActive = channelWorkThreadSearch.trim().replace(/\s+/g, " ").length >= 2;
   const activeWorkThread = activeWorkThreadId
     ? visibleChannelWorkThreads.find((thread) => thread.id === activeWorkThreadId)
     : undefined;
@@ -712,11 +744,13 @@ export function WorkspaceClientView({
   const latestRun = channelRuns[0];
   useEffect(() => {
     setActiveWorkThreadId("");
+    setChannelWorkThreadSearch("");
   }, [selectedChannelId]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId) {
       setChannelWorkThreads([]);
+      setChannelWorkThreadsFallbackFromRuns(false);
       setChannelWorkThreadError("");
       return;
     }
@@ -727,10 +761,19 @@ export function WorkspaceClientView({
       .then((response) => {
         if (!cancelled) {
           setChannelWorkThreads(response.threads);
+          const responseThreadIds = new Set(response.threads.map((thread) => thread.id));
+          setArchivedChannelWorkThreadIds((current) => new Set([...current].filter((threadId) => !responseThreadIds.has(threadId))));
+          setChannelWorkThreadsFallbackFromRuns(false);
         }
       })
       .catch((caught: unknown) => {
         if (!cancelled) {
+          if (caught instanceof LingDaemonError && caught.status === 404) {
+            setChannelWorkThreads([]);
+            setChannelWorkThreadsFallbackFromRuns(true);
+            setChannelWorkThreadError("");
+            return;
+          }
           setChannelWorkThreadError(caught instanceof Error ? caught.message : String(caught));
         }
       })
@@ -1594,6 +1637,48 @@ export function WorkspaceClientView({
       setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
     } finally {
       setForkingWorkThreadId("");
+    }
+  }
+
+  async function mutateChannelWorkThreadVisibility(thread: LingThread, action: "archive" | "pin" | "unpin"): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || workThreadVisibilityId) {
+      return;
+    }
+    setWorkThreadVisibilityId(thread.id);
+    setChannelWorkThreadError("");
+    if (action === "archive") {
+      setArchivedChannelWorkThreadIds((current) => new Set(current).add(thread.id));
+      setChannelWorkThreads((current) => current.filter((item) => item.id !== thread.id));
+      setArchiveConfirmWorkThreadId("");
+    }
+    try {
+      const idempotencyKey = `channel-work-thread-${action}:${thread.id}`;
+      const response = action === "archive"
+        ? await archiveLingThread(workspaceCwd, thread.id, { idempotencyKey })
+        : action === "pin"
+          ? await pinLingThread(workspaceCwd, thread.id, { idempotencyKey })
+          : await unpinLingThread(workspaceCwd, thread.id, { idempotencyKey });
+      setChannelWorkThreads((current) =>
+        action === "archive"
+          ? current.filter((item) => item.id !== response.thread.id)
+          : [response.thread, ...current.filter((item) => item.id !== response.thread.id)]
+      );
+      if (action === "archive") {
+        setArchivedChannelWorkThreadIds((current) => new Set(current).add(response.thread.id));
+      }
+    } catch (error) {
+      if (action === "archive") {
+        setArchivedChannelWorkThreadIds((current) => {
+          const next = new Set(current);
+          next.delete(thread.id);
+          return next;
+        });
+        setChannelWorkThreads((current) => [thread, ...current.filter((item) => item.id !== thread.id)]);
+      }
+      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWorkThreadVisibilityId("");
     }
   }
 
@@ -3621,7 +3706,7 @@ export function WorkspaceClientView({
                       />
                     </div>
                   ) : null}
-                  {(channelWorkThreadsLoading || channelWorkThreadError || channelWorkThreadTreeRows.length > 0 || activeWorkThread) ? (
+                  {(channelWorkThreadsLoading || channelWorkThreadError || channelWorkThreadTreeRows.length > 0 || activeWorkThread || (channelWorkThreadSearchActive && visibleChannelWorkThreads.length > 0)) ? (
                     <div className="channel-work-thread-tree" aria-label={t("Channel work threads")}>
                       <div className="channel-work-thread-tree-head">
                         <span>
@@ -3632,6 +3717,16 @@ export function WorkspaceClientView({
                           <small><Loader2 className="spin" size={12} /> {t("Loading")}</small>
                         ) : null}
                       </div>
+                      <label className="activity-search-field channel-work-thread-search-field">
+                        <Search size={14} />
+                        <input
+                          type="search"
+                          value={channelWorkThreadSearch}
+                          onChange={(event) => setChannelWorkThreadSearch(event.target.value)}
+                          placeholder={t("Search branches")}
+                          aria-label={t("Search branches")}
+                        />
+                      </label>
                       {channelWorkThreadError ? (
                         <div className="inline-error compact">
                           <CircleAlert size={14} />
@@ -3667,6 +3762,8 @@ export function WorkspaceClientView({
                                 <small>
                                   {thread.parentThreadId ? `${t("Fork branch")} · ` : ""}
                                   {parentHidden ? `${t("Parent hidden")} · ` : ""}
+                                  {thread.pinnedAt ? `${t("Pinned")} · ` : ""}
+                                  {thread.archivedAt || thread.status === "archived" ? `${t("Archived")} · ` : ""}
                                   {thread.lastRunId ?? thread.id}
                                 </small>
                               </span>
@@ -3674,15 +3771,63 @@ export function WorkspaceClientView({
                             <button
                               className="icon-button"
                               type="button"
+                              aria-label={thread.pinnedAt ? t("Unpin") : t("Pin")}
+                              title={thread.pinnedAt ? t("Unpin") : t("Pin")}
+                              disabled={workThreadVisibilityId === thread.id}
+                              onClick={() => void mutateChannelWorkThreadVisibility(thread, thread.pinnedAt ? "unpin" : "pin")}
+                            >
+                              {workThreadVisibilityId === thread.id ? <Loader2 className="spin" size={14} /> : thread.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
+                            </button>
+                            <button
+                              className="icon-button"
+                              type="button"
                               aria-label={t("Fork")}
                               title={t("Fork")}
-                              disabled={forkingWorkThreadId === thread.id || thread.status === "archived"}
+                              disabled={forkingWorkThreadId === thread.id || thread.status === "archived" || Boolean(thread.archivedAt)}
                               onClick={() => void forkChannelWorkThread(thread)}
                             >
                               {forkingWorkThreadId === thread.id ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
                             </button>
+                            {archiveConfirmWorkThreadId === thread.id ? (
+                              <>
+                                <button
+                                  className="secondary-button compact-button danger"
+                                  type="button"
+                                  disabled={workThreadVisibilityId === thread.id}
+                                  onClick={() => void mutateChannelWorkThreadVisibility(thread, "archive")}
+                                >
+                                  {workThreadVisibilityId === thread.id ? <Loader2 className="spin" size={14} /> : <Archive size={14} />}
+                                  {t("Confirm")}
+                                </button>
+                                <button
+                                  className="secondary-button compact-button"
+                                  type="button"
+                                  disabled={workThreadVisibilityId === thread.id}
+                                  onClick={() => setArchiveConfirmWorkThreadId("")}
+                                >
+                                  {t("Cancel")}
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                className="icon-button"
+                                type="button"
+                                aria-label={t("Archive")}
+                                title={t("Archive")}
+                                disabled={workThreadVisibilityId === thread.id || thread.status === "archived" || Boolean(thread.archivedAt)}
+                                onClick={() => setArchiveConfirmWorkThreadId(thread.id)}
+                              >
+                                <Archive size={14} />
+                              </button>
+                            )}
                           </div>
                         ))}
+                        {channelWorkThreadSearchActive && channelWorkThreadTreeRows.length === 0 ? (
+                          <div className="empty-state compact-empty">
+                            <Search />
+                            <span>{t("No active branches match")}</span>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
@@ -6989,6 +7134,8 @@ function buildChannelWorkThreadTree(threads: readonly LingThread[]): ReadonlyArr
   const visited = new Set<string>();
   const sortIds = (ids: readonly string[]): string[] =>
     [...new Set(ids)].sort((leftId, rightId) =>
+      Number(Boolean(threadById.get(rightId)?.pinnedAt)) - Number(Boolean(threadById.get(leftId)?.pinnedAt)) ||
+      (threadById.get(rightId)?.pinnedAt ?? "").localeCompare(threadById.get(leftId)?.pinnedAt ?? "") ||
       (threadById.get(rightId)?.updatedAt ?? "").localeCompare(threadById.get(leftId)?.updatedAt ?? "") ||
       leftId.localeCompare(rightId));
   const visit = (threadId: string, depth: number, parentHidden: boolean): void => {

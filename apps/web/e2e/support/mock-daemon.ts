@@ -112,7 +112,9 @@ export interface MockLingThread {
   forkedFromRunId?: string;
   createdAt: string;
   updatedAt: string;
+  pinnedAt?: string;
   archivedAt?: string;
+  archivedReason?: string;
 }
 
 export interface MockLingTurn {
@@ -1158,8 +1160,242 @@ function deterministicMockForkThreadId(threadId: string, sourceTurnId: string | 
   return `thread_fork_${sanitizeMockId([threadId, sourceTurnId, sourceRunId, idempotencyKey].filter(Boolean).join("_")).slice(0, 64)}`;
 }
 
+function deterministicMockForkRunTurnId(operationKey: string): string {
+  return `turn_fork_run_${sanitizeMockId(operationKey).slice(0, 64)}`;
+}
+
+function deterministicMockForkRunRunId(operationKey: string): string {
+  return `run_fork_run_${sanitizeMockId(operationKey).slice(0, 64)}`;
+}
+
+function titleFromMockInstruction(instruction: string, fallback: string): string {
+  const firstLine = instruction.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  if (!firstLine) {
+    return fallback;
+  }
+  return firstLine.length > 96 ? `${firstLine.slice(0, 93)}...` : firstLine;
+}
+
 function sanitizeMockId(value: string): string {
   return value.replace(/[^a-zA-Z0-9_]+/g, "_");
+}
+
+type MockArchivedFilter = "exclude" | "include" | "only";
+
+function readMockArchivedFilter(url: URL): { value?: MockArchivedFilter } | { error: string; message: string } {
+  const value = url.searchParams.get("archived");
+  if (value === null) {
+    return {};
+  }
+  if (value !== "exclude" && value !== "include" && value !== "only") {
+    return { error: "bad_archived_filter", message: "archived must be one of: exclude, include, only" };
+  }
+  return { value };
+}
+
+function readMockThreadSearchQuery(url: URL): { value?: string } | { error: string; message: string } {
+  const value = url.searchParams.get("q");
+  if (value === null) {
+    return {};
+  }
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (normalized.length < 2) {
+    return { error: "search_query_too_short", message: "q must include at least two visible characters" };
+  }
+  if (normalized.length > 128) {
+    return { error: "search_query_too_long", message: "q must be at most 128 characters" };
+  }
+  return { value: normalized };
+}
+
+function searchMockLingThreads(
+  state: MockState,
+  threads: readonly MockLingThread[],
+  query: string,
+): { threads: MockLingThread[]; matches: Array<{ threadId: string; turnId?: string; runId?: string; field: string; snippet: string }> } {
+  const normalized = query.toLowerCase();
+  const matchesByThreadId = new Map<string, Array<{ threadId: string; turnId?: string; runId?: string; field: string; snippet: string }>>();
+  for (const thread of threads) {
+    addMockThreadSearchMatch(matchesByThreadId, thread.id, "thread_title", thread.title, normalized);
+    addMockThreadSearchMatch(matchesByThreadId, thread.id, "thread_objective", thread.objective, normalized);
+    addMockThreadSearchMatch(matchesByThreadId, thread.id, "task_id", thread.taskId, normalized);
+  }
+  const threadIds = new Set(threads.map((thread) => thread.id));
+  for (const turn of state.turns.filter((item) => threadIds.has(item.threadId))) {
+    addMockThreadSearchMatch(matchesByThreadId, turn.threadId, "turn_title", turn.title, normalized, { turnId: turn.id });
+    addMockThreadSearchMatch(matchesByThreadId, turn.threadId, "turn_instruction", turn.userInstruction, normalized, { turnId: turn.id });
+    addMockThreadSearchMatch(matchesByThreadId, turn.threadId, "task_id", turn.taskId, normalized, { turnId: turn.id });
+  }
+  for (const run of state.runs.filter((item) => item.threadId && threadIds.has(item.threadId))) {
+    const threadId = run.threadId;
+    if (!threadId) {
+      continue;
+    }
+    addMockThreadSearchMatch(matchesByThreadId, threadId, "task_id", run.taskId, normalized, { runId: run.id });
+    addMockThreadSearchMatch(matchesByThreadId, threadId, "task_title", readMockTaskTitle(run.taskSnapshot), normalized, { runId: run.id });
+    addMockThreadSearchMatch(matchesByThreadId, threadId, "task_prompt", readMockTaskPrompt(run.taskSnapshot), normalized, { runId: run.id });
+  }
+  const rankedThreads = threads
+    .filter((thread) => (matchesByThreadId.get(thread.id)?.length ?? 0) > 0)
+    .sort((left, right) =>
+      bestMockThreadSearchRank(left, matchesByThreadId.get(left.id) ?? [], normalized) -
+      bestMockThreadSearchRank(right, matchesByThreadId.get(right.id) ?? [], normalized) ||
+      right.updatedAt.localeCompare(left.updatedAt) ||
+      right.id.localeCompare(left.id)
+    );
+  return {
+    threads: rankedThreads,
+    matches: rankedThreads.flatMap((thread) => (matchesByThreadId.get(thread.id) ?? []).slice(0, 5)),
+  };
+}
+
+function addMockThreadSearchMatch(
+  matchesByThreadId: Map<string, Array<{ threadId: string; turnId?: string; runId?: string; field: string; snippet: string }>>,
+  threadId: string,
+  field: string,
+  value: string | undefined,
+  query: string,
+  refs: { turnId?: string; runId?: string } = {},
+): void {
+  if (!value || !value.trim().replace(/\s+/g, " ").toLowerCase().includes(query)) {
+    return;
+  }
+  const current = matchesByThreadId.get(threadId) ?? [];
+  if (current.some((match) => match.field === field && match.turnId === refs.turnId && match.runId === refs.runId)) {
+    return;
+  }
+  matchesByThreadId.set(threadId, [
+    ...current,
+    {
+      threadId,
+      ...refs,
+      field,
+      snippet: redactMockSearchSnippet(value),
+    },
+  ]);
+}
+
+function bestMockThreadSearchRank(
+  thread: MockLingThread,
+  matches: readonly { field: string }[],
+  query: string,
+): number {
+  const archivedPenalty = isMockThreadArchived(thread) ? 100 : 0;
+  const pinnedBonus = thread.pinnedAt ? -5 : 0;
+  return Math.min(...matches.map((match) => archivedPenalty + pinnedBonus + mockSearchFieldRank(thread, match.field, query)));
+}
+
+function mockSearchFieldRank(thread: MockLingThread, field: string, query: string): number {
+  const title = thread.title.trim().replace(/\s+/g, " ").toLowerCase();
+  if (field === "thread_title" && title === query) {
+    return 0;
+  }
+  if (field === "thread_title" && title.startsWith(query)) {
+    return 10;
+  }
+  if (field === "thread_title" || field === "thread_objective") {
+    return 20;
+  }
+  if (field === "task_id" || field === "task_title" || field === "task_prompt") {
+    return 40;
+  }
+  return 50;
+}
+
+function redactMockSearchSnippet(value: string): string {
+  return value
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED]")
+    .slice(0, 160);
+}
+
+function matchesMockArchivedFilter(thread: MockLingThread, filter: MockArchivedFilter): boolean {
+  if (filter === "include") {
+    return true;
+  }
+  const archived = isMockThreadArchived(thread);
+  return filter === "only" ? archived : !archived;
+}
+
+function isMockThreadArchived(thread: MockLingThread): boolean {
+  return thread.status === "archived" || Boolean(thread.archivedAt);
+}
+
+function mutateMockThreadVisibility(
+  state: MockState,
+  thread: MockLingThread,
+  action: string,
+  body: Record<string, unknown>,
+): { thread: MockLingThread } | { status: number; error: string; message: string } {
+  const idempotencyKey = typeof body.idempotencyKey === "string" && body.idempotencyKey.trim() ? body.idempotencyKey.trim() : undefined;
+  const now = "2026-05-25T03:00:00.000Z";
+  if (action === "archive") {
+    if (isMockThreadArchived(thread)) {
+      if (idempotencyKey) {
+        return { thread };
+      }
+      return { status: 409, error: "thread_already_archived", message: `Ling thread is already archived: ${thread.id}` };
+    }
+    const archiveBlock = getMockThreadArchiveBlocker(state, thread);
+    if (archiveBlock) {
+      return { status: 409, error: "active_thread_archive_blocked", message: archiveBlock };
+    }
+    const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim().slice(0, 500) : undefined;
+    return { thread: upsertMockThread(state, { ...thread, archivedAt: now, archivedReason: reason, updatedAt: now }) };
+  }
+  if (action === "unarchive") {
+    if (!isMockThreadArchived(thread)) {
+      if (idempotencyKey) {
+        return { thread };
+      }
+      return { status: 409, error: "thread_not_archived", message: `Ling thread is not archived: ${thread.id}` };
+    }
+    return {
+      thread: upsertMockThread(state, {
+        ...thread,
+        archivedAt: undefined,
+        archivedReason: undefined,
+        status: thread.status === "archived" ? "open" : thread.status,
+        updatedAt: now,
+      }),
+    };
+  }
+  if (action === "pin") {
+    if (thread.pinnedAt) {
+      if (idempotencyKey) {
+        return { thread };
+      }
+      return { status: 409, error: "thread_already_pinned", message: `Ling thread is already pinned: ${thread.id}` };
+    }
+    return { thread: upsertMockThread(state, { ...thread, pinnedAt: now, updatedAt: now }) };
+  }
+  if (!thread.pinnedAt) {
+    if (idempotencyKey) {
+      return { thread };
+    }
+    return { status: 409, error: "thread_not_pinned", message: `Ling thread is not pinned: ${thread.id}` };
+  }
+  return { thread: upsertMockThread(state, { ...thread, pinnedAt: undefined, updatedAt: now }) };
+}
+
+function getMockThreadArchiveBlocker(state: MockState, thread: MockLingThread): string | undefined {
+  if (thread.activeRunId) {
+    const activeRun = state.runs.find((run) => run.id === thread.activeRunId);
+    if (!activeRun || isMockRunActive(activeRun)) {
+      return `Cannot archive thread with active work: ${thread.id}`;
+    }
+  }
+  const activeTurn = state.turns.find((turn) => turn.threadId === thread.id && isMockTurnActiveForResume(state, turn));
+  return activeTurn ? `Cannot archive thread with active turn: ${activeTurn.id}` : undefined;
+}
+
+function upsertMockThread(state: MockState, thread: MockLingThread): MockLingThread {
+  const index = state.threads.findIndex((item) => item.id === thread.id);
+  if (index >= 0) {
+    state.threads[index] = thread;
+  } else {
+    state.threads.unshift(thread);
+  }
+  return thread;
 }
 
 export function isMockRunActive(run: MockRun): boolean {
@@ -4498,9 +4734,20 @@ export async function handleDaemonRoute(
   }
   if (request.method() === "GET" && path === "/threads") {
     const limit = Number(url.searchParams.get("limit") ?? "50");
+    const archivedFilter = readMockArchivedFilter(url);
+    if ("error" in archivedFilter) {
+      await route.fulfill({ status: 400, json: { error: archivedFilter.error, message: archivedFilter.message } });
+      return;
+    }
     const includeArchived = url.searchParams.get("includeArchived") === "true";
-    const threads = state.threads
-      .filter((thread) => includeArchived || thread.status !== "archived")
+    const effectiveArchivedFilter = archivedFilter.value ?? (includeArchived || url.searchParams.has("status") ? "include" : "exclude");
+    const searchQuery = readMockThreadSearchQuery(url);
+    if ("error" in searchQuery) {
+      await route.fulfill({ status: 400, json: { error: searchQuery.error, message: searchQuery.message } });
+      return;
+    }
+    const filteredThreads = state.threads
+      .filter((thread) => matchesMockArchivedFilter(thread, effectiveArchivedFilter))
       .filter((thread) => filterOptionalSearchParam(url, "kind", thread.kind))
       .filter((thread) => filterOptionalSearchParam(url, "channelId", thread.channelId))
       .filter((thread) => filterOptionalSearchParam(url, "taskId", thread.taskId))
@@ -4508,8 +4755,22 @@ export async function handleDaemonRoute(
       .filter((thread) => filterOptionalSearchParam(url, "workflowStepId", thread.workflowStepId))
       .filter((thread) => filterOptionalSearchParam(url, "externalWorkId", thread.externalWorkId))
       .filter((thread) => filterOptionalSearchParam(url, "status", thread.status))
+      .sort((left, right) =>
+        Number(Boolean(right.pinnedAt)) - Number(Boolean(left.pinnedAt)) ||
+        (right.pinnedAt ?? "").localeCompare(left.pinnedAt ?? "") ||
+        right.updatedAt.localeCompare(left.updatedAt) ||
+        right.id.localeCompare(left.id)
+      );
+    const search = searchQuery.value ? searchMockLingThreads(state, filteredThreads, searchQuery.value) : undefined;
+    const threads = (search?.threads ?? filteredThreads)
       .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 50);
-    await route.fulfill({ json: { cwd, threads } });
+    await route.fulfill({
+      json: {
+        cwd,
+        threads,
+        ...(search ? { matches: search.matches.filter((match) => threads.some((thread) => thread.id === match.threadId)) } : {}),
+      },
+    });
     return;
   }
 
@@ -4539,6 +4800,161 @@ export async function handleDaemonRoute(
       const turnIds = new Set(turns.map((turn) => turn.id));
       const runLinks = state.turnRunLinks.filter((link) => turnIds.has(link.turnId));
       await route.fulfill({ json: { cwd, threadId, turns, runLinks } });
+      return;
+    }
+    if (request.method() === "POST" && (action === "archive" || action === "unarchive" || action === "pin" || action === "unpin")) {
+      let body: Record<string, unknown> = {};
+      try {
+        body = request.postDataJSON() as Record<string, unknown>;
+      } catch {
+        body = {};
+      }
+      const mutation = mutateMockThreadVisibility(state, thread, action, body);
+      if ("error" in mutation) {
+        await route.fulfill({ status: mutation.status, json: { error: mutation.error, message: mutation.message } });
+        return;
+      }
+      await route.fulfill({ json: { cwd, thread: mutation.thread } });
+      return;
+    }
+    if (request.method() === "POST" && action === "fork-run") {
+      let body: Record<string, unknown> = {};
+      try {
+        body = request.postDataJSON() as Record<string, unknown>;
+      } catch {
+        body = {};
+      }
+      const instruction = typeof body.instruction === "string" ? body.instruction.trim() : "";
+      if (!instruction) {
+        await route.fulfill({ status: 400, json: { error: "fork_run_instruction_required", message: "Fork-and-run requires a non-empty instruction." } });
+        return;
+      }
+      const userIdempotencyKey = typeof body.idempotencyKey === "string" && body.idempotencyKey.trim() ? body.idempotencyKey.trim() : "";
+      if (!userIdempotencyKey) {
+        await route.fulfill({ status: 400, json: { error: "fork_run_idempotency_required", message: "Fork-and-run requires an idempotency key." } });
+        return;
+      }
+      const anchor = resolveMockForkAnchor(state, thread, body);
+      if ("error" in anchor) {
+        await route.fulfill({ status: anchor.status, json: { error: anchor.error, message: anchor.message } });
+        return;
+      }
+      if (!anchor.sourceRun && typeof body.providerPresetId !== "string") {
+        await route.fulfill({ status: 400, json: { error: "fork_run_snapshot_unavailable", message: "No reusable provider snapshot is available." } });
+        return;
+      }
+      const operationKey = `fork-run:${thread.id}:${anchor.sourceTurn?.id ?? ""}:${anchor.sourceRun?.id ?? ""}:${userIdempotencyKey}`;
+      const childId = deterministicMockForkThreadId(thread.id, anchor.sourceTurn?.id, anchor.sourceRun?.id, operationKey);
+      const now = "2026-05-25T00:42:00.000Z";
+      let childThread = state.threads.find((item) => item.id === childId);
+      if (!childThread) {
+        childThread = {
+          id: childId,
+          workspaceId: thread.workspaceId,
+          kind: thread.kind,
+          channelId: thread.channelId,
+          taskId: thread.taskId,
+          teammateId: thread.teammateId,
+          workflowId: thread.workflowId,
+          workflowStepId: thread.workflowStepId,
+          externalWorkId: thread.externalWorkId,
+          title: typeof body.title === "string" && body.title.trim() ? body.title.trim() : `Fork: ${thread.title}`,
+          objective: typeof body.objective === "string" && body.objective.trim()
+            ? body.objective.trim()
+            : `Forked from ${anchor.sourceTurn?.title || thread.title} (${thread.id}) to explore a separate work branch.`,
+          status: "open",
+          parentThreadId: thread.id,
+          parentTurnId: anchor.sourceTurn?.id,
+          forkedFromRunId: anchor.sourceRun?.id,
+          createdAt: now,
+          updatedAt: now,
+        };
+        state.threads.unshift(childThread);
+      }
+      const childTurnId = deterministicMockForkRunTurnId(operationKey);
+      let childTurn = state.turns.find((item) => item.id === childTurnId);
+      if (childTurn && (childTurn.threadId !== childThread.id || childTurn.userInstruction !== instruction)) {
+        await route.fulfill({ status: 409, json: { error: "fork_run_child_turn_conflict", message: `Fork-and-run child turn conflicts with an existing turn: ${childTurnId}` } });
+        return;
+      }
+      if (!childTurn) {
+        childTurn = {
+          id: childTurnId,
+          workspaceId: childThread.workspaceId,
+          threadId: childThread.id,
+          kind: "initial_request",
+          status: "running",
+          title: titleFromMockInstruction(instruction, "Fork and run"),
+          userInstruction: instruction,
+          channelId: childThread.channelId,
+          taskId: childThread.taskId,
+          teammateId: childThread.teammateId,
+          workflowStepId: childThread.workflowStepId,
+          externalWorkId: childThread.externalWorkId,
+          createdByActor: "local-user",
+          createdAt: now,
+          updatedAt: now,
+        };
+        state.turns.unshift(childTurn);
+      }
+      const runId = deterministicMockForkRunRunId(operationKey);
+      let childRun = state.runs.find((item) => item.id === runId);
+      if (!childRun) {
+        const sourceRun = anchor.sourceRun ?? state.runs[0];
+        childRun = {
+          ...sourceRun,
+          id: runId,
+          status: "running",
+          threadId: childThread.id,
+          turnId: childTurn.id,
+          taskId: `task_${runId}`,
+          channelId: childThread.channelId,
+          taskSnapshot: { id: `task_${runId}`, title: childTurn.title, prompt: instruction, channelId: childThread.channelId },
+          requestSnapshot: {
+            ...(isRecord(sourceRun?.requestSnapshot) ? sourceRun.requestSnapshot : {}),
+            cwd,
+            providerPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : sourceRun?.providerPresetId ?? "provider_local",
+            runnerId: typeof body.runnerId === "string" ? body.runnerId : undefined,
+            threadId: childThread.id,
+            turnId: childTurn.id,
+            idempotencyKey: operationKey,
+            task: { id: `task_${runId}`, title: childTurn.title, prompt: instruction, channelId: childThread.channelId },
+          },
+          eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+          errorMessage: undefined,
+          createdAt: now,
+          startedAt: now,
+          updatedAt: now,
+          endedAt: undefined,
+        };
+        state.runs.unshift(childRun);
+        state.eventsByRun[runId] = [];
+        state.turnRunLinks.push({
+          turnId: childTurn.id,
+          runId,
+          attemptNumber: 1,
+          role: "primary",
+          createdAt: now,
+        });
+      }
+      childTurn = { ...childTurn, status: "running", activeRunId: runId, lastRunId: runId, updatedAt: now };
+      state.turns = state.turns.map((item) => item.id === childTurn.id ? childTurn : item);
+      childThread = { ...childThread, status: "running", activeRunId: runId, lastRunId: runId, updatedAt: now };
+      state.threads = state.threads.map((item) => item.id === childThread.id ? childThread : item);
+      await route.fulfill({
+        status: 202,
+        json: {
+          cwd,
+          sourceThread: thread,
+          sourceTurn: anchor.sourceTurn,
+          sourceRun: anchor.sourceRun,
+          childThread,
+          childTurn,
+          childRun,
+          runId,
+          status: "run_started",
+        },
+      });
       return;
     }
     if (request.method() === "POST" && action === "fork") {

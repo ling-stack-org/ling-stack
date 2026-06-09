@@ -662,6 +662,23 @@ export async function routeRequest(
               controlPlaneEvents,
             },
           )),
+      startForkRun: async (runRequest) =>
+        await startDetachedRunAndResolveReady((onRunReady) =>
+          executeRunRequest(
+            runRequest,
+            createDetachedRunExecutionSink(),
+            runnerRegistry,
+            storeRegistry,
+            activeRuns,
+            runtimeSupervisor,
+            secretResolver,
+            mcpBroker,
+            {
+              onRunReady,
+              afterRunTerminal: maybeContinueRunInterventions,
+              controlPlaneEvents,
+            },
+          )),
     });
     return;
   }

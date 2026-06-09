@@ -120,12 +120,17 @@ import type {
   HardDeleteAiTeammateRequest,
   HardDeleteAiTeammateResponse,
   ListApprovalsRequest,
+  LingThreadArchiveRequest,
   LingThreadDetailResponse,
   LingThreadEvidenceResponse,
+  LingThreadForkRunRequest,
+  LingThreadForkRunResponse,
   LingThreadForkRequest,
   LingThreadForkResponse,
   LingThreadListRequest,
   LingThreadListResponse,
+  LingThreadMutationResponse,
+  LingThreadPinRequest,
   LingThreadResumePreviewResponse,
   LingThreadResumeRequest,
   LingThreadResumeResponse,
@@ -493,6 +498,7 @@ export class LingDaemonClient {
   async listLingThreads(cwd: string, options: LingThreadListRequest = {}): Promise<LingThreadListResponse> {
     return this.get("/threads", {
       cwd,
+      q: options.q,
       kind: options.kind,
       channelId: options.channelId,
       taskId: options.taskId,
@@ -500,6 +506,7 @@ export class LingDaemonClient {
       workflowStepId: options.workflowStepId,
       externalWorkId: options.externalWorkId,
       status: options.status,
+      archived: options.archived,
       includeArchived: options.includeArchived,
       limit: options.limit,
     });
@@ -535,6 +542,26 @@ export class LingDaemonClient {
 
   async forkLingThread(cwd: string, threadId: string, input: LingThreadForkRequest = {}): Promise<LingThreadForkResponse> {
     return this.post(`/threads/${encodeURIComponent(threadId)}/fork`, { cwd }, input);
+  }
+
+  async forkRunLingThread(cwd: string, threadId: string, input: LingThreadForkRunRequest): Promise<LingThreadForkRunResponse> {
+    return this.post(`/threads/${encodeURIComponent(threadId)}/fork-run`, { cwd }, input);
+  }
+
+  async archiveLingThread(cwd: string, threadId: string, input: LingThreadArchiveRequest = {}): Promise<LingThreadMutationResponse> {
+    return this.post(`/threads/${encodeURIComponent(threadId)}/archive`, { cwd }, input);
+  }
+
+  async unarchiveLingThread(cwd: string, threadId: string, input: LingThreadArchiveRequest = {}): Promise<LingThreadMutationResponse> {
+    return this.post(`/threads/${encodeURIComponent(threadId)}/unarchive`, { cwd }, input);
+  }
+
+  async pinLingThread(cwd: string, threadId: string, input: LingThreadPinRequest = {}): Promise<LingThreadMutationResponse> {
+    return this.post(`/threads/${encodeURIComponent(threadId)}/pin`, { cwd }, input);
+  }
+
+  async unpinLingThread(cwd: string, threadId: string, input: LingThreadPinRequest = {}): Promise<LingThreadMutationResponse> {
+    return this.post(`/threads/${encodeURIComponent(threadId)}/unpin`, { cwd }, input);
   }
 
   async getRun(runId: string, cwd?: string): Promise<RunSession> {

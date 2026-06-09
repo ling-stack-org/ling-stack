@@ -6222,6 +6222,19 @@ code,
   white-space: nowrap;
 }
 
+.work-history-filter {
+  margin: 2px 0 8px;
+}
+
+.work-history-search-field,
+.channel-work-thread-search-field {
+  margin-bottom: 8px;
+}
+
+.channel-work-thread-search-field {
+  width: min(100%, 320px);
+}
+
 .thread-resume-panel select {
   width: 100%;
   min-height: 36px;
