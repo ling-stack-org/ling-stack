@@ -2717,6 +2717,135 @@ export function createMockTeammate(overrides: Record<string, unknown> = {}): Rec
   };
 }
 
+function maybeCreateMockWorkflowProposal(
+  state: MockState,
+  channelId: string,
+  message: Record<string, unknown>,
+  autoReplyMode: string,
+): boolean {
+  const body = typeof message.body === "string" ? message.body : "";
+  const lower = body.toLowerCase();
+  const allTeammates = /(所有|全部|全体|每个|每位).{0,8}(队友|agent|teammate|agents)/iu.test(body);
+  const orderedWork = /(architect|架构|架构师).{0,80}(engineer|工程|实现|开发|qa|测试|验证|验收)/iu.test(body) ||
+    /(engineer|工程|实现|开发).{0,80}(qa|测试|验证|验收)/iu.test(body) ||
+    /(先|然后|接着|再).{0,80}(实现|验证|测试|review|qa|工程|架构|拆解)/iu.test(body);
+  const roleOrder = ["architect", "engineer", "qa", "designer", "product", "security", "docs", "release"];
+  const matchedRoles = roleOrder.filter((role) => mockTextMentionsRole(lower, role));
+  if (!allTeammates && !orderedWork && matchedRoles.length < 2) {
+    return false;
+  }
+
+  const activeTeammates = state.aiTeammates.filter((teammate): teammate is Record<string, unknown> =>
+    isRecord(teammate) && teammate.status !== "disabled" && teammate.hidden !== true);
+  const selectedTeammates = allTeammates
+    ? roleOrder.flatMap((role) => {
+        const teammate = activeTeammates.find((item) => item.roleKey === role);
+        return teammate ? [teammate] : [];
+      }).slice(0, 5)
+    : roleOrder.flatMap((role) => {
+        if (!matchedRoles.includes(role)) {
+          return [];
+        }
+        const teammate = activeTeammates.find((item) => item.roleKey === role);
+        return teammate ? [teammate] : [];
+      });
+  if (selectedTeammates.length === 0) {
+    return false;
+  }
+
+  const engineer = selectedTeammates.find((teammate) => teammate.roleKey === "engineer");
+  const assignee = engineer ?? selectedTeammates[0];
+  const assigneeId = typeof assignee.id === "string" ? assignee.id : "teammate_builtin_engineer";
+  const proposal = {
+    id: `proposal_${state.channelExecutionProposals.length + 1}`,
+    workspaceId: "workspace_default",
+    channelId,
+    sourceMessageId: typeof message.id === "string" ? message.id : "",
+    proposedByTeammateId: assigneeId,
+    title: body.length > 72 ? `${body.slice(0, 69)}...` : body,
+    prompt: `The user message looks like a coordinated workflow request.\n\nOriginal request: ${body}\n\nWait for explicit user confirmation before starting executable work.`,
+    assigneeTeammateId: assigneeId,
+    acceptanceCriteria: [
+      "Confirm the collaboration scope before starting execution.",
+      "Run each implementation step through the existing channel task/run path.",
+      "Keep selector, handoff, run, approval, and artifact evidence expandable.",
+    ],
+    collaborationSteps: selectedTeammates.map((teammate) => ({
+      teammateId: typeof teammate.id === "string" ? teammate.id : "teammate_builtin_engineer",
+      action: teammate.roleKey === "qa" || teammate.roleKey === "designer" || teammate.roleKey === "docs" ? "reviewed" : "coordinated",
+      summary: mockProposalStepSummary(typeof teammate.roleKey === "string" ? teammate.roleKey : "engineer"),
+    })),
+    requiredTools: Array.from(new Set(selectedTeammates.flatMap((teammate) => Array.isArray(teammate.allowedTools) ? teammate.allowedTools : []))),
+    riskSummary: allTeammates
+      ? "Converted an all-teammates request into one workflow proposal instead of visible group chat."
+      : "Multi-agent work starts only after confirmation and continues through existing workflow/run approvals.",
+    status: "draft",
+    createdAt: "2026-05-25T00:18:02.000Z",
+    updatedAt: "2026-05-25T00:18:02.000Z",
+  };
+  state.channelExecutionProposals.unshift(proposal);
+  state.channelMessageRouteDecisions.push({
+    schemaVersion: 1,
+    id: `route_${state.channelMessageRouteDecisions.length + 1}`,
+    workspaceId: "workspace_default",
+    channelId,
+    sourceMessageId: typeof message.id === "string" ? message.id : "",
+    mode: autoReplyMode,
+    action: "no_reply",
+    reason: "Workflow proposal created from channel intent.",
+    alternativesConsidered: [],
+    status: "suppressed",
+    createdBy: "deterministic",
+    createdAt: "2026-05-25T00:18:00.500Z",
+    updatedAt: "2026-05-25T00:18:00.500Z",
+  });
+  return true;
+}
+
+function mockTextMentionsRole(text: string, role: string): boolean {
+  if (role === "architect") {
+    return /(architect|架构|架构师|技术方案|拆解)/iu.test(text);
+  }
+  if (role === "engineer") {
+    return /(engineer|工程|开发|写代码|改代码|修复|执行实现)/iu.test(text);
+  }
+  if (role === "qa") {
+    return /(qa|测试|验证|验收|e2e|回归)/iu.test(text);
+  }
+  if (role === "designer") {
+    return /(designer|design|设计|ui|ux|交互|视觉)/iu.test(text);
+  }
+  if (role === "product") {
+    return /(product|产品|需求|范围|scope|取舍)/iu.test(text);
+  }
+  if (role === "security") {
+    return /(security|安全|审计|威胁|trust boundary)/iu.test(text);
+  }
+  if (role === "docs") {
+    return /(docs|document|文档|说明)/iu.test(text);
+  }
+  return /(release|ship|push|合并|发布|部署)/iu.test(text);
+}
+
+function mockProposalStepSummary(role: string): string {
+  if (role === "architect") {
+    return "Define implementation boundaries and sequencing before execution.";
+  }
+  if (role === "engineer") {
+    return "Implement the approved step after the boundary is clear.";
+  }
+  if (role === "qa") {
+    return "Validate the expected behavior and regression checks.";
+  }
+  if (role === "designer") {
+    return "Review interaction quality and visible product behavior.";
+  }
+  if (role === "docs") {
+    return "Keep documentation aligned with the shipped behavior.";
+  }
+  return "Coordinate the requested workflow step.";
+}
+
 export function createTeammateFromBody(body: Record<string, unknown>, id: string, existing: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
@@ -2775,6 +2904,7 @@ export async function mockDaemon(
   state: MockState,
   options: {
     readonly defaultWorkspaceCwd?: string;
+    readonly channelAutoRouteEnabled?: boolean;
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
@@ -2790,6 +2920,7 @@ export async function handleDaemonRoute(
   state: MockState,
   options: {
     readonly defaultWorkspaceCwd?: string;
+    readonly channelAutoRouteEnabled?: boolean;
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
@@ -2805,6 +2936,11 @@ export async function handleDaemonRoute(
         ok: true,
         service: "ling-stack-daemon",
         defaultWorkspaceCwd: options.defaultWorkspaceCwd ?? cwd,
+        features: {
+          channels: {
+            autoRoute: options.channelAutoRouteEnabled === true,
+          },
+        },
       },
     });
     return;
@@ -4286,6 +4422,10 @@ export async function handleDaemonRoute(
     state.channelMessages.push(message);
     const channel = state.channels.find((item) => isRecord(item) && item.id === channelId);
     const autoReplyMode = isRecord(channel) && typeof channel.autoReplyMode === "string" ? channel.autoReplyMode : "mentions_only";
+    if (body.requestAiReply !== true && maybeCreateMockWorkflowProposal(state, channelId, message, autoReplyMode)) {
+      await route.fulfill({ status: 201, json: { message } });
+      return;
+    }
     const shouldAutoReply = body.requestAiReply === true ||
       (
         typeof message.body === "string" &&

@@ -72,6 +72,13 @@ export interface DaemonHealthResponse {
   readonly ok: boolean;
   readonly service?: string;
   readonly defaultWorkspaceCwd?: string;
+  readonly features?: DaemonFeatureFlags;
+}
+
+export interface DaemonFeatureFlags {
+  readonly channels: {
+    readonly autoRoute: boolean;
+  };
 }
 
 export type RuntimeInstanceStatus = "healthy" | "starting" | "stopping" | "recovering";

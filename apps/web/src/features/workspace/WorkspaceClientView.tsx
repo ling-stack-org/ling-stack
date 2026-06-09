@@ -186,8 +186,6 @@ import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
-const channelAutoRouteEnabled = import.meta.env.VITE_LING_STACK_CHANNEL_AUTO_ROUTE === "true";
-
 type ChannelSidePanelView = "progress" | "files" | "context" | "settings" | "task" | "approval";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "progress" | "files" | "context" | "settings">;
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
@@ -304,11 +302,25 @@ function channelActivityVisibleInDefaultChat(item: ChannelActivityItem): boolean
 
 type MessageFeedItem =
   | { readonly id: "older-channel-messages"; readonly kind: "older-loader" }
-  | { readonly id: string; readonly kind: "activity"; readonly item: ChannelActivityItem };
+  | { readonly id: string; readonly kind: "activity"; readonly item: ChannelActivityItem }
+  | { readonly id: string; readonly kind: "pending-send"; readonly preview: PendingChannelSendPreview };
+
+interface PendingChannelSendPreview {
+  readonly id: string;
+  readonly channelId: string;
+  readonly body: string;
+  readonly mentions: readonly ChannelMention[];
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly requestAiReply: boolean;
+  readonly autoReplyMode: Channel["autoReplyMode"];
+  readonly createdAt: string;
+}
 
 export function WorkspaceClientView({
   cwd,
   daemonHealthy,
+  channelAutoRouteEnabled,
   providerLabel,
   channels,
   selectedChannelId,
@@ -441,6 +453,7 @@ export function WorkspaceClientView({
 }: {
   readonly cwd: string;
   readonly daemonHealthy: boolean | undefined;
+  readonly channelAutoRouteEnabled: boolean;
   readonly providerLabel: string;
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
@@ -621,6 +634,7 @@ export function WorkspaceClientView({
   const [composerBusy, setComposerBusy] = useState(false);
   const [sendState, setSendState] = useState<ComposerSendState>("idle");
   const [sendError, setSendError] = useState("");
+  const [pendingChannelSendPreview, setPendingChannelSendPreview] = useState<PendingChannelSendPreview | undefined>();
   const [activeThreadId, setActiveThreadId] = useState("");
   const [activeWorkThreadId, setActiveWorkThreadId] = useState("");
   const [channelWorkThreads, setChannelWorkThreads] = useState<readonly LingThread[]>([]);
@@ -1215,14 +1229,41 @@ export function WorkspaceClientView({
     renderableActivityItems.length > 0 ? renderableActivityItems[renderableActivityItems.length - 1]?.id ?? "" : "";
   const messageFeedCanLoadOlder =
     channelMessagesHasOlder && !activityFiltersActive && renderableActivityItems.length > 0;
+  const pendingChannelSendResolved = useMemo(() => {
+    if (!pendingChannelSendPreview) {
+      return false;
+    }
+    const latestLocalMessage = [...channelMessages]
+      .reverse()
+      .find((message) =>
+        message.channelId === pendingChannelSendPreview.channelId &&
+        message.kind === "message" &&
+        message.authorType === "local-user"
+      );
+    return Boolean(
+      latestLocalMessage &&
+      latestLocalMessage.body === pendingChannelSendPreview.body &&
+      sameStringList(latestLocalMessage.attachmentIds, pendingChannelSendPreview.attachmentIds) &&
+      sameStringList(latestLocalMessage.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds),
+    );
+  }, [channelMessages, pendingChannelSendPreview]);
+  const pendingChannelSendVisible = Boolean(
+    pendingChannelSendPreview &&
+    !pendingChannelSendResolved &&
+    pendingChannelSendPreview.channelId === selectedChannelId &&
+    !activeWorkThreadId,
+  );
   const messageFeedItems = useMemo<readonly MessageFeedItem[]>(
     () => [
       ...(messageFeedCanLoadOlder ? [{ id: "older-channel-messages", kind: "older-loader" } satisfies MessageFeedItem] : []),
       ...renderableActivityItems.map((item) => ({ id: item.id, kind: "activity" as const, item })),
+      ...(pendingChannelSendVisible && pendingChannelSendPreview
+        ? [{ id: `pending-send:${pendingChannelSendPreview.id}`, kind: "pending-send" as const, preview: pendingChannelSendPreview }]
+        : []),
     ],
-    [messageFeedCanLoadOlder, renderableActivityItems],
+    [messageFeedCanLoadOlder, pendingChannelSendPreview, pendingChannelSendVisible, renderableActivityItems],
   );
-  const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && renderableActivityItems.length === 0;
+  const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && renderableActivityItems.length === 0 && !pendingChannelSendVisible;
   const messageFeedVirtualizer = useVirtualizer({
     count: messageFeedItems.length,
     getScrollElement: () => messageFeedRef.current,
@@ -1497,6 +1538,7 @@ export function WorkspaceClientView({
     setPendingChannelTeammateId("");
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
+    setPendingChannelSendPreview(undefined);
     setAttentionProgressExpanded(true);
     setSidePanelView("progress");
     setSidePanelOpen(false);
@@ -2514,6 +2556,10 @@ export function WorkspaceClientView({
     if (!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent) {
       return;
     }
+    const draftSnapshot = messageDraft;
+    const messageMentionsSnapshot = messageMentions;
+    const pendingAttachmentsSnapshot = pendingAttachments;
+    const pendingLinkPreviewsSnapshot = pendingLinkPreviews;
     const serializedInput = serializeComposerInputParts(composerInputParts);
     const body = serializedInput.body.trim();
     const pastedUrls = extractUrls(body);
@@ -2522,6 +2568,7 @@ export function WorkspaceClientView({
     const pendingPreviewRecords = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview] : []);
     const mentions = mergeMentions(messageMentions, findMentionsInText(body, teammateOptions));
     const shouldRequestAi = mentions.some((mention) => mention.kind === "ai-teammate");
+    let pendingSendPreviewId = "";
     setComposerBusy(true);
     setSendState("sending");
     setSendError("");
@@ -2543,6 +2590,24 @@ export function WorkspaceClientView({
         }
       }
       const linkPreviews = [...pendingPreviewRecords, ...newPreviews];
+      const pendingSendPreview = {
+        id: createLocalId("message"),
+        channelId: selectedChannelId,
+        body,
+        mentions,
+        attachmentIds,
+        linkPreviewIds: linkPreviews.map((preview) => preview.id),
+        requestAiReply: shouldRequestAi,
+        autoReplyMode: selectedChannel?.autoReplyMode ?? "mentions_only",
+        createdAt: new Date().toISOString(),
+      } satisfies PendingChannelSendPreview;
+      pendingSendPreviewId = pendingSendPreview.id;
+      setPendingChannelSendPreview(pendingSendPreview);
+      setMessageDraft("");
+      setMessageMentions([]);
+      setPendingAttachments([]);
+      setPendingLinkPreviews([]);
+      autoPreviewUrlsRef.current.clear();
       await onSendMessage({
         body,
         mentions,
@@ -2550,16 +2615,19 @@ export function WorkspaceClientView({
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
         requestAiReply: shouldRequestAi,
       });
-      revokePendingAttachmentPreviews(pendingAttachments);
-      setMessageDraft("");
-      setMessageMentions([]);
-      setPendingAttachments([]);
-      setPendingLinkPreviews([]);
-      autoPreviewUrlsRef.current.clear();
+      revokePendingAttachmentPreviews(pendingAttachmentsSnapshot);
+      setPendingChannelSendPreview((current) => current?.id === pendingSendPreviewId ? undefined : current);
       setSendState("idle");
       setSendError("");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (pendingSendPreviewId) {
+        setPendingChannelSendPreview((current) => current?.id === pendingSendPreviewId ? undefined : current);
+        setMessageDraft(draftSnapshot);
+        setMessageMentions(messageMentionsSnapshot);
+        setPendingAttachments(pendingAttachmentsSnapshot);
+        setPendingLinkPreviews(pendingLinkPreviewsSnapshot);
+      }
       setSendState("failed");
       setSendError(message);
     } finally {
@@ -3138,7 +3206,60 @@ export function WorkspaceClientView({
         </div>
       );
     }
+    if (feedItem.kind === "pending-send") {
+      return renderPendingChannelSendPreview(feedItem.preview);
+    }
     return renderMessageFeedActivityItem(feedItem.item);
+  }
+
+  function renderPendingChannelSendPreview(preview: PendingChannelSendPreview): ReactNode {
+    return (
+      <div className="message-group channel-pending-send-group">
+        <MessageRow
+          className="channel-message-row pending-send"
+          authorType="local-user"
+          avatar={<AvatarInitial label="T" />}
+          authorName="Tian"
+          createdAtLabel={formatDateTime(preview.createdAt)}
+          bodyNode={(
+            <div className="message-body-shell">
+              <MessageBodyRenderer text={preview.body} cwd={cwd} compact />
+            </div>
+          )}
+          attachmentsNode={renderChannelAttachmentStrip(preview.attachmentIds)}
+        />
+        <div className="channel-send-thinking-row" role="status" aria-live="polite">
+          <Loader2 className="message-pending-spinner spin" size={13} />
+          <span>{t("Thinking...")}</span>
+        </div>
+      </div>
+    );
+  }
+
+  function renderChannelAttachmentStrip(attachmentIds: readonly string[]): ReactNode {
+    const attachments = attachmentIds
+      .map((id) => channelAttachmentById.get(id))
+      .filter((attachment): attachment is ChannelAttachment => Boolean(attachment));
+    return attachments.length > 0 ? (
+      <ConversationAttachmentStrip
+        attachments={attachments.map((attachment) => ({
+          id: attachment.id,
+          label: attachment.fileName,
+          meta: formatBytes(attachment.sizeBytes),
+          href: attachmentContentUrl(attachment),
+          target: "_blank",
+          rel: "noreferrer",
+          icon: attachment.kind === "image" ? <ImageIcon size={13} /> : <FileText size={13} />,
+          previewRequest: attachmentCanPreview(attachment) ? {
+            source: "attachment",
+            cwd,
+            attachmentId: attachment.id,
+            scope: "channel",
+            channelId: selectedChannelId,
+          } : undefined,
+        }))}
+      />
+    ) : null;
   }
 
   const channelComposer = (
@@ -3561,6 +3682,7 @@ export function WorkspaceClientView({
             <option value="default_teammate">{t("Default teammate")}</option>
             <option value="auto_route" disabled={!channelAutoRouteEnabled}>{t("Auto route")}</option>
           </select>
+          {!channelAutoRouteEnabled ? <small>{t("Auto route is disabled by daemon configuration.")}</small> : null}
         </label>
         <ChannelRuntimePolicyFields form={channelEditForm} onChange={onChannelEditFormChange} />
         <div className="channel-option-actions">
@@ -3901,6 +4023,7 @@ export function WorkspaceClientView({
                   <option value="default_teammate">{t("Default teammate")}</option>
                   <option value="auto_route" disabled={!channelAutoRouteEnabled}>{t("Auto route")}</option>
                 </select>
+                {!channelAutoRouteEnabled ? <small>{t("Auto route is disabled by daemon configuration.")}</small> : null}
               </label>
               <ChannelRuntimePolicyFields form={channelForm} onChange={updateCreateChannelRuntimeForm} />
               <div className="channel-option-actions">
@@ -4751,6 +4874,10 @@ function uniqueWorkUnits(workUnits: readonly WorkUnit[]): readonly WorkUnit[] {
 
 function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values)];
+}
+
+function sameStringList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function formatAge(value: string | undefined): string {

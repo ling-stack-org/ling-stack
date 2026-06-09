@@ -4002,6 +4002,27 @@ code,
   gap: 10px;
 }
 
+.channel-pending-send-group {
+  gap: 8px;
+}
+
+.channel-send-thinking-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  max-width: min(680px, calc(100% - 40px));
+  margin-left: 40px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.3;
+}
+
+.channel-send-thinking-row .message-pending-spinner {
+  color: var(--text-muted);
+}
+
 .message-bubble-inline .message-content {
   max-width: min(76%, 680px);
   padding: 8px 12px 10px;

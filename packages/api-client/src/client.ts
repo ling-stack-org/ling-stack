@@ -315,11 +315,13 @@ export class LingDaemonClient {
       ok?: unknown;
       service?: unknown;
       defaultWorkspaceCwd?: unknown;
+      features?: unknown;
     };
     return {
       ok: body.ok === true,
       service: typeof body.service === "string" ? body.service : undefined,
       defaultWorkspaceCwd: typeof body.defaultWorkspaceCwd === "string" ? body.defaultWorkspaceCwd : undefined,
+      features: readDaemonFeatureFlags(body.features),
     };
   }
 
@@ -1792,6 +1794,22 @@ export class LingDaemonClient {
 }
 
 type Query = Record<string, string | number | boolean | undefined>;
+
+function readDaemonFeatureFlags(value: unknown): DaemonHealthResponse["features"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { channels: { autoRoute: false } };
+  }
+  const features = value as Record<string, unknown>;
+  const channels = features.channels;
+  if (typeof channels !== "object" || channels === null || Array.isArray(channels)) {
+    return { channels: { autoRoute: false } };
+  }
+  return {
+    channels: {
+      autoRoute: (channels as Record<string, unknown>).autoRoute === true,
+    },
+  };
+}
 
 async function readErrorMessage(response: Response): Promise<string> {
   let message = `${response.status} ${response.statusText}`;
