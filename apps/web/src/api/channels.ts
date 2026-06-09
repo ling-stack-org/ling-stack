@@ -27,6 +27,10 @@ import type {
   ChannelWorkflowStepRetryResponse,
   ChannelWorkflowStepStartResponse,
   ChannelWorkflowTemplateMutationResponse,
+  ChannelWorkspaceCreateWorktreeRequest,
+  ChannelWorkspaceHandoffRequest,
+  ChannelWorkspaceMutationResponse,
+  ChannelWorkspaceResponse,
   WorkflowEvidenceResponse,
   CreateChannelContextSummaryRequest,
   CreateChannelDecisionRequest,
@@ -69,6 +73,30 @@ export async function updateChannel(cwd: string, channelId: string, form: Channe
 
 export async function deleteChannel(cwd: string, channelId: string): Promise<void> {
   await daemonClient.deleteChannel(cwd, channelId);
+}
+
+export async function getChannelWorkspace(cwd: string, channelId: string): Promise<ChannelWorkspaceResponse> {
+  return daemonClient.getChannelWorkspace(cwd, channelId);
+}
+
+export async function createChannelWorktree(
+  cwd: string,
+  channelId: string,
+  input: ChannelWorkspaceCreateWorktreeRequest = {},
+): Promise<ChannelWorkspaceMutationResponse> {
+  return daemonClient.createChannelWorktree(cwd, channelId, input);
+}
+
+export async function handoffChannelWorkspace(
+  cwd: string,
+  channelId: string,
+  input: ChannelWorkspaceHandoffRequest,
+): Promise<ChannelWorkspaceMutationResponse> {
+  return daemonClient.handoffChannelWorkspace(cwd, channelId, input);
+}
+
+export async function refreshChannelWorkspace(cwd: string, channelId: string): Promise<ChannelWorkspaceMutationResponse> {
+  return daemonClient.refreshChannelWorkspace(cwd, channelId);
 }
 
 export async function listChannelMessages(

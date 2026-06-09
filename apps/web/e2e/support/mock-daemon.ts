@@ -92,6 +92,7 @@ export interface MockState {
   turnRunLinks: MockLingTurnRun[];
   failThreadTurnsForThreadIds: string[];
   executionActions: MockExecutionAction[];
+  workspaceSettings: Record<string, unknown>;
 }
 
 export interface MockLingThread {
@@ -903,6 +904,11 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     turnRunLinks: [],
     failThreadTurnsForThreadIds: [],
     executionActions: [],
+    workspaceSettings: {
+      schemaVersion: 1,
+      workspaceCwd: cwd,
+      updatedAt: "2026-05-22T00:00:00.000Z",
+    },
   };
 }
 
@@ -2685,6 +2691,13 @@ export function createChannelFromBody(body: Record<string, unknown>, id: string,
       : isRecord(existing.runtimePolicy)
         ? existing.runtimePolicy
         : defaultRuntimePolicy,
+    workspaceBinding: body.workspaceBinding === null
+      ? undefined
+      : isRecord(body.workspaceBinding)
+        ? body.workspaceBinding
+        : isRecord(existing.workspaceBinding)
+          ? existing.workspaceBinding
+          : undefined,
     createdAt: typeof existing.createdAt === "string" ? existing.createdAt : "2026-05-25T00:15:00.000Z",
     updatedAt: "2026-05-25T00:15:00.000Z",
   };
@@ -2947,6 +2960,34 @@ export async function handleDaemonRoute(
   }
   if (request.method() === "GET" && path === "/provider-templates") {
     await route.fulfill({ json: { templates: options.templates ?? [] } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/workspace-settings") {
+    state.workspaceSettings = {
+      schemaVersion: 1,
+      ...state.workspaceSettings,
+      workspaceCwd: typeof state.workspaceSettings.workspaceCwd === "string" ? state.workspaceSettings.workspaceCwd : cwd,
+      updatedAt: typeof state.workspaceSettings.updatedAt === "string" ? state.workspaceSettings.updatedAt : "2026-05-22T00:00:00.000Z",
+    };
+    await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
+    return;
+  }
+  if (request.method() === "PATCH" && path === "/workspace-settings") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const nextSettings = { ...state.workspaceSettings };
+    for (const key of ["workspaceCwd", "theme", "locale", "channelNotifications", "channelActivityViews"] as const) {
+      if (body[key] === null) {
+        delete nextSettings[key];
+      } else if (body[key] !== undefined) {
+        nextSettings[key] = body[key];
+      }
+    }
+    state.workspaceSettings = {
+      schemaVersion: 1,
+      ...nextSettings,
+      updatedAt: "2026-05-25T00:18:00.000Z",
+    };
+    await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
     return;
   }
   if (request.method() === "GET" && path === "/providers") {
@@ -4316,6 +4357,75 @@ export async function handleDaemonRoute(
     state.channels.unshift(channel);
     await route.fulfill({ status: 201, json: { channel } });
     return;
+  }
+  const channelWorkspaceMatch = /^\/channels\/([^/]+)\/workspace(?:\/([^/]+))?$/.exec(path);
+  if (channelWorkspaceMatch) {
+    const channelId = decodeURIComponent(channelWorkspaceMatch[1]);
+    const action = channelWorkspaceMatch[2] ? decodeURIComponent(channelWorkspaceMatch[2]) : "";
+    const channelIndex = state.channels.findIndex((item) => isRecord(item) && item.id === channelId);
+    if (channelIndex === -1 || !isRecord(state.channels[channelIndex])) {
+      await route.fulfill({ status: 404, json: { error: "channel_not_found", message: `Channel not found: ${channelId}` } });
+      return;
+    }
+    const channel = state.channels[channelIndex] as Record<string, unknown>;
+    if (request.method() === "GET" && !action) {
+      const binding = readMockChannelWorkspaceBinding(channel);
+      await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, channel, binding) });
+      return;
+    }
+    if (request.method() === "POST" && action === "refresh") {
+      const binding = {
+        ...readMockChannelWorkspaceBinding(channel),
+        status: "ready",
+        checkedAt: "2026-05-25T00:18:00.000Z",
+        updatedAt: "2026-05-25T00:18:00.000Z",
+      };
+      const updated = { ...channel, workspaceBinding: binding, updatedAt: "2026-05-25T00:18:00.000Z" };
+      state.channels[channelIndex] = updated;
+      await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, updated, binding) });
+      return;
+    }
+    if (request.method() === "POST" && action === "create-worktree") {
+      const binding = {
+        mode: "managed_worktree",
+        status: "ready",
+        executionPath: `${cwd}/.ling-stack/worktrees/channels/${channelId}`,
+        worktreePath: `${cwd}/.ling-stack/worktrees/channels/${channelId}`,
+        branchName: `ling/channel-${channelId}`,
+        baseBranch: "main",
+        baseCommit: "mock-base-commit",
+        createdAt: "2026-05-25T00:18:00.000Z",
+        updatedAt: "2026-05-25T00:18:00.000Z",
+        checkedAt: "2026-05-25T00:18:00.000Z",
+      };
+      const updated = { ...channel, workspaceBinding: binding, updatedAt: "2026-05-25T00:18:00.000Z" };
+      state.channels[channelIndex] = updated;
+      await route.fulfill({ status: 201, json: buildMockChannelWorkspaceResponse(channelId, updated, binding) });
+      return;
+    }
+    if (request.method() === "POST" && action === "handoff") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const existing = readMockChannelWorkspaceBinding(channel);
+      const mode = body.mode === "managed_worktree" || body.mode === "external_path" ? body.mode : "local";
+      const executionPath = mode === "managed_worktree"
+        ? typeof existing.worktreePath === "string" ? existing.worktreePath : `${cwd}/.ling-stack/worktrees/channels/${channelId}`
+        : mode === "external_path" && typeof body.executionPath === "string"
+          ? body.executionPath
+          : typeof channel.boundPath === "string" ? channel.boundPath : cwd;
+      const binding = {
+        ...existing,
+        mode,
+        status: "ready",
+        executionPath,
+        worktreePath: mode === "managed_worktree" ? executionPath : undefined,
+        updatedAt: "2026-05-25T00:18:00.000Z",
+        checkedAt: "2026-05-25T00:18:00.000Z",
+      };
+      const updated = { ...channel, workspaceBinding: binding, updatedAt: "2026-05-25T00:18:00.000Z" };
+      state.channels[channelIndex] = updated;
+      await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, updated, binding) });
+      return;
+    }
   }
   const channelMessagesMatch = /^\/channels\/([^/]+)\/messages$/.exec(path);
   if (channelMessagesMatch && request.method() === "GET") {
@@ -6434,6 +6544,48 @@ export async function handleDaemonRoute(
   }
 
   await route.fulfill({ status: 404, json: { error: "not_found", path } });
+}
+
+function readMockChannelWorkspaceBinding(channel: Record<string, unknown>): Record<string, unknown> {
+  if (isRecord(channel.workspaceBinding)) {
+    return channel.workspaceBinding;
+  }
+  const executionPath = typeof channel.boundPath === "string" && channel.boundPath.trim() ? channel.boundPath : cwd;
+  return {
+    mode: "local",
+    status: "ready",
+    executionPath,
+    updatedAt: typeof channel.updatedAt === "string" ? channel.updatedAt : "2026-05-22T00:00:00.000Z",
+  };
+}
+
+function buildMockChannelWorkspaceResponse(
+  channelId: string,
+  channel: Record<string, unknown>,
+  binding: Record<string, unknown>,
+): Record<string, unknown> {
+  const executionCwd = typeof binding.mode === "string" && binding.mode === "managed_worktree" && typeof binding.worktreePath === "string"
+    ? binding.worktreePath
+    : typeof binding.executionPath === "string" && binding.executionPath.trim()
+      ? binding.executionPath
+      : typeof channel.boundPath === "string" && channel.boundPath.trim()
+        ? channel.boundPath
+        : cwd;
+  return {
+    cwd,
+    channelId,
+    binding,
+    snapshot: {
+      mode: typeof binding.mode === "string" ? binding.mode : "local",
+      status: typeof binding.status === "string" ? binding.status : "ready",
+      workspaceCwd: cwd,
+      executionCwd,
+      boundPath: typeof channel.boundPath === "string" ? channel.boundPath : undefined,
+      worktreePath: typeof binding.worktreePath === "string" ? binding.worktreePath : undefined,
+      branchName: typeof binding.branchName === "string" ? binding.branchName : undefined,
+      checkedAt: typeof binding.checkedAt === "string" ? binding.checkedAt : undefined,
+    },
+  };
 }
 
 export function inferMockChannelAttachment(fileName: string): { readonly kind: string; readonly contentType: string } {

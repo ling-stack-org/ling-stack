@@ -2,6 +2,7 @@ import type { ServerResponse } from "node:http";
 import {
   type ApprovalPolicy,
   buildEffectiveTeammateSkills,
+  createChannelWorkspaceSnapshot,
   createRunId,
   DEFAULT_WORKSPACE_ID,
   resolveSessionRunPolicy,
@@ -334,6 +335,10 @@ export async function executeRunRequest(
         permissionMode: effectivePolicySnapshot.mode,
         effectivePolicySnapshot,
         workspaceCwd,
+        executionCwd: runRequest.cwd,
+        channelWorkspaceBinding: preparedConcurrency.channel
+          ? createChannelWorkspaceSnapshot(preparedConcurrency.channel, workspaceCwd)
+          : undefined,
         threadId: thread.id,
         turnId: turn.id,
         provider: resolvedProvider,

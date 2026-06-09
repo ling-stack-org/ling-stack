@@ -73,7 +73,7 @@ export function buildTaskRunRequest(
   const fallbackTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
   return {
     workspaceCwd,
-    cwd: channel.boundPath || workspaceCwd,
+    cwd: resolveChannelExecutionCwd(channel, workspaceCwd),
     task: {
       id: task.id,
       title: task.title,
@@ -87,6 +87,16 @@ export function buildTaskRunRequest(
     permissionMode: options.permissionMode,
     thinkingLevel: "medium",
   };
+}
+
+function resolveChannelExecutionCwd(channel: Channel, workspaceCwd: string): string {
+  if (channel.workspaceBinding?.mode === "managed_worktree" && channel.workspaceBinding.worktreePath) {
+    return channel.workspaceBinding.worktreePath;
+  }
+  if (channel.workspaceBinding?.mode === "external_path" && channel.workspaceBinding.executionPath) {
+    return channel.workspaceBinding.executionPath;
+  }
+  return channel.boundPath || workspaceCwd;
 }
 
 export function buildRerunRequest(run: RunSession): unknown {

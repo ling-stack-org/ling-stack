@@ -55,6 +55,10 @@ import type {
   ChannelWorkflowStepStartResponse,
   ChannelWorkflowStepStatus,
   ChannelWorkflowTemplateMutationResponse,
+  ChannelWorkspaceCreateWorktreeRequest,
+  ChannelWorkspaceHandoffRequest,
+  ChannelWorkspaceMutationResponse,
+  ChannelWorkspaceResponse,
   WorkflowEvidenceResponse,
   CreateChannelAttachmentRequest,
   CreateChannelContextSummaryRequest,
@@ -232,6 +236,7 @@ import type {
   UpdateChannelWorkflowRequest,
   UpdateChannelWorkflowStepRequest,
   UpdateChannelRequest,
+  UpdateWorkspaceSettingsRequest,
   UpdateMemoryObjectRequest,
   UpdateTaskRequest,
   StartChannelWorkflowStepRequest,
@@ -277,6 +282,7 @@ import type {
   WorkItemReleaseRequest,
   WorkItemRouteRequest,
   WorkspaceRuntimeSettingsPatch,
+  WorkspaceSettingsResponse,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "./errors.js";
 
@@ -323,6 +329,14 @@ export class LingDaemonClient {
       defaultWorkspaceCwd: typeof body.defaultWorkspaceCwd === "string" ? body.defaultWorkspaceCwd : undefined,
       features: readDaemonFeatureFlags(body.features),
     };
+  }
+
+  async getWorkspaceSettings(cwd: string): Promise<WorkspaceSettingsResponse> {
+    return this.get("/workspace-settings", { cwd });
+  }
+
+  async updateWorkspaceSettings(cwd: string, input: UpdateWorkspaceSettingsRequest): Promise<WorkspaceSettingsResponse> {
+    return this.patch("/workspace-settings", { cwd }, input);
   }
 
   async getControlPlaneSnapshot(
@@ -806,6 +820,30 @@ export class LingDaemonClient {
 
   async deleteChannel(cwd: string, channelId: string): Promise<void> {
     await this.request("DELETE", `/channels/${encodeURIComponent(channelId)}`, { cwd });
+  }
+
+  async getChannelWorkspace(cwd: string, channelId: string): Promise<ChannelWorkspaceResponse> {
+    return this.get(`/channels/${encodeURIComponent(channelId)}/workspace`, { cwd });
+  }
+
+  async createChannelWorktree(
+    cwd: string,
+    channelId: string,
+    input: ChannelWorkspaceCreateWorktreeRequest = {},
+  ): Promise<ChannelWorkspaceMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/workspace/create-worktree`, { cwd }, input);
+  }
+
+  async handoffChannelWorkspace(
+    cwd: string,
+    channelId: string,
+    input: ChannelWorkspaceHandoffRequest,
+  ): Promise<ChannelWorkspaceMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/workspace/handoff`, { cwd }, input);
+  }
+
+  async refreshChannelWorkspace(cwd: string, channelId: string): Promise<ChannelWorkspaceMutationResponse> {
+    return this.post(`/channels/${encodeURIComponent(channelId)}/workspace/refresh`, { cwd });
   }
 
   async listChannelMessages(

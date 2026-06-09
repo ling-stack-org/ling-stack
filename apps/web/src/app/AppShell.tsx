@@ -9,6 +9,7 @@ import {
   getBuiltinSkillPack,
 } from "@ling-stack/core/builtin-skill-packs";
 import { useI18n } from "../i18n.js";
+import { useTheme } from "../theme.js";
 import type {
   ApprovalRequest,
   AiTeammate,
@@ -45,7 +46,9 @@ import type {
   TaskFormState,
   TaskRunActionState,
   UpdateChannelBriefRequest,
+  UpdateWorkspaceSettingsRequest,
   WorkItemView,
+  WorkspaceSettings,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -98,6 +101,7 @@ import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspace
 import { getControlPlaneSnapshot } from "../api/control-plane.js";
 import { routeExternalWork } from "../api/external-work.js";
 import { claimWorkItem, heartbeatWorkItem, listWorkItems } from "../api/work-items.js";
+import { getWorkspaceSettings, updateWorkspaceSettings } from "../api/workspace-settings.js";
 import {
   controlPlaneStreamUrl,
   controlPlaneSummaryDomains,
@@ -181,7 +185,8 @@ function splitTextLines(value: string): string[] {
 }
 
 export function AppShell(): JSX.Element {
-  const { t } = useI18n();
+  const { locale, setLocale, t } = useI18n();
+  const { preference: themePreference, setPreference: setThemePreference } = useTheme();
   const initialWorkspaceCwd = readInitialWorkspaceCwd();
   const [form, setForm] = useState<RunFormState>(() => ({
     ...defaultForm,
@@ -204,6 +209,7 @@ export function AppShell(): JSX.Element {
   const [durableWorkItems, setDurableWorkItems] = useState<readonly WorkItemView[]>([]);
   const [durableWorkItemsLoading, setDurableWorkItemsLoading] = useState(false);
   const [busyWorkItemId, setBusyWorkItemId] = useState("");
+  const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettings | undefined>();
   const [threadPageTargetId, setThreadPageTargetId] = useState("");
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
@@ -213,6 +219,7 @@ export function AppShell(): JSX.Element {
   const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
+  const workspaceSettingsLoadedCwdRef = useRef("");
   const controlPlaneInvalidationRef = useRef<(domains: readonly ControlPlaneDomain[]) => void>(() => undefined);
   const {
     buildRerunRequest,
@@ -1145,6 +1152,11 @@ export function AppShell(): JSX.Element {
   function updateWorkspaceCwd(cwd: string): void {
     const previousCwd = form.cwd;
     writeSavedWorkspaceCwd(cwd);
+    if (cwd.trim()) {
+      void updateWorkspaceSettings(cwd.trim(), { workspaceCwd: cwd.trim() })
+        .then((response) => setWorkspaceSettings(response.settings))
+        .catch(() => undefined);
+    }
     setForm({ ...form, cwd });
     resetWorkspaceForCwd(cwd);
     resetProvidersForCwd();
@@ -1163,6 +1175,71 @@ export function AppShell(): JSX.Element {
       boundPath: current.boundPath === previousCwd || !current.boundPath ? cwd : current.boundPath,
     }));
   }
+
+  function patchWorkspaceSettings(patch: UpdateWorkspaceSettingsRequest): void {
+    const workspaceCwd = form.cwd.trim();
+    if (!workspaceCwd) {
+      return;
+    }
+    void updateWorkspaceSettings(workspaceCwd, patch)
+      .then((response) => setWorkspaceSettings(response.settings))
+      .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)));
+  }
+
+  useEffect(() => {
+    const workspaceCwd = form.cwd.trim();
+    if (daemonHealthy !== true || !workspaceCwd) {
+      setWorkspaceSettings(undefined);
+      workspaceSettingsLoadedCwdRef.current = "";
+      return;
+    }
+    let cancelled = false;
+    workspaceSettingsLoadedCwdRef.current = workspaceCwd;
+    void getWorkspaceSettings(workspaceCwd)
+      .then((response) => {
+        if (cancelled || workspaceSettingsLoadedCwdRef.current !== workspaceCwd) {
+          return;
+        }
+        setWorkspaceSettings(response.settings);
+        if (response.settings.theme) {
+          setThemePreference(response.settings.theme);
+        }
+        if (isWorkspaceSettingsLocale(response.settings.locale)) {
+          setLocale(response.settings.locale);
+        }
+        if (response.settings.workspaceCwd !== workspaceCwd) {
+          void updateWorkspaceSettings(workspaceCwd, { workspaceCwd })
+            .then((updated) => {
+              if (!cancelled && workspaceSettingsLoadedCwdRef.current === workspaceCwd) {
+                setWorkspaceSettings(updated.settings);
+              }
+            })
+            .catch(() => undefined);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWorkspaceSettings(undefined);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [daemonHealthy, form.cwd, setLocale, setThemePreference]);
+
+  useEffect(() => {
+    const workspaceCwd = form.cwd.trim();
+    if (daemonHealthy !== true || !workspaceCwd || workspaceSettingsLoadedCwdRef.current !== workspaceCwd) {
+      return;
+    }
+    if (workspaceSettings?.theme === themePreference && workspaceSettings?.locale === locale && workspaceSettings?.workspaceCwd === workspaceCwd) {
+      return;
+    }
+    const timeout = globalThis.setTimeout(() => {
+      patchWorkspaceSettings({ workspaceCwd, theme: themePreference, locale });
+    }, 250);
+    return () => globalThis.clearTimeout(timeout);
+  }, [daemonHealthy, form.cwd, locale, themePreference, workspaceSettings]);
 
   async function refreshHealth(): Promise<void> {
     try {
@@ -2721,6 +2798,8 @@ export function AppShell(): JSX.Element {
             onHeartbeatWorkItem={(workItemId, claimToken) => void heartbeatDurableWorkItem(workItemId, claimToken)}
             busyWorkItemId={busyWorkItemId}
             onOpenProviders={(sourceRun) => sourceRun ? openProvidersFromRun(sourceRun) : openPlainView("providers")}
+            workspaceSettings={workspaceSettings}
+            onWorkspaceSettingsPatch={patchWorkspaceSettings}
               />
             ) : (
               <>
@@ -3234,6 +3313,10 @@ function readRequestPermissionMode(requestBody: unknown): SessionPermissionMode 
   return value === "ask_everything" || value === "balanced" || value === "workspace_write" || value === "full_access" || value === "custom"
     ? value
     : undefined;
+}
+
+function isWorkspaceSettingsLocale(value: string | undefined): value is "en-US" | "zh-CN" {
+  return value === "en-US" || value === "zh-CN";
 }
 
 interface ChannelTransitionEntity {

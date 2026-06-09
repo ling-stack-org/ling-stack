@@ -52,6 +52,7 @@ import {
   handleChannelMessageRouteDecisionsCollection,
   handleChannelsCollection,
 } from "../features/channels/routes.js";
+import { assertChannelWorkspaceReady, handleChannelWorkspace } from "../features/channels/workspace.js";
 import {
   handleChannelWorkflowEvidence,
   handleChannelWorkflowFromHandoff,
@@ -151,6 +152,7 @@ import {
 } from "../features/runs/routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
+import { handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
 import {
@@ -310,6 +312,11 @@ export async function routeRequest(
 
   if (url.pathname === "/channels") {
     await handleChannelsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/workspace-settings") {
+    await handleWorkspaceSettings(request, response, config, storeRegistry);
     return;
   }
 
@@ -1230,6 +1237,10 @@ export async function routeRequest(
 
   const channelRoute = parseChannelRoute(url.pathname);
   if (channelRoute) {
+    if (channelRoute.action === "workspace") {
+      await handleChannelWorkspace(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.workspaceAction);
+      return;
+    }
     if (channelRoute.action === "brief") {
       await handleChannelBrief(request, response, config, storeRegistry, channelRoute.channelId);
       return;
@@ -1434,10 +1445,15 @@ export async function routeRequest(
         storeRegistry,
         taskRoute.taskId,
         async ({ workspaceCwd, task, channel, runRequest, response }) => {
+          const workspace = assertChannelWorkspaceReady(channel, workspaceCwd);
+          if (!workspace.ok) {
+            writeJson(response, 409, { error: "channel_workspace_unavailable", message: workspace.message });
+            return;
+          }
           await executeRunRequest(
             {
               workspaceCwd,
-              cwd: channel.boundPath ?? workspaceCwd,
+              cwd: workspace.executionCwd,
               providerPresetId: runRequest.providerPresetId,
               runnerId: runRequest.runnerId,
               teammateId: task.assigneeTeammateId ?? channel.defaultTeammateId,

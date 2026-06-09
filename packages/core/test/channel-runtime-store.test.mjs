@@ -140,6 +140,64 @@ test("sqlite channel auto reply mode and route decisions round trip", async () =
   }
 });
 
+test("sqlite channels persist workspace binding and workspace settings", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workspace-binding-"));
+  const now = "2026-06-09T00:00:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel(
+      {
+        name: "Worktree Channel",
+        boundPath: cwd,
+        workspaceBinding: {
+          mode: "external_path",
+          status: "ready",
+          executionPath: resolve(cwd, "external"),
+          updatedAt: now,
+        },
+      },
+      now,
+    );
+    assert.equal(channel.workspaceBinding.mode, "external_path");
+    assert.equal(channel.workspaceBinding.executionPath, resolve(cwd, "external"));
+
+    const settings = store.updateWorkspaceSettings(
+      {
+        workspaceCwd: cwd,
+        theme: "dark",
+        locale: "zh-CN",
+        channelNotifications: { [channel.id]: "mentions" },
+        channelActivityViews: { [channel.id]: [{ id: "custom:risks", name: "Risks" }] },
+      },
+      "2026-06-09T00:01:00.000Z",
+    );
+    assert.equal(settings.workspaceCwd, cwd);
+    assert.equal(settings.theme, "dark");
+    assert.equal(settings.channelNotifications[channel.id], "mentions");
+  } finally {
+    store.close();
+  }
+
+  store = createSqliteRunStore(cwd);
+  try {
+    const [reopenedChannel] = store.listChannels();
+    assert.equal(reopenedChannel.workspaceBinding.mode, "external_path");
+    assert.equal(reopenedChannel.workspaceBinding.executionPath, resolve(cwd, "external"));
+    const reopenedSettings = store.getWorkspaceSettings();
+    assert.equal(reopenedSettings.workspaceCwd, cwd);
+    assert.equal(reopenedSettings.theme, "dark");
+    assert.equal(reopenedSettings.locale, "zh-CN");
+    assert.equal(reopenedSettings.channelNotifications[reopenedChannel.id], "mentions");
+    assert.equal(Array.isArray(reopenedSettings.channelActivityViews[reopenedChannel.id]), true);
+
+    const cleared = store.updateChannel(reopenedChannel.id, { workspaceBinding: null }, "2026-06-09T00:02:00.000Z");
+    assert.equal(cleared.workspaceBinding, undefined);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite channel workspace assets persist messages, attachments, and link previews", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workspace-"));
   const now = "2026-05-28T00:00:00.000Z";

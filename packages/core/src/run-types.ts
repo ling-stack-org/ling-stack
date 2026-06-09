@@ -97,6 +97,8 @@ import type {
   UpdateChannelDecisionInput,
   UpdateChannelExecutionProposalInput,
   UpdateChannelMessageRouteDecisionInput,
+  UpdateWorkspaceSettingsInput,
+  WorkspaceSettings,
   UpdateWorkflowHandoffIntentInput,
   UpdateWorkflowSelectorDecisionInput,
   UpdateChannelWorkflowInput,
@@ -915,6 +917,8 @@ export interface RunStore {
   expireResourceLeases(now: string): number;
   listResourceLeases(options?: ListResourceLeasesOptions): ResourceLease[];
   getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined;
+  getWorkspaceSettings(): WorkspaceSettings;
+  updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings;
   createChannel(input: CreateChannelInput, now: string): Channel;
   getChannel(id: string): Channel | undefined;
   listChannels(options?: ListChannelsOptions): Channel[];

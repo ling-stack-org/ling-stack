@@ -597,10 +597,28 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   ]);
   await expect(guidance).toContainText("Queued");
   await expect(guidance.getByRole("button", { name: "Run this guidance now" })).toBeEnabled();
-  await guidance.getByRole("button", { name: "Cancel" }).click();
+  await expect(guidance.getByRole("button", { name: "Delete queued guidance" })).toBeEnabled();
+  await guidance.getByRole("button", { name: "More guidance actions" }).click();
+  await expect(guidance.getByRole("menuitem", { name: "Edit message" })).toBeVisible();
+  await expect(guidance.getByRole("menuitem", { name: "Close queue" })).toBeVisible();
+  await guidance.getByRole("menuitem", { name: "Edit message" }).click();
+  await expect(guidance.getByPlaceholder("Add guidance")).toHaveValue("Continue with only risks after this reply.");
   await expect.poll(() => state.teammateDirectInterventions[0]?.status).toBe("cancelled");
 
   const guidanceAfterCancel = page.getByLabel("Replying");
+  await guidanceAfterCancel.getByPlaceholder("Add guidance").fill("Delete this queued guidance.");
+  await guidanceAfterCancel.getByRole("button", { name: "Queue guidance" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("queued");
+  await guidanceAfterCancel.getByRole("button", { name: "Delete queued guidance" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("cancelled");
+
+  await guidanceAfterCancel.getByPlaceholder("Add guidance").fill("Close the whole guidance queue.");
+  await guidanceAfterCancel.getByRole("button", { name: "Queue guidance" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("queued");
+  await guidanceAfterCancel.getByRole("button", { name: "More guidance actions" }).click();
+  await guidanceAfterCancel.getByRole("menuitem", { name: "Close queue" }).click();
+  await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("cancelled");
+
   await guidanceAfterCancel.getByPlaceholder("Add guidance").fill("Run this queued guidance immediately.");
   await guidanceAfterCancel.getByRole("button", { name: "Queue guidance" }).click();
   await expect.poll(() => state.teammateDirectInterventions.at(-1)?.status).toBe("queued");

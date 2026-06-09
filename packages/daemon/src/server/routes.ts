@@ -224,11 +224,23 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "message-route-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows";
+  readonly action?: "brief" | "messages" | "message-route-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "workspace";
+  readonly workspaceAction?: "create-worktree" | "handoff" | "refresh";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "channels") {
     return { channelId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "channels" && segments[2] === "workspace") {
+    return { channelId: segments[1], action: "workspace" };
+  }
+  if (
+    segments.length === 4 &&
+    segments[0] === "channels" &&
+    segments[2] === "workspace" &&
+    (segments[3] === "create-worktree" || segments[3] === "handoff" || segments[3] === "refresh")
+  ) {
+    return { channelId: segments[1], action: "workspace", workspaceAction: segments[3] };
   }
   if (
     segments.length === 3 &&

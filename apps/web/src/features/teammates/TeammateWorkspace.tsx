@@ -213,6 +213,7 @@ export function TeammateWorkspace({
   const [directGuidanceSubmitting, setDirectGuidanceSubmitting] = useState<"queue_followup" | "interrupt_redirect" | "stop" | "">("");
   const [directGuidanceCancelingId, setDirectGuidanceCancelingId] = useState("");
   const [directGuidancePromotingId, setDirectGuidancePromotingId] = useState("");
+  const [directGuidanceClosingQueue, setDirectGuidanceClosingQueue] = useState(false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
@@ -743,6 +744,35 @@ export function TeammateWorkspace({
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
       setDirectGuidanceCancelingId("");
+    }
+  }
+
+  async function editDirectGuidance(intervention: TeammateDirectReplyIntervention): Promise<void> {
+    if (intervention.status !== "queued" || directGuidanceCancelingId || directGuidanceClosingQueue) {
+      return;
+    }
+    setDirectGuidanceInstruction(intervention.instruction);
+    await cancelDirectGuidance(intervention.id);
+  }
+
+  async function closeDirectGuidanceQueue(): Promise<void> {
+    const queuedInterventions = openDirectInterventions.filter((intervention) => intervention.status === "queued");
+    if (directGuidanceClosingQueue || queuedInterventions.length === 0) {
+      return;
+    }
+    setDirectGuidanceClosingQueue(true);
+    try {
+      setWorkspaceError("");
+      await Promise.all(
+        queuedInterventions.map((intervention) =>
+          cancelTeammateDirectIntervention(cwd.trim(), intervention.id, { reason: "queue_closed_by_user" }),
+        ),
+      );
+      await refreshDirectRuntime();
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDirectGuidanceClosingQueue(false);
     }
   }
 
@@ -1643,19 +1673,33 @@ export function TeammateWorkspace({
                   submitting={directGuidanceSubmitting}
                   stopDisabled={!directRuntime?.activeReply}
                   submitDisabled={!directRuntime?.activeReply || !directGuidanceInstruction.trim()}
-                  items={openDirectInterventions.map((intervention) => ({
-                    id: intervention.id,
-                    instruction: intervention.instruction,
-                    statusLabel: teammateDirectInterventionStatusLabel(intervention.status, t),
-                    meta: teammateDirectInterventionModeLabel(intervention.mode, t),
-                    promoteLabel: t("立即执行这条引导"),
-                    promoteDisabled: Boolean(directGuidancePromotingId) || Boolean(directGuidanceSubmitting),
-                    promoteLoading: directGuidancePromotingId === intervention.id,
-                    onPromote: intervention.status === "queued" && directRuntime?.activeReply ? () => void promoteDirectGuidance(intervention.id) : undefined,
-                    cancelLabel: t("Cancel"),
-                    cancelDisabled: directGuidanceCancelingId === intervention.id || directGuidancePromotingId === intervention.id,
-                    onCancel: () => void cancelDirectGuidance(intervention.id),
-                  }))}
+                  items={openDirectInterventions.map((intervention) => {
+                    const isQueued = intervention.status === "queued";
+                    const rowBusy = directGuidanceCancelingId === intervention.id || directGuidancePromotingId === intervention.id || directGuidanceClosingQueue;
+
+                    return {
+                      id: intervention.id,
+                      instruction: intervention.instruction,
+                      statusLabel: teammateDirectInterventionStatusLabel(intervention.status, t),
+                      meta: teammateDirectInterventionModeLabel(intervention.mode, t),
+                      promoteLabel: t("立即执行这条引导"),
+                      promoteDisabled: rowBusy || Boolean(directGuidanceSubmitting),
+                      promoteLoading: directGuidancePromotingId === intervention.id,
+                      onPromote: isQueued && directRuntime?.activeReply ? () => void promoteDirectGuidance(intervention.id) : undefined,
+                      deleteLabel: t("删除排队引导"),
+                      deleteDisabled: rowBusy,
+                      deleteLoading: directGuidanceCancelingId === intervention.id,
+                      onDelete: isQueued ? () => void cancelDirectGuidance(intervention.id) : undefined,
+                      moreLabel: t("更多引导操作"),
+                      editLabel: t("编辑消息"),
+                      editDisabled: rowBusy,
+                      onEdit: isQueued ? () => void editDirectGuidance(intervention) : undefined,
+                      closeQueueLabel: t("关闭排队"),
+                      closeQueueDisabled: directGuidanceClosingQueue || !openDirectInterventions.some((item) => item.status === "queued"),
+                      closeQueueLoading: directGuidanceClosingQueue,
+                      onCloseQueue: isQueued ? () => void closeDirectGuidanceQueue() : undefined,
+                    };
+                  })}
                   onInstructionChange={setDirectGuidanceInstruction}
                   onQueue={() => void submitDirectGuidance("queue_followup")}
                   onRedirect={() => void submitDirectGuidance("interrupt_redirect")}

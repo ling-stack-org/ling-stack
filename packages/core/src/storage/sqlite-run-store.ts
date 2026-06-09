@@ -93,6 +93,7 @@ import {
   type ChannelRuntimePolicy,
   type ChannelStatus,
   type ChannelUpdateInput,
+  type ChannelWorkspaceBinding,
   type ChannelWorkflow,
   type ChannelWorkflowMetadata,
   type ChannelWorkflowStep,
@@ -169,6 +170,8 @@ import {
   type UpdateChannelWorkflowStepInput,
   type UpdateWorkflowHandoffIntentInput,
   type UpdateWorkflowSelectorDecisionInput,
+  type UpdateWorkspaceSettingsInput,
+  type WorkspaceSettings,
   type WorkflowFanInPolicy,
   type WorkflowHandoffIntent,
   type WorkflowHandoffIntentStatus,
@@ -563,6 +566,8 @@ const CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_VERSION = 50;
 const CHANNEL_AUTO_REPLY_ROUTER_MIGRATION_NAME = "create_channel_auto_reply_router";
 const TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_VERSION = 51;
 const TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_NAME = "create_teammate_direct_reply_interventions";
+const WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_VERSION = 52;
+const WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_NAME = "create_workspace_settings_and_channel_binding";
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRunStoreOptions {
@@ -2794,6 +2799,39 @@ export class SqliteRunStore implements RunStore {
     return row ? mapResourceLease(row) : undefined;
   }
 
+  getWorkspaceSettings(): WorkspaceSettings {
+    const row = this.database
+      .prepare("SELECT settings_json, updated_at FROM workspace_settings WHERE workspace_id = ?")
+      .get(DEFAULT_WORKSPACE_ID);
+    if (!row) {
+      return createDefaultWorkspaceSettings(new Date().toISOString());
+    }
+    return parseWorkspaceSettings(readString(row as Record<string, SQLOutputValue>, "settings_json"), readString(row as Record<string, SQLOutputValue>, "updated_at"));
+  }
+
+  updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings {
+    const current = this.getWorkspaceSettings();
+    const next: WorkspaceSettings = omitUndefined({
+      schemaVersion: 1 as const,
+      workspaceCwd: nullableUpdate(input.workspaceCwd, current.workspaceCwd),
+      theme: nullableUpdate(input.theme, current.theme),
+      locale: nullableUpdate(input.locale, current.locale),
+      channelNotifications: nullableUpdate(input.channelNotifications, current.channelNotifications),
+      channelActivityViews: nullableUpdate(input.channelActivityViews, current.channelActivityViews),
+      updatedAt: now,
+    });
+    this.database
+      .prepare(`
+        INSERT INTO workspace_settings (workspace_id, settings_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET
+          settings_json = excluded.settings_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(DEFAULT_WORKSPACE_ID, stringifyJson(next), now, now);
+    return this.getWorkspaceSettings();
+  }
+
   createChannel(input: CreateChannelInput, now: string): Channel {
     const channel: Channel = {
       id: createChannelId(),
@@ -2801,6 +2839,7 @@ export class SqliteRunStore implements RunStore {
       name: input.name,
       status: input.status ?? "active",
       boundPath: input.boundPath,
+      workspaceBinding: input.workspaceBinding,
       defaultProviderPresetId: input.defaultProviderPresetId,
       defaultTeammateId: input.defaultTeammateId,
       autoReplyMode: input.autoReplyMode ?? "mentions_only",
@@ -2823,9 +2862,10 @@ export class SqliteRunStore implements RunStore {
           auto_reply_mode,
           allowed_tools_json,
           runtime_policy_json,
+          workspace_binding_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         channel.id,
@@ -2838,6 +2878,7 @@ export class SqliteRunStore implements RunStore {
         channel.autoReplyMode,
         stringifyJson(channel.allowedTools),
         stringifyJson(channel.runtimePolicy),
+        channel.workspaceBinding ? stringifyJson(channel.workspaceBinding) : null,
         channel.createdAt,
         channel.updatedAt,
       );
@@ -2873,6 +2914,7 @@ export class SqliteRunStore implements RunStore {
       name: input.name ?? existing.name,
       status: input.status ?? existing.status,
       boundPath: nullableUpdate(input.boundPath, existing.boundPath),
+      workspaceBinding: nullableUpdate(input.workspaceBinding, existing.workspaceBinding),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, existing.defaultProviderPresetId),
       defaultTeammateId: nullableUpdate(input.defaultTeammateId, existing.defaultTeammateId),
       autoReplyMode: input.autoReplyMode === null ? "mentions_only" : input.autoReplyMode ?? existing.autoReplyMode,
@@ -2893,6 +2935,7 @@ export class SqliteRunStore implements RunStore {
           auto_reply_mode = ?,
           allowed_tools_json = ?,
           runtime_policy_json = ?,
+          workspace_binding_json = ?,
           updated_at = ?
         WHERE id = ?
       `)
@@ -2905,6 +2948,7 @@ export class SqliteRunStore implements RunStore {
         next.autoReplyMode,
         stringifyJson(next.allowedTools),
         stringifyJson(next.runtimePolicy),
+        next.workspaceBinding ? stringifyJson(next.workspaceBinding) : null,
         next.updatedAt,
         id,
       );
@@ -12539,6 +12583,29 @@ export class SqliteRunStore implements RunStore {
         this.recordMigration(TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_VERSION, TEAMMATE_DIRECT_REPLY_INTERVENTIONS_MIGRATION_NAME);
       }
     }
+
+    const hasWorkspaceSettingsAndChannelBindingMigration = this.hasMigration(WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_VERSION);
+    if (
+      !hasWorkspaceSettingsAndChannelBindingMigration ||
+      !this.hasColumn("channels", "workspace_binding_json") ||
+      !this.hasTable("workspace_settings")
+    ) {
+      if (!this.hasColumn("channels", "workspace_binding_json")) {
+        this.database.exec("ALTER TABLE channels ADD COLUMN workspace_binding_json TEXT;");
+      }
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS workspace_settings (
+          workspace_id TEXT PRIMARY KEY,
+          settings_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+      `);
+      if (!hasWorkspaceSettingsAndChannelBindingMigration) {
+        this.recordMigration(WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_VERSION, WORKSPACE_SETTINGS_AND_CHANNEL_BINDING_MIGRATION_NAME);
+      }
+    }
   }
 
   private ensureDefaultWorkspace(): void {
@@ -13529,6 +13596,7 @@ function mapChannel(row: Record<string, SQLOutputValue>): Channel {
     name: readString(row, "name"),
     status: readString(row, "status") as ChannelStatus,
     boundPath: readNullableString(row, "bound_path"),
+    workspaceBinding: parseNullableChannelWorkspaceBinding(readNullableString(row, "workspace_binding_json")),
     defaultProviderPresetId: readNullableString(row, "default_provider_preset_id"),
     defaultTeammateId: readNullableString(row, "default_teammate_id"),
     autoReplyMode: readString(row, "auto_reply_mode") as Channel["autoReplyMode"],
@@ -14713,6 +14781,88 @@ function parseChannelRuntimePolicy(value: string): ChannelRuntimePolicy {
   });
 }
 
+function parseNullableChannelWorkspaceBinding(value: string | undefined): ChannelWorkspaceBinding | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = parseJsonObject(value);
+  return normalizeChannelWorkspaceBinding(parsed);
+}
+
+function normalizeChannelWorkspaceBinding(value: Record<string, unknown>): ChannelWorkspaceBinding | undefined {
+  const mode = value.mode;
+  if (mode !== "local" && mode !== "managed_worktree" && mode !== "external_path") {
+    return undefined;
+  }
+  const normalizedMode: ChannelWorkspaceBinding["mode"] = mode;
+  const status = value.status;
+  const normalizedStatus: ChannelWorkspaceBinding["status"] =
+    status === "ready" || status === "not_created" || status === "missing" || status === "unsupported" || status === "blocked"
+      ? status
+      : normalizedMode === "local" || normalizedMode === "external_path" ? "ready" : "not_created";
+  return omitUndefined({
+    mode: normalizedMode,
+    status: normalizedStatus,
+    executionPath: typeof value.executionPath === "string" && value.executionPath.trim() ? value.executionPath : undefined,
+    worktreePath: typeof value.worktreePath === "string" && value.worktreePath.trim() ? value.worktreePath : undefined,
+    branchName: typeof value.branchName === "string" && value.branchName.trim() ? value.branchName : undefined,
+    baseBranch: typeof value.baseBranch === "string" && value.baseBranch.trim() ? value.baseBranch : undefined,
+    baseCommit: typeof value.baseCommit === "string" && value.baseCommit.trim() ? value.baseCommit : undefined,
+    errorMessage: typeof value.errorMessage === "string" && value.errorMessage.trim() ? value.errorMessage : undefined,
+    createdAt: typeof value.createdAt === "string" && value.createdAt.trim() ? value.createdAt : undefined,
+    checkedAt: typeof value.checkedAt === "string" && value.checkedAt.trim() ? value.checkedAt : undefined,
+    updatedAt: typeof value.updatedAt === "string" && value.updatedAt.trim() ? value.updatedAt : new Date().toISOString(),
+  });
+}
+
+function createDefaultWorkspaceSettings(now: string): WorkspaceSettings {
+  return {
+    schemaVersion: 1,
+    updatedAt: now,
+  };
+}
+
+function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSettings {
+  const parsed = parseJsonObject(value);
+  const parsedTheme: WorkspaceSettings["theme"] =
+    parsed.theme === "light" || parsed.theme === "dark" || parsed.theme === "system" ? parsed.theme : undefined;
+  return omitUndefined({
+    schemaVersion: 1 as const,
+    workspaceCwd: typeof parsed.workspaceCwd === "string" && parsed.workspaceCwd.trim() ? parsed.workspaceCwd : undefined,
+    theme: parsedTheme,
+    locale: typeof parsed.locale === "string" && parsed.locale.trim() ? parsed.locale : undefined,
+    channelNotifications: parseOptionalStringRecord(parsed.channelNotifications),
+    channelActivityViews: parseOptionalUnknownRecord(parsed.channelActivityViews),
+    updatedAt: typeof parsed.updatedAt === "string" && parsed.updatedAt.trim() ? parsed.updatedAt : updatedAt,
+  });
+}
+
+function parseOptionalStringRecord(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const result: Record<string, string> = {};
+  for (const [key, entryValue] of Object.entries(value)) {
+    if (typeof entryValue === "string") {
+      result[key] = entryValue;
+    }
+  }
+  return result;
+}
+
+function parseOptionalUnknownRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
 function parseRuntimeTimeoutPolicy(value: string): RuntimeTimeoutPolicy {
   try {
     const parsed = parseJsonObject(value);
@@ -14745,6 +14895,7 @@ function channelSelectSql(whereClause: string): string {
       auto_reply_mode,
       allowed_tools_json,
       runtime_policy_json,
+      workspace_binding_json,
       created_at,
       updated_at
     FROM channels

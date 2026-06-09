@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -2289,6 +2289,91 @@ test("AI teammate private reply waits for startup provider refresh instead of us
   } finally {
     await daemon.close();
     await relay.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workspace settings API persists UI preferences in .ling-stack state", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-settings-api-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const initial = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(initial.settings.schemaVersion, 1);
+    assert.equal(initial.settings.workspaceCwd, undefined);
+
+    const patched = await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      workspaceCwd: cwd,
+      theme: "dark",
+      locale: "zh-CN",
+      channelNotifications: { channel_one: "mentions" },
+      channelActivityViews: { channel_one: [{ id: "custom:review", name: "Review" }] },
+    });
+    assert.equal(patched.settings.workspaceCwd, cwd);
+    assert.equal(patched.settings.theme, "dark");
+    assert.equal(patched.settings.locale, "zh-CN");
+    assert.equal(patched.settings.channelNotifications.channel_one, "mentions");
+
+    const reopened = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(reopened.settings.theme, "dark");
+    assert.equal(reopened.settings.channelActivityViews.channel_one[0].id, "custom:review");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel workspace API supports local and external path handoff", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workspace-api-"));
+  const externalPath = resolve(cwd, "external-workspace");
+  const daemon = await startDaemonForTest();
+  try {
+    await mkdir(externalPath, { recursive: true });
+    const channel = await createChannel(daemon.url, cwd);
+    const initial = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(initial.binding.mode, "local");
+    assert.equal(initial.snapshot.workspaceCwd, cwd);
+    assert.equal(initial.snapshot.executionCwd, cwd);
+
+    const external = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/handoff?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "external_path",
+      executionPath: externalPath,
+    });
+    assert.equal(external.binding.mode, "external_path");
+    assert.equal(external.binding.status, "ready");
+    assert.equal(external.snapshot.executionCwd, externalPath);
+
+    await rm(externalPath, { recursive: true, force: true });
+    const refreshed = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/refresh?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(refreshed.binding.status, "missing");
+
+    const local = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/handoff?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "local",
+    });
+    assert.equal(local.binding.mode, "local");
+    assert.equal(local.binding.status, "ready");
+    assert.equal(local.snapshot.executionCwd, cwd);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("managed worktree creation returns a friendly error outside Git repositories", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-worktree-nongit-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 400);
+    const body = await response.json();
+    assert.equal(body.error, "not_git_repository");
+    assert.match(body.message, /Git 仓库/);
+  } finally {
+    await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });

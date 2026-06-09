@@ -47,6 +47,7 @@ export function channelToForm(channel: Channel, fallbackCwd: string): ChannelFor
     name: channel.name,
     status: channel.status,
     boundPath: channel.boundPath ?? fallbackCwd,
+    workspaceBinding: channel.workspaceBinding,
     defaultProviderPresetId: channel.defaultProviderPresetId ?? "",
     defaultTeammateId: channel.defaultTeammateId ?? "",
     autoReplyMode: channel.autoReplyMode ?? "mentions_only",

@@ -39,6 +39,7 @@ import {
   readOptionalChannelWorkflowStatusQuery,
   readOptionalChannelWorkflowStepStatusQuery,
 } from "./schemas.js";
+import { assertChannelWorkspaceReady } from "./workspace.js";
 
 const WORKFLOW_STEP_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -632,6 +633,10 @@ export function prepareWorkflowStepStart(
   }
 
   const providerPresetId = input.providerPresetId ?? channel.defaultProviderPresetId;
+  const workspace = assertChannelWorkspaceReady(channel, cwd);
+  if (!workspace.ok) {
+    return block(workspace.message);
+  }
   const runnerId = input.runnerId;
   const taskTitle = input.taskTitle ?? step.title;
   const taskPrompt = formatWorkflowStepTaskPrompt(
@@ -643,7 +648,7 @@ export function prepareWorkflowStepStart(
   const assigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const runRequestBase: WorkflowStepRunRequest = {
     workspaceCwd: cwd,
-    cwd: channel.boundPath ?? cwd,
+    cwd: workspace.executionCwd,
     providerPresetId,
     runnerId,
     teammateId: assigneeTeammateId,
