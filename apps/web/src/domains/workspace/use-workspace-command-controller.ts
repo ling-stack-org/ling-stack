@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import {
   cancelChannelWorkflow,
   channelAttachmentContentUrl,
+  confirmChannelExecutionProposalWorkflow,
   createChannel,
   createChannelContextSummary,
   createChannelDecision,
@@ -33,6 +34,7 @@ export function useWorkspaceCommandController() {
   return useMemo(() => ({
     cancelChannelWorkflow,
     channelAttachmentContentUrl,
+    confirmChannelExecutionProposalWorkflow,
     createChannel,
     createChannelContextSummary,
     createChannelDecision,

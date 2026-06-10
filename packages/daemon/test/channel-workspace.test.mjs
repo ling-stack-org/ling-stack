@@ -12,14 +12,16 @@ test("health exposes channel auto_route capability", async () => {
   try {
     const health = await getJson(`${disabledDaemon.url}/health`);
     assert.equal(health.features.channels.autoRoute, false);
+    assert.equal(health.features.channels.intentSelector, false);
   } finally {
     await disabledDaemon.close();
   }
 
-  const enabledDaemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: true } });
+  const enabledDaemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: true, intentSelector: true } });
   try {
     const health = await getJson(`${enabledDaemon.url}/health`);
     assert.equal(health.features.channels.autoRoute, true);
+    assert.equal(health.features.channels.intentSelector, true);
   } finally {
     await enabledDaemon.close();
   }
@@ -239,12 +241,210 @@ test("channel intent selector creates workflow proposals instead of all-teammate
     const listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listedMessages.messages.filter((message) => message.kind === "ai_reply").length, 0);
 
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(routeDecisions.decisions.length, 0);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "workflow_proposal");
+    assert.equal(decisions.decisions[0].status, "accepted");
+    assert.equal(decisions.decisions[0].createdBy, "deterministic");
+    assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
+    assert.match(decisions.decisions[0].reason, /Workflow proposal created from channel intent/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel intent selector asks one clarify question for underspecified work requests", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-clarify-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "teammate_builtin_engineer",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep"],
+    })).channel;
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "做一下吧",
+    });
+
+    assert.equal(created.message.body, "做一下吧");
+    assert.equal(created.aiReply.kind, "ai_reply");
+    assert.equal(created.aiReply.status, "ready");
+    assert.equal(created.aiReply.threadId, created.message.id);
+    assert.equal(created.aiReply.authorId, "teammate_builtin_engineer");
+    assert.match(created.aiReply.body, /确认范围/);
+    assert.equal(runner.runs.length, 0);
+
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(proposals.proposals, []);
+
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(routeDecisions.decisions.length, 0);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "clarify");
+    assert.equal(decisions.decisions[0].status, "accepted");
+    assert.equal(decisions.decisions[0].createdBy, "deterministic");
+    assert.equal(decisions.decisions[0].selectedTeammateId, "teammate_builtin_engineer");
+    assert.equal(decisions.decisions[0].replyMessageId, created.aiReply.id);
+    assert.match(decisions.decisions[0].reason, /Clarify question created from channel intent/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel intent selector records direct workflow as a confirmed-start proposal only", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-direct-workflow-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "teammate_builtin_engineer",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    for (const teammateId of ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"]) {
+      await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: provider.id,
+      });
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "开始跑 Architect -> Engineer -> QA",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(runner.runs.length, 0);
+    assert.deepEqual((await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`)).workflows, []);
+
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].status, "draft");
+    assert.deepEqual(
+      proposals.proposals[0].collaborationSteps.map((step) => step.teammateId),
+      ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"],
+    );
+    assert.match(proposals.proposals[0].riskSummary, /user confirmation is still required/i);
+
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "direct_workflow");
+    assert.equal(decisions.decisions[0].status, "accepted");
+    assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("model-assisted channel intent selector can suppress ordinary auto replies", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-no-reply-"));
+  const runner = new ScriptedRunner([JSON.stringify({ action: "no_reply", reason: "User is only acknowledging prior context." })]);
+  const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "teammate_builtin_engineer",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep"],
+    })).channel;
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+    });
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "这个需要回复吗？",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].systemPrompt, /channel intent selector/i);
+    const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(routeDecisions.decisions, []);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "no_reply");
     assert.equal(decisions.decisions[0].status, "suppressed");
+    assert.equal(decisions.decisions[0].createdBy, "model");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("model-assisted channel intent selector falls back to deterministic workflow proposal", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-fallback-"));
+  const runner = new ScriptedRunner(["not json"]);
+  const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "teammate_builtin_engineer",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    for (const teammateId of ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"]) {
+      await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: provider.id,
+      });
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Architect 先拆，Engineer 实现，QA 验证",
+    });
+
+    assert.equal(created.aiReply, undefined);
+    assert.equal(runner.runs.length, 1);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "workflow_proposal");
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
-    assert.match(decisions.decisions[0].reason, /Workflow proposal created from channel intent/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

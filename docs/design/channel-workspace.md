@@ -1812,12 +1812,14 @@ Current MVP implementation status:
   popover. Do not send route evidence into the default timeline, do not use the right
   drawer for ordinary route explanation, and do not show confidence numbers or raw
   selector JSON in the normal channel UI,
-- the channel intent-to-workflow selector is now documented as the future bridge from
+- the channel intent-to-workflow selector is now documented as the staged bridge from
   ordinary messages into workflow-shaped collaboration: `no_reply`, `single_reply`,
-  `clarify`, `workflow_proposal`, or validated `direct_workflow`. The first
-  deterministic implementation creates one draft execution proposal for clear multi-role
-  requests and explicitly prevents requests like `所有队友都回复我一下` from becoming
-  all-agents-visible group chat,
+  `clarify`, `workflow_proposal`, or validated `direct_workflow`. P0 creates one draft
+  execution proposal for clear multi-role requests and explicitly prevents requests like
+  `所有队友都回复我一下` from becoming all-agents-visible group chat. P1-P6 now cover
+  proposal-to-workflow graph execution, proposal edit, clarify, independent intent
+  persistence, confirmed direct-workflow prefill, and feature-gated model-assisted
+  intent selection,
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.

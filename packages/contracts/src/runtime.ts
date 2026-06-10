@@ -78,6 +78,7 @@ export interface DaemonHealthResponse {
 export interface DaemonFeatureFlags {
   readonly channels: {
     readonly autoRoute: boolean;
+    readonly intentSelector?: boolean;
   };
 }
 

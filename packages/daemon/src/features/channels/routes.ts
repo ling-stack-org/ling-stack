@@ -26,6 +26,8 @@ import {
   readOptionalChannelDecisionStatusQuery,
   readOptionalChannelContextSummaryTargetTypeQuery,
   readOptionalChannelExecutionProposalStatusQuery,
+  readOptionalChannelIntentDecisionActionQuery,
+  readOptionalChannelIntentDecisionStatusQuery,
   readOptionalChannelMessageRouteDecisionStatusQuery,
   readOptionalChannelHandoffStatusQuery,
 } from "./schemas.js";
@@ -286,6 +288,63 @@ export async function handleChannelMessageRouteDecisionsCollection(
     }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel route decisions` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleChannelIntentDecisionsCollection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      const sourceMessageId = url.searchParams.get("sourceMessageId") ?? undefined;
+      if (sourceMessageId) {
+        const messageError = validateChannelMessageOwner(store, channelId, sourceMessageId);
+        if (messageError) {
+          writeJson(response, messageError.statusCode, {
+            error: messageError.code,
+            message: messageError.message,
+          });
+          return;
+        }
+      }
+      writeJson(response, 200, {
+        cwd,
+        channelId,
+        decisions: store.listChannelIntentDecisions({
+          channelId,
+          sourceMessageId,
+          action: readOptionalChannelIntentDecisionActionQuery(url),
+          status: readOptionalChannelIntentDecisionStatusQuery(url),
+          limit: readOptionalIntegerQuery(url, "limit", 1),
+        }),
+      });
+      return;
+    }
+
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel intent decisions` });
   } catch (error) {
     writeJson(response, 400, {
       error: "bad_request",

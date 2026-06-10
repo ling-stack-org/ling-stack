@@ -115,36 +115,47 @@ export async function handleChannelMessagesCollection(
           proposalMode: "allow",
         });
       } else {
-        const workflowIntent = selectChannelWorkflowIntent({
+        const workflowIntent = await selectChannelWorkflowIntent({
           store,
           channel,
           sourceMessage: message,
           requestedProviderPresetId: input.providerPresetId,
           secretResolver: routeDependencies.secretResolver,
+          config,
+          runnerRegistry: routeDependencies.runnerRegistry,
         });
+        if (workflowIntent.action === "no_reply") {
+          writeJson(response, 201, { message });
+          return;
+        }
         if (workflowIntent.action === "workflow_proposal") {
           writeJson(response, 201, { message });
           return;
         }
+        if (workflowIntent.action === "clarify") {
+          aiReply = workflowIntent.aiReply;
+        }
 
-        const route = await routeChannelMessageReply({
-          ...routeDependencies,
-          store,
-          channel,
-          sourceMessage: message,
-          requestedProviderPresetId: input.providerPresetId,
-          requestedTeammateId: input.teammateId,
-        });
-        routeDecisionId = route.decisionId;
-        if (route.action === "reply") {
-          aiReply = await createAiReply({
+        if (!aiReply) {
+          const route = await routeChannelMessageReply({
+            ...routeDependencies,
             store,
             channel,
             sourceMessage: message,
-            providerPresetId: route.providerPresetId ?? input.providerPresetId,
-            teammateId: route.teammateId,
-            proposalMode: "disabled",
+            requestedProviderPresetId: input.providerPresetId,
+            requestedTeammateId: input.teammateId,
           });
+          routeDecisionId = route.decisionId;
+          if (route.action === "reply") {
+            aiReply = await createAiReply({
+              store,
+              channel,
+              sourceMessage: message,
+              providerPresetId: route.providerPresetId ?? input.providerPresetId,
+              teammateId: route.teammateId,
+              proposalMode: "disabled",
+            });
+          }
         }
       }
 

@@ -22,6 +22,7 @@ export interface MockState {
   channels: unknown[];
   channelMessages: unknown[];
   channelMessageRouteDecisions: unknown[];
+  channelIntentDecisions: unknown[];
   channelExecutionProposals: unknown[];
   channelAttachments: unknown[];
   channelLinkPreviews: unknown[];
@@ -780,6 +781,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     ],
     channelMessages: [],
     channelMessageRouteDecisions: [],
+    channelIntentDecisions: [],
     channelMessageQueries: [],
     channelExecutionProposals: [],
     channelAttachments: [],
@@ -2759,17 +2761,16 @@ function maybeCreateMockWorkflowProposal(
     updatedAt: "2026-05-25T00:18:02.000Z",
   };
   state.channelExecutionProposals.unshift(proposal);
-  state.channelMessageRouteDecisions.push({
+  state.channelIntentDecisions.push({
     schemaVersion: 1,
-    id: `route_${state.channelMessageRouteDecisions.length + 1}`,
+    id: `intent_${state.channelIntentDecisions.length + 1}`,
     workspaceId: "workspace_default",
     channelId,
     sourceMessageId: typeof message.id === "string" ? message.id : "",
-    mode: autoReplyMode,
-    action: "no_reply",
+    action: "workflow_proposal",
+    proposalId: proposal.id,
     reason: "Workflow proposal created from channel intent.",
-    alternativesConsidered: [],
-    status: "suppressed",
+    status: "accepted",
     createdBy: "deterministic",
     createdAt: "2026-05-25T00:18:00.500Z",
     updatedAt: "2026-05-25T00:18:00.500Z",
@@ -4179,6 +4180,22 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  const channelIntentDecisionsMatch = /^\/channels\/([^/]+)\/intent-decisions$/.exec(path);
+  if (channelIntentDecisionsMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelIntentDecisionsMatch[1]);
+    const sourceMessageId = url.searchParams.get("sourceMessageId");
+    await route.fulfill({
+      json: {
+        cwd,
+        channelId,
+        decisions: state.channelIntentDecisions.filter((decision) =>
+          isRecord(decision) &&
+          decision.channelId === channelId &&
+          (!sourceMessageId || decision.sourceMessageId === sourceMessageId)),
+      },
+    });
+    return;
+  }
   if (channelMessagesMatch && request.method() === "POST") {
     const channelId = decodeURIComponent(channelMessagesMatch[1]);
     const body = await request.postDataJSON() as Record<string, unknown>;
@@ -4331,12 +4348,94 @@ export async function handleDaemonRoute(
         riskSummary: body.riskSummary === null ? undefined : body.riskSummary ?? proposal.riskSummary,
         linkedTaskId: body.linkedTaskId === null ? undefined : body.linkedTaskId ?? proposal.linkedTaskId,
         linkedRunId: body.linkedRunId === null ? undefined : body.linkedRunId ?? proposal.linkedRunId,
+        linkedWorkflowId: body.linkedWorkflowId === null ? undefined : body.linkedWorkflowId ?? proposal.linkedWorkflowId,
         errorMessage: body.errorMessage === null ? undefined : body.errorMessage ?? proposal.errorMessage,
         updatedAt: "2026-05-25T00:18:04.000Z",
       };
       return updated;
     });
     await route.fulfill({ status: updated ? 200 : 404, json: updated ? { proposal: updated } : { error: "proposal_not_found" } });
+    return;
+  }
+  const channelProposalWorkflowMatch = /^\/channel-proposals\/([^/]+)\/confirm-workflow$/.exec(path);
+  if (channelProposalWorkflowMatch && request.method() === "POST") {
+    const proposalId = decodeURIComponent(channelProposalWorkflowMatch[1]);
+    const proposal = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === proposalId);
+    if (!isRecord(proposal)) {
+      await route.fulfill({ status: 404, json: { error: "proposal_not_found" } });
+      return;
+    }
+    const collaborationSteps = Array.isArray(proposal.collaborationSteps) && proposal.collaborationSteps.length > 0
+      ? proposal.collaborationSteps.filter(isRecord)
+      : [{ teammateId: proposal.assigneeTeammateId, action: "coordinated", summary: "Complete the confirmed execution proposal." }];
+    const workflow = {
+      id: `workflow_${state.channelWorkflows.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId: proposal.channelId,
+      title: typeof proposal.title === "string" ? proposal.title : "Execution proposal workflow",
+      objective: typeof proposal.prompt === "string" ? proposal.prompt : "",
+      status: "running",
+      createdBy: typeof proposal.proposedByTeammateId === "string" ? proposal.proposedByTeammateId : "local-user",
+      metadata: {
+        sourceProposalId: proposal.id,
+        sourceMessageId: proposal.sourceMessageId,
+      },
+      createdAt: "2026-05-25T00:32:00.000Z",
+      updatedAt: "2026-05-25T00:32:00.000Z",
+    };
+    const workflowSteps = collaborationSteps.map((step, index) => {
+      const teammateId = typeof step.teammateId === "string" ? step.teammateId : String(proposal.assigneeTeammateId ?? "engineer");
+      const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
+      return {
+        id: `workflow_step_${state.channelWorkflowSteps.length + index + 1}`,
+        workspaceId: "workspace_default",
+        channelId: proposal.channelId,
+        workflowId: workflow.id,
+        position: index + 1,
+        title: `${isRecord(teammate) && typeof teammate.displayName === "string" ? teammate.displayName : teammateId}: ${typeof step.action === "string" ? step.action : "coordinated"}`,
+        prompt: typeof step.summary === "string" ? step.summary : String(proposal.prompt ?? ""),
+        toParticipantId: teammateId,
+        toParticipantLabel: isRecord(teammate) && typeof teammate.displayName === "string" ? teammate.displayName : teammateId,
+        status: index === 0 ? "running" : "queued",
+        metadata: {
+          sourceProposalId: proposal.id,
+          sourceMessageId: proposal.sourceMessageId,
+          dependsOnStepIds: index === 0 ? undefined : [`workflow_step_${state.channelWorkflowSteps.length + index}`],
+          autoStart: true,
+        },
+        createdAt: "2026-05-25T00:32:00.000Z",
+        updatedAt: "2026-05-25T00:32:00.000Z",
+      };
+    });
+    const updatedProposal = {
+      ...proposal,
+      status: "accepted",
+      linkedWorkflowId: workflow.id,
+      linkedTaskId: undefined,
+      linkedRunId: undefined,
+      errorMessage: undefined,
+      updatedAt: "2026-05-25T00:32:00.000Z",
+    };
+    state.channelExecutionProposals = state.channelExecutionProposals.map((item) =>
+      isRecord(item) && item.id === proposal.id ? updatedProposal : item
+    );
+    state.channelWorkflows.unshift(workflow);
+    state.channelWorkflowSteps.unshift(...workflowSteps);
+    await route.fulfill({
+      status: 200,
+      json: {
+        proposal: updatedProposal,
+        workflow,
+        workflowSteps,
+        orchestration: {
+          status: workflowSteps.length > 0 ? "started" : "idle",
+          workflow,
+          workflowStep: workflowSteps[0],
+          taskId: workflowSteps[0]?.id ? `task_${workflowSteps[0].id}` : undefined,
+          runId: workflowSteps[0]?.id ? `run_${workflowSteps[0].id}` : undefined,
+        },
+      },
+    });
     return;
   }
   const channelAttachmentsMatch = /^\/channels\/([^/]+)\/attachments$/.exec(path);

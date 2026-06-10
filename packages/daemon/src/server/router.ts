@@ -24,6 +24,7 @@ import {
 import { createAiChannelReply } from "../features/channels/ai-replies.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
 import { handleChannelMessagesCollection } from "../features/channels/messages.js";
+import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
 import {
   handleWorkflowHandoffIntentAccept,
   handleWorkflowHandoffIntentItem,
@@ -49,6 +50,7 @@ import {
   handleChannelHandoffItem,
   handleChannelHandoffsCollection,
   handleChannelItem,
+  handleChannelIntentDecisionsCollection,
   handleChannelMessageRouteDecisionsCollection,
   handleChannelsCollection,
 } from "../features/channels/routes.js";
@@ -277,6 +279,7 @@ export async function routeRequest(
       features: {
         channels: {
           autoRoute: config.channels.autoRoute === true,
+          intentSelector: config.channels.intentSelector === true,
         },
       },
     });
@@ -1216,6 +1219,10 @@ export async function routeRequest(
       await handleChannelMessageRouteDecisionsCollection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
+    if (channelRoute.action === "intent-decisions") {
+      await handleChannelIntentDecisionsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
     if (channelRoute.action === "proposals") {
       await handleChannelExecutionProposalsCollection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
@@ -1250,6 +1257,51 @@ export async function routeRequest(
 
   const channelProposalRoute = parseChannelExecutionProposalRoute(url.pathname);
   if (channelProposalRoute) {
+    if (channelProposalRoute.action === "confirm-workflow") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for proposal workflow confirmation` });
+        return;
+      }
+      const cwd = url.searchParams.get("cwd");
+      if (!cwd) {
+        writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+        return;
+      }
+      try {
+        const store = storeRegistry.getStore(cwd);
+        const confirmed = confirmChannelExecutionProposalWorkflow({
+          store,
+          cwd,
+          proposalId: channelProposalRoute.proposalId,
+          runnerRegistry,
+          validateRunRequest: (candidateRunRequest) => {
+            resolveProviderForRun(store, candidateRunRequest, secretResolver);
+          },
+        });
+        const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
+        const orchestration = await orchestrateChannelWorkflow({
+          store,
+          cwd,
+          workflowId: confirmed.workflow.id,
+          validateRunRequest: (candidateRunRequest) => {
+            resolveProviderForRun(store, candidateRunRequest, secretResolver);
+          },
+          startRun: startOrchestratedRun,
+        });
+        writeJson(response, 200, {
+          proposal: store.getChannelExecutionProposal(channelProposalRoute.proposalId) ?? confirmed.proposal,
+          workflow: orchestration.workflow,
+          workflowSteps: store.listChannelWorkflowSteps({ workflowId: confirmed.workflow.id, limit: 500 }),
+          orchestration,
+        });
+      } catch (error) {
+        writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+          error: error instanceof HttpError ? error.code : "bad_request",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return;
+    }
     await handleChannelExecutionProposalItem(request, response, config, storeRegistry, channelProposalRoute.proposalId);
     return;
   }

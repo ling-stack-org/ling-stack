@@ -1,6 +1,6 @@
 import type { ApprovalRequest, SkillApprovalProfile } from "./approvals.js";
 import type { RunArtifact } from "./artifacts.js";
-import type { ChannelHandoff } from "./channels.js";
+import type { ChannelExecutionProposal, ChannelHandoff } from "./channels.js";
 import type { MemoryObject } from "./memory.js";
 import type { RunSession, RunnerFallbackReason, RunnerRequestSource } from "./runtime.js";
 import type { Task } from "./tasks.js";
@@ -274,6 +274,8 @@ export interface ChannelWorkflowStepMetadata {
   readonly outputArtifactIds?: readonly string[];
   readonly selectorDecisionIds?: readonly string[];
   readonly handoffIntentIds?: readonly string[];
+  readonly sourceProposalId?: string;
+  readonly sourceMessageId?: string;
   readonly fanInSummaryArtifactId?: string;
   readonly memoryCandidateIds?: readonly string[];
 }
@@ -342,6 +344,8 @@ export interface ChannelWorkflowMetadata {
   readonly workflowGraphArtifactId?: string;
   readonly termination?: WorkflowTerminationPolicy;
   readonly maxParallelSteps?: number;
+  readonly sourceProposalId?: string;
+  readonly sourceMessageId?: string;
 }
 
 export interface ChannelWorkflow {
@@ -586,6 +590,13 @@ export interface ChannelWorkflowMutationResponse {
 export interface ChannelWorkflowTemplateMutationResponse {
   readonly workflow: ChannelWorkflow;
   readonly workflowSteps: readonly ChannelWorkflowStep[];
+}
+
+export interface ChannelExecutionProposalWorkflowConfirmResponse {
+  readonly proposal: ChannelExecutionProposal;
+  readonly workflow: ChannelWorkflow;
+  readonly workflowSteps: readonly ChannelWorkflowStep[];
+  readonly orchestration?: ChannelWorkflowOrchestrationResponse;
 }
 
 export interface ChannelWorkflowStepListResponse {

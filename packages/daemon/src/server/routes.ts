@@ -201,7 +201,7 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "message-route-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows";
+  readonly action?: "brief" | "messages" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "channels") {
@@ -214,6 +214,7 @@ export function parseChannelRoute(
       segments[2] === "brief" ||
       segments[2] === "messages" ||
       segments[2] === "message-route-decisions" ||
+      segments[2] === "intent-decisions" ||
       segments[2] === "proposals" ||
       segments[2] === "attachments" ||
       segments[2] === "link-previews" ||
@@ -228,10 +229,13 @@ export function parseChannelRoute(
   return undefined;
 }
 
-export function parseChannelExecutionProposalRoute(pathname: string): { readonly proposalId: string } | undefined {
+export function parseChannelExecutionProposalRoute(pathname: string): { readonly proposalId: string; readonly action?: "confirm-workflow" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "channel-proposals") {
     return { proposalId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "channel-proposals" && segments[2] === "confirm-workflow") {
+    return { proposalId: segments[1], action: "confirm-workflow" };
   }
   return undefined;
 }

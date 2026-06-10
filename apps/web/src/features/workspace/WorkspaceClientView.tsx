@@ -151,6 +151,7 @@ import type {
   ChannelMessage,
   ChannelMessageRouteDecision,
   ChannelExecutionProposal,
+  UpdateChannelExecutionProposalRequest,
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
@@ -194,6 +195,19 @@ type ComposerSendState = "idle" | "sending" | "failed";
 type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
 type ChannelNotificationLevel = "all" | "mentions" | "muted";
 type AttentionProgressTone = "success" | "running" | "waiting" | "blocked" | "failed" | "neutral";
+type ChannelProposalStepDraft = {
+  readonly teammateId: string;
+  readonly action: ChannelExecutionProposal["collaborationSteps"][number]["action"];
+  readonly summary: string;
+};
+type ChannelProposalEditDraft = {
+  readonly title: string;
+  readonly prompt: string;
+  readonly assigneeTeammateId: string;
+  readonly acceptanceCriteriaText: string;
+  readonly collaborationSteps: readonly ChannelProposalStepDraft[];
+};
+const proposalStepActions: readonly ChannelProposalStepDraft["action"][] = ["coordinated", "consulted", "reviewed", "flagged_risk"];
 type ThreadTurnsLoadState =
   | { readonly status: "not_loaded" }
   | { readonly status: "loading" }
@@ -407,6 +421,7 @@ export function WorkspaceClientView({
   onSendMessage,
   onConfirmExecutionProposal,
   onCancelExecutionProposal,
+  onUpdateExecutionProposal,
   onUploadAttachments,
   onCreateLinkPreview,
   onDeleteAttachment,
@@ -547,6 +562,10 @@ export function WorkspaceClientView({
   }) => Promise<void>;
   readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
+  readonly onUpdateExecutionProposal: (
+    proposal: ChannelExecutionProposal,
+    input: UpdateChannelExecutionProposalRequest,
+  ) => Promise<ChannelExecutionProposal | undefined>;
   readonly onUploadAttachments: (files: readonly File[]) => Promise<readonly ChannelAttachment[]>;
   readonly onCreateLinkPreview: (url: string) => Promise<ChannelLinkPreview | undefined>;
   readonly onDeleteAttachment: (attachmentId: string) => void;
@@ -2835,11 +2854,14 @@ export function WorkspaceClientView({
                 assigneeLabel={teammateLabel(proposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))}
                 teammates={teammateOptions}
                 linkedRun={proposal.linkedRunId ? runById.get(proposal.linkedRunId) : undefined}
+                linkedWorkflow={proposal.linkedWorkflowId ? channelWorkflows.find((workflow) => workflow.id === proposal.linkedWorkflowId) : undefined}
                 activeRunId={activeRunId}
                 latestStatus={latestStatus}
                 onConfirm={() => onConfirmExecutionProposal(proposal)}
                 onCancel={() => onCancelExecutionProposal(proposal)}
+                onUpdate={onUpdateExecutionProposal}
                 onOpenRun={openRunInPanel}
+                onOpenWorkflow={openWorkflowEvidencePanel}
               />
             ))}
           </div>
@@ -2870,11 +2892,14 @@ export function WorkspaceClientView({
               assigneeLabel={teammateLabel(proposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))}
               teammates={teammateOptions}
               linkedRun={proposal.linkedRunId ? runById.get(proposal.linkedRunId) : undefined}
+              linkedWorkflow={proposal.linkedWorkflowId ? channelWorkflows.find((workflow) => workflow.id === proposal.linkedWorkflowId) : undefined}
               activeRunId={activeRunId}
               latestStatus={latestStatus}
               onConfirm={() => onConfirmExecutionProposal(proposal)}
               onCancel={() => onCancelExecutionProposal(proposal)}
+              onUpdate={onUpdateExecutionProposal}
               onOpenRun={openRunInPanel}
+              onOpenWorkflow={openWorkflowEvidencePanel}
             />
           ))}
         </div>
@@ -6195,26 +6220,43 @@ function ChannelExecutionProposalCard({
   assigneeLabel,
   teammates,
   linkedRun,
+  linkedWorkflow,
   activeRunId,
   latestStatus,
   onConfirm,
   onCancel,
+  onUpdate,
   onOpenRun,
+  onOpenWorkflow,
 }: {
   readonly proposal: ChannelExecutionProposal;
   readonly assigneeLabel: string;
   readonly teammates: readonly ChannelMention[];
   readonly linkedRun: RunSession | undefined;
+  readonly linkedWorkflow: ChannelWorkflow | undefined;
   readonly activeRunId: string;
   readonly latestStatus: string;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
+  readonly onUpdate: (
+    proposal: ChannelExecutionProposal,
+    input: UpdateChannelExecutionProposalRequest,
+  ) => Promise<ChannelExecutionProposal | undefined>;
   readonly onOpenRun: (runId: string) => void;
+  readonly onOpenWorkflow: (workflowIdOrThreadId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [draft, setDraft] = useState<ChannelProposalEditDraft>(() => proposalToEditDraft(proposal));
   const canStart = proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed";
+  const canEdit = canStart && !proposal.linkedWorkflowId;
   const linkedRunStatus = proposal.linkedRunId
     ? displayLinkedRunStatus(proposal.linkedRunId, linkedRun, activeRunId, latestStatus)
+    : "";
+  const linkedWorkflowStatus = proposal.linkedWorkflowId
+    ? (linkedWorkflow?.status ?? "workflow")
     : "";
   const collaborationSummary = proposalCollaborationSummary(proposal, teammates, t);
   const statusIcon = proposal.status === "accepted"
@@ -6222,6 +6264,62 @@ function ChannelExecutionProposalCard({
     : proposal.status === "blocked" || proposal.status === "run_failed"
       ? <CircleAlert size={14} />
       : <Play size={14} />;
+  const draftValid = proposalDraftIsValid(draft);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(proposalToEditDraft(proposal));
+      setEditError("");
+    }
+  }, [editing, proposal]);
+
+  async function saveEdit(): Promise<void> {
+    if (!draftValid || saving) {
+      return;
+    }
+    setSaving(true);
+    setEditError("");
+    try {
+      const updated = await onUpdate(proposal, proposalDraftToUpdateInput(draft));
+      if (updated) {
+        setEditing(false);
+      }
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateStep(index: number, patch: Partial<ChannelProposalStepDraft>): void {
+    setDraft((current) => ({
+      ...current,
+      collaborationSteps: current.collaborationSteps.map((step, stepIndex) =>
+        stepIndex === index ? { ...step, ...patch } : step
+      ),
+    }));
+  }
+
+  function removeStep(index: number): void {
+    setDraft((current) => ({
+      ...current,
+      collaborationSteps: current.collaborationSteps.filter((_, stepIndex) => stepIndex !== index),
+    }));
+  }
+
+  function addStep(): void {
+    setDraft((current) => ({
+      ...current,
+      collaborationSteps: [
+        ...current.collaborationSteps,
+        {
+          teammateId: current.assigneeTeammateId || teammates[0]?.id || proposal.assigneeTeammateId,
+          action: "coordinated",
+          summary: "",
+        },
+      ],
+    }));
+  }
 
   return (
     <div className={`channel-execution-proposal ${proposal.status}`} aria-label={t("Execution proposal")}>
@@ -6232,10 +6330,76 @@ function ChannelExecutionProposalCard({
         </span>
         <small>{t(executionProposalStatusLabel(proposal.status))}</small>
       </div>
-      <p>{proposal.prompt}</p>
+      {editing ? (
+        <div className="channel-proposal-edit-form">
+          <label>
+            <span>{t("Title")}</span>
+            <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.currentTarget.value })} />
+          </label>
+          <label>
+            <span>{t("Scope")}</span>
+            <textarea rows={4} value={draft.prompt} onChange={(event) => setDraft({ ...draft, prompt: event.currentTarget.value })} />
+          </label>
+          <label>
+            <span>{t("Assignee")}</span>
+            <select value={draft.assigneeTeammateId} onChange={(event) => setDraft({ ...draft, assigneeTeammateId: event.currentTarget.value })}>
+              {teammates.map((teammate) => (
+                <option key={teammate.id} value={teammate.id}>{teammate.label}</option>
+              ))}
+              {teammates.some((teammate) => teammate.id === draft.assigneeTeammateId) ? null : (
+                <option value={draft.assigneeTeammateId}>{teammateLabel(draft.assigneeTeammateId, teammates, t("Deleted teammate"))}</option>
+              )}
+            </select>
+          </label>
+          <label>
+            <span>{t("Acceptance criteria")}</span>
+            <textarea rows={3} value={draft.acceptanceCriteriaText} onChange={(event) => setDraft({ ...draft, acceptanceCriteriaText: event.currentTarget.value })} />
+          </label>
+          <div className="channel-proposal-edit-steps">
+            <div className="channel-proposal-edit-steps-head">
+              <strong>{t("Steps")}</strong>
+              <button className="secondary-button compact-button" type="button" onClick={addStep}>
+                <Plus size={14} />
+                {t("Add step")}
+              </button>
+            </div>
+            {draft.collaborationSteps.map((step, index) => (
+              <div className="channel-proposal-edit-step" key={`${index}-${step.teammateId}-${step.action}`}>
+                <select value={step.teammateId} onChange={(event) => updateStep(index, { teammateId: event.currentTarget.value })}>
+                  {teammates.map((teammate) => (
+                    <option key={teammate.id} value={teammate.id}>{teammate.label}</option>
+                  ))}
+                  {teammates.some((teammate) => teammate.id === step.teammateId) ? null : (
+                    <option value={step.teammateId}>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</option>
+                  )}
+                </select>
+                <select value={step.action} onChange={(event) => updateStep(index, { action: event.currentTarget.value as ChannelProposalStepDraft["action"] })}>
+                  {proposalStepActions.map((action) => (
+                    <option key={action} value={action}>{t(proposalStepActionLabel(action))}</option>
+                  ))}
+                </select>
+                <textarea rows={2} value={step.summary} onChange={(event) => updateStep(index, { summary: event.currentTarget.value })} />
+                <button className="secondary-button danger compact-button" type="button" onClick={() => removeStep(index)} disabled={draft.collaborationSteps.length <= 1}>
+                  <Trash2 size={14} />
+                  {t("Remove")}
+                </button>
+              </div>
+            ))}
+          </div>
+          {editError ? (
+            <div className="channel-proposal-error">
+              <CircleAlert size={14} />
+              <span>{editError}</span>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <p>{proposal.prompt}</p>
+      )}
       <div className="channel-proposal-meta">
         <span>{t("Assignee")}: <strong>{assigneeLabel}</strong></span>
         {proposal.requiredTools.length > 0 ? <span>{t("Required tools")}: {proposal.requiredTools.join(", ")}</span> : null}
+        {linkedWorkflowStatus ? <StatusBadge status={linkedWorkflowStatus} /> : null}
         {linkedRunStatus ? <StatusBadge status={linkedRunStatus} /> : null}
       </div>
       {proposal.acceptanceCriteria.length > 0 ? (
@@ -6286,16 +6450,39 @@ function ChannelExecutionProposalCard({
         </details>
       ) : null}
       <div className="channel-proposal-actions">
-        {canStart ? (
+        {editing ? (
+          <>
+            <button className="primary-button compact-button" type="button" onClick={() => void saveEdit()} disabled={saving || !draftValid}>
+              {saving ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+              {t("Save")}
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={() => setEditing(false)} disabled={saving}>
+              <X size={14} />
+              {t("Cancel")}
+            </button>
+          </>
+        ) : canStart ? (
           <button className="primary-button compact-button" type="button" onClick={onConfirm}>
             <Play size={14} />
             {t("Start handling")}
+          </button>
+        ) : null}
+        {!editing && canEdit ? (
+          <button className="secondary-button compact-button" type="button" onClick={() => setEditing(true)}>
+            <SlidersHorizontal size={14} />
+            {t("Edit")}
           </button>
         ) : null}
         {proposal.linkedRunId ? (
           <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(proposal.linkedRunId ?? "")}>
             <SquareTerminal size={14} />
             {t("Open run")}
+          </button>
+        ) : null}
+        {proposal.linkedWorkflowId ? (
+          <button className="secondary-button compact-button" type="button" onClick={() => onOpenWorkflow(proposal.linkedWorkflowId ?? "")}>
+            <Workflow size={14} />
+            {t("Open workflow")}
           </button>
         ) : null}
         {proposal.status === "draft" ? (
@@ -7430,6 +7617,49 @@ function teammateLabel(teammateId: string | undefined, teammates: readonly Chann
     return fallback;
   }
   return teammates.find((teammate) => teammate.id === teammateId)?.label ?? fallback;
+}
+
+function proposalToEditDraft(proposal: ChannelExecutionProposal): ChannelProposalEditDraft {
+  const collaborationSteps = proposal.collaborationSteps.length > 0
+    ? proposal.collaborationSteps
+    : [{ teammateId: proposal.assigneeTeammateId, action: "coordinated", summary: "Complete the confirmed execution proposal." } satisfies ChannelProposalStepDraft];
+  return {
+    title: proposal.title,
+    prompt: proposal.prompt,
+    assigneeTeammateId: proposal.assigneeTeammateId,
+    acceptanceCriteriaText: proposal.acceptanceCriteria.join("\n"),
+    collaborationSteps,
+  };
+}
+
+function proposalDraftIsValid(draft: ChannelProposalEditDraft): boolean {
+  return draft.title.trim().length > 0 &&
+    draft.prompt.trim().length > 0 &&
+    draft.assigneeTeammateId.trim().length > 0 &&
+    parseProposalLines(draft.acceptanceCriteriaText).length > 0 &&
+    draft.collaborationSteps.length > 0 &&
+    draft.collaborationSteps.every((step) => step.teammateId.trim().length > 0 && step.summary.trim().length > 0);
+}
+
+function proposalDraftToUpdateInput(draft: ChannelProposalEditDraft): UpdateChannelExecutionProposalRequest {
+  return {
+    title: draft.title.trim(),
+    prompt: draft.prompt.trim(),
+    assigneeTeammateId: draft.assigneeTeammateId.trim(),
+    acceptanceCriteria: parseProposalLines(draft.acceptanceCriteriaText),
+    collaborationSteps: draft.collaborationSteps.map((step) => ({
+      teammateId: step.teammateId.trim(),
+      action: step.action,
+      summary: step.summary.trim(),
+    })),
+  };
+}
+
+function parseProposalLines(value: string): readonly string[] {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function executionProposalStatusLabel(status: ChannelExecutionProposal["status"]): string {

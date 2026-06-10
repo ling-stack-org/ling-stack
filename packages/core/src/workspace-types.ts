@@ -510,6 +510,70 @@ export interface ListChannelMessageRouteDecisionsOptions {
   readonly limit?: number;
 }
 
+export type ChannelIntentDecisionAction =
+  | "no_reply"
+  | "single_reply"
+  | "clarify"
+  | "workflow_proposal"
+  | "direct_workflow";
+
+export const channelIntentDecisionActions: readonly ChannelIntentDecisionAction[] = [
+  "no_reply",
+  "single_reply",
+  "clarify",
+  "workflow_proposal",
+  "direct_workflow",
+];
+
+export type ChannelIntentDecisionStatus = "accepted" | "suppressed" | "failed";
+
+export const channelIntentDecisionStatuses: readonly ChannelIntentDecisionStatus[] = ["accepted", "suppressed", "failed"];
+
+export type ChannelIntentDecisionCreatedBy = "deterministic" | "model";
+
+export const channelIntentDecisionCreatedByValues: readonly ChannelIntentDecisionCreatedBy[] = ["deterministic", "model"];
+
+export interface ChannelIntentDecision {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly sourceMessageId: string;
+  readonly action: ChannelIntentDecisionAction;
+  readonly selectedTeammateId?: string;
+  readonly proposalId?: string;
+  readonly replyMessageId?: string;
+  readonly workflowId?: string;
+  readonly reason: string;
+  readonly status: ChannelIntentDecisionStatus;
+  readonly createdBy: ChannelIntentDecisionCreatedBy;
+  readonly errorMessage?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateChannelIntentDecisionInput {
+  readonly channelId: string;
+  readonly sourceMessageId: string;
+  readonly action: ChannelIntentDecisionAction;
+  readonly selectedTeammateId?: string;
+  readonly proposalId?: string;
+  readonly replyMessageId?: string;
+  readonly workflowId?: string;
+  readonly reason: string;
+  readonly status: ChannelIntentDecisionStatus;
+  readonly createdBy: ChannelIntentDecisionCreatedBy;
+  readonly errorMessage?: string;
+}
+
+export interface ListChannelIntentDecisionsOptions {
+  readonly channelId?: string;
+  readonly sourceMessageId?: string;
+  readonly action?: ChannelIntentDecisionAction;
+  readonly status?: ChannelIntentDecisionStatus;
+  readonly limit?: number;
+}
+
 export type ChannelExecutionProposalStatus = "draft" | "accepted" | "cancelled" | "superseded" | "blocked" | "run_failed";
 
 export type ChannelExecutionProposalStepAction = "coordinated" | "consulted" | "reviewed" | "flagged_risk";
@@ -536,6 +600,7 @@ export interface ChannelExecutionProposal {
   readonly status: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
+  readonly linkedWorkflowId?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -555,6 +620,7 @@ export interface CreateChannelExecutionProposalInput {
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
+  readonly linkedWorkflowId?: string;
   readonly errorMessage?: string;
 }
 
@@ -569,6 +635,7 @@ export interface UpdateChannelExecutionProposalInput {
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string | null;
   readonly linkedRunId?: string | null;
+  readonly linkedWorkflowId?: string | null;
   readonly errorMessage?: string | null;
 }
 
@@ -1255,6 +1322,8 @@ export interface ChannelWorkflowStepMetadata {
   readonly outputArtifactIds?: readonly string[];
   readonly selectorDecisionIds?: readonly string[];
   readonly handoffIntentIds?: readonly string[];
+  readonly sourceProposalId?: string;
+  readonly sourceMessageId?: string;
   readonly fanInSummaryArtifactId?: string;
   readonly memoryCandidateIds?: readonly string[];
 }
@@ -1265,6 +1334,8 @@ export interface ChannelWorkflowMetadata {
   readonly workflowGraphArtifactId?: string;
   readonly termination?: WorkflowTerminationPolicy;
   readonly maxParallelSteps?: number;
+  readonly sourceProposalId?: string;
+  readonly sourceMessageId?: string;
 }
 
 export interface ChannelWorkflow {
@@ -1395,6 +1466,10 @@ export function createChannelMessageId(): string {
 
 export function createChannelMessageRouteDecisionId(): string {
   return `route_${randomUUID()}`;
+}
+
+export function createChannelIntentDecisionId(): string {
+  return `channel_intent_decision_${randomUUID()}`;
 }
 
 export function createChannelExecutionProposalId(): string {

@@ -37,6 +37,7 @@ import type {
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelHandoff,
+  ChannelIntentDecision,
   ChannelLinkPreview,
   ChannelMessage,
   ChannelMessageRouteDecision,
@@ -53,6 +54,7 @@ import type {
   CreateChannelWorkflowStepInput,
   CreateChannelHandoffInput,
   CreateChannelInput,
+  CreateChannelIntentDecisionInput,
   CreateChannelLinkPreviewInput,
   CreateChannelMessageInput,
   CreateAiTeammateInput,
@@ -71,6 +73,7 @@ import type {
   ListChannelWorkflowStepsOptions,
   ListChannelWorkflowsOptions,
   ListChannelHandoffsOptions,
+  ListChannelIntentDecisionsOptions,
   ListChannelsOptions,
   ListChannelLinkPreviewsOptions,
   ListChannelMessagesOptions,
@@ -1005,6 +1008,9 @@ export interface RunStore {
     input: UpdateChannelMessageRouteDecisionInput,
     now: string,
   ): ChannelMessageRouteDecision | undefined;
+  createChannelIntentDecision(input: CreateChannelIntentDecisionInput, now: string): ChannelIntentDecision;
+  getChannelIntentDecision(id: string): ChannelIntentDecision | undefined;
+  listChannelIntentDecisions(options?: ListChannelIntentDecisionsOptions): ChannelIntentDecision[];
   createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal;
   getChannelExecutionProposal(id: string): ChannelExecutionProposal | undefined;
   listChannelExecutionProposals(options: ListChannelExecutionProposalsOptions): ChannelExecutionProposal[];

@@ -1,8 +1,8 @@
 # Multi-Agent Orchestration P4-P7 Detailed Design
 
 Status: initial implementation landed; workflow model-assisted selector remains a follow-up.
-Channel `auto_route` is split out; the channel-message entry into workflow selector is
-documented as a future slice.
+Channel `auto_route` is split out; the channel-message entry into workflow selector now
+has P1-P6 implemented with model-assisted intent selection feature-gated.
 Date: 2026-06-09
 
 Source design:
@@ -109,9 +109,11 @@ workflow.
 
 When an ordinary message is likely to start coordinated work, it should first pass
 through [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md). That
-entry layer may produce a compact workflow proposal or a validated direct-workflow entry,
-then hand normalized intent into this P5 workflow selector. It must not turn ordinary
-channel discussion into a shared multi-agent transcript.
+entry layer may produce a compact workflow proposal, a clarify question, or a validated
+direct-workflow prefill that still requires confirmation. Its P1 adapter hands a
+confirmed proposal into this workflow graph/selector layer; it must not turn ordinary
+channel discussion into a shared multi-agent transcript or bypass workflow state
+machines.
 
 ## Execution Stage Boundary
 

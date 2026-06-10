@@ -8,6 +8,7 @@ import type {
   ChannelDecisionMutationResponse,
   ChannelExecutionProposalListResponse,
   ChannelExecutionProposalMutationResponse,
+  ChannelExecutionProposalWorkflowConfirmResponse,
   ChannelFormState,
   ChannelHandoffListResponse,
   ChannelHandoffMutationResponse,
@@ -15,6 +16,7 @@ import type {
   ChannelLinkPreviewMutationResponse,
   ChannelListResponse,
   ChannelMessageListResponse,
+  ChannelIntentDecisionListResponse,
   ChannelMessageRouteDecisionListResponse,
   ChannelMessageMutationResponse,
   ChannelMutationResponse,
@@ -95,6 +97,14 @@ export async function listChannelMessageRouteDecisions(
   return daemonClient.listChannelMessageRouteDecisions(cwd, channelId, options);
 }
 
+export async function listChannelIntentDecisions(
+  cwd: string,
+  channelId: string,
+  options: { readonly sourceMessageId?: string; readonly action?: string; readonly status?: string; readonly limit?: number } = {},
+): Promise<ChannelIntentDecisionListResponse> {
+  return daemonClient.listChannelIntentDecisions(cwd, channelId, options);
+}
+
 export async function listChannelExecutionProposals(cwd: string, channelId: string): Promise<ChannelExecutionProposalListResponse> {
   return daemonClient.listChannelExecutionProposals(cwd, channelId);
 }
@@ -113,6 +123,13 @@ export async function updateChannelExecutionProposal(
   input: UpdateChannelExecutionProposalRequest,
 ): Promise<ChannelExecutionProposalMutationResponse> {
   return daemonClient.updateChannelExecutionProposal(cwd, proposalId, input);
+}
+
+export async function confirmChannelExecutionProposalWorkflow(
+  cwd: string,
+  proposalId: string,
+): Promise<ChannelExecutionProposalWorkflowConfirmResponse> {
+  return daemonClient.confirmChannelExecutionProposalWorkflow(cwd, proposalId);
 }
 
 export async function listChannelLinkPreviews(cwd: string, channelId: string): Promise<ChannelLinkPreviewListResponse> {

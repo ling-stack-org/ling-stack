@@ -224,6 +224,7 @@ export function AppShell(): JSX.Element {
   const {
     cancelChannelWorkflow,
     channelAttachmentContentUrl,
+    confirmChannelExecutionProposalWorkflow,
     createChannel,
     createChannelContextSummary,
     createChannelDecision,
@@ -2186,105 +2187,22 @@ export function AppShell(): JSX.Element {
       setErrorMessage(t("Local workspace is not ready."));
       return;
     }
-    if (isRunning) {
-      setErrorMessage(t("A run is already active. Wait for it to finish before starting another proposal."));
-      return;
-    }
-
-    const channel = channels.find((item) => item.id === proposal.channelId);
-    if (!channel) {
-      await blockChannelExecutionProposal(proposal, t("Task channel not found."));
-      return;
-    }
-    if (channel.status !== "active") {
-      await blockChannelExecutionProposal(proposal, t("Channel is {status}; resume it before starting a new run.", { status: t(channel.status) }));
-      return;
-    }
-
-    const assignee = findAiTeammateByReference(proposal.assigneeTeammateId);
-    if (!assignee) {
-      await blockChannelExecutionProposal(proposal, t("Assignee teammate not found. Add the teammate to this workspace before starting."));
-      return;
-    }
-    const providerPresetId = assignee.providerPresetId;
-    if (!providerPresetId) {
-      await blockChannelExecutionProposal(proposal, t("Assignee teammate has no provider configured. Open AI teammate management and assign a runnable provider."));
-      return;
-    }
-    const provider = providers.find((item) => item.id === providerPresetId);
-    const providerBlocker = providerRunPreflightBlocker(provider, t);
-    if (providerBlocker) {
-      await blockChannelExecutionProposal(proposal, providerBlocker);
-      return;
-    }
-
-    let taskToRun = proposal.linkedTaskId ? tasks.find((task) => task.id === proposal.linkedTaskId) : undefined;
     try {
       setErrorMessage("");
-      if (!taskToRun) {
-        const taskResponse = await createTask(workspaceCwd, proposal.channelId, {
-          title: proposal.title.trim() || titleFromPrompt(proposal.prompt),
-          prompt: proposal.prompt,
-          assigneeTeammateId: proposal.assigneeTeammateId,
-        });
-        taskToRun = taskResponse.task;
-        setSelectedTaskId(taskResponse.task.id);
-        setTasks((current) => [taskResponse.task, ...current.filter((task) => task.id !== taskResponse.task.id)]);
-      } else {
-        setSelectedTaskId(taskToRun.id);
-      }
-      const confirmedTask = taskToRun;
-
-      await markChannelExecutionProposal(proposal, {
-        status: "accepted",
-        linkedTaskId: confirmedTask.id,
-        errorMessage: null,
-      });
-
-      let linkedRunId = "";
-      const runStarted = await runPersistedTask(confirmedTask, {
-        providerPresetIdOverride: providerPresetId,
-        toolsOverride: assignee.allowedTools,
-        approvalProfileOverride: assignee.approvalProfile,
-        afterRunLoaded: async (runId) => {
-          linkedRunId = runId;
-          await markChannelExecutionProposal(proposal, {
-            status: "accepted",
-            linkedTaskId: confirmedTask.id,
-            linkedRunId: runId,
-            errorMessage: null,
-          });
-        },
-      });
-
-      if (!runStarted) {
-        await markChannelExecutionProposal(proposal, {
-          status: "run_failed",
-          linkedTaskId: confirmedTask.id,
-          errorMessage: t("Run failed to start."),
-        });
-      } else if (!linkedRunId) {
-        await markChannelExecutionProposal(proposal, {
-          status: "run_failed",
-          linkedTaskId: confirmedTask.id,
-          errorMessage: t("Proposal run did not return a run id."),
-        });
-      }
-
+      const response = await confirmChannelExecutionProposalWorkflow(workspaceCwd, proposal.id);
+      upsertChannelExecutionProposal(response.proposal);
+      setChannelWorkflows((current) => [response.workflow, ...current.filter((workflow) => workflow.id !== response.workflow.id)]);
+      setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
       await Promise.all([
-        refreshTasks(proposal.channelId),
         refreshRuns(workspaceCwd),
+        refreshChannelProtocol(proposal.channelId),
         refreshChannelExecutionProposals(proposal.channelId),
         refreshUsedMemoryAudit(workspaceCwd),
       ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setErrorMessage(message);
-      await markChannelExecutionProposal(proposal, {
-        status: "run_failed",
-        linkedTaskId: taskToRun?.id ?? proposal.linkedTaskId ?? null,
-        errorMessage: message,
-      });
+      await blockChannelExecutionProposal(proposal, message);
     }
   }
 
@@ -2673,6 +2591,7 @@ export function AppShell(): JSX.Element {
             onSendMessage={sendChannelMessage}
             onConfirmExecutionProposal={(proposal) => void confirmChannelExecutionProposal(proposal)}
             onCancelExecutionProposal={(proposal) => void cancelChannelExecutionProposal(proposal)}
+            onUpdateExecutionProposal={markChannelExecutionProposal}
             onUploadAttachments={(files) => uploadChannelFiles(files)}
             onCreateLinkPreview={(url) => addChannelLinkPreview(url)}
             onDeleteAttachment={(attachmentId) => void removeChannelAttachment(attachmentId)}
