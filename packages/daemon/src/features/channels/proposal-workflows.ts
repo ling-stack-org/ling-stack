@@ -3,6 +3,7 @@ import {
   type Channel,
   type ChannelExecutionProposal,
   type ChannelExecutionProposalStep,
+  type ResponseLanguage,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type RunStore,
@@ -11,6 +12,7 @@ import {
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
+import { responseLanguageInstruction } from "./response-language.js";
 import { compileWorkflowGraph } from "./workflow-graph.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
 
@@ -86,6 +88,7 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
   }
 
   const graph = buildProposalWorkflowGraph(proposal, participants);
+  const responseLanguage = proposalResponseLanguage(proposal);
   const compiled = compileWorkflowGraph(
     input.store,
     {
@@ -108,6 +111,7 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
         ...compiled.workflow.metadata,
         sourceProposalId: proposal.id,
         sourceMessageId: proposal.sourceMessageId,
+        responseLanguage,
       },
     },
     now,
@@ -268,6 +272,7 @@ function stepPrompt(
   step: ChannelExecutionProposalStep,
   teammate: AiTeammate,
 ): string {
+  const responseLanguage = proposalResponseLanguage(proposal);
   return [
     `Confirmed proposal:\n${proposal.title}`,
     `Overall scope:\n${proposal.prompt}`,
@@ -278,7 +283,12 @@ function stepPrompt(
       ? `Acceptance criteria:\n${proposal.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`
       : undefined,
     proposal.riskSummary ? `Risk summary:\n${proposal.riskSummary}` : undefined,
+    responseLanguageInstruction(responseLanguage),
     "Complete only this step. Do not start or approve later workflow steps.",
     "Return a concise terminal summary and any artifacts or decisions needed by later steps.",
   ].filter((part): part is string => Boolean(part)).join("\n\n");
+}
+
+function proposalResponseLanguage(proposal: ChannelExecutionProposal): ResponseLanguage {
+  return proposal.responseLanguage ?? (/[\u3400-\u9fff]/u.test(`${proposal.title}\n${proposal.prompt}`) ? "zh-CN" : "en-US");
 }

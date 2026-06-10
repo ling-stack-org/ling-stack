@@ -237,7 +237,11 @@ test("channel intent selector creates workflow proposals instead of all-teammate
       proposals.proposals[0].collaborationSteps.map((step) => step.teammateId),
       ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa", "teammate_builtin_designer", "teammate_builtin_product-strategist"],
     );
-    assert.match(proposals.proposals[0].riskSummary, /instead of visible group chat/i);
+    assert.equal(proposals.proposals[0].responseLanguage, "zh-CN");
+    assert.match(proposals.proposals[0].prompt, /建议协作步骤/);
+    assert.match(proposals.proposals[0].acceptanceCriteria[0], /确认协作范围/);
+    assert.match(proposals.proposals[0].collaborationSteps[0].summary, /拆解实现边界/);
+    assert.match(proposals.proposals[0].riskSummary, /工作流 proposal/);
 
     const listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listedMessages.messages.filter((message) => message.kind === "ai_reply").length, 0);
@@ -349,17 +353,93 @@ test("channel intent selector records direct workflow as a confirmed-start propo
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
     assert.equal(proposals.proposals[0].status, "draft");
+    assert.equal(proposals.proposals[0].responseLanguage, "zh-CN");
     assert.deepEqual(
       proposals.proposals[0].collaborationSteps.map((step) => step.teammateId),
       ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"],
     );
-    assert.match(proposals.proposals[0].riskSummary, /user confirmation is still required/i);
+    assert.match(proposals.proposals[0].riskSummary, /执行前仍需要用户确认/);
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
     assert.equal(decisions.decisions[0].action, "direct_workflow");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
+
+    const confirmed = await postJson(`${daemon.url}/channel-proposals/${encodeURIComponent(proposals.proposals[0].id)}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(confirmed.proposal.status, "accepted");
+    assert.equal(confirmed.workflow.metadata.responseLanguage, "zh-CN");
+    assert.equal(confirmed.workflowSteps.length, 3);
+    assert.match(confirmed.workflowSteps[0].prompt, /用户可读输出请使用中文/);
+    assert.match(confirmed.workflowSteps[0].prompt, /API 字段和证据摘录保持原文/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("explicit response language overrides workspace default for workflow proposals", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-language-override-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      responseLanguage: "zh-CN",
+    });
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      defaultTeammateId: "teammate_builtin_engineer",
+      autoReplyMode: "default_teammate",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    for (const teammateId of ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"]) {
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Architect 先拆，Engineer 实现，QA 验证。Please respond in English.",
+    });
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].responseLanguage, "en-US");
+    assert.match(proposals.proposals[0].prompt, /Proposed collaboration/);
+    assert.match(proposals.proposals[0].acceptanceCriteria[0], /Confirm the collaboration scope/);
+    assert.match(proposals.proposals[0].riskSummary, /Multi-agent work starts only after confirmation/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel response language overrides follow-user inference for workflow proposals", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-language-channel-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_engineer",
+      autoReplyMode: "default_teammate",
+      responseLanguage: "en-US",
+      allowedTools: ["read", "grep"],
+    })).channel;
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Architect 先拆，Engineer 实现，QA 验证",
+    });
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(proposals.proposals.length, 1);
+    assert.equal(proposals.proposals[0].responseLanguage, "en-US");
+    assert.match(proposals.proposals[0].prompt, /Proposed collaboration/);
+    assert.match(proposals.proposals[0].riskSummary, /Multi-agent work starts only after confirmation/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

@@ -35,6 +35,18 @@ export type ChannelAutoReplyMode = "mentions_only" | "default_teammate" | "auto_
 
 export const channelAutoReplyModes: readonly ChannelAutoReplyMode[] = ["mentions_only", "default_teammate", "auto_route"];
 
+export type ResponseLanguage = "zh-CN" | "en-US";
+
+export const responseLanguages: readonly ResponseLanguage[] = ["zh-CN", "en-US"];
+
+export type ResponseLanguagePreference = "follow_user" | ResponseLanguage;
+
+export const responseLanguagePreferences: readonly ResponseLanguagePreference[] = ["follow_user", "zh-CN", "en-US"];
+
+export type ChannelResponseLanguage = "workspace" | ResponseLanguagePreference;
+
+export const channelResponseLanguages: readonly ChannelResponseLanguage[] = ["workspace", "follow_user", "zh-CN", "en-US"];
+
 export type ChannelExecutionMode = "serial" | "parallel";
 
 export type ChannelWriteLockScope = "channel" | "boundPath" | "workspace";
@@ -104,6 +116,7 @@ export interface Channel {
   readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
   readonly autoReplyMode: ChannelAutoReplyMode;
+  readonly responseLanguage?: ChannelResponseLanguage;
   readonly allowedTools: readonly RunTool[];
   readonly runtimePolicy: ChannelRuntimePolicy;
   readonly createdAt: string;
@@ -118,6 +131,7 @@ export interface CreateChannelInput {
   readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
   readonly autoReplyMode?: ChannelAutoReplyMode;
+  readonly responseLanguage?: ChannelResponseLanguage;
   readonly allowedTools?: readonly RunTool[];
   readonly runtimePolicy?: Partial<ChannelRuntimePolicy>;
 }
@@ -130,6 +144,7 @@ export interface ChannelUpdateInput {
   readonly defaultProviderPresetId?: string | null;
   readonly defaultTeammateId?: string | null;
   readonly autoReplyMode?: ChannelAutoReplyMode | null;
+  readonly responseLanguage?: ChannelResponseLanguage | null;
   readonly allowedTools?: readonly RunTool[];
   readonly runtimePolicy?: Partial<ChannelRuntimePolicy>;
 }
@@ -171,6 +186,7 @@ export interface WorkspaceSettings {
   readonly workspaceCwd?: string;
   readonly theme?: "light" | "dark" | "system";
   readonly locale?: string;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly channelNotifications?: Record<string, string>;
   readonly channelActivityViews?: Record<string, unknown>;
   readonly updatedAt: string;
@@ -180,6 +196,7 @@ export interface UpdateWorkspaceSettingsInput {
   readonly workspaceCwd?: string | null;
   readonly theme?: "light" | "dark" | "system" | null;
   readonly locale?: string | null;
+  readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly channelNotifications?: Record<string, string> | null;
   readonly channelActivityViews?: Record<string, unknown> | null;
 }
@@ -740,6 +757,7 @@ export interface ChannelExecutionProposal {
   readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
   readonly requiredTools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "edit" | "write")[];
   readonly riskSummary?: string;
+  readonly responseLanguage?: ResponseLanguage;
   readonly status: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
@@ -760,6 +778,7 @@ export interface CreateChannelExecutionProposalInput {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly ChannelExecutionProposal["requiredTools"][number][];
   readonly riskSummary?: string;
+  readonly responseLanguage?: ResponseLanguage;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
@@ -775,6 +794,7 @@ export interface UpdateChannelExecutionProposalInput {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly ChannelExecutionProposal["requiredTools"][number][];
   readonly riskSummary?: string | null;
+  readonly responseLanguage?: ResponseLanguage | null;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string | null;
   readonly linkedRunId?: string | null;
@@ -1479,6 +1499,7 @@ export interface ChannelWorkflowMetadata {
   readonly maxParallelSteps?: number;
   readonly sourceProposalId?: string;
   readonly sourceMessageId?: string;
+  readonly responseLanguage?: ResponseLanguage;
 }
 
 export interface ChannelWorkflow {

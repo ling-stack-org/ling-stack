@@ -3895,6 +3895,19 @@ export function WorkspaceClientView({
           </select>
           {!channelAutoRouteEnabled ? <small>{t("Auto route is disabled by daemon configuration.")}</small> : null}
         </label>
+        <label className="field wide">
+          <span>{t("AI response language")}</span>
+          <select
+            value={channelEditForm.responseLanguage}
+            onChange={(event) => onChannelEditFormChange({ ...channelEditForm, responseLanguage: event.target.value as ChannelFormState["responseLanguage"] })}
+            disabled={!selectedChannelId}
+          >
+            <option value="workspace">{t("Workspace default")}</option>
+            <option value="follow_user">{t("Follow user message")}</option>
+            <option value="zh-CN">{t("Chinese")}</option>
+            <option value="en-US">{t("English")}</option>
+          </select>
+        </label>
         <ChannelRuntimePolicyFields form={channelEditForm} onChange={onChannelEditFormChange} />
         <div className="channel-option-actions">
           <button className="secondary-button compact-button" type="button" onClick={onRefreshChannels} disabled={channelsLoading}>
@@ -4247,6 +4260,18 @@ export function WorkspaceClientView({
                   <option value="auto_route" disabled={!channelAutoRouteEnabled}>{t("Auto route")}</option>
                 </select>
                 {!channelAutoRouteEnabled ? <small>{t("Auto route is disabled by daemon configuration.")}</small> : null}
+              </label>
+              <label className="field wide">
+                <span>{t("AI response language")}</span>
+                <select
+                  value={channelForm.responseLanguage}
+                  onChange={(event) => onChannelFormChange({ ...channelForm, responseLanguage: event.target.value as ChannelFormState["responseLanguage"] })}
+                >
+                  <option value="workspace">{t("Workspace default")}</option>
+                  <option value="follow_user">{t("Follow user message")}</option>
+                  <option value="zh-CN">{t("Chinese")}</option>
+                  <option value="en-US">{t("English")}</option>
+                </select>
               </label>
               <ChannelRuntimePolicyFields form={channelForm} onChange={updateCreateChannelRuntimeForm} />
               <div className="channel-option-actions">

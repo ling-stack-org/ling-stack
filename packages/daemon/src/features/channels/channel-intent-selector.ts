@@ -5,6 +5,7 @@ import type {
   ChannelExecutionProposal,
   ChannelExecutionProposalStep,
   ChannelMessage,
+  ResponseLanguage,
   RunStore,
   SecretResolver,
 } from "@ling-stack/core";
@@ -13,6 +14,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import { resolveChannelResponseLanguage } from "./response-language.js";
 
 export interface ChannelIntentSelectorInput {
   readonly store: RunStore;
@@ -62,6 +64,7 @@ interface ChannelIntentModelOutput {
 interface RoleMatch {
   readonly roleKey: AiTeammate["roleKey"];
   readonly summary: string;
+  readonly summaryZh: string;
   readonly action: ChannelExecutionProposalStep["action"];
 }
 
@@ -74,41 +77,49 @@ const roleMatches: readonly RoleMatch[] = [
   {
     roleKey: "architect",
     summary: "Define implementation boundaries and sequencing before execution.",
+    summaryZh: "执行前先拆解实现边界和步骤顺序。",
     action: "coordinated",
   },
   {
     roleKey: "engineer",
     summary: "Implement the approved step after the boundary is clear.",
+    summaryZh: "在边界清楚后执行已确认的实现步骤。",
     action: "coordinated",
   },
   {
     roleKey: "qa",
     summary: "Validate the expected behavior and regression checks.",
+    summaryZh: "验证预期行为和回归检查项。",
     action: "reviewed",
   },
   {
     roleKey: "designer",
     summary: "Review interaction quality and visible product behavior.",
+    summaryZh: "检查交互质量和可见产品行为。",
     action: "reviewed",
   },
   {
     roleKey: "product",
     summary: "Clarify product scope and acceptance before execution.",
+    summaryZh: "执行前澄清产品范围和验收标准。",
     action: "consulted",
   },
   {
     roleKey: "security",
     summary: "Review trust boundaries and approval-sensitive risks.",
+    summaryZh: "审查信任边界和需要审批的风险。",
     action: "flagged_risk",
   },
   {
     roleKey: "docs",
     summary: "Keep documentation aligned with the shipped behavior.",
+    summaryZh: "保持文档与实际交付行为一致。",
     action: "reviewed",
   },
   {
     roleKey: "release",
     summary: "Prepare shipping checks and approval-sensitive publication steps.",
+    summaryZh: "准备发布检查和需要审批的发布步骤。",
     action: "coordinated",
   },
 ];
@@ -359,6 +370,11 @@ function createWorkflowProposal(
 
   const assignee = chooseAssignee(input, participants);
   const proposedBy = chooseProposedBy(input, assignee);
+  const responseLanguage = resolveChannelResponseLanguage({
+    store: input.store,
+    channel: input.channel,
+    sourceText: input.sourceMessage.body,
+  }).language;
   const now = new Date().toISOString();
   const proposal = input.store.createChannelExecutionProposal(
     {
@@ -366,20 +382,17 @@ function createWorkflowProposal(
       sourceMessageId: input.sourceMessage.id,
       proposedByTeammateId: proposedBy.id,
       title: buildProposalTitle(input.sourceMessage.body, reasonCode),
-      prompt: buildProposalPrompt(input.sourceMessage.body, participants),
+      prompt: buildProposalPrompt(input.sourceMessage.body, participants, responseLanguage),
       assigneeTeammateId: assignee.id,
-      acceptanceCriteria: [
-        "Confirm the collaboration scope before starting execution.",
-        "Run each implementation step through the existing channel task/run path.",
-        "Keep selector, handoff, run, approval, and artifact evidence expandable.",
-      ],
+      acceptanceCriteria: buildAcceptanceCriteria(responseLanguage),
       collaborationSteps: participants.map((participant) => ({
         teammateId: participant.teammate.id,
         action: participant.role.action,
-        summary: participant.role.summary,
+        summary: roleSummary(participant.role, responseLanguage),
       })),
       requiredTools: deriveRequiredTools(participants),
-      riskSummary: buildRiskSummary(reasonCode),
+      riskSummary: buildRiskSummary(reasonCode, responseLanguage),
+      responseLanguage,
       status: "draft",
     },
     now,
@@ -419,6 +432,11 @@ function createClarifyReply(
   if (!teammate) {
     return { action: "continue" };
   }
+  const responseLanguage = resolveChannelResponseLanguage({
+    store: input.store,
+    channel: input.channel,
+    sourceText: input.sourceMessage.body,
+  }).language;
   const now = new Date().toISOString();
   const aiReply = input.store.createChannelMessage(
     {
@@ -428,7 +446,7 @@ function createClarifyReply(
       intent: "discuss",
       authorType: "ai-teammate",
       authorId: teammate.id,
-      body: buildClarifyQuestion(input.sourceMessage.body, reasonCode),
+      body: buildClarifyQuestion(reasonCode, responseLanguage),
       status: "ready",
     },
     now,
@@ -624,8 +642,8 @@ function textMentionsAnyRole(text: string): boolean {
   return roleMatches.some((role) => textMentionsRole(text, role.roleKey));
 }
 
-function buildClarifyQuestion(messageBody: string, reasonCode: ClarifyReasonCode): string {
-  const chinese = /[\u3400-\u9fff]/u.test(messageBody);
+function buildClarifyQuestion(reasonCode: ClarifyReasonCode, responseLanguage: ResponseLanguage): string {
+  const chinese = responseLanguage === "zh-CN";
   if (reasonCode === "approval_sensitive_target") {
     return chinese
       ? "我需要先确认范围：目标分支/PR 是哪个？是否允许执行会修改远端状态的步骤？完成后用什么检查验收？"
@@ -655,8 +673,21 @@ function buildProposalTitle(messageBody: string, reasonCode: IntentReasonCode): 
 function buildProposalPrompt(
   messageBody: string,
   participants: readonly ProposalParticipantSelection[],
+  responseLanguage: ResponseLanguage,
 ): string {
-  const steps = participants.map((participant, index) => `${index + 1}. ${participant.teammate.displayName}: ${participant.role.summary}`);
+  const steps = participants.map((participant, index) => `${index + 1}. ${participant.teammate.displayName}: ${roleSummary(participant.role, responseLanguage)}`);
+  if (responseLanguage === "zh-CN") {
+    return [
+      "这条用户消息看起来是一个需要协作执行的工作流请求。",
+      "",
+      `原始请求: ${normalizeWhitespace(messageBody)}`,
+      "",
+      "建议协作步骤:",
+      ...steps,
+      "",
+      "等待用户明确确认后再开始可执行工作。",
+    ].join("\n");
+  }
   return [
     "The user message looks like a coordinated workflow request.",
     "",
@@ -667,6 +698,20 @@ function buildProposalPrompt(
     "",
     "Wait for explicit user confirmation before starting executable work.",
   ].join("\n");
+}
+
+function buildAcceptanceCriteria(responseLanguage: ResponseLanguage): readonly string[] {
+  return responseLanguage === "zh-CN"
+    ? [
+        "开始执行前先确认协作范围。",
+        "每个实现步骤都通过现有频道 task/run 路径执行。",
+        "selector、handoff、run、approval 和 artifact 证据都保持可展开查看。",
+      ]
+    : [
+        "Confirm the collaboration scope before starting execution.",
+        "Run each implementation step through the existing channel task/run path.",
+        "Keep selector, handoff, run, approval, and artifact evidence expandable.",
+      ];
 }
 
 function deriveRequiredTools(
@@ -681,14 +726,24 @@ function deriveRequiredTools(
   return [...tools];
 }
 
-function buildRiskSummary(reasonCode: IntentReasonCode): string {
+function buildRiskSummary(reasonCode: IntentReasonCode, responseLanguage: ResponseLanguage): string {
   if (reasonCode === "all_teammates_request") {
-    return "Converted an all-teammates request into one workflow proposal instead of visible group chat.";
+    return responseLanguage === "zh-CN"
+      ? "已把全员发言请求转换为一个工作流 proposal，而不是在频道里展开可见群聊。"
+      : "Converted an all-teammates request into one workflow proposal instead of visible group chat.";
   }
   if (reasonCode === "explicit_workflow_start") {
-    return "Direct workflow request is prefilled as a proposal; user confirmation is still required before execution.";
+    return responseLanguage === "zh-CN"
+      ? "显式开始 workflow 的请求会先预填为 proposal；执行前仍需要用户确认。"
+      : "Direct workflow request is prefilled as a proposal; user confirmation is still required before execution.";
   }
-  return "Multi-agent work starts only after confirmation and continues through existing workflow/run approvals.";
+  return responseLanguage === "zh-CN"
+    ? "多 agent 工作只会在确认后开始，并继续沿用现有 workflow/run approval。"
+    : "Multi-agent work starts only after confirmation and continues through existing workflow/run approvals.";
+}
+
+function roleSummary(role: RoleMatch, responseLanguage: ResponseLanguage): string {
+  return responseLanguage === "zh-CN" ? role.summaryZh : role.summary;
 }
 
 function persistIntentDecision(

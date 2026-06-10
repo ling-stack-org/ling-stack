@@ -1820,6 +1820,14 @@ Current MVP implementation status:
   proposal-to-workflow graph execution, proposal edit, clarify, independent intent
   persistence, confirmed direct-workflow prefill, and feature-gated model-assisted
   intent selection,
+- response language for generated workflow text is a channel/workspace preference, not a
+  global translation pass. The default should come from Workspace Settings, a channel may
+  override it, `AGENTS.md` or equivalent project instructions may impose a clearer
+  workspace rule, and an explicit user/proposal override wins for the current work. The
+  resolved language applies to user-facing generated proposal/clarify/summary text only;
+  code, logs, command output, filenames, API fields, errors, and historical evidence
+  remain in their original language. See
+  [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md#response-language-resolution),
 - AI attachment/link content ingestion, automatic multi-agent loops, custom workflow
   builder, Channel Brief AI generation, and server-side notification persistence remain
   future slices.
@@ -2271,6 +2279,30 @@ Current MVP implementation status:
   output packets, approvals, artifacts, and raw runtime events.
 - [ ] Add targeted browser checks for visible live progress, terminal folding, and
   evidence expansion.
+
+### Phase 35: Response Language Context
+
+- [x] Define response-language resolution in
+  `docs/design/channel-intent-workflow-selector.md`.
+- [x] Add a Workspace Settings response-language preference for generated user-facing
+  text, separate from the Web UI locale switcher.
+- [x] Add an optional channel-level response-language override that defaults to
+  Workspace Settings.
+- [ ] Let proposal editing override response language for the current proposal before
+  confirmation.
+- [x] Persist the resolved language on the proposal/workflow so later workflow steps do
+  not have to guess from partial context.
+- [x] Ensure generated proposal body, clarify questions, risk summary, acceptance
+  criteria, collaboration step summaries, ordinary AI reply prompts, and workflow step
+  prompts follow the resolved language.
+- [ ] Extend terminal/run summary rendering to reuse the persisted workflow response
+  language where summaries are generated outside the step prompt.
+- [x] Preserve raw code, logs, shell output, errors, API fields, filenames, artifacts,
+  and existing history in their original language.
+- [x] Add targeted daemon tests for Workspace default, channel override, explicit user
+  override, proposal/workflow persistence, and evidence-original-language instruction.
+- [ ] Add browser coverage for channel override controls and proposal edit language
+  override when proposal edit lands.
 
 ## Validation Plan
 

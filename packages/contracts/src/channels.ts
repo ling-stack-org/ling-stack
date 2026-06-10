@@ -1,8 +1,11 @@
 import type { RunTool, ToolName } from "./shared.js";
+import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
 
 export type ChannelStatus = "active" | "paused" | "archived";
 
 export type ChannelAutoReplyMode = "mentions_only" | "default_teammate" | "auto_route";
+
+export type ChannelResponseLanguage = "workspace" | ResponseLanguagePreference;
 
 export type ChannelExecutionMode = "serial" | "parallel";
 
@@ -75,6 +78,7 @@ export interface Channel {
   readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
   readonly autoReplyMode: ChannelAutoReplyMode;
+  readonly responseLanguage?: ChannelResponseLanguage;
   readonly allowedTools: readonly ToolName[];
   readonly runtimePolicy: ChannelRuntimePolicy;
   readonly createdAt: string;
@@ -98,6 +102,7 @@ export interface CreateChannelRequest {
   readonly defaultProviderPresetId?: string;
   readonly defaultTeammateId?: string;
   readonly autoReplyMode?: ChannelAutoReplyMode;
+  readonly responseLanguage?: ChannelResponseLanguage;
   readonly allowedTools: readonly ToolName[];
   readonly runtimePolicy: ChannelRuntimePolicy;
 }
@@ -110,6 +115,7 @@ export interface UpdateChannelRequest {
   readonly defaultProviderPresetId?: string | null;
   readonly defaultTeammateId?: string | null;
   readonly autoReplyMode?: ChannelAutoReplyMode | null;
+  readonly responseLanguage?: ChannelResponseLanguage | null;
   readonly allowedTools?: readonly ToolName[];
   readonly runtimePolicy?: ChannelRuntimePolicy;
 }
@@ -276,6 +282,7 @@ export interface ChannelExecutionProposal {
   readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
   readonly requiredTools: readonly RunTool[];
   readonly riskSummary?: string;
+  readonly responseLanguage?: ResponseLanguage;
   readonly status: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
@@ -295,6 +302,7 @@ export interface CreateChannelExecutionProposalRequest {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly RunTool[];
   readonly riskSummary?: string;
+  readonly responseLanguage?: ResponseLanguage;
 }
 
 export interface UpdateChannelExecutionProposalRequest {
@@ -305,6 +313,7 @@ export interface UpdateChannelExecutionProposalRequest {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly RunTool[];
   readonly riskSummary?: string | null;
+  readonly responseLanguage?: ResponseLanguage | null;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string | null;
   readonly linkedRunId?: string | null;
